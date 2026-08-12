@@ -1128,6 +1128,17 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
     Operates on the final serialized string so it works uniformly across all tool
     code-paths regardless of which builder produced the underlying dict.  No-ops for
     non-dict JSON (arrays, primitives) to stay safe.
+
+    M14 (retired behavior): ``mcp_contract_version`` is a HARD assignment -- the
+    central const (``_TG_MCP_SERVER_CONTRACT_VERSION``) ALWAYS wins. The retired form
+    was ``setdefault``, which let a tool payload's OWN top-level ``mcp_contract_version``
+    literal (a stale hardcode, or a forked value copied from an older contract) WIN and
+    skirt the central const -- a forked literal defeats the point of a single source of
+    truth. ``schema_version`` deliberately stays ``setdefault``: it is the JSON-output
+    version only by default, and a tool with a DOMAIN meaning for that exact key keeps
+    it (``tg_doctor`` documents top-level ``schema_version: 2`` as the doctor JSON
+    schema version, distinct from the MCP output version; clobbering it would break
+    consumers -- see harness_api.md).
     """
     try:
         payload = json.loads(result_json)
@@ -1135,7 +1146,7 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
         return result_json
     if not isinstance(payload, dict):
         return result_json
-    payload.setdefault("mcp_contract_version", _TG_MCP_SERVER_CONTRACT_VERSION)
+    payload["mcp_contract_version"] = _TG_MCP_SERVER_CONTRACT_VERSION
     payload.setdefault("schema_version", _json_output_version())
     return json.dumps(payload, indent=2)
 
@@ -2249,7 +2260,9 @@ def _broad_root_scan_refusal_result(
         }
         if lang is not None:
             payload["lang"] = lang
-        return json.dumps(payload, indent=2)
+        # M14: this helper is shared by tg_search / tg_ast_search but is unreachable by
+        # black-box census probes -- route through the injector like every other envelope.
+        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
     return f"tg: {message}"
 
 
@@ -2668,7 +2681,8 @@ def tg_ruleset_scan(
             ruleset=ruleset,
             path=path,
         )
-    return json.dumps(payload, indent=2)
+    # M14: the scan success payload is assembled inline and crossed the wire un-stamped.
+    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -3250,19 +3264,22 @@ def tg_session_edit_plan(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_context_edit_plan(
-                session_id,
-                query,
-                path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_tokens=max_tokens,
-                max_symbols=max_symbols,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_context_edit_plan(
+                    session_id,
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_symbols=max_symbols,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -3344,24 +3361,27 @@ def tg_session_context_render(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_context_render(
-                session_id,
-                query,
-                path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                max_tokens=max_tokens,
-                model=model,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                profile=profile,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_context_render(
+                    session_id,
+                    query,
+                    path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    max_tokens=max_tokens,
+                    model=model,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -3429,15 +3449,18 @@ def tg_session_blast_radius(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_blast_radius(
-                session_id,
-                symbol,
-                path,
-                max_depth=max_depth,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_blast_radius(
+                    session_id,
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -3534,14 +3557,17 @@ def tg_session_file_importers(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_file_importers(
-                session_id,
-                file,
-                path,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_file_importers(
+                    session_id,
+                    file,
+                    path,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -3609,20 +3635,24 @@ def tg_symbol_blast_radius_plan(
         payload["max_depth"] = max(0, int(max_depth))
         payload["path"] = path
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
+        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
     try:
-        return json.dumps(
-            build_symbol_blast_radius_plan(
-                symbol,
-                path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_symbols=max_symbols,
-                semantic_provider=provider,
-                max_repo_files=max_repo_files,
-            ),
-            indent=2,
+        # M14: build_symbol_blast_radius_plan returns a bare dict crossed the wire exactly;
+        # the injector stamps (and re-serializes) the final JSON like every tool envelope.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                build_symbol_blast_radius_plan(
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    semantic_provider=provider,
+                    max_repo_files=max_repo_files,
+                ),
+                indent=2,
+            )
         )
     except FileNotFoundError:
         payload = _envelope_base(
@@ -3637,7 +3667,7 @@ def tg_symbol_blast_radius_plan(
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
         }
-        return json.dumps(payload, indent=2)
+        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -3652,7 +3682,7 @@ def tg_symbol_blast_radius_plan(
             "message": str(exc),
             "retryable": False,
         }
-        return json.dumps(payload, indent=2)
+        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -3711,21 +3741,24 @@ def tg_session_blast_radius_render(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_blast_radius_render(
-                session_id,
-                symbol,
-                path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_blast_radius_render(
+                    session_id,
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -3817,17 +3850,20 @@ def tg_session_blast_radius_plan(
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
-        return json.dumps(
-            session_blast_radius_plan(
-                session_id,
-                symbol,
-                path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_symbols=max_symbols,
-                refresh_on_stale=effective_refresh,
-            ),
-            indent=2,
+        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+        return _inject_mcp_contract_fields(
+            json.dumps(
+                session_blast_radius_plan(
+                    session_id,
+                    symbol,
+                    path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    refresh_on_stale=effective_refresh,
+                ),
+                indent=2,
+            )
         )
     except SessionStaleError as exc:
         return _session_error_payload(
@@ -4780,7 +4816,8 @@ def tg_search(
                 **_incomplete_class_fragment(None),
                 "error": {"code": "invalid_input", "message": str(exc)},
             }
-            return json.dumps(payload, indent=2)
+            # M14: this no-scan error envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
         return f"Search failed: {exc}"
 
     rendered_file_limit = max(0, max_files if max_files is not None else 15)
@@ -4952,7 +4989,8 @@ def tg_search(
                                 "retryable": False,
                             },
                         }
-                        return json.dumps(error_payload, indent=2)
+                        # M14: error envelope crossed the wire un-stamped.
+                        return _inject_mcp_contract_fields(json.dumps(error_payload, indent=2))
                     return f"Search failed: semantic backend error: {exc}"
             else:
                 # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
@@ -4994,7 +5032,8 @@ def tg_search(
                 # OTHER (non-rank/non-semantic) search's envelope shape stays byte-identical.
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-                return json.dumps(payload, indent=2)
+                # M14: the no-match structured envelope crossed the wire un-stamped.
+                return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
             capped_note = (
                 f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
                 if empty_scan_capped
@@ -5025,7 +5064,8 @@ def tg_search(
                     count_payload["scan_limit"] = scan_limit_payload
                 if all_results.rank_fallback_reason:
                     count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-                return json.dumps(count_payload, indent=2)
+                # M14: the count envelope crossed the wire un-stamped.
+                return _inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
             return (
                 f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
                 f"{_routing_summary(all_results)}"
@@ -5087,7 +5127,8 @@ def tg_search(
                 payload["scan_limit"] = scan_limit_payload
             if all_results.rank_fallback_reason:
                 payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-            return json.dumps(payload, indent=2)
+            # M14: the results envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
         # Format the results into a readable string for the LLM
         output = [
@@ -5167,14 +5208,17 @@ def tg_ast_search(
         path = str(_confine_mcp_path(path, label="path"))
     except ValueError as exc:
         if structured_json:
-            return json.dumps(
-                {
-                    "pattern": pattern,
-                    "lang": lang,
-                    "path": path,
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                },
-                indent=2,
+            # M14: confinement-refusal envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "error": {"code": "invalid_input", "message": str(exc)},
+                    },
+                    indent=2,
+                )
             )
         return f"AST search failed: {exc}"
 
@@ -5191,34 +5235,40 @@ def tg_ast_search(
         # which is EARLIER than the backend-type check below -- mirror that branch's response
         # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
         if structured_json:
-            return json.dumps(
-                {
-                    "pattern": pattern,
-                    "lang": lang,
-                    "path": path,
-                    "error": {
-                        "code": "unavailable",
-                        "message": f"AstBackend is not available on this system: {exc}",
+            # M14: unavailable envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "error": {
+                            "code": "unavailable",
+                            "message": f"AstBackend is not available on this system: {exc}",
+                        },
                     },
-                },
-                indent=2,
+                    indent=2,
+                )
             )
         return f"Error: AstBackend is not available on this system: {exc}"
 
     backend_name = type(backend).__name__
     if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
         if structured_json:
-            return json.dumps(
-                {
-                    "pattern": pattern,
-                    "lang": lang,
-                    "path": path,
-                    "error": {
-                        "code": "unavailable",
-                        "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
+            # M14: unavailable envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "error": {
+                            "code": "unavailable",
+                            "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
+                        },
                     },
-                },
-                indent=2,
+                    indent=2,
+                )
             )
         return "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
 
@@ -5334,26 +5384,29 @@ def tg_ast_search(
 
         if all_results.is_empty:
             if structured_json:
-                return json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "total_matches": 0,
-                        "total_files": all_results.total_files,
-                        "rendered_match_count": 0,
-                        "rendered_file_count": 0,
-                        "matches": [],
-                        "truncated": scan_capped,
-                        "omitted_matches": 0,
-                        "omitted_files": 0,
-                        "result_incomplete": all_results.result_incomplete,
-                        "incomplete_reason": all_results.incomplete_reason,
-                        **_incomplete_class_fragment(all_results),
-                        "scan_limit": scan_limit_payload,
-                        "routing": _routing_payload(all_results),
-                    },
-                    indent=2,
+                # M14: no-match envelope crossed the wire un-stamped.
+                return _inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "pattern": pattern,
+                            "lang": lang,
+                            "path": path,
+                            "total_matches": 0,
+                            "total_files": all_results.total_files,
+                            "rendered_match_count": 0,
+                            "rendered_file_count": 0,
+                            "matches": [],
+                            "truncated": scan_capped,
+                            "omitted_matches": 0,
+                            "omitted_files": 0,
+                            "result_incomplete": all_results.result_incomplete,
+                            "incomplete_reason": all_results.incomplete_reason,
+                            **_incomplete_class_fragment(all_results),
+                            "scan_limit": scan_limit_payload,
+                            "routing": _routing_payload(all_results),
+                        },
+                        indent=2,
+                    )
                 )
             capped_note = (
                 f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
@@ -5398,26 +5451,29 @@ def tg_ast_search(
                 for filepath, matches in rendered_by_file.items()
                 for m in matches
             ]
-            return json.dumps(
-                {
-                    "pattern": pattern,
-                    "lang": lang,
-                    "path": path,
-                    "total_matches": all_results.total_matches,
-                    "total_files": all_results.total_files,
-                    "rendered_match_count": len(payload_matches),
-                    "rendered_file_count": rendered_file_count,
-                    "matches": payload_matches,
-                    "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
-                    "omitted_matches": omitted_matches,
-                    "omitted_files": omitted_files,
-                    "result_incomplete": all_results.result_incomplete,
-                    "incomplete_reason": all_results.incomplete_reason,
-                    **_incomplete_class_fragment(all_results),
-                    "scan_limit": scan_limit_payload,
-                    "routing": _routing_payload(all_results),
-                },
-                indent=2,
+            # M14: results envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "total_matches": all_results.total_matches,
+                        "total_files": all_results.total_files,
+                        "rendered_match_count": len(payload_matches),
+                        "rendered_file_count": rendered_file_count,
+                        "matches": payload_matches,
+                        "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
+                        "omitted_matches": omitted_matches,
+                        "omitted_files": omitted_files,
+                        "result_incomplete": all_results.result_incomplete,
+                        "incomplete_reason": all_results.incomplete_reason,
+                        **_incomplete_class_fragment(all_results),
+                        "scan_limit": scan_limit_payload,
+                        "routing": _routing_payload(all_results),
+                    },
+                    indent=2,
+                )
             )
 
         output = [
@@ -5452,14 +5508,17 @@ def tg_ast_search(
 
     except Exception as e:
         if structured_json:
-            return json.dumps(
-                {
-                    "pattern": pattern,
-                    "lang": lang,
-                    "path": path,
-                    "error": _sanitized_tool_error("tg_ast_search", e),
-                },
-                indent=2,
+            # M14: exception envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
+                        "error": _sanitized_tool_error("tg_ast_search", e),
+                    },
+                    indent=2,
+                )
             )
         return _sanitized_tool_error_text("tg_ast_search", e)
 
@@ -5486,12 +5545,15 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
     except ValueError as exc:
         if structured_json:
-            return json.dumps(
-                {
-                    "file_path": file_path,
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                },
-                indent=2,
+            # M14: confinement-refusal envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "file_path": file_path,
+                        "error": {"code": "invalid_input", "message": str(exc)},
+                    },
+                    indent=2,
+                )
             )
         return f"Error: {exc}"
 
@@ -5513,15 +5575,18 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         lines = list(itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1))
         if not lines:
             if structured_json:
-                return json.dumps(
-                    {
-                        "file_path": file_path,
-                        "error": {
-                            "code": "invalid_input",
-                            "message": f"File {file_path} is empty or unreadable.",
+                # M14: empty/unreadable envelope crossed the wire un-stamped.
+                return _inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "file_path": file_path,
+                            "error": {
+                                "code": "invalid_input",
+                                "message": f"File {file_path} is empty or unreadable.",
+                            },
                         },
-                    },
-                    indent=2,
+                        indent=2,
+                    )
                 )
             return f"Error: File {file_path} is empty or unreadable."
 
@@ -5539,20 +5604,23 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
                 warnings_or_errors.append((budgeted_lines[i].strip(), r["label"], r["confidence"]))
 
         if structured_json:
-            return json.dumps(
-                {
-                    "file_path": file_path,
-                    "provider": provider_used,
-                    "provider_status": provider_status,
-                    "sample_lines": line_budget["emitted_lines"],
-                    "total_lines": line_budget["total_lines"],
-                    "anomaly_count": len(warnings_or_errors),
-                    "anomalies": [
-                        {"label": label, "confidence": conf, "text": text}
-                        for text, label, conf in warnings_or_errors[:20]
-                    ],
-                },
-                indent=2,
+            # M14: the success envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "file_path": file_path,
+                        "provider": provider_used,
+                        "provider_status": provider_status,
+                        "sample_lines": line_budget["emitted_lines"],
+                        "total_lines": line_budget["total_lines"],
+                        "anomaly_count": len(warnings_or_errors),
+                        "anomalies": [
+                            {"label": label, "confidence": conf, "text": text}
+                            for text, label, conf in warnings_or_errors[:20]
+                        ],
+                    },
+                    indent=2,
+                )
             )
 
         if not warnings_or_errors:
@@ -5573,12 +5641,15 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
 
     except Exception as e:
         if structured_json:
-            return json.dumps(
-                {
-                    "file_path": file_path,
-                    "error": _sanitized_tool_error("tg_classify_logs", e),
-                },
-                indent=2,
+            # M14: exception envelope crossed the wire un-stamped.
+            return _inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "file_path": file_path,
+                        "error": _sanitized_tool_error("tg_classify_logs", e),
+                    },
+                    indent=2,
+                )
             )
         return _sanitized_tool_error_text("tg_classify_logs", e)
 
@@ -5597,7 +5668,9 @@ def tg_devices(json_output: bool = True) -> str:
     inventory = collect_device_inventory()
     payload = inventory.to_dict()
     if json_output:
-        return json.dumps(payload)
+        # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
+        # through the injector like every other tool envelope.
+        return _inject_mcp_contract_fields(json.dumps(payload))
 
     if not inventory.devices:
         return "No routable GPUs detected."
@@ -5821,10 +5894,15 @@ def tg_audit_manifest_verify(
         return _audit_manifest_error(str(exc), code="invalid_input")
 
     try:
-        return verify_audit_manifest_json(
-            manifest_path,
-            signing_key=signing_key,
-            previous_manifest=previous_manifest,
+        # M14: verify_audit_manifest_json serializes a flat CLI payload with no MCP
+        # envelope -- stamp at the tool seam (the error arms above already embed the
+        # const via _audit_manifest_error).
+        return _inject_mcp_contract_fields(
+            verify_audit_manifest_json(
+                manifest_path,
+                signing_key=signing_key,
+                previous_manifest=previous_manifest,
+            )
         )
     except FileNotFoundError as exc:
         return _audit_manifest_error(str(exc), code="not_found")
@@ -5983,12 +6061,17 @@ def tg_review_bundle_create(
             )
 
     try:
-        return create_review_bundle_json(
-            manifest_path,
-            scan_path=scan_path,
-            checkpoint_id=checkpoint_id,
-            previous_manifest=previous_manifest,
-            output_path=output_path,
+        # M14: create_review_bundle_json serializes a flat CLI payload with no MCP envelope --
+        # stamp at the tool seam (the error arms above already embed the const via
+        # _review_bundle_error).
+        return _inject_mcp_contract_fields(
+            create_review_bundle_json(
+                manifest_path,
+                scan_path=scan_path,
+                checkpoint_id=checkpoint_id,
+                previous_manifest=previous_manifest,
+                output_path=output_path,
+            )
         )
     except FileNotFoundError as exc:
         return _review_bundle_error(
@@ -6042,7 +6125,10 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
         )
 
     try:
-        return verify_review_bundle_json(bundle_path)
+        # M14: verify_review_bundle_json serializes a flat CLI payload with no MCP envelope --
+        # stamp at the tool seam (the error arms above already embed the const via
+        # _review_bundle_error).
+        return _inject_mcp_contract_fields(verify_review_bundle_json(bundle_path))
     except FileNotFoundError as exc:
         return _review_bundle_error(
             str(exc),
@@ -6368,7 +6454,8 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
             detail={},
         )
 
-    return json.dumps(payload.__dict__, indent=2)
+    # M14: the refreshed-session payload crossed the wire un-stamped.
+    return _inject_mcp_contract_fields(json.dumps(payload.__dict__, indent=2))
 
 
 @_register_legacy_tool  # type: ignore

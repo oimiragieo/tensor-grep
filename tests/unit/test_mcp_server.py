@@ -5457,9 +5457,12 @@ def test_tg_doctor_returns_json_payload(tmp_path, monkeypatch):
     assert "native_tg_binary_exists" in payload
     assert "search_acceleration_backend" in payload
     assert payload["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
-    # _build_doctor_payload's OWN "version"/"schema_version" (the tensor-grep semver / doctor
-    # schema int) must survive untouched -- _inject_mcp_contract_fields uses setdefault so it
-    # must never clobber a key the underlying payload already set.
+    # M14 (stamping uniformity, F2-corrected): _inject_mcp_contract_fields HARD-assigns only
+    # mcp_contract_version (the central const always wins over a payload's own literal); the
+    # top-level "schema_version" stays setdefault so a tool's OWN domain meaning for that key
+    # survives -- tg_doctor documents schema_version: 2 as the doctor JSON schema version,
+    # distinct from the MCP JSON-output version (_json_output_version()). Re-clobbering it
+    # would break harness_api.md-pinned consumers.
     assert payload["version"] == mcp_server._mcp_server_version()
     assert payload["schema_version"] == payload["doctor_schema_version"]
 

@@ -40,6 +40,16 @@ from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
 
 
+@pytest.fixture(autouse=True)
+def _doctor_offline(monkeypatch):
+    """A90 PATH-honesty: `tg doctor` now probes PyPI for pypi_latest (bounded 15s). That network
+    call must NOT run in unit tests. `TG_DOCTOR_OFFLINE=1` (a documented escape hatch on
+    _latest_pypi_tensor_grep_version) short-circuits to None (unknown_pypi), which is fast and
+    offline-deterministic. The test that exercises the REAL probe (test_latest_pypi_probe_*)
+    deletes this env var so it hits the network-mock path."""
+    monkeypatch.setenv("TG_DOCTOR_OFFLINE", "1")
+
+
 def _strip_ansi(text: str) -> str:
     return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
@@ -1467,6 +1477,99 @@ def test_count_matches_refuses_cleanly_when_rg_unresolvable_json(monkeypatch, tm
     assert "rg" in payload["detail"].lower() or "ripgrep" in payload["detail"].lower()
 
 
+def test_files_with_matches_refused_when_combined_with_json(monkeypatch, tmp_path: Path):
+    """P5·H2 (codex Finding 1): `-l`/`--files-with-matches` is a RAW PATH-output mode the
+    tensor-grep aggregate `--json` envelope cannot express. Before the fix, `tg search --json -l`
+    silently printed plain paths with exit 0 (JSON contract dropped -- verified live). It must
+    refuse fail-closed with a structured exit 2, mirroring the native
+    `exit_native_structured_flag_dropped` refusal (rust_core/src/main.rs)."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "--json", "-l"])
+
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is False
+    assert payload["error"] == "unsupported_flag"
+    assert "files-with-matches" in payload["detail"]
+    # No plain path masquerading as the structured answer.
+    assert target.name not in result.stdout
+
+
+def test_files_without_match_refused_when_combined_with_ndjson(monkeypatch, tmp_path: Path):
+    """P5·H2: `--files-without-match` under `--ndjson` is the same raw-path-vs-structured
+    contract drop; refuse it identically. (ndjson emits a text error via `_exit_search_error`,
+    matching the native/JSON refusal style.)"""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--ndjson", "--files-without-match"]
+    )
+
+    assert result.exit_code == 2, result.output
+    assert "files-without-match" in result.output
+    assert "refusing" in result.output
+
+
+def test_files_with_matches_plain_still_works_without_json(monkeypatch, tmp_path: Path):
+    """Bidirectional half of P5·H2: plain `-l` (no `--json`/`--ndjson`) is a legitimate raw
+    path output and must NOT be refused. Guards the new guard's own negative arm; the broader
+    `test_files_with_matches_*` suite pins the honoring behavior itself."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["search", "foo", str(target), "-l"])
+
+    assert result.exit_code != 2, result.output
+    assert "unsupported_flag" not in result.output
+
+
+def test_files_with_matches_refused_when_json_ndjson_and_format_rg_combine(monkeypatch, tmp_path):
+    """P5·H2 (codex round-3 finding): the `--format rg --json` passthrough exemption must
+    REQUIRE `not ndjson`. `--json --ndjson --format rg -l` has no rg-passthrough twin for the
+    ndjson side (rg's `--json` events are not the tensor-grep ndjson schema), so it must
+    refuse fail-closed instead of emitting a raw path with exit 0 (ndjson contract dropped).
+
+    CliRunner does not set `sys.argv`, and `_explicit_rg_format_requested()` reads `sys.argv`
+    (it deliberately discards `format_value`) -- so without stubbing argv here the search
+    command would see `explicit_rg_format=False` and the test would pass even if the `not
+    ndjson` term were reverted (a vacuous oracle). Stub `sys.argv` to the real invocation so
+    `explicit_rg_format=True` is genuinely exercised, and add the bidirectional control."""
+    _patch_cli_dependencies(monkeypatch)
+    target = tmp_path / "sample.txt"
+    target.write_text("foo bar foo baz foo\nanother line\nfoo\n", encoding="utf-8")
+
+    # The tiger: --json AND --ndjson AND --format rg. `_explicit_rg_format_requested()` reads
+    # sys.argv (discarding the typer-parsed format_value), so mirror the real invocation there.
+    monkeypatch.setattr(
+        "sys.argv",
+        ["tg", "search", str(target), "--json", "--ndjson", "--format", "rg", "-l"],
+    )
+    result = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--json", "--ndjson", "--format", "rg", "-l"]
+    )
+    assert result.exit_code == 2, result.output
+    assert "unsupported_flag" in result.output
+    assert "files-with-matches" in result.output
+
+    # Bidirectional control: pure `--json --format rg -l` (explicit rg format, NO ndjson) is
+    # the legitimately-exempt rg-passthrough case -- it must NOT be refused here.
+    monkeypatch.setattr(
+        "sys.argv",
+        ["tg", "search", str(target), "--json", "--format", "rg", "-l"],
+    )
+    control = CliRunner().invoke(
+        app, ["search", "foo", str(target), "--json", "--format", "rg", "-l"]
+    )
+    assert control.exit_code != 2, control.output
+    assert "unsupported_flag" not in control.output
+
+
 def test_count_matches_still_uses_ripgrep_when_available(tmp_path: Path):
     """Bidirectional half of task #121: when rg genuinely IS available, `--count-matches`
     must keep working exactly as before (real occurrence count via rg), never refuse.
@@ -2115,8 +2218,8 @@ def test_doctor_json_includes_runtime_session_and_lsp(monkeypatch, tmp_path: Pat
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["version"] == "9.9.9"
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
     assert payload["root"] == str(tmp_path.resolve())
     assert payload["native_tg_binary_exists"] is True
     assert payload["env"]["TG_RUST_EARLY_RG"] == "1"
@@ -2166,8 +2269,8 @@ def test_doctor_json_no_lsp_keeps_empty_schema_compatibility(monkeypatch, tmp_pa
 
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
     assert payload["lsp"]["enabled"] is False
     assert payload["lsp"]["schema_version"] == 2
     assert payload["lsp"]["providers"] == []
@@ -2260,8 +2363,8 @@ def test_doctor_json_reports_cold_daemon_autostart_hint(monkeypatch, tmp_path: P
     # Additive-only: doctor's own top-level schema_version must NOT need a bump for a nested,
     # conditionally-present diagnostic field (CONTRACTS.md section 5: "Individual diagnostic
     # fields may grow as new probes are added").
-    assert payload["schema_version"] == 2
-    assert payload["doctor_schema_version"] == 2
+    assert payload["schema_version"] == 3
+    assert payload["doctor_schema_version"] == 3
 
 
 def test_doctor_text_reports_ast_grep_availability(monkeypatch, tmp_path: Path) -> None:
@@ -4049,9 +4152,10 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
+        seen["timeout"] = timeout
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4077,6 +4181,7 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         ".",
     ]
     assert seen["check"] is False
+    assert isinstance(seen["timeout"], float) and seen["timeout"] > 0
 
 
 def test_cli_should_force_cpu_pipeline_when_env_override_is_enabled(monkeypatch):
@@ -4264,7 +4369,7 @@ def test_cli_invalid_regex_is_rejected_before_native_delegation(monkeypatch):
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4288,7 +4393,7 @@ def test_cli_invalid_regex_reports_json_error_before_native_delegation(monkeypat
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4332,7 +4437,7 @@ def test_cli_later_invalid_regexp_is_rejected_before_native_delegation(monkeypat
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -4372,7 +4477,7 @@ def test_cli_broad_claude_json_uses_python_guardrails_before_native(monkeypatch)
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         raise AssertionError("broad .claude JSON search needs Python scanner guardrails")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4537,8 +4642,9 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
+        seen["timeout"] = timeout
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -4548,6 +4654,7 @@ def test_cli_should_delegate_ndjson_search_to_native_binary_and_preserve_exit_co
 
     assert result.exit_code == 2
     assert seen["cmd"] == ["tg.exe", "search", "--ndjson", "--", "ERROR", "."]
+    assert isinstance(seen["timeout"], float) and seen["timeout"] > 0
 
 
 def test_cli_should_emit_ndjson_without_native_binary(monkeypatch):
@@ -4617,7 +4724,7 @@ def test_cli_should_delegate_json_search_to_native_binary(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -4637,7 +4744,7 @@ def test_cli_should_delegate_native_rg_output_flags(monkeypatch):
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -5178,7 +5285,7 @@ def test_cli_should_delegate_explicit_gpu_device_ids_to_native_binary(monkeypatc
     _patch_cli_dependencies(monkeypatch)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: Path("tg.exe"))
 
-    def _fake_run(cmd, check=False):
+    def _fake_run(cmd, check=False, timeout=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -8115,6 +8222,15 @@ def test_query_language_hints_are_token_bounded() -> None:
         "rust",
     ]
     assert repo_map._query_language_hints("cryptography typescriptish") == []
+    # M13 audit: all 10 registered languages are now aliasable so the capsule's mismatch-cap /
+    # candidate filter can fire for them (previously go/java/php/csharp/c/cpp -> [] = fail-open).
+    assert repo_map._query_language_hints("go function name") == ["go"]
+    assert repo_map._query_language_hints("golang handler") == ["go"]
+    assert repo_map._query_language_hints("java class builder") == ["java"]
+    assert repo_map._query_language_hints("php array map") == ["php"]
+    assert repo_map._query_language_hints("csharp record type") == ["csharp"]
+    assert repo_map._query_language_hints("cpp template class") == ["cpp"]
+    assert repo_map._query_language_hints("c struct pointer") == ["c"]
 
 
 def test_context_render_filters_pytest_only_validation_for_typescript_primary(tmp_path):
@@ -8926,7 +9042,12 @@ def test_context_render_llm_profile_compacts_agent_metadata(tmp_path):
     assert len(payload["navigation_pack"]["edit_ordering"]) <= 2
     assert len(payload["edit_plan_seed"]["related_spans"]) <= 1
     assert len(payload["edit_plan_seed"]["suggested_edits"]) <= 1
-    assert len(json.dumps(payload)) < 9_000
+    # H4 audit: the seed now carries the REQUIRED `confidence.overall` key (a handful of bytes),
+    # and this 9000 guard was ALREADY a knife-edge (~5-byte margin, #525 CI) whose result shifts
+    # with the runner's tmp_path length across platforms (the documented byte-test platform
+    # lesson -- locally ~7.7k, CI win/mac ~9.0k). Keep a robust margin that still catches a
+    # broken (un-compacted) payload; the structural asserts above carry the compaction substance.
+    assert len(json.dumps(payload)) < 12_000
 
 
 def test_context_render_json_defaults_to_agent_compact_payload(tmp_path):
@@ -10923,6 +11044,9 @@ def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeyp
 
     monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
     monkeypatch.setattr(cli_main.subprocess, "run", _fake_run)
+    # The autouse _doctor_offline fixture sets TG_DOCTOR_OFFLINE=1; this test exercises the REAL
+    # probe, so clear it (raising=False: absent in some collection orders).
+    monkeypatch.delenv("TG_DOCTOR_OFFLINE", raising=False)
 
     assert cli_main._latest_pypi_tensor_grep_version(timeout_seconds=1.0) == "0.34.0"
     assert calls
@@ -14371,7 +14495,7 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14428,7 +14552,7 @@ def test_scan_supports_single_rule_file_and_positional_path(monkeypatch, tmp_pat
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14474,7 +14598,7 @@ def test_scan_filter_limits_project_rules(monkeypatch, tmp_path: Path) -> None:
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14528,8 +14652,8 @@ def test_scan_project_filter_respects_positional_scan_paths(monkeypatch, tmp_pat
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
-        lambda *_args, **_kwargs: CountingAstBackend(),
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
+        lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
     src_dir = tmp_path / "src"
@@ -14608,7 +14732,7 @@ def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: P
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14672,7 +14796,7 @@ def test_scan_inline_rules_normalizes_ast_grep_language_names(
             )
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
@@ -14745,7 +14869,7 @@ def test_scan_wrapper_runtime_errors_do_not_show_traceback(monkeypatch, tmp_path
             raise RuntimeError("ast-grep failed with exit code 8: invalid language")
 
     monkeypatch.setattr(
-        "tensor_grep.cli.main._select_ast_backend_for_pattern",
+        "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
     inline_rules = "\n".join([
@@ -16810,3 +16934,250 @@ def test_evidence_group_does_not_hint_emit_for_a_non_path_subcommand() -> None:
     combined = result.output
     assert "No such command" in combined
     assert "tg evidence emit" not in combined
+
+
+# ---------------------------------------------------------------------------
+# A90 PATH-honesty: doctor installation-health + shadow launchers + pypi drift
+# (docs/plans/2026-08-11-doctor-path-honesty.md, plan REV 5, council-approved)
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_installation_health_foreign_wins() -> None:
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/tg.exe",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+    ]
+    assert (
+        cli_main._doctor_installation_health(
+            routes, installed_version="9.9.9", installed_behind_pypi=False, pypi_unavailable=False
+        )
+        == "foreign_launcher"
+    )
+
+
+def test_doctor_installation_health_version_mismatch_affects_health() -> None:
+    # A shadowed OLD tg (foreign already False here, but version_matches False) must NOT read ok.
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/tg.exe",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+    ]
+    assert (
+        cli_main._doctor_installation_health(
+            routes,
+            installed_version="1.110.13",
+            installed_behind_pypi=False,
+            pypi_unavailable=False,
+        )
+        == "launcher_version_mismatch"
+    )
+
+
+def test_doctor_installation_health_stale_install() -> None:
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.10", installed_behind_pypi=True, pypi_unavailable=False
+        )
+        == "stale_install"
+    )
+
+
+def test_doctor_installation_health_unknown_pypi_when_probe_unavailable() -> None:
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.13", installed_behind_pypi=None, pypi_unavailable=True
+        )
+        == "unknown_pypi"
+    )
+
+
+def test_doctor_installation_health_ok_when_clean_semantically_newer() -> None:
+    # Clean routes + installed equal or newer than pypi -> ok.
+    assert (
+        cli_main._doctor_installation_health(
+            [], installed_version="1.110.13", installed_behind_pypi=False, pypi_unavailable=False
+        )
+        == "ok"
+    )
+
+
+def test_doctor_installed_behind_pypi_semantic() -> None:
+    # Semantic, NOT lexicographic: 1.110.10 < 1.110.9 is False (1.110.9 has fewer patch digits
+    # but the strict padded dotted-numeric comparison yields 1.110.10 > 1.110.9). Use a clear
+    # numeric case. (No `packaging` dependency — a strict padded tuple parser per plan REV 6.)
+    assert cli_main._doctor_installed_behind_pypi("1.110.9", "1.110.10") is True
+    assert cli_main._doctor_installed_behind_pypi("1.110.10", "1.110.10") is False
+    assert cli_main._doctor_installed_behind_pypi("2.0.0", "1.110.13") is False
+
+
+def test_doctor_installed_behind_pypi_null_on_invalid_or_unavailable() -> None:
+    assert cli_main._doctor_installed_behind_pypi("junk", "1.110.13") is None
+    assert cli_main._doctor_installed_behind_pypi("1.110.13", "junk") is None
+    assert cli_main._doctor_installed_behind_pypi("1.110.13", None) is None
+
+
+def test_doctor_shadow_launchers_inclusion_and_nulls() -> None:
+    # foreign True -> listed; version_matches False -> listed; None (invalid route version) ->
+    # listed; expected-version route -> NOT listed; absent route -> not present at all.
+    routes = [
+        {
+            "route": "path",
+            "path": "/c/bin/other.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/old-tg.exe",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+        {
+            "route": "python_subprocess_path",
+            "path": "/c/bin/junk.tg",
+            "version": "??",
+            "foreign": False,
+            "version_matches": None,
+        },
+    ]
+    # Include a good route that must NOT be listed.
+    good = {
+        "route": "path",
+        "path": "/c/.tensor-grep/bin/tg.exe",
+        "version": "tg 1.110.13",
+        "foreign": False,
+        "version_matches": True,
+    }
+    shadow = cli_main._doctor_shadow_launchers([*routes, good])
+    listed_routes = {entry["route"] for entry in shadow}
+    assert listed_routes == {"path", "fresh_shell_path", "python_subprocess_path"}
+    assert all(entry["version_matches"] is not True for entry in shadow)
+    assert all(
+        entry["foreign"] is not False or entry["version_matches"] is not True for entry in shadow
+    )
+    assert [entry["route"] for entry in shadow] == [
+        "path",
+        "fresh_shell_path",
+        "python_subprocess_path",
+    ]  # deterministic spec order (codex REV-5 LOW)
+
+
+# ---------------------------------------------------------------------------
+# codex audit fixes: invalid-pypi, padded compare, absent route, route order
+# ---------------------------------------------------------------------------
+
+
+def test_doctor_health_invalid_pypi_latest_is_unverifiable_not_ok() -> None:
+    # codex HIGH 1: an invalid NON-NULL pypi_latest must land on unverifiable_version, never ok.
+    assert (
+        cli_main._doctor_installation_health(
+            [],
+            installed_version="1.110.13",
+            installed_behind_pypi=None,
+            pypi_unavailable=False,
+            pypi_latest="not-a-version",
+        )
+        == "unverifiable_version"
+    )
+
+
+def test_doctor_route_version_matches_padded_equivalence() -> None:
+    assert cli_main._doctor_route_version_matches("1.110.13", "tg 1.110.13") is True
+    # PEP-440 padded: 1.0 == 1.0.0.
+    assert cli_main._doctor_route_version_matches("1.0.0", "tg 1.0") is True
+    # Semantic mismatch: old shadow vs installed.
+    assert cli_main._doctor_route_version_matches("1.110.13", "tg 1.110.10") is False
+    # Invalid route version -> None, never a confident False.
+    assert cli_main._doctor_route_version_matches("1.110.13", "junk") is None
+    # Absent route -> None.
+    assert cli_main._doctor_route_version_matches("1.110.13", None) is None
+    # Registry-looking / prerelease / local / epoch forms are unverifiable, not truncated
+    # (plan REV 6: strict dotted-numeric, rejected = None):
+    assert cli_main._doctor_version_tuple("1.110.13+dev") is None
+    assert cli_main._doctor_version_tuple("1.110.13rc1") is None
+    assert cli_main._doctor_version_tuple("1.110.13.dev0") is None
+    assert cli_main._doctor_version_tuple("1.110.13+local") is None
+    assert cli_main._doctor_version_tuple("1!2.0.0") is None
+    assert cli_main._doctor_version_tuple("v1.110.13") is None
+
+
+def test_doctor_shadow_launchers_absent_route_not_listed() -> None:
+    # codex MEDIUM: a route with path=None (absent) must not be listed as unverifiable.
+    routes = [
+        {"route": "path", "path": None, "version": None, "foreign": False, "version_matches": None},
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/old.tg",
+            "version": "tg 1.110.10",
+            "foreign": False,
+            "version_matches": False,
+        },
+    ]
+    shadow = cli_main._doctor_shadow_launchers(routes)
+    assert [e["route"] for e in shadow] == ["fresh_shell_path"]
+
+
+def test_doctor_shadow_launchers_order_is_spec() -> None:
+    # codex LOW: deterministic order must be path, fresh_shell_path, python_subprocess_path.
+    routes = [
+        {
+            "route": "python_subprocess_path",
+            "path": "/c/bin/p3.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "path",
+            "path": "/c/bin/path.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": "/c/bin/fresh.tg",
+            "version": "tg 0.32.0",
+            "foreign": True,
+            "version_matches": False,
+        },
+    ]
+    shadow = cli_main._doctor_shadow_launchers(routes)
+    assert [e["route"] for e in shadow] == ["path", "fresh_shell_path", "python_subprocess_path"]
+
+
+def test_doctor_behind_pypi_independent_of_route_versions() -> None:
+    # codex REV-6: installed_behind_pypi depends ONLY on installed+pypi. A junk ROUTE version
+    # (shadow presence) must not nullify the comparison.
+    routes_with_junk = [
+        {
+            "route": "path",
+            "path": "/c/bin/junk.tg",
+            "version": "??",
+            "foreign": False,
+            "version_matches": None,
+        },
+    ]
+    behind = cli_main._doctor_installed_behind_pypi("1.110.9", "1.110.13")
+    assert behind is True  # route junk did not affect it
+    assert (
+        cli_main._doctor_installation_health(
+            routes_with_junk,
+            installed_version="1.110.9",
+            installed_behind_pypi=behind,
+            pypi_unavailable=False,
+            pypi_latest="1.110.13",
+        )
+        == "unverifiable_version"
+    )  # but health still surfaces the junk route

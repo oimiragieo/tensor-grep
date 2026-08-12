@@ -788,3 +788,109 @@ def test_help_probe_timeout_env_override_is_honored(parity_env):
         assert "Usage:" in result.stdout
         assert "AI agent moat commands" in _strip_ansi(result.stdout)
         assert result.stderr.strip() == ""
+
+
+A90_MATRIX = [
+    # (args, expect_refusal, expect_known_users) -- expect_refusal: exit 2 w/ unknown_command.
+    (["edit-ready", "--help"], True, None),
+    (["edit-ready", "--json"], True, None),
+    (["edit-ready", "--help", "--json"], True, None),
+    (["verify-edit", "--json"], True, None),
+    (["workspace", "--json"], True, None),
+    (["hello", "--json"], False, None),
+    (["hello", "target.txt", "--json"], False, None),
+    (["edit-ready", "target.txt", "--json"], True, None),
+    (["edit-ready", "target.txt"], False, None),
+    (["qqq", "--json"], False, None),
+    (["qqq", "--help"], True, ["lsp", "map", "mcp", "new", "run"]),
+    (["search", "workspace", "--json"], False, None),
+    (["searhc", "--help"], True, ["search"]),
+    (["qqqqzzzz", "--help"], True, []),
+    (["--bogus", "--help"], False, None),
+]
+
+
+@pytest.mark.parametrize("args,expect_refusal,expected_nearest", A90_MATRIX)
+def test_unknown_command_refusal_parity_across_launchers(
+    parity_env, args, expect_refusal, expected_nearest
+):
+    """A90: the unknown-command refusal must be IDENTICAL across the python-m / native /
+    bootstrap launchers. Flag-bearing reserved names refuse (exit 2, unknown_command, stderr);
+    unreserved pattern+flag and reserved+positional stay search; `--help` on ANY unknown refuses
+    (a nonexistent command has no help); `tg search workspace --json` (explicit command) stays
+    search (escape hatch). Third column pins the EXACT nearest[] (via the human help line, which
+    carries 'did you mean ...?' when non-empty and omits it when [])."""
+    parsed_json_by_launcher = {}
+    help_nearest_by_launcher = {}
+    for launcher in LAUNCHERS:
+        result = run_command(launcher, args, cwd=parity_env)
+        if expect_refusal:
+            assert result.returncode == 2, (
+                f"{launcher} {args}: expected exit 2, got {result.returncode} stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
+            )
+            assert result.stdout.strip() == "", (
+                f"{launcher} {args}: refusal must keep stdout EMPTY, got {result.stdout[:120]!r}"
+            )
+            if "--json" in args and "--help" not in args:
+                parsed = json.loads(result.stderr.strip().splitlines()[-1])
+                assert parsed["error"]["code"] == "unknown_command", (
+                    f"{launcher} {args}: wrong error code {parsed}"
+                )
+                assert isinstance(parsed["error"]["nearest"], list), parsed
+                parsed_json_by_launcher[launcher] = parsed
+            else:
+                assert "unknown command" in result.stderr, (
+                    f"{launcher} {args}: human diagnostic missing, stderr={result.stderr[:120]!r}"
+                )
+                # Exact help-form nearest parity: parse the complete 'did you mean' list and
+                # compare EXACTLY (a substring assert would accept "search" matching
+                # "search, serve"). Collect across launchers for cross-door equality below.
+                if expected_nearest:
+                    import re as _re
+
+                    m = _re.search(r"\(did you mean (.+?)\?\)", result.stderr)
+                    assert m is not None, (
+                        f"{launcher} {args}: 'did you mean' missing, stderr={result.stderr[:160]!r}"
+                    )
+                    actual = [part.strip() for part in m.group(1).split(",")]
+                    assert actual == expected_nearest, (
+                        f"{launcher} {args}: exact nearest mismatch, actual={actual} "
+                        f"expected={expected_nearest}"
+                    )
+                    help_nearest_by_launcher[launcher] = actual
+                else:
+                    assert "did you mean" not in result.stderr, (
+                        f"{launcher} {args}: empty nearest must omit the suggestion, "
+                        f"stderr={result.stderr[:160]!r}"
+                    )
+        else:
+            # A search shape must NOT be refused as an unknown command. Legit search outcomes
+            # (match exit 0/1, or a search-path/broad-scan error at exit 2) are fine — what is
+            # forbidden is the unknown_command refusal shape. Assert its ABSENCE on both streams.
+            combined = result.stdout + result.stderr
+            assert "unknown_command" not in combined, (
+                f"{launcher} {args}: search must not emit unknown_command "
+                f"stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
+            )
+            assert "unknown command" not in combined, (
+                f"{launcher} {args}: search must not emit 'unknown command' "
+                f"stdout={result.stdout[:120]!r} stderr={result.stderr[:120]!r}"
+            )
+    if parsed_json_by_launcher:
+        # Cross-launcher parity: EVERY door must emit the SAME structured refusal (code + nearest).
+        first = next(iter(parsed_json_by_launcher.values()))
+        for launcher, parsed in parsed_json_by_launcher.items():
+            assert parsed["error"]["code"] == first["error"]["code"], (
+                f"{launcher} {args}: refusal code diverged {parsed} vs {first}"
+            )
+            assert parsed["error"]["nearest"] == first["error"]["nearest"], (
+                f"{launcher} {args}: nearest[] diverged {parsed['error']['nearest']} vs "
+                f"{first['error']['nearest']}"
+            )
+    if help_nearest_by_launcher:
+        # Help-form cross-launcher nearest parity: every door must suggest the SAME list.
+        first_help = next(iter(help_nearest_by_launcher.values()))
+        for launcher, actual in help_nearest_by_launcher.items():
+            assert actual == first_help, (
+                f"{launcher} {args}: help-form nearest diverged {actual} vs {first_help}"
+            )

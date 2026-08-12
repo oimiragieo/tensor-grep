@@ -833,6 +833,11 @@ def test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings(ca
 
     assert result.total_matches == 1
     assert "skipped unreadable paths" in capsys.readouterr().err
+    # M10 audit: a partial scan (skipped unreadable paths) must be marked INCOMPLETE so no
+    # consumer trusts the found-rows as exhaustive -- mirror the rg twin
+    # (ripgrep_backend.py: result_incomplete=True + class "unreadable_path").
+    assert result.result_incomplete is True
+    assert result.incomplete_reason_class == "unreadable_path"
 
 
 # --- Backend Fail-Closed Contract: exit-0 malformed/wrong-shape JSON must raise,

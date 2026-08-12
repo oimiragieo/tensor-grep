@@ -8099,6 +8099,19 @@ _QUERY_LANGUAGE_ALIASES = {
     "js": "javascript",
     "rust": "rust",
     "rs": "rust",
+    # M13 audit: cover the remaining 6 registered languages so query_language_hints no longer
+    # silently degrades to [] for them (fail-open: the capsule's mismatch-cap and candidate
+    # filter never fire for go/java/php/csharp/c/cpp targets). A spurious hint errs toward the
+    # conservative ask/filter, never a confident-wrong (the repo's honesty-over-speed posture).
+    "go": "go",
+    "golang": "go",
+    "java": "java",
+    "php": "php",
+    "csharp": "csharp",
+    "c_sharp": "csharp",
+    "c": "c",
+    "cpp": "cpp",
+    "cplusplus": "cpp",
 }
 
 
@@ -10877,6 +10890,28 @@ def _confidence_from_score(score: int) -> float:
     if score <= 0:
         return 0.0
     return round(min(1.0, 0.35 + (score / 20.0)), 3)
+
+
+def _derive_seed_overall(confidence: dict[str, Any]) -> float:
+    """H4 audit: derive the seed's single ``overall`` confidence from the per-axis scores the
+    ranking already computed, so consumers never fall back to a flat 0.9 default. ``file``
+    anchors the primary target (the capsule edits a file even when no symbol matched); ``symbol``
+    strengthens it and is legitimately 0.0 when a query had no symbol; ``test`` is a separate
+    validation axis (0.0 whenever no test matched) and must not drag the answer-confidence down.
+    Returns raw 0.0..1.0 -- callers apply their own caps (e.g. the 0.65 filtered-alignment cap in
+    `_build_edit_plan_seed`, which runs BEFORE this so the derived overall inherits it)."""
+
+    def _as_score(value: Any) -> float:
+        try:
+            numeric = float(value or 0.0)
+        except (TypeError, ValueError):
+            numeric = 0.0
+        return numeric if numeric >= 0.0 else 0.0
+
+    return round(
+        max(_as_score(confidence.get("file")), _as_score(confidence.get("symbol"))),
+        3,
+    )
 
 
 def _primary_span_for_symbol(symbol: dict[str, Any] | None) -> dict[str, int] | None:
@@ -13772,6 +13807,7 @@ def _build_edit_plan_seed(
     }
     if int(validation_alignment.get("filtered_count", 0) or 0) > 0:
         confidence = {key: round(min(float(value), 0.65), 3) for key, value in confidence.items()}
+    confidence["overall"] = _derive_seed_overall(confidence)
 
     return {
         "primary_file": primary_file,
@@ -14108,6 +14144,14 @@ def _attach_lightweight_navigation_metadata(
         if primary_file
         else None
     )
+    seed_confidence: dict[str, Any] = {
+        "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
+        "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
+        if primary_symbol is not None
+        else 0.0,
+        "test": 0.0,
+    }
+    seed_confidence["overall"] = _derive_seed_overall(seed_confidence)
     lightweight_seed = {
         "primary_file": primary_file,
         "primary_symbol": primary_symbol,
@@ -14123,13 +14167,7 @@ def _attach_lightweight_navigation_metadata(
             else []
         ),
         "reasons": list(primary_file_match.get("reasons", [])),
-        "confidence": {
-            "file": _confidence_from_score(int(primary_file_match.get("score", 0))),
-            "symbol": _confidence_from_score(int(primary_symbol.get("score", 0)))
-            if primary_symbol is not None
-            else 0.0,
-            "test": 0.0,
-        },
+        "confidence": seed_confidence,
         "related_spans": [],
         "suggested_edits": [],
         "dependency_trust": _dependency_trust(repo_map, []),

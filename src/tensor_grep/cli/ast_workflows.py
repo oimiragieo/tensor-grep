@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, cast
@@ -116,6 +117,15 @@ def _get_cache_dir(root_dir: Path) -> Path:
     return root_dir / ".tg_cache" / "ast"
 
 
+# M16 (F3): twin of PROJECT_DATA_V6_SCHEMA_VERSION in
+# rust_core/src/backend_ast_workflow.rs. Python is a compatibility READER of the
+# Rust-written `project_data_v6.json` cache; a legacy-schema cache carries
+# `rule_specs` WITHOUT composite members and severity/message even when
+# mtime-fresh, so both sides reject (rebuild from source) on mismatch. Bump
+# BOTH constants together whenever the persisted rule-spec schema changes.
+_PROJECT_DATA_CACHE_SCHEMA_VERSION = 2
+
+
 def _load_ast_project_data(
     config_path: str | None,
 ) -> tuple[dict[str, Any], list[dict[str, str]], list[str], list[dict[str, Any]], dict[str, Any]]:
@@ -143,6 +153,13 @@ def _load_ast_project_data(
                 cached_data = json.loads(cache_file.read_text(encoding="utf-8"))
                 validation = cached_data.get("validation_metadata", {})
                 still_valid = True
+
+                # Validation 1a (M16/F3): reject legacy-schema caches. Their
+                # rule_specs lack composite members and severity/message even
+                # when mtime-fresh; treat as a cache miss and rebuild from
+                # source (same gate as the Rust writer, which owns this file).
+                if cached_data.get("cache_schema_version") != _PROJECT_DATA_CACHE_SCHEMA_VERSION:
+                    still_valid = False
 
                 # Validation 2: Rule files
                 rule_files = validation.get("rule_files", {})
@@ -263,14 +280,51 @@ def _precompute_orchestration_hints(
     backend_hints = {}
 
     for rule in rule_specs:
-        backend_name = _select_ast_backend_name_for_pattern(
-            rule["pattern"], project_cfg["language"]
-        )
+        # M16 F3: composite-aware — a rule whose members need the ast-grep
+        # wrapper must never be hinted to a backend that serves only the first
+        # member (e.g. bare `alpha` -> native, which cannot serve `alpha(1)`).
+        backend_name = _select_ast_backend_name_for_rule(rule, project_cfg["language"])
         backend_hints[rule["id"]] = backend_name
 
     return {
         "backend_hints": backend_hints,
     }
+
+
+def _pattern_is_native_shaped(pattern: str) -> bool:
+    """Shape-only native-query check (M16 F3): a bare identifier or a
+    parenthesised s-expression is native-shaped; anything else (ast-grep DSL,
+    metavariables, calls like `alpha(1)`) needs the ast-grep wrapper.
+    Language/availability are deliberately NOT consulted here."""
+    stripped = pattern.strip()
+    if not stripped:
+        return False
+    if stripped.startswith("("):
+        return True
+    global _SUPPORTED_NATIVE_PATTERN_RE
+    if _SUPPORTED_NATIVE_PATTERN_RE is None:
+        _SUPPORTED_NATIVE_PATTERN_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    return bool(_SUPPORTED_NATIVE_PATTERN_RE.fullmatch(stripped))
+
+
+def _rule_needs_ast_grep_wrapper(rule: Mapping[str, object]) -> bool:
+    """M16 F3: True when a rule has MULTIPLE member patterns and ANY member is
+    not native-shaped. A composite rule must never be routed through a backend
+    that only serves its first member (e.g. a bare `alpha` first member routed
+    to tree-sitter native, which cannot serve a DSL member like `alpha(1)`).
+    Single-pattern rules keep the legacy single-pattern routing."""
+    members = _rule_member_patterns(rule)
+    return len(members) > 1 and any(not _pattern_is_native_shaped(m) for m in members)
+
+
+def _select_ast_backend_name_for_rule(rule: Mapping[str, object], language: str) -> str:
+    """Composite-aware backend NAME (M16 F3): a composite with any non-native
+    member always names the ast-grep wrapper; an all-native composite is served
+    by the same backend as its first member; single-pattern rules keep the
+    legacy `_select_ast_backend_name_for_pattern` decision."""
+    if _rule_needs_ast_grep_wrapper(rule):
+        return "AstGrepWrapperBackend"
+    return _select_ast_backend_name_for_pattern(_rule_member_patterns(rule)[0], language)
 
 
 def _select_ast_backend_name_for_pattern(pattern: str, language: str) -> str:
@@ -316,30 +370,40 @@ def _load_rule_specs_and_meta(
             for idx, item in enumerate(raw_rules):
                 if not isinstance(item, dict):
                     continue
-                pattern = _extract_rule_pattern(item)
-                if not pattern:
+                member_patterns = _extract_rule_member_patterns(item)
+                if not member_patterns:
                     continue
-                specs.append({
+                spec = {
                     "id": str(item.get("id") or f"{rule_file.stem}-{idx + 1}"),
-                    "pattern": pattern,
+                    "pattern": member_patterns[0],
                     "language": normalize_ast_language(
                         item.get("language") or payload.get("language") or default_language
                     ),
                     "severity": str(item.get("severity") or payload.get("severity") or "warning"),
                     "message": str(item.get("message") or payload.get("message") or ""),
-                })
+                }
+                if len(member_patterns) > 1:
+                    # M16: composite (multi-pattern any-of) rules carry ALL
+                    # members; `pattern` stays the FIRST member so existing
+                    # single-pattern consumers keep working.
+                    spec["patterns"] = member_patterns  # type: ignore[assignment]
+                specs.append(spec)
             continue
 
-        pattern = _extract_rule_pattern(payload)
-        if not pattern:
+        member_patterns = _extract_rule_member_patterns(payload)
+        if not member_patterns:
             continue
-        specs.append({
+        spec = {
             "id": str(payload.get("id") or rule_file.stem),
-            "pattern": pattern,
+            "pattern": member_patterns[0],
             "language": normalize_ast_language(payload.get("language") or default_language),
             "severity": str(payload.get("severity") or "warning"),
             "message": str(payload.get("message") or ""),
-        })
+        }
+        if len(member_patterns) > 1:
+            # M16: composite members (see the rules-sequence branch above).
+            spec["patterns"] = member_patterns  # type: ignore[assignment]
+        specs.append(spec)
 
     return specs, meta
 
@@ -393,6 +457,93 @@ def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
             return nested.strip()
 
     return None
+
+
+def _extract_rule_member_patterns(rule_data: dict[str, object]) -> list[str] | None:
+    """Extract the member patterns of a rule item (M16; Rust twin:
+    `AstWorkflowOrchestrator::extract_rule_member_patterns` in
+    `rust_core/src/backend_ast_workflow.rs`).
+
+    Supported ast-grep rule-YAML shapes:
+    - a flat ``pattern:`` STRING,
+    - a ``pattern:`` LIST of strings,
+    - a ``rule:`` mapping whose ``pattern`` is a string,
+    - a ``rule:`` mapping whose ``any:`` sequence lists sub-rules (each
+      sub-rule's ``pattern`` string, or its nested ``rule.pattern`` string).
+
+    A composite member that does not carry exactly one extractable pattern
+    fails the WHOLE rule closed (None) rather than under-matching. ``all:`` /
+    ``not:`` composite bodies require same-node intersection semantics the
+    per-pattern matchers cannot express; they also return None and the rule is
+    dropped, exactly as the Rust twin drops them.
+    """
+    direct = rule_data.get("pattern")
+    if isinstance(direct, str):
+        trimmed = direct.strip()
+        if trimmed:
+            return [trimmed]
+    elif isinstance(direct, list):
+        members: list[str] = []
+        for item in direct:
+            if not isinstance(item, str) or not item.strip():
+                return None
+            members.append(item.strip())
+        if members:
+            return members
+
+    rule_node = rule_data.get("rule")
+    if isinstance(rule_node, dict):
+        nested = rule_node.get("pattern")
+        if isinstance(nested, str) and nested.strip():
+            return [nested.strip()]
+        any_members = rule_node.get("any")
+        if isinstance(any_members, list) and any_members:
+            members = []
+            for member in any_members:
+                if not isinstance(member, dict):
+                    return None
+                member_pattern: object = member.get("pattern")
+                if not isinstance(member_pattern, str) or not member_pattern.strip():
+                    inner_rule = member.get("rule")
+                    if isinstance(inner_rule, dict):
+                        member_pattern = inner_rule.get("pattern")
+                    else:
+                        member_pattern = None
+                if not isinstance(member_pattern, str) or not member_pattern.strip():
+                    return None
+                members.append(member_pattern.strip())
+            if members:
+                return members
+    return None
+
+
+def _rule_member_patterns(rule: Mapping[str, object]) -> list[str]:
+    """The member patterns a rule scans with (M16): `patterns` (composite
+    any-of members, set by `_load_rule_specs_and_meta` when a rule carries more
+    than one) when present, else the single `pattern`. Mirrors
+    `ast_rule_member_patterns` in the Rust scan core.
+    """
+    patterns = rule.get("patterns")
+    if isinstance(patterns, list) and patterns:
+        return [str(pattern) for pattern in patterns]
+    return [str(rule["pattern"])]
+
+
+def _match_node_identity(
+    match: MatchLine, fallback_file: str | None = None
+) -> tuple[str, int, int]:
+    """Stable AST-node identity for composite-rule union dedupe (M16 F1): the
+    node BYTE SPAN (file, start_byte, end_byte) when the backend supplied one,
+    else a per-(file, line) fallback (-1 sentinel). Only the SAME node matched
+    by multiple members may be deduplicated — two distinct nodes on one line
+    are distinct matches, matching whole-config ast-grep's per-node `any`
+    semantics. Rust twin: the `(start_byte, end_byte)` spans the scan core
+    unions per file.
+    """
+    file_path = match.file or fallback_file or ""
+    if match.start_byte is not None and match.end_byte is not None:
+        return (file_path, match.start_byte, match.end_byte)
+    return (file_path, -1, match.line_number)
 
 
 def _suffix_for_language(language: str) -> str:
@@ -1108,6 +1259,32 @@ def _select_ast_backend_for_pattern(
     return backend
 
 
+def _select_ast_backend_for_rule(
+    base_config: SearchConfig,
+    rule: Mapping[str, object],
+    backend_cache: dict[tuple[str | None, str, bool, bool], Any] | None = None,
+) -> Any:
+    """Composite-aware backend selection (M16 F3): a rule's backend must serve
+    EVERY member. A composite with any non-native-shaped member routes to the
+    ast-grep wrapper, and FAILS CLOSED (ConfigurationError) when the wrapper is
+    unavailable — never routed through a backend that only serves the first
+    member. All-native composites and single-pattern rules delegate to the
+    single-pattern selection on the first member.
+    """
+    if _rule_needs_ast_grep_wrapper(rule):
+        if _check_backend_available("AstGrepWrapperBackend"):
+            return _get_cached_backend("AstGrepWrapperBackend")
+        from tensor_grep.core.pipeline import ConfigurationError
+
+        raise ConfigurationError(
+            "Explicit AST search requires AST dependencies: ast-grep wrapper "
+            "backend is required for composite rule members but is not available"
+        )
+    return _select_ast_backend_for_pattern(
+        base_config, _rule_member_patterns(rule)[0], backend_cache
+    )
+
+
 def scan_command(
     config: str | None = "sgconfig.yml",
     ruleset: str | None = None,
@@ -1267,7 +1444,9 @@ def scan_command(
         if backend_name and _check_backend_available(backend_name):
             backend = _get_cached_backend(backend_name)
         else:
-            backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"])
+            # M16 F3: rule-aware fallback — a composite with non-native members
+            # must reach a backend that serves ALL members (or fail closed).
+            backend = _select_ast_backend_for_rule(rule_cfg, rule)
 
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_project"):
             wrapper_rules.append(rule)
@@ -1375,29 +1554,73 @@ def scan_command(
         backend_names_used.add(type(backend).__name__)
         matched_files: set[str] = set()
 
-        if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
-            try:
-                result = cast(Any, backend).search_many(
-                    [str(root_dir)], rule["pattern"], config=rule_cfg
-                )
-            except RuntimeError as exc:
-                print(f"Error: {exc}", file=sys.stderr)
-                return 1
-            rule_matches = result.total_matches
-            matched_files.update(result.matched_file_paths)
-            if not matched_files and result.total_files > 0:
-                matched_files.update(match.file for match in result.matches if match.file)
-        else:
-            rule_matches = 0
-            for current_file in candidate_files:
+        # M16 F1: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched AST NODE once across members, deduplicating by
+        # node SPAN via `_match_node_identity` (file, start_byte, end_byte; the
+        # same key the Rust scan core unions) — two distinct nodes on one line
+        # each count, matching whole-config ast-grep's per-node `any` count.
+        # Single-pattern rules keep the legacy per-node total accounting.
+        member_patterns = _rule_member_patterns(rule)
+        composite = len(member_patterns) > 1
+        seen_identities: set[tuple[str, int, int]] = set()
+        rule_matches = 0
+        composite_ev_data: dict[str, list[dict[str, Any]]] = {}
+        use_wrapper_many = type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(
+            backend, "search_many"
+        )
+
+        for member_pattern in member_patterns:
+            if use_wrapper_many:
                 try:
-                    result = backend.search(current_file, rule["pattern"], config=rule_cfg)
+                    result = cast(Any, backend).search_many(
+                        [str(root_dir)], member_pattern, config=rule_cfg
+                    )
                 except RuntimeError as exc:
                     print(f"Error: {exc}", file=sys.stderr)
                     return 1
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    matched_files.add(current_file)
+                if composite:
+                    seen_identities.update(
+                        _match_node_identity(match) for match in result.matches if match.file
+                    )
+                else:
+                    rule_matches += result.total_matches
+                matched_files.update(result.matched_file_paths)
+                if not matched_files and result.total_files > 0:
+                    matched_files.update(match.file for match in result.matches if match.file)
+            else:
+                for current_file in candidate_files:
+                    try:
+                        result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    except RuntimeError as exc:
+                        print(f"Error: {exc}", file=sys.stderr)
+                        return 1
+                    if composite:
+                        seen_identities.update(
+                            _match_node_identity(match, fallback_file=current_file)
+                            for match in result.matches
+                        )
+                    else:
+                        rule_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        matched_files.add(current_file)
+
+            member_ev: dict[str, list[dict[str, Any]]] = {}
+            for m in result.matches:
+                if m.file:
+                    member_ev.setdefault(m.file, []).append({
+                        "line_number": m.line_number,
+                        "text": m.text[:max_evidence_snippet_chars],
+                    })
+            if composite:
+                for f, snips in member_ev.items():
+                    composite_ev_data.setdefault(f, []).extend(snips)
+            else:
+                # Legacy single-pattern semantics: evidence comes from the
+                # (single) member result exactly as before.
+                composite_ev_data = member_ev
+
+        if composite:
+            rule_matches = len(seen_identities)
 
         total_matches += rule_matches
         if rule_matches > 0:
@@ -1420,17 +1643,9 @@ def scan_command(
             ).encode("utf-8")
         ).hexdigest()
 
-        ev_data = {}
-        for m in result.matches:
-            if m.file:
-                ev_data.setdefault(m.file, []).append({
-                    "line_number": m.line_number,
-                    "text": m.text[:max_evidence_snippet_chars],
-                })
-
         evidence = []
-        if ev_data:
-            for f, snips in ev_data.items():
+        if composite_ev_data:
+            for f, snips in composite_ev_data.items():
                 item = {"file": f, "match_count": len(snips)}
                 if include_evidence:
                     item["snippets"] = snips[:max_evidence_snippets_per_file]

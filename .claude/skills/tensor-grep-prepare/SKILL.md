@@ -5,8 +5,7 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.101.31** (LIVE 2026-08-02 gotcontext-saddle; prior 1.101.22 /
-1.101.19 / 1.95.0 CLI contract still representative of the core CUJ).
+Verified against **tg 1.110.14** (LIVE 2026-08-11 Windows `uvx` — saddle ~5s; tg `src` `--out`/`--claim` ~22s; prior 1.110.12 CUJ still representative).
 
 Note: anonymous `--claim` `agent_id_hint` remains strong (“NOT attributable…” until
 `TG_LEDGER_AGENT_ID` / `TG_EVIDENCE_AGENT_ID` is set).
@@ -36,6 +35,12 @@ Dogfood:
 
 | Case | Result |
 | --- | --- |
+| `prepare …` saddle (**1.110.13**) | PASS ~5s |
+| `prepare … --out/--claim` tg `src` (**1.110.13**) | PASS ~22s |
+| `prepare …` saddle (**1.110.12**) | PASS ~6.5s |
+| `prepare … --out/--claim` tg `src` (**1.110.12**) | PASS ~20s |
+| `prepare …` saddle (**1.110.10**) | PASS ~6s |
+| `prepare … --out/--claim` tg `src` (**1.110.10**) | PASS ~14s |
 | `prepare … --out` (**1.101.31**) | PASS ~8s — overall 0.9, callers_count=1, file ~8KB |
 | `prepare … --claim` (**1.101.31**) | PASS ~13s — anonymous + strong hint; env id clears hint |
 | `prepare … --out` (**1.101.22**) | PASS ~7s — overall 0.9, callers_count=1, file ~8KB |

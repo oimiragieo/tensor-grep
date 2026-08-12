@@ -49,7 +49,13 @@ _PLACEHOLDER_HINTS = ("path/to/", "path/file", "<", "example.com", "your-", "foo
 # it. Deriving N from the raw folder count instead of from this definition produces a permanent
 # off-by-one that fires on a CORRECT repo -- verified against three historical revisions
 # (20/20, 26/26, 27/27 all correct under this rule; all three "wrong" under a raw folder count).
-_STATED_COUNT_RE = re.compile(r"\*\*(\d+) skills\*\*")
+# The regex is anchored to the DEFINING sentence (the index sentence that names
+# `code-search-and-retrieval-reference` immediately before the count), not to any `**N skills**`
+# anywhere in the file -- AGENTS.md carries dated historical narratives that mention an old skill
+# count (e.g. a 2026-08-01 audit that read "`**28 skills**`" when that was true), and the never-
+# rewrite-a-dated-receipt law forbids editing them, so a whole-file leftmost match would read the
+# historical number instead of the index's.
+_STATED_COUNT_RE = re.compile(r"code-search-and-retrieval-reference`, \*\*(\d+) skills\*\*")
 
 
 def _library_skill_folders() -> set[str]:

@@ -691,8 +691,9 @@ fn test_tg_search_index_old_format_triggers_rebuild() {
     let rebuilt = fs::read(dir.path().join(".tg_index")).unwrap();
     assert_eq!(&rebuilt[0..4], b"TGI\x00");
     assert_eq!(
-        rebuilt[4], 4,
-        "expected rebuilt index to use the new format"
+        rebuilt[4],
+        tensor_grep_rs::index::INDEX_FORMAT_VERSION,
+        "expected rebuilt index to use the current format"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -2200,5 +2201,156 @@ fn test_tg_search_explicit_index_default_line_number_behavior_matches_native() {
         String::from_utf8_lossy(&indexed.stdout),
         String::from_utf8_lossy(&native.stdout),
         "default (no -n/-N) output via --index must byte-match the no-index route"
+    );
+}
+
+/// M17 F2 (audit-m17 gate): an index built from a RELATIVE root must never be dereferenced
+/// against a LATER query's cwd. Build from cwd A with a relative `tree` root; a decoy tree
+/// with IDENTICAL name/size/mtime lives at cwd B. Query A's tree BY ITS ABSOLUTE PATH from
+/// cwd B: the canonical-root check legitimately passes (same tree), so the only thing
+/// standing between the query and B's decoy is the deref-through-verified-canonical-root
+/// rule. Pre-fix, stored entries kept the raw relative spelling (`tree/a.txt`), staleness
+/// and search resolved it against cwd B, read the metadata-identical decoy, found no match,
+/// and exited 1; post-fix everything dereferences through the canonical root, reads A's real
+/// file, and exits 0 with the match. Structural argument: the decoy is byte-for-byte
+/// metadata-identical (same size, same mtime via FileTimes), so the ONLY discriminator is
+/// which root the entry paths are joined to.
+#[test]
+fn test_m17_f2_relative_root_index_never_reads_other_cwd_tree() {
+    let outer = tempdir().unwrap();
+    let cwd_a = outer.path().join("A");
+    let cwd_b = outer.path().join("B");
+    fs::create_dir(&cwd_a).unwrap();
+    fs::create_dir(&cwd_b).unwrap();
+    fs::create_dir(cwd_a.join("tree")).unwrap();
+    fs::create_dir(cwd_b.join("tree")).unwrap();
+
+    fs::write(cwd_a.join("tree/a.txt"), "hello world\n").unwrap();
+    fs::write(cwd_b.join("tree/a.txt"), "yyyyyyyyyyy\n").unwrap(); // same 12 bytes, no match
+
+    let mtime_a = fs::metadata(cwd_a.join("tree/a.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    let decoy = std::fs::OpenOptions::new()
+        .write(true)
+        .open(cwd_b.join("tree/a.txt"))
+        .unwrap();
+    decoy
+        .set_times(std::fs::FileTimes::new().set_modified(mtime_a))
+        .unwrap();
+    drop(decoy);
+    assert_eq!(
+        fs::metadata(cwd_b.join("tree/a.txt"))
+            .unwrap()
+            .modified()
+            .unwrap(),
+        mtime_a,
+        "decoy premise: B's tree must be metadata-identical to A's tree"
+    );
+    assert_eq!(
+        fs::metadata(cwd_b.join("tree/a.txt")).unwrap().len(),
+        fs::metadata(cwd_a.join("tree/a.txt")).unwrap().len(),
+        "decoy premise: sizes must match"
+    );
+
+    // Build the index with a RELATIVE root from cwd A.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd_a)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build stderr={}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    // Query A's tree by ABSOLUTE path FROM cwd B -- the cross-cwd deref test.
+    let query = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg(cwd_a.join("tree"))
+        .current_dir(&cwd_b)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&query.stdout);
+    assert!(
+        query.status.success(),
+        "cross-cwd index search must exit 0; stderr={} stdout={stdout}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    assert!(
+        stdout.contains("hello world"),
+        "the index must read the REAL tree through the canonical root, not cwd B's decoy: stdout={stdout}"
+    );
+}
+
+/// M17 F3 (gate round 2): index output must carry the QUERY's path SPELLING, not the
+/// canonical absolute path -- dereference stays canonical (sound), but emission
+/// re-projects through the query root's original spelling. A relative `tree` root must
+/// emit `tree<sep>a.txt` (platform separator), never the canonical absolute path.
+#[test]
+fn test_m17_f3_index_output_uses_query_root_spelling() {
+    let outer = tempdir().unwrap();
+    let cwd = outer.path().join("A");
+    fs::create_dir(&cwd).unwrap();
+    fs::create_dir(cwd.join("tree")).unwrap();
+    fs::write(cwd.join("tree/a.txt"), "hello world\n").unwrap();
+
+    // Build and query with the SAME relative `tree` root, all from one cwd.
+    let build = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "build stderr={}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+
+    let query = tg()
+        .arg("search")
+        .arg("--index")
+        .arg("--fixed-strings")
+        .arg("hello")
+        .arg("tree")
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        query.status.success(),
+        "query stderr={}",
+        String::from_utf8_lossy(&query.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&query.stdout);
+    assert!(
+        stdout.contains("hello world"),
+        "the match content must be present: stdout={stdout}"
+    );
+    // Portable separator: Path::new("tree").join("a.txt") yields `tree\a.txt` on Windows
+    // and `tree/a.txt` on POSIX, so this assertion holds on every platform if any.
+    let relative_spelling = Path::new("tree")
+        .join("a.txt")
+        .to_string_lossy()
+        .to_string();
+    assert!(
+        stdout.contains(&relative_spelling),
+        "the emitted path must use the QUERY's relative spelling ({relative_spelling}): stdout={stdout}"
+    );
+    assert!(
+        !stdout.contains(&cwd.join("tree").to_string_lossy().to_string()),
+        "the canonical absolute tree path must not leak into output: stdout={stdout}"
     );
 }

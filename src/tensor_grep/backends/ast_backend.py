@@ -20,9 +20,18 @@ _AST_NODE_INDEX_CACHE_MAX_ENTRIES_ENV = "TENSOR_GREP_AST_NODE_INDEX_CACHE_MAX_EN
 _DEFAULT_AST_QUERY_CACHE_MAX_ENTRIES = 256
 _DEFAULT_AST_NODE_INDEX_CACHE_MAX_ENTRIES = 512
 
+# M16 F2: persisted-cache schema discriminators. Legacy caches (written before
+# the span plumbing) store line numbers ONLY — distinct same-line AST nodes
+# collapse, so composite-rule union accounting would undercount on a cache hit.
+# A cache whose discriminator is absent/old is treated as a miss (rebuilt from
+# the current tree). Bump together with any match-shape change.
+_RESULT_CACHE_FORMAT = 2
+_NODE_TYPE_INDEX_FORMAT = 2
+NodeSpan = tuple[int, int, int]  # (line, start_byte, end_byte)
+
 FileSignature = tuple[int, int, int, int, int]
 ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
-NodeTypeIndexCacheEntry = tuple[FileSignature, dict[str, list[int]]]
+NodeTypeIndexCacheEntry = tuple[FileSignature, dict[str, list[NodeSpan]]]
 
 
 _AST_LANGUAGE_ALIASES = {
@@ -317,19 +326,43 @@ class AstBackend(ComputeBackend):
         digest = hashlib.sha256(f"{Path(file_path).resolve()}::{lang}".encode()).hexdigest()
         return self._get_persistent_cache_dir() / lang / "node-index" / f"{digest}.json"
 
-    def _get_result_cache_path(self, file_path: str, lang: str, pattern: str) -> Path:
+    def _get_result_cache_path(
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
+    ) -> Path:
+        # M8 audit: the persistent cache key must include the match-semantics flags so a cached
+        # non-inverted result can never be served to an inverted query (and vice versa).
         digest = hashlib.sha256(
-            f"{Path(file_path).resolve()}::{lang}::{pattern}".encode()
+            (
+                f"{Path(file_path).resolve()}::{lang}::{pattern}::v={invert_match}::w={word_regexp}"
+            ).encode()
         ).hexdigest()
         return self._get_persistent_cache_dir() / lang / f"{digest}.json"
 
     def _load_persistent_cached_result(
-        self, file_path: str, lang: str, pattern: str
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
     ) -> SearchResult | None:
         if not self._is_persistent_cache_enabled():
             return None
 
-        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        cache_path = self._get_result_cache_path(
+            file_path,
+            lang,
+            pattern,
+            invert_match=invert_match,
+            word_regexp=word_regexp,
+        )
         if not cache_path.exists():
             return None
 
@@ -342,18 +375,34 @@ class AstBackend(ComputeBackend):
         if signature != list(self._build_file_signature(file_path)):
             return None
 
+        # M16 F2: legacy result caches (no discriminator / old shape) carry line
+        # numbers only — distinct same-line nodes collapse, undercounting a
+        # composite union on a cache hit. Treat them as a miss (rebuild).
+        if payload.get("format") != _RESULT_CACHE_FORMAT:
+            return None
+
         matches_payload = payload.get("matches", [])
         if not isinstance(matches_payload, list):
             return None
 
-        matches = [
-            MatchLine(
-                line_number=int(match["line_number"]),
-                text=str(match["text"]),
-                file=str(match["file"]),
+        matches = []
+        for match in matches_payload:
+            try:
+                start_byte = (
+                    int(match["start_byte"]) if match.get("start_byte") is not None else None
+                )
+                end_byte = int(match["end_byte"]) if match.get("end_byte") is not None else None
+            except (KeyError, TypeError, ValueError):
+                return None
+            matches.append(
+                MatchLine(
+                    line_number=int(match["line_number"]),
+                    text=str(match["text"]),
+                    file=str(match["file"]),
+                    start_byte=start_byte,
+                    end_byte=end_byte,
+                )
             )
-            for match in matches_payload
-        ]
 
         return SearchResult(
             matches=matches,
@@ -366,13 +415,27 @@ class AstBackend(ComputeBackend):
         )
 
     def _persist_result_cache(
-        self, file_path: str, lang: str, pattern: str, result: SearchResult
+        self,
+        file_path: str,
+        lang: str,
+        pattern: str,
+        result: SearchResult,
+        *,
+        invert_match: bool = False,
+        word_regexp: bool = False,
     ) -> None:
         if not self._is_persistent_cache_enabled():
             return
 
-        cache_path = self._get_result_cache_path(file_path, lang, pattern)
+        cache_path = self._get_result_cache_path(
+            file_path,
+            lang,
+            pattern,
+            invert_match=invert_match,
+            word_regexp=word_regexp,
+        )
         payload = {
+            "format": _RESULT_CACHE_FORMAT,
             "file_signature": list(self._build_file_signature(file_path)),
             "total_files": result.total_files,
             "total_matches": result.total_matches,
@@ -381,6 +444,10 @@ class AstBackend(ComputeBackend):
                     "line_number": match.line_number,
                     "text": match.text,
                     "file": match.file,
+                    # M16 F2: carry the node byte spans so a cache hit keeps the
+                    # same node-level identity a live search would have produced.
+                    "start_byte": match.start_byte,
+                    "end_byte": match.end_byte,
                 }
                 for match in result.matches
             ],
@@ -391,23 +458,35 @@ class AstBackend(ComputeBackend):
         except OSError:
             logger.debug("Failed to write AST persistent cache for %s", file_path, exc_info=True)
 
-    def _build_node_type_index(self, root_node: Any) -> dict[str, list[int]]:
+    def _build_node_type_index(self, root_node: Any) -> dict[str, list[NodeSpan]]:
         # audit B3: convert recursive DFS to explicit stack to avoid RecursionError on
         # deeply-nested ASTs (e.g. long chained expressions or auto-generated code).
-        node_type_index: dict[str, set[int]] = {}
+        # M16 F2: index by (line, start_byte, end_byte) SPAN, not line alone --
+        # two distinct nodes of the same type on one line are two matches.
+        node_type_index: dict[str, set[NodeSpan]] = {}
         stack = [root_node]
         while stack:
             node = stack.pop()
-            node_type_index.setdefault(node.type, set()).add(node.start_point[0] + 1)
+            start_point = getattr(node, "start_point", None)
+            start_byte = getattr(node, "start_byte", None)
+            end_byte = getattr(node, "end_byte", None)
+            if start_point is None or start_byte is None or end_byte is None:
+                # Defensive: nodes without a byte span (e.g. a synthetic root in
+                # unit fixtures) contribute nothing but their children still do.
+                stack.extend(reversed(getattr(node, "children", [])))
+                continue
+            node_type_index.setdefault(node.type, set()).add((
+                start_point[0] + 1,
+                start_byte,
+                end_byte,
+            ))
             # Push children in reverse order so leftmost child is processed first.
             stack.extend(reversed(node.children))
-        return {
-            node_type: sorted(line_numbers) for node_type, line_numbers in node_type_index.items()
-        }
+        return {node_type: sorted(spans) for node_type, spans in node_type_index.items()}
 
     def _load_persistent_node_type_index(
         self, file_path: str, lang: str
-    ) -> dict[str, list[int]] | None:
+    ) -> dict[str, list[NodeSpan]] | None:
         cache_key = (file_path, lang)
         cache_signature = self._build_file_signature(file_path)
         cached = self._node_type_index_cache.get(cache_key)
@@ -432,20 +511,34 @@ class AstBackend(ComputeBackend):
         if payload.get("file_signature") != list(self._build_file_signature(file_path)):
             return None
 
+        # M16 F2: legacy index files store LINE numbers only, collapsing
+        # distinct same-line nodes; treat them as a miss (rebuild by span).
+        if payload.get("format") != _NODE_TYPE_INDEX_FORMAT:
+            return None
+
         node_index = payload.get("node_type_index")
         if not isinstance(node_index, dict):
             return None
 
-        normalized: dict[str, list[int]] = {}
-        for node_type, line_numbers in node_index.items():
-            if not isinstance(node_type, str) or not isinstance(line_numbers, list):
+        normalized: dict[str, list[NodeSpan]] = {}
+        for node_type, spans in node_index.items():
+            if not isinstance(node_type, str) or not isinstance(spans, list):
                 return None
-            normalized[node_type] = [int(line_number) for line_number in line_numbers]
+            normalized_spans: list[NodeSpan] = []
+            for span in spans:
+                if (
+                    not isinstance(span, list)
+                    or len(span) != 3
+                    or any(not isinstance(value, int) for value in span)
+                ):
+                    return None
+                normalized_spans.append((int(span[0]), int(span[1]), int(span[2])))
+            normalized[node_type] = sorted(normalized_spans)
         self._remember_node_type_index(cache_key, (cache_signature, normalized))
         return normalized
 
     def _persist_node_type_index(
-        self, file_path: str, lang: str, node_type_index: dict[str, list[int]]
+        self, file_path: str, lang: str, node_type_index: dict[str, list[NodeSpan]]
     ) -> None:
         self._remember_node_type_index(
             (file_path, lang),
@@ -459,6 +552,7 @@ class AstBackend(ComputeBackend):
 
         cache_path = self._get_node_index_cache_path(file_path, lang)
         payload = {
+            "format": _NODE_TYPE_INDEX_FORMAT,
             "file_signature": list(self._build_file_signature(file_path)),
             "node_type_index": node_type_index,
         }
@@ -484,14 +578,23 @@ class AstBackend(ComputeBackend):
         result.total_files = 1 if result.matches else 0
         return result
 
-    def _build_matches_from_line_numbers(
-        self, file_path: str, lines: list[str], line_numbers: list[int], routing_reason: str
+    def _build_matches_from_node_spans(
+        self, file_path: str, lines: list[str], spans: list[NodeSpan], routing_reason: str
     ) -> SearchResult:
+        # M16 F2: one MatchLine per distinct NODE SPAN — two nodes of the same
+        # type on one line are two matches (composite-rule span identity).
         matches = [
-            MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
-            for line_num in line_numbers
-            if 0 < line_num <= len(lines)
+            MatchLine(
+                line_number=line_number,
+                text=lines[line_number - 1],
+                file=file_path,
+                start_byte=start_byte,
+                end_byte=end_byte,
+            )
+            for line_number, start_byte, end_byte in spans
+            if 0 < line_number <= len(lines)
         ]
+        matches.sort(key=lambda m: (m.line_number, m.start_byte or 0))
         return SearchResult(
             matches=matches,
             total_files=1 if matches else 0,
@@ -625,13 +728,28 @@ class AstBackend(ComputeBackend):
             # BackendExecutionError, never fall through to a silent-empty result.
             raise BackendExecutionError("AstBackend requires tree-sitter to be installed.")
 
+        if config and (config.invert_match or config.word_regexp):
+            # M8 audit: neither AST backend implements inverted (`-v`) / whole-word (`-w`)
+            # MATCH semantics -- silently ignoring them returned the WRONG (non-inverted) match
+            # set as if it were inverted. Fail closed: raise, never silently drop.
+            raise BackendExecutionError(
+                "invert-match (-v) / word-regexp (-w) are not supported for AST structural "
+                "search; use plain `tg search` for inverted or whole-word matching."
+            )
+
         lang = "python"
         if config and hasattr(config, "lang") and config.lang:
             lang = config.lang
         elif file_path.endswith(".js") or file_path.endswith(".ts"):
             lang = "javascript"
 
-        persistent_cached_result = self._load_persistent_cached_result(file_path, lang, pattern)
+        persistent_cached_result = self._load_persistent_cached_result(
+            file_path,
+            lang,
+            pattern,
+            invert_match=bool(config.invert_match if config else False),
+            word_regexp=bool(config.word_regexp if config else False),
+        )
         if persistent_cached_result is not None:
             return self._cap_to_max_count(persistent_cached_result, config)
 
@@ -641,14 +759,21 @@ class AstBackend(ComputeBackend):
                 lines = self._get_cached_lines(file_path, lang)
                 if lines is None:
                     lines = Path(file_path).read_text(encoding="utf-8").splitlines()
-                result = self._build_matches_from_line_numbers(
+                result = self._build_matches_from_node_spans(
                     file_path,
                     lines,
                     node_type_index.get(pattern, []),
                     "ast_structural_index_cache",
                 )
                 if result.total_matches > 0:
-                    self._persist_result_cache(file_path, lang, pattern, result)
+                    self._persist_result_cache(
+                        file_path,
+                        lang,
+                        pattern,
+                        result,
+                        invert_match=bool(config.invert_match if config else False),
+                        word_regexp=bool(config.word_regexp if config else False),
+                    )
                     return self._cap_to_max_count(result, config)
 
         parser = self._get_parser(lang)
@@ -656,14 +781,21 @@ class AstBackend(ComputeBackend):
         if self._is_simple_node_type_pattern(pattern):
             node_type_index = self._build_node_type_index(tree.root_node)
             self._persist_node_type_index(file_path, lang, node_type_index)
-            result = self._build_matches_from_line_numbers(
+            result = self._build_matches_from_node_spans(
                 file_path,
                 lines,
                 node_type_index.get(pattern, []),
                 "ast_structural_index",
             )
             if result.total_matches > 0:
-                self._persist_result_cache(file_path, lang, pattern, result)
+                self._persist_result_cache(
+                    file_path,
+                    lang,
+                    pattern,
+                    result,
+                    invert_match=bool(config.invert_match if config else False),
+                    word_regexp=bool(config.word_regexp if config else False),
+                )
                 return self._cap_to_max_count(result, config)
 
         try:
@@ -698,7 +830,10 @@ class AstBackend(ComputeBackend):
             ) from exc
 
         matches = []
-        seen_lines = set()
+        # M16 F2: dedupe by NODE SPAN, not line — two distinct same-line nodes
+        # are two matches; only the EXACT same node (same span, e.g. a capture
+        # seen twice) is suppressed.
+        seen_spans: set[tuple[int, int]] = set()
 
         # We perform actual structural matching using tree-sitter queries instead of naive hash
         # to fix the ast matching accuracy issue
@@ -720,15 +855,30 @@ class AstBackend(ComputeBackend):
 
         for node, _ in iter_nodes:
             line_num = node.start_point[0] + 1
-            if line_num not in seen_lines and line_num <= len(lines):
-                seen_lines.add(line_num)
+            start_byte = getattr(node, "start_byte", None)
+            end_byte = getattr(node, "end_byte", None)
+            if start_byte is None or end_byte is None:
+                # Span-less node (synthetic fixture): dedupe per line.
+                span: tuple[int, int] = (line_num, -1)
+            else:
+                span = (start_byte, end_byte)
+            if span not in seen_spans and line_num <= len(lines):
+                seen_spans.add(span)
                 matches.append(
-                    MatchLine(line_number=line_num, text=lines[line_num - 1], file=file_path)
+                    MatchLine(
+                        line_number=line_num,
+                        text=lines[line_num - 1],
+                        file=file_path,
+                        # M16 F1: byte span of the matched node so composite-rule
+                        # accounting can dedupe by NODE SPAN, not line.
+                        start_byte=start_byte,
+                        end_byte=end_byte,
+                    )
                 )
 
         logger.debug("AST search completed for %s with %d matches", file_path, len(matches))
 
-        matches.sort(key=lambda m: m.line_number)
+        matches.sort(key=lambda m: (m.line_number, m.start_byte or 0))
 
         result = SearchResult(
             matches=matches,
@@ -739,5 +889,12 @@ class AstBackend(ComputeBackend):
             routing_distributed=False,
             routing_worker_count=1,
         )
-        self._persist_result_cache(file_path, lang, pattern, result)
+        self._persist_result_cache(
+            file_path,
+            lang,
+            pattern,
+            result,
+            invert_match=bool(config.invert_match if config else False),
+            word_regexp=bool(config.word_regexp if config else False),
+        )
         return self._cap_to_max_count(result, config)

@@ -63,3 +63,19 @@ KNOWN_COMMANDS = {
     "dogfood",
     "install-dense",
 }
+
+# `RESERVED_TOP_LEVEL_COMMANDS` = roadmap commands that DO NOT EXIST yet (A90). They must never
+# be faked by the search fall-through (`tg edit-ready --json` must exit 2 with
+# `error.code=unknown_command`, not search for "edit-ready"), and they must never be treated as
+# registered commands either -- a reserved name is NOT in KNOWN_COMMANDS, and the A90 lifecycle
+# invariant `RESERVED ∩ KNOWN == ∅` (pinned by test) fails the build if a name lands in both.
+# Roadmap source: `docs/plans/2026-08-09-worldclass-roadmap.md` (edit-ready / verify-edit /
+# workspace are the phase-2 edit-control-plane commands). When a reserved command is REALIZED,
+# this entry is REMOVED in the same PR that registers it (KNOWN_COMMANDS + the 4 command sites +
+# the parity test) -- the lifecycle gate fails if a KNOWN_COMMANDS addition leaves its reserved
+# twin behind.
+RESERVED_TOP_LEVEL_COMMANDS = {
+    "edit-ready",
+    "verify-edit",
+    "workspace",
+}

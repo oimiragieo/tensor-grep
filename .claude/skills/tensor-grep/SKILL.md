@@ -36,11 +36,11 @@ prefer the canonical path-first form.
 3. Content search then source:
    - `tg search PATTERN REPO_PATH --rank`
    - Vocabulary mismatch: `tg find "intent" REPO_PATH/src --deadline 20 --json` (run `tg install-dense` once; see `tensor-grep-find-and-route`)
-   - Multi-project: `tg search PATTERN . --glob "*.py" --max-depth 3` (bare text/`--json` without PATH: exit 1 + note; `--json` also sets `path_was_defaulted`/`scope_note` @ 1.101.31 — always pass PATH; multi-project parent refuses exit 2)
+   - Multi-project: `tg search PATTERN . --glob "*.py" --max-depth 3` (bare text/`--json` without PATH: exit 1 + note; `--json` also sets `path_was_defaulted`/`scope_note` @ 1.101.31 — always pass PATH; unscoped multi-project parent refuses exit 2 with `incomplete_reason_class`/`error.code`=`workspace_root_refused` @ 1.110.x — not generic `scan_limit`)
    - `tg source REPO_PATH/src SYMBOL`
 4. Symbol navigation — prefer `src/`:
    - `tg callers REPO_PATH/src SYMBOL --deadline 15 --json`
-5. Edit readiness — **prefer `tg prepare REPO/src`** (~8s PASS on gotcontext-saddle hooks @ 1.101.31; ~27s on larger src @ 1.91.0):
+5. Edit readiness — **prefer `tg prepare REPO/src`** (~5–22s PASS on gotcontext-saddle / tg `src` @ 1.110.14+; ~27s on larger src @ 1.91.0):
    - `tg prepare REPO_PATH/src "task" --json`  # primary + blast floor + validation + coordination hooks
    - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
    - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
@@ -101,25 +101,40 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Last full workspace+GPU dogfood: v1.91.0** (WSL `/mnt/c/dev/projects`, `/tmp/tg-dogfood-v21/report.tsv` — 57 PASS / 8 INCOMPLETE / 2 TIMEOUT / 1 FAIL). 14 items have shipped since (v1.91.1→v1.93.2: cold-path SLA, CLI-dispatcher ranking fix, single-file rayon, accuracy-gate pinning, inline caller annotations, binary-detection parity, flat-scorer hardening, index-lock de-flake, unscoped fast-refuse, dynamic-import honesty, WSL GPU-probe fix, install-dense/doctor-autostart/prepare-out UX batch, ledger PATH fix, gate-findings close-out, blast-radius honesty) — not re-verified as one whole-workspace sweep past v1.91.0; the rows below reflect the shipped fixes individually, not a fresh 1.93.2 dogfood run.
+**Latest CUJ dogfood: v1.110.14** (2026-08-11, Windows `uvx`, artifact
+`C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**). Core CUJ + M16/M17 still green.
+**A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
+(`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for
+`--json`, `nearest: []`). Typo + `--help` suggests nearest (`searhc` → search). Bare
+`tg edit-ready` *without* a flag still searches that token by design (escape: `tg search edit-ready`).
+Live callers coverage still 10/10 parser-backed. Parent refuse still `workspace_root_refused`.
+See `tensor-grep-workspace-dogfood`.
 
-**More shipped v1.93.3→v1.95.0** (also not re-verified as one fresh whole-workspace sweep): a CEO +10% perf campaign (+25.3% end-to-end, v1.93.3-v1.93.8), a post-campaign repo-map ast.walk-merge (~54% faster) and validation-scan textual pre-check (~68% faster), a macOS CI rustup-retry fix, and two new symbol-graph languages — Java (v1.94.0) and PHP (v1.95.0) — taking the tier to 7 of the top-10 languages as of v1.95.0 (python/js/ts/go/rust plus java/php; C# merged to `main` right after v1.95.0 with its release still pending — re-check `lang_registry.py`'s `register_language` calls for the live count rather than trusting this number; C/C++ still deferred). A narrower same-session spot-check on that same workspace (c:/dev/projects, now 300k+ files, v1.95.0) found `orient` ~4.9s cold-scan (bounded by the 2000-file scan ceiling + centrality; a warm session-daemon hit is faster still — was ~36s at v1.91.0 on this workspace), `search` degrading to a partial result with an honest "exceeded timeout" message instead of hanging (exit 124), and `inventory --deadline` bounding per-project — encouraging, but still narrower than a full PASS/INCOMPLETE/TIMEOUT/FAIL sweep.
+**Parent refuse vs scoped empty:** unscoped `tg search needle C:\dev\projects --json` → exit 2 +
+`workspace_root_refused`. Scoped `… --glob "*.py" --max-depth N` does **not** hard-refuse (may
+exit 1 with zero matches = complete empty). Skill text that said parent class=`scan_limit` is stale.
 
-**Detail on a few v1.91.1→v1.93.2 items, still current at v1.95.0:** `tg prepare --out FILE` (persists the capsule for `tg evidence emit --capsule FILE`, no manual redirect), ledger claim/list PATH-canonicalization fix (A13), the generic >1500-file unscoped fast-refuse (A9), `dynamic_unresolved` import honesty (A10/A15), `tg doctor` `session_daemon.autostart` (A12(b)), and every dense-absent hint now leading with `tg install-dense` (A12(a)). See `tensor-grep-prepare`, `tensor-grep-ledger`.
+**Historical:** last full workspace+GPU sweep was v1.91.0 (WSL). Language campaign closed through
+Task 10E + F7 Task 11 (#957). Prefer the 1.110.13 CUJ table over older 1.95.0 “7 of 10” prose.
 
 **Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol; bare agent TIMEOUT empty @75s.
 
 **`tg install-dense`:** once per host; post-install `tg find` drops the BM25-only `rank_fallback_reason` (the fallback message itself now leads with `tg install-dense` when dense is absent).
 
-**`tg ledger`:** claim/release/list/record/find — see `tensor-grep-ledger`. Slice 1 (claim/release/list) AND Slice 2 (record/find) are both PATH-canonicalization-fixed -- Slice 1 by A13, Slice 2 by #850 (v1.101.16). Both canonicalize to the nearest `.git` ancestor via `_ledger_physical_root`.
+**`tg ledger`:** claim/release/list/record/find — see `tensor-grep-ledger`. Slice 1 + Slice 2 PATH-canonicalization fixed (A13 / #850).
 
-**Unscoped multi-project search refuses fast (~1.7s, not a silent 60s timeout).** A single `IMPLICIT_SEARCH_WALK_FILE_CEILING=1500` fast-refuse fires on any defaulted PATH >1500 files, coherent across all 3 doors (bootstrap probe, `main.py`, `rg_passthrough.rs`); escape hatches are an explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/`--type` alone do NOT bypass it when the path was defaulted. Prefer per-repo for deep `--type ts`.
+**Unscoped multi-project search refuses fast (~1–2s).** Workspace-root safety refuse uses
+`workspace_root_refused`; the generic >1500-file defaulted-PATH ceiling is a separate gate.
+Escape hatches: explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/`--type`
+alone do NOT bypass the defaulted-PATH ceiling. Prefer per-repo for deep `--type ts`.
 
 **`tg codemap` still TIMEOUT on WSL** (90s). Importers/callers-at-root may be deadline-partial.
 
-**CLI traps:** `tg classify` has no `--json`; scan ruleset names from `tg rulesets`; session `context-render` needs absolute session-root PATH.
+**CLI traps:** `tg classify` has no `--json`; scan ruleset names from `tg rulesets`; session
+`context-render` needs absolute session-root PATH; reserved+flag refuses (A90); bare unknown tokens may still search.
 
 ## GPU (experimental) — verified on v1.91.0, no change through v1.93.2
+SUPERSEDED stamp (2026-08-11, append-only): unchanged through v1.110.14 -- GPU remains experimental/unpromoted (no crossover proven; see `tensor-grep-gpu` + `docs/gpu_crossover.md`). Re-verify every release.
 
 Hardware visible (2× ~12GB). Build without CUDA: calibrate FAIL; search GPU → CPU fallback; doctor `search_ready=false`. v1.93.0 (A11) fixed the WSL bare-shim cross-domain misclassification that produced a bogus `path_not_found`; full detail in `tensor-grep-gpu`.
 

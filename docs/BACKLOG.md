@@ -7,15 +7,14 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-03 continuation, release `v1.102.1`, merged main
-> `8024125`, one open PR (#911), one open GitHub issue (#48).** Product healthy; planning PR
-> blocked on fresh exact-head security re-clearance; backlog not done; Task 2A correctly blocked. The complete
-> live disposition list is the canonical index in `docs/TASK_BOARD.md` (28 rows / 20 unfinished =
-> 7 READY, 2 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED after F10+DD-004 RETIRED 2026-08-05); `docs/audits/2026-08-02-backlog-reconciliation.md` is its
-> dated evidence packet, and `docs/audits/2026-08-03-ceo-backlog-update.md` is the current dumbed-down
-> closed-world update. Task 2 is reconciled; the amended #89/#90 path-domain program plus Tasks 3–15
-> are the current execution queue. Historical sections below remain append-only evidence and may
-> describe old status.
+> **Current closed-world CEO snapshot: 2026-08-06 PM, release `v1.110.0`, tip `bb4fdae` (re-derive).**
+> Live disposition is the canonical index in `docs/TASK_BOARD.md` (28 rows / 17 unfinished =
+> **0 READY**, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). Live dumbed-down packet:
+> `docs/audits/2026-08-06-pm-ceo-backlog-update.md`. Morning receipt (A70–A76 / pre-stamp READY):
+> `docs/audits/2026-08-06-ceo-backlog-update.md`. Task 2A remains correctly blocked (draft #966
+> FIX-FIRST lineage; Sol SHIP + Windows CI outstanding). No spend; #169 only financial stop.
+> Historical header text below this block may still describe older READY counts — trust the
+> canonical index + PM CEO packet, not stale prose in this ledger's opening paragraph.
 > Recovered local-environment incident (historical): `ENV-VENV-DRIFT` occurred when a WSL `uv`
 > probe replaced the canonical Windows `.venv`. The incompatible environment was moved aside and
 > Windows `uv sync --frozen` rebuilt and verified the canonical environment; this is not an active
@@ -43,6 +42,172 @@
 >
 
 
+
+## Recent campaign notes (2026-08-11 late) — skill coverage wave (post-#1001)
+
+- **Post-merge coverage audit** of the 34-skill library vs the A83-A96 / M16-M17 / doctor-3 / world-class wave: 6 gaps found (A87 static-SHIP-provisional, A89 real-artifact parity, A92 escrowed evidence, A96 byte-exact-edit, M16 scan rule preservation, world-class roadmap).
+- **Five lesson-gaps folded into existing skills; one NEW skill: `tensor-grep-worldclass-roadmap`** (S1-S7 edit-control-plane spine, Exa-grounded: Occasio OIDC attestation / AET evidence-freshness / Anthropic harness papers). Index 33 -> 34; skill_rules.json 22; workflow 35/35; gates 16/16.
+- Laws A94-A96 were captured in #1001; this wave converts the remaining audit finding into skill coverage so `tg-skill-audit` and future sessions find the disciplines without re-deriving from AGENTS.md.
+
+## Recent campaign notes (2026-08-11 PM) — CEO update to v1.110.14
+
+- **Public product: `v1.110.14`** (tag, GitHub assets, PyPI). Since the 2026-08-10 snapshot: v1.110.11 (M16 #987), v1.110.12 (M17 #988), v1.110.13 (A90 #997 unknown-command fail-closed), v1.110.14 (doctor #1000 PATH honesty: pypi_latest / installed_behind_pypi / shadow_launchers / installation_health) + audit fixes H2 #979, M1 #982, M3 #983, M14 #984 + spend-smart CI #977.
+- **Skill-library evolution (#999 #1001 #1002):** dogfood refreshes + full-library audit (21 stale stamps, 7 tier contradictions) + coverage-gap wave (worldclass-roadmap skill, five skills extended). All post-merge verified.
+- **Closed world unchanged:** 28 rows / 17 unfinished (0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). No new rows; no status flips. Open PRs: only #966 (Task 2A parked). No spend; #169 only money stop. No nonfinancial CEO question.
+- **CEO packet (live):** `docs/audits/2026-08-11-ceo-backlog-update.md`.
+- **Next after the next code release:** run the `tensor-grep-release-drift-check` sweep (A94) before further skill work.
+
+## Recent campaign notes (2026-08-11) — skill-library audit + freshness mechanism
+
+- **Skill-library audit (all 33 in-repo `.claude/skills/*/SKILL.md` files, 3 parallel subagent waves):**
+  library found stale ONE release after the last refresh — 21 version stamps below the v1.110.14
+  current tag, 7 language-tier contradictions (foundational-vs-parser-backed surviving the C/C++
+  promotion; ground truth now 10 parser-backed / 0 foundational via `_symbol_navigation_descriptor()`),
+  2 stale state facts (M17 index-fingerprint, doctor schema-3), 1 dangling prose contradiction.
+- **Fixes:** mechanical stamp bumps (generated edit scripts, byte-safe); append-only dated SUPERSEDED
+  blocks in `code-search-and-retrieval-reference` + `tensor-grep-add-language` for the retired tier
+  claims; doctor-3 fields (`pypi_latest`/`installed_behind_pypi`/`shadow_launchers`/
+  `installation_health` + `TG_DOCTOR_OFFLINE`) added to `tensor-grep-config-and-flags` +
+  `tensor-grep-diagnostics-and-tooling`; index count re-derived 32 → 33 (new folder) in AGENTS.md +
+  CLAUDE.md; `.claude/skill_rules.json` now 21 entries.
+- **Standing mechanism created: `tensor-grep-release-drift-check` skill** — mechanical post-release
+  governance sweep (stamps ≥ current tag, derived counts, known-state facts, SUPERSEDED discipline).
+  Deliberately NOT a pytest (numbers drift by design; a hard gate reddens every PR) — a maintenance
+  command like `.claude/skill_anchor_audit.py`. Run it after every release.
+- **Laws A94–A96** captured (stamp rot is a maintenance sweep; a "verified correct" note is part of
+  the contract it guards and must be updated in the same change; non-ASCII punctuation defeats
+  byte-exact edit-tool matches — splice by line index from a python script).
+- **Ledgers:** `docs/audits/2026-08-11-skill-audit-findings.md` (27-item fix list +
+  new-skill decision, Exa-grounded) and `docs/audits/2026-08-11-skill-audit-facts.md` (ground truth).
+
+## Recent campaign notes (2026-08-10) — M16/M17 first-CI-row drain (plan Round 3)
+
+- **Drain landed:** #993 (docs world-class roadmap), #994 (docs A90–A93), #992 (docs 24h capture,
+  incl. A87–A89; one `ruff format --preview` lint fix on `test_skill_library_drift.py`; rebased onto
+  post-#993/#994 main with union-resolved conflicts), **#987 (M16 Rust scan composite/severity →
+  v1.110.11)**, **#988 (M17 index root/format → v1.110.12)**. Open at session end: #966 (Task 2A RED
+  scaffold, parked by design). Full matrix green on every merged head; PyPI verified serving
+  1.110.11 + 1.110.12 (4 files each, cache-bypassed). #993/#994/#992 are docs (no release); #987 and
+  #988 serialized one-per-publish.
+- **FINDING (A87 made real, twice):** both Rust PRs (#987/#988) had "passed" codex static audits,
+  then the FIRST real CI run found genuine compile errors — #988 survived three audit rounds and
+  still failed E0599/E0308/E0382 on first compile; #987's regression only surfaced on the full
+  matrix (its author's self-gate never ran `tests/unit/test_backend_bug_fixes.py`). The first-compile
+  gate IS the Rust gate; static SHIP is not durable until cargo builds and the matrix runs (A87).
+- **FINDING (first-CI regression: fingerprint vs walk disagreement, #988):** the M17-added
+  `compute_tree_fingerprint` ran RAW `read_dir` over the canonical root, so a gitignored file added
+  after build flipped the digest and falsely reported staleness — disagreeing with the new-file walk
+  that correctly ignores it (the code's own "walkers must not disagree" doctrine). Fix: derive the
+  fingerprint population from `ignore::WalkBuilder` with the SAME config as `collect_file_entries`
+  (`hidden`, `git_ignore(!no_ignore)`, `max_depth(1)`, add_ignore trio), `file`-only before sort/cap,
+  and thread `no_ignore` through all call sites. The two `staleness_new_file_scan_honors_root_gitignore_*`
+  tests had passed on main (no fingerprint there) and were the honest REDs.
+- **FINDING (Windows-only test hid a format-pin break, #988):** `test_tg_search_index_old_format_triggers_rebuild`
+  is `#![cfg(windows)]` — the M17 wire-format bump 4→6 (canonical root, then tree_fingerprint) broke
+  its hardcoded `rebuilt[4] == 4` assertion on Windows only; all other legs ran the same branch and
+  passed, so the break was invisible until the Windows leg ran. Fix: export `INDEX_FORMAT_VERSION`
+  `pub` and pin the test to the constant (next bump cannot silently re-break). The `#![cfg(windows)]`
+  gate is a platform-divergence hiding-spot worth a census.
+- **FINDING (ratchet caught the new walk, #988):** `test_known_discard_sites_never_grow` (#276
+  walk-error-discard ratchet) redded because the new fingerprint walk used the silent
+  `.filter_map(|e| e.ok())` idiom — exactly the class the ratchet exists to forbid. Fix: log the
+  discard (`map_err(|e| eprintln!(...)).ok()`, the shape the ratchet's own oracle test blesses) and
+  keep the test-fixture `read_dir` enumeration on the non-ratcheted binding. Lesson: every new walk
+  site must join the #276 doctrine (log, never silent) even in a best-effort staleness signal.
+- **FINDING (comment satisfies the census — reversed):** the initial fix rewrote the fixture comment
+  TO CONTAIN the literal `.filter_map(|e| e.ok())`, and the raw-text census counted the comment as a
+  site (count stayed 2). The census regex is text-based; never write the ratcheted idiom in a
+  comment near a ratcheted file (mirror of the "census satisfied by a comment" trap, reversed).
+- **Codex rounds:** #987 fixture-first fix — clean. #988 — R1 FIX-FIRST (fingerprint select-FILES-
+  first before cap; empty-dir + cap-displacement + symlink regressions) → R2 FIX-FIRST (cap test's
+  `zdir*` sorted AFTER the target, so it passed on the bug; renamed to `adir*` + Unix-gated symlink
+  arm) → R3 SHIP → final-head SHIP (one LOW: `docs/routing_policy.md` hardcoded format 4; folded
+  in-PR). Independent-gate SHIP was re-earned after every CI-surfaced fix (A18).
+- Execution plan: `docs/plans/2026-08-10-backlog-completion-plan.md` (2-seat thinktank-approved
+  Round 3: codex-sol + agy unanimous APPROVED, no MUST-FIX). Next buildable per plan: none — the two
+  Rust rows are closed; remaining rows are CEO/demand/research-gated (see header snapshot).
+
+## Recent campaign notes (2026-08-08)
+
+- **Drain landed:** #975 (M7 verify_receipt never-raises → **v1.110.6**), #976 (M8 AST -v/-w
+  fail-closed → **v1.110.7**), #980 (TASK_BOARD reconcile → unblocked the meat-gate), #967 (docs
+  A77–A82 retention), #977 (spend-smart CI gate). #978 plan PR + #979 P5·H2 draft PR open.
+- **Published-wheel dogfood (v1.110.7):** M8 PASS (visible CPU fallback honors `-v`, rg-identical
+  inverted set, correct JSON envelope); M7 PASS (corrupt embedded key → structured `valid=False`,
+  exit 1, no crash); H2 pre-fix baseline confirmed (`--json -l` → raw path exit 0 on the wheel; the
+  fix is #979, unmerged).
+- **FINDING (stale-ready labels):** #967 (docs) and #977 (ci) were labeled ready/mergeable but their
+  heads predated #969–#976 — each had 7 failing tracker-freshness jobs that were base-staleness, not
+  content. Both rebased onto real main, re-CI'd green, then merged. Charge: any "ready" label must
+  cite the head SHA's own completed run (A44/A51).
+- **FINDING (release-gate incident):** v1.110.7 (#976) could not publish because TASK_BOARD's
+  reconcile stamp lagged 6 releases (tolerance 5) → `test_task_board_freshness` failed in all 7
+  test-python/gpu jobs → the matrix gate blocked the release train. Fixed by #980 (board reconcile
+  + SESSION_HANDOFF index sync), which re-ran Semantic Release and published the orphaned M8 fix as
+  v1.110.7. The freshness gate is ordinal-CHANGELOG-distance (A76) and its mirror
+  (`test_backlog_tracker_truth` index-version equality) must ride the same commit.
+- **H2 residual (recorded, not fixed):** `--format rg --json -l` keeps rg-parity raw paths (rg
+  itself emits plain paths for `--json -l`). Tracked as a named follow-up; #979 deliberately does
+  not refuse it.
+- Execution plan: `docs/plans/2026-08-08-backlog-completion-plan.md` (three-lens thinktank-approved
+  Round 3). Next buildable per plan: M1 (checkpoint create-side symlink/junction containment).
+
+## Recent campaign notes (2026-08-08 late) — audit-fix wave receipts
+
+- **Buildable audit fixes TDD'd this wave (all draft PRs, codex-gated):**
+  - P5·H2 (#979): fail-closed refusal of `--count-matches`/`--files-with-matches`/`--files-without-match`
+    on the native structured + positional GPU routes (compile-exhaustive 68-field ratchet; `-o`/`-c`/
+    `--format rg --json` stay honored). Codex R1(4)→R2(2)→R3(1)→R4(1)→R5 APPROVE-WITH-NITS.
+  - M1 (#982): checkpoint create-side junction/symlink-ancestor containment — parent-chain-only resolve,
+    raw-leaf identity (A38), Windows junction fixtures (no privilege needed), 4 new tests RED→GREEN;
+    A48 handle-anchoring + undo leaf-following recorded canonically as M1-FU1/M1-FU2 (owners +
+    reopen triggers). Codex R1 FIX-BEFORE-MERGE(4)→R2 SHIP.
+- **Named M-follow-up rows (A49, recorded beside M1-FU1/M1-FU2 in this same campaign note):**
+  - **M16-FU1 `SCAN-ALL-NOT-SAME-NODE`** — `all:`/`not:` composite rule bodies (nested/intersection
+    shapes) stay DROPPED fail-closed today (both the Rust twin `backend_ast_workflow.rs:1181-1184`
+    and Python `ast_workflows.py:475-478` release only `any`-of member semantics; an intersection
+    body requires same-node semantics the native matcher cannot express and would be
+    under-matched, not served). OWNER: M16 change-control (Rust `tg scan`). DISPOSITION: DEFERRED,
+    not claimed. REOPEN TRIGGER: a consumer configuration whose composite rules use
+    `all:`/`not:` bodies and needs them evaluated (currently they drop fail-closed rather than
+    under-match).
+  - **M17-FU1 `INDEX-FINGERPRINT-SAMPLE-CAP`** — the `tree_fingerprint` (u64 full-content digest of
+    the top-32 top-level files, index-machinery namespace excluded) closes same-path
+    metadata-preserving swaps only for the sampled files; files NOT sampled (33rd+ top-level and
+    every non-top-level file) are covered only by the per-file mtime/size identity loop
+    (`rust_core/src/index.rs` `compute_tree_fingerprint` / `staleness_reason` — the honest boundary
+    is named in the code as "tracked as follow-up M17-FU1"). OWNER: M17 index change-control.
+    DISPOSITION: DEFERRED, not claimed. REOPEN TRIGGER: a same-path metadata-preserving swap
+    landing in an unsampled file (below the 32-file sampling cap) that the mtime/size loop cannot
+    detect, or a consumer requiring full-content identity for every entry.
+  - M3 (#983): LSP `documentChanges` CreateFile/RenameFile/DeleteFile confinement — was VACUOUS
+    (file-ops invisible; `all()` over empty set). Five-field enumeration + opaque-member fail-closed +
+    strict external-DocumentUri validator (absolute file: URI only; rejects %00, whitespace,
+    path-rootless `file:C:evil`, non-file schemes). Relay-only TOCTOU documented. Codex
+    R1(3)→R2(3: kind-null, snake_case bypass, file:/ RFC-8089)→R3(1: path-rootless)→R4 seat FAILED on
+    content filter (A10/A74 — substitute probes verified; draft-PR gate + CI are the durable arbiter).
+    LSP-EDIT-CONSTRUCTION (lsprotocol documentChanges construction) named as separate tracked item.
+  - M14 (#984): MCP `mcp_contract_version` central-const hard-assign (was setdefault → tool's own
+    stale/forked literal won) + LIVE-registry VALUE ratchet over all 58 tools × success+error
+    families; 11 tools' masked success paths wrapped; `schema_version` stays setdefault so doctor's
+    v2 survives (harness_api-pinned); const untouched (1.7.0). Census corrected the "15/58 approx"
+    to a live 19 sites / 11 tools. Codex R1(3)→R2(3 harness: exception-allowlist masking,
+    env-dependence on dense model, partial-key parity)→R3 SHIP (independent mutation re-verified).
+- **Session receipts (2026-08-08):** origin/main `5500b88`; v1.110.6 + v1.110.7 published (PyPI
+  verified); open at session end: #979/#982/#983/#984 drafts + #966 (Task2A RED, parked by design).
+  Remaining per plan: M16 (Rust `tg scan` composite rules + severity — CI-oracle), M17 (index stored-
+  root check — CI-oracle), then research R1–R8 (each design-council-gated). All shared-box cargo and
+  MCP-native ext tests remain CI-oracle (worktree venv limitation; failures proven pre-existing on
+  origin/main).
+
+## Recent campaign notes (2026-08-06 PM CEO)
+
+- Live CEO packet: `docs/audits/2026-08-06-pm-ceo-backlog-update.md` (A77–A82).
+- Closed-world index `2026-08-06.3`: **0 READY**, 6 BLOCKED, 5 CEO_GATED, 6 DEMAND_GATED
+  (17 unfinished / 28 rows). Morning file retained for A70–A76 + pre-stamp READY receipt.
+- Task 2A: draft #966 FIX-FIRST only — tip under review, not archaeological RED alone (A80/A81).
+- Findings this wave: stdin+heredoc poller false ALL_TERMINAL (#963); usage-limit seats FAILED;
+  status-stamp must retarget tracker pins (#964); AMEND_SPINE held (no MCP/F5–F8 product builds).
 
 ## Recent campaign notes (2026-08-06 CEO)
 
@@ -121,12 +286,11 @@ evidence packet for that label).
 | E F10 + DD-004 DROP | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED — RETIRED with receipts |
 | F board reconcile + dogfood | this entry + TASK_BOARD + #961 | dogfood: `tg search needle C:\dev\projects --json` against main → exit 2, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused` |
 
-**What shipped (honest claims only):**
+**What shipped (honest claims only) — as of this 2026-08-06 receipt:**
 - F7 Task 11 waves 1–2: Java (#950), PHP (#952), C# (#955) cross-file caller confirmation on
-  `main`. Wave 3 C/C++ is **#957** (open / in flight — not claimed shipped).
+  `main`. (Wave 3 C/C++ **#957** was still open at this receipt; see 2026-08-09 refresh below.)
 - Multi-project parent refuse now names itself: `incomplete_reason_class` /
-  `error.code` = `workspace_root_refused` (#956). Dogfood is against **main source**, not the
-  published wheel (see PyPI note).
+  `error.code` = `workspace_root_refused` (#956).
 - F10 MaxSim and DD-004 typed-boundary rows are **RETIRED** with dated receipts (#953) — not
   "fixed", not "still planned".
 
@@ -138,14 +302,34 @@ evidence packet for that label).
 - CEO gates **#48 / #72 / #77 / #131 / #169** are untouched — recommendations only (short packets
   below); status stays `CEO_GATED`.
 
-**PyPI / local:** live PyPI **v1.109.0** (index 200 + bogus 404 control). Phase 0+1 code is on
-`main` and awaits the next `feat:`/`fix:` publish; installed wheel remains pre-#956 until then
-(control: installed path still emitted `scan_limit`/`broad_scan_refused`; main source emits
-`workspace_root_refused`). Index check ≠ install.
+**PyPI / local (2026-08-06):** live PyPI was **v1.109.0**; Phase 0+1 code was on `main` awaiting
+publish (installed wheel still pre-#956 at that moment). See 2026-08-09 refresh for published
+wheel dogfood.
 
-**Next:** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips that lived
-in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this Packet F
-reconcile #961) rather than undrafted.
+**Next (2026-08-06):** F7 Task 11 wave 3 = open PR #957 (C/C++). Broader READY→SHIPPED board flips
+that lived in draft #960 were **not** absorbed here; #960 was **CLOSED** (superseded by this
+Packet F reconcile #961) rather than undrafted.
+
+### EXTERNAL / Phase 0+1 closeout refresh — 2026-08-09
+
+Campaign packets A–F are complete on `main` and published. Hard stops held: no #169 spend, no
+Task 2A / #89 / #90 GREEN claim, no silent CEO_GATED flips, no local shared-box `rust_core` cargo
+for F5/F8 product builds, no Phase 2 edit/workspace launch claims.
+
+| packet | PR | live disposition |
+|---|---|---|
+| A | [#951](https://github.com/oimiragieo/tensor-grep/pull/951) | MERGED |
+| B wave 2 PHP | [#952](https://github.com/oimiragieo/tensor-grep/pull/952) | MERGED |
+| B wave 2 C# | [#955](https://github.com/oimiragieo/tensor-grep/pull/955) | MERGED |
+| C wave 3 C/C++ | [#957](https://github.com/oimiragieo/tensor-grep/pull/957) | MERGED — include-path engine + adapters |
+| D refuse taxonomy | [#956](https://github.com/oimiragieo/tensor-grep/pull/956) | MERGED |
+| E F10 + DD-004 | [#953](https://github.com/oimiragieo/tensor-grep/pull/953) | MERGED / RETIRED |
+| F receipt + board | [#961](https://github.com/oimiragieo/tensor-grep/pull/961) + this refresh | claim matrix + CEO packets remain `CEO_GATED` |
+
+**Published-wheel dogfood (2026-08-09):** `uvx --from tensor-grep==1.110.10 tg search needle C:\dev\projects --json`
+→ exit **2**, `incomplete_reason_class=workspace_root_refused`, `error.code=workspace_root_refused`.
+Live PyPI **1.110.10**. F7 Task 11 waves 1–3 are SHIPPED on the board (closure #963). Draft #966
+(Task 2A) stays DRAFT / not GREEN.
 
 #### Packet F — CEO recommendation packets (still CEO_GATED; do not implement)
 
@@ -170,7 +354,7 @@ finished work -- which is exactly how six queued items were found already-shippe
 |---|---|---|
 | **#859** class-level atomic-writer census | **SHIPPED** | #937 widened the census 3 -> 41 modules; #945 classified all 16 violating identities; #946 closed the download TOCTOU; #947 retired the residual. Violating 16 -> 1, and that one is retired with a reopen condition. |
 | **F7** language registry (Task 10) | **SHIPPED** | five waves: #927 Java, #928 C#, #930 PHP, #932 C, #934 C++. `_symbol_navigation_descriptor()` now reports 10 parser-backed / 0 foundational. Verified on the published wheels. |
-| **F7** cross-file resolution (Task 11) | **OPEN, justified** | measured on a real 269-file C++ repo: cross-file call sites outnumber in-file ~1.7:1 and 46% of defined symbols have a caller in another file. Tighten ground truth (parse, do not regex) and repeat on Java/C# before sizing. |
+| **F7** cross-file resolution (Task 11) | **SHIPPED** | waves 1–3 merged: Java #950, PHP #952, C# #955, C/C++ #957; board closure #963. (2026-08-05 row below was the sizing justification that preceded the build.) |
 | **REF-CALL-REGISTRY** (Task 9) | **SHIPPED** | the dispatch ladders were removed as a side effect of the F7 campaign; `_references_and_calls_for_path` is four statements with zero language branching. Its missing Step 2 guard shipped in #940. NOTE: this row's description mislabels Task 9 as "prepare-service extraction" -- that is Task 6 Step 0. |
 | **CPU-BACKEND** (Task 5) | **SHIPPED** | #925 (Rust `replace_in_place` discarded directory-mode failures and reported success) plus the CPU-backend TypeError retry that silently dropped `invert_match` and inverted results. |
 | **F6** edit-verification (Tasks 6-7) | **Step 0 SHIPPED, rest multi-week** | #939 extracted `prepare_service.py` byte-identical. The remainder is ~10 versioned schemas, WSL path-domain extension, evidence signing and a 5 MiB bounded reader. |
@@ -197,9 +381,8 @@ demand evidence. That is a measured state, not a stall.
   classified all 16 violating identities, `#946` closed the download TOCTOU, `#947` retired the
   residual; all four MERGED). This row contradicted its own receipt row 24 lines above it for a full
   day. Left struck through rather than deleted so the contradiction is legible.
-- **F7** — cross-file resolution, **Task 11 only**. Task 10 (language registry) SHIPPED in five
-  waves. Task 11 is IN_FLIGHT: waves 1–2 shipped (Java #950, PHP #952, C# #955); wave 3 C/C++ =
-  open PR #957.
+- ~~**F7** — cross-file resolution, Task 11.~~ **SHIPPED** — waves 1–3: Java #950, PHP #952, C#
+  #955, C/C++ #957; closure #963.
 - ~~**MCP-SURFACE** — Task 4.~~ **BLOCKED on Task 2C**, not buildable: Task 4 bumps the MCP contract
   `1.8.0 -> 1.9.0` and the live value is `1.7.0`. Building it first bumps from a version that does
   not exist.
@@ -689,6 +872,43 @@ wheel compile (~65min normal), don't panic-rerun. **WIP CAP: no new build while 
 
 ---
 
+## ⭐ EXTERNAL — enterprise closeout campaign session findings (2026-08-06)
+
+Session closeout progress from the gotcontext-saddle / orchestrator seat. **Docs-only
+receipt — does not authorize GREEN, releases, or STOP lifts.**
+
+### START_NOW complete
+
+- **#963** + **#964** MERGED; tip carries wave-2 plan `PROCEED_D1_THEN_W4`.
+- Main CI for the #964 merge push completed success (docs merges; no publish lane).
+- **PyPI still `1.110.0`** — these were docs merges only; product version unchanged.
+
+### Task 2A W4 — in progress (NOT GREEN)
+
+- Local branch `task2a-round60-red` (**NOT pushed**).
+- Path: Sol R1 `FIX-FIRST` → repairs → Sol R2 `FIX-FIRST`.
+- Cleared HIGH **#4** and **#6**; **6 HIGH remain**.
+- **Do NOT claim GREEN.** No Sol exact-byte `SHIP`, no authorized Windows CI green phase.
+
+### Explicit STOP unchanged
+
+F5 / F6 / F8 / MCP / #169 / `CEO_GATED` — unchanged. Do not reopen or reclassify from this
+receipt.
+
+### Findings (session)
+
+1. **First-pass HIGH1–10 repairs were vacuous vs Sol** — local “fixed” marks did not survive
+   Sol re-audit; treat implementer-self-GREEN as non-evidence.
+2. **Production-path oracles required** — scaffold / helper-only controls do not discriminate
+   the defects Sol scores; oracles must exercise the real production path.
+3. **Worktree `gitdir` WSL path breaks Windows git** — a worktree whose `.git` gitdir points
+   at a WSL path is unusable from Windows `git`; create/manage Windows worktrees with
+   Windows git only.
+
+See also: `docs/audits/2026-08-06-enterprise-closeout-campaign-state.md`.
+
+---
+
 ## ⭐ EXTERNAL DOGFOOD — v1.108.2 on gotcontext-saddle (2026-08-05)
 
 Second external run on the same host, seven releases on from the 2026-08-02 one below. **Verdict:
@@ -706,7 +926,7 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 | reported | disposition | receipt |
 |---|---|---|
 | **Parent-refuse class is generic `scan_limit`** — wants `workspace_root_refused` so agents do not confuse a refusal with file-cap truncation | **SHIPPED** — PR **#956** (merged 2026-08-06) | `_emit_broad_scan_refusal` gained `incomplete_reason_class`/`error_code` params; workspace guard emits `workspace_root_refused` for both. Dogfood on `C:\dev\projects` against main: exit 2 + class/code pair. Other ceilings keep `scan_limit`/`broad_scan_refused`. |
-| **Caller-graph parity for Java/C#/C/C++/PHP** | **IN FLIGHT** — F7 Task 11 waves 1–2 shipped | Java **#950**, PHP **#952**, C# **#955** merged. Wave 3 C/C++ open as **#957**. Sized by parsed C# re-measure in **#951**. |
+| **Caller-graph parity for Java/C#/C/C++/PHP** | **SHIPPED** — F7 Task 11 waves 1–3 | Java **#950**, PHP **#952**, C# **#955**, C/C++ **#957** merged. Sized by parsed C# re-measure in **#951**. |
 | **Ship or forever-drop MaxSim** | **RETIRED** — F10 DROP receipt in **#953** | Caller/installability census + decisive negative on golden set; MaxSim reachable only via undocumented `TG_LATE_RERANK=1`. DD-004 RETIRED in the same PR. |
 | Bare search exits 1, not 2 | **BY DESIGN — already retired as #22** | contract: exit 0 = complete with matches, exit 1 = complete with NO match, exit 2 = incomplete. The request (exit 2 + `missing_explicit_path`) is a CONTRACT CHANGE, not a bug fix — it would make "searched correctly, found nothing" indistinguishable from "could not search". Reopening needs an argument against that collapse. |
 | Anonymous `--claim` still allowed (hint only) | **BY DESIGN — already retired as F2** | legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan. |
@@ -714,8 +934,9 @@ agreement details; ledger Slice 1 + Slice 2; `evidence emit/verify` (`checks.dig
 | No fail-closed `edit-ready` / `verify-edit` / `workspace` | **BLOCKED, not missed** | F5 Steps 3-5 and F8 Tasks 12-13 modify `rust_core/**` and `tests/e2e/**`; cargo and the e2e routing suite are forbidden on this shared box. Needs CI or a cloud seat. |
 
 **Two of seven "new features" were already built or already answered**, which is the value of running
-the triage rather than queueing the report verbatim: caller-graph parity is mid-campaign, and MaxSim
-has a measured negative sitting behind it. Queueing all seven would have re-litigated settled work.
+the triage rather than queueing the report verbatim: caller-graph parity later closed via F7 Task 11
+waves 1–3, and MaxSim has a measured negative sitting behind it. Queueing all seven would have
+re-litigated settled work.
 
 ## ⭐ EXTERNAL DOGFOOD — v1.101.31 on gotcontext-saddle (2026-08-02)
 

@@ -51,7 +51,12 @@ KNOWN_DISCARD_SITES: dict[str, int] = {
     # PR that fixed them: the ratchet's own failure message is explicit that leaving the number
     # high "would let a future regression slip back in unnoticed" -- a ratchet that is not
     # re-tightened after a fix has no teeth for the sites that remain.
-    "backend_cpu.rs": 4,
+    # 4 -> 0: audit-H1 fix (`backend_cpu.rs` search_with_paths + count paths) replaced the
+    # `filter_map(|e| e.ok())` walk idiom with `collect::<Result<Vec<_>,_>>()?`, so every walk
+    # error now propagates (rust_backend.py -> BackendExecutionError -> visible CPU fallback)
+    # instead of silently dropping entries. Lowered here in the SAME PR -- a ratchet that is
+    # not re-tightened after a fix has no teeth for the sites that remain.
+    "backend_cpu.rs": 0,
     "index.rs": 1,
 }
 

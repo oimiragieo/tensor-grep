@@ -143,6 +143,10 @@ family is MIRRORED — see `AGENTS.md`; adding a form is a two-file edit.)
 
 - A `--sign` no-key RED that only pops `TG_EVIDENCE_SIGNING_KEY` is **split from the default key
   path** (AGENTS.md **A70**) — same family as Form 8 / ambient-fixture pollution.
+  **Merge/poller twin (A77):** a `gh pr checks` pipe into a stdin-eating heredoc can empty the checklist
+  and read as ALL_TERMINAL while jobs are still pending — write checks to a file and require heavy
+  lanes present by name. **Quota twin (A78):** usage-limit seat errors are FAILED seats, not pending
+  Sol SHIP. **Status-stamp twin (A79):** READY→BLOCKED stamps must retarget tracker pins in the same PR.
 - A TASK_BOARD “campaign note” under the canonical index is not documentation; it is a **malformed
   row** to the tracker parser (**A71**).
 - Bare-wheel dogfood without semantic extras cannot grade `tg find` (**A73**).
@@ -341,6 +345,27 @@ Windows ACL specifics learned the hard way (#281):
   reported and acted upon -- the artifact reachable by nobody. Land it in the same turn you consume
   its conclusions. Same class: reconcile the board AT completion, never "next cycle" -- staleness
   accrues exactly one deferral at a time.
+
+### A89 — the REAL-ARTIFACT parity arm (2026-08-08/09, M17 wave)
+
+A parity test whose "real" arm is FAKE-BACKED (a stub producer standing in for the shipped binary,
+a `range.byteOffset` field never emitted by any real backend) makes three arms agree on the bug
+itself: the schema test, the fake-backer, and the product all "confirm" the shape that the real
+artifact would have broken. The M16/M17 receipts (A89, 2026-08-08) are this family applied to
+oracle INPUTS: when the real producer is cheap to invoke, ADD A REAL `ast-grep --json` subprocess
+arm (or equivalent real-binary arm) — a fake-backed arm is a hypothesis about what the producer
+does, not a measurement. Rule: every parity claim names WHICH producer backed each arm
+(`fake-backed` vs `real-artifact`); a suite whose arms are all fake-backed proves only that its
+fakes agree with each other.
+
+### A87 — static review is not a typecheck (2026-08-08/09, receipts #987/#988)
+
+Two Rust PRs passed codex static audits and failed the FIRST real compile — #988 survived three
+audit rounds then hit E0599/E0308/E0382; #987's regression surfaced only on the full matrix (its
+author's self-gate never ran `tests/unit/test_backend_bug_fixes.py`). Rules: for Rust, "static SHIP"
+is `SHIP-PROVISIONAL` until the first CI compile of the head SHA completes (the first compile IS the
+typecheck gate); a self-gate's suite selection is a hypothesis until the matrix runs — state which
+suites ran and which were skipped alongside any self-verified result.
 
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 

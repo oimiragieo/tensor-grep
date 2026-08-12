@@ -1,31 +1,65 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-06
+Last updated: 2026-08-11
 
 ## Current Release State
 
-release_docs_current_tag: v1.110.0
+release_docs_current_tag: v1.110.14
 
-- Latest tagged version: `v1.110.0`
-- Latest complete PyPI version: `v1.110.0`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.0>
+- Latest tagged version: `v1.110.14`
+- Latest complete PyPI version: `v1.110.14`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.14>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-06.2
-
-- Public product: `v1.110.0`. CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
-- Closed-world: 28 rows / **17 unfinished** = 6 READY, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED
-  (7 SHIPPED + 4 RETIRED terminal). F7 / CPU-BACKEND / REF-CALL-REGISTRY closed SHIPPED this reconcile.
+Canonical status index version: 2026-08-11.1
+- Public product: `v1.110.14` (2026-08-11). Since the 2026-08-10 snapshot: v1.110.11 (M16 #987
+  composite/severity), v1.110.12 (M17 #988 index root/format), v1.110.13 (A90 #997 unknown-command
+  fail-closed), v1.110.14 (doctor #1000 PATH honesty: pypi_latest/installed_behind_pypi/
+  shadow_launchers/installation_health), plus audit fixes H2/M1/M3/M14 (#977-#985) and spend-smart CI
+  (#977). World-class roadmap approved: `docs/plans/2026-08-09-worldclass-roadmap.md`
+  (council-amended; edit-control-plane thesis, H1 + S1-S7 spine).
+- Skill-library evolution waves: #1001 (audit of all skills: 21 stale stamps + 7 tier contradictions
+  fixed; new release-drift-check skill; A94-A96) and #1002 (coverage-gap analysis; new
+  worldclass-roadmap skill; five existing skills extended). All post-merge verified (A29).
+- CEO packet: `docs/audits/2026-08-11-ceo-backlog-update.md` (live).
+- In-PR: #966 (Task 2A parked, RED by design). No release in flight.
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
   local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
 - #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.
 - Enterprise CUJ locked (#958) and dogfooded on published wheel (#962).
-- New agent laws A70–A76 (ambient signing-key pollution; canonical-index free-form ban; tracker
-  closeout debt; bare-wheel find; quota substitute SHIP; premise-check queue; ordinal freshness).
-- The closeout campaign remains **Tasks 3–15** (edit/verify/workspace/MCP disclosure and gated
+- Closeout campaign remains **Tasks 3–15** (edit/verify/workspace/MCP disclosure and gated
   follow-ons); Task 2A security RED stays blocked ahead of #89/#90 product GREEN.
+- New agent laws A70–A76 (ambient signing; canonical-index ban; closeout debt; bare-wheel; quota
+  SHIP; premise-check; ordinal freshness), A83–A89 (argv-rewrite shadow; cross-platform path gate;
+  env-independent gated tests; stale-ready labels; static-review≠typecheck; dogfood fixture-bites;
+  real-artifact parity arms), A90–A93 (unknown-command fail-closed; Python-slice≠native-touch;
+  escrowed evidence; self-dogfood≠demand + premise-check plans), A94–A96 (skill stamps rot —
+  release-drift-check sweep; a "verified correct" count note is a contract site; non-ASCII defeats
+  byte-exact edits).
 
 ## Historical Milestones
+
+**2026-08-11 skill-library audit + freshness mechanism (v1.110.14):** a full 3-wave parallel-agent audit
+of all 33 in-repo `.claude/skills/*/SKILL.md` files found the library stale ONE release after the last
+refresh: 21 version-stamp mismatches (stamps below the v1.110.14 current tag), 7 language-tier
+contradictions (foundational-vs-parser-backed claims surviving the C/C++ promotion to parser-backed,
+now 10/0 — verified via `repo_map._symbol_navigation_descriptor()`), 2 stale state facts (M17
+index-fingerprint claim, doctor schema), and 1 dangling prose contradiction. Fix discipline: mechanical
+stamp bumps via generated edit scripts; append-only dated SUPERSEDED blocks (never silent rewrites) for
+tier claims in `code-search-and-retrieval-reference` and `tensor-grep-add-language`; doctor schema-3
+fields (`pypi_latest`/`installed_behind_pypi`/`shadow_launchers`/`installation_health`, `TG_DOCTOR_OFFLINE`)
+added to `tensor-grep-config-and-flags` + `tensor-grep-diagnostics-and-tooling`; the `**32 skills**` index
+count re-derived and raised to 33 in both AGENTS.md and CLAUDE.md (with a new folder). Standing mechanism
+created: the `tensor-grep-release-drift-check` skill — a mechanical post-release governance sweep (version
+stamps vs current tag, derived counts via the product, known-state facts, SUPERSEDED fix discipline),
+deliberately NOT a pytest gate (numbers drift; a hard gate would red every PR), registered as the 21st
+entry in `.claude/skill_rules.json`. A-laws **A94–A96** captured (stamp rot is a maintenance sweep; a
+"verified correct" note is part of the contract it guards; non-ASCII punctuation defeats byte-exact
+`edit`-tool matches — splice by line index from a python script). Full ledger:
+`docs/audits/2026-08-11-skill-audit-findings.md`; ground truth:
+`docs/audits/2026-08-11-skill-audit-facts.md`.
+
+**2026-08-11 coverage wave (v1.110.14, follow-up to #1001):** a post-merge coverage audit of the re-synced 34-skill library vs the 24h A83-A96/M16/M17/doctor-3/world-class wave found 6 gaps: A87 (static SHIP is provisional until first CI compile), A89 (real-artifact parity arms), A92 (escrowed verify-edit evidence, principal-doesn't-hold key), A96 (non-ASCII defeats byte-exact edits), M16 (Rust scan must not drop composite rules/custom severity), and the world-class roadmap itself. All five lesson-gaps folded into existing skills (codex-gated-audit-loop, validation-and-qa, enterprise-review-bundle, docs-and-writing, research-methodology, release-drift-check); the partial A93/A95 halves closed in research-methodology + release-drift-check. **New skill created (Exa-grounded): `tensor-grep-worldclass-roadmap`** -- the S1-S7 edit-control-plane spine (S1 escrowed verify-edit contract, $1 both-front-door obligations, gate sequence), grounded in Occasio OIDC attestation, AET evidence-freshness, and Anthropic harness papers. Index 33 -> 34 in both docs; skill_rules.json 22 entries; tg-skill-audit workflow 35/35 folders. Governance gates 16/16 green.
 
 **Historical shipped milestones (the v1.45.x line — 2026-07-07):** a correctness + agent-trust cluster from a multi-model (Fable-designed, Sonnet-built, verified-in-real-venv) audit blitz. `tg callers --provider lsp` now unions native and LSP callers instead of masking one behind the other (H1); the `tg agent` confidence signal reflects graph corroboration (T2) and the flagship command honors the exit-2-on-scan-truncation contract, so a `--max-repo-files`-capped scan can no longer emit a confident capsule at exit 0 (1D); StringZilla honors `--invert-match` and `--max-count` (H5/H6); an apply-policy phantom-rollback fix plus a self-healing index-lock and atomic-write/retention hardening (reliability H8/H9/M6/M8); the MCP surface received the same walk-deadline and refusal guards as the CLI (H3/H4); the Rust bridge passes ripgrep args by keyword to prevent silent flag-scrambling (R1); `merge_runtime_routing` surfaces mixed-backend routing instead of reporting only the last engine used (M9); and `tg search --count` / `-l` recover partial results on a subprocess timeout instead of hard-crashing (L7). The number-one product-latency fix landed as a parse-product cache: one tree-sitter parse per (path, mtime) shared across the symbol, reference, and caller extractors, golden-parity-locked (the oracle suites pass byte-identical) and measured at roughly -25% cold render / -45% parse time on this repo, larger on TypeScript-heavy trees (PERF). A 2026-07-07 competitive analysis (codanna, Gortex, Serena, Sourcegraph) plus a dogfood of the cross-tool caller-graph edge cases confirmed tensor-grep's name-based `tg callers` has stronger recall than resolved-edge rivals (it catches module-alias and virtual-dispatch call sites they miss and would otherwise mark as dead code) while carrying the mirror precision gap (a same-named local function's calls can be over-attributed to the queried symbol); the recall-preserving three-tier resolution-confidence fix is designed and queued (C-EDGE-1).
 
@@ -48,8 +82,8 @@ Canonical status index version: 2026-08-06.2
 - Previous CodeQL proof run `26064676072`: passed on the `v1.12.32` release line
 - Previous CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.110.0 tg --version` reports `tensor-grep 1.110.0`
-- GitHub release assets: `v1.110.0` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.110.14 tg --version` reports `tensor-grep 1.110.14`
+- GitHub release assets: `v1.110.14` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
 - Closed v1.13.23 dogfood follow-up gap: PR #236 makes `tg repair-launcher` remove verified tensor-grep-owned Python Scripts entrypoints that shadow the managed native front door, preserves explicit `--allow-foreign-rename` for unrelated foreign launchers, and keeps help/docs aligned with that Windows launcher repair contract.
 - Closed v1.13.22 dogfood follow-up gap: PR #235 keeps Windows public launcher routes contract-equivalent for `tg run --diff`, bounds MCP `tg_search` with `query`, `max_results`, `max_files`, and `structured_json`, makes capsule validation tie resolution cite concrete `targeted-validation` evidence, gives literal `classify` inputs a clear file-path error, and keeps explicit `tg dogfood --output` writes beside the requested artifact.
 - Closed v1.13.21 dogfood follow-up gap: PR #233 restarts pre-existing session daemons after direct or scheduled Windows `tg upgrade` handoff loss and keeps successful LSP proof payloads from surfacing stale Pyright SRE mismatch tracebacks as current stderr; post-v1.13.21 dogfood should verify daemon handoff and LSP diagnostic quieting on public installs.

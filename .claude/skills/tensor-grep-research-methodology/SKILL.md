@@ -256,6 +256,16 @@ that earns or fails a pre-stated 2-week numeric gate before any ledger/claims la
 of this writing that build (`#456`) is **open, not merged to `main`** — cite it as an in-flight design
 pattern, not a shipped result (`git log --oneline origin/main | head` to re-check).
 
+**Self-dogfood is self-consistency, NOT demand (A93, 2026-08-09).** `tg dogfood` passing 22/22 on tg
+itself proves tg works for itself — it says nothing about external-customer demand for a roadmap
+item. The 2026-08-09 world-class council found 5 of 22 dogfood "FAIL" rows were bad oracles (self-
+triaged) and 2 of 8 "banked" roadmap claims were false until a ground-truth seat checked
+origin/main — the same premise-check law (A75) applied to a plan's own "already shipped" claims.
+Rules: (1) a self-dogfood PASS is evidence of internal consistency only; external grounding is a
+separate evidence class; (2) before a roadmap item enters a design council, premise-check its
+"shipped/banked" claims against origin/main, or the council certifies fiction (A93 receipt in
+`docs/plans/2026-08-09-worldclass-roadmap.md`).
+
 ### Worked example — a fresh default-OFF -> proven -> pending-flip lifecycle (`TG_FIND_DENSE_WEIGHT`, #189/#628/#630, 2026-07-16)
 
 A clean, in-progress instance of stages 2-3 (the "adopted" stage 5a has NOT fired yet — do not describe

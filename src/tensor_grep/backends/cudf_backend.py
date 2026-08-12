@@ -7,7 +7,7 @@ import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -321,7 +321,19 @@ class CuDFBackend(ComputeBackend):
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
-        result = self._search_uncapped(file_path, pattern, config)
+        # H6 audit (Backend Fail-Closed Contract): CuDFBackend was the only backend with ZERO
+        # BackendExecutionError raises -- a GPU OOM / driver / regex fault escaped raw, so the
+        # per-file CPU-fallback retry (`except BackendExecutionError`, cli/main.py) never fired
+        # and the user got an uncaught traceback instead of a visible CPU fallback. Wrap the
+        # engine entry so any real failure becomes BackendExecutionError (re-raising an already
+        # normalized one verbatim); the internal degrade ladder (zero-copy -> read_text ->
+        # chunked -> distributed) stays untouched.
+        try:
+            result = self._search_uncapped(file_path, pattern, config)
+        except BackendExecutionError:
+            raise
+        except Exception as exc:
+            raise BackendExecutionError(f"CuDFBackend failed: {exc}") from exc
         return self._cap_to_max_count(result, config)
 
     @staticmethod

@@ -210,10 +210,10 @@ language works for some commands and quietly does nothing for others):
 | # | Seam | Feeds | File | Verified anchor |
 |---|---|---|---|---|
 | 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | grep `def _imports_and_symbols_for_path` (was `:6244`, now `:6627`; branches `:6650-6679`) |
-| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` (was `:6440`, now `:6832`) — currently dispatches only python/javascript/typescript/rust/java; go/php/csharp fall through to `[]` here today (matches seam 5's exclusion below) |
+| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` (was `:6440`, now `:6832`) — dispatches ALL 10 as of the top-10 campaign's final waves (python/js/ts/rust/java inline; go/php/csharp/c/cpp via their `lang_*` module extractors, `repo_map.py:7089-7116`; the old "go/php/csharp fall through to `[]`" note predates the top-10 wave) |
 | 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | grep `def build_symbol_source_from_map` (was `:15815`, now `:16326` -- 511 lines adrift) |
 | 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | grep `def _target_language_for_path` (was `:7383`, now `:7867`) -- the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches, grep that phrase rather than trusting sub-line numbers; skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
-| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | grep `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (was `:16633`, now `:17148`) -- currently `{python, javascript, typescript, rust, java}`; go/php/csharp are deliberately excluded (their `import_update_target` is still `None`, a tracked follow-up), so those files get an honest `result_incomplete=True` instead of a silently-empty resolved-imports list |
+| 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | grep `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (was `:16633`, now `:17148`) — all 10 as of the top-10 campaign's final waves: `frozenset({python, javascript, typescript, rust, java, go, php, csharp, c, cpp})` (`repo_map.py:17530-17556`); go/php/csharp/c/cpp joined at the raw-imports tier — their deeper `import_update_target`/true `import-string -> target-file` resolution is still `None` (tracked follow-ups in `docs/BACKLOG.md`), so those files honestly report unresolved import edges instead of a fabricated resolved list |
 
 **Fail closed for a missing grammar.** Every language added since the registry existed
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
@@ -464,7 +464,7 @@ is self-attestation, not anti-replay evidence.
 paragraph/invariant. Preserve severity and final-vendor validation. A no-verdict seat is recorded as
 failed and replaced; it is never inferred as `SHIP` and need not stall all progress indefinitely.
 
-**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A69).** Behavioral RED pins the exact
+**RED and CI evidence must discriminate (2026-08-03, AGENTS A61–A82).** Behavioral RED pins the exact
 expected reason — crash, import, panic, and setup errors are not RED. Route/start evidence comes from
 the actual producer/constructor and test-owned OS/raw proof, never a hardcoded bool or a production
 hook that self-attests before start. Containment authenticates writer/client provenance and proves
@@ -478,6 +478,10 @@ Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw art
 population — no run is no clearance. Security green is point-in-time: a fresh fixable advisory blocks
 merge and is upgraded across every live direct/constraint floor, the lock, validator tests, and user
 remediation text before a new exact-head audit; never ignore a vulnerability with a fixed release.
+**A77–A82 (2026-08-06 PM):** never pipe `gh pr checks` into a stdin-eating heredoc (false ALL_TERMINAL);
+usage-limit seats are FAILED not pending; READY→BLOCKED stamps retarget governance pins in the same PR;
+gate tip bytes under review not archaeological RED SHAs; HIGH receipts ≠ Sol SHIP; AMEND_SPINE when
+board READY contradicts reconcile BLOCKED (START_NOW = docs/R0/D1 only).
 
 **Search twins and respect public boundaries.** After retiring a defect shape, grep sibling adapters and
 helpers for the same pattern; a zero-retry fix in `RustCoreBackend` did not protect two copies in
@@ -629,11 +633,11 @@ CI infers the semantic-release bump from the **PR title** (which becomes the squ
 | Title prefix | Effect |
 |---|---|
 | `feat: ...` | minor release |
-| `fix: ...` / `perf: ...` / `refactor: ...` | patch release |
+| `fix: ...` / `perf: ...` | patch release |
 | `feat!: ...` / `fix!: ...` | major release |
-| `docs:` / `test:` / `chore:` / `ci:` / `build:` | **no release** |
+| `docs:` / `test:` / `chore:` / `ci:` / `build:` / `refactor:` | **no release** |
 
-> **`refactor:` cuts a PATCH release** — a frequent surprise. The ground truth is `scripts/validate_pr_title_semver.py` (`_RELEASE_INTENTS`), NOT the prose table in `AGENTS.md` (which omits `refactor:`). If you title a cleanup PR `refactor:` expecting no release, you will ship a version. Re-verify: `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py`.
+> **`refactor:` publishes NOTHING (measured on PR #915, merged `3faf500`)** — a frequent surprise. Two authorities govern, and they disagree: `scripts/validate_pr_title_semver.py` (`_RELEASE_INTENTS`) ACCEPTS `refactor:` as patch-intent, but that script only gates the TITLE. The PUBLISHER, `[tool.semantic_release]` in `pyproject.toml`, sets no `commit_parser`/`patch_tags`, so the default angular parser applies and its patch types are `fix`/`perf` only. Measured on PR #915: Semantic Release logged *"No release will be made, 1.102.4 has already been released!"*, `publish-pypi` was skipped, and PyPI stayed at 1.102.4 — an unreleased `refactor:` ships with the next `fix:`/`feat:` merge. Re-verify BOTH authorities: `grep -A12 _RELEASE_INTENTS scripts/validate_pr_title_semver.py` (what the title gate accepts) and the `[tool.semantic_release]` block in `pyproject.toml` (what actually ships).
 
 - Use **Squash and merge** for release-bearing PRs so the validated title becomes the `main` subject.
 - **Do not manually create release tags** while semantic-release is active.

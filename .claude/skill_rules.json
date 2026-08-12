@@ -73,6 +73,41 @@
             "priority": "medium",
             "minKeywordHits": 1,
             "keywords": ["deadline", "hang", "large repo", "timeout", "scandir", "unscoped search", "workspace scale"]
+        },
+        "tensor-grep-codex-gated-audit-loop": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["codex-gated", "audit loop", "audit-fix", "adversarial gate", "re-audit", "FIX-BEFORE-MERGE"]
+        },
+        "tensor-grep-hermetic-hostile-tests": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["hermetic test", "hostile fixture", "fixture-BITES", "STILL VACUOUS", "env-independent", "fixture never applied", "mutation asserted-applied", "positive control"]
+        },
+        "tensor-grep-argv-normalization-and-shadowing": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["argv rewrite", "argv normalizer", "option-first", "flag shadowing", "CWE-88", "end-of-options", "-- sentinel", "shape-monotonic", "front-door rewrite"]
+        },
+        "tensor-grep-cross-platform-path-confinement": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["junction", "symlink", "drive-absolute", "reparse point", "path confinement", "within_root", "canonicalize", "opened identity", "mklink /J", "out-of-root", "CWE-59", "CWE-1386"]
+        },
+        "tensor-grep-index-fingerprint-freshness": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["index reuse", "staleness", "tree_fingerprint", "wrong tree", "stored root", "canonical_root_of", "mtime size", "fingerprint", "sample cap", "M17"]
+        },
+        "tensor-grep-release-drift-check": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["skill drift", "version stamp", "superseded", "stale stamp"]
+        },
+        "tensor-grep-worldclass-roadmap": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["edit-control plane", "verify-edit", "escrowed evidence", "edit tickets", "next_action", "why_ranked", "federated workspace", "S1-S7"]
         }
     }
 }

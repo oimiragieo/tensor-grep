@@ -693,3 +693,44 @@ class TestCuDFBackend:
         assert call_order.index("device_enter") < call_order.index("gpu_alloc"), (
             "device context must be entered before any cuDF GPU allocation"
         )
+
+
+class TestCuDFBackendFailClosed:
+    """H6 audit: engine failures MUST surface as BackendExecutionError so the per-file
+    CPU-fallback retry (`except BackendExecutionError`, cli/main.py) can fire -- a raw
+    GPU OOM/driver/regex fault must never escape as an uncaught traceback."""
+
+    def test_engine_failure_becomes_backend_execution_error(self, monkeypatch) -> None:
+        from tensor_grep.backends.base import BackendExecutionError
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        def _boom(*_args, **_kwargs) -> None:
+            raise RuntimeError("cudf CUDA out of memory")
+
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _boom)
+        with pytest.raises(BackendExecutionError) as excinfo:
+            CuDFBackend().search("a.log", "foo")
+        assert "cudf" in str(excinfo.value).lower() or "memory" in str(excinfo.value).lower()
+
+    def test_normal_result_untouched(self, monkeypatch) -> None:
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+        from tensor_grep.core.result import SearchResult
+
+        def _ok(*_args, **_kwargs) -> SearchResult:
+            return SearchResult(matches=[], total_files=0, total_matches=0)
+
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _ok)
+        result = CuDFBackend().search("a.log", "foo")
+        assert result.total_matches == 0
+
+    def test_backend_execution_error_re_raised_verbatim(self, monkeypatch) -> None:
+        from tensor_grep.backends.base import BackendExecutionError
+        from tensor_grep.backends.cudf_backend import CuDFBackend
+
+        def _raise(*_args, **_kwargs) -> None:
+            raise BackendExecutionError("engine-specific")
+
+        monkeypatch.setattr(CuDFBackend, "_search_uncapped", _raise)
+        with pytest.raises(BackendExecutionError) as excinfo:
+            CuDFBackend().search("a.log", "foo")
+        assert str(excinfo.value) == "engine-specific"

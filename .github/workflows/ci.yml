@@ -33,6 +33,24 @@ jobs:
       - name: Validate PR title for semantic release
         run: python scripts/validate_pr_title_semver.py
 
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.code.outputs.code }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+      - id: code
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests .github/workflows pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)
+          else
+            CODE_FILES="main-push"
+          fi
+          if [ -n "$CODE_FILES" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; else echo "code=false" >> "$GITHUB_OUTPUT"; fi
+
   repo-hygiene:
     name: repo-hygiene
     runs-on: ubuntu-latest
@@ -120,7 +138,8 @@ jobs:
 
   agent-readiness:
     name: agent-readiness
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -158,7 +177,8 @@ jobs:
 
   windows-agent-readiness:
     name: windows-agent-readiness
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -276,7 +296,8 @@ jobs:
 
   static-analysis:
     name: Formatting & Linting
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -359,7 +380,8 @@ jobs:
 
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -568,7 +590,8 @@ jobs:
 
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     # #145: nightly Rust is unstable by design (a wall-clock-timing test on this leg has blocked
     # the release gate 3x on wholly non-product flakes). Only the nightly leg is non-gating here --
@@ -584,6 +607,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust_channel: [stable, nightly]
+        # CI-cost discipline (thinktank-ratified): the macOS x nightly leg runs a
+        # non-gating signal (continue-on-error) at ~10x the Linux rate for zero release value.
+        # Nightly still runs on linux/windows every PR and all channels weekly via the cron.
+        exclude:
+          - os: macos-latest
+            rust_channel: nightly
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       
@@ -640,7 +669,8 @@ jobs:
   # build/test, no CUDA toolkit required) that runs on every PR so a break is caught immediately.
   cuda-feature-check:
     name: cuda-feature-check (${{ matrix.os }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -720,7 +750,8 @@ jobs:
 
   search-golden-parity:
     name: search-golden-parity (windows-latest)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -747,7 +778,8 @@ jobs:
 
   native-build-smoke:
     name: native-build-smoke (${{ matrix.os }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -1052,7 +1084,8 @@ jobs:
 
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1103,7 +1136,8 @@ jobs:
 
   benchmark-regression:
     name: benchmark-regression (ubuntu-latest)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -96,6 +96,12 @@ impl AstMatch {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AstCliMatch {
     pub line: usize,
+    /// Byte offset of the matched AST node's start (M16 F1: the union
+    /// dedupe identity for composite rules is the SPAN, so two distinct nodes
+    /// on the same line each count).
+    pub start_byte: usize,
+    /// Byte offset one past the matched AST node's end (see `start_byte`).
+    pub end_byte: usize,
     pub matched_text: String,
 }
 
@@ -851,8 +857,11 @@ impl AstBackend {
 
         for matched in ast.root().find_all(pattern.pattern.clone()) {
             let ls = line_starts.get_or_insert_with(|| build_line_starts(&source));
+            let byte_range = matched.range();
             matches.push(AstCliMatch {
-                line: line_number_for_byte(ls, matched.range().start),
+                line: line_number_for_byte(ls, byte_range.start),
+                start_byte: byte_range.start,
+                end_byte: byte_range.end,
                 matched_text: matched.text().to_string(),
             });
         }
@@ -868,6 +877,8 @@ impl AstBackend {
                 }) {
                     matches.push(AstCliMatch {
                         line: fallback_match.line,
+                        start_byte: fallback_match.candidate.byte_range.start,
+                        end_byte: fallback_match.candidate.byte_range.end,
                         matched_text: fallback_match.matched_text,
                     });
                 }

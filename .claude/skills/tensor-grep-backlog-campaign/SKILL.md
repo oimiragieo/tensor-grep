@@ -120,7 +120,7 @@ has told you to ask only about money.
     no-verdict seat is failed, not approval and not an infinite wait. Cursor/other economical model work
     remains a hypothesis until Sol validates the exact resulting bytes/prompt.
 
-    **RED/CI evidence rider (2026-08-03, AGENTS A61–A69):** behavioral RED pins the exact expected
+    **RED/CI evidence rider (2026-08-03, AGENTS A61–A82):** behavioral RED pins the exact expected
     reason — crash/import/panic/setup errors are not RED. Route/start evidence comes from the actual
     producer/constructor and test-owned OS/raw proof, never a hardcoded bool or production self-attest
     hook. Containment authenticates writer/client provenance and proves alive-before → dead-after plus
@@ -132,7 +132,10 @@ has told you to ask only about money.
     before the guard. Immutable-SHA CI clearance needs a real run, expected per-node outcomes, raw
     artifacts, and the exact population — no run is no clearance. Security green is point-in-time:
     a fresh fixable advisory blocks merge and is upgraded across all live floors, the lock, validators,
-    and remediation text before a new exact-head audit; never ignore a vulnerability with a fix.
+    and remediation text before a new exact-head audit — never ignored. **A77–A82 (2026-08-06 PM):**
+    file-based PR-check pollers (never stdin+heredoc empty→ALL_TERMINAL); usage-limit seats FAILED;
+    status-stamp PRs retarget governance pins; gate tip bytes not archaeological RED SHAs; HIGH
+    receipts ≠ Sol SHIP; AMEND_SPINE when READY∩reconcile-BLOCKED.
 
 12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.

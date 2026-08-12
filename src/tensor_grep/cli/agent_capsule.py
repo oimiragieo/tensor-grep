@@ -3367,6 +3367,15 @@ def build_agent_capsule_from_map(
             min(float(confidence["overall"]), _BEST_EFFORT_PRIMARY_MAX_CONFIDENCE), 3
         )
         _cap_primary_target_confidence(target, _BEST_EFFORT_PRIMARY_MAX_CONFIDENCE)
+    # H4 audit (1A, final reconciliation): `primary_target.confidence` must never exceed the
+    # FINAL `confidence.overall` AFTER every ladder AND the corroborated token-budget lift have
+    # run. The lift lowers a high-seeded target to `uplifted` via `_cap_primary_target_confidence`
+    # above, and every other gate here lowers -- so this closing pass covers the DOWNWARD-only
+    # ladders (empty-snippets / primary-omitted / token-budget) that lower `confidence.overall`
+    # without touching the target, which is the H4 "confident false zero" (a weak lexical hit
+    # still reported a 0.9 target confidence). Runs LAST so it never blocks a legitimate raise;
+    # `_cap_primary_target_confidence` is min-only and never raises.
+    _cap_primary_target_confidence(target, float(confidence["overall"]))
     # DAR (arxiv steal #4): runs AFTER call-site collection so it can dedupe against
     # `related_call_sites`, and deliberately does NOT touch `target`/`confidence`/`consistency`/
     # `ask_reasons` -- see `_collect_outbound_dependencies`'s fail-safe + budget-isolation

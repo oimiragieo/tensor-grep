@@ -93,7 +93,7 @@ _DEFAULT_SYMBOL_MAX_TESTS = 25
 _DOCTOR_LSP_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_WINDOWS_PROBE_TIMEOUT_SECONDS = 15.0
 _DOCTOR_LSP_PROBE_TIMEOUT_ENV = "TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS"
-_DOCTOR_SCHEMA_VERSION = 2
+_DOCTOR_SCHEMA_VERSION = 3
 _DOCTOR_LSP_SCHEMA_VERSION = 2
 _GUARDED_BROAD_SEARCH_ROOTS = {".claude", ".claude/context"}
 _BROAD_GENERATED_SCAN_DIR_NAMES = {
@@ -484,7 +484,13 @@ def _candidate_versions_from_pip_index(timeout_seconds: float) -> list[str]:
 
 
 def _latest_pypi_tensor_grep_version(timeout_seconds: float = 15.0) -> str | None:
-    """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface."""
+    """Best-effort latest-version probe that avoids trusting one stale PyPI cache surface.
+
+    `TG_DOCTOR_OFFLINE=1` short-circuits to None (a documented escape hatch: forces doctor's
+    freshness signal to 'unknown_pypi' instead of making a network call — used by tests and
+    genuinely-offline runs; it is NOT a silent 'clean', it disables the probe)."""
+    if os.environ.get("TG_DOCTOR_OFFLINE") == "1":
+        return None
     import urllib.request
 
     candidates: list[str] = []
@@ -2584,6 +2590,159 @@ def _doctor_rust_binary_remediation(
     return None
 
 
+def _doctor_version_tuple(version_text: str | None) -> tuple[int, ...] | None:
+    """Semantic version comparison key (A90 PATH-honesty). Strips a 'tg '/'tensor-grep '
+    prefix if present, then parses a PURE dotted-numeric release (`1.110.13` -> (1,110,13) so
+    1.110.9 < 1.110.10 numerically). STRICT by design (codex HIGH): ANY trailing/embedded
+    non-dotted-numeric content — `+dev`, `-rc1`, `rc1`, `.post1`, a `v` prefix — is REJECTED and
+    yields None, so a prerelease/local build is treated as UNVERIFIABLE (fail-closed), never
+    silently truncated into a stable-looking tuple. Returns None on any unparseable value;
+    callers MUST treat None as 'unverifiable', never as a confident comparison."""
+    if not version_text:
+        return None
+    stripped = version_text.strip()
+    for prefix in ("tensor-grep ", "tg "):
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
+            break
+    if not stripped:
+        return None
+    if not all(ch.isdigit() or ch == "." for ch in stripped):
+        return None
+    if stripped.startswith(".") or stripped.endswith(".") or ".." in stripped:
+        return None
+    if stripped.count(".") > 8:
+        return None
+    parts: list[int] = []
+    for segment in stripped.split("."):
+        if not segment:
+            return None
+        try:
+            parts.append(int(segment))
+        except ValueError:
+            return None
+    if len(parts) < 2:
+        # A single-segment "version" is not a real release tuple (e.g. "9", "0"); the harness
+        # always emits X.Y(.Z...) — treat short forms as unverifiable rather than comparable.
+        return None
+    return tuple(parts)
+
+
+def _doctor_version_compare(a: tuple[int, ...], b: tuple[int, ...]) -> int:
+    """PEP-440-style padded comparison: `1.0` equals `1.0.0` (missing trailing segments are 0).
+    Returns -1/0/1. Both tuples must already be valid (non-None)."""
+    width = max(len(a), len(b))
+    av = a + (0,) * (width - len(a))
+    bv = b + (0,) * (width - len(b))
+    if av < bv:
+        return -1
+    if av > bv:
+        return 1
+    return 0
+
+
+def _doctor_installed_behind_pypi(installed_version: str, pypi_latest: str | None) -> bool | None:
+    """Semantic `installed < pypi_latest` (padded: 1.0 == 1.0.0). None when either version is
+    unparseable OR pypi_latest is unavailable (probe failed) — never a confident False on an
+    unverifiable comparison (A90 plan REV 5, codex must-fix: no fallthrough to ok)."""
+    if pypi_latest is None:
+        return None
+    installed_t = _doctor_version_tuple(installed_version)
+    pypi_t = _doctor_version_tuple(pypi_latest)
+    if installed_t is None or pypi_t is None:
+        return None
+    return _doctor_version_compare(installed_t, pypi_t) < 0
+
+
+def _doctor_route_version_matches(installed_version: str, route_version: str | None) -> bool | None:
+    """Semantic twin for shadow_launchers[].version_matches (A90 codex HIGH): returns
+    - None when the route version is ABSENT (no route binary) or UNPARSEABLE (invalid) —
+      never a confident False on an invalid version;
+    - True when the padded semantic tuples are equal (1.0 == 1.0.0);
+    - False when they differ (e.g. a shadowed old 1.110.10 vs installed 1.110.13).
+    Does NOT reuse the substring matcher (which would call an invalid version a confident
+    mismatch and treat 1.0 != 1.0.0 as a mismatch)."""
+    if route_version is None:
+        return None
+    installed_t = _doctor_version_tuple(installed_version)
+    route_t = _doctor_version_tuple(route_version)
+    if installed_t is None or route_t is None:
+        return None
+    return _doctor_version_compare(installed_t, route_t) == 0
+
+
+_ROUTE_ORDER = {"path": 0, "fresh_shell_path": 1, "python_subprocess_path": 2}
+
+
+def _doctor_shadow_launchers(
+    routes: list[dict[str, str | bool | None]],
+) -> list[dict[str, str | bool | None]]:
+    """Consolidated list of launcher routes where the resolved tg is foreign, its version does
+    not match the installed wheel, or its version is unverifiable. A route is listed iff
+    `foreign OR version_matches is False OR version_matches is None`; the null contract == the
+    inclusion predicate (codex REV-4/5). ABSENT ROUTES are filtered out BEFORE the inclusion
+    predicate (a path=None route is NOT 'unparseable', it simply is not listed). Deterministic
+    order: path, fresh_shell_path, python_subprocess_path (codex REV-5 LOW, explicit rank)."""
+    listed: list[dict[str, str | bool | None]] = []
+    for entry in routes:
+        if not entry.get("path"):
+            continue
+        foreign = bool(entry.get("foreign"))
+        version_matches = entry.get("version_matches")
+        if foreign or version_matches is False or version_matches is None:
+            listed.append(entry)
+    listed.sort(key=lambda e: _ROUTE_ORDER.get(str(e.get("route", "")), 99))
+    return listed
+
+
+def _doctor_installation_health(
+    shadow_launchers: list[dict[str, str | bool | None]],
+    *,
+    installed_version: str,
+    installed_behind_pypi: bool | None,
+    pypi_unavailable: bool,
+    pypi_latest: str | None = None,
+) -> str:
+    """Aggregate installation health (A90 PATH-honesty). Precedence:
+    foreign_launcher > unverifiable_version > launcher_version_mismatch > stale_install >
+    unknown_pypi > ok. ANY unverifiable version (invalid installed, invalid pypi_latest, or
+    invalid present-route version) lands on unverifiable_version, never ok (codex must-fix
+    REV-4: an invalid NON-NULL pypi_latest must not fall through to ok — hence pypi_latest is
+    parsed here when provided)."""
+    if any(bool(entry.get("foreign")) for entry in shadow_launchers):
+        return "foreign_launcher"
+    if _doctor_version_tuple(installed_version) is None or _any_route_unverifiable(
+        shadow_launchers
+    ):
+        return "unverifiable_version"
+    if pypi_latest is not None and _doctor_version_tuple(pypi_latest) is None:
+        # An invalid NON-NULL pypi_latest: pypi_unavailable is False (the probe returned a
+        # value), but that value is unparseable — cannot certify freshness -> unverifiable.
+        return "unverifiable_version"
+    if any(entry.get("version_matches") is False for entry in shadow_launchers):
+        return "launcher_version_mismatch"
+    if installed_behind_pypi is True:
+        return "stale_install"
+    if pypi_unavailable:
+        return "unknown_pypi"
+    return "ok"
+
+
+def _any_route_unverifiable(
+    shadow_launchers: list[dict[str, str | bool | None]],
+) -> bool:
+    """True when any listed route carries an unparseable version (version_matches is None), or
+    the route's own raw version fails to parse. Used to force unverifiable_version when we
+    cannot certify health."""
+    for entry in shadow_launchers:
+        if entry.get("version_matches") is None:
+            return True
+        raw = str(entry.get("version") or "")
+        if raw and _doctor_version_tuple(raw) is None:
+            return True
+    return False
+
+
 def _doctor_rust_binary_warning(
     *,
     expected_version: str,
@@ -3593,6 +3752,55 @@ def _build_doctor_payload(
         "session_daemon": _doctor_session_daemon_status(str(root)),
         "dense_model": _doctor_dense_model_status(),
     }
+
+    # A90 PATH-honesty (docs/plans/2026-08-11-doctor-path-honesty.md): surface the resolved
+    # `tg`-vs-expected-wheel mismatch and the wheel-vs-PyPI drift as an aggregate health signal
+    # so a foreign 0.32.0 shadow or a stale install is UNMISSABLE, not just scattered booleans.
+    pypi_latest = _latest_pypi_tensor_grep_version()
+    payload["pypi_latest"] = pypi_latest
+    installed_behind_pypi = _doctor_installed_behind_pypi(installed_version, pypi_latest)
+    payload["installed_behind_pypi"] = installed_behind_pypi
+    route_entries = [
+        {
+            "route": "path",
+            "path": path_tg_first_path,
+            "version": path_tg_first_version,
+            "kind": path_tg_first_launcher_kind,
+            "foreign": path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, path_tg_first_version
+            ),
+        },
+        {
+            "route": "fresh_shell_path",
+            "path": fresh_shell_path_tg_first_path,
+            "version": fresh_shell_path_tg_first_version,
+            "kind": fresh_shell_path_tg_first_launcher_kind,
+            "foreign": fresh_shell_path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, fresh_shell_path_tg_first_version
+            ),
+        },
+        {
+            "route": "python_subprocess_path",
+            "path": python_subprocess_path_tg_first_path,
+            "version": python_subprocess_path_tg_first_version,
+            "kind": python_subprocess_path_tg_first_launcher_kind,
+            "foreign": python_subprocess_path_tg_first_launcher_kind == "foreign",
+            "version_matches": _doctor_route_version_matches(
+                installed_version, python_subprocess_path_tg_first_version
+            ),
+        },
+    ]
+    shadow_launchers = _doctor_shadow_launchers(route_entries)
+    payload["shadow_launchers"] = shadow_launchers
+    payload["installation_health"] = _doctor_installation_health(
+        shadow_launchers,
+        installed_version=installed_version,
+        installed_behind_pypi=installed_behind_pypi,
+        pypi_unavailable=pypi_latest is None,
+        pypi_latest=pypi_latest,
+    )
     if with_lsp:
         lsp_providers = _doctor_apply_lsp_missing_component_remediation(
             _doctor_apply_lsp_workspace_warnings(_doctor_lsp_provider_statuses(str(root)))
@@ -3629,6 +3837,33 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         f"invoked_as: {payload['invoked_as']}",
         f"root: {payload['root']}",
     ]
+    # A90 PATH-honesty: scream loudly when the aggregate installation health is not ok, so a
+    # foreign 0.32.0 shadow or a stale install can never be missed in human output. This line is
+    # human-only (never touches the --json envelope).
+    health = payload.get("installation_health")
+    if health and health != "ok":
+        lines.append(f"warning: installation_health={health}")
+        if health == "foreign_launcher" or health == "launcher_version_mismatch":
+            lines.append(
+                "  one or more resolved `tg` launchers are foreign or not the installed wheel "
+                "version (see shadow_launchers); pin the wheel: uvx --from "
+                f"tensor-grep=={payload['version']} tg ..."
+            )
+        elif health == "stale_install":
+            lines.append(
+                "  the installed wheel is behind the latest PyPI release "
+                f"(pypi_latest={payload.get('pypi_latest')}); run `tg upgrade`"
+            )
+        elif health == "unknown_pypi":
+            lines.append(
+                "  could not reach PyPI to verify freshness (offline?); install state is "
+                "unverified, not clean"
+            )
+        elif health == "unverifiable_version":
+            lines.append(
+                "  one or more versions could not be parsed; install state is unverifiable, "
+                "not clean"
+            )
     native_tg_binary = payload.get("native_tg_binary")
     lines.append(f"native_tg_binary: {native_tg_binary or 'missing'}")
     lines.append(f"native_tg_binary_kind: {payload.get('native_tg_binary_kind', 'unknown')}")
@@ -3977,10 +4212,38 @@ def _delegate_to_native_tg_search(
         config=config,
         ndjson=ndjson,
     )
-    # A62 / HIGH#9: observe only after the real producer process has started.
-    completed = subprocess.Popen(command)
+    # UNION (A22, 2026-08-12 merge of origin/main b6dc0a6 into task2a-round60-red):
+    # - main's H5 audit contract: bound the native-delegation subprocess the same way the
+    #   bootstrap passthrough twin does (bootstrap.py `_streaming_passthrough_returncode`) —
+    #   a hung native search must not hang the CLI forever, `TimeoutExpired` becomes a clean
+    #   exit 124 (coreutils convention), a spawn `OSError` becomes exit 2, never a traceback.
+    #   Pinned by tests/unit/test_native_delegation_timeout.py (fakes `subprocess.run`).
+    # - branch's A62 / HIGH#9 contract: `_emit_child_start` observes ONLY a really-started
+    #   producer — with `subprocess.run` the child has started (and finished) on the success
+    #   arm and had started on the timeout arm; it never started on the OSError arm, so the
+    #   hook must not fire there. No branch test pins Popen at this site, so run()-shape is
+    #   the zero-test-delta union.
+    from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
+
+    try:
+        completed = subprocess.run(
+            command, check=False, timeout=configured_ripgrep_timeout_seconds()
+        )
+    except subprocess.TimeoutExpired:
+        _emit_child_start("native", command)
+        sys.stderr.write(
+            "tensor-grep: native search exceeded the configured timeout and was stopped. For a "
+            "large repo, scope the search to a path (e.g. `tg search PATTERN src/`), or raise "
+            "TG_RG_TIMEOUT_SECONDS (or TG_SIDECAR_TIMEOUT_MS when set).\n"
+        )
+        return 124
+    except OSError as exc:
+        sys.stderr.write(
+            f"tensor-grep: could not start native search ({exc}); output cannot be trusted.\n"
+        )
+        return 2
     _emit_child_start("native", command)
-    return int(completed.wait())
+    return int(completed.returncode)
 
 
 def _collect_candidate_files(
@@ -5974,26 +6237,13 @@ def _load_sg_project_config(config_path: str | None) -> dict[str, object]:
     }
 
 
-def _extract_rule_pattern(rule_data: dict[str, object]) -> str | None:
-    direct = rule_data.get("pattern")
-    if isinstance(direct, str) and direct.strip():
-        return direct.strip()
-
-    rule_node = rule_data.get("rule")
-    if isinstance(rule_node, dict):
-        nested = rule_node.get("pattern")
-        if isinstance(nested, str) and nested.strip():
-            return nested.strip()
-
-    return None
-
-
 def _load_inline_rule_specs(
     inline_rules_text: str, *, default_language: str | None = None
 ) -> list[dict[str, str]]:
     import yaml
 
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflows import _extract_rule_member_patterns
 
     class _NoAliasSafeLoader(yaml.SafeLoader):
         """SafeLoader that REJECTS YAML aliases. Inline ast-grep rules never legitimately
@@ -6044,12 +6294,16 @@ def _load_inline_rule_specs(
             for rule_index, item in enumerate(raw_rules, start=1):
                 if not isinstance(item, dict):
                     continue
-                pattern = _extract_rule_pattern(item)
-                if not pattern:
+                # M16 F2: composite (multi-pattern any-of) rules are carried by
+                # the SAME member extraction the project-config path uses, so
+                # `--rule`/`--inline-rules` no longer silently drop rule.any /
+                # pattern-list members. pattern = FIRST member; patterns = ALL.
+                member_patterns = _extract_rule_member_patterns(item)
+                if not member_patterns:
                     continue
                 spec = {
                     "id": str(item.get("id") or f"inline-rule-{document_index}-{rule_index}"),
-                    "pattern": pattern,
+                    "pattern": member_patterns[0],
                     "language": normalize_ast_language(
                         item.get("language")
                         or payload.get("language")
@@ -6062,15 +6316,17 @@ def _load_inline_rule_specs(
                         spec[metadata_key] = str(item[metadata_key])
                     elif payload.get(metadata_key) is not None:
                         spec[metadata_key] = str(payload[metadata_key])
+                if len(member_patterns) > 1:
+                    spec["patterns"] = member_patterns  # type: ignore[assignment]
                 specs.append(spec)
             continue
 
-        pattern = _extract_rule_pattern(payload)
-        if not pattern:
+        member_patterns = _extract_rule_member_patterns(payload)
+        if not member_patterns:
             continue
         spec = {
             "id": str(payload.get("id") or f"inline-rule-{document_index}"),
-            "pattern": pattern,
+            "pattern": member_patterns[0],
             "language": normalize_ast_language(
                 str(payload.get("language") or default_language or "python")
             ),
@@ -6078,6 +6334,8 @@ def _load_inline_rule_specs(
         for metadata_key in ("severity", "message"):
             if payload.get(metadata_key) is not None:
                 spec[metadata_key] = str(payload[metadata_key])
+        if len(member_patterns) > 1:
+            spec["patterns"] = member_patterns  # type: ignore[assignment]
         specs.append(spec)
 
     return specs
@@ -6588,6 +6846,11 @@ def _run_ast_scan_payload(
     max_evidence_snippet_chars: int = 120,
 ) -> dict[str, object]:
     from tensor_grep.backends.ast_backend import normalize_ast_language
+    from tensor_grep.cli.ast_workflows import (
+        _match_node_identity,
+        _rule_member_patterns,
+        _select_ast_backend_for_rule,
+    )
     from tensor_grep.cli.scan_guardrails import ensure_scan_not_broad
     from tensor_grep.core.config import SearchConfig
     from tensor_grep.core.result import SearchResult
@@ -6708,7 +6971,10 @@ def _run_ast_scan_payload(
             regex_rules.append(rule)
             continue
         rule_cfg = replace(cfg, lang=rule["language"])
-        backend = _select_ast_backend_for_pattern(rule_cfg, rule["pattern"], backend_cache)
+        # M16 F3: rule-aware selection — a composite with non-native members
+        # must reach a backend that serves ALL members (or fail closed), never
+        # a backend selected from only the first member's shape.
+        backend = _select_ast_backend_for_rule(rule_cfg, rule, backend_cache)
         if (
             project_scan_fast_path
             and not scan_has_discovery_filter
@@ -6774,6 +7040,17 @@ def _run_ast_scan_payload(
         resolved_match_counts_by_file: dict[str, int] = {}
         resolved_snippets_by_file: dict[str, list[dict[str, object]]] = {}
         resolved_rule_occurrences: list[dict[str, object]] = []
+
+        # M16 F1: composite (multi-pattern any-of) rules scan EVERY member and
+        # count each matched AST NODE once across members, deduplicating by
+        # node SPAN via `_match_node_identity` (file, start_byte, end_byte; the
+        # same key the Rust scan core unions) — two distinct nodes on one line
+        # each count, matching whole-config ast-grep's per-node `any` count.
+        # Single-pattern rules keep the legacy per-node total accounting.
+        member_patterns = _rule_member_patterns(rule)
+        composite = len(member_patterns) > 1
+        resolved_identities: set[tuple[str, int, int]] = set()
+
         if type(backend).__name__ == "AstGrepWrapperBackend" and hasattr(backend, "search_many"):
             backend_scan_paths = (
                 _candidate_files_for_filtered_scan()
@@ -6781,34 +7058,45 @@ def _run_ast_scan_payload(
                 else resolved_scan_paths
             )
             if backend_scan_paths:
-                result = backend.search_many(backend_scan_paths, rule["pattern"], config=rule_cfg)
-                rule_matches = result.total_matches
-                resolved_matched_files.update(result.matched_file_paths)
-                for file_path, count in result.match_counts_by_file.items():
-                    resolved_match_counts_by_file[file_path] = (
-                        resolved_match_counts_by_file.get(file_path, 0) + count
+                rule_matches = 0
+                for member_pattern in member_patterns:
+                    result = backend.search_many(
+                        backend_scan_paths, member_pattern, config=rule_cfg
                     )
-                for match in result.matches:
-                    if match.file:
-                        resolved_match_counts_by_file[match.file] = (
-                            resolved_match_counts_by_file.get(match.file, 0) + 1
+                    if composite:
+                        resolved_identities.update(
+                            _match_node_identity(match) for match in result.matches if match.file
                         )
-                        resolved_rule_occurrences.append({
-                            "file": match.file,
-                            "line": match.line_number,
-                        })
-                        if (
-                            include_evidence_snippets
-                            and len(resolved_snippets_by_file.get(match.file, []))
-                            < max_evidence_snippets_per_file
-                        ):
-                            resolved_snippets_by_file.setdefault(match.file, []).append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
+                    else:
+                        rule_matches += result.total_matches
+                    resolved_matched_files.update(result.matched_file_paths)
+                    for file_path, count in result.match_counts_by_file.items():
+                        resolved_match_counts_by_file[file_path] = (
+                            resolved_match_counts_by_file.get(file_path, 0) + count
+                        )
+                    for match in result.matches:
+                        if match.file:
+                            resolved_match_counts_by_file[match.file] = (
+                                resolved_match_counts_by_file.get(match.file, 0) + 1
                             )
-                if not resolved_matched_files and result.total_files > 0:
-                    resolved_matched_files.update(
-                        match.file for match in result.matches if match.file
-                    )
+                            resolved_rule_occurrences.append({
+                                "file": match.file,
+                                "line": match.line_number,
+                            })
+                            if (
+                                include_evidence_snippets
+                                and len(resolved_snippets_by_file.get(match.file, []))
+                                < max_evidence_snippets_per_file
+                            ):
+                                resolved_snippets_by_file.setdefault(match.file, []).append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+                    if not resolved_matched_files and result.total_files > 0:
+                        resolved_matched_files.update(
+                            match.file for match in result.matches if match.file
+                        )
             else:
                 rule_matches = 0
         else:
@@ -6817,27 +7105,50 @@ def _run_ast_scan_payload(
             if resolved_candidate_files is None:
                 resolved_candidate_files, _ = _collect_candidate_files(scanner, resolved_scan_paths)
             rule_matches = 0
-            for current_file in resolved_candidate_files:
-                result = backend.search(current_file, rule["pattern"], config=rule_cfg)
-                rule_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    resolved_matched_files.add(current_file)
-                    resolved_match_counts_by_file[current_file] = (
-                        resolved_match_counts_by_file.get(current_file, 0) + result.total_matches
-                    )
-                    for match in result.matches:
-                        resolved_rule_occurrences.append({
-                            "file": match.file or current_file,
-                            "line": match.line_number,
-                        })
-                    if include_evidence_snippets:
-                        file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+            for member_pattern in member_patterns:
+                for current_file in resolved_candidate_files:
+                    result = backend.search(current_file, member_pattern, config=rule_cfg)
+                    if composite:
+                        resolved_identities.update(
+                            _match_node_identity(match, fallback_file=current_file)
+                            for match in result.matches
+                        )
+                    else:
+                        rule_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        resolved_matched_files.add(current_file)
+                        resolved_match_counts_by_file[current_file] = (
+                            resolved_match_counts_by_file.get(current_file, 0)
+                            + result.total_matches
+                        )
                         for match in result.matches:
-                            if len(file_snippets) >= max_evidence_snippets_per_file:
-                                break
-                            file_snippets.append(
-                                _truncate_evidence_snippet(match.text, max_evidence_snippet_chars)
-                            )
+                            resolved_rule_occurrences.append({
+                                "file": match.file or current_file,
+                                "line": match.line_number,
+                            })
+                        if include_evidence_snippets:
+                            file_snippets = resolved_snippets_by_file.setdefault(current_file, [])
+                            for match in result.matches:
+                                if len(file_snippets) >= max_evidence_snippets_per_file:
+                                    break
+                                file_snippets.append(
+                                    _truncate_evidence_snippet(
+                                        match.text, max_evidence_snippet_chars
+                                    )
+                                )
+
+        if composite:
+            # F1: count the span-union — never the summed multiset — and
+            # rebuild the per-file counts from the identities so no member
+            # overlap double-counts. Occurrences were appended per member above
+            # (file, line) and are deduplicated downstream in `_append_finding`.
+            rule_matches = len(resolved_identities)
+            resolved_match_counts_by_file = {}
+            for file_path, _start_byte, _end_byte in resolved_identities:
+                resolved_match_counts_by_file[file_path] = (
+                    resolved_match_counts_by_file.get(file_path, 0) + 1
+                )
+
         _append_finding(
             rule=rule,
             rule_matches=rule_matches,
@@ -8070,6 +8381,45 @@ def search_command(
                 "and the bundled fallback). Install ripgrep "
                 "(https://github.com/BurntSushi/ripgrep#installation), set TG_RG_PATH, "
                 "or use --count (-c) for a line count that works without rg."
+            ),
+            json_mode=json,
+        )
+    # P5·H2 (audit verdict / codex Finding 1): `-l`/`--files-with-matches`/`--files-without-match`
+    # are RAW PATH-OUTPUT modes. The tensor-grep aggregate `--json`/`--ndjson` envelope has no
+    # place for a bare path list, and the files emitters below (main.py ~the `if files_with_matches:`
+    # / `if files_without_match:` blocks) would print plain paths with exit 0 while the caller asked
+    # for structured output -- the JSON contract silently dropped (verified live:
+    # `tg search --json -l PAT DIR` emits the path, exit 0). Fail closed, mirroring the native
+    # `exit_native_structured_flag_dropped` refusal (rust_core/src/main.rs) and the
+    # `count_matches_requires_ripgrep` refusal above (same `_exit_search_error` contract).
+    # `--format rg --json` (rg passthrough) is deliberately excluded: `_can_passthrough_rg` returns
+    # False for files + rg_json_passthrough, so that route never reaches these emitters as an
+    # additive same-JSON contract issue (its raw-paths behavior is pre-existing and tracked
+    # separately). The exemption REQUIRES `not ndjson`: `--ndjson` has no rg-passthrough twin
+    # (rg's `--json` events are not the tensor-grep ndjson schema), so `--json --ndjson --format rg
+    # -l` must still refuse rather than drop the ndjson contract (codex round-3 finding). Plain
+    # `-l`/`--files-with-matches` WITHOUT --json/--ndjson keeps working (it
+    # routes to rg passthrough below; pinned by test_cli_modes.py::test_files_with_matches_*).
+    if (
+        (json or ndjson)
+        and not (json and explicit_rg_format and not ndjson)
+        and (files_with_matches or files_without_match)
+    ):
+        flag_list = ", ".join(
+            spelling
+            for present, spelling in (
+                (files_with_matches, "-l/--files-with-matches"),
+                (files_without_match, "--files-without-match"),
+            )
+            if present
+        )
+        _exit_search_error(
+            "unsupported_flag",
+            (
+                f"{flag_list} is a raw path-output mode that cannot be expressed inside the "
+                "tensor-grep aggregate --json/--ndjson envelope and would be silently dropped; "
+                f"refusing rather than silently ignoring it. Drop --json/--ndjson (or {flag_list}) "
+                "to get the raw path list."
             ),
             json_mode=json,
         )

@@ -1,6 +1,1417 @@
 # CHANGELOG
 
 
+## v1.110.14 (2026-08-11)
+
+### Bug Fixes
+
+- **doctor**: Surface pypi_latest + shadow launchers + installation health (PATH honesty)
+  ([#1000](https://github.com/oimiragieo/tensor-grep/pull/1000),
+  [`e69d82c`](https://github.com/oimiragieo/tensor-grep/commit/e69d82c9ebbe451d18389b0970fd6695f0658109))
+
+* fix(doctor): close codex audit findings — semantic versions, absent routes, route order
+
+Folds all 5 codex findings + the plan REV-6 PEP-440-prefix amendment:
+
+- HIGH: invalid NON-NULL pypi_latest now lands on unverifiable_version (health parses pypi_latest),
+  never a wrong confident ok. - HIGH: shadow_launchers[].version_matches is now SEMANTIC (strict
+  padded dotted-numeric: 1.0 == 1.0.0; invalid route version -> None, never a confident False via
+  the substring matcher). - HIGH: _doctor_version_tuple is STRICT — any suffix (1.110.13rc1, +dev,
+  1!2.0.0), leading/ trailing dot, "..", or single segment returns None (unverifiable, fail-closed),
+  never silently truncated into a stable tuple. Deliberate PEP-440-prefix deviation documented in
+  the plan REV 6 with a reopen trigger (tg's release line emits only clean X.Y.Z; full PEP 440 would
+  require declaring the `packaging` transitive dep and churn ~260 uv.lock lines). - MEDIUM: absent
+  routes (path=None) filtered BEFORE the inclusion predicate (absent != unparseable). - LOW:
+  deterministic spec route order path/fresh_shell_path/python_subprocess_path via explicit
+  _ROUTE_ORDER rank (was alphabetical). - installed_behind_pypi computed independently of route
+  versions (junk route must not nullify installed-vs-pypi), pinned by test.
+
+13 new doctor tests (70 doctor tests, 547 total in test_cli_modes); ruff/mypy/format clean.
+
+* test(doctor): codex R3 LOWs — stale packaging comment + full REV-6 rejection pins
+
+- Drop the stale 'packaging compares numerically' comment (no dependency; strict padded
+  dotted-numeric tuple parser per plan REV 6). - Pin the documented rejection contract: +dev, rc1,
+  .dev0, +local, epoch (1!2.0.0), v-prefix all -> None (unverifiable), not truncated.
+
+### Documentation
+
+- **skills**: Dogfood refresh for tg 1.110.13 (A90)
+  ([#999](https://github.com/oimiragieo/tensor-grep/pull/999),
+  [`a125e1a`](https://github.com/oimiragieo/tensor-grep/commit/a125e1afed7c3313e2ff4d525c6d6052de3ca97c))
+
+Stamp fail-closed unknown_command for reserved Phase-2 names; CUJ 21/21 on Windows uvx.
+
+
+## v1.110.13 (2026-08-11)
+
+### Bug Fixes
+
+- **cli**: Fail closed on unknown flag-bearing top-level commands (A90)
+  ([#997](https://github.com/oimiragieo/tensor-grep/pull/997),
+  [`baef00b`](https://github.com/oimiragieo/tensor-grep/commit/baef00b28322680cbd1ba6cf681d1316444cab27))
+
+* fix(cli): fail closed on unknown flag-bearing top-level commands (A90)
+
+An unknown top-level command (tg edit-ready, tg verify-edit) fell through to search on both front
+  doors: --help printed search help exit 0 (an agent could conclude the nonexistent command exists),
+  and flag-bearing unknowns (--json) became search patterns. This is world-class blocker #1 (roadmap
+  H1).
+
+Fix (council-approved ARM A, REV 4): - commands.py: RESERVED_TOP_LEVEL_COMMANDS = {edit-ready,
+  verify-edit, workspace}, lifecycle-invariant with KNOWN_COMMANDS (disjoint,
+  remove-on-registration). - Python door (bootstrap.py): _top_level_command_refusal detects
+  reserved+flag and unknown+--help shapes; main_entry renders stderr-only exit-2 (human for --help,
+  single JSON unknown_command + nearest on stderr for --json; help wins on conflict). stdlib json
+  stays FUNCTION-LOCAL (F2.5 fast-path import contract). - Native door (main.rs):
+  scoped_python_set_member parses KNOWN_COMMANDS / RESERVED_TOP_LEVEL_COMMANDS blocks independently
+  (the old unscoped include_str parser leaked reserved names into 'known' and could never refuse
+  them); same refusal predicate + nearest_commands + stderr render, exit 2. - Bare tg PATTERN /
+  PATTERN PATH / unreserved pattern+flag and reserved+positional (no flag) all STAY search -- pinned
+  both doors. Escape hatch: tg search workspace --json. - parity matrix (12 rows x 3 launchers) +
+  native unit tests + Python unit tests (nearest bounded/deterministic; reserved/known disjoint;
+  registry lifecycle).
+
+* fix(cli): address codex A90 implementation audit (CRITICAL/HIGH/MEDIUM)
+
+- CRITICAL: native refusal block was nested inside the raw_args.len()<=1 branch (unreachable for any
+  command-bearing invocation); moved it after the no-argument help branch and before
+  version/help/search dispatch. - HIGH: nearest_commands extracted members via ends_with(quote)
+  which every trailing-comma KNOWN_COMMANDS entry fails ("agent",); replaced with a single
+  quote/escape-aware, brace-depth scoped member extractor (python_set_members) shared by
+  known/reserved membership and nearest. - MEDIUM: scoped parser was not comment/string aware (a
+  hash inside a string, or braces inside strings, mis-parsed); the new extractor tokenizes properly.
+  - MEDIUM: nearest[] now enforces a genuine Levenshtein edit distance <= 3 in BOTH doors (not
+  length-diff + ratio), deterministically identical (parity-pinned); honest empty [] for distant
+  tokens like edit-ready (no registered command is within 3 edits). - MEDIUM: e2e parity test no
+  longer compares a value to itself; pins EXACT nearest via the human "did you mean" line
+  (searhc->search, distant->[]) and asserts cross-launcher identical structured refusals. - Python
+  door nearest mirrored with _levenshtein (Wagner-Fischer), function-local json import preserved
+  (F2.5 fast-path contract).
+
+* fix(cli): codex R2 audit fixes — collection + escape decode + exact help parity
+
+- HIGH: e2e parametrize name _unused mismatched the signature's expected_nearest, so the full A90
+  matrix never collected; renamed to expected_nearest (14 rows now collect). - MEDIUM: Rust scoped
+  set scanner now DECODES the escapes that can appear inside a double-quoted Python string member
+  (\" and \\\\ -> bare char); any other escape is copied verbatim, matching Python's decoding for
+  identifier-shaped members. Structure pin added: every parsed member must be a clean identifier (no
+  backslash/quote/trailing comma/__ leak). - MEDIUM: help-form nearest parity is now EXACT — the
+  full 'did you mean' list is parsed and compared for equality to the expected pins
+  (searhc->[search], distant->[]), and identical across all launchers, not a substring assert.
+
+* fix(cli): codex R3 audit fixes — __ membership retention + dash-first parity
+
+- HIGH: python_set_members no longer drops __-prefixed internal commands at EXTRACTION (__gpu-* are
+  legitimate KNOWN_COMMANDS members whose hidden-command dispatch must keep working); the __ filter
+  now lives only in nearest_commands (hide from suggestions, not from membership). Bidirectional pin
+  added: is_known_python_command("__gpu-native-stats") true, members contains it, nearest excludes
+  it. - MEDIUM: Python _top_level_command_refusal now exempts ALL dash-first first args
+  (first_arg.startswith('-')), mirroring the native door so 'tg --bogus --help' routes identically
+  (never an unknown-command refusal); added as a cross-launcher parity row.
+
+* docs(routing): document the A90 unknown-command dispatch contract
+
+* fix(cli): clippy doc-lazy-continuation + while-let-on-iterator in A90 native code
+
+* test(cli): fix A90 parity matrix — use parity_env paths + assert refusal-shape absence
+
+- Rows used sample.txt/docs/ which parity_env does not create; path_not_found is a LEGIT search
+  error (exit 2), so the 'search must not exit 2' assertion was wrong. Rows now use parity_env's
+  real target.txt. - Not-refusal assertion checks the unknown_command REFUSAL SHAPE is absent on
+  both streams (a legit search error at exit 2 is fine), instead of exit-code != 2. - Removed the
+  redundant returncodes accumulator.
+
+* test(cli): qqq --help nearest pin — it IS close to lsp/map/mcp/new/run
+
+The 'omit suggestion for distant tokens' assertion was wrong for qqq: it is within Levenshtein 3 of
+  lsp/map/mcp/new/run (genuine typo-adjacent commands), so the honest suggestion list is
+  ['lsp','map','mcp','new','run']. Pinned exactly.
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.110.12 (M16/M17 drain + A90 in flight)
+  ([#998](https://github.com/oimiragieo/tensor-grep/pull/998),
+  [`644c2a7`](https://github.com/oimiragieo/tensor-grep/commit/644c2a70fb442397fb800d53eeb1734252e4dfa8))
+
+The board's reconcile stamp was v1.110.6 (2026-08-08) while the shipped product advanced to
+  v1.110.12 — 6 releases behind tolerance 5, reddening
+  test_task_board_reconcile_stamp_is_not_many_releases_stale on every PR.
+
+Reconciled against reality (not a bare bump): - Public product v1.110.11 / v1.110.12
+  (PyPI-verified), M16 #987 / M17 #988 closed. - Docs drain #992/#993/#994/#995 merged; A90 #997 in
+  draft (council+codex approved). - Removed stale duplicated snapshot lines (v1.110.6 / v1.110.10
+  stragglers). - IN FLIGHT table refreshed from live gh pr list. All 11 freshness + 52
+  docs-governance tests pass.
+
+- Record 2026-08-10 M16/M17 first-CI drain receipts (BACKLOG campaign note)
+  ([#995](https://github.com/oimiragieo/tensor-grep/pull/995),
+  [`641dc31`](https://github.com/oimiragieo/tensor-grep/commit/641dc31c588f5db7c7e1267f58badbe4d05708a8))
+
+Captures the Round-3 completion of the previous backlog-completion plan: - #993/#994/#992 (docs),
+  #987 (M16 -> v1.110.11), #988 (M17 -> v1.110.12) drained; all green, PyPI verified. - Four new
+  durable findings: A87 confirmed twice; fingerprint-vs-walk disagreement fix; the cfg(windows)-only
+  test hiding a format-version pin break; the #276 ratchet catching the new walk site + the
+  comment-satisfies-census reversed trap.
+
+- **skills**: Dogfood refresh for tg 1.110.12 (M16/M17)
+  ([#996](https://github.com/oimiragieo/tensor-grep/pull/996),
+  [`4fd9b9e`](https://github.com/oimiragieo/tensor-grep/commit/4fd9b9ecd7f6e52dd40f4fd134694fb5bc3a1f24))
+
+Stamp 21/21 Windows uvx CUJ; scan severity/message; --index TrigramIndex isolation surface.
+
+
+## v1.110.12 (2026-08-10)
+
+### Bug Fixes
+
+- **index**: Reused index never serves a mismatched stored root (M17 audit)
+  ([#988](https://github.com/oimiragieo/tensor-grep/pull/988),
+  [`855939b`](https://github.com/oimiragieo/tensor-grep/commit/855939b0f730d45ddc72f428334ecc28a97d1a01))
+
+* fix(index): never serve a .tg_index whose stored root != query root (M17 audit)
+
+Pre-fix gap: the reuse path had NO root comparison at all. The stored root was recorded verbatim
+  (build_with_options wrote root.to_path_buf(), index.rs build literal) and staleness_reason
+  (index.rs) only checked no_ignore mode + per-file mtime/size + a new-file walk OVER SELF.ROOT --
+  if the query path resolves to a different tree than the index was built for (copied .tg_index,
+  renamed tree, symlink alias), the per-file checks ask the WRONG tree for its health and can pass,
+  serving a wrong tree's entries with exit 0.
+
+Fix: - index.rs: TrigramIndex gains a persisted canonical_root (Path::canonicalize at build, once,
+  via canonical_root_of); format version 4 -> 5 (old indices fail the version gate -> rebuild, same
+  established pattern as the H1d no_ignore bump). rebuild_incremental_with_options re-records it.
+  New public seam root_servability_reason(query_root): canonicalize-vs-canonicalize compare;
+  Some(reason) = refuse/rebuild, None = serve; empty stored root (legacy JSON form) fails closed
+  toward rebuild. - main.rs detect_warm_index_state: root check runs BEFORE is_stale/staleness work;
+  mismatch marks the routing state stale (warm routing declines, query served correctly by the
+  fallback engine) with a verbose disclosure. - main.rs handle_index_search: the preloaded_index arm
+  filters through the check (defense in depth: never serve a mismatched root even if a future caller
+  bypasses the routing gate), and the fresh disk-load branch checks root BEFORE staleness_reason --
+  mismatch full-rebuilds from the QUERY root (never incremental: file identity from a different tree
+  is semantically wrong), disclosing via the existing "[index] stale" verbose channel. -
+  staleness_reason's per-file identity walk is kept as the same-tree backstop, unchanged.
+
+Tests (rust_core/src/index.rs unit tests, CI is the compile/test oracle): -
+  test_m17_stored_canonical_root_matches_canonicalized_build_root: stored canonical root ==
+  canonicalize(build root), survives save/load round trip, re-recorded by incremental rebuild. -
+  test_m17_root_servability_refuses_different_tree_but_serves_same_tree: different tree ->
+  Some("root mismatch") (rebuild); same tree via same spelling and via canonicalized spelling ->
+  None (serve control). - test_m17_empty_canonical_root_fails_closed: legacy-form empty root ->
+  refuse. - test_format_version_in_binary updated: pins version 5.
+
+RED argument: pre-fix, root_servability_reason() and canonical_root() do not exist -- the tests are
+  compile-time failures on the old code (the seam is a structural absence); main.rs behavior changes
+  are verified by CI only.
+
+rustfmt --check (edition 2021): clean on both touched files.
+
+* fix(index): close all 5 M17 gate findings on index-root reuse (F1-F5)
+
+Follow-up to bec8f38 (root comparison at reuse). Each finding is closed in index.rs; main.rs needs
+  no change (its call sites pass the query path raw, and every seam now canonicalizes/derefs
+  internally).
+
+F1 HIGH - tree identity backstop. staleness_reason's per-file name/mtime/size loop cannot see a
+  wholesale same-path swap that preserves metadata. Added tree_fingerprint (SHA-256 over a BOUNDED
+  representative set: direct children of the canonical root, name+size+mtime+first 4KiB per file,
+  .tg_index excluded, deterministic order; 32-entry / 4KiB caps), persisted (format v6) and compared
+  in staleness_reason AFTER the per-file loop, so a metadata-preserving swap is detected while a
+  normal edit still reports the precise file-level reason. Bounded by design, not a full re-hash;
+  per-file granular platform IDs (unix dev+ino / Windows file index) recorded as follow-up M17-FU1
+  (owner: future audit; reopen: same-path swap reported stale-served, or Windows per-file identity
+  needed).
+
+F2 HIGH - relative-root escape. Builds now walk the CANONICALIZED root, file entries are stored
+  canonical-root-RELATIVE, and the ONLY dereference is canonical_root.join(rel) (deref_path), used
+  by query candidates, both search paths, incremental update, and every staleness probe (including
+  the new-file scan, which now walks the canonical root and compares relativized paths). The
+  build-spelling root is display-only and no longer serialized (loaded indices carry root ==
+  canonical root). Nothing in an index is ever a cwd-dependent spelling, so a later query from a
+  different cwd cannot re-root a stored path at its own working directory.
+
+F3 MEDIUM - canonicalization fail-open. canonical_root_of now returns Result: build/rebuild FAIL on
+  uncanonicalizable roots (no raw fallback), and root_servability_reason refuses UNCONDITIONALLY
+  when the QUERY root cannot be canonicalized. No side of the comparison can ever pass "by raw
+  spelling coincidence".
+
+F4 MEDIUM - unenforced public invariant. The public serving surface now requires a verified root:
+  search() and query_candidates/query_candidates_fixed (error out on an empty canonical root -- the
+  legacy load_json form and any crafted load). query_candidates* changed to Result<Vec<..>>
+  (breaking API change, deliberate: silent empty was the fail-open). The CLI already routes every
+  serve through root_servability_reason, so this never fires in-tree.
+
+F5 MEDIUM - lossy-path alias collision. Canonical root is strict UTF-8 in both directions: build
+  rejects non-UTF-8 roots (canonical_root_of) and entry rel-paths (relativize_entry), and bincode
+  load rejects non-UTF-8 stored roots (from_utf8, not from_utf8_lossy). Distinct non-UTF-8 paths can
+  no longer collapse into one identity at any point on the wire.
+
+Format: INDEX_FORMAT_VERSION 5 -> 6 (canonical root only, no build-spelling root; tree_fingerprint
+  u64). Old indices fail the version gate and rebuild (the established H1d pattern).
+  staleness_reason's per-file walk is retained as the documented same-tree backstop on top of the
+  new identity checks.
+
+Tests (CI is the compile/test oracle; none run locally - rustfmt only): - unit
+  test_m17_f1_tree_fingerprint_detects_metadata_preserving_swap:
+  same-name/same-size/same-mtime/different-content swap (mtimes pinned via std FileTimes) must
+  report "fingerprint", not a per-file reason. RED pre-fix: no fingerprint existed, the swap read as
+  fresh (serve).
+
+- unit test_m17_f2_entries_relative_and_deref_through_canonical_root: stored entries relative;
+  results absolute canonical-root-prefixed; survives save/load round trip. RED pre-fix: entries kept
+  the raw (cwd-relative) spelling. - integration
+  test_m17_f2_relative_root_index_never_reads_other_cwd_tree (windows-gated suite): build with
+  relative root from cwd A, query by ABSOLUTE path from cwd B whose decoy tree is byte-for-byte
+  metadata- identical; must exit 0 with the real match. RED pre-fix: staleness+search read cwd B's
+  decoy (exit 1/no match). - unit test_m17_f3_uncanonicalizable_query_root_is_unconditional_refusal:
+  nonexistent query root -> refusal naming the canonicalize failure. - unit
+  test_m17_f4_legacy_json_loaded_index_is_not_searchable: load_json then search()/query_candidates()
+  error "no verified root". - unit test_m17_f5_non_utf8_canonical_root_fails_load_closed:
+  hand-crafted wire format with invalid-UTF-8 canonical root bytes -> load error. -
+  test_format_version_in_binary pinned 5 -> 6; hostile-length-prefix and future-version tests
+  unaffected (still error by construction).
+
+rustfmt --check (edition 2021): clean on index.rs + tests/test_index.rs (main.rs untouched this
+  round).
+
+* fix(index): close all 4 M17 round-2 gate findings (F1-F4)
+
+Follow-up to 848661e. CI is the compile/test oracle; rustfmt-only locally.
+
+F1 HIGH - fingerprint evasion + underscoped FU1 + .tg_index slot bug. (a) compute_tree_fingerprint
+  now hashes FULL content of every sampled file (no 4 KiB byte cap; bounded by the 32-file
+  TREE_FINGERPRINT_TOP_LEVEL_CAP), so a same-size/same-mtime edit past offset 4096 in a sampled file
+  is detected -- inode identity would NOT have caught in-place modification, so M17-FU1 is re-scoped
+  (below). (b) `.tg_index` is now excluded BEFORE the sampling cap (filter before take(32)); the
+  index's own persisted file can no longer displace a real top-level file from the sample and
+  false-trip staleness. FU1 re-scope (A49 record): "per-file FULL content identity (or per-file
+  digest) for every file OUTSIDE the 32-file top-level sample -- 33rd+ top-level files and all
+  non-top-level files, which today are covered only by the mtime/size loop. Note inode/dev IDs do
+  NOT close this: in-place modification keeps the inode." Owner: future index audit; reopen trigger:
+  a same-path metadata-preserving modification outside the top-32 sample serves stale postings, or a
+  user indexes a tree with >32 top-level entries.
+
+F2 HIGH - F5 not strict for entry paths + unvalidated loaded entries. (a) bincode entry decode is
+  now strict from_utf8 (never from_utf8_lossy) -- a non-UTF-8 name rejects the whole index. (b)
+  every loaded entry (bincode AND the legacy JSON from_serializable path) is validated by
+  validate_entry_rel_path: must be strictly relative with no RootDir/Prefix component and no `..`
+  escape, so canonical_root.join(rel) is provably confined to the verified root; any violation
+  rejects the index (fail closed). Empty rel (file-rooted index) is allowed: join("") is the root
+  itself.
+
+F3 MEDIUM - user-visible path-spelling regression. Dereference keeps canonical storage (sound), but
+  DISPLAY is now a separate contract: new TrigramIndex::display_path(query_spelling, canonical_file)
+  re-projects the emitted path as query_spelling.join(rel), and run_index_query emits through it --
+  a relative `tree` query emits tree/a.txt (its own path space), a differently-spelled absolute
+  query emits its own spelling, and reads stay confined to the canonical root. main.rs:10112-10124
+  is the single projection point (covers text/json/ndjson/count emitters); parity tests with
+  absolute roots are byte-unchanged (projection is a no-op there).
+
+F4 MEDIUM - rlib API break without A40 disposition. query_candidates*_checked (Result, fail-closed)
+  are now the primary surface; query_candidates / query_candidates_fixed are restored as
+  Vec-returning legacy compatibility wrappers (internal callers moved to the checked variants), so
+  downstream rlib consumers outside the in-repo census keep compiling. The deliberate API-shape
+  decision + migration note is recorded in the wrapper's doc comment (A49 style): checked variants
+  are the future; wrappers empty-degrade on an unverified index and are the deletion target of a
+  future breaking release.
+
+Tests added/updated (all structural; none run locally): -
+  test_m17_f1_fingerprint_detects_change_beyond_4096_bytes: first 4096 bytes identical, size+mtime
+  preserved, tail byte changed -> fingerprint reason; RED on the old 4 KiB-capped sampler (identical
+  digest), GREEN on full content hashing. - test_m17_f1_fingerprint_slots_not_consumed_by_tg_index:
+  40 top-level files + persisted .tg_index -> not stale; RED pre-filter (`.tg_index` sorted first
+  displaces f031 from the sample -> digest flip), GREEN post-filter. -
+  test_m17_f2_load_rejects_unconfined_entry_paths: crafted wire with (a) non-UTF-8 entry name
+  (reject), (b) rooted/absolute entry (reject; platform- tolerant message assert: Windows treats
+  /foo as rooted-but-relative so the component check fires), (c) `..` entry (reject "escapes the
+  canonical root"), (d) confined relative entry loads (control). - test_m17_f3 (unit, in F2 test) +
+  integration test_m17_f3_index_output_uses_query_root_spelling (windows suite): relative `tree`
+  root emits tree\a.txt and never the canonical absolute path; unit side asserts display_path ==
+  query_spelling.join(rel) while search results stay canonical-absolute. -
+  test_m17_f4_legacy_json_loaded_index_is_not_searchable extended: checked variant errors on the
+  legacy form, legacy wrapper degrades to empty.
+
+rustfmt --check (edition 2021): clean on all three touched files (index.rs, main.rs,
+  tests/test_index.rs).
+
+* fix(index): M17 round-3 -- portable display-spelling test + index-machinery namespace exclusion
+
+Follow-up to 75b7314. Two real round-3 gate issues, fixed. CI is the compile/test oracle;
+  rustfmt-only locally.
+
+F1 FIXED -- Windows-only separator literal in the display-spelling integration test.
+  test_m17_f3_index_output_uses_query_root_spelling asserted the literal "tree\\a.txt" (backslash).
+  The expected path is now constructed portably (Path::new("tree").join("a.txt").to_string_lossy()),
+  which yields `tree\a.txt` on Windows and `tree/a.txt` on POSIX, so the assertion discriminates on
+  every platform; the doc comment was made platform-neutral. Audited the other M17-added tests for
+  the same class: the cross-cwd test uses cwd_a.join("tree") (Portable), the unit tests use
+  Path::new joins (portable) -- no other hardcoded separators remain (grep confirms zero backslash
+  escapes in both files).
+
+F2 FIXED -- fingerprint sampled the index's OWN leftover machinery namespace. The atomic-save temp
+  is `..tg_index.<token>.tmp` (atomic_write_bytes: parent joined with format!(".{file_name}.{}.tmp")
+  where file_name = ".tg_index", so the temp is `..tg_index.<token>.tmp`) and the write lock is
+  `..tg_index.lock` (index_lock::lock_path_for). A leftover temp (crash between write and rename) or
+  lock (hard crash) persists at the top level; it sorts first (`.` < letters) and consumed one of
+  the 32 sample slots, flipping the digest into a FALSE staleness transition on a healthy tree.
+  compute_tree_fingerprint now excludes the whole OWNED namespace via is_tg_index_owned_entry BEFORE
+  sorting/sampling: `.tg_index`, `..tg_index.*` (covers the temp and lock families). The artifacts
+  were already invisible to the per-file loop (never indexed) and the new-file walk (`.`-hidden), so
+  the fingerprint was the only affected surface.
+
+Test (structural): test_m17_f2_fingerprint_ignores_leftover_index_machinery_files -- 40 top-level
+  files, then create `..tg_index.deadbeef.tmp` and `..tg_index.lock`, with a fixture-premise assert
+  that read_dir sees them (name starts_with "..tg_index."); asserts the fingerprint digest is
+  unchanged and staleness_reason stays None. RED pre-fix: the leftover sorts into slot 1, displacing
+  a real file from the 32-cap, flipping the digest -> false stale. GREEN post-fix: excluded before
+  the cap, sampled set unchanged.
+
+Re-check of the round-3 "passed by inspection" claims (all hold on inspection): - Windows
+  drive/UNC/backslash-parent confinement: `C:\x` / `\\server\share\x` are !is_relative() -> "not
+  relative" bail; `a\..\b` yields Component::ParentDir on Windows -> "escapes" bail; on POSIX
+  backslash is a normal filename char, not an escape. validate_entry_rel_path covers all three via
+  Prefix/RootDir/ ParentDir (index.rs:566-592). - `..` in the query spelling: display_path is
+  EMISSION-only (query_spelling.join(rel) with rel pre-validated no-`..`); reads never use the
+  spelling, so a `..`-containing user spelling cannot redirect I/O. - Legacy-JSON unsearchability:
+  from_serializable sets an empty canonical root; ensure_searchable refuses search/candidates on it
+  (round-2 F4 test). - mtime precision consistency: the fingerprint hashes the SAME
+  metadata().modified() values in compute and staleness recompute (same clock, same filesystem
+  granularity); FileTimes-pinned tests round-trip exactly on NTFS/ext4.
+
+* fix(index): repair 4 M17 compile errors so the reused-root guard builds (gate)
+
+- is_tg_index_owned_entry: OsStr has no starts_with; compare via to_string_lossy -
+  compute_tree_fingerprint: file_name() returns Option<&OsStr>; guard the hash update -
+  Index::build: compute tree_fingerprint before moving canonical_root into the struct -
+  staleness_reason: strip_prefix returns Result, not Option; match Ok(rel)
+
+* fix(index): fingerprint must use the walk's ignore semantics for agreement (M17 gate)
+
+The staleness fingerprint (F1) ran raw read_dir over the canonical root, so a gitignored file added
+  after build flipped the digest and falsely reported staleness -- disagreeing with the new-file
+  walk, which correctly ignored it.
+
+Fix: derive the fingerprint's top-level file set from ignore::WalkBuilder with the SAME config as
+  collect_file_entries (hidden=true, git_ignore=!no_ignore, max_depth=1, add_ignore trio), so
+  agreement holds by construction. The walk's hidden filter also excludes the tg-index dot-namespace
+  (.tg_index, ..tg_index.*), replacing the old is_tg_index_owned_entry filter for the fingerprint
+  (kept as defense-in-depth).
+
+Also fixes the doc_lazy_continuation clippy warning (blank doc line after list). Closes: A87 (M17
+  compile -> re-gate), M17 gate 3a (fingerprint-vs-walk).
+
+* fix(index): fingerprint selects FILES first (codex M17 round-3 audit)
+
+The fingerprint's depth-1 walk collected every entry then applied the 32-slot cap before is_file()
+  rejection, so a top-level directory or symlink could both flip the digest (the walks never see
+  non-files) and consume a slot, displacing a real file from the representative sample. Filter
+  walker entries to regular files BEFORE sort/cap -- matching collect_file_entries and the new-file
+  scan by construction (codex audit finding, M17 round-3).
+
+Regression tests (each RED on the pre-fix fingerprint): -
+  fingerprint_ignores_top_level_directories_and_symlinks -
+  fingerprint_cap_not_consumed_by_early_sorting_directories
+
+* fix(index): make fingerprint regression tests genuinely RED pre-fix + symlink arm (codex round-3)
+
+Codex re-audit: the cap regression named dirs zdir* which sort AFTER the target file, so pre-fix the
+  target still landed in the 32-slot sample and the test passed on the bug (not a real guard).
+  Rename dirs to adir* (sort FIRST) and target to zzz_target.txt (sort after), making the test RED
+  pre-fix. Add a Unix-gated top-level-symlink regression (std::os::unix::fs::symlink); Windows CI
+  cannot create symlinks without privilege, so that arm is #[cfg(unix)].
+
+* fix(index): clippy redundant-closure on is_some_and (M17 round-3 gate)
+
+* fix(index): pin wire-format version in the Windows rebuild test (M17 gate)
+
+test_tg_search_index_old_format_triggers_rebuild (cfg(windows) only -- the platform divergence that
+  hid this) hardcoded rebuilt[4] == 4, but M17 bumped INDEX_FORMAT_VERSION 4 -> 5 -> 6 (canonical
+  root, then tree_fingerprint), so on Windows the rebuilt index carries 6 and the stale literal
+  failed. Export INDEX_FORMAT_VERSION as pub and pin the test to the constant, so the next bump
+  cannot silently go wrong again (cite-the-symbol provenance rule).
+
+* fix(index): log fingerprint walk errors instead of silent discard (M17 gate)
+
+test_known_discard_sites_never_grow (task #276 ratchet) flagged the new fingerprint walk's silent
+  .filter_map(|e| e.ok()) as a count-rising regression on the python legs. The fingerprint is a
+  best-effort staleness signal, but a truncated walk must not read as clean: log the walk error (the
+  ratchet's own oracle test blesses the map_err(log).ok() shape), and use the non-ratcheted binding
+  in the leftover-machinery fixture's read_dir enumeration (not a walk site) so the census stays at
+  the audited walk sites only.
+
+* docs: drop stale INDEX_FORMAT_VERSION literal in routing_policy (codex final-note)
+
+The doc claimed the on-disk format is INDEX_FORMAT_VERSION 4; the current format is 6 (canonical
+  root + tree_fingerprint). State the no_ignore byte was introduced at v4 and that the current
+  version derives from the constant, never a literal.
+
+
+## v1.110.11 (2026-08-10)
+
+### Bug Fixes
+
+- **scan**: Rust tg scan keeps composite rules + severity/message (M16 audit)
+  ([#987](https://github.com/oimiragieo/tensor-grep/pull/987),
+  [`d4db8a6`](https://github.com/oimiragieo/tensor-grep/commit/d4db8a685b4cd22af82de4e2b11e5a93545f3354))
+
+* fix(scan): Rust tg scan keeps composite rules + severity/message (M16 audit)
+
+Pre-fix gap (audit VERIFIED, backend_ast_workflow.rs:871-904 + :1074-1099): Rust tg scan (config
+  route) built AstRuleSpec{id, pattern, language} only and extracted a single flat string pattern
+  (pattern / rule.pattern), so composite ast-grep rule bodies (rule: { any: [...] }, pattern: LIST)
+  returned None and the rule was DROPPED, and severity/message never survived discovery. The Python
+  project-scan twin (cli/ast_workflows.py:_load_rule_specs_and_meta:319-342) already threads
+  severity/message into rule specs and findings.
+
+Fix: - AstRuleSpec gains patterns (composite members; serde default), severity (item -> payload ->
+  'warning', matching Python), message (item -> payload -> ''). - extract_rule_member_patterns
+  handles pattern-string, pattern-list, rule.pattern and rule.any members; unresolvable members /
+  all:/not: bodies fail closed (dropped), matching the Python twin's drop behavior - never
+  under-match. rule.pattern stays the FIRST member so hints/test-linking keep working. -
+  execute_ast_scan_core unions members per rule: matches sum, files are distinct, matching the
+  Python twin's set-based file accounting. [scan] text lines and Scan completed. summary stay
+  byte-parity with the Python emitter. - Two public single-pattern helpers (extract_rule_pattern /
+  _json) retained (A40: no in-repo caller does not authorize deletion).
+
+CI will verify: 7 new unit tests (composite any-of parse, pattern-list parse, severity/message
+  round-trip + payload/default fallback, fail-closed all: pin, stale-cache serde-default pin,
+  real-AstBackend union counting in execute_ast_scan_core), plus cargo test/clippy/rustfmt on the
+  touched file.
+
+* fix(scan): close codex F1-F4 on M16 composite/severity parity (M16)
+
+Codex gate FIX-BEFORE-MERGE findings, all verified against the real code:
+
+F1 (HIGH) Python/Rust twin divergence on composites — FIXED by (b), the plan-intended direction: the
+  Python project-scan loader now carries the SAME member semantics as the Rust scan.
+  ast_workflows.py gains _extract_rule_member_patterns (pattern-string / pattern-LIST / rule.pattern
+  / rule.any members; any unresolvable member or all:/not: body fails the whole rule closed ->
+  dropped, mirroring rust extract_rule_member_patterns) and _load_rule_specs_and_meta emits
+  pattern=FIRST member + patterns=ALL members. Both Python scan loops (ast_workflows.scan_command
+  and main.py _run_ast_scan_payload non-fast paths) scan every member; the ast-grep whole-config
+  fast path already unions natively.
+
+F2 (HIGH) summed-multiset instead of union — FIXED: composite rules dedupe matches by (file, line)
+  identity (the identity surface MatchLine exposes, so Rust and Python count identically); each
+  matched line counts ONCE across members. Single-pattern rules keep the legacy per-node count
+  byte-identically (nothing was dropped there pre-fix).
+
+F3 (HIGH) stale-cache correctness — FIXED: ProjectDataV6 gains cache_schema_version (u32, serde
+  default = legacy 1, current = 2) and load_cache REJECTS absent/old discriminators (rebuild from
+  source), following the index.rs INDEX_FORMAT_VERSION bump precedent; the Python reader
+  (_load_ast_project_data) applies the same gate to the Rust-written cache
+  (_PROJECT_DATA_CACHE_SCHEMA_VERSION twin).
+
+F4 (MEDIUM) metadata scalar parity — FIXED: rule metadata now converts TRUTHY non-string scalars
+  like Python str(): 5 -> '5', true -> 'True'; falsy ('', 0, 0.0, false, null) falls through to
+  payload then default. Structural values (lists/mappings) fail closed to the default (documented
+  divergence).
+
+Tests: rust — composite any-of parse, pattern-list parse, severity/message round-trip +
+  payload/default fallback + truthy-scalar conversion, fail-closed all: pin, stale AstRuleSpec JSON
+  default pin, legacy cache rejected + current cache served, union line-dedupe vs single-pattern
+  node counts through the real AstBackend. Python (tests/unit/test_scan_composite_rules_m16.py, run
+  locally 8/8 + test_ast_workflows 46/46 + test_cli_modes scan surface 62/62) — member extraction
+  shapes + fail-closed, loader carries members and metadata, schema-gate parametrized
+  rebuild-vs-serve, composite union CLI count + JSON severity/message.
+
+CI will verify: cargo test/clippy/rustfmt on backend_ast_workflow.rs, ruff + ruff format --preview +
+  mypy (all pass locally), and the full Python suite.
+
+* fix(scan): span-based composite union + inline loader parity + float spelling (M16 round-2 gate)
+
+Codex round-2 findings, verified against real ast-grep 0.42.1 + source.
+
+F1 (HIGH) - (file,line) union identity WRONG; whole-config ast-grep counts 3 for 'alpha(1);
+  alpha(2)' with members alpha + alpha(1) (two distinct identifier nodes + one call node, same
+  line): the union dedupe identity is now the AST SPAN (file, start_byte, end_byte) on ALL
+  node-granular paths. - Rust: AstCliMatch gains start_byte/end_byte (node range; fallback arm uses
+  candidate.byte_range); execute_ast_scan_core unions HashSet<(start,end)> per file. Single-pattern
+  rules keep legacy per-node counts. - Python: MatchLine gains optional start_byte/end_byte
+  (ast_backend populates from tree-sitter node; ast_wrapper_backend from ast-grep JSON range.index);
+  _match_node_identity lowers to (file,start,end) with a (file,-1,line) fallback for span-less
+  backends; both scan loops union spans. - Parity pins: Rust test counts 3 (composite), 2
+  (single-pattern per-node), 1 (same span matched by two members); Python span-fake CLI test pins 3
+  on the iterative path (scan_paths given -> fast path off) + 2 for inline; whole-config arm is
+  ast-grep native (authoritative 3, verified by the gate).
+
+F2 (MEDIUM) - _load_inline_rule_specs dropped rule.any/pattern-lists for --rule/--inline-rules: now
+  routed through the SAME _extract_rule_member_patterns helper (pattern=first member, patterns=all);
+  the now-orphaned flat-string _extract_rule_pattern copy in main.py is deleted. Tests: loader unit
+  (two members carried, list form too) + CLI --inline-rules scan of both members.
+
+F3 (LOW) - NaN/inf scalar spelling: rule_metadata_scalar_string special-cases non-finite floats to
+  Python's str() spellings (nan/inf/-inf instead of serde_yaml's .nan/.inf/-.inf); test pins all
+  three.
+
+Local (this machine, run): tests/unit/test_scan_composite_rules_m16.py 11/11, test_ast_workflows
+  46/46, test_cli_modes -k scan 62/62, ruff check clean, ruff format --check --preview clean, mypy
+  success (92 files), rustfmt --check clean on both touched rust files. Rust test OUTCOMES are
+  structural-argument only (CI is the compile oracle); pre/post-fix reasoning is in each test
+  docstring.
+
+* fix(scan): real ast-grep spans, span caches, member-aware routing (M16 round-3 gate)
+
+Codex round-3 findings, all verified against real ast-grep 0.42.1 + source.
+
+F1 (HIGH) - spans read from the WRONG wire fields. Live probe of ast-grep 0.42.1 on this box:
+  "range": {"byteOffset": {"start": 0, "end": 5}, "start": {"line": 0, "column": 0}, "end": {...}}
+  range.start/end carry NO index field, so round-2's index reads always produced spanless matches
+  and (file,-1,line) collapsed same-line nodes. FIXED: ast_wrapper_backend now reads
+  range.byteOffset.start/end (probe-verified); REAL (non-fake) wrapper test asserts two same-line
+  matches carry distinct spans (0,5)/(10,15) through the actual subprocess path.
+
+F2 (HIGH) - caches erased node identity. (a) persistent result cache: writer now stamps format=2 +
+  per-match start_byte/end_byte; reader rejects discriminator-less (legacy) payloads as a
+  miss/rebuild. (b) node-type index: indexed by (line, start, end) SPAN with format=2 on disk
+  (legacy -> miss); capture path dedupes by node span instead of line (only exact same-span
+  duplicates suppressed). Real native verification: pattern 'call' over 'alpha(1); alpha(2)' on ONE
+  line now reports two spans (0,8)/(10,18) on both the node-type path and the query-capture path
+  (pre-fix: 1). Legacy fake-node fixtures gained deterministic spans; test_cli_modes selection-patch
+  targets moved to the implementation the F3 loop now reaches.
+
+F3 (HIGH) - composite routed by first member only. Orchestration hints and both scan loops now use
+  composite-aware selection (_pattern_is_native_shaped / _rule_needs_ast_grep_wrapper /
+  _select_ast_backend_name_for_rule / _select_ast_backend_for_rule): a composite with ANY non-native
+  member routes to the ast-grep wrapper (or fails closed with ConfigurationError when unavailable);
+  all-native composites and single rules keep legacy routing. Tests: member-aware name unit, hints
+  unit (mixed -> wrapper), CLI mixed-shape routing (wrapper path, both members scanned, 3 counted,
+  backends=wrapper).
+
+Parity pins (all three arms, count=3 for alpha(1);alpha(2) with members alpha+alpha(1)):
+  whole-config ast-grep (authoritative, gate-verified), Python iterative wrapper (REAL subprocess
+  span test + span-fake CLI test routed to the wrapper), Rust scan core (CI). Local: M16 file 18/18,
+  ast_backend 36+xfailed, ast_workflows full, test_cli_modes FULL 534 passed, ruff/format
+  --preview/mypy (92 files)/rustfmt clean. Rust test OUTCOMES are structural-argument only (CI is
+  the compile oracle).
+
+* test(scan): give _FakeNode byte spans for the span-based node-type index (M16)
+
+M16 changed _build_node_type_index to index by (line, start_byte, end_byte) spans, but the _FakeNode
+  fixture only carried start_point, so every synthetic node hit the defensive 'no byte span' skip
+  and produced an EMPTY index. This regressed two pre-existing tests (deep-tree recursion + line
+  mapping) that passed on origin/main:
+
+deep_tree: AssertionError: assert 'expr' in {} (RED, verified)
+
+correct_line_mapping: KeyError: 'root' (RED, verified)
+
+Fixture-first fix (council-approved): teach _FakeNode a deterministic byte span derived from line,
+  and update correct_line_mapping to assert the new NodeSpan tuple shape. Production ast_backend.py
+  span machinery is untouched.
+
+### Documentation
+
+- Consolidate 24h session capture — A87-A89 mirror, 4 new skills, drift fixes
+  ([#992](https://github.com/oimiragieo/tensor-grep/pull/992),
+  [`62cd29e`](https://github.com/oimiragieo/tensor-grep/commit/62cd29ef6a4a51122251e65ab8308453f2d79820))
+
+* docs: retain A87-A89 lessons + session-capture date + M16/M17 follow-up rows
+
+A-law mirror (C-A87-A89): - AGENTS.md: add A87 (static review != typecheck; CI is the only compile
+  oracle for Rust, #987/#988), A88 (dogfood fixtures must BITE - mklink /J silent-fails on non-empty
+  target, M1), A89 (real-artifact test arms beat fake-backed ones in parity oracles - ast-grep
+  byteOffset vs range.start.index, #987) to the A-law list. - CLAUDE.md: extend the A-law summary
+  A61-A86 -> A61-A89 and the A83-A86 bullet to A83-A89 (the three new legs folded in).
+
+Capture fixes: - docs/SESSION_HANDOFF.md: Last updated 2026-08-06 -> 2026-08-09. - docs/BACKLOG.md:
+  add named A49-style follow-up rows M16-FU1 SCAN-ALL-NOT-SAME-NODE (all:/not: composite bodies stay
+  dropped fail-closed) and M17-FU1 INDEX-FINGERPRINT-SAMPLE-CAP (files below the tree_fingerprint
+  32-file cap get only mtime/size), each with owner/disposition/reopen trigger, beside the
+  M1-FU1/M1-FU2 record.
+
+* docs(skills): fix skills-substance drift + workflow cross-reference note
+
+- tensor-grep-research-frontier: the "Honest framing of the coverage number" block contradicted its
+  own 10/0 claim and origin/main (it still said parser-backed 8 / foundational c,cpp 2). Prepend a
+  SUPERSEDED 2026-08-09 note (Tasks 10D/10E: now 10 parser-backed / 0 foundational, tier EMPTY) and
+  correct the split to the real 10/0. - tensor-grep-architecture-contract: re-anchor
+  `_TG_ONLY_SEARCH_FLAGS` from bootstrap.py:72 (stale) to bootstrap.py:50 (matches its own :88/:338
+  and the real def). - workflows/tg-audit-fix-loop.js: add cross-reference comments to the four new
+  skills (hermetic-hostile-tests in the RED phase; argv-normalization and
+  cross-platform-path-confinement in the Seam phase).
+
+* docs(skills): add 4 retention skills + registry wiring (library 28 -> 32)
+
+Four Exa-researched skills written in the repo's sibling-skill style (150-300 lines, checked-item
+  steps, external anchors, repo receipts cited by symbol + grep per the never-re-stamp law):
+
+- tensor-grep-hermetic-hostile-tests: env-independent gated tests BY CONSTRUCTION (forced seams,
+  mutation-control REDs), the fixture-BITES precondition (Form 6 / #281), mutation-asserted-applied,
+  positive controls. - tensor-grep-argv-normalization-and-shadowing: front-door normalizer topology,
+  the A83 rewritten-argv door census, CWE-88 `--` hygiene (POSIX Guideline 10), shared-builder
+  stream-vs-parse consumers (-q). - tensor-grep-cross-platform-path-confinement: junction vs symlink
+  vs hardlink table, the A84 drive-absolute escape, A38/A48/A53 handle anchoring +
+  canonicalize-or-fail-closed, M17 alias/swap REPRO shape. -
+  tensor-grep-index-fingerprint-freshness: identity-anchor-first (M17 canonical root), the
+  alias/swap RED shape, the fingerprint ladder (mtime+size -> ctime -> full-content -> whole-tree),
+  bounded 32-file sampling with the M17-FU1 named boundary.
+
+Registry wiring (the 28 -> 32 bump): - AGENTS.md + CLAUDE.md: "**28 skills**" -> "**32 skills**" in
+  both bucket sentences; the CLAUDE.md VERIFIED CORRECT note (33 folders; re-derive arithmetic 27 ->
+  31 tensor-grep-*); both bucket lists gain the 4 new skills (Change safely + Understand)
+  byte-identically. - .claude/skill_rules.json: 4 trigger entries in the existing shape. -
+  tests/unit/test_skill_library_drift.py: anchor the stated-count regex to the DEFINING index
+  sentence (code-search-and-retrieval-reference`, **N skills**) instead of the whole-file leftmost
+  match, so dated historical narratives mentioning an old count (never rewrite a dated receipt)
+  cannot masquerade as the index's count.
+
+* style: ruff format --preview on test_skill_library_drift.py (Fix lint gate)
+
+- Fix skill accuracy drifts (language-tier census, run-and-operate exit contract, change-control
+  seams) ([#986](https://github.com/oimiragieo/tensor-grep/pull/986),
+  [`c390af1`](https://github.com/oimiragieo/tensor-grep/commit/c390af1847086b5ce1b903d0b3ed85cef1dd3446))
+
+* docs(skills): fix six documented SKILL accuracy drifts (2026-08-09 audit vs origin/main e3feaf5)
+
+Per-file claim repairs, anchored to the live descriptor
+  (parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript +
+  foundational-defs-imports-only:, 10 parser-backed / 0 foundational, tier EMPTY) and verified
+  origin/main code sites (repo_map.py:590-597, :6433/:6446, :6752/:6790/:6804/:6846, :6789-6793,
+  :6845-6849, :7089-7116, :17530-17556; lang_c.py:654/:748/:799; lang_c_cpp_include.py;
+  main.py:11457-11470):
+
+- enterprise-agent: row opening "REGISTRY 10/10; CALLER-GRAPH 7/10 ... FOUNDATIONAL-TIER for
+  c,cpp,php" -> 10 parser-backed / 0 foundational, no Y tier, cross-file confirmation the remaining
+  gap; aligned the "today prints 7/3" descriptor with the 10/0 state; dated snapshot chain kept
+  intact. - code-search-and-retrieval-reference: "nine parser-backed + one foundational (cpp)", "9
+  parser-backed + 1 foundational", quick-ref "6+4 as of PR #927" -> all 10 parser-backed,
+  foundational tier EMPTY (Task 10E final wave); grammar-missing field-count note corrected;
+  consistent with the file's own correct 10/0 block. - tensor-grep: "7 of the top-10 languages ...
+  C/C++ still deferred" -> all 10 registered AND parser-backed (C/C++ via lang_c/lang_cpp, Tasks
+  10D/10E + F7 Task 11 wave #957); self-hedge to re-check retained. - research-frontier Problem 6:
+  header SUPERSEDED 2026-08-09; "all hooks None / regex heuristic fallthrough" and "#include
+  resolution not attempted" claims replaced with the shipped state (wired references_and_calls +
+  file_imports_symbol_from_definition, c-include-path-confirmation engine); genuine remaining tails
+  kept honest (beyond-band cross-file confirmation, general #include->file resolution,
+  header/definition canonical-site decision). - change-control: seams 2/5 "dispatches only 5 /
+  frozenset of 5" -> all 10 (repo_map.py:7089-7116, :17530-17556); Part 8 "refactor -> patch
+  release" -> publishes NOTHING (measured, PR #915, PyPI stayed 1.102.4; default angular parser
+  fix/perf only), mirroring tensor-grep-release-and-positioning. - run-and-operate: "empty truncated
+  exits 2, found truncated exits 0" -> truncation trumps found (main.py:11467-11470 Exit(2) on any
+  partial/result_incomplete before not-found; #399 overturned), aligned with the file's own 11a.
+
+No anchors re-stamped; skill_anchor_audit.py finding set unchanged (AMBIGUOUS_PATH=15,
+  SYMBOL_MOVED=53, identical to baseline e3feaf5); test_skill_index_sync + test_skill_library_drift
+  green (9 passed); test_public_docs_governance -k skill green (3 passed).
+
+* docs(skills): add tensor-grep-codex-gated-audit-loop skill (codex-gated audit loop, 2026-08-09
+  receipts)
+
+* docs: wire codex-gated-audit-loop skill into indexes + registry
+
+* docs: capture session laws A83-A86 (argv-rewrite shadow, platform path gate, env-independent
+  tests, stale-ready labels)
+
+* docs(workflow): add tg-audit-fix-loop slash-command (codex-gated audit loop)
+
+Mirrors tg-skill-audit.js structure; drives the tensor-grep-codex-gated-audit-loop skill: Seam
+  (git-show symbol re-verify + argv-rewrite door census, A83/A44) -> RED (hermetic by construction,
+  A85) -> GREEN (platform-gate path transforms, A84) -> Gate (independent codex, try-to-BREAK) ->
+  Verify (own probes, re-audit to SHIP). Rides the docs/skill-accuracy-2026-08-09 branch with the
+  new skill + laws.
+
+- Phase 0+1 closeout refresh (wave3 + PyPI 1.110.10 dogfood)
+  ([#989](https://github.com/oimiragieo/tensor-grep/pull/989),
+  [`2bd6b91`](https://github.com/oimiragieo/tensor-grep/commit/2bd6b918d8cd5291ebd145f76ea9a90bb0144a10))
+
+Stamp packets A-F complete on the ledger and board; record published-wheel refuse dogfood.
+
+- Record 2026-08-08 late audit-fix wave receipts (H2/M1/M3/M14)
+  ([#985](https://github.com/oimiragieo/tensor-grep/pull/985),
+  [`5ed5a92`](https://github.com/oimiragieo/tensor-grep/commit/5ed5a9270486148da908895e19cbdc5561e4061e))
+
+- Retain lessons A90-A93 (unknown-command, native-touch, escrowed-evidence, premise-check) +
+  SESSION_HANDOFF refresh ([#994](https://github.com/oimiragieo/tensor-grep/pull/994),
+  [`6f912ad`](https://github.com/oimiragieo/tensor-grep/commit/6f912add8b2f770d0c6da830370930ac05073cba))
+
+A90 — fail closed on unknown subcommands; never fall through to search (bootstrap.py
+  _normalize_search_invocation prints search help for unknown top-level commands exit 0 — both front
+  doors must refuse with nearest[]). A91 — 'no core-Rust logic' never means 'no native touch' —
+  every Python/ sidecar feature slice must enroll both front doors + 4-site parity test. A92 —
+  executed evidence must be escrowed to a key the verified principal does NOT hold (CI-held;
+  stdout-hash+exit+duration; absent = UNVERIFIED never PASS); verification fails closed on tree
+  drift (ticket carries base_sha+fingerprint). A93 — self-dogfood is self-consistency, not demand;
+  premise-check a plan's 'banked/shipped' claims against origin/main before the design council reads
+  it.
+
+Governance/pin tests: 63 passed. Mirrored in CLAUDE.md A61-A93 range. SESSION_HANDOFF refreshed to
+  v1.110.10 + world-class roadmap + A90-A93.
+
+- World-class roadmap — edit-control plane (council-amended)
+  ([#993](https://github.com/oimiragieo/tensor-grep/pull/993),
+  [`7ca96bf`](https://github.com/oimiragieo/tensor-grep/commit/7ca96bf6949a9aa9ad2c3d0573cff04165c9e872))
+
+Design + prioritization doc grounded in the 2026-08-09 published dogfood (22/22 CUJ). Thesis
+  (council-endorsed): tg's moat is the agentic edit-control plane (what to touch, what else breaks,
+  what to run, when to stop, with receipts) — not faster grep.
+
+Spine (amended): H1 unknown-command fail-closed + PATH honesty (prerequisite hotfix, separated from
+  the feature spine); S1+S5 fail-closed edit tickets + verify-edit + escrowed head-bound evidence
+  chain (the moat bundle, re-scoped: both front doors + tree-fingerprint tickets + UNVERIFIED state
+  + un-apply via checkpoint); S2 registration-aware impact-diff (the tier-3 differentiator); S4 warm
+  session resume (premise CORRECTED: session prepare/resume are unbuilt); S6 semantic default +
+  why_ranked; S7 federated workspace (object, Python slice first).
+
+Council corrections folded: escrowed evidence signed by a CI-held key (never the editing principal);
+  touched-files-subset demoted to table stakes (an agent sandbox already enforces it); 'no core-rust
+  logic' never means 'no native touch' (4-site registration parity in every slice); base/head/merge
+  SHA attribution on the evidence chain; run envelopes carry deadline/max_output_bytes/allow_network
+  budgets; resolution_gaps inherit the registration census's blind spots.
+
+- **skills**: Refresh dogfood evidence for tg 1.110.10
+  ([#991](https://github.com/oimiragieo/tensor-grep/pull/991),
+  [`e0015f7`](https://github.com/oimiragieo/tensor-grep/commit/e0015f776d00d102290c67918eb2207da2273168))
+
+Stamp workspace_root_refused, 10/10 parser-backed coverage, unknown-command search fallthrough trap,
+  and prepare timings from the 2026-08-09 Windows uvx CUJ.
+
+
+## v1.110.10 (2026-08-09)
+
+### Bug Fixes
+
+- **mcp**: Central mcp_contract_version always wins + value ratchet over all 58 tools (M14 audit)
+  ([#984](https://github.com/oimiragieo/tensor-grep/pull/984),
+  [`27775b3`](https://github.com/oimiragieo/tensor-grep/commit/27775b3894014cb492caec5be000374cbe882519))
+
+* fix(mcp): central mcp_contract_version always wins + value ratchet over all 58 tools (M14 audit)
+
+M14 (census-corrected): the central stamp helpers (_envelope_base / _inject_mcp_contract_fields)
+  existed but setdefault let a tool payload's OWN mcp_contract_version literal (stale/forked) WIN
+  and skirt the const; tg_classify_logs + 15-22 actual sites were unstamped on success paths. Live
+  census correction: 58 tools, 19 sites / 11 tools unstamped on success (the original '15/58 approx'
+  was overstated; the masked-success arm is the real class).
+
+Fix: _inject_mcp_contract_fields hard-assigns mcp_contract_version (const always wins; A49
+  retired-behavior comment); schema_version stays setdefault so tg_doctor's documented v2 schema
+  survives (harness_api.md-pinned); 11 tools' success returns wrapped through the injector
+  (tg_audit_manifest_verify, tg_review_bundle_create/verify, tg_session_refresh +
+  tg_session_blast_radius/_plan/_render + tg_session_context_render + tg_session_edit_plan +
+  tg_session_file_importers + the shared _broad_root_scan_refusal_result helper). Const untouched
+  (1.7.0 -- stamping uniformity only; fifth-registration-site law). Value ratchet: LIVE registry
+  census (mcp.list_tools, never a hand list) asserting every tool's SUCCESS + ERROR families carry
+  mcp_contract_version == const by VALUE; mutation-control (any other exception type / non-str
+  return REDs; an independent stamp-deletion mutation REDs both probes); dense-model-forced hermetic
+  tg_find reach (env-independent); (tool,family) full-key parity.
+
+Security gate: codex R1 FIX-BEFORE-MERGE (3 HIGH: 4 more unstamped success paths + schema contract
+  break + path-incomplete census) -> fixed + widened to 11 tools; R2 FIX-BEFORE-MERGE (3 harness
+  defects: exception-allowlist masking, env-dependence, partial-key parity) -> fixed; R3 SHIP, no
+  new findings, mutation-proof re-verified independently. 26 ratchet tests + 578 MCP tests green
+  locally (4 *rewrite*embedded* env failures proven pre-existing on origin/main: worktree lacks
+  compiled rust_core ext); ruff/format/mypy clean.
+
+* test(mcp): make the M14 contract-stamp census environment-independent
+
+The census failed on all CI test-python lanes because the AST tools (tg_ast_search, tg_ruleset_scan,
+  tg_scan) could not reach a SUCCESS arm there: their success requires the tree-sitter grammar or
+  ast-grep wrapper the CI pytest env does not install. Mirror the existing tg_find dense-model
+  hermetic force: probe exactly those (tool, family) families through a controlled AST engine seam
+  (Pipeline.get_backend -> a fixed 'AstBackend' stub, _run_ast_scan_payload -> deterministic
+  empty-findings payload), so the tools' real success return sites are exercised and value-checked
+  on every env. Error arms stay real (engine-free out-of-root confinement refusals) and remain
+  value-checked. Proof tests simulate the no-ast-engine and corrupt-dense envs and assert the census
+  verdict is unchanged; allowlist/fixture keys validated against the generated probe-family set.
+
+* test(mcp): re-pin session-edit-plan envelope assertion to substance (M14 stamps)
+
+test_profiling_cli_mcp asserts payload == {"ok": True}; M14's centralized mcp_contract_version +
+  schema_version stamps now (correctly) appear in every tool envelope. An exact-shape pin reds on
+  legitimate envelope growth -- re-pin to substance: ok is True + both stamps equal the central
+  const / json output version by value. Same class as the doctor payload re-pin (A19/C-nit). Swept
+  the whole unit suite for sibling exact-envelope pins: none other touch an MCP tool envelope
+  (test_session_cli retry payload is daemon-internal, unstamped).
+
+
+## v1.110.9 (2026-08-09)
+
+### Bug Fixes
+
+- Fail closed on count-matches/files-with-matches/files-without-match native structured route (H2
+  audit) ([#979](https://github.com/oimiragieo/tensor-grep/pull/979),
+  [`f95998a`](https://github.com/oimiragieo/tensor-grep/commit/f95998a955b41f000c77a6c83c53d6a369b653d5))
+
+* P5 H2 (2026-08-08): fail-close --count-matches/--files-with-matches/--files-without-match on
+  native structured and positional GPU routes
+
+H2 audit (PARTIAL): on the native structured route (--json/--ndjson) the count/files flags fell
+  through search_requires_ripgrep_passthrough's !json&&!ndjson gate and were SILENTLY DROPPED
+  (OUT_OF_SCOPE_GAP at main.rs:3485/3522/3523/3584); the positional --gpu-device-ids door had no
+  json gate at all. The Python full-CLI route silently printed plain paths for --json -l (verified
+  live: exit 0).
+
+- Rust: native_structured_dropped_search_flags/positional_native_dropped_search_flags predicates;
+  pure validate_* refusers; exit_native_structured_flag_dropped (exit 2, names every dropped flag +
+  remedy); hoisted before count_search_corpus_bytes (CUDA census) with !args.index preserving the
+  trigram-index path's own pinned IndexFlagPolicy::Refuse message; --format rg --json rg passthrough
+  and -o/-c stay honored; ratchet =
+  assert_search_args_native_structured_field_classification_is_exhaustive (all 68 SearchArgs fields,
+  compile-time exhaustive) + in-process grid + integration tests against the real binary
+  (tests/test_h2_native_structured_refusal.rs). - Python: search_command refuses json/ndjson +
+  files-with-matches/files-without-match (exemption requires explicit --format rg AND not ndjson;
+  codex round-3 finding closed); count_matches_requires_ripgrep + _can_passthrough_rg pins
+  re-verified unchanged. - Tests: 4 new Python (incl. the --json --ndjson --format rg -l repro), 27
+  affected test_cli_modes + 9 bootstrap compile/subset green locally; ruff+format+mypy clean;
+  rustfmt --check clean (Rust parses; full compile + cargo tests are CI-oracle per cpu-safe).
+
+Codex audit loop: R1 FIX-BEFORE-MERGE (4 findings; fixed) -> R2 FIX-BEFORE-MERGE (2 broken new
+  tests: self-matching census + integration-file cwd; fixed: census removed as
+  self-matching/fragile, behavioral coverage via CARGO_BIN_EXE_tg integration, cwd fixed) -> R3
+  FIX-BEFORE-MERGE (1 MEDIUM: --json --ndjson --format rg -l slipped the exemption; fixed: exemption
+  requires not ndjson + pinning test) -> R4 FIX-BEFORE-MERGE (1 MEDIUM:
+
+the pinning test was vacuous under CliRunner sys.argv; fixed: stub sys.argv + bidirectional control)
+  -> R5 APPROVE-WITH-NITS (only nit: this audit-loop line; refreshed).
+
+* test: make h2 native structured refusal dual-env for rg-present and rg-absent
+
+The positional --gpu-device-ids + --count-matches arm previously required stderr to contain
+  "refusing", which is only produced by the P5·H2 validator. On CI's test-rust-core lanes rg is
+  UNAVAILABLE, so the front door normalizes the argv into the `tg search` subcommand
+  (--count-matches is in SEARCH_OPTION_FIRST_FLAGS) where the PRE-EXISTING rg-required passthrough
+  gate (search_prefers_ripgrep_passthrough -> require_ripgrep_or_exit in handle_ripgrep_search,
+  main.rs:9414) fires FIRST and exits 2 with "this search's flag combination requires the ripgrep
+  (`rg`) backend" -- before the P5·H2 validator's "refusing" message runs.
+
+The exit-2 fail-closed contract holds in both environments; only the wording differs. New
+  assert_positional_gpu_refused accepts exit 2 + (stderr contains "refusing" OR "requires the
+  ripgrep" OR the flag name --count-matches). The --json positional arm and all four
+  structured-search arms are env-independent (json short-circuits the rg-required predicate), so
+  they keep the strict "refusing" + flag-name assertion.
+
+* fix: refuse gpu + count/files combos on the native search form before rg passthrough
+
+SEARCH_OPTION_FIRST_FLAGS includes --count-matches, so the positional `tg PAT . --gpu-device-ids 0
+  --count-matches` is REWRITTEN into the search-subcommand form (normalize_top_level_search_args)
+  and never reaches run_positional_cli's P5·H2 validator -- the front-door-rewrite shadow. On the
+  search path, --count-matches / -l / --files-with-matches / --files-without-match all sit in
+  search_requires_ripgrep_passthrough's hard-flag list, so they route to command_ripgrep_args, which
+  threads them into rg's argv but carries NO --gpu-device-ids field (RipgrepSearchArgs has zero gpu
+  refs): with rg present the explicit GPU request was SILENTLY DROPPED (exit 0, wrong output); with
+  rg absent the pre-existing rg-required passthrough gate exited 2 by accident (wrong wording).
+
+New search-form gate in handle_ripgrep_search BEFORE the rg-passthrough early return:
+  !gpu_device_ids.is_empty() && any count/files flag -> exit 2 with a "refusing" message naming both
+  the GPU flag and the count/files flag, mirrored on exit_native_structured_flag_dropped.
+  Airtight-ordering argument: the gate sits before the passthrough block whose
+  require_ripgrep_or_exit would otherwise fire when rg is absent, so for these combos it is the
+  FIRST gate in BOTH environments -- the rg-absent CI arm now hits this deterministic message, and
+  the rg-present arm no longer drops the GPU request. !args.index preserves the explicit-index
+  path's own IndexFlagPolicy::Refuse message (mirrors the structured validator's carve-out). Pure
+  --count-matches/-l without --gpu-device-ids keeps its HONORED rg passthrough (the predicate
+  returns empty).
+
+Positional behavior otherwise unchanged: --files-without-match / --files-with-matches long forms are
+  in neither rewrite list and PositionalCli has no -l spelling, so those positional file-flag routes
+  stay exactly as pre-existing P5·H2 left them (the positional validator refuses --count-matches
+  only) -- a separate, unchanged boundary, not silently claimed as covered.
+
+Coverage: in-process unit grid drives the pure predicate (rg_passthrough_gpu_dropped_ search_flags)
+  over the refused set plus honored controls; the integration test pins the rewritten positional
+  door AND the direct search-form combos to a STRICT exit-2 + "refusing" + both-flag-names assertion
+  (no more dual-env tolerance: the ordering argument makes the message deterministic), and adds a
+  discriminating control proving pure count/files (no gpu) never fires the new gate.
+
+Rust authored blind under CPU-SAFE (no local cargo): rustfmt --check clean on both files; CI's cargo
+  test is the oracle. This is the P5·H2 never-silently-drop (Backend Fail-Closed Contract) closure
+  for the SEARCH form.
+
+- **lsp**: Confine documentChanges CreateFile/RenameFile/DeleteFile file-ops (M3 audit)
+  ([#983](https://github.com/oimiragieo/tensor-grep/pull/983),
+  [`2252fc3`](https://github.com/oimiragieo/tensor-grep/commit/2252fc38368c6dbe14aa9ffbc92aabe09059aff8))
+
+* fix(lsp): confine documentChanges CreateFile/Rename/DeleteFile file-ops (M3 audit)
+
+M3 HIGH (verified): _workspace_edit_target_uris collected only changes-map keys + textDocument.uri,
+  so file-op members (CreateFile/RenameFile/DeleteFile carry uri/ oldUri/newUri, no textDocument)
+  yielded [] and the guard 'if edit_uris and all(...)' passed VACUOUSLY -- out-of-root file-ops were
+  forwarded to the IDE (rename-in plants content, rename-out exfiltrates, delete of an out-of-root
+  uri passed). Worse than not checked: an empty guarantee that read as a check.
+
+Fix (thinktank-audited, codex-gated): - Enumerate all five target fields (textDocument.uri + rename
+  oldUri/newUri + create/ delete uri + changes keys) via _document_change_member_targets -- each
+  member is EXACTLY ONE shape; hybrid/unknown/null-kind members are opaque. -
+  _workspace_edit_has_opaque_member: present-but-non-list documentChanges or any snake_case
+  document_changes key (accepted by the lsprotocol constructor -> outbound bypass) or an opaque
+  member -> refuse the WHOLE edit (A53 no-weaker-fallback). - _valid_external_document_uri: external
+  targets must be syntactically valid absolute file: URIs -- reject whitespace/control chars (incl.
+  %00 NUL), path-rootless
+
+(file:C:evil), non-file schemes (http://, uppercase FILE://, +file://) fail closed (round-2/round-3
+  HIGHs: malformed forms previously resolved against the server's per-drive CWD and passed in-root
+  while the original string was forwarded unchanged). - _workspace_edit_refused = opaque OR
+  (per-target validator AND resolve-containment); TWO independent nets -- the
+  trailing-space/dot-adjacent forms I probed in round 4 are caught by the resolve+containment arm
+  even where the form validator accepts the absolute shape. - Relay residual documented inline: tg
+  resolves at check time, the IDE applies later (relay-only TOCTOU; not an opened-identity
+  guarantee).
+
+Tests: 31 in test_lsp_server_confinement.py (per-op refusals, hybrid/opaque, snake_case
+
+bypass, %00, file:/ RFC-8089, malformed-form cluster, in-root controls, percent-encoding + UNC
+  edges); 178 LSP-subset tests pass; ruff/format/mypy clean. Security gate: codex R1
+  FIX-BEFORE-MERGE (3) -> fixed; R2 FIX-BEFORE-MERGE (2: kind-null, snake_case, file:/ HIGH) ->
+  fixed; R3 FIX-BEFORE-MERGE (1: path-rootless HIGH) -> fixed; R4 seat FAILED on its content filter
+  (A10/A74: failed seat, substitute verified by the orchestrator's own probes -- all seven hostile
+  forms resolve out-of-root and refuse). Known remaining (separate tracked item
+  LSP-EDIT-CONSTRUCTION): lsprotocol's document_changes-vs-documentChanges constructor mismatch
+  means confined all-in-root file-op edits flow through the existing native fallback; construction
+  fix deferred.
+
+* fix(lsp): gate drive-absolute URI strip on Windows (cross-platform M3)
+
+Linux CI reddened test_uri_to_path_handles_single_slash_file_uri (assert True is False): the
+  drive-absolute strip (path[1:] for /C:/...) ran unconditionally, so on POSIX the root-anchored
+  /C:/Windows/evil became a RELATIVE C:/Windows/evil that resolved INSIDE the process cwd --
+  recreating the drive-relative escape the fix was meant to close, on Linux instead of Windows. Gate
+  on os.name == 'nt': Windows keeps the strip (C:\\Windows\\evil absolute, outside root); POSIX
+  keeps the leading '/' (path stays root-anchored, outside any cwd). Verified locally 31/31
+  test_lsp_server_confinement; the Linux CI assertion now holds both arms.
+
+
+## v1.110.8 (2026-08-09)
+
+### Bug Fixes
+
+- **checkpoint**: Refuse symlinked/junctioned ancestor dirs on create-side copy (M1 audit)
+  ([#982](https://github.com/oimiragieo/tensor-grep/pull/982),
+  [`e3feaf5`](https://github.com/oimiragieo/tensor-grep/commit/e3feaf502b5d9ce1fc2bb4c131141431871758c8))
+
+M1 HIGH (verified): create_checkpoint's copy loop copied with follow_symlinks=False, which refuses
+  only a link AT THE LEAF. A symlinked or (Windows) junctioned ANCESTOR directory under root is
+  traversed transparently by the OS, so shutil.copy2(root/a/b.txt, ...) copied OUT-OF-ROOT file
+  content into the checkpoint snapshot (create-side disclosure; e.g. root/a junctioned to
+  C:\Users\...\evil). The undo side already refused this class for its snapshot source (audit H3);
+  the create side did not (A27/A39 twin).
+
+Fix: _resolve_parent_within_root resolves ONLY the parent chain and asserts containment; the copy
+  loop composes source = resolved_parent / leaf and still copies with follow_symlinks=False -- a
+  legitimately tracked out-of-root-pointing LEAF symlink is stored AS A LINK (never followed, never
+  refused; law A38 -- this is NOT the leaf-following _resolve_within_root). Fail closed (ValueError
+  -> cleanup + raises) on a planted ancestor.
+
+Tests: 4 new (junction ancestor refused; symlinked ancestor refused; normal tree ok;
+
+tracked leaf symlink stored as link), RED confirmed pre-fix (junction disclosure probe:
+  SECRET-OUT-OF-ROOT-VIA-JUNCTION landed in the snapshot), GREEN post-fix; 88 checkpoint tests pass;
+  ruff/format/mypy clean. Security gate (A3, codex): SHIP. R1 FIX-BEFORE-MERGE 4 findings -> all
+  resolved: 3 = the A48 opened-parent-handle class, pre-scoped out by the approved plan and now
+  recorded canonically as deferred rows M1-FU1 CHECKPOINT-A48-HANDLES (owner M1 change-control;
+  reopen: attacker able to race a parent swap in the snapshot window) and M1-FU2
+  CHECKPOINT-UNDO-LEAF-RESIDUAL (undo leaf-following; owner undo-change-control) with dispositions +
+  reopen triggers; R2 SHIP, no new findings.
+
+### Continuous Integration
+
+- Spend-smart CI — PR-only code-touch gate for expensive jobs (CI-cost)
+  ([#977](https://github.com/oimiragieo/tensor-grep/pull/977),
+  [`f764b08`](https://github.com/oimiragieo/tensor-grep/commit/f764b08dc445bc9e222b151f056d28396f955a19))
+
+Thinktank-ratified, verified against the governance suite. Full matrix still runs on every main push
+  (so `release`'s `needs:` are never skipped and the publish is never lost); on a docs-only
+  pull_request the expensive/cross-platform jobs are SKIPPED (a skipped required job counts as
+  success for branch protection — never trigger-level paths-ignore, which deadlocks).
+
+- Add a cheap `changes` job computing whether the PR diff touches code (src/ rust_core/ tests/
+  .github/workflows/ pyproject.toml Cargo.toml Cargo.lock uv.lock). - Gate the 10 expensive jobs
+  (agent-readiness, windows-agent-readiness, static-analysis, test-python, test-rust-core,
+  cuda-feature-check, search-golden-parity, native-build-smoke, test-gpu-linux,
+  benchmark-regression) with `if: github.event_name != 'pull_request' || needs.changes.outputs.code
+  == 'true'` and `needs: [smoke, changes]` (keeps the smoke gate). - Drop the macOS x nightly
+  `test-rust-core` leg (continue-on-error signal at ~10x the Linux rate, zero release-gating value;
+  nightly still runs on linux/windows every PR and all channels weekly via the cron).
+
+Validator updates (same PR): the 3 release-workflow-configuration pins that asserted the literal
+  `needs: smoke` now assert the substance (a `needs:` line referencing `smoke`).
+  `docs/CI_PIPELINE.md` updated. Verified locally: test_release_workflow_configuration.py +
+  test_release_assets_validation.py (173 passed) + test_native_e2e_ci_coverage_contract.py (5
+  passed) against the edited workflow; YAML parse clean.
+
+### Documentation
+
+- 2026-08-06 PM CEO update + A77–A82 lesson retention
+  ([#967](https://github.com/oimiragieo/tensor-grep/pull/967),
+  [`49f68a9`](https://github.com/oimiragieo/tensor-grep/commit/49f68a9fcb20e8efe8fc1835f754b0ef3a944e8a))
+
+Stamp live closed-world (0 READY / 6 BLOCKED), list all 28 backlog rows, research still needed, and
+  retain stdin-poller / quota-FAILED / tip-bytes / receipts≠Sol / AMEND_SPINE laws across AGENTS,
+  CLAUDE, MEMORY, and skills.
+
+- Complete-backlog completion plan (2026-08-08) through thinktank round 2
+  ([#978](https://github.com/oimiragieo/tensor-grep/pull/978),
+  [`5500b88`](https://github.com/oimiragieo/tensor-grep/commit/5500b889f915829923939cd859cd296379f0743b))
+
+Refreshed, three-lens (evidence/process/security) thinktank-audited execution plan for the remaining
+  buildable audit fixes (P5 H2, M1, M3, M16, M17, M14), the Part-0 open-PR drain
+  (#975/#976/#977/#967), and the gated research features (R1-R8), with honest closed-world
+  dispositions for CEO/blocked/demand-gated items. Round 2 folded in every security HIGH and process
+  MUST finding.
+
+- Record 2026-08-08 campaign findings (stale-ready labels, board-freshness release gate, H2
+  residual) ([#981](https://github.com/oimiragieo/tensor-grep/pull/981),
+  [`39b3ea3`](https://github.com/oimiragieo/tensor-grep/commit/39b3ea38e169cdafe7105f1007ae242066527398))
+
+
+## v1.110.7 (2026-08-08)
+
+### Bug Fixes
+
+- Fail closed on --ast -v/-w + fix AST cache key (M8 audit)
+  ([#976](https://github.com/oimiragieo/tensor-grep/pull/976),
+  [`18fad0f`](https://github.com/oimiragieo/tensor-grep/commit/18fad0ff0ba2f99cfa681017f693867f7b52aabb))
+
+M8 MED (verified): `--ast -v` / `--ast -w` SILENTLY DROPPED invert-match / word-regexp on BOTH AST
+  backends -- `tg search --ast -v PAT` returned the non-inverted match set as if it were inverted (a
+  wrong result that reads as absence), and ast_backend's persistent cache key
+  (`file::lang::pattern`) omitted the flags, so a cached non-inverted result could be served to an
+  inverted query. No guard existed anywhere (grepped pipeline/main/ast routes).
+
+Change (fail-closed, per the Backend Fail-Closed Contract + the audit's refusal recommendation): -
+  `ast_backend.search` and `ast_wrapper_backend.{search,search_many}` now raise a clear
+  BackendExecutionError when `invert_match` (`-v`) or `word_regexp` (`-w`) is set, directing to
+  plain `tg search` for inverted/whole-word matching. Never silently return the wrong set. -
+  `ast_backend`'s persistent result-cache key now includes both flags
+  (`...::v={invert_match}::w={word_regexp}`), threaded through the 3 cache fns + all 4 call sites,
+  so a non-inverted and inverted query can never share a cache entry (belt+braces). -
+  `search_project` (config-file project scan, no match-semantics config) intentionally untouched.
+
+Tests: new `tests/unit/test_ast_invert_match_fail_closed.py` (both AST backends refuse -v and
+
+-w; cache key digests differ across invert/word/no-flag). Full ast suite: 78 passed, 1 xfailed; ruff
+  / ruff format --preview / mypy clean.
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.110.6 (unblocks board-freshness release gate)
+  ([#980](https://github.com/oimiragieo/tensor-grep/pull/980),
+  [`255a4c9`](https://github.com/oimiragieo/tensor-grep/commit/255a4c95862f9accac0f38e81f7c9bdf00f25742))
+
+* docs: reconcile TASK_BOARD to v1.110.6 (unblocks the board-freshness release gate)
+
+The reconcile stamp sat at v1.110.0 while pyproject shipped v1.110.6 -- 6 releases behind tolerance
+  5 -- so test_task_board_freshness.py failed in EVERY test-python job and, because the test matrix
+  gates the release train, v1.110.7 (#976 M8) could not publish.
+
+Reconciled live (derived, not retyped): snapshot to v1.110.6 (PyPI endpoint), IN FLIGHT table
+  replaced with gh pr list 2026-08-08 state (#966/#967/#977/#978/#979), campaign note added:
+  2026-08-08 drain (M7 #975 -> v1.110.6, M8 #976 -> v1.110.7 in flight) + P5 H2 draft #979 + the
+  M1/M3/M16/M17/M14 audit queue per docs/plans/2026-08-08-backlog-completion-plan.md. Also flags
+  that #967/#977 were found STALE-BASED (labeled ready/green heads predated #969-#976) and were
+  rebased onto current main the same day.
+
+* docs: sync SESSION_HANDOFF + campaign note to index 2026-08-08.1
+
+
+## v1.110.6 (2026-08-08)
+
+### Bug Fixes
+
+- Verify_receipt malformed embedded key never-raises (M7 audit)
+  ([#975](https://github.com/oimiragieo/tensor-grep/pull/975),
+  [`2cafa29`](https://github.com/oimiragieo/tensor-grep/commit/2cafa290431950d1b107103bbf8cad6044579cff))
+
+M7 MED (verified): `verify_receipt` computed `fingerprint =
+  key_id_from_public_b64(public_key_field)` OUTSIDE the guarded try. On a malformed embedded public
+  key (valid str, invalid base64), `key_id_from_public_b64` raises `EvidenceSigningError` -- which
+  escaped and aborted a whole review-bundle verify as a raw error instead of recording a normal
+  invalid result, violating verify_receipt's documented "never raises" contract (methods in this
+  family return an `errors` list instead).
+
+Change: moved the fingerprint derivation INSIDE the try and added `EvidenceSigningError` to the
+  except tuple, so a corrupt receipt now degrades to `valid=False` + a malformed-key error.
+
+Tests: new `test_verify_receipt_malformed_embedded_public_key_never_raises` (a signed receipt with a
+  corrupted embedded public key must return an invalid result, never raise). The existing
+  sign/tamper tests still pass. ruff/format-preview/mypy clean.
+
+
+## v1.110.5 (2026-08-08)
+
+### Bug Fixes
+
+- Mark ast-grep partial scans result_incomplete (M10 audit)
+  ([#974](https://github.com/oimiragieo/tensor-grep/pull/974),
+  [`8c04a01`](https://github.com/oimiragieo/tensor-grep/commit/8c04a014328bf49ecd64e80f3d8f4faf0eb19c17))
+
+M10 MED (verified): `ast_wrapper_backend._raise_for_nonzero` waives an ast-grep scan that skipped
+  unreadable paths (per-path access failure; findings still on stdout), but the result carried NO
+  incompleteness marker -- so a consumer treats the found-rows as complete. The rg twin sets
+  `result_incomplete=True` + `incomplete_reason_class="unreadable_path"` (ripgrep_backend.py).
+  Pre-fix, `result_incomplete` was NEVER written in ast_wrapper_backend (grepped: 0 matches on
+  origin/main) -- the structural RED proof for the new assertions.
+
+Change: `_raise_for_nonzero` now returns a bool (True = non-fatal partial scan; False on exit 0 /
+  clean JSON waive; genuine failures still raise BackendExecutionError), threaded into
+  `_parse_result(..., partial=...)` which marks the SearchResult `result_incomplete=True` +
+  `incomplete_reason_class="unreadable_path"` (mirroring the rg twin). All 3 call sites (`search`,
+  `search_many`, `search_project`) wired.
+
+Tests: extended `test_ast_wrapper_backend_tolerates_per_path_access_warnings_with_findings` to
+  assert `result_incomplete is True` + `incomplete_reason_class == "unreadable_path"` (the existing
+  37-test file passes). Mypy/ruff clean.
+
+
+## v1.110.4 (2026-08-07)
+
+### Bug Fixes
+
+- Backend_cpu fail-closed error propagation (H1 audit)
+  ([#972](https://github.com/oimiragieo/tensor-grep/pull/972),
+  [`b5d89ff`](https://github.com/oimiragieo/tensor-grep/commit/b5d89ff2327ed3a9e276cdb0c298ce39c13cff97))
+
+* fix: backend_cpu fail-closed error propagation (H1 audit)
+
+H1 HIGH (verified): `backend_cpu.rs::search_with_paths` + the count path swallowed EVERY file and
+  walk error -- `if let Ok(x) = self.search_file_*(...) { extend }` dropped File::open/mmap errors
+  and `WalkDir::into_iter().filter_map(|e| e.ok())` dropped every walk error -- so an unreadable
+  file yielded Ok(empty) (a "trustworthy no matches" on a real failure). rust_backend.py's
+  try/except could never fire because the error was already swallowed (Backend Fail-Closed Contract
+  violation, the engine most users hit).
+
+Change: all ~16 swallow sites now propagate with `?` -- a per-file open/read/mmap failure or an
+  unreadable walk entry surfaces as an error that rust_backend.py converts to BackendExecutionError
+  (visible CPU fallback), never a silent 0-match. The walk iterator is collected into Result so a
+  walk error aborts fail-closed.
+
+Tests: 2 new Rust unit tests -- (unix) a walk hitting an unreadable dir entry returns Err,
+
+not Ok(empty) (discriminates on the ubuntu test-rust-core leg: pre-fix filter_map swallowed it);
+  happy-path single-file search still matches. rustfmt --check clean. Compile+test oracle is CI
+  (test-rust-core), per local CPU-safe policy.
+
+* test: lower walk-discard ratchet backend_cpu 4 -> 0 (H1 fixed all sites)
+
+The ratchet (`test_native_walk_error_ratchet.py`) fired on the H1 PR: backend_cpu.rs recorded 4
+  error-discarding walk sites, and the H1 fix replaced all four with
+  `collect::<Result<Vec<_>,_>>()?` propagation (actual 0). Lowering the recorded count in the SAME
+  PR, per the ratchet's own rule ("leaving it high would let a future regression slip back in
+  unnoticed"). Re-verified: the ratchet test passes with backend_cpu.rs at 0.
+
+- Cover all 10 registered languages in query-language hints (M13 audit)
+  ([#973](https://github.com/oimiragieo/tensor-grep/pull/973),
+  [`8a8ec2c`](https://github.com/oimiragieo/tensor-grep/commit/8a8ec2c51d33dbcf21042ef06403e53ba97b2990))
+
+M13 MED (verified): `repo_map._QUERY_LANGUAGE_ALIASES` covered only 4 of 10 registered languages
+  (python/typescript/javascript/rust), so a query naming go/java/php/csharp/c/cpp yielded
+  `query_language_hints: []` -- silently DISABLING the capsule's mismatch-confidence-cap and the
+  language candidate filter for those 6 targets (a fail-open honesty gap; the target side
+  `_target_language_for_path` already handled all 10).
+
+Change: extended the alias map to all 10 registered languages (incl. golang/c_sharp/cplusplus
+  abbreviations; bare one-letter "c" included -- a spurious hint errs toward the conservative
+  ask/filter, never a confident-wrong, consistent with the repo's honesty-over-speed posture).
+
+Tests: extended `test_query_language_hints_are_token_bounded` with the 6 newly-covered
+
+languages + aliases. Verification: 34 passed (incl. capsule hardcases + best_effort); per-task
+  accuracy gate (`tests/eval/test_agent_accuracy.py`) 2/2 passed -- no ranking regression.
+
+
+## v1.110.3 (2026-08-07)
+
+### Bug Fixes
+
+- Remove Cmd/BatBadBut batch-shim wrap in python_sidecar (H3 audit)
+  ([#971](https://github.com/oimiragieo/tensor-grep/pull/971),
+  [`af458b7`](https://github.com/oimiragieo/tensor-grep/commit/af458b7e445152d9c536f7e03fc99e00d4c90bcb))
+
+H3 HIGH (verified): `python_sidecar.rs::command_for_executable` (3 call sites -- all resolved
+  Python-interpreter launches) manually wrapped a `.cmd`/`.bat` interpreter as `cmd /d /c <path>`
+  with sidecar args appended after it. That makes cmd.exe the program: std applies plain
+  CreateProcess quoting and cmd.exe RE-PARSES the sidecar args, so a caller-supplied `&`/`|`/`%`
+  injects an additional command when the resolved Python is a .cmd/.bat shim (CWE-88 / BatBadBut
+  CVE-2024-24576 class). This is the exact pattern the rg twin bans (`rg_passthrough.rs:729-736`,
+  A27/A39 class fix that never crossed).
+
+Change: `command_for_executable` now returns plain `Command::new(program)` on every platform (after
+  removing the now-dead `is_windows_batch_script` helper). Since Rust 1.77.2 (pinned 1.96.0) std
+  detects a .bat/.cmd program and spawns it through cmd.exe WITH the CVE-fixed per-arg escaping, so
+  this is both correct and injection-safe.
+
+Tests: 2 new Rust unit tests in python_sidecar.rs `mod tests_h3` -- a .bat shim must be the launched
+  program (never `cmd`) -- discriminating on the Windows test-rust-core CI leg (pre-fix it launches
+  cmd; post-fix the shim), and a plain program stays untouched. rustfmt --check clean. CI
+  (test-rust-core windows) is the compile+test oracle per CPU-safe local policy.
+
+
+## v1.110.2 (2026-08-07)
+
+### Bug Fixes
+
+- Emit real edit_plan_seed confidence overall, cap primary target (H4 audit)
+  ([#969](https://github.com/oimiragieo/tensor-grep/pull/969),
+  [`b327be3`](https://github.com/oimiragieo/tensor-grep/commit/b327be38a92476b3749bf2e4b344d02059959a68))
+
+* fix: emit real edit_plan_seed confidence overall, cap primary target (H4 audit)
+
+HIGH H4 (verified @ HEAD by independent census): repo_map's edit-plan-seed confidence had no
+  "overall" key, so both capsule consumers (_primary_target agent_capsule.py:560 and _confidence
+  :2256) fell back to a flat 0.9 default -- a weak lexical hit reported a confident 0.9 and cleared
+  the >=0.75 no-ask threshold (the "confident false zero").
+
+Producer: `_build_edit_plan_seed` + `_attach_lightweight_navigation_metadata` now emit `overall =
+  max(file, symbol)` (`_derive_seed_overall`), computed AFTER the 0.65 filtered-alignment cap so the
+  derived overall inherits that cap; file anchors when no symbol matched; test (a separate
+  validation axis) is excluded by design.
+
+Consumer: `build_agent_capsule_from_map` adds a FINAL reconciliation
+  `_cap_primary_target_confidence(target, confidence.overall)` after the best-effort block and the
+  corroborated token-budget lift, so `primary_target.confidence` can never exceed the ladder-capped
+  overall. Placement was derived from local reds, not assumed: an EARLY cap (immediately after
+  `_confidence`) broke the corroboration raise paths (token-budget uplift :3336, LSP), because those
+  cap a high-seeded target DOWN to `uplifted`; the final reconciliation preserves them while closing
+  the downward-only ladders (empty-snippets / primary-omitted / budget).
+
+Tests: 4 new in tests/unit/test_h4_confidence_overall.py (helper semantics, lightweight-seed
+  producer emits derived overall, 0.65-cap inheritance, primary-target capped by the empty-snippets
+  ladder). Re-pinned 3 stale 0.9 goldens in test_validation_commands.py to substance
+  (agent/edit-plan parity, >= 0.75 no-ask threshold, exact downgrade-reason lists) -- the values
+  changed BY DESIGN; the test intents (parity, disclosure) did not.
+
+Gates: 653 passed (cli_modes incl.), 702 + 223 passed broader capsule/repo_map/ accuracy suites
+  (per-task accuracy gate green -> no ranking regression); ruff/ruff-format-preview/mypy clean (92
+  files). Branch based on origin/main bb4fdae.
+
+* docs: campaign plan loop state — iteration 2 (P2 H4) complete
+
+* docs: untrack campaign plan doc from P2 (working artifact; #968 carries it to main)
+
+* fix: re-pin llm-compact payload byte guard for H4 confidence.overall (CI win/mac)
+
+H4 added the REQUIRED `confidence.overall` key to the edit-plan-seed confidence dict; it grows the
+  llm-compact context-render payload by a handful of platform-dependent bytes, and the 9000 byte
+  guard was already a documented knife-edge (~5-byte margin, #525 CI) whose result shifts with the
+  runner tmp_path length (win/mac ~9.0k vs local ~7.7k). Re-pinned the envelope guard to <12000 with
+  the rationale in-test; the structural compaction asserts (edit_ordering / related_spans /
+  suggested_edits caps) unchanged and carrying the real substance.
+
+- Normalize CuDFBackend engine failures to BackendExecutionError (H6 audit)
+  ([#970](https://github.com/oimiragieo/tensor-grep/pull/970),
+  [`0328a8b`](https://github.com/oimiragieo/tensor-grep/commit/0328a8be9bcdd9b9ddcbc3ff75aa2d65fd4b0ff4))
+
+* fix: normalize CuDFBackend engine failures to BackendExecutionError (H6 audit)
+
+H6 HIGH (verified): CuDFBackend was the only ComputeBackend with ZERO BackendExecutionError raises
+  -- a GPU OOM / driver / regex fault escaped raw, so the per-file CPU-fallback retry (`except
+  BackendExecutionError`, cli/main.py) never fired and a GPU fault produced an uncaught traceback
+  instead of a visible CPU fallback (Backend Fail-Closed Contract).
+
+Change: `CuDFBackend.search` now wraps the engine entry (`_search_uncapped`) so any real failure
+  becomes BackendExecutionError (re-raises an already-normalized one verbatim). The internal degrade
+  ladder (zero-copy -> read_text -> chunked -> distributed process pool) is untouched.
+
+Tests: 3 new in tests/unit/test_cudf_backend.py (engine failure -> BackendExecutionError with the
+  cause in the message; normal result untouched through _cap_to_max_count; already-normalized error
+  re-raised verbatim). Gates: test file 3 passed; related backend suites 42 passed, 1 skipped;
+  ruff/format-preview/mypy clean. Branch based on origin/main bb4fdae. GPU experimental; no
+  promotion claim.
+
+* test: restore pre-existing cudf_backend test file, append H6 fail-closed tests
+
+The first H6 commit clobbered the pre-existing tests/unit/test_cudf_backend.py (549 lines:
+  CUDA-worker isolation, read_text routing, device-context ordering) by overwriting it with a 3-test
+  file. Restored the original and appended the H6 fail-closed tests as a new
+  TestCuDFBackendFailClosed class instead. Full file: 33 passed. ruff/format-preview clean.
+
+
+## v1.110.1 (2026-08-07)
+
+### Bug Fixes
+
+- Bound native-delegation search subprocess timeout (H5 audit)
+  ([#968](https://github.com/oimiragieo/tensor-grep/pull/968),
+  [`2aa3bb7`](https://github.com/oimiragieo/tensor-grep/commit/2aa3bb76a49d329ee513f688db15fc50f0433321))
+
+* docs: agentic-cli + deep-dive-audit campaign plan (P1 H5 in flight)
+
+* fix: bound native-delegation search subprocess timeout (H5 audit)
+
+The second native-delegation route (cli/main.py _delegate_to_native_tg_search, reachable via `tg
+  search PAT --cpu` / `--json`) ran subprocess.run with NO timeout, so a hung native search hung the
+  CLI forever (fail-open). Now: - bounded with timeout=configured_ripgrep_timeout_seconds()
+  (subprocess_policy.py:63) - TimeoutExpired -> exit 124 + stderr hint (the bootstrap twin contract)
+  - spawn OSError (missing/unexecutable native binary) -> exit 2 + stderr "output cannot be trusted"
+  (fail-closed, not a traceback)
+
+Adversarial audit folded in: - MED: hint names BOTH knobs (TG_RG_TIMEOUT_SECONDS, and
+  TG_SIDECAR_TIMEOUT_MS when set -- that knob takes precedence in
+  configured_ripgrep_timeout_seconds) - MED: test_native_delegation_uses_configured_timeout pins the
+  configured knob is threaded (42.0 sentinel), not a hardcoded literal - MED: OSError -> exit 2
+  Cleared: timeout edge values, fake-module binding, exit-124 consistency.
+
+Banked NITs: CONTRACTS.md 124 documentation; upstream inf-timeout fail-open.
+
+Tests: 6 new in tests/unit/test_native_delegation_timeout.py; full tests/unit/test_cli_modes.py
+  passes (530; test doubles updated to accept timeout -- class sweep of 8 _fake_run doubles, audit
+  A27 twin rule); 58 pass related delegation/rg suite; ruff/ruff-format-preview/mypy clean.
+
+* docs: ruff --preview format campaign plan markdown (CI Formatting & Linting)
+
+### Documentation
+
+- 2026-08-06 CEO backlog update + A70–A76 lesson retention
+  ([#963](https://github.com/oimiragieo/tensor-grep/pull/963),
+  [`9bf38c2`](https://github.com/oimiragieo/tensor-grep/commit/9bf38c23d433121ea98cd5f6063f4b7b1278d17d))
+
+* docs: 2026-08-06 CEO update + retain A70–A76 lessons
+
+Dumbed-down closed-world packet, close F7/CPU-BACKEND/REF-CALL-REGISTRY to SHIPPED, and bank ambient
+  signing-key / tracker / bare-wheel / quota lessons in AGENTS, MEMORY, and skills.
+
+* docs: stamp Closure PR #963 on F7/CPU-BACKEND/REF-CALL-REGISTRY rows
+
+* docs: restore Tasks 3–15 pin in SESSION_HANDOFF current closeout
+
+- Closeout campaign findings + Task2A Sol R2 status
+  ([#965](https://github.com/oimiragieo/tensor-grep/pull/965),
+  [`bb4fdae`](https://github.com/oimiragieo/tensor-grep/commit/bb4fdaeaf8fc616ace3cfdb583f377f7c2b359e2))
+
+- Stamp READY∩BLOCKED board truth + closeout plan
+  ([#964](https://github.com/oimiragieo/tensor-grep/pull/964),
+  [`ac68e62`](https://github.com/oimiragieo/tensor-grep/commit/ac68e62da1b4f23b96b195640ce764160eb66e61))
+
+* docs: stamp READY∩BLOCKED truth + closeout plan/R0 packets
+
+Align the canonical index with the BACKLOG reconcile so MCP-SURFACE/F5/F6/F8/#89/#90 are not false
+  build licenses, and record the #963 early-merge instrument finding.
+
+* docs: refresh closeout campaign state with PR #964 pointer
+
+* docs: wave-2 closeout plan PROCEED_D1_THEN_W4 (Fable+Sol reconcile)
+
+EOF
+
+* fix(test): pin READY→BLOCKED board stamp for program-owned rows
+
+Governance tests still expected READY for #89/#90 and forbade BLOCKED on program owners; align pins
+  with Task 2A ownership so D1 CI can go green.
+
+- W5 enterprise published-wheel dogfood receipt (1.110.0)
+  ([#962](https://github.com/oimiragieo/tensor-grep/pull/962),
+  [`5341754`](https://github.com/oimiragieo/tensor-grep/commit/5341754567c2b4b33e7d00f4d60bd1b8717394d1))
+
+* docs: record W5 1.110.0 enterprise published-wheel dogfood
+
+Capture the prepare/search/evidence/review-bundle/ledger verdict table and the ambient default
+  signing-key instrument note after #958 landed.
+
+* docs: keep W5 campaign note out of TASK_BOARD canonical rows
+
+The tracker parser requires Status/PR/Trigger rows; a free-form campaign bullet under the index
+  failed test_ceo_demand_duplication_is_rejected.
+
+### Testing
+
+- Lock prepare→evidence→review-bundle enterprise CUJ chain
+  ([#958](https://github.com/oimiragieo/tensor-grep/pull/958),
+  [`65d0195`](https://github.com/oimiragieo/tensor-grep/commit/65d0195703c14d71a62e6b7dd193b44798101398))
+
+* test: lock prepare→evidence→review-bundle enterprise CUJ chain
+
+* test: ruff format --preview for enterprise CUJ lock
+
+
 ## v1.110.0 (2026-08-06)
 
 ### Bug Fixes

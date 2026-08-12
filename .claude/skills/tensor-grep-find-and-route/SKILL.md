@@ -5,7 +5,7 @@ description: Use when vocabulary-mismatched queries need whole-repo hybrid searc
 
 # tensor-grep find + route-test
 
-Verified against **tg 1.95.0** (2026-07-24; prior full dogfood 2026-07-21 WSL workspace sweep at v1.91.0).
+Verified against **tg 1.110.14** (2026-08-11; prior full dogfood 2026-07-21 WSL workspace sweep at v1.91.0).
 
 ## When to use
 

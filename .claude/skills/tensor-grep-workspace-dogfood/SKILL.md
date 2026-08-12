@@ -8,12 +8,14 @@ description: Use when stress-testing tensor-grep against a multi-project workspa
 ## Preconditions
 
 ```bash
-tg --version
+# Prefer an explicit published pin when comparing skills to product:
+uvx --from tensor-grep==1.110.14 tg --version
+# Bare `uvx --from tensor-grep tg` / a shadowed `C:\Users\...\bin\tg` can report a stale version.
 tg doctor --json ROOT
 tg devices
 ```
 
-## Recommended sweep (v1.101.31)
+## Recommended sweep (v1.110.14)
 
 ```bash
 cd /path/to/workspace
@@ -39,44 +41,35 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-08-02, tg 1.101.31, gotcontext-saddle)
+## Latest sweep (2026-08-11, tg 1.110.14, Windows uvx)
 
 | Category | Result | Notes |
 | --- | --- | --- |
-| Symbol ladder / blast / orient / map / route-test / evidence / dogfood | ✅ | `agreement_details`; evidence `checks.digest_valid` |
-| `tg agent` scoped + root `--deadline 90` | ✅ | scoped ~8s; root ~55s rc 0 non-partial |
-| lexical + trunc hard-stop | ✅ | trunc conf **0.72** + ask.required |
-| **`tg prepare`** / `--out` / `--claim` | ✅ | ~8–13s; strong anonymous `agent_id_hint` |
-| ledger Slice 1 + Slice 2 find | ✅ | list + find rollup under repo root |
-| `tg find` without dense | ✅ | BM25 + install-dense hint; **MaxSim NOT advertised** (help) |
-| GPU | ⚠️ | `unsupported` / cpu-fallback + not-proof stderr |
-| Multi-project parent unscoped | ✅ | exit 2 + JSON `incomplete_reason` |
-| Bare `search` text + `--json` | ✅ | PATH note on stderr; **`--json` also has `path_was_defaulted` + `scope_note`** (see condition below) |
-| Cold doctor daemon | ✅ | autostart hint → warm running |
+| Core CUJ | ✅ | 21/21 PASS; prepare saddle ~5s; tg `src` --out/--claim ~22s |
+| Parent refuse | ✅ | exit 2; `workspace_root_refused` |
+| **A90** reserved+flag refuse | ✅ | `edit-ready/--json` → exit 2 `unknown_command`; typo `searhc --help` suggests search |
+| A90 bare reserved token | ✅ by design | `tg edit-ready` (no flag) still searches that string |
+| M16 scan / M17 `--index` | ✅ | retained from 1.110.12 |
+| Language coverage | ✅ | 10/10 parser-backed |
+| Phase-2 `edit-ready` product | ❌ | correctly **refused** now; not implemented |
 
-Artifact: `/tmp/tg-dogfood-110131.json`.
+Artifact: `C:\Users\Public\tg-dogfood-111013.json`.
 
-**Condition on `path_was_defaulted` / `scope_note` (added 2026-08-02, NOT re-verified).** These are
-stamped only when `result.path_was_defaulted` is true -- `json_fmt.py`, `grep -n "path_was_defaulted"
-src/tensor_grep/cli/formatters/json_fmt.py`, which is explicitly additive ("absent on an
-explicitly-scoped search, so an existing consumer's payload is byte-identical"). Shipped since
-v1.101.26; enumerated by EMITTER in `tests/unit/test_scope_note_covers_every_json_emitter.py`.
+## Prior sweep (2026-08-05, tg 1.108.2, gotcontext-saddle)
 
-A 2026-08-02 re-probe on the installed v1.102.0 did NOT reproduce either field -- in a small root the
-search completed (exit 0) with neither key, and in the repo root the unscoped-scan guard refused
-(exit 2) so the normal emitter never ran. **That is an unreproduced row, not a refuted one:** neither
-probe established which emitter it reached (the native front door has its own -- 20 hits in
-`rust_core/src/main.rs`), so it cannot discriminate. Left standing and labelled rather than deleted
-or trusted. Re-verify by asserting the emitter, not the exit code.
-
+Kept for trend only. Parent refuse class was still recorded as `scan_limit` in that sweep —
+**superseded** by `workspace_root_refused` on 1.110.x (#956).
 
 ## Trend
 
 | Version | PASS | TIMEOUT | Notable |
 | --- | ---: | ---: | --- |
-| 1.101.19 | saddle ✅ | — | bare-text PATH stderr note |
-| 1.101.22 | saddle ✅ | — | bare-`--json` PATH note (stderr); stronger anon hint |
-| **1.101.31** | **saddle ✅** | — | bare-`--json` **in-band** `scope_note`; MaxSim de-advertised |
+| 1.101.22 | saddle ✅ | — | bare-`--json` PATH note (stderr) |
+| 1.101.31 | saddle ✅ | — | bare-`--json` in-band `scope_note`; MaxSim de-advertised |
+| 1.108.2 | saddle ✅ | — | CUJ stable; parent refuse class then=`scan_limit` |
+| **1.110.10** | saddle+tg ✅ | — | `workspace_root_refused`; 10/10 parser-backed; prepare~6–14s |
+| **1.110.12** | saddle+tg ✅ | — | +M16 scan severity/message; +M17 index root isolation surface; CUJ 21/21 |
+| **1.110.13** | **saddle+tg ✅** | — | +A90 unknown-command fail-closed; CUJ 21/21 |
 
 ## Sibling skills
 
