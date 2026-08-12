@@ -3699,9 +3699,11 @@ mod tests {
             no_invert_match: _,  // NO-OP (ditto)
             count: _,            // HONORED (line-granular contract, credentialed for -c)
             count_matches: _,    // HARD-REFUSED (P5·H2 -- THIS PR)
-            line_number: _,      // HONORED
-            no_line_number: _,   // HONORED (see line_number)
-            column: _,           // IRRELEVANT-TO-THIS-CLASS (neither a silent native drop fix nor
+            pattern_file: _,     // HONORED (Round-60 `-f/--file` folds into request.patterns
+            // via `resolve_search_request_with_stdin` BEFORE routing, SearchInputLedger-bounded)
+            line_number: _,    // HONORED
+            no_line_number: _, // HONORED (see line_number)
+            column: _,         // IRRELEVANT-TO-THIS-CLASS (neither a silent native drop fix nor
             // an honored native field; see the GPU ratchet's OUT_OF_SCOPE_GAP)
             no_column: _, // NO-OP (moot: `column` is never emitted by this engine)
             replace: _,   // HONORED (task #131 F3)
