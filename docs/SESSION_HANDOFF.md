@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-09
+Last updated: 2026-08-11
 
 ## Current Release State
 
@@ -11,14 +11,18 @@ release_docs_current_tag: v1.110.14
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.14>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-08.1
-- Public product: `v1.110.10` (2026-08-09). All buildable Python audit fixes SHIPPED (H2 #979,
-  M1 #982, M3 #983, M14 #984); published-wheel dogfood 22/22 CUJ PASS (2026-08-09, gotcontext-saddle
-  + tensor-grep). World-class roadmap approved: `docs/plans/2026-08-09-worldclass-roadmap.md`
+Canonical status index version: 2026-08-11.1
+- Public product: `v1.110.14` (2026-08-11). Since the 2026-08-10 snapshot: v1.110.11 (M16 #987
+  composite/severity), v1.110.12 (M17 #988 index root/format), v1.110.13 (A90 #997 unknown-command
+  fail-closed), v1.110.14 (doctor #1000 PATH honesty: pypi_latest/installed_behind_pypi/
+  shadow_launchers/installation_health), plus audit fixes H2/M1/M3/M14 (#977-#985) and spend-smart CI
+  (#977). World-class roadmap approved: `docs/plans/2026-08-09-worldclass-roadmap.md`
   (council-amended; edit-control-plane thesis, H1 + S1-S7 spine).
-- CEO packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.
-- In-PR: #992 (24h capture: A87-A89 mirror + 4 new skills + drift fixes), #993 (world-class roadmap),
-  #987/#988 (M16/M17 Rust — red on first CI compile, A87), #966 (Task 2A parked).
+- Skill-library evolution waves: #1001 (audit of all skills: 21 stale stamps + 7 tier contradictions
+  fixed; new release-drift-check skill; A94-A96) and #1002 (coverage-gap analysis; new
+  worldclass-roadmap skill; five existing skills extended). All post-merge verified (A29).
+- CEO packet: `docs/audits/2026-08-11-ceo-backlog-update.md` (live).
+- In-PR: #966 (Task 2A parked, RED by design). No release in flight.
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
   local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
 - #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.
@@ -29,7 +33,9 @@ Canonical status index version: 2026-08-08.1
   SHIP; premise-check; ordinal freshness), A83–A89 (argv-rewrite shadow; cross-platform path gate;
   env-independent gated tests; stale-ready labels; static-review≠typecheck; dogfood fixture-bites;
   real-artifact parity arms), A90–A93 (unknown-command fail-closed; Python-slice≠native-touch;
-  escrowed evidence; self-dogfood≠demand + premise-check plans).
+  escrowed evidence; self-dogfood≠demand + premise-check plans), A94–A96 (skill stamps rot —
+  release-drift-check sweep; a "verified correct" count note is a contract site; non-ASCII defeats
+  byte-exact edits).
 
 ## Historical Milestones
 

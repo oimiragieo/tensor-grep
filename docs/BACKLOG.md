@@ -49,6 +49,14 @@
 - **Five lesson-gaps folded into existing skills; one NEW skill: `tensor-grep-worldclass-roadmap`** (S1-S7 edit-control-plane spine, Exa-grounded: Occasio OIDC attestation / AET evidence-freshness / Anthropic harness papers). Index 33 -> 34; skill_rules.json 22; workflow 35/35; gates 16/16.
 - Laws A94-A96 were captured in #1001; this wave converts the remaining audit finding into skill coverage so `tg-skill-audit` and future sessions find the disciplines without re-deriving from AGENTS.md.
 
+## Recent campaign notes (2026-08-11 PM) — CEO update to v1.110.14
+
+- **Public product: `v1.110.14`** (tag, GitHub assets, PyPI). Since the 2026-08-10 snapshot: v1.110.11 (M16 #987), v1.110.12 (M17 #988), v1.110.13 (A90 #997 unknown-command fail-closed), v1.110.14 (doctor #1000 PATH honesty: pypi_latest / installed_behind_pypi / shadow_launchers / installation_health) + audit fixes H2 #979, M1 #982, M3 #983, M14 #984 + spend-smart CI #977.
+- **Skill-library evolution (#999 #1001 #1002):** dogfood refreshes + full-library audit (21 stale stamps, 7 tier contradictions) + coverage-gap wave (worldclass-roadmap skill, five skills extended). All post-merge verified.
+- **Closed world unchanged:** 28 rows / 17 unfinished (0 READY, 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED, 6 DEMAND_GATED). No new rows; no status flips. Open PRs: only #966 (Task 2A parked). No spend; #169 only money stop. No nonfinancial CEO question.
+- **CEO packet (live):** `docs/audits/2026-08-11-ceo-backlog-update.md`.
+- **Next after the next code release:** run the `tensor-grep-release-drift-check` sweep (A94) before further skill work.
+
 ## Recent campaign notes (2026-08-11) — skill-library audit + freshness mechanism
 
 - **Skill-library audit (all 33 in-repo `.claude/skills/*/SKILL.md` files, 3 parallel subagent waves):**
