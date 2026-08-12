@@ -1344,7 +1344,7 @@ fn main() -> anyhow::Result<()> {
 }
 
 fn main_inner() -> anyhow::Result<()> {
-    let raw_args = std::env::args_os().collect();
+    let raw_args: Vec<std::ffi::OsString> = std::env::args_os().collect();
     if raw_args.len() <= 1 {
         if let Some(exit_code) = try_public_help_passthrough(&raw_args)? {
             if exit_code != 0 {
