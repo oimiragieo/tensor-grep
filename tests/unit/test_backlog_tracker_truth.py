@@ -86,7 +86,6 @@ DEMAND_IDS = {
     "AST-DSL-PARITY",
     "MCP-LEAN-DEFAULT",
     "CONTINUOUS-REFRESH",
-    "RUST-REPLACE-SYMLINK",
 }
 PROGRAM_OWNERS = {
     "MCP-SURFACE": "Task 4",
@@ -789,7 +788,9 @@ def test_handoff_version_and_current_prose() -> None:
     assert "Tasks 3\u201315" in current
     board = BOARD_PATH.read_text(encoding="utf-8")
     live = board.split("## Live campaign snapshot", 1)[1].split("\n## ", 1)[0]
-    assert "Task 2 is complete" in live
+    # 2026-08-12 stamp retarget (A79): the snapshot now narrates Task 2A's advanced-but-blocked
+    # state rather than the completed Task-2 reconciliation checkpoint it replaced.
+    assert "Task 2A RED remains correctly blocked" in live
     assert "canonical index" in live
     assert CEO_AUDIT_PATH.name in live
     ceo_audit = CEO_AUDIT_PATH.read_text(encoding="utf-8")
