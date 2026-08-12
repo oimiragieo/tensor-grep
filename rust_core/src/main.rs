@@ -8748,6 +8748,10 @@ const INDEX_FLAG_POLICY: &[(&str, IndexFlagPolicy)] = &[
     ("ndjson", IndexFlagPolicy::Honor),
     ("verbose", IndexFlagPolicy::Honor),
     ("regexp", IndexFlagPolicy::Honor),
+    // Round-60 `-f/--file`: folds into request.patterns pre-routing (same class as `regexp`);
+    // the index route's single-pattern guard (`request.patterns.len() != 1`) still refuses
+    // any multi-pattern result by COUNT, so Honor here cannot smuggle multi-pattern in.
+    ("pattern_file", IndexFlagPolicy::Honor),
     ("pattern", IndexFlagPolicy::Honor),
     ("path", IndexFlagPolicy::Honor),
     ("pcre2", IndexFlagPolicy::Refuse),

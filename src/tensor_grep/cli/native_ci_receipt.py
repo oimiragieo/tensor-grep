@@ -260,10 +260,19 @@ def receipt_to_dict(receipt: NativeCiReceiptV1) -> dict[str, Any]:
 
 
 def write_receipt(path: Path, receipt: NativeCiReceiptV1) -> None:
-    """Emit a NativeCiReceiptV1 JSON document (runners may call this)."""
+    """Emit a NativeCiReceiptV1 JSON document (runners may call this).
+
+    Routes through the shared atomic writer (temp + rename) so a crashed runner can
+    never leave a torn half-receipt that a verifier then parses — caught by the
+    atomic-writer census ratchet on the 2026-08-12 union (a bare ``Path.write_text``
+    here drifted the pinned violating population).
+    """
+    from tensor_grep.cli._index_lock import atomic_write_bytes
+
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = receipt_to_dict(receipt)
-    path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    data = (json.dumps(payload, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    atomic_write_bytes(path, data)
 
 
 def derive_live_actions_tuple(environ: Mapping[str, str]) -> LiveActionsTuple:

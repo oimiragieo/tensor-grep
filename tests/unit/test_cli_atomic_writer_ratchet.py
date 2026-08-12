@@ -48,6 +48,13 @@ this task, confirmed by manual review, not by this detector).
 
 Known gaps (stated plainly, not papered over):
 
+- Round-60 (2026-08-12): `_win32_path_domain.py` carries TWO surfaced `python -c` execution
+  roots (`_spawn_descendant_pipe_heartbeat_writer_posix` / `_..._win32`). Assessed: the payload
+  (`_descendant_pipe_heartbeat_child_code`) is static except a hex-encoded nonce and writes
+  ONLY to the inherited canary pipe via stdout -- no filesystem writes, so no atomic-writer
+  sanction applies. Pinned in `test_generated_source_c_sites_are_surfaced`'s expected map; the
+  detector still does not recurse into the payload (it is pipe-only by construction).
+
 - The detector does NOT do full Hindley-Milner-grade type inference. ``Path.write_text`` /
   ``Path.write_bytes`` are always treated as write-shaped (no stdlib type other than
   ``pathlib.Path`` exposes those names, so the collision risk is effectively zero). But
@@ -1422,13 +1429,26 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     )
 
     # Widened alongside the population census (task #859 class ratchet): every OTHER discovered
-    # module, not just the original 3-file scope, must have zero surfaced '-c' sites -- verified
-    # against the full walk so a new module can never quietly grow one unnoticed.
+    # module must match its pinned expectation -- zero for almost all, plus the two Round-60
+    # descendant-heartbeat spawners in `_win32_path_domain.py` (assessed 2026-08-12: their
+    # `python -c` payload is built by `_descendant_pipe_heartbeat_child_code`, static except a
+    # hex-encoded nonce, writes ONLY to the inherited canary pipe via stdout -- no filesystem
+    # writes, so the atomic-writer sanction set is not implicated; see the module docstring's
+    # Known-gaps entry). A new module can still never quietly grow a site unnoticed.
+    expected_other_sites: dict[str, list[tuple[str, str]]] = {
+        "_win32_path_domain.py": [
+            ("_win32_path_domain.py", "_spawn_descendant_pipe_heartbeat_writer_posix"),
+            ("_win32_path_domain.py", "_spawn_descendant_pipe_heartbeat_writer_win32"),
+        ],
+    }
     for fname in _SCANNED_PRODUCTION_FILES:
         if fname == "main.py":
             continue
         other_sites = _real_subprocess_dash_c_sites(_read(_CLI_SRC / fname), fname)
-        assert other_sites == [], f"unexpected new '-c' execution root(s) in {fname}: {other_sites}"
+        assert other_sites == expected_other_sites.get(fname, []), (
+            f"unexpected new '-c' execution root(s) in {fname}: {other_sites}. If genuine, pin it"
+            " here AND assess whether its payload writes files (module docstring Known-gaps)."
+        )
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1487,6 +1507,10 @@ _EXPECTED_HELPER_BACKED = {
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     ("main.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
+    # Round-60 union (2026-08-12): NativeCiReceipt emission routed through the shared atomic
+    # writer (a bare Path.write_text here was caught by this very census — a torn half-receipt
+    # is exactly what a verifier must never parse).
+    ("native_ci_receipt.py", "write_receipt", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     # The bidirectional control's "current" arm (also asserted directly above).
     ("codemap.py", "_atomic_write_text", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---

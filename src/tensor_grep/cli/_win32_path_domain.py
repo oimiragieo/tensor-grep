@@ -528,7 +528,8 @@ def _spawn_descendant_pipe_heartbeat_writer_win32(
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.OpenProcess.restype = wintypes.HANDLE
 
-    write_handle = msvcrt.get_osfhandle(canary_pipe_write_fd)
+    # mypy linux leg: msvcrt lacks get_osfhandle off Windows; runtime path is win32-gated.
+    write_handle = msvcrt.get_osfhandle(canary_pipe_write_fd)  # type: ignore[attr-defined]
     if not kernel32.SetHandleInformation(write_handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
         raise OSError(f"SetHandleInformation(inherit) failed: {_win_last_error()}")
 
