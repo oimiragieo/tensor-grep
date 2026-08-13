@@ -53,6 +53,13 @@ class Check(NamedTuple):
     retry_on_timeout: int = 0
 
 
+# A101 (codex W2A-01): retry_on_timeout is caller-controlled, so the runner clamps it at
+# this ceiling -- otherwise an oversized value multiplies the probe timeout into an
+# effectively infinite readiness hang. 3 is deliberately small: the point of the field
+# is distinguishing a transient timeout from a persistent hang, not burn-in testing.
+_MAX_TIMEOUT_RETRIES = 3
+
+
 _PYTHON_SUBPROCESS_TG_VERSION_PROBE = (
     "import subprocess, sys; "
     "completed = subprocess.run(['tg', '--version'], capture_output=True, text=True); "
@@ -1134,7 +1141,7 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
     stderr = ""
     returncode = 0
     attempts = 0
-    max_attempts = 1 + max(0, check.retry_on_timeout)
+    max_attempts = 1 + min(max(0, check.retry_on_timeout), _MAX_TIMEOUT_RETRIES)
     try:
         if check.command:
             env = dict(os.environ)
