@@ -195,6 +195,64 @@ def test_sol_r2_crash_classification_fail_closed(tmp_path: Path) -> None:
         == "crash_or_setup"
     )
 
+    # Sol W4 round 1: a <failure> with NO type attribute (or an EMPTY type) must be
+    # crash_or_setup, never behavioral RED -- an untyped failure cannot prove the test
+    # asserted the expected refusal (A61). Pre-fix this arm clears as
+    # executed_refused_receipt (the `if ftype and ...` guard treats "" as passable).
+    for label, failure_xml in (
+        (
+            "no-type",
+            """<?xml version="1.0"?>
+<testsuite tests="1" errors="0" failures="1">
+  <testcase classname="tests.unit.test_x" name="test_leaf">
+    <failure message="boom"/>
+  </testcase>
+</testsuite>
+""",
+        ),
+        (
+            "empty-type",
+            """<?xml version="1.0"?>
+<testsuite tests="1" errors="0" failures="1">
+  <testcase classname="tests.unit.test_x" name="test_leaf">
+    <failure message="boom" type=""/>
+  </testcase>
+</testsuite>
+""",
+        ),
+    ):
+        untyped = tmp_path / f"{label}.xml"
+        untyped.write_text(failure_xml, encoding="utf-8")
+        assert (
+            py.classify_pytest_node_phase(
+                junit_path=untyped,
+                pytest_nodeid="tests/unit/test_x.py::test_leaf",
+                exit_code=1,
+            )
+            == "crash_or_setup"
+        ), f"an untyped <failure> ({label}) must be crash_or_setup"
+
+    # Typed AssertionError stays behavioral RED (positive control for the arms above).
+    typed = tmp_path / "typed.xml"
+    typed.write_text(
+        """<?xml version="1.0"?>
+<testsuite tests="1" errors="0" failures="1">
+  <testcase classname="tests.unit.test_x" name="test_leaf">
+    <failure message="boom" type="AssertionError"/>
+  </testcase>
+</testsuite>
+""",
+        encoding="utf-8",
+    )
+    assert (
+        py.classify_pytest_node_phase(
+            junit_path=typed,
+            pytest_nodeid="tests/unit/test_x.py::test_leaf",
+            exit_code=1,
+        )
+        == "executed_refused_receipt"
+    )
+
     # Rust: abnormal exit without assertion markers → crash_or_setup (fail-closed).
     assert (
         rust.classify_rust_node_phase(exit_code=101, stdout="", stderr="something odd")

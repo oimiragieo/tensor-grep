@@ -229,7 +229,10 @@ def classify_pytest_node_phase(
         # crash/setup error (A61) — e.g. an uncaught NotImplementedError from a
         # behaviorless stub must NOT earn a receipt.
         ftype = str(failure.attrib.get("type") or "")
-        if ftype and not ftype.endswith("AssertionError"):
+        # F1 (Sol rounds 1 + W4-1): a JUnit <failure> is behavioral RED only when the test
+        # asserted the expected refusal (AssertionError). Any other exception type -- AND a
+        # missing or empty type, which proves nothing -- is a crash/setup error (A61).
+        if not ftype.endswith("AssertionError"):
             return "crash_or_setup"
         return "executed_refused_receipt"
     if exit_code == 0 and case.find("skipped") is None:
