@@ -282,6 +282,16 @@
 - Findings this wave: stdin+heredoc poller false ALL_TERMINAL (#963); usage-limit seats FAILED;
   status-stamp must retarget tracker pins (#964); AMEND_SPINE held (no MCP/F5–F8 product builds).
 
+
+## Recent campaign notes (2026-08-13, PR #1010 in flight)
+
+- `RUST-REPLACE-SYMLINK` READY -> IN_FLIGHT with PR #1010 (A50): fail-closed symlink_metadata
+  guard, root refusal, junction REFUSE (GATE-W3A-1 (a), bounded toolchain probe), residual-race
+  characterization pin. New canonical row `RUST-REPLACE-TOCTOU` (DEMAND_GATED) filed in the same
+  PR -- it owns the leaf race, walk-time child swap, and non-leaf ancestor bypass; candidate
+  machinery: `rust_core/src/safe_write.rs`'s O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT.
+  Threat model: `docs/design/2026-08-13-replace-in-place-symlink-threat-model.md`.
+
 ## Recent campaign notes (2026-08-06 CEO)
 
 - CEO dumbed-down packet: `docs/audits/2026-08-06-ceo-backlog-update.md`.

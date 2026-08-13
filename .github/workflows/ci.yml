@@ -472,6 +472,12 @@ jobs:
     needs: [smoke, changes]
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      # RUST-REPLACE-SYMLINK (PR #1010): promote CANNOT_MEASURE symlink-test skips to a panic so
+      # an unprivileged runner cannot go silent-green on the security arms. GitHub-hosted runners
+      # hold SeCreateSymbolicLinkPrivilege; if a leg reds here it is a real environment finding,
+      # not a product regression.
+      TG_REQUIRE_SYMLINK_TESTS: "1"
     # #145: nightly Rust is unstable by design (a wall-clock-timing test on this leg has blocked
     # the release gate 3x on wholly non-product flakes). Only the nightly leg is non-gating here --
     # it still RUNS and stays VISIBLE (so a real nightly regression is seen and can be triaged), but

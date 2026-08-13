@@ -288,6 +288,68 @@ struct ReplaceFaultInjection {
     force_literal_child_failure: bool,
     /// Force the next regex-mode child-file replace/write to fail.
     force_regex_child_failure: bool,
+    /// Force the symlink_metadata guard's stat call to fail, without needing a real
+    /// unreadable path. Proves the guard fails CLOSED rather than falling through.
+    force_symlink_metadata_failure: bool,
+
+    /// Event gate for the residual-TOCTOU characterization pin. The writer signals on
+    /// `reached_guard` once it is PAST the no-follow guard and BEFORE the writer opens the
+    /// path, then blocks on `resume` until the second actor acknowledges its swap. Both are
+    /// capacity-1 channels: a `send` never blocks, a `recv` is always `recv_timeout`-bounded,
+    /// so this is a handshake, not a sleep and not a hang vector.
+    swap_gate: Option<SwapGate>,
+}
+
+#[cfg(test)]
+struct SwapGate {
+    reached_guard: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+}
+
+#[cfg(test)]
+const SWAP_GATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Replace the leaf `path` with a symlink pointing at `attacker_target`, exactly as an
+/// attacker who wins the TOCTOU race would. Returns false when this environment cannot
+/// create a symlink at all -- CANNOT_MEASURE, not a failed swap (A61).
+#[cfg(test)]
+fn swap_leaf_to_symlink_for_test(path: &Path, attacker_target: &Path) -> bool {
+    if let Err(err) = std::fs::remove_file(path) {
+        if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+            panic!("TG_REQUIRE_SYMLINK_TESTS set: cannot unlink the leaf: {err}");
+        }
+        eprintln!("skipping the residual-TOCTOU pin: cannot unlink the leaf: {err}");
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        match std::os::unix::fs::symlink(attacker_target, path) {
+            Ok(()) => true,
+            Err(err) => {
+                if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+                    panic!("TG_REQUIRE_SYMLINK_TESTS set: symlink failed: {err}");
+                }
+                eprintln!("skipping the residual-TOCTOU pin: symlink failed: {err}");
+                false
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        match std::os::windows::fs::symlink_file(attacker_target, path) {
+            Ok(()) => true,
+            Err(err) => {
+                if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+                    panic!("TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows symlink: {err}");
+                }
+                eprintln!(
+                    "skipping the residual-TOCTOU pin: cannot create a Windows symlink \
+                     in this environment: {err}"
+                );
+                false
+            }
+        }
+    }
 }
 
 pub struct CpuBackend {
@@ -446,6 +508,121 @@ impl CpuBackend {
         fixed_strings: bool,
     ) -> anyhow::Result<()> {
         let path_obj = Path::new(path);
+
+        // RUST-REPLACE-SYMLINK: refuse a symlinked target rather than writing THROUGH it.
+        // Path::is_file() and OpenOptions::open both FOLLOW symlinks, so without this an
+        // attacker-planted link redirects an in-place rewrite to a destination the caller
+        // never named (GNU sed CVE-2026-5958, uutils GHSA-239g-2685-54x3, Capgo
+        // CVE-2026-56236). symlink_metadata does NOT follow.
+        //
+        // RESIDUAL TOCTOU, deliberately not claimed as closed: the path can be swapped
+        // between this stat and the open below. Closing it needs O_NOFOLLOW (POSIX) plus
+        // FILE_FLAG_OPEN_REPARSE_POINT (Windows) at the open site -- machinery already
+        // implemented in rust_core/src/safe_write.rs (see its OpenOptions setup). This guard
+        // turns a
+        // reliable static LEAF-symlink overwrite into a race the attacker must win; it does
+        // NOT cover a symlink in a NON-LEAF path component (symlink_metadata lstats the leaf
+        // only -- an attacker-controlled ancestor directory link still redirects statically,
+        // with no race; component-wise openat(O_NOFOLLOW) / handle-relative opens are filed
+        // under RUST-REPLACE-TOCTOU). See
+        // docs/design/2026-08-13-replace-in-place-symlink-threat-model.md.
+        //
+        // Directory mode's STATIC symlink exposure is unaffected: walk_directory_entries uses
+        // WalkDir's default follow_links(false) (the call is at the WalkDir::new site inside
+        // walk_directory_entries) and both directory routes skip non-is_file() entries. Two
+        // residual windows remain, both owned by RUST-REPLACE-TOCTOU and deliberately
+        // unpinned here: (1) children are re-opened by pathname after enumeration, so a child
+        // swapped for a symlink between enumeration and open is still followed; (2) the
+        // DIRECTORY ROOT itself is swapped between this guard's stat and the is_dir() below,
+        // WalkDir's follow_root_links(true) default (walkdir 2.5.0) descends into the
+        // attacker's directory and rewrites its whole tree -- the widest blast radius in this
+        // surface. The swap-gate pin below characterizes the FILE-LEAF window only; the
+        // root window is named here rather than silently implied. Closing the leaf race at
+        // the open sites would use the O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT machinery
+        // already implemented in rust_core/src/safe_write.rs -- deliberately not applied in
+        // this PR because it touches both open sites AND every directory-child open: applying it
+        // there would convert a raced child follow into an Err rather than a silent write -- safe
+        // for legitimate use (WalkDir's follow_links(false) already filters static symlink
+        // children) but a semantic change to the directory route that belongs in the TOCTOU row's
+        // design pass, not this guard's.
+        //
+        // FAILS CLOSED. `if let Ok(meta) = ..` would fail OPEN: on any stat error -- a
+        // permission denial, a reparse point whose filter driver refuses the query, an EIO --
+        // the guard would silently do nothing and the follow behaviour would return, with
+        // nothing observable separating "checked and safe" from "could not check".
+        //
+        // The test fault is injected as an Err INTO the same map_err path below (never a
+        // bail! before the stat), so the fail-closed test observes the real wiring: a guard
+        // rewritten fail-open (`.ok()` + if-let) reds that test.
+        //
+        // The stat uses a trailing-separator-stripped path: on POSIX, lstat("<dirlink>/")
+        // resolves THROUGH the final symlink, so a raw caller string with a trailing slash
+        // would pass an is_symlink() check on the unstripped path and hand the link root to
+        // WalkDir (opus gate r4 F1, measured). components() normalization strips trailing
+        // separators without resolving anything; an empty result falls back to the raw path.
+        let guard_path = {
+            let stripped: std::path::PathBuf = path_obj.components().collect();
+            if stripped.as_os_str().is_empty() {
+                path_obj.to_path_buf()
+            } else {
+                stripped
+            }
+        };
+        let meta = {
+            #[cfg(test)]
+            let stat_result = if self
+                .replace_fault_injection
+                .lock()
+                .unwrap()
+                .force_symlink_metadata_failure
+            {
+                Err(std::io::Error::other("injected test fault"))
+            } else {
+                std::fs::symlink_metadata(&guard_path)
+            };
+            #[cfg(not(test))]
+            let stat_result = std::fs::symlink_metadata(&guard_path);
+            stat_result.map_err(|err| {
+                anyhow::anyhow!(
+                    "replace_in_place: cannot determine whether {} is a symlink: {}",
+                    path_obj.display(),
+                    err
+                )
+            })?
+        };
+        if meta.file_type().is_symlink() {
+            anyhow::bail!(
+                "replace_in_place: refusing to follow symlink {}; pass the resolved target explicitly",
+                path_obj.display()
+            );
+        }
+        // A38/A48: the leaf check above and a swap-resistant WRITER are separate contracts.
+        // This PR ships the leaf check only. The gate below is the seam that lets a test stand
+        // INSIDE the residual window -- past the guard, before the open -- so the window is an
+        // asserted property (the characterization pin, Step 4b) rather than a doc sentence.
+        //
+        // The gate is TAKEN out from under the lock and the lock DROPPED before either wait:
+        // holding the injection mutex across the blocking `recv_timeout` would deadlock the
+        // second actor out of the same struct. take() also makes it fire exactly once.
+        #[cfg(test)]
+        {
+            let gate = self
+                .replace_fault_injection
+                .lock()
+                .unwrap()
+                .swap_gate
+                .take();
+            if let Some(gate) = gate {
+                // Non-blocking: the channel has capacity 1 and this is its only message.
+                gate.reached_guard.send(()).expect(
+                    "CANNOT_MEASURE: swap-gate signal channel closed before the writer arrived",
+                );
+                gate.resume.recv_timeout(SWAP_GATE_TIMEOUT).expect(
+                    "CANNOT_MEASURE: no swap acknowledgment within 2s (timed out, or the writer \
+                     side of the handshake disconnected)",
+                );
+            }
+        }
 
         if fixed_strings && !ignore_case && !pattern.is_empty() {
             if path_obj.is_file() {
@@ -1426,6 +1603,174 @@ mod tests {
         assert!(
             message.contains(child.to_str().unwrap()),
             "error should carry the failing child path, got: {message}"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_place_fails_closed_when_symlink_metadata_errors() {
+        // The guard's FIRST draft was `if let Ok(meta) = symlink_metadata(..)`, which fails
+        // OPEN: on any stat error the guard silently does nothing and the follow behaviour
+        // returns, with nothing observable distinguishing "checked and safe" from "could not
+        // check". This is the arm that discriminates those two.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("plain.txt");
+        write_fixture_file(&target, "needle");
+
+        let backend = CpuBackend::new();
+        backend
+            .replace_fault_injection
+            .lock()
+            .unwrap()
+            .force_symlink_metadata_failure = true;
+
+        let result =
+            backend.replace_in_place("needle", "found", target.to_str().unwrap(), false, true);
+
+        let err = result.expect_err(
+            "a symlink_metadata failure must fail CLOSED as Err, never fall through to the rewrite",
+        );
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains(&target.display().to_string()),
+            "the error must name the path it could not stat; got {msg}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "needle",
+            "FAILED OPEN: the file was rewritten even though the guard could not stat it"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_place_rewrites_normally_when_no_metadata_fault_is_injected() {
+        // The other direction of the bidirectional pair. Without this, a guard that refused
+        // on EVERY stat outcome would pass the test above and be indistinguishable from a
+        // correct fail-closed guard. Same fixture, same call, fault flag OFF.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("plain.txt");
+        write_fixture_file(&target, "needle");
+
+        let backend = CpuBackend::new();
+        backend
+            .replace_in_place("needle", "found", target.to_str().unwrap(), false, true)
+            .expect("with no injected fault a regular file must still be rewritten");
+
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "found");
+    }
+
+    #[test]
+    fn test_replace_in_place_on_a_missing_path_still_errors_with_the_path_named() {
+        // Contract-change pin, not a compatibility pin (opus gate r3 F1): a nonexistent path
+        // was a SILENT Ok(()) no-op BEFORE the guard (the old pin test proved it) and is now
+        // Err via the fail-closed symlink_metadata. The contract this PR deliberately changes
+        // and must hold going forward is "Err, naming the path" -- not which producer made it.
+        // Pinning the contract rather than the message keeps this from becoming a
+        // change-detector test.
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("does-not-exist.txt");
+
+        let backend = CpuBackend::new();
+        let err = backend
+            .replace_in_place("needle", "found", missing.to_str().unwrap(), false, true)
+            .expect_err("a missing path must still be an Err");
+
+        assert!(
+            format!("{err:#}").contains(&missing.display().to_string()),
+            "the error must name the missing path"
+        );
+    }
+
+    #[test]
+    fn test_replace_in_place_leaf_swapped_between_guard_and_open_characterizes_the_residual_window()
+    {
+        // CHARACTERIZATION PIN, NOT A RED. A38/A48: the leaf check and a swap-resistant WRITER
+        // are SEPARATE contracts, and this PR ships the first only. This test asserts the
+        // CURRENT behaviour -- the window is OPEN, and a leaf swapped between the guard's stat
+        // and the writer's open still redirects the write -- so the residual is an enforced
+        // property of the code rather than a sentence in a doc that nothing checks.
+        //
+        // WHEN RUST-REPLACE-TOCTOU LANDS, THIS PIN MUST FLIP: the writer will open with
+        // O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT, the swap will stop redirecting, and this
+        // assertion will fail. That failure is the REOPEN SIGNAL for that row -- invert the
+        // assertion then, do not delete the test.
+        //
+        // Bounded by construction: a two-party capacity-1 handshake with a 2s cap on every
+        // wait, no spin loop and no wall-clock race. An unbounded race test on a shared CI
+        // runner is a flake generator, not evidence.
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("plain.txt");
+        let attacker = dir.path().join("attacker-owned.txt");
+        write_fixture_file(&target, "needle");
+        write_fixture_file(&attacker, "needle");
+
+        let (reached_tx, reached_rx) = std::sync::mpsc::sync_channel::<()>(1);
+        let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel::<()>(1);
+
+        let backend = CpuBackend::new();
+        backend.replace_fault_injection.lock().unwrap().swap_gate = Some(SwapGate {
+            reached_guard: reached_tx,
+            resume: resume_rx,
+        });
+
+        // ACTOR 1: the writer. The backend is MOVED into the thread (the test keeps nothing
+        // but the channel endpoints); CpuBackend is Send (and, via Mutex, Sync), so the spawn
+        // is sound on either auto-trait.
+        let writer_path = target.clone();
+        let writer = std::thread::spawn(move || {
+            backend.replace_in_place(
+                "needle",
+                "found",
+                writer_path.to_str().unwrap(),
+                false,
+                true,
+            )
+        });
+
+        // Bounded wait: the writer must reach the post-guard point, or this test measured
+        // nothing at all.
+        reached_rx.recv_timeout(SWAP_GATE_TIMEOUT).expect(
+            "CANNOT_MEASURE: the writer never signalled the post-guard point within 2s; the \
+             gate is not wired at the guard site",
+        );
+
+        // ACTOR 2: the attacker, deterministically inside the window.
+        let swapped = swap_leaf_to_symlink_for_test(&target, &attacker);
+
+        // Release the writer either way -- an un-acknowledged writer would sit until its own
+        // 2s bound and panic in a thread, turning a skip into a confusing failure. The send
+        // itself cannot block (capacity 1); it errors immediately only if the writer is gone.
+        resume_tx
+            .send(())
+            .expect("CANNOT_MEASURE: the writer thread vanished before acknowledgment");
+        let write_result = writer.join().expect("the writer thread panicked");
+
+        if !swapped {
+            // The skip line is already on stderr from the helper. No verdict from this node.
+            return;
+        }
+
+        assert!(
+            write_result.is_ok(),
+            "the writer errored instead of following the swapped-in link; the window may have \
+             moved -- re-derive before changing this pin"
+        );
+        // THE PIN ITSELF: the window is OPEN, so the swap redirected the write.
+        assert_eq!(
+            std::fs::read_to_string(&attacker).unwrap(),
+            "found",
+            "the swap did not redirect the write; the window may have CLOSED (a RUST-REPLACE-TOCTOU \
+             fix landing flips this pin -- invert the assertion and close that row)"
+        );
+        // The original leaf was REMOVED by the swap helper and replaced by a symlink, so
+        // read_to_string(&target) would FOLLOW it -- that reads the attacker's file, not the
+        // old leaf. The correct invariant is structural: the swapped-in link must still BE a
+        // symlink, proving the write went THROUGH it rather than replacing it.
+        assert!(
+            std::fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the swapped-in link was replaced by a regular file; the write did not go THROUGH it"
         );
     }
 }

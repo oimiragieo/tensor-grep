@@ -78,7 +78,8 @@ Canonical status index version: 2026-08-12.1
 - [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle; evidence refreshed 2026-08-12 (ast-grep ecosystem growing, zero metavariable-performance demand; LEAVE)
 - [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface; evidence refreshed 2026-08-12 (industry converged on lean/deferred tool loading — Claude Code tool-search, 25k-token doctor warning, AWS guidance; direction confirmed but STILL SEQUENCED AFTER Task 2C per the MCP-SURFACE ladder)
 - [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: approved scoping/design pass for a warm search-index service (not a build); evidence refreshed 2026-08-12 (warm code-index daemons trending to table stakes across agent tooling — Cursor secure-indexing, zoekt-mcp/TriSeek/codescope wave; the banked big-refactor note stands)
-- [ ] **RUST-REPLACE-SYMLINK** — Status: READY; PR: none; Trigger: reopen condition SATISFIED 2026-08-12 — the concrete untrusted-destination threat model is now evidenced by fresh 2026 CVEs in peer tools' in-place replace (GNU sed `-i --follow-symlinks` TOCTOU CVE-2026-5958; uutils coreutils GHSA-239g-2685-54x3 / CVE-2026-35356/35359; Capgo CLI CVE-2026-56236; receipts in docs/audits/2026-08-12-research-receipts.md), so the deferred `replace_in_place` leaf-symlink behavior (A49) gets a deliberate close: design-council pass FIRST, then TDD build resolving the downstream compatibility decision (no-follow-by-default or a documented boundary + Event-gated swap test per A38/A48)
+- [ ] **RUST-REPLACE-SYMLINK** — Status: IN_FLIGHT; PR: PR #1010; Trigger: the untrusted-destination threat model is evidenced by fresh 2026 CVEs (sed CVE-2026-5958; uutils GHSA-239g-2685-54x3; Capgo CVE-2026-56236; receipts in docs/audits/2026-08-12-research-receipts.md); design council (3 rounds, GATE-W3A-1 = (a) REFUSE via bounded toolchain probe) resolved the downstream compatibility decision no-follow-by-default; PR ships the fail-closed symlink_metadata guard (covers symlinks and Windows junctions) + root refusal + residual-race characterization pin; closure PR flips to SHIPPED after publish
+- [ ] **RUST-REPLACE-TOCTOU** — Status: DEMAND_GATED; PR: none; Trigger: residual `replace_in_place` races and a static no-race ancestor bypass: (1) the leaf stat-vs-open swap window (pinned OPEN by the characterization pin in `backend_cpu.rs` — that pin INVERTING is this row's acceptance signal), (2) walk-time child swap between enumeration and pathname re-open, (3) a symlink in a non-leaf path component (leaf-only `symlink_metadata`), (4) the directory-ROOT swap window (guard stat to `is_dir()` — the widest blast radius; needs a SECOND swap-gate fire point between the guard and `is_dir()` when built, since the existing pin covers the leaf only); candidate machinery: `O_NOFOLLOW` / `FILE_FLAG_OPEN_REPARSE_POINT` (already implemented in `rust_core/src/safe_write.rs`; applying it at the two open sites converts a raced child follow into an `Err` and is safe for legitimate use because walkdir already filters static symlink children) applied at the replace open sites, or component-wise handle-relative opens
 
 ## Live campaign snapshot
 
@@ -96,21 +97,22 @@ v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #99
 **CEO packet:** `docs/audits/2026-08-11-ceo-backlog-update.md` (live, 2026-08-11); 2026-08-06 PM and
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
-**Unfinished (buildable queue):** **1 READY row — RUST-REPLACE-SYMLINK** (design-council pass
+**Unfinished (buildable queue):** **0 READY rows** — RUST-REPLACE-SYMLINK is IN_FLIGHT
+(PR #1010, design-council pass
 first; flipped 2026-08-12 on CVE-class evidence carried in the row). The rest of the forward work
 is the world-class roadmap spine per `docs/plans/2026-08-09-worldclass-roadmap.md` — F6-scoped,
 with the 2026-08-12 correction that F6 is MIXED (Python/schema/signing slices buildable-first;
 rust/e2e halves CI/cloud). Blocked/CEO/demand rows: 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE),
-5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
-MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). Board READY is not a build license when BACKLOG reconcile
+5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). Board READY is not a build license when BACKLOG reconcile
 says BLOCKED (A71/A76).
 
 **Hard stops:** Task 2A not merge-ready (#966 RED by design); no #169 spend; no silent CEO-gate flips;
 MCP wire-contract fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-**Unfinished 17:** 1 READY (RUST-REPLACE-SYMLINK, design-council-first), 6 BLOCKED (#89 #90 F5 F6
-F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
-MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). 0 IN_FLIGHT (#966 is a parked RED scaffold — advanced
+**Unfinished 18:** 0 READY, 1 IN_FLIGHT (RUST-REPLACE-SYMLINK, PR #1010), 6 BLOCKED (#89 #90 F5 F6
+F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). (#966 is a parked RED scaffold - advanced
 2026-08-12 to MERGEABLE with a live evidence chain, still not an implementation in flight). Board
 READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
@@ -118,15 +120,16 @@ post-**v1.110.14**, PyPI-verified 2026-08-11 (`tensor-grep 1.110.14`).
 
 post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-11)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-13)
 
 | PR | Title | Type | State |
 |---|---|---|---|
 | #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design; not Phase 0+1) |
+| #1010 | `fix: replace_in_place refuses to follow a symlinked target` | fix | DRAFT → OPEN when CI green (RUST-REPLACE-SYMLINK implementation; RED proven, A3 opus gate 13 rounds SHIP, codex AUDIT-clear pending final re-check) |
 
 *(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
-(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. #966 is the only open
-PR; do not read it as Task 2A GREEN.)*
+(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs: #966
+(parked Task 2A RED scaffold — do not read it as Task 2A GREEN) and #1010 (RUST-REPLACE-SYMLINK).)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
