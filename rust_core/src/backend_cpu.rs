@@ -540,8 +540,11 @@ impl CpuBackend {
         // root window is named here rather than silently implied. Closing the leaf race at
         // the open sites would use the O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT machinery
         // already implemented in rust_core/src/safe_write.rs -- deliberately not applied in
-        // this PR because it would also change directory-child open semantics, which is the
-        // TOCTOU row's design pass, not this guard's.
+// this PR because it touches both open sites AND every directory-child open: applying it
+// there would convert a raced child follow into an Err rather than a silent write -- safe
+// for legitimate use (WalkDir's follow_links(false) already filters static symlink
+// children) but a semantic change to the directory route that belongs in the TOCTOU row's
+// design pass, not this guard's.
         //
         // FAILS CLOSED. `if let Ok(meta) = ..` would fail OPEN: on any stat error -- a
         // permission denial, a reparse point whose filter driver refuses the query, an EIO --
@@ -1709,8 +1712,9 @@ mod tests {
             resume: resume_rx,
         });
 
-        // ACTOR 1: the writer. The backend is MOVED into the thread, so this needs only
-        // CpuBackend: Send (not Sync) -- the test keeps nothing but the channel endpoints.
+        // ACTOR 1: the writer. The backend is MOVED into the thread (the test keeps nothing
+        // but the channel endpoints); CpuBackend is Send (and, via Mutex, Sync), so the spawn
+        // is sound on either auto-trait.
         let writer_path = target.clone();
         let writer = std::thread::spawn(move || {
             backend.replace_in_place(
