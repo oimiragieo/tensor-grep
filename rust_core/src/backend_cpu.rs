@@ -520,20 +520,25 @@ impl CpuBackend {
         // permission denial, a reparse point whose filter driver refuses the query, an EIO --
         // the guard would silently do nothing and the follow behaviour would return, with
         // nothing observable separating "checked and safe" from "could not check".
+        //
+        // The test fault is injected as an Err INTO the same map_err path below (never a
+        // bail! before the stat), so the fail-closed test observes the real wiring: a guard
+        // rewritten fail-open (`.ok()` + if-let) reds that test.
         let meta = {
             #[cfg(test)]
-            if self
+            let stat_result = if self
                 .replace_fault_injection
                 .lock()
                 .unwrap()
                 .force_symlink_metadata_failure
             {
-                anyhow::bail!(
-                    "replace_in_place: cannot determine whether {} is a symlink: injected test fault",
-                    path_obj.display()
-                );
-            }
-            std::fs::symlink_metadata(path_obj).map_err(|err| {
+                Err(std::io::Error::other("injected test fault"))
+            } else {
+                std::fs::symlink_metadata(path_obj)
+            };
+            #[cfg(not(test))]
+            let stat_result = std::fs::symlink_metadata(path_obj);
+            stat_result.map_err(|err| {
                 anyhow::anyhow!(
                     "replace_in_place: cannot determine whether {} is a symlink: {}",
                     path_obj.display(),
