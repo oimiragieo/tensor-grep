@@ -40,6 +40,12 @@ Canonical status index version: 2026-08-12.1
   (reconciliation ERRATUM-2); `tg-skill-audit.js` artifact-bound + exact-coverage hardened;
   `tg-audit-fix-loop.js` phases wired; new `test_skill_rules_registry.py` governance gate. Zero new
   skills (fold-over-fragmentation). Receipt: `docs/audits/2026-08-12-session-retention-audit.md`.
+- Retention lessons retained (2026-08-13): the campaign's own failure modes became **A97-A102** in
+  AGENTS.md — interrupted-edit-may-have-applied (verify before retry); spot-check-census-of-N-files;
+  verifier-must-be-artifact-bound; advertised-capability-must-execute; third-flake-=fix-signal;
+  input-brief-facts-are-hypotheses. Folded into `tensor-grep-docs-and-writing` (A97/A98),
+  `tensor-grep-validation-and-qa` (A99/A100), `tensor-grep-change-control` (A102/A98), and
+  `tensor-grep-debugging-playbook` (A101).
 - CEO packet: `docs/audits/2026-08-11-ceo-backlog-update.md` (live).
 - In-PR: #966 (Task 2A parked, RED by design). No release in flight.
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical

@@ -348,4 +348,14 @@ anything below before relying on it — a wrong runbook is worse than none.
 | Fast docs-claim-check fragment list | `sed -n '/def validate_docs_claims/,/^def /p' scripts/agent_readiness.py` |
 | `docs/SESSION_HANDOFF.md` prose-vs-tag-line staleness (Part 8) | `head -10 docs/SESSION_HANDOFF.md` vs the last `- Closed vX...` entry's version |
 
+## Retention folds (2026-08-13)
+
+- **A97 — interrupted edit may have applied.** After an interrupted/aborted `edit` result, READ the
+  file back before retrying; never re-apply blind (a double-apply duplicated whole sections across
+  AGENTS.md + SESSION_HANDOFF.md + the reconciliation doc during the 2026-08-12 retention campaign).
+- **A98 — a spot-check census of N docs is a claim about the ONE doc checked.** Declaring 11 dirty
+  docs "stale" from one file's header missed two never-committed sections; a census needs a
+  mechanical per-file diff or an explicit per-file disposition (ERRATUM-2,
+  `docs/audits/2026-08-12-stale-branch-reconciliation.md`).
+
 If any command above no longer matches what's in this file, update the skill in the same change.

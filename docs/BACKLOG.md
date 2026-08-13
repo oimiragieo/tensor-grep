@@ -73,6 +73,12 @@
   rerun green.
 - **Landed:** PR #1005 (`docs:`), commit `f7bcc9a`, squash-merged `5148664` (2026-08-13).
   Receipt: `docs/audits/2026-08-12-session-retention-audit.md`.
+- **Lessons retained (2026-08-13 follow-up):** the campaign's own failure modes became **A97-A102**
+  (interrupted-edit-may-have-applied; spot-check-census-of-N-files; verifier-must-be-artifact-bound;
+  advertised-capability-must-execute; third-flake-=fix-signal; input-brief-facts-are-hypotheses),
+  folded into `tensor-grep-docs-and-writing` / `-validation-and-qa` / `-change-control` /
+  `-debugging-playbook`. The fresh-context adversarial gate that caught these is the A18/A29
+  discipline re-confirmed (author self-verification reported zero; the independent gate found 8).
 
 ## Recent campaign notes (2026-08-12) - backlog-closeout campaign: Task 2A resume + reconciliation + research receipts
 
