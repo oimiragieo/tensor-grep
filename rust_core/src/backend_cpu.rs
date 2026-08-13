@@ -1709,10 +1709,16 @@ mod tests {
             "the swap did not redirect the write; the window may have CLOSED (a RUST-REPLACE-TOCTOU \
              fix landing flips this pin -- invert the assertion and close that row)"
         );
-        assert_eq!(
-            std::fs::read_to_string(&target).unwrap(),
-            "needle",
-            "the original leaf changed; the pin no longer measures the window it describes"
+        // The original leaf was REMOVED by the swap helper and replaced by a symlink, so
+        // read_to_string(&target) would FOLLOW it -- that reads the attacker's file, not the
+        // old leaf. The correct invariant is structural: the swapped-in link must still BE a
+        // symlink, proving the write went THROUGH it rather than replacing it.
+        assert!(
+            std::fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the swapped-in link was replaced by a regular file; the write did not go THROUGH it"
         );
     }
 }
