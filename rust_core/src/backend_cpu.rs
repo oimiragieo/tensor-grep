@@ -315,6 +315,9 @@ const SWAP_GATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2)
 #[cfg(test)]
 fn swap_leaf_to_symlink_for_test(path: &Path, attacker_target: &Path) -> bool {
     if let Err(err) = std::fs::remove_file(path) {
+        if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+            panic!("TG_REQUIRE_SYMLINK_TESTS set: cannot unlink the leaf: {err}");
+        }
         eprintln!("skipping the residual-TOCTOU pin: cannot unlink the leaf: {err}");
         return false;
     }
