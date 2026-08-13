@@ -85,19 +85,22 @@ and migration planning -- out of scope here.
 
 ## Documented follow-ups (explicitly out of scope for this task)
 
-- **`RUST-REPLACE-NONEXISTENT_PATH`** -- a nonexistent direct-file path: `path_obj.is_file()` and
-  `path_obj.is_dir()` are both `false`, so `replace_in_place` falls through to `Ok(())` without
-  touching the filesystem, silently. This is the *current, unchanged* behavior; pinned by
-  `test_rust_replace_in_place_direct_file_nonexistent_path_is_currently_a_silent_no_op` in
-  `rust_core/tests/test_replace.rs`. Whether a nonexistent target should instead be an explicit
-  `Err` is a compatibility decision for a future task, not this one.
-- **`RUST-REPLACE-SYMLINK=DEMAND_GATED`** -- direct-leaf-symlink follow behavior is unchanged.
-  Owner: whoever picks up the Rust replace-in-place surface next. Threat boundary: a symlink at
-  the leaf path passed directly (not inside a walked directory) is followed by
-  `OpenOptions::open`/`MmapOptions` exactly as before this change. Reopen trigger: a security
-  review of `tg`'s file-mutation surface, or a report of unexpected symlink-follow behavior in
-  `replace_in_place`. This decision is orthogonal to the directory-mode error-propagation fix in
-  this task and was not touched.
+> **RESOLVED by `RUST-REPLACE-SYMLINK` (2026-08-13, PR #1010):** both bullets below were
+> open when this doc was written; the campaign closed them. The nonexistent-path silent
+> `Ok(())` is now an `Err` naming the path (fail-closed `symlink_metadata`, pinned by
+> `test_rust_replace_in_place_direct_file_nonexistent_path_errors_with_the_path_named`), and a
+> direct symlink/junction leaf or root is now REFUSED (threat model
+> `docs/design/2026-08-13-replace-in-place-symlink-threat-model.md`). The residual
+> stat-vs-open leaf race and walk-time child swap are owned by `RUST-REPLACE-TOCTOU`. The
+> historical text is retained below, superseded.
+
+- **`RUST-REPLACE-NONEXISTENT_PATH` -- RESOLVED.** A nonexistent direct-file path was a silent
+  `Ok(())` no-op (pinned by the since-renamed
+  `test_rust_replace_in_place_direct_file_nonexistent_path_is_currently_a_silent_no_op`); it is
+  now an `Err` naming the path per the fail-closed guard.
+- **`RUST-REPLACE-SYMLINK` -- SHIPPED (guard).** Direct-leaf-symlink follow was unchanged; it is
+  now refused at the leaf AND the root (symlinks and Windows junctions on the pinned toolchain).
+  The residual race stays open under `RUST-REPLACE-TOCTOU`.
 
 Neither follow-up was silently absorbed into "CPU-BACKEND done" -- both remain open rows,
 separate from this task's closure, per `docs/BACKLOG.md`.

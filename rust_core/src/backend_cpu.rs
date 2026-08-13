@@ -516,9 +516,11 @@ impl CpuBackend {
         // under RUST-REPLACE-TOCTOU). See
         // docs/design/2026-08-13-replace-in-place-symlink-threat-model.md.
         //
-        // Directory mode is unaffected: walk_directory_entries uses WalkDir's default
-        // follow_links(false) (the call is at the WalkDir::new site inside
-        // walk_directory_entries) and both directory routes skip non-is_file() entries.
+        // Directory mode's STATIC symlink exposure is unaffected: walk_directory_entries uses
+        // WalkDir's default follow_links(false) (the call is at the WalkDir::new site inside
+        // walk_directory_entries) and both directory routes skip non-is_file() entries. Children
+        // are still re-opened by pathname after enumeration, so the child walk->open swap race
+        // is the same residual, owned by RUST-REPLACE-TOCTOU.
         //
         // FAILS CLOSED. `if let Ok(meta) = ..` would fail OPEN: on any stat error -- a
         // permission denial, a reparse point whose filter driver refuses the query, an EIO --
