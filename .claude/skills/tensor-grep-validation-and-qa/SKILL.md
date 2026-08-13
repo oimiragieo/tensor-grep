@@ -1146,5 +1146,16 @@ Re-verify before relying on them:
 | Structural ENTER/EXIT marker-order assertion (Part 1 point 20, #739) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
 | Windows clock-resolution / degenerate-ratio incident (Part 1 point 19, #739) | `gh pr view 739 --json body -q .body` (search for "baseline_elapsed measured" and "cProfile") |
 
+## Retention folds (2026-08-13)
+
+- **A99 — a verifier must be bound to the artifact it audits.** Record audited root + HEAD SHA + a
+  path/blob manifest, and require EXACT set equality between the expected population and reported
+  coverage; a truthy response that omits members is PARTIAL, a null lane is CANNOT_VERIFY, and a
+  CLEAN verdict needs non-zero sampled evidence (never clean-on-empty). The pre-hardening
+  `tg-skill-audit.js` could audit the wrong checkout and still report 6/6 covered.
+- **A100 — advertised capability must be executed.** An unconsumed schema or un-run phase is a false
+  advertisement of capability (`tg-audit-fix-loop.js` advertised five phases with zero execution
+  statements). Wire structure to execution, or label the stub, before anything depends on it.
+
 If any command above no longer matches, update this skill in the same change — a wrong runbook is
 worse than none.

@@ -1203,6 +1203,13 @@ grep -n -A8 "release-tag-smoke:" .github/workflows/ci.yml
 # python -c "import time; print(time.get_clock_info('monotonic'))"
 ```
 
+## Retention fold (2026-08-13)
+
+- **A101 — third recurrence of a flake = structural-fix signal, not rerun signal.** A rerun
+  self-heals ONCE; the third sighting of the same flake (e.g. `windows-agent-readiness`
+  `public-version-powershell` 30s timeout, 3× in 3 runs) means fix the probe (raise the timeout /
+  make it tolerant), not keep rerunning. Record the recurrence count beside the flake.
+
 If any of these greps come back empty or materially different, the corresponding row above is
 stale — update it before relying on it, and check whether the fix pointer's target skill
 (`tensor-grep-architecture-contract`, `tensor-grep-change-control`, etc.) needs the same update.

@@ -857,4 +857,13 @@ have an auditor accept the header — doc-only, no release tag re-verified for t
 | #737 shape-9/9a/9b test split (pre-fix-baseline paragraph) | `grep -n "shape9a_filescope_member_fn_ptr_variable\|shape9b_inclass_member_fn_ptr_variable" tests/unit/test_lang_cpp.py` |
 | #739 structural marker-order test (ast.dump / comment-gating paragraphs) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
 
+## Retention folds (2026-08-13)
+
+- **A102 — input-brief facts are hypotheses.** When dispatching a fix/build seat, the brief's stated
+  facts (version numbers, SHAs, "already shipped" claims) are hypotheses until the seat re-derives
+  them from the tree; two of seven retention fix-wave seats corrected facts in their own briefs.
+  Require seats to verify load-bearing input facts before writing and to report any that fail.
+- **A98 — spot-check census.** Declaring N dirty files "stale"/"novel" from one file's header is a
+  claim about the one file checked; use a mechanical per-file diff or explicit per-file disposition.
+
 If any command above no longer matches, update this skill in the same change — a wrong runbook is worse than none.
