@@ -52,9 +52,14 @@ If those two drift from each other or from this file, trust the source, not this
 
 ## Environment variable catalog
 
-Boolean env vars in tg follow one convention everywhere (`env_flag_enabled`,
-`src/tensor_grep/cli/runtime_paths.py:13-15`): the raw value is lower-cased and stripped, and it is
-"on" only if it is exactly `1`, `true`, `yes`, or `on` — anything else (including unset) is "off".
+Boolean env vars in tg follow one convention almost everywhere (`env_flag_enabled`,
+`grep -n "def env_flag_enabled" src/tensor_grep/cli/runtime_paths.py` — was `:13-15`, now `:20-22`):
+the raw value is lower-cased and stripped, and it is "on" only if it is exactly `1`, `true`, `yes`,
+or `on` — anything else (including unset) is "off". **Two STRICT exceptions compare the raw value
+against the literal `"1"` only, so `true`/`yes`/`on` do NOT enable them:** `TG_DOCTOR_OFFLINE` is
+`== "1"` on the Python side (`grep -n "TG_DOCTOR_OFFLINE" src/tensor_grep/cli/main.py` — `:492`),
+and `TG_RESIDENT_AST` is `!= "1"` on the Rust side (`grep -n "TG_RESIDENT_AST"
+rust_core/src/main.rs` — `:7581`).
 
 ### Routing / launcher
 
@@ -167,6 +172,22 @@ This is an Enablement Discipline case: default-OFF, opt-in only, and it is the k
 `CLAUDE.md`) and `tensor-grep-change-control` for the graduation gate (council-verify → dry-run →
 conscious flag-flip).
 
+### Evidence signing (`tg evidence emit --sign` / `tg evidence verify`)
+
+| Var | Default | Effect | Source |
+|---|---|---|---|
+| `TG_EVIDENCE_SIGNING_KEY` | unset → ambient default key | Ed25519 private key path for `--sign`. Precedence: `--signing-key` flag > this env var > the ambient per-USER default key `~/.tensor-grep/keys/evidence_ed25519.key`. **Consequence (A70): clearing/unsetting the env var does NOT disable signing when the ambient default key exists** — resolution falls through to the default path and `--sign` still signs. To force a true no-key fail-closed arm, isolate `HOME`/`USERPROFILE` (or remove the default key). With no resolvable key file, `--sign` fails closed: non-zero exit, no receipt written — never a silent unsigned fallback. | `grep -n "def resolve_signing_key_path" src/tensor_grep/cli/evidence_signing.py` — `:133-140` (precedence), `_default_signing_key_path` `:127-130`, `_DEFAULT_KEY_FILENAME = "evidence_ed25519.key"` `:60` |
+| `TG_EVIDENCE_TRUSTED_KEYS` | unset | The trust pin: comma-separated base64 Ed25519 public keys, merged with repeatable `--trusted-key` flag values. `verify` always reports the signer's fingerprint recomputed from the actual key bytes, but only upgrades `key_trusted` to `true` against this out-of-band pinned set (`hmac.compare_digest`); `--require-trusted` fails `valid` closed on an unpinned key. An embedded public key proves internal consistency, never authenticity. | `grep -n "_TRUSTED_KEYS_ENV\|def resolve_trusted_public_keys" src/tensor_grep/cli/evidence_signing.py` — `:57`, `:143-152` |
+
+### Ledger (`tg ledger` claims / findings)
+
+| Var | Default | Effect | Source |
+|---|---|---|---|
+| `TG_LEDGER_CLAIM_TTL_SECONDS` | `900` | Claim TTL in seconds; expired claims are pruned. | `grep -n "_TTL_ENV\|_DEFAULT_TTL_SECONDS" src/tensor_grep/cli/ledger_store.py` — `:124-125` |
+| `TG_LEDGER_AGENT_ID` | `anonymous` sentinel (after fallback) | Agent identity for claim/release, recorded verbatim (never inferred from process/user identity; do not put secrets in it — it lands in a plaintext, multi-agent-readable per-repo JSON). Precedence: `--agent-id` flag > this env > `TG_EVIDENCE_AGENT_ID` > the `anonymous` sentinel. The sentinel is DELIBERATE: two zero-config agents must both file as `anonymous` so `_find_overlaps` shows them each other's overlaps (#845) — do not auto-derive a per-checkout id. | `grep -n "_AGENT_ID_ENV\|_FALLBACK_AGENT_ID_ENV\|_DEFAULT_AGENT_ID\|def resolve_agent_id" src/tensor_grep/cli/ledger_store.py` — `:127-129`, `:302` |
+| `TG_LEDGER_FINDING_TTL_SECONDS` | `86400` (24h) | Wall-clock backstop TTL for findings; revision match, not this TTL, is the primary freshness signal. | `grep -n "_FINDING_TTL_ENV\|_DEFAULT_FINDING_TTL_SECONDS" src/tensor_grep/cli/ledger_store.py` — `:168-169` |
+| `TG_LEDGER_MAX_BLOB_BYTES` | 256 MiB | Total on-disk bytes across all DISTINCT (content-addressed, dedup'd) finding blobs for one root — independent of the live-findings count cap, so a flood of small findings cannot accumulate unbounded disk under the count cap. | `grep -n "_MAX_BLOB_BYTES_ENV\|_DEFAULT_MAX_TOTAL_BLOB_BYTES" src/tensor_grep/cli/ledger_store.py` — `:178-179` |
+
 ### In-process caches (bound long-lived agent-loop state)
 
 These exist so a long-lived `tg session daemon` / MCP server process doesn't grow unbounded caches.
@@ -254,7 +275,7 @@ when it carries `lsp_provider_response = true` from a completed provider request
 | `TENSOR_GREP_CLASSIFY_PROVIDER=cybert`/`triton` | **EXPERIMENTAL** | explicit env opt-in | Requires a Triton/CyBERT model deployment; falls back before expensive model load if unavailable. |
 | `TG_MCP_ALLOW_VALIDATION_COMMANDS=1` | **Off by design (security), not "not ready yet"** | explicit env opt-in on the MCP server process | Shell-executes `lint_cmd`/`test_cmd`, a prompt-injection surface. |
 | Local hybrid semantic search (BM25 + CPU dense embeddings + RRF) | **SHIPPED, EXPERIMENTAL default-OFF** — `tg search --semantic` (`grep -n '"--semantic"' src/tensor_grep/cli/main.py` — was `:6619`, now `:7403`; `core/retrieval_dense.py` + `core/retrieval_fusion.py`) | explicit `--semantic` flag; requires the `semantic` extra (`model2vec`, `pyproject.toml:577`), fails closed with a `rank_fallback_reason` when unavailable | No API key, no GPU, pure local CPU dense leg fused with BM25 via RRF -- see `tensor-grep-semantic-search-campaign` for build history and promotion gates. A 2nd consumer of the same dense/fusion core is `tg find` (below). |
-| `TG_FIND_DENSE_WEIGHT` (`tg find` only) | `"1.0"` (unset/empty/unparseable/non-finite all resolve to this — byte-identical no-op fusion weight) | Query-adaptive `dense_weight` override for `tg find`'s `rank_chunks` calls ONLY -- gates ONLY `tg find`, never `--semantic`. A valid finite override applies ONLY to genuinely multi-word queries (`len(query.split()) > 1`, a whitespace word-count gate, #191/#630); a single whitespace-free token (a literal identifier/symbol lookup) always stays pinned at `1.0` regardless of the env value. `math.isfinite` clamps `nan`/`inf`/`-inf` back to the default (flip-prep NIT 1, #630) before it can reach `reciprocal_rank_fusion`'s sort. | `grep -n "_FIND_DENSE_WEIGHT_ENV\|_FIND_DENSE_WEIGHT_DEFAULT" src/tensor_grep/cli/main.py` (was `:4007-4008`, now `:4271-4272`), `_find_dense_weight` (was `:4176-4227`, re-grep the function name) -- still **default-OFF**; the flip to a non-1.0 default is a separate CEO checkpoint (`tensor-grep-semantic-search-campaign`). |
+| `TG_FIND_DENSE_WEIGHT` (`tg find` only) | unset → **adaptive** (flip SHIPPED, #191/#634, first released v1.79.0): `5.0` for genuinely multi-word queries, `1.0` for single-token queries | Query-adaptive `dense_weight` for `tg find`'s `rank_chunks` calls ONLY -- gates ONLY `tg find`, never `--semantic`. Resolution (`_find_dense_weight`): unset/empty/malformed/non-finite env → `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (`5.0`, the ledger-swept 1:5 bm25:dense ratio) for a genuinely multi-word query (`len(query.split()) > 1`, the whitespace word-count gate, #191/#630); a single whitespace-free token (a literal identifier/symbol lookup) ALWAYS stays pinned at `_FIND_DENSE_WEIGHT_DEFAULT` (`1.0`) regardless of the env value; a malformed/non-finite value (`nan`/`inf`/garbage) falls to the adaptive `5.0` — treated exactly like unset, NOT clamped to `1.0` — so a typo cannot silently opt an operator out of the improved default (#634 must-fix; a non-finite value still never reaches `reciprocal_rank_fusion`'s sort). Explicit `TG_FIND_DENSE_WEIGHT=1.0` is the opt-out back to the old equal-weight fusion; any other finite value (e.g. `=3.0`) is honored verbatim. | `grep -n "_find_dense_weight\|_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT" src/tensor_grep/cli/main.py` (env/default consts were `:4007-4008`, then `:4271-4272`, now `:4593-4594`; adaptive const now `:4600`; reader `_find_dense_weight` was `:4176-4227`, now `:4613-4684`). The old "still **default-OFF**; the flip to a non-1.0 default is a separate CEO checkpoint" framing is SUPERSEDED by the shipped flip — see `tensor-grep-semantic-search-campaign` STATUS UPDATE 4. |
 
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 
@@ -562,6 +583,19 @@ passes, and merges land one-at-a-time rather than batched, so line-number drift 
 not occasional. Re-verify this file on a cadence of a few releases, not only when a citation is
 reported broken — the `CALLER_SCAN_FILE_CEILING` miss above sat wrong for two whole passes because
 nothing forced a re-check of a section nobody had reported as broken.
+
+Retention pass, 2026-08-12, verified against v1.110.14 (base `568065a`): recorded the v1.110.14
+doctor rows — the `TG_DOCTOR_OFFLINE` routing/launcher row added for the doctor schema-3 freshness
+fields had its citation re-verified in the same pass (`grep -n "TG_DOCTOR_OFFLINE"
+src/tensor_grep/cli/main.py` — `:489-492`, unchanged). Same pass: rewrote the `TG_FIND_DENSE_WEIGHT`
+row to the shipped adaptive state (reader re-grepped: env/default consts `:4271-4272` → `:4593-4594`,
+adaptive const `:4600`, `_find_dense_weight` `:4613-4684`); softened the boolean-convention claim
+with the two strict `== "1"` / `!= "1"` exceptions (`main.py:492`, `rust_core/src/main.rs:7581`) and
+re-anchored `env_flag_enabled` (`runtime_paths.py` `:13-15` → `:20-22`); and added the
+evidence-signing rows (`evidence_signing.py:56-60,127-152`) plus the four ledger env rows
+(`ledger_store.py:124-129,168-169,178-179,302`). The rest of this file (GPU/LSP/provider sections,
+front-door tables, `tg inventory` section, native-delegation checklist) was **not** re-walked in this
+pass — treat those sections' exact line numbers as needing a fresh check, same rule as before.
 
 If `AGENTS.md`'s `release_docs_current_tag` no longer says `v1.78.1`, treat every default/line-number
 claim in this file as needing re-verification, not just the version string.

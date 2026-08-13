@@ -41,8 +41,14 @@ The M17 structural fix (merged on origin/main as v1.110.12; current tag v1.110.1
 - [ ] On mismatch: REBUILD from the current tree (always safe in-tree — prefer rebuild over bare
       refuse) with a disclosed reason — rebuild must not be invisible latency.
 
-Root bytes are already persisted (`index.rs`, `root` field, `:272-274` write / `:355-356,413`
-read on origin/main); the defect was that the reuse path never COMPARED them to the query root.
+Root bytes are already persisted (`index.rs`, `canonical_root` field — grep the symbol). Two
+corrections to an earlier pass (2026-08-12): the field is `canonical_root`, NOT `root` (the
+pre-fix plan this skill was drafted from used a bare `root` field; format v6 persists the
+canonical form, declared `canonical_root: PathBuf`); and the plan's line refs copied into that
+pass (`:272-274` write / `:355-356,413` read) were the PLAN's own pre-fix numbers, unlabeled —
+on this tree the write is the format-v6 serializer emitting `canonical_root_bytes` and the read
+is the deserializer parsing it back (re-grep `canonical_root` in `rust_core/src/index.rs` to
+relocate both). The defect was that the reuse path never COMPARED them to the query root.
 
 ---
 
@@ -83,9 +89,13 @@ inode identity would not catch it either — so sampled files are hashed in FULL
 
 ## Part 4 — Bounded sampling with NAMED boundaries (the reopen-trigger discipline, A49)
 
-`compute_tree_fingerprint` samples the **top-32** top-level DIRECT children of the canonical root,
-fully hashed, index-machinery namespace excluded (a leftover `.tg_index.<token>.tmp` / lock must
-not consume a sample slot — `is_tg_index_owned_entry`). The honest remaining boundary is NAMED,
+`compute_tree_fingerprint` samples the **top-32** top-level FILES (direct children) of the
+canonical root — the walk filters to regular files BEFORE the cap (`entry.file_type()...is_file()`
+precedes `.take(TREE_FINGERPRINT_TOP_LEVEL_CAP)`), so a directory or symlink can neither flip the
+digest nor consume a sample slot — fully hashed, index-machinery namespace excluded (a leftover
+`..tg_index.<token>.tmp` atomic-save temp / `..tg_index.lock` must not consume a sample slot —
+`is_tg_index_owned_entry`, whose matcher is `starts_with("..tg_index.")` — TWO leading dots, not
+one). The honest remaining boundary is NAMED,
 not hidden:
 
 - [ ] The cap (`TREE_FINGERPRINT_TOP_LEVEL_CAP = 32`) is documented AT the constant with the
@@ -104,8 +114,12 @@ Python parse/semantic caches:
 - `semantic_index.py` stale check = SHA-256 fingerprint over sorted paths + mtimes; on mismatch it
   warns to stderr and falls back in-memory (NOT wired to a `tg index` command yet).
 - `repo_map.py` `_mtime_aware_cache` (grep the symbol) is the Python cache-freshness wrapper with a
-  `_MTIME_CACHE_CLEAR_REGISTRY` that sweeps every decorated cache — a per-root keyed re-export cache
-  is deliberately NOT one of them, and the boundary is documented at the symbol.
+  `_MTIME_CACHE_CLEAR_REGISTRY` that sweeps every decorated cache — and the per-root keyed
+  re-export/tsconfig contexts ARE swept too, contrary to an earlier pass of this skill that said
+  they were "deliberately NOT" among them: `_clear_all_source_caches` (grep the symbol in
+  `repo_map.py`) explicitly clears `_JS_TS_REPO_CONTEXTS`, `_RUST_REPO_CONTEXTS`, and calls
+  `lang_go.clear_go_repo_context_cache()` with the comment "Clear them too so the sweep is
+  actually complete" — they are not `_mtime_aware_cache` wrappers, so the sweep adds them by hand.
 
 ---
 

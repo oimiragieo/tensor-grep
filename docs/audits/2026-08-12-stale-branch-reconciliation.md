@@ -102,3 +102,21 @@ exit-124 / spawn-OSError-exit-2 / emit-only-after-start contract, the `_run_nati
 binary prefix, the ignore-list/order/collection ratchet arms, the bounded `-f` reader, the static
 heartbeat payload, and the win32 mypy seam. **Board stays BLOCKED** — the scaffold is RED by
 design and F2/F5 remain. Round 2 (re-audit of `8181762`) is the next gate before any GREEN claim.
+
+## 6. ERRATUM-2 (2026-08-12, appended by the session-retention audit; sections 1-5 untouched)
+
+Section 1's row "11 dirty docs/skill files are stale 2026-08-06-era snapshots … BEHIND, not
+novel" was WRONG for two of the eleven. The spot-check method (one file — SESSION_HANDOFF.md's
+header/date — generalized to all eleven) missed NOVEL, never-committed content:
+
+| dirty file | novel content | proof it never landed |
+|---|---|---|
+| `AGENTS.md` | `## Session Lessons (2026-08-07, campaign continuation)` + `## CI Cost Discipline (2026-08-07, from a real account-cutoff incident)` | `git log --all -S "CI Cost Discipline" -- AGENTS.md` → zero commits; `git diff 568065a -- AGENTS.md` shows both as `+` sections |
+| `docs/SESSION_HANDOFF.md` | `## Session Lessons (2026-08-07, campaign continuation)` (16-item detail block that the AGENTS.md section references) | `git log --all -S "Session Lessons (2026-08-07"` → zero commits |
+
+The remaining nine files' "stale snapshot" classification stands. Disposition: the retention PR
+landed all three sections VERBATIM (with provenance notes) BEFORE any cleanup of the dirty tree
+executes. The "ZERO unlanded product work" headline remains correct for code/tests; it was never
+established for lesson prose, and this erratum is the correction. Class lesson: a spot-check
+census of N files is a claim about the ONE file checked (AGENTS.md: "the population is the
+defect").

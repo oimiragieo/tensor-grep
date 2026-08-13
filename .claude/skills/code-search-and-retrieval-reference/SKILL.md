@@ -145,17 +145,23 @@ picks between them per query:
 `def $FUNC($$$ARGS):` matches any Python function definition, binding `$FUNC` and `$$$ARGS`).
 
 **Corrected — the routing default is the OPPOSITE of what this section previously said.** The real
-routing decision lives in `_select_ast_backend_for_pattern` (grep `def
-_select_ast_backend_for_pattern` in `main.py` -- was `:6737`, then a prior pass tagged that same
-number "as of 2026-07-27" and it had ALREADY drifted to `:6915` by this pass: a dated hedge does not
+routing decision lives in `_select_ast_backend_for_pattern` in `src/tensor_grep/cli/ast_workflows.py`
+(grep `def _select_ast_backend_for_pattern` in `ast_workflows.py` -- the `main.py` copy this
+instruction used to point at (was `:6737`, then `:6915`) is now a THIN FORWARDING SHIM onto the
+ast_workflows implementation; `grep "Thin forwarding shim onto" src/tensor_grep/cli/main.py` finds
+it, and its docstring records the drift that forced the collapse -- the old hand-maintained
+duplicate silently dropped the `requires_ast_grep_wrapper` fail-closed guard. A dated hedge does not
 stop a line number from rotting, it just makes the rot look supervised, so no citation in this
 document carries a date anymore), and its own comment is unambiguous: *"Prefer the ast-grep wrapper
 whenever it is available: it is the stable, results-defining backend for BOTH pattern kinds. The
 native tree-sitter AstBackend uses a DIFFERENT DSL and returns DIFFERENT results, so it must not be
 silently preferred ... Native-as-CPU-default is task #141. Native is reached ONLY as the
-ast-grep-absent fallback for native patterns."* (grep "Prefer the ast-grep wrapper" in `main.py` --
-was `:6692-6697`, now `:6952-6957`). Concretely: `if ast_wrapper.is_available(): backend =
-ast_wrapper` runs **first** (grep that exact line in `main.py` -- was `:6698`, now `:6958`),
+ast-grep-absent fallback for native patterns."* (grep "Prefer the ast-grep wrapper" in
+`ast_workflows.py` -- was `:6692-6697` in `main.py`, then `:6952-6957`). Concretely: the wrapper
+availability check runs **first** (`if _check_backend_available("AstGrepWrapperBackend"): backend =
+_get_cached_backend("AstGrepWrapperBackend")` -- grep `_check_backend_available("AstGrepWrapperBackend")`
+in `ast_workflows.py`; the old `if ast_wrapper.is_available(): backend = ast_wrapper` shape this
+entry used to cite in `main.py`, was `:6698`, then `:6958`, is gone),
 unconditionally, regardless of GPU/CUDA or pattern shape; native `AstBackend` is reached only when
 the wrapper is unavailable AND the pattern qualifies as "native" (`base_config.ast_prefer_native`
 and `is_native_ast_language(base_config.lang)` — the native-capable language set is narrower than
@@ -254,15 +260,18 @@ the shape alone; check the registration date.
 provenance_when_missing` defaults to `"regex-heuristic"` (`lang_registry.py:89`) — the original
 four languages fall back differently when their grammar is missing: python's
 `provenance_when_missing="python-ast"` (grep that exact string in `repo_map.py` -- was `:6011`, now
-`:6294`, no external grammar to miss at all) and javascript/typescript/rust keep the inherited
+`:6294`, no external grammar to miss at all); javascript/typescript keep the inherited
 `"regex-heuristic"` default (grep each `register_language(` call and read the block — there is no
-separate literal string to grep for on those three, since it is the field's own default). Every
+separate literal string to grep for on those two, since it is the field's own default), while rust
+now sets it EXPLICITLY (grep `provenance_when_missing="regex-heuristic"` in `repo_map.py`). Every
 language added since the original four (go/java/php/csharp, and both c/cpp -- foundational-tier at
 registration, since promoted in Tasks 10D/10E) instead sets
 `provenance_when_missing="grammar-missing"` explicitly on its own `register_language(...)` call
-(grep the literal in `repo_map.py` — 6 field settings as of 2026-08-09, one per post-registry
-language; the literal also appears in explanatory comments, so match the field shape
-`^\s*provenance_when_missing=` to count settings rather than raw hits) and ships **no regex fallback at all**: a
+(count with `grep -c "^\s*provenance_when_missing=" src/tensor_grep/cli/repo_map.py` — **8 field
+settings** as of 2026-08-12 (was 6 as of 2026-08-09): the six post-registry `grammar-missing`
+languages plus python's `python-ast` plus rust's now-explicit `regex-heuristic`; the literal also
+appears in explanatory comments, so match the field shape `^\s*provenance_when_missing=` to count
+settings rather than raw hits) and ships **no regex fallback at all**: a
 grammar-absent file for one of these six returns `([], [])` from `_imports_and_symbols_for_path`
 (grep `def _imports_and_symbols_for_path` in `repo_map.py` -- was `:6626`, now `:6627`) rather than
 silently degrading. That flag is consumed by `_language_coverage_gaps_for_universe` (grep `def
@@ -543,6 +552,12 @@ RRF, CPU-only, MIT. **RRF** (Reciprocal Rank Fusion, `k=60` is the standard cons
 original paper) is the fusion method for combining two independently ranked lists (here: BM25
 lexical ranking + dense embedding ranking) into one merged ranking without needing comparable raw
 scores — each item's fused score is `Σ weight_i / (k + rank_i)` across the lists it appears in.
+**Shipped default is `combine="max"`, not the sum:** `retrieval_fusion.py`'s
+`reciprocal_rank_fusion(..., combine: Literal["sum", "max"] = "max")` ships best-rank-wins as the
+DEFAULT (accuracy-leg campaign: ndcg@10 0.3047 (sum) -> 0.4953 (max), +62.6%, on the frozen golden
+harness); the sum formula above is the ORIGINAL Cormack/Clarke/Buettcher formulation, kept as
+`combine="sum"` for byte-identity with pre-max-flip behavior (module docstring; verify with
+`grep -n "combine: Literal" src/tensor_grep/core/retrieval_fusion.py`).
 
 **Current shipped status: BOTH legs are real code, not a plan.** This section previously described
 the dense+RRF leg as plan-only (`docs/superpowers/plans/2026-06-26-hybrid-semantic-search.md`,
@@ -587,6 +602,17 @@ query-adaptive `TG_FIND_DENSE_WEIGHT` fusion-weight knob (default-OFF, `1.0` = t
 equal weighting) gated by the query-shape classifier in §10 below. See `tensor-grep-run-and-operate`
 §1/§7/§11c for the command surface and `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 for the
 build history.
+
+**SUPERSEDED (append-only, do not rewrite the paragraph above) — 2026-08-05, task F10: the
+`TG_LATE_RERANK` "HELD/evidence-gated, not a verdict on MaxSim" framing is RETIRED.**
+`src/tensor_grep/core/retrieval_late.py:4-16` (the module-header RETIRED block) records MaxSim
+late-rerank as a VALIDATED DEAD END, not a paused build: decisive negative on the golden set AFTER
+the role-aware encoder fix already landed (ndcg@10 0.068 vs plain RRF 0.305), root cause = model
+capacity (the 17M-param int8 `LateOn-Code-edge` model's raw MaxSim ranking is statistically
+indistinguishable from random on in-repo code), NOT the encoder — so re-flipping the same encoder
+cannot change the verdict, and the old "entangled with a non-role-aware doc encoder" hedge no
+longer applies. Reopen only on BOTH a real `tg`-command install path AND a different encoder
+clearing the design doc's T8 golden-set thresholds. Do not re-run the old experiment.
 
 ---
 
@@ -648,7 +674,7 @@ router, not just `tg find`.
 | `-u`/`-uu`/`-uuu` | `bootstrap.py`, grep `def _search_args_request_unrestricted_generated_scan` (was `:581`, now `:726`) | intercepted by the broad-root safety guard, not blind passthrough |
 | `--` argv sentinel (MCP) | `mcp_server.py`, grep `command.extend\(\["--", pattern, path\]\)` (was `:1306`, now `:1375`) | blocks flag injection; list-argv alone only blocks shell injection |
 | `--` argv sentinel (native rg passthrough) | `rg_passthrough.rs`, grep `fn ripgrep_operand_args` (was `:581-600`, now `:584-603`) | FIXED — `ripgrep_operand_args` inserts `--` before paths; 3 tests, no longer contiguous — grep `operand_args_insert_end_of_options_sentinel_before_paths` / `operand_args_no_sentinel_when_no_paths` / `operand_args_files_mode_omits_patterns_but_keeps_sentinel` (was `:788-826`, now `:1034`/`:1056`/`:1065`) |
-| AST native vs sidecar | `main.py`, grep `def _select_ast_backend_for_pattern` (was `:6655`, then hedged `:6737`, now `:6915`); `ast_backend.py:505` (`is_available`, still current) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
+| AST native vs sidecar | `ast_workflows.py`, grep `def _select_ast_backend_for_pattern` (was `:6655` in `main.py`, then hedged `:6737`, then `:6915`; `main.py`'s copy is now a forwarding shim onto `ast_workflows.py`); `ast_backend.py:505` (`is_available`, still current) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
 | Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, all 10 parser-backed refs/callers + 0 foundational defs/imports-only (tier EMPTY) as of the Task 10E C++ final wave -- the "6 parser-backed + 4 foundational as of PR #927" split this row used to quote was the pre-campaign state (`_symbol_navigation_descriptor()` -- re-run it, do not trust this number); grammar-missing fails closed to `resolution_gaps`, never a silent empty result -- see section 2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
 | Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:7929`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
@@ -815,6 +841,16 @@ foundational tier is EMPTY). Verified live on origin/main a6242bb (v1.110.14):
 dated history; the CURRENT tier count is 10/0. Cross-checked by
 `tests/unit/test_lang_registry.py` (10 registrations) and the re-verification one-liner below.
 
+**2026-08-12 retention pass (append-only).** Four corrections, each verified against the tree at
+base `568065a`: §2's wrapper-preference grep instructions, the quick-reference row, and the
+re-verify command were re-pointed from `main.py` to `ast_workflows.py` (`main.py`'s
+`_select_ast_backend_for_pattern` is now a forwarding shim; the "Prefer the ast-grep wrapper"
+comment and the wrapper-first check live only in `ast_workflows.py`). §2a's
+`provenance_when_missing` count updated 6 -> 8 field settings (rust now sets `regex-heuristic`
+explicitly; count via the field-shape grep). §9's RRF entry notes the shipped `combine="max"`
+default (the sum formula is the original formulation kept for byte-identity). §9's `TG_LATE_RERANK`
+hold marked RETIRED 2026-08-05 (task F10) via the SUPERSEDED block above.
+
 Re-verification commands:
 
 ```bash
@@ -842,9 +878,10 @@ grep -n 'register_language(\|language_id="' C:/dev/projects/tensor-grep/src/tens
 grep -n "_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES\|_language_coverage_gaps_for_universe" C:/dev/projects/tensor-grep/src/tensor_grep/cli/repo_map.py
 
 # Re-check AstBackend.is_available() has not re-grown a GPU/torch_geometric gate, and that the
-# ast-grep wrapper is still preferred over native in the real router function
+# ast-grep wrapper is still preferred over native in the real router function (main.py's copy is
+# now a forwarding shim onto ast_workflows.py -- grep there, not in main.py)
 grep -n "def is_available" -A 12 C:/dev/projects/tensor-grep/src/tensor_grep/backends/ast_backend.py
-grep -n "Prefer the ast-grep wrapper\|def _select_ast_backend_for_pattern" C:/dev/projects/tensor-grep/src/tensor_grep/cli/main.py
+grep -n "Prefer the ast-grep wrapper\|def _select_ast_backend_for_pattern" C:/dev/projects/tensor-grep/src/tensor_grep/cli/ast_workflows.py
 
 # Confirm the semantic-search dense+RRF leg is still present under its real module names
 # (embed_backend.py / retrieval_hybrid.py never existed -- don't grep for those)

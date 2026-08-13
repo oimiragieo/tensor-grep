@@ -12,7 +12,7 @@ before a hunch is allowed to be called a result — and what do we do with the h
 
 `tensor-grep` is described in its own docs as a **benchmark-governed, contract-heavy codebase** where you
 **do not optimize by guesswork** (`AGENTS.md:15`, `grep -n "benchmark-governed" AGENTS.md` — verified unchanged). The whole product wedge is trustworthy context for an
-agent — "the product wedge is **not** 'faster grep'" (`grep -n "not \"faster grep\"" AGENTS.md`; was `:377`, now `:473` — AGENTS.md keeps growing above this citation, cite the grep not the number) — so a result that *looks* right but
+agent — "the product wedge is **not** 'faster grep.'" (`grep -n 'not "faster grep' AGENTS.md` — no closing quote in the pattern: the tree text is `not "faster grep."` with the period INSIDE the quotes, so a pattern ending in `grep"` matches nothing; was `:377`, then `:473`, now `:729` — AGENTS.md keeps growing above this citation, cite the grep not the number) — so a result that *looks* right but
 was never actually proven is not a small sin here; it is the exact failure the product exists to prevent.
 This skill is the discipline that keeps hunches honest.
 
@@ -63,8 +63,10 @@ observations it must account for — and deliberately include the ones that woul
   silently mis-handles the empty case has not been proven, it has been cherry-picked.
 - **The edge/adversarial inputs.** CRLF, invalid UTF-8, BOM, binary/NUL-byte files, multiline. `rg`'s
   default engine matches invalid UTF-8 but **PCRE2 requires valid UTF-8 and transcodes** — so a mechanism
-  that swaps engines changes *results*, not just speed (`AGENTS.md` Backend Fail-Closed Contract, `:496-506`;
-  the `--pcre2` fail-closed example is at `:502`).
+  that swaps engines changes *results*, not just speed (`AGENTS.md` Backend Fail-Closed Contract —
+  `grep -n "## Backend Fail-Closed Contract" AGENTS.md`, was `:496-506`, then `:1672`, now `:1973`;
+  the `--pcre2` fail-closed example is the "Fail closed for any flag/contract the fallback cannot
+  preserve" bullet — `grep -n "the fallback cannot preserve" AGENTS.md`, was `:502`, now `:1979`).
 - **The disconfirming measurement.** If your mechanism predicts a win and the fair measurement shows a
   loss, the mechanism is wrong (or incomplete) — you do not get to keep the mechanism and blame the ruler.
 
@@ -222,7 +224,7 @@ Experimental-until-proven is a hard rule, not a preference: **GPU, LSP, semantic
 provider-`classify` (`cybert`) stay default-OFF and labeled experimental until correctness AND speed AND UX
 are all proven** — never market an unproven wedge (`tensor-grep-change-control` Part 1, rule 4; GPU remains
 *slower* than `rg`/`tg_cpu` at every scale tested and public CUDA-asset publishing is on a deliberate
-**HOLD**, `grep -n "deliberate .HOLD" AGENTS.md`; was `:541,:552-553`, now `:1728`). "Experimental" is a lifecycle stage with an exit gate, not a permanent
+**HOLD**, `grep -n "deliberate \*\*HOLD" AGENTS.md` — the old `deliberate .HOLD` pattern is dead: BRE `.` matches exactly one char and the tree text is `deliberate **HOLD` with two; was `:541,:552-553`, then `:1728`, now `:2029`). "Experimental" is a lifecycle stage with an exit gate, not a permanent
 excuse.
 
 ### The instrumented-build-gate fork (C12, added 2026-07-08) — for a speculative idea with appeal but no demand proof
@@ -252,9 +254,13 @@ three-way fork resolved it as DOCUMENT-NOW-BUILD-LATER-ON-GATE: ship a docs-only
 (`docs/multi_agent_context_plane.md`) for free, plus a small opt-out demand-instrumentation patch on
 the session daemon (concurrent-distinct-client counter + repeat-expensive-artifact counter, both
 fail-open/PII-free/hashed, read back via existing `tg session daemon status` / `tg doctor` surfaces)
-that earns or fails a pre-stated 2-week numeric gate before any ledger/claims layer is authorized. As
-of this writing that build (`#456`) is **open, not merged to `main`** — cite it as an in-flight design
-pattern, not a shipped result (`git log --oneline origin/main | head` to re-check).
+that earns or fails a pre-stated 2-week numeric gate before any ledger/claims layer is authorized.
+That build (`#456`) **MERGED as `fca77a4`** ("feat(daemon): document the shared code-intelligence
+plane + add opt-out demand instrumentation ... (step-0)") — the instrumentation pattern is a shipped
+result, not an in-flight design, and the ledger it gated followed (`#673`/`#675`), recorded in
+`docs/multi_agent_context_plane.md` as EXPERIMENTAL/preview and explicit-invoke only (nothing in
+`tg agent`/`tg edit-plan`/the daemon consults the ledger). Re-verify with
+`git log --oneline --grep="#456"` — the former "open, not merged to `main`" wording was false.
 
 **Self-dogfood is self-consistency, NOT demand (A93, 2026-08-09).** `tg dogfood` passing 22/22 on tg
 itself proves tg works for itself — it says nothing about external-customer demand for a roadmap
@@ -265,6 +271,35 @@ Rules: (1) a self-dogfood PASS is evidence of internal consistency only; externa
 separate evidence class; (2) before a roadmap item enters a design council, premise-check its
 "shipped/banked" claims against origin/main, or the council certifies fiction (A93 receipt in
 `docs/plans/2026-08-09-worldclass-roadmap.md`).
+
+### Three 2026-08-12 lifecycle lessons (folded from the backlog-closeout research receipts)
+
+1. **Evidence must match the row's LITERAL reopen trigger.** RUST-REPLACE-SYMLINK's row named its
+   trigger as "a concrete untrusted-destination threat model or a downstream compatibility
+   decision" (`docs/BACKLOG.md`, grep "RUST-REPLACE-SYMLINK"); the 2026-08-12 Exa pass delivered
+   exactly that class — peer tools' in-place replace earning fresh 2026 CVEs (GNU sed
+   `-i --follow-symlinks` TOCTOU CVE-2026-5958, uutils GHSA-239g-2685-54x3, Capgo CVE-2026-56236) —
+   so the DEMAND_GATED->READY flip could record "reopen condition SATISFIED" with receipts
+   (`docs/TASK_BOARD.md` row; `docs/audits/2026-08-12-research-receipts.md`). Evidence that merely
+   satisfies the PREMISE while silently AMENDING the trigger (an adjacent-but-different threat
+   class, weaker semantics) is not a reopen — it needs an explicit trigger-amendment record, or the
+   gate has been moved without a decision.
+2. **Move only to the MINIMUM disposition the evidence supports.** Positive models from the same
+   pass: MCP-LEAN-DEFAULT got direction-confirmation but stayed Task-2C-fenced (PROPOSED_REOPEN,
+   not READY); CONTINUOUS-REFRESH reopened for a design/scoping pass ONLY, not a build, because the
+   banked "big-refactor" note still stands. A demand signal that supports scoping does not
+   authorize building.
+3. **Research receipts PROPOSE transitions; the parser-legal docs PR owns the board state change
+   (A71).** `docs/audits/2026-08-12-research-receipts.md` says it in its own header: dispositions
+   in the audit are PROPOSED, and `docs/TASK_BOARD.md` may only be flipped by the docs PR that
+   carries the measurement in-body — never from the audit file alone (A71: the tracker parser
+   accepts only `Status:`/`PR:`/`Trigger:` checklist rows under the canonical index).
+
+**Evidence standard for research receipts (the Exa format, same source):** query counts by category
++ date window, an `exa_ok` flag, the raw-JSON retention path (even when it lives outside the repo),
+arXiv abs-page re-verification (HTTP 200; date derived from the ID), inline uncertainty flags, and
+honest nulls per row ("no paper found shipping X" is itself a result, stated as one). A receipt
+missing these is a claim, not evidence.
 
 ### Worked example — a fresh default-OFF -> proven -> pending-flip lifecycle (`TG_FIND_DENSE_WEIGHT`, #189/#628/#630, 2026-07-16)
 
@@ -438,6 +473,18 @@ citation was converted from a hard line number to a `grep <quoted-phrase>` instr
 re-stamp" rule — do not re-introduce a bare `AGENTS.md:NNN` citation in this file's prose; put the
 grep and the drift receipt back if you must record a new number. This is the FOURTH time this file's
 AGENTS.md citations have drifted, not the third.
+
+**2026-08-12 retention pass.** Fixed two DEAD grep patterns — the `not "faster grep"` pattern (tree
+text is `not "faster grep."` with the period INSIDE the quotes, so a pattern ending in `grep"`
+matches nothing; now `:729`) and the BRE `deliberate .HOLD` pattern (tree text is `deliberate
+**HOLD`; BRE `.` matches exactly one char, and there are two — now `:2029`). Converted the last bare
+`AGENTS.md:NNN` citation pair in Part 1 (Backend Fail-Closed Contract block, `:496-506`/`:502`) to
+grep-the-symbol form (now `:1973`/`:1979`), per this file's own no-bare-line rule and the table
+below. Corrected the #456 claim (MERGED as `fca77a4`, not "open, not merged"; the ledger it gated
+shipped experimental per `docs/multi_agent_context_plane.md`). Folded three 2026-08-12 lifecycle
+lessons + the Exa receipt format into Part 3 (sources: `docs/audits/2026-08-12-research-receipts.md`,
+`docs/TASK_BOARD.md`, `docs/BACKLOG.md` 2026-08-12 campaign note).
+
 Re-verify before relying on any of them — a wrong methodology runbook lets a bad result through,
 which is worse than none.
 
@@ -445,9 +492,9 @@ which is worse than none.
 |---|---|
 | Current release tag | `grep -n release_docs_current_tag AGENTS.md` (was `v1.96.0`, now `v1.101.27` — 2026-08-01 pass) |
 | "Benchmark-governed, do not optimize by guesswork" | `grep -n "benchmark-governed" AGENTS.md` (`:15`, still unchanged 2026-08-01) |
-| Product wedge is not "faster grep" | `grep -n "not \"faster grep\"\|agentic code-intelligence" AGENTS.md` (was `:377`, now `:473`) |
+| Product wedge is not "faster grep" | `grep -n 'not "faster grep\|agentic code-intelligence' AGENTS.md` (no closing quote after `grep`: the tree text is `not "faster grep."` with the period inside the quotes; was `:377`, then `:473`, now `:729`) |
 | Verify-plan + adversarial-audit + "no citation is DISCARDED" | `grep -n "DISCARDED\|ADVERSARIAL AUDIT\|caught 5 blockers\|CUDA-fork hazard" AGENTS.md` (was `:490,:494,:632`, now `:588`/`:603`/`:1825`) |
-| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` (AGENTS.md block was `:496`, now `:1672`; `base.py:7`, unchanged) |
+| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` (AGENTS.md block was `:496`, then `:1672`, now `:1973`; `base.py:7`, unchanged) |
 | No-match is a valid comparator outcome; fair many-fixed-strings baseline | `grep -n "no-match as a real comparator\|many fixed strings" AGENTS.md` (was `:373,:374`, now `:469,:470`) |
 | Ranking flip: harden, don't relax the test | `grep -n "IDF blast-radius\|robust to IDF shifts" AGENTS.md` (was `:385`, now `:481`) |
 | Roadmap sequencing (Semble; #1 user ask; registration-check) | `grep -n "Roadmap Sequencing" -A 45 AGENTS.md` (was `:525` onward with Semble `:565`/registration-check `:566`; now `:1701` onward with Semble `:1741`/registration-check `:1742` — this whole block drifted ~1176 lines in one week; cite the grep, never the number) |

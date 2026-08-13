@@ -68,7 +68,9 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Rule:** GPU, LSP, semantic-search, and provider-backed classify (`cybert`) paths stay **default-OFF and labeled experimental** until correctness **and** speed **and** UX are all proven. Never market an unproven wedge.
 
 **Why / incidents:**
-- **GPU** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`docs/CONTRACTS.md:80-82`). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:368`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
+- **GPU** Phase-0 SHIPPED (v1.75.1-v1.75.4, PRs #594-#597 -- #593/v1.75.0 was an UNRELATED
+  `tg orient`/`tg agent` improvement that landed in the same version range by publish order, not part
+  of the GPU wave; AGENTS.md's "GPU Phase-0 hardening wave" addendum records the same range): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion" docs/CONTRACTS.md` — was cited at `:80-82`, now `:123`; the old anchor pointed at the `--column`/`-c` flag list). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:368`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
 - **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md:375`).
 - **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md:366`).
 
@@ -121,19 +123,35 @@ claims; only a pin catches the second one.
 **Applies to:** any PR touching `repo_map.py`'s scorers, the reverse-import/blast-radius graph, PageRank/
 centrality, or any BM25/RRF/dense-fusion weighting.
 
-### 7. "Not mine" / "CI doesn't flag it" is not a disposition
+### 7. "Not mine" / "CI doesn't flag it" is not a disposition — but ownership decides WHERE the fix lands
 
 **Rule:** Authorship, CI visibility, tracked-vs-untracked status, and whether a finding sits inside the
-current task's stated scope are all irrelevant to whether a real defect gets fixed. If you find one while
-doing something else, fix it in the same turn -- in place, even if you cannot commit it (e.g. it lives in
-a file you were told not to touch, or another agent's in-flight WIP) -- rather than reasoning your way past
-it. The only legitimate stop is a hard blocker (needs a build/fire, is irreversible, or is human/CEO-gated),
+current task's stated scope are all irrelevant to whether a real defect gets FIXED — but ownership decides
+WHERE the fix may land. If you find a defect while doing something else, never reason your way past it;
+the disposition is one of:
+
+- **Your own / isolated tree (a worktree you own, a fresh branch off `origin/main`):** fix it in the same
+  turn, in place.
+- **Another agent's in-flight WIP, a file marked do-not-touch, or any foreign dirty state:** do NOT edit
+  in place. PRESERVE the foreign dirty/untracked state exactly as found, RECORD the finding
+  (`file:symbol` + repro) in the durable place for it (the owning PR/issue, the tracker, the handoff
+  doc), and fix it in an owned/isolated tree or after EXPLICIT ownership transfer from the owner/human.
+  A concurrent writer's tree is shared state: an in-place "fix" can collide with a rewrite in flight,
+  and `git stash` / `git add -A` in a shared tree can destroy another agent's work — grep AGENTS.md for
+  "Never edit a worktree a live agent owns" and "`git stash` Is UNSAFE Once Parallel Worktrees Exist"
+  (the 2026-08-02 receipt); never stamp those as line numbers.
+
+The only legitimate stop is a hard blocker (needs a build/fire, is irreversible, or is human/CEO-gated),
 and that gets a tracked follow-up with a concrete acceptance test, never a sentence of justification.
 
-**Why / incident:** A lint/audit finding was named out loud and then waved past **twice** with exactly
+**Why / incidents:** A lint/audit finding was named out loud and then waved past **twice** with exactly
 this reasoning -- "not my file," "CI doesn't flag it" -- and both times the underlying defect was real. A
 constraint on one verb (e.g. "do not **commit** this file") is not permission on another (silently
-generalizing it into "do not **fix** this file" and leaving a live bug in the tree).
+generalizing it into "do not **fix** this file" and leaving a live bug in the tree). The 2026-08-12
+retention audit then found the ORIGINAL wording of this rule ("fix it in the same turn -- in place, even
+... in another agent's in-flight WIP") contradicting AGENTS.md's never-edit-a-live-agent's-worktree law
+and the 2026-08-02 parallel-worktree receipts — the wave-past failure and the ownership failure are two
+distinct defects, and the rule must close BOTH, not trade one for the other.
 
 **Applies to:** any lint/grep/audit finding you surface incidentally while doing something else, regardless
 of who owns the file, whether it is tracked by git, or whether CI currently exercises it.
@@ -516,9 +534,28 @@ That job **compiles native assets before publishing → it runs ~6 minutes**, an
 
 **Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md:844`).
 
-**A second, DIFFERENT release-failure shape does NOT self-heal (C-release-flake) — do not apply the "just push again" recovery to it blind.** A flaky `needs:`-list job (e.g. a timing-sensitive lock-concurrency test, a transient dependency-install flake) can make `Semantic Release` report `skipped` rather than `failure` — no tag, no `chore(release)` commit, PyPI unchanged. This is **not** the push-race shape (no `! [rejected]` line) and it will **not** resolve itself on the next ordinary push, because nothing about the flaky job's cause changes between runs. Recovery here is `gh run rerun --failed` on the SAME run (re-executes only the failed job, not the whole pipeline) — receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test widened + rerun), v1.92.2/#701 (the index-lock concurrency test rewritten to a scheduler-independent Event-handshake contract after 2 releases of flaking). **Tell the two shapes apart by reading the job conclusion, not by symptom-guessing:** `! [rejected] main -> main` in the `Semantic Release` job's own log = push-race, self-heals; a `skipped` conclusion with no rejection line = a `needs:`-job flake, needs `gh run rerun --failed`. Cross-link: `tensor-grep-debugging-playbook` §2.
+**A second, DIFFERENT release-failure shape (C-release-flake) — rerun immediately; do not wait it out.** A flaky `needs:`-list job (e.g. a timing-sensitive lock-concurrency test, a transient dependency-install flake) can make `Semantic Release` report `skipped` rather than `failure` — no tag, no `chore(release)` commit, PyPI unchanged. This is **not** the push-race shape (no `! [rejected]` line). Do NOT wait for an unrelated push to clear it: the recovery is `gh run rerun --failed` on the SAME run, immediately (re-executes only the failed job, not the whole pipeline). A later green main push CAN also self-heal this shape — the `Semantic Release` job runs on every eligible main push (verify the `release` job's `if:` condition: `grep -n "github.event_name == 'push'" .github/workflows/ci.yml` — it additionally guards `!contains(github.event.head_commit.message, 'skip release')`) and the version is **derived from git tags**, not the failed run's state — but "a future push will eventually clear it" is not a strategy, it is an abandoned rerun; the failed run is the thing you own, so rerun it. Receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test widened + rerun), v1.92.2/#701 (the index-lock concurrency test rewritten to a scheduler-independent Event-handshake contract after 2 releases of flaking). **Tell the two shapes apart by reading the job conclusion, not by symptom-guessing:** `! [rejected] main -> main` in the `Semantic Release` job's own log = push-race, self-heals; a `skipped` conclusion with no rejection line = a `needs:`-job flake, needs `gh run rerun --failed`. Cross-link: `tensor-grep-debugging-playbook` §2.
 
 Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md:830-832`).
+
+### Precedence: strict serialization is the DEFAULT; batch forms are narrow, named exceptions
+
+The merge regimes below do NOT sit at equal weight — when in doubt, the strictest applies:
+
+1. **DEFAULT — one-merge-per-tick (strict serialization).** For any release-bearing PR: merge ONE →
+   wait for its `chore(release)` commit on `main` AND the new version on PyPI → then merge the next.
+   The Part 10 checklist item enforces this default.
+2. **Narrow MONITORED exception — C-batch (next subsection).** Several ALREADY-CI-green releasing PRs
+   may merge ~15-20s apart in ONE gate-open window and produce one combined release, but ONLY when:
+   every PR in the batch is already independently green, the merges happen inside one green window, and
+   the operator watches the NEWEST main run to full completion (run-id polled by id, job population
+   present — see "Two merge-gate blind spots" below), not just each PR's own CI.
+3. **Non-releasing PRs (`docs:`/`test:`/`chore:`/`bench:`) batch freely ONLY when no release is in
+   flight or planned** (A31; AGENTS.md "Batch the non-releasing, serialize the releasing" — grep the
+   phrase, don't stamp the line). They create no publish to race, so their only gate is "the newest
+   main run completed"; the moment a release is in flight or next in the queue, they fall back to the
+   DEFAULT wait, because ANY merge landing inside a release window can reject the in-flight publish
+   (v1.17.23/#318/#319 receipt above).
 
 ### Rapid-window batch-merge — several already-green releasing PRs in one window (C-batch)
 
@@ -619,12 +656,33 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
   `chore(release)` commit timestamp against the PR run's timestamp; if a release landed, re-run the
   PR's CI or rebase first). And read the FAILURE COUNT, not the red-row count: #930 showed "7
   failing lanes" that were ONE gate (6331 passed, 1 failed).
-- **A `needs:`-gated job is ABSENT, not pending, until its gate finishes.** Twelve jobs carry
-  `needs: smoke` (re-derive: `grep -c 'needs: smoke' .github/workflows/ci.yml`) plus `release`
+- **A `needs:`-gated job is ABSENT, not pending, until its gate finishes.** Twelve jobs are
+  smoke-gated — re-derive with BOTH forms, because since #977's `changes` job ten read
+  `needs: [smoke, changes]` and only two still read bare `needs: smoke`, so the old single-form
+  `grep -c 'needs: smoke'` under-counts 12 as 2:
+  `grep -cE 'needs: (smoke|\[smoke, changes\])' .github/workflows/ci.yml` — plus `release`
   naming smoke in its needs list, so pre-smoke a PR exposes only the ungated check-runs and a settle
   probe of `all(bucket != "pending")` is VACUOUSLY TRUE over a view that structurally cannot contain
   a test lane (observed: 11 -> 39 check-runs the instant smoke ended). **A merge or settle gate must
   assert the heavy lanes are PRESENT by name or count**, never "nothing is pending".
+
+### Session-retention lessons (2026-08-12)
+
+- **Stale-branch content reconciliation: `git cherry` + proves PATCH-ID distinctness, NOT novel
+  content.** A clean `git cherry` only says the patches are not byte-identical to upstream; the same
+  fix can land as a different patch. Enumerate the branch's touched paths, diff EACH endpoint against
+  the target, and confirm the symbols/tests actually exist on the target; for historical-blob claims
+  use blob identity (`git rev-parse <rev>:<path>`) plus pickaxe (`git log -S"<exact string>"`), not
+  commit-message reading.
+- **Reconciliation is not cleanup.** Preserve dirty/untracked state exactly as found; stage only
+  explicit paths; deletions are PROPOSED, never executed, unless separately authorized. Same root as
+  Part 1 Rule 7: foreign tree state is evidence, not litter.
+- **Long-lived published branches: union-MERGE `main` INTO the branch (not rebase)**, then verify the
+  per-node outcome map before/after the merge plus a live job-population census — a rebase rewrites
+  the branch's published history and invalidates every prior run/verdict keyed on its SHAs.
+- **Mixed dispositions stay mixed (A41).** `shipped + blocked`, `fixed + retired`,
+  `implemented + demand-gated` are each TWO outcomes, not one; never flatten a sub-outcome pair into
+  a single flattering word when recording status.
 
 ## Part 8 — PR title drives release intent
 
@@ -761,7 +819,7 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
   canonical Windows `.venv`; canonical verification ran from PowerShell.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
 - [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
-- [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick**.
+- [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick** is the DEFAULT; C-batch is the narrow monitored exception, and non-releasing PRs batch only in a release-free gap (Part 7 "Precedence").
 - [ ] Autonomous work stops at a **draft PR** — no auto/admin-merge.
 
 ---

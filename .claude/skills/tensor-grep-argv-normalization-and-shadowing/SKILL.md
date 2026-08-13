@@ -50,8 +50,10 @@ runs BEFORE the Typer app. Its shape-rewriting joints:
 - `_run_rg_passthrough` (`bootstrap.py`, `def _run_rg_passthrough`) — forwards the plain-addressed
   text search straight to ripgrep.
 
-**The invariant to preserve (routing_policy.md, "shape-monotonic" paragraph — grep
-`monoton` in docs/routing_policy.md):** the front door's verdict must be a *superset-monotone*
+**The invariant to preserve (routing_policy.md's one-directional-verdict paragraph — grep
+`stricter, never looser` in docs/routing_policy.md; the earlier anchor `grep monoton` returns ZERO
+hits at this SHA — the invariant lives under this wording, not the word "monotonic"):** the front
+door's verdict must be a *superset-monotone*
 refinement of the clap path's — the front door may be stricter, never looser; attached-value short
 spellings (`-eneedle`) are a known deliberate asymmetry in the SAFE direction. When you loosen a
 front-door predicate, you widen every path that falls through it.
@@ -64,12 +66,28 @@ Before claiming a front-door/argv fix is closed, enumerate the doors mechanicall
 
 - [ ] List every flag the normalizer REWRITES (e.g. `SEARCH_OPTION_FIRST_FLAGS` includes
       `--count-matches`, so `tg PAT --count-matches` becomes the search subcommand form).
+- [ ] Know the SIBLING list: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (`rust_core/src/main.rs`, grep
+      `const SEARCH_PYTHON_PASSTHROUGH_FLAGS`) is a co-trigger of the SAME rewrite —
+      `normalize_top_level_search_args` rewrites to the search form when EITHER list matches (grep
+      `raw_args_contain_any_flag` in the same file). It carries, among others, `-f`/`--file`.
+- [ ] Door-parity example (`-f`/`--file`): `-f`/`--file` is in `SEARCH_PYTHON_PASSTHROUGH_FLAGS`
+      (native front door routes it to the Python passthrough), and the Python front door's
+      `_can_delegate_to_native_tg_search` (`bootstrap.py`, grep that symbol) EXCLUDES `-e`/`-f`
+      from native delegation because the separately-compiled standalone native binary silently
+      never reads a `-f` pattern file at all (audit #69 receipt — grep `silently never read` in
+      `bootstrap.py`). Two front doors, one argv: both must refuse/drop the same shapes, or one
+      door silently misroutes what the other guards.
 - [ ] List every parser that can receive the REWRITTEN form: the search subcommand handler, the
       positional (`run_positional_cli`) handler, and the rg-passthrough path.
 - [ ] For each (rewritten flag, sub-parser) pair, ask: does that parser honor the flag, refuse it,
-      or silently drop it? `SEARCH_OPTION_FIRST_FLAGS`'s `--gpu-device-ids` lands on a search path
-      whose structured args struct has NO gpu field — the drop is structural, not a bug someone
-      typed.
+      or silently drop it? NOTE `--gpu-device-ids` is NOT itself a `SEARCH_OPTION_FIRST_FLAGS`
+      member (verify: `const SEARCH_OPTION_FIRST_FLAGS` in `rust_core/src/main.rs`); the rewrite is
+      TRIGGERED by a member riding in the same argv (`--count-matches`), with `--gpu-device-ids`
+      riding along into the search form, where the structured args struct has NO gpu field on the
+      rg-passthrough route — the drop is structural, not a bug someone typed. The tree's own receipt
+      says exactly this: grep `rg_passthrough_gpu_dropped_search_flags` in `rust_core/src/main.rs`
+      ("`SEARCH_OPTION_FIRST_FLAGS` includes `--count-matches`, so `tg PAT . --gpu-device-ids 0
+      --count-matches` normalizes into `tg search ...`").
 - [ ] Guard EVERY door you enumerate; a guard added only to the door you *thought* you were fixing
       is a no-op against the other doors (the H2 receipt: the rg-passthrough early-return was where
       the explicit request was silently dropped; the guard had to be placed BEFORE that early
@@ -145,7 +163,8 @@ the thing the flag changes (AGENTS.md "The check and the defect AGREED" — #876
 | **shrpx/secure-argv receipts (repo)** | See Part 4's `-q` table from `tests/... rg_parity` / comment receipts in `RipgrepBackend._build_cmd` | Consumers-parse-vs-stream enumeration. |
 
 **Repo receipts to cite by symbol, not line:** `main_entry`, `_normalize_search_invocation`,
-`_requires_full_cli` (all `src/tensor_grep/cli/bootstrap.py`); `SEARCH_OPTION_FIRST_FLAGS` and
+`_requires_full_cli`, `_can_delegate_to_native_tg_search` (all `src/tensor_grep/cli/bootstrap.py`);
+`SEARCH_OPTION_FIRST_FLAGS`, `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, and
 `normalize_top_level_search_args` (`rust_core/src/main.rs`); `_build_cmd` and its consumers
 (`src/tensor_grep/backends/ripgrep_backend.py`); `tests/unit/test_argv_sentinel_covers_every_builder.py`
 (the behavioural census — read its docstring for WHY the source-scan form was retired); AGENTS.md A83.

@@ -228,7 +228,9 @@ this is systematic, not jitter.** Jitter (above) is random noise around the true
 regime mismatch is a **wrong measurement of the wrong code path** and can point the wrong direction
 entirely. A warm dogfood run measures the CACHED path, where the function you actually changed may not
 even execute on that request. Receipt: a `tg orient` warm end-to-end dogfood read showed **-36%** on a
-symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py:2126`) that
+symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py` — locate via
+`grep -n "def _python_imports_and_symbols" src/tensor_grep/cli/repo_map.py`, was `:2126`, now
+`:2166` on 2026-08-13) that
 directly microbenchmarking the function then showed was actually **~54% faster** (961ms→446ms), because
 the warm run never re-parsed the file the change touched. This deepens corollary 3 above ("cold-start
 and repeated-query are different regimes") into a concrete verification recipe: to prove a cold-path
@@ -237,7 +239,9 @@ process per rep (cold cache by construction), a single pass over distinct inputs
 output-identity (`total == total` both sides) — or (b) explicitly clear the relevant cache between reps
 of an end-to-end run. Never trust a warm end-to-end number as evidence for or against a cold-path
 change. Second receipt, same shipped-wheel-microbench discipline applied to a different lever: a
-validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py:11112`)
+validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py` —
+locate via `grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`, was
+`:11112`, now `:11446` on 2026-08-13)
 measured **~68% faster** (3657ms→1172ms) this way, output byte-identical. The general profiling/proof
 pipeline this recipe belongs to (profile the shipped wheel → prove byte-identical output → warm/cold
 microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the
@@ -359,8 +363,12 @@ Keep the honesty floor: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-
 few dozen lines above the real promotion-contract paragraph, currently `:123`). Do not treat any GPU
 number you produce as promotion evidence; it is implementation history at best.
 
-**Re-verified current as of v1.95.0**: `docs/gpu_crossover.md` now carries its own "Current
-post-`v1.95.0` GPU dogfood Read" section, and the verdict above is unchanged in substance — still no
+**Re-verified current as of v1.95.0**: `docs/gpu_crossover.md` carries its own rotating
+"Current post-`<version>` GPU dogfood Read" heading section — the `<version>` in that heading is
+re-stamped per release (it was `v1.95.0` when this sentence was first written and has rotated
+since; `grep -n "GPU dogfood Read" docs/gpu_crossover.md` for the current one — this file
+previously embedded the literal `v1.95.0` heading text, a snapshot that goes stale every release),
+and the verdict above is unchanged in substance — still no
 single-pattern crossover, and the public managed binary still routes GPU requests through `GpuSidecar`
 (not `NativeGpuBackend`). Promotion has grown a more detailed contract since v1.75.4 (unchanged
 conclusion, more machinery): public promotion now additionally requires a managed NVIDIA front door
@@ -510,7 +518,11 @@ Re-verify before trusting a stale number:
   (`grep -n 'GPU benchmark correctness\|managed GPU promotion' docs/CONTRACTS.md`).
 
   This line cited `docs/CONTRACTS.md:80-82` until 2026-08-02. That anchor was corrected earlier in
-  THIS FILE (see the GPU section's `grep -n "gpu_evidence_status"` note) and the correction never
+  THIS FILE (see the GPU section's `grep -n "Public managed GPU promotion additionally requires"
+  docs/CONTRACTS.md` note — pointer fixed 2026-08-13: this sentence previously pointed at "the GPU
+  section's `grep -n "gpu_evidence_status"` note", which does not exist anywhere in this file; the
+  only other `gpu_evidence_status` occurrence is the field name inside rule 2 of the GPU section,
+  not an anchor note) and the correction never
   reached this duplicate 150 lines below, so the file shipped a fact and its refutation at once --
   `:80-82` is a `--column`/`-c`/`--count-matches` flag list, not a promotion contract. **Fix a fact
   -> grep the WHOLE doc for the old anchor**; a correction applied at one site is not applied.

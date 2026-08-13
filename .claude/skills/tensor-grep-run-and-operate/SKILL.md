@@ -69,6 +69,7 @@ command name).
 | `tg importers FILE [ROOT]` | `FILE [ROOT]` | Reverse file-dependency edges (bounded scan; `--deadline` on large roots) |
 | `tg evidence emit PATH` | `PATH` + `--capsule`/`--manifest` | Aggregate prior outputs into an EvidenceReceipt |
 | `tg codemap PATH` | `PATH` | Browsable folder→file→symbol map (`--out`; slow — prefer `/tmp`) |
+| `tg map PATH` | `PATH` | AST-indexed repo map (files/symbols/coverage); takes `--deadline` (`main.py` `def map`, grep the symbol) and sits under the §11a three-state contract — a scan-truncated map exits `2` (added to this table 2026-08-12; it was missing) |
 | `tg agent PATH "query"` | `PATH QUERY` | Actionable Context Capsule — prefer `PATH/src` for speed |
 | `tg session open PATH` | `PATH` | Create a cached repo-map session (returns `session_id`) |
 | `tg scan --ruleset NAME` | (flag-driven) | Run a built-in security/compliance AST rule pack |
@@ -234,6 +235,14 @@ design council (§11). The full audit decision procedure (P2 = truncation,
 P7 = "zero callers != dead code") lives in `tensor-grep-code-audit`; this skill covers how to invoke
 the command and how to branch on its exit/flags.
 
+**`tg callers` is Python-first — prefer `tg refs` for TS/JS symbol navigation.** Call-site
+resolution matches Python AST call nodes most reliably and can under-match or run for minutes on
+large TypeScript/JS repos. Dogfood receipt (v1.19.3, `AGENTS.md`): on a TS-heavy repo, `tg refs`
+returned 14 reference sites for a symbol where `tg callers` returned 1. Prefer `tg refs` there —
+and still cross-check with `tg scan`/grep, because the call graph cannot see
+set/list/decorator/dispatch-table registration sites, so even a COMPLETE zero-caller result is
+not proof of dead code.
+
 ## 4. Session lifecycle — open, refresh, serve, daemon
 
 Sessions cache the repo-map so repeated context/edit-plan/blast-radius calls skip re-indexing.
@@ -355,9 +364,20 @@ Starts a **stdio** MCP server (`FastMCP("tensor-grep")`, `mcp_server.py:120`, `a
 Call `tg_mcp_capabilities` **first** in any new client/sandbox — it reports which tools work
 without a standalone native `tg` binary versus which require one (`mcp_server.py:1948`).
 
-Representative tool names (**58** as of v1.96.0 — count unchanged since the v1.93.2 pass, spot-
-re-verified this pass; `grep -n "^def tg_\|^async def tg_" mcp_server.py
-| wc -l`; re-run this before trusting the count on a later version, see Provenance below):
+Representative tool names (**58 advertised with the default `TG_MCP_LEGACY_TOOLS` ON — but the
+surface was REORGANIZED post-v1.96.0**, #98 MCP consolidation Phase-1, verified 2026-08-12:
+**46 legacy tools** (the individual names below) are gated behind `TG_MCP_LEGACY_TOOLS`
+(default **ON**; `_legacy_tools_enabled()` / `_register_legacy_tool` in `mcp_server.py`);
+**10 task-shaped meta-tools** (`tg_navigate`, `tg_impact`, `tg_query`, `tg_context`,
+`tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` — the
+`_META_MCP_TOOLS` tuple) compose the legacy tools by an `action` selector param and are ALWAYS
+registered regardless of the flag; plus **2 always-on singletons** (`tg_mcp_capabilities`,
+`tg_classify_logs` — `_SINGLETON_MCP_TOOLS`). 46 + 10 + 2 = 58. Flipping `TG_MCP_LEGACY_TOOLS`
+OFF de-advertises the 46 legacy names but keeps the 10 meta + 2 singletons (the meta tools'
+dispatch bodies call the legacy functions in-process either way). Re-derive the shape with
+`grep -n "_META_MCP_TOOLS\|_SINGLETON_MCP_TOOLS\|def _legacy_tools_enabled"
+src/tensor_grep/cli/mcp_server.py`; the full advertised set below — the legacy individual names
+first, the 10 meta-tools and `tg_classify_logs` singleton at the end):
 `tg_search`, `tg_find` (whole-repo hybrid NL search, agent-callable form of `tg find`, v1.78.0/#189/#627 —
 see `docs/harness_api.md`), `tg_ast_search`, `tg_symbol_defs`, `tg_symbol_source`,
 `tg_symbol_refs`, `tg_symbol_callers`, `tg_symbol_impact`, `tg_symbol_blast_radius`,
@@ -552,6 +572,22 @@ if not_found:
 flagged `callers_truncated`/`files_truncated`; only a **scan** cap (`partial` or
 `scan_limit.possibly_truncated`) exits `2`.
 
+**Not every exit-2 cause is budget-remediable — branch on `incomplete_reason_class` before
+advising a retry (closed vocabulary, `docs/CONTRACTS.md`).** `result_incomplete: true` payloads
+additively carry `incomplete_reason_class` — a CLOSED vocabulary: `"unreadable_path"`,
+`"scan_limit"`, `"deadline"`, `"timeout"`, `"workspace_root_refused"` (re-derive:
+`grep -n "incomplete_reason_class" docs/CONTRACTS.md`). `"scan_limit"`/`"deadline"`/`"timeout"`
+are answered by raising `--max-repo-files`/`--deadline` or narrowing scope;
+`"workspace_root_refused"` by scoping (`--glob`/`--type`/`--max-depth`/explicit path) or
+`--allow-broad-generated-scan`, never by raising a file-cap; and **`"unreadable_path"` is NOT
+budget-remediable at all** — no `--deadline`/`--max-repo-files` value makes a permission-denied
+or missing path readable, so the correct remediation there is to make the path readable or scope
+the request away from it. Never advise "raise the budget" for an exit-2 payload whose class is
+`"unreadable_path"` — or an unrecognized class (fail closed: unknown causes are never
+budget-remediable). (A hyphenated TWIN vocabulary, `scan_limit.truncation_cause` =
+`project-files`/`deadline`/`unreadable-path`, covers `tg inventory`/`tg docs-coverage` — same
+remediability split, deliberately different spelling; do not unify them.)
+
 ### 11b. Search family — `tg search` / `tg run`
 
 Mirrors ripgrep's convention: **0** = match, **1** = clean no-match, **2** = usage/argument error
@@ -583,7 +619,7 @@ $rc = $LASTEXITCODE
 switch ($rc) {
   0 { <# trust it; if $json has result_incomplete/partial, it is a FLOOR -- raise the budget for MORE #> }
   1 { <# genuine not-found on a COMPLETE scan -> safe to treat the symbol as absent #> }
-  2 { <# INCOMPLETE + EMPTY -> do NOT conclude "absent"; retry: bigger --deadline / --max-repo-files, or narrower PATH #> }
+  2 { <# INCOMPLETE (found OR empty -- truncation trumps found) -> do NOT conclude "absent" and do NOT trust a partial list as complete; retry: bigger --deadline / --max-repo-files, or narrower PATH #> }
 }
 ```
 
@@ -596,9 +632,12 @@ the exit-code contract test pattern lives in `tensor-grep-validation-and-qa`
 ## 12. Bounding a scan with `--deadline`
 
 `--deadline SECONDS` (float, `min=0.1`) wall-clock-bounds the underlying repo scan and returns
-whatever was found so far instead of running unbounded. It is on **these commands only** (verify the
-set with `grep -n '"--deadline"' src/tensor_grep/cli/main.py` — `tensor-grep-config-and-flags` owns
-the authoritative list):
+whatever was found so far instead of running unbounded. **The table below is a SUBSET, not the
+full set** — it lists 12 of the 21 `"--deadline"` option sites in `main.py` (derived 2026-08-12
+at base `568065a` with `grep -c '"--deadline"' src/tensor_grep/cli/main.py`; an earlier pass
+said "on these commands only", which was false even of that pass's own table). Re-derive the
+full set before trusting it (`grep -n '"--deadline"' src/tensor_grep/cli/main.py` —
+`tensor-grep-config-and-flags` owns the authoritative list):
 
 | Command | `--deadline` line | Notes |
 | --- | --- | --- |
@@ -743,7 +782,8 @@ tools use the 16000 pack budget. What the budget *proves* (vs. what it just boun
 | Running `tg search PATTERN` with no path in a large repo | Always scope to a path (§10) — a vendored/large/workspace root now refuses in <1s (shipped), and the 60s ripgrep-subprocess timeout is only the last-resort backstop, not the primary behavior |
 | Reading `tg search --json` as ripgrep JSON Lines | It is tensor-grep's own aggregate JSON object; use `--format rg --json` for rg's JSON Lines schema |
 | Passing `SYMBOL PATH` (reversed) to `defs`/`refs`/`callers`/`blast-radius` | Auto-corrected with a stderr warning, but write `PATH SYMBOL` — the canonical, documented order |
-| Reading a symbol-command **exit `2`** as "usage/argument error" | On `callers`/`refs`/`impact`/`blast-radius` it means **INCOMPLETE + EMPTY** (§11a) — retry with a bigger `--deadline`/`--max-repo-files` or narrower `PATH`, don't abort |
+| Reading a symbol-command **exit `2`** as "usage/argument error" | On `callers`/`refs`/`impact`/`blast-radius` it means **INCOMPLETE — whether or not anything was found** (§11a: truncation trumps found; `_emit_symbol_command_result` raises `Exit(2)` on ANY `partial`/`result_incomplete` BEFORE the not-found check) — retry with a bigger `--deadline`/`--max-repo-files` or narrower `PATH`, don't abort |
+| Using `tg callers` for TS/JS symbol navigation | `callers` is Python-first and can under-match/run long on TS/JS — prefer `tg refs` there (v1.19.3 receipt: refs 14 vs callers 1), cross-checking with `tg scan`/grep (§3) |
 | Treating a symbol-command **exit `0`** as "the complete set" | If the JSON carries `result_incomplete`/`partial`, it is a **floor** — raise the budget for MORE (§11a, §12) |
 | Treating `callers=0` / `result_incomplete: true` as "no callers" | Truncated ≠ dead; widen scope or raise the cap — see `tensor-grep-code-audit` and §11 |
 | Trusting `--deadline` as a hard end-to-end wall-clock SLA on a huge repo | It bounds each stage in isolation; the pipeline (and the `--daemon` graph path) is **not** fully bounded yet (`#52`/`#390`, §12) |
@@ -805,8 +845,12 @@ grep -n "@app.command\|@session_app.command\|@session_daemon_app.command\|@check
 # Full, current MCP tool surface (compare against SS 7)
 # NOTE: `grep -A1 "@mcp.tool" | grep "^def "` is BROKEN -- ripgrep/grep's `-A1` context lines are
 # prefixed "NNNN-", not "NNNN:", so `^def ` never matches and this silently returns 0. Count the
-# decorated function definitions directly instead (verified == the @mcp.tool decorator count, 58
-# as of v1.96.0, unchanged since v1.93.2):
+# tool FUNCTION DEFINITIONS directly instead (58 as of the 2026-08-12 re-verify = 46 legacy +
+# 10 meta + 2 singletons). NOTE this count is NO LONGER "== the @mcp.tool decorator count" as an
+# earlier pass claimed: since the #98 consolidation only ~13 bare `@mcp.tool` decorators remain
+# (verify: `rg -c "@mcp\.tool" src/tensor_grep/cli/mcp_server.py`) -- the 46 legacy tools register
+# via `_register_legacy_tool`'s CONDITIONAL `mcp.tool()` call (gated on TG_MCP_LEGACY_TOOLS), and
+# the meta/singletons via explicit registration, so decorator-counting under-counts the surface:
 grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l
 
 # tg prepare / tg ledger still have no MCP tool counterpart? (re-check before citing as a gap)

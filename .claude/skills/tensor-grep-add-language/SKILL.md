@@ -41,17 +41,8 @@ module (`lang_c.py`/`lang_cpp.py`, mirroring `lang_go.py`'s shape), both at the 
 foundational tier as Java/PHP/C# (defs/imports only, no `references_and_calls`).** A
 follow-up C fix (#736, v1.98.2) corrected a file-scope function-pointer-variable mis-kind -
 see B5's declarator-shape addendum below before writing similar C/C++ declarator-walking
-logic. **SUPERSEDED (append-only, do not edit the paragraph above) - 2026-08-11, Task 10E
-final wave:** C and C++ are now PARSER-BACKED too; `_symbol_navigation_descriptor()` returns
-**10 parser-backed** (c, cpp, csharp, go, java, javascript, php, python, rust, typescript)
-and the **foundational tier is EMPTY**. The "same foundational tier as Java/PHP/C#" claim
-above is accurate-as-dated (v1.98.x) history; the tier split has since moved to 10/0 and is
-pinned by `tests/unit/test_lang_registry.py`. **Re-run the grep above before trusting any
-"N of top-10" count** - it is a snapshot, not a promise; this count has changed on every pass
-of this skill so far.
-
-**SUPERSEDED 2026-08-04 by Task 10E (C++, the final wave of the top-10 language-support
-campaign):** the "foundational tier" claim two sentences up is now STALE for every language
+logic. **SUPERSEDED 2026-08-04 by Task 10E (C++, the final wave of the top-10 language-support
+campaign):** the "foundational tier" claim in the paragraph above is now STALE for every language
 named in it. Java (10A), C# (10B), PHP (10C), C (10D), and now C++ (10E) all carry a real
 `references_and_calls` extractor; `repo_map._symbol_navigation_descriptor()` reports
 **10 parser-backed / 0 foundational** — the foundational tier is EMPTY. `lang_cpp.py`'s new
@@ -62,6 +53,21 @@ general receiver-type confirmation (`w.method()`, `p->method()`) — C++'s real 
 `auto` make that walk unsound for the common case; see `lang_cpp.py`'s own "TASK 10E CALL/
 ACCESS NODE SHAPES" / "RESOLUTION CONFIDENCE" docstring block for the full reasoning. Re-run
 the one-liner rather than trust this paragraph either.
+
+**SUPERSEDED (append-only, do not edit the paragraph above) - 2026-08-11, Task 10E
+final wave:** C and C++ are now PARSER-BACKED too; `_symbol_navigation_descriptor()` returns
+**10 parser-backed** (c, cpp, csharp, go, java, javascript, php, python, rust, typescript)
+and the **foundational tier is EMPTY**. The "same foundational tier as Java/PHP/C#" claim
+above is accurate-as-dated (v1.98.x) history; the tier split has since moved to 10/0 and is
+pinned by `tests/unit/test_lang_registry.py`. **Re-run the grep above before trusting any
+"N of top-10" count** - it is a snapshot, not a promise; this count has changed on every pass
+of this skill so far.
+
+*(2026-08-12 maintenance note: the two SUPERSEDED blocks above were reordered on this date to
+restore append-only chronology — the 2026-08-11 entry had been placed ABOVE the 2026-08-04
+entry despite the append-only (newest-last) instruction. Both blocks describe the same 10/0
+terminal state; all dated content was preserved verbatim, only the order changed: oldest
+first, newest last.)*
 
 The tiered language model (unchanged shape, re-verify the coverage numbers):
 
@@ -89,14 +95,17 @@ registers through `lang_registry` — both shapes are contract-consistent, but *
 shape is what Go, PHP, and C# (the three most recent additions) all converged on**, and is
 what `lang_go.py`'s own docstring recommends: it keeps `repo_map.py` from growing further.
 
-One-directional import rule (stated in both `lang_registry.py:10-12` and `lang_go.py:9-15`):
+One-directional import rule (stated in both `lang_registry.py`'s module docstring — `grep -n
+"never the reverse" src/tensor_grep/cli/lang_registry.py`, was `:10-12`, now `:10-11` — and
+`lang_go.py:9-15`):
 `repo_map.py` → `lang_<x>.py`, never the reverse. A helper the new module needs that
 `repo_map.py` already has must be **duplicated locally** (see `lang_go.py:44-87`'s (was cited
 `:37-87`, re-grep `grep -n "Duplicated tiny helpers"` to relocate the block if this drifts again)
 byte-identical-to-`repo_map.py` tiny helpers), not imported — importing back creates a
 cycle.
 
-`LanguageSpec` (`lang_registry.py:67-111`, frozen dataclass) is the single contract. Fields
+`LanguageSpec` (`grep -n "class LanguageSpec" src/tensor_grep/cli/lang_registry.py` — was
+`:67-111`, now `:72-119`; frozen dataclass) is the single contract. Fields
 worth knowing before writing one:
 
 | Field | Status | Note |
@@ -108,9 +117,11 @@ worth knowing before writing one:
 | `prime_repo_context` | wired | `None` if the language has no per-repo workspace state to prime (tsconfig/`go.mod`-style) |
 | `def_node_kinds`, `classify_ref_kind` | **doc-only in Stage 0** | no dispatch seam reads these yet — populate for self-documentation, do not assume they are wired |
 
-`register_language()` is idempotent (`lang_registry.py:118-128`) — re-registering the same
+`register_language()` is idempotent (`grep -n "def register_language"
+src/tensor_grep/cli/lang_registry.py` — was `:118-128`, now `:126-136`) — re-registering the same
 `language_id` replaces the entry and re-derives every suffix pointer, so a stale mapping
-never survives a reload. `LANGUAGE_REGISTRY` starts **empty** (`:114`) until whatever module
+never survives a reload. `LANGUAGE_REGISTRY` starts **empty** (`grep -n "^LANGUAGE_REGISTRY"
+src/tensor_grep/cli/lang_registry.py` — was `:114`, now `:122`) until whatever module
 calls `register_language(...)` is imported — a bare `import lang_registry` with no
 `import repo_map` gets an empty dict (see "Fast self-check" below).
 
@@ -243,7 +254,8 @@ import-resolution context after a repo change.
 ## B3 — fail-closed contract, extended per-language
 
 - **Override `provenance_when_missing`.** The registry default is `"regex-heuristic"`
-  (`lang_registry.py:89`) — true for the original JS/TS/Rust languages, which have a real
+  (`grep -n "provenance_when_missing: str" src/tensor_grep/cli/lang_registry.py` — was `:89`,
+  now `:94`) — true for the original JS/TS/Rust languages, which have a real
   regex fallback. Every language shipped since (Go, PHP) has **no** regex fallback and
   explicitly sets `provenance_when_missing="grammar-missing"` in its `LanguageSpec(...)`
   call. Skipping this override makes a grammar-absent file for the new language read as
@@ -264,7 +276,12 @@ import-resolution context after a repo change.
   `parser = _go_parser(); if parser is None: return <empty>`).
 - **Symbol-kind vocabulary — emit the language's own, do not pre-collapse.** Each module
   emits its native kind strings (Go: `"function"`/`"method"`/`"struct"`/`"interface"`/
-  `"const"`/`"var"`/`"type"`, `lang_go.py:110-113`). A later normalization layer (not
+  `"const"`/`"var"`/`"type"`). The FULL def-node vocabulary for Go is `_GO_DEF_NODE_KINDS`
+  (`grep -n "_GO_DEF_NODE_KINDS" src/tensor_grep/cli/lang_go.py` — this spot was cited as
+  `lang_go.py:110-113`, which is only `_GO_TYPE_SPEC_KIND_BY_TYPE_FIELD`, the struct/interface
+  sub-mapping applied INSIDE a `type_spec`; the full set now lives at `:117-123`, with the
+  kind emission sites at `:290` (`const`/`var`), `:397` (`function`), `:400` (`method`), and
+  the `type_spec` branch defaulting to `"type"`). A later normalization layer (not
   independently re-verified this pass — presumably in `repo_map.py`) is what the ledger
   records as the cross-language collapse: class/interface/struct/enum/record/trait →
   `"class"`; method/constructor/function → `"function"`. Emit the real vocabulary in the new
@@ -388,10 +405,20 @@ next language beyond the top-10, not as an open task:
 1. **No module system.** Go has `go.mod`/`go.work`; C/C++ has no compiler-enforced
    namespace-to-directory mapping. The honest floor for a first landing is per-file symbol
    extraction (filename-as-scope), not a full `compile_commands.json`/CMake include-graph.
-   **Confirmed as shipped:** `#include` resolution stays deferred/BACKLOG for both C and
-   C++ (an honest `resolution_gaps` entry, never a fabricated resolved path) — a true
-   `#include`-graph resolver is a separate, much larger scope (clangd-grade), tracked but
-   not started.
+   **SUPERSEDED 2026-08-12 — the "`#include` resolution ... tracked but not started" claim
+   this item used to end with is STALE:** PR #957 (commit `9f854d4`, verified via
+   `git log --oneline -1 9f854d4`) shipped a fail-closed `#include` resolution engine —
+   `src/tensor_grep/cli/lang_c_cpp_include.py` (quoted includes search the importer's
+   directory first then repo-rooted include roots; angle includes only the repo-rooted roots;
+   macro/call-form includes stay unresolved; never fabricates an on-disk path) — wired into
+   `lang_c.c_file_imports_symbol_from_definition` and
+   `lang_cpp.cpp_file_imports_symbol_from_definition` (grep those symbols in
+   `src/tensor_grep/cli/lang_c.py` / `lang_cpp.py`), and tested by
+   `tests/unit/test_c_cpp_cross_file_callers.py`. What REMAINS honestly deferred: forward
+   `tg imports` resolution for c/cpp — `_resolve_raw_import_entry`'s `elif language_id in
+   ("go", "php", "csharp", "c", "cpp")` branch still returns the deferred tuple
+   (`resolved=None, external=False`) — and a clangd-grade
+   `compile_commands.json`/CMake include-graph resolver, which is not started.
 2. **`#include` is textual, not semantic.** tree-sitter has no preprocessor; a
    `#define`-wrapped declaration (export/visibility macros are common in real C/C++ headers)
    can hide or reshape the node the extractor expects — B5's live-verify discipline is
@@ -498,6 +525,19 @@ tg --version
 
 ## Provenance and maintenance
 
+- **2026-08-12 retention pass — the 2026-08-01 "zero drift" claim for `lang_registry.py` is
+  FALSIFIED; every bare `lang_registry.py` citation above converted to grep-the-symbol form.**
+  The fourth pass (below) asserted the registry-contract lines "matched the live file exactly,
+  byte-for-byte range, with zero drift" — re-measured this pass against `origin/main` @
+  `568065a`, they had all moved: `class LanguageSpec` was `:67-111`, now `:72-119`;
+  `provenance_when_missing: str` default was `:89`, now `:94`; `LANGUAGE_REGISTRY` was `:114`,
+  now `:122`; `register_language` was `:118-128`, now `:126-136`; the one-directional-import
+  docstring was `:10-12`, now `:10-11` (`grep -n "never the reverse"`). Also fixed this pass:
+  E1 item 1's "`#include` resolution tracked but not started" (superseded by PR #957/`9f854d4`,
+  see the item itself), the Go kind-vocabulary citation (`lang_go.py:110-113` is only the
+  `_GO_TYPE_SPEC_KIND_BY_TYPE_FIELD` subset; the full set is `_GO_DEF_NODE_KINDS`), and the
+  inverted SUPERSEDED chronology in "Current status" (2026-08-04 entry now precedes the
+  2026-08-11 entry, append-only order restored).
 - **Fourth re-verify pass, 2026-08-01** (skill-library drift audit). Every `repo_map.py` seam in
   B2/the worked example had drifted 1-85 lines since the third pass (register_language count
   unchanged at 10; `_imports_and_symbols_for_path` `:6626`->`:6627`;

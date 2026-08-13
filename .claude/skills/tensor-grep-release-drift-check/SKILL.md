@@ -122,3 +122,13 @@ goes red and future readers never find it:
 - 2026-08-11 sweep (v1.110.14): 21 stale stamps, 7 tier contradictions, 2 stale state facts
   (doctor schema, index-fingerprint) — all corrected or SUPERSEDED, and this skill created as the
   standing maintenance mechanism. Ledger: `docs/audits/2026-08-11-skill-audit-findings.md`.
+
+  **ANNOTATION (2026-08-13, append-only — the dated receipt above stays as written):** the headline
+  counts "21 stale stamps / 7 tier contradictions" are HISTORICAL and not reproducible from the
+  ledger's own itemized census, which enumerates **17 stamp rows** (items 1-17 under "Stale version
+  stamps") + **5 tier rows** (items 18-22 under "Language-tier contradictions") — counted 2026-08-13
+  in `docs/audits/2026-08-11-skill-audit-findings.md`. The same 21/7 figures also appear in the
+  ledger's own closing paragraph ("this session found 21 stale stamps + 7 tier contradictions"), so
+  the mismatch is internal to the ledger, not a transcription error in this skill. Treat the
+  ITEMIZED ROWS as the authority; do not re-cite 21/7 as a re-derivable count. (The same headline
+  number also appears in Part 1 step 1 above; this single annotation covers both sites.)

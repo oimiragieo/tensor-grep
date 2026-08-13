@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-failure-archaeology
-description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code; trusting a cause-emitter census count reached by "this one covers that one" reasoning instead of counting each emitter directly; re-proposing an auto-derived agent-id for `tg ledger --claim`; treating MaxSim reranking's absence after `tg install-dense` as a CUJ-coverage gap instead of the separate `rerank`-extra hold it is; or chasing a GPU exit-code-2 report, or trusting a control/repro that reproduces the failing output, before confirming which exact symbol the control checked and whether that code path runs in the real CI job; or re-adding a shared-argv-builder flag like `-q` to `_build_cmd` instead of `search_passthrough`, silently starving the consumers that parse rg's stdout rather than stream it. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
+description: Use when about to "fix" or "optimize" something in tensor-grep that feels novel — before proposing PyO3/FFI for directory walking, re-enabling free-threading, adding a --json self-test, tightening a dependency upper-cap, blaming an IDF/ranking flip, trusting a green mock/FFI test, diagnosing a release that "didn't publish", chasing a reported latency "regression" without profiling at scale, shipping a doc-drift/precision heuristic off green fixtures alone, adding a "differs-from-default" native-delegation gate, reading a `capfd`-based CliRunner test result, micro-optimizing a hot loop without checking who actually consumes the value, re-proposing cAST structural chunking as the default, re-proposing dense int8/binary/PCA embedding compression, proposing a warm-session/daemon search-index shortcut, proposing GPU-for-search or re-litigating the PFAC-vs-brute-force kernel claim, hitting the many-pattern Aho-Corasick dedup bug, trusting an unverified "cheap win" from a paper/research steal-list, cloning a "mirror language X" onboarding brief without checking which module is the CURRENT template, trusting a conflict-free git rebase across several PRs that touch the same shared registration file as proof nothing was silently dropped, or trusting a BANKED fix hypothesis (a memory note from a prior session) without re-deriving it against the real AST/code; trusting a cause-emitter census count reached by "this one covers that one" reasoning instead of counting each emitter directly; re-proposing an auto-derived agent-id for `tg ledger --claim`; treating MaxSim reranking's absence after `tg install-dense` as a CUJ-coverage gap instead of the RETIRED 2026-08-05 (task F10) validated dead end it is; or chasing a GPU exit-code-2 report, or trusting a control/repro that reproduces the failing output, before confirming which exact symbol the control checked and whether that code path runs in the real CI job; or re-adding a shared-argv-builder flag like `-q` to `_build_cmd` instead of `search_passthrough`, silently starving the consumers that parse rg's stdout rather than stream it. A chronicle of settled battles (symptom -> root cause -> evidence -> status) so no one re-fights them. Load it to check "has this already been tried and lost?" before spending effort. For a live NEW failure use tensor-grep-debugging-playbook; for the process gates to re-attempt one use tensor-grep-change-control.
 ---
 
 # Tensor-Grep Failure Archaeology
@@ -22,8 +22,14 @@ plus fixing a stale `AGENTS.md` section-letter reference, and a seventh, same-da
 v1.98.2** adding Battle 25 (the banked C function-pointer fix hypothesis, falsified before any code was
 written), and an eighth pass **2026-07-31 at v1.101.24** adding Battles 26-29 (the defaulted-scope
 disclosure census undercount, the anonymous `--claim` sentinel-id retention, the MaxSim `rerank`-extra
-deliberate hold, and the #868 GPU exit-2 investigation's two false-confirmation traps). Re-verify
-anything load-bearing with the commands in **Provenance and maintenance** before you act on it.
+deliberate hold, and the #868 GPU exit-2 investigation's two false-confirmation traps), a ninth pass
+**2026-08-01 at v1.101.27** adding Battle 30 (the `-q` false-zero shipped in the shared `_build_cmd`,
+#876/#880), and a tenth retention pass **2026-08-12** that marked Battle 28 RETIRED (task F10, per the
+`retrieval_late.py` module header), Battle 29 SETTLED/RETIRED (commit `50595ef` — the exit-2 rule
+itself was retired), scoped Battle 20's no-crossover claim to single-pattern + fair public baselines,
+corrected Battle 21's #694 description (the guard pins the CORRECT behavior, not the bug) and Battle
+23's `lang_java.py` claim, and reconciled Battle 22's steal-list count to its actual 6-candidate list.
+Re-verify anything load-bearing with the commands in **Provenance and maintenance** before you act on it.
 
 ## When to use this skill
 
@@ -54,11 +60,13 @@ Load this **before** you spend effort on any of these, because each has already 
   state") — the daemon holds a symbol map, not a search index; this is a big refactor, not a quick win
   (Battle 19).
 - Proposing **GPU-for-search**, or describing the shipped GPU kernel as PFAC/Aho-Corasick — it is a
-  brute-force byte-compare with no crossover at any scale (Battle 20).
+  brute-force byte-compare with no single-pattern crossover at any scale vs the fair public baselines
+  (Battle 20); many-fixed-pattern native CUDA remains only the local candidate lane.
 - Hitting a **many-pattern `-e`/`-f` count that looks off** — a live native aho-corasick dedup
   over-count bug is already diagnosed and guarded, not yet root-fixed (Battle 21).
 - Trusting an unverified **"cheap win" from a paper or research steal-list** without checking it against
-  the real code first — 5 of 6 recent steals came back negative once verified (Battle 22, the meta-lesson).
+  the real code first — every one of the 6 recent steals came back negative/big-refactor/secondary-path
+  once verified (Battle 22, the meta-lesson).
 - Assuming a **"clone language X's extractor"** onboarding brief is still accurate without checking
   which module is the CURRENT template — a brief that says "mirror inline `_rust_*`" is stale once the
   codebase has grown a `lang_registry` + `lang_go.py`-style module (Battle 23).
@@ -71,9 +79,9 @@ Load this **before** you spend effort on any of these, because each has already 
 - Re-proposing an **auto-derived agent-id** for `tg ledger --claim` to remove the explicit
   `--agent-id` requirement — evaluated and REJECTED, it silently reproduces #845 through the
   ledger's own overlap suppression (Battle 27).
-- Treating **MaxSim reranking's absence** after `tg install-dense` as a CUJ-coverage gap — it
-  depends on the separate `rerank` extra, which no `tg` command provisions; a deliberate hold
-  (Battle 28).
+- Treating **MaxSim reranking's absence** after `tg install-dense` as a CUJ-coverage gap — MaxSim
+  late-rerank is RETIRED 2026-08-05 (task F10) as a validated dead end, not a paused hold or a
+  coverage gap (Battle 28).
 - Chasing a GPU-path **exit code 2** as a plain regression, or trusting a control/repro that
   reproduces the failing output, before confirming which exact symbol it exercised and whether
   that symbol's job runs in the real CI path (Battle 29).
@@ -417,14 +425,14 @@ numpy with no SIMD path) can actually realize the theoretical speed benefit befo
 KIND of state for the new use case — check what a cache/daemon/session actually holds (a symbol map
 vs. a search index are not interchangeable) before proposing to repurpose it.
 
-## Battle 20 -- GPU-for-search: NO crossover at any scale, and the shipped kernel is NOT PFAC (2026-07-21, #251)
+## Battle 20 -- GPU-for-search: NO single-pattern crossover at any scale vs fair public baselines, and the shipped kernel is NOT PFAC (2026-07-21, #251)
 
 | Field | Detail |
 |---|---|
 | **Symptom** | A recurring pitch to invest further in GPU-accelerated text search, sometimes phrased as "the PFAC kernel should give a crossover at scale" or "surely a big-enough corpus favors GPU." |
-| **Root cause** | Re-tested across 10MB-5GB corpora: **no crossover at any scale**, historical worst case ~30-35x SLOWER than `rg` at 5GB. Crucially, the premise "we have a PFAC kernel" is itself wrong: the shipped `gpu_text_search_positions` kernel is a **position-parallel brute-force byte-compare**, not a PFAC/Aho-Corasick automaton (`docs/gpu_crossover.md:133-138` — PFAC remains documented future work). Even the best-case candidate wedge (many fixed patterns resident over a large corpus) loses to the fair single-invocation baseline: 100 patterns over 1GB measured `rg -F -e ... -e ...` at 0.169s vs the GPU-requested path at 0.448s (itself a CPU-fallback measurement, not a real GPU number). |
+| **Root cause** | Re-tested across 10MB-5GB corpora: **no SINGLE-PATTERN crossover at any scale** against the fair public baselines (`rg`, `tg_cpu`), historical worst case ~30-35x SLOWER than `rg` at 5GB. Crucially, the premise "we have a PFAC kernel" is itself wrong: the shipped `gpu_text_search_positions` kernel is a **position-parallel brute-force byte-compare**, not a PFAC/Aho-Corasick automaton (`docs/gpu_crossover.md:133-138` — PFAC remains documented future work). Even the best-case candidate wedge (many fixed patterns resident over a large corpus) loses to the fair single-invocation baseline: 100 patterns over 1GB measured `rg -F -e ... -e ...` at 0.169s vs the GPU-requested path at 0.448s (itself a CPU-fallback measurement, not a real GPU number). `docs/gpu_crossover.md` (grep "GPU performance claims must name the workload class") nonetheless preserves many-fixed-pattern native CUDA as the LOCAL candidate crossover lane — what is SETTLED here is the single-pattern + public-managed claim, not the resident local lane. |
 | **Evidence** | `docs/gpu_crossover.md:133-138`; the CEO deep-research decision package (2026-07-21) adjudicated public CUDA-asset publishing to a deliberate **HOLD** (task-store #169, not a GitHub issue). Release checksums currently ship 3 CPU-only rows. |
-| **Status** | **SETTLED / HOLD.** Do not re-propose GPU-for-search without a genuinely new mechanism (not a re-measurement of the same brute-force kernel), and never describe the shipped kernel as PFAC. |
+| **Status** | **SETTLED / HOLD (scoped).** Single-pattern GPU-for-search and public managed promotion stay HOLD: do not re-propose either without a genuinely new mechanism (not a re-measurement of the same brute-force kernel), never describe the shipped kernel as PFAC, and do not claim it is public-promotion-ready. Many-fixed-pattern native CUDA remains the LOCAL candidate lane (`docs/gpu_crossover.md`), unproven and not public-promotion-ready. |
 
 **Rule:** Before re-pitching a GPU program, confirm what kernel is ACTUALLY shipped (read the source,
 don't trust the roadmap's aspirational language) — "we have kernel X" claims drift from "we shipped a
@@ -436,7 +444,7 @@ simpler placeholder for X" easily, and the gap matters for whether a crossover c
 |---|---|
 | **Symptom** | A many-fixed-pattern search (`-e pat1 -e pat2 ...` / `-f patterns.txt`) over the same 100-pattern path used elsewhere in this campaign's benchmarks reproduces a live over-count: `total_matches: 3` where the rg-correct answer is `2`, on a case where one line matches two different patterns from the set. |
 | **Root cause** | The fast native Aho-Corasick delegation path counts one match per `(line, pattern)` pair rather than deduplicating by line when multiple patterns hit the same line — a real correctness bug in the delegation path, not a benchmark artifact. |
-| **Evidence** | PR #694 — a guard test that reproduces and pins the bug (asserts the CURRENT, wrong behavior so a future accidental "fix" doesn't silently change semantics without review), not a root-cause fix. The many-pattern fast path is deliberately blocked from delegation until this is resolved. |
+| **Evidence** | PR #694 — a guard test that pins the CORRECT rg-parity behavior, NOT the bug: `test_many_fixed_patterns_dedupe_overlapping_lines_at_scale` (`tests/e2e/test_multi_pattern_native.py`) runs the in-process Python combine route (`--cpu`, `_combine_multi_patterns`, combine-into-one-alternation-regex) at 100 patterns and asserts the deduplicated answer (4 matched lines, each reported once, `total_matches == 4`). The NATIVE defect is documented in the test's docstring prose, not asserted: the native Aho-Corasick fast path (`native_search.rs::run_native_fixed_multi_pattern_search`) emits one match per `(line, pattern)` pair, measured `total_matches: 3` vs the rg-correct `2` on the published binary. The many-pattern fast path stays deliberately blocked from native delegation (`bootstrap.py`'s `_can_delegate_to_native_tg_search` + `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, audit #69 comments) until the native dedup is root-fixed. Do not re-describe the guard as asserting the wrong behavior. |
 | **Status** | **OPEN, GUARDED.** The real fix is native dedup + FFI-level correctness work, banked as a moat-investment option (task-store #255, not a GitHub issue). Do not re-describe this as "the code is still correct" — #694 falsified that framing; treat any many-pattern count claim as suspect until the dedup fix lands. |
 
 **Rule:** A benchmark that measures a wrong-but-plausible-looking number (`3` instead of `2`) can hide a
@@ -444,14 +452,14 @@ real correctness bug behind what looks like a performance measurement — when a
 match the naive/reference tool's count, suspect the fast path's correctness before assuming it's just
 "differently implemented."
 
-## Battle 22 (meta) -- the 5/5 mirage: every "cheap win" from the research steal-list came back negative once verified (2026-07-21, #251)
+## Battle 22 (meta) -- the 6/6 mirage: every "cheap win" from the research steal-list came back negative once verified (2026-07-21, #251)
 
 | Field | Detail |
 |---|---|
 | **Symptom** | A CEO deep-research directive produced a steal-list of 6 candidate "cheap wins" from papers/prior-art (cAST chunking, dense-int8 compression, warm-session search, GPU-for-search viability, a many-pattern speed claim, and a "code is still correct" framing) — the kind of list that FEELS like free value sitting on the table. |
-| **Root cause** | Every single one, when verified against the REAL code and REAL measurements (not the paper's claims or a plausible-sounding mechanism), came back negative, a big-refactor, or a secondary-path finding — Battles 17-21 above are the individual verdicts. Separately, 2 of 6 unrelated "dogfood ask" items in the same research pass turned out to be ALREADY-SHIPPED features whose real defect differed from what was reported — another instance of not verifying the premise before acting on it. |
+| **Root cause** | Every single one, when verified against the REAL code and REAL measurements (not the paper's claims or a plausible-sounding mechanism), came back negative, a big-refactor, or a secondary-path finding — Battles 17-21 above are the individual verdicts (FIVE verdicts for the SIX list items: Battle 21 covers both the many-pattern speed claim and the "code is still correct" framing). Separately, 2 of 6 unrelated "dogfood ask" items in the same research pass turned out to be ALREADY-SHIPPED features whose real defect differed from what was reported — another instance of not verifying the premise before acting on it. |
 | **Evidence** | Battles 17-21 (this file); the closing research-campaign summary in `docs/BACKLOG.md` / MEMORY.md for the 2026-07-21 session. |
-| **Status** | **SETTLED discipline.** The 5/5-negative result IS itself the deliverable of a properly-run research pass, not a failure of the research — a steal-list that returns "no, and here's the file:line evidence why" for every item is a SUCCESSFUL verification pass, not a wasted one. |
+| **Status** | **SETTLED discipline.** The 6/6-negative result (six steal-list candidates, delivered as five battle verdicts) IS itself the deliverable of a properly-run research pass, not a failure of the research — a steal-list that returns "no, and here's the file:line evidence why" for every item is a SUCCESSFUL verification pass, not a wasted one. |
 
 **Rule:** Treat every item on a "cheap win from research" list as an unverified hypothesis, exactly like
 an AI-drafted plan — verify each one against the real code and real measurements before spending a build
@@ -466,7 +474,7 @@ of Test A/Test C (this skill's evidence bar) firing at portfolio scale rather th
 |---|---|
 | **Symptom** | An orchestration brief for onboarding a new language into the symbol-graph tier instructed a build agent to "mirror the inline `_rust_*` / `_parser_for_source_suffix` machinery" — i.e. clone Rust's extractor style, since Rust and Python are the oldest, most-familiar languages in the codebase. |
 | **Root cause** | Rust and Python predate `lang_registry.py` (introduced by the Go PATH-A-Stage-0 refactor, #418) and still carry the OLD scattered-suffix-dispatch style the registry replaced. Go (#420) established the CURRENT pattern — `lang_registry.register_language(LanguageSpec(...))` plus a self-contained `lang_go.py` module — and every language PR since treats `lang_go.py`, not the Rust/Python inline code, as the reference template. A brief written from a stale mental model ("the two languages I remember") instead of the grown registry silently steers a build agent toward the wrong shape. |
-| **Evidence** | The C# PR (`6c09424`, #726) explicitly self-corrects this exact framing in its own commit message: "mirroring the Go precedent (`lang_go.py`) rather than the older pre-registry Rust/JS/TS inline pattern -- Go is the most current template since it was added after the `lang_registry` refactor." The PHP PR (`8659e87`, #724) independently states the same: "mirroring `lang_go.py`'s module shape." Both `lang_php.py` and `lang_csharp.py` exist as standalone modules on `origin/main`; there is no `lang_java.py` — Java (`f3ad51b`, #725) legitimately used the OTHER valid shape instead, with its extractor functions inline in `repo_map.py`, self-documented there as "mirroring the two Rust functions above" (`grep -n "mirroring the two Rust functions above" src/tensor_grep/cli/repo_map.py` — was `:4515-4519`, now `:4755`; content verified present verbatim). Both shapes register through `lang_registry` and are contract-consistent — see `_target_language_for_path` (`repo_map.py:7850-7880`), which every one of the four newly-registered suffixes (go/java/php/csharp) touches with its own inline "MOST-FORGOTTEN seam" comment reminding the next language's author why the branch matters. |
+| **Evidence** | The C# PR (`6c09424`, #726) explicitly self-corrects this exact framing in its own commit message: "mirroring the Go precedent (`lang_go.py`) rather than the older pre-registry Rust/JS/TS inline pattern -- Go is the most current template since it was added after the `lang_registry` refactor." The PHP PR (`8659e87`, #724) independently states the same: "mirroring `lang_go.py`'s module shape." All THREE of `lang_php.py`, `lang_csharp.py`, and `lang_java.py` exist as standalone modules on `origin/main` (`ls src/tensor_grep/cli/lang_*.py`). Java (`f3ad51b`, #725) ORIGINALLY landed with its extractor functions inline in `repo_map.py` — self-documented there as "mirroring the two Rust functions above" (`grep -n "mirroring the two Rust functions above" src/tensor_grep/cli/repo_map.py` — was `:4515-4519`, then `:4755`, now `:4808`; content verified present verbatim) — and Task 10A later moved its references/calls extraction into `lang_java.py` (`java_references_and_calls`, wired via `LanguageSpec.references_and_calls`; `grep -n "lang_java.java_references_and_calls" src/tensor_grep/cli/repo_map.py`), deliberately leaving defs/imports inline (`grep -n "scoped OUT of" src/tensor_grep/cli/repo_map.py` — the registration-block comment recording that the defs/imports move was deliberately scoped out of Task 10A). This entry's earlier "there is no `lang_java.py`" wording was itself the stale-snapshot claim this battle warns about — it was true when Java landed inline and false once Task 10A shipped. Both shapes register through `lang_registry` and are contract-consistent — see `_target_language_for_path` (`grep -n "def _target_language_for_path" src/tensor_grep/cli/repo_map.py` — was `:7850-7880`, now `:8127`), which every one of the four newly-registered suffixes (go/java/php/csharp) touches with its own inline "MOST-FORGOTTEN seam" comment reminding the next language's author why the branch matters. |
 | **Status** | **SETTLED discipline, reinforced.** |
 
 **Rule:** "Mirror language X" is only good guidance if X is still the CURRENT template — verify a
@@ -549,21 +557,33 @@ only thing preventing the collision.
 | **Symptom** | MaxSim (late-interaction) reranking appeared unavailable after running `tg install-dense`, read as a CUJ-coverage gap in the semantic-search stack. |
 | **Root cause** | `tg install-dense` installs the `semantic` extra — the BM25+dense-embedding RRF leg (`tensor-grep-semantic-search-campaign`). MaxSim reranking depends on a DIFFERENT extra, `rerank`, whose model **no `tg` command fetches** — there is no install path that provisions it today. Nothing regressed; the feature was never wired to auto-provision. |
 | **Evidence** | #15. The fix shipped was doc-honesty (state the gap plainly instead of implying `install-dense` covers it) plus making the existing test for this path able to fail — it previously could not distinguish "MaxSim ran" from "MaxSim was silently skipped." |
-| **Status** | **SETTLED / DELIBERATE HOLD**, not a capability gap. Do not re-file this as a CUJ-coverage miss without first checking whether the `rerank` extra has since gained an install path. |
+| **Status** | **SETTLED / RETIRED 2026-08-05 (task F10)** — the deliberate-hold disposition below was SUPERSEDED by a full retirement; see the appended block. |
 
 **Rule:** `semantic` and `rerank` are different extras gating different capabilities — confirm which
 one actually provisions the feature you're testing before calling its absence a coverage gap. A test
 that cannot fail when the dependent feature silently no-ops is the same broken-oracle shape as
 Battle 8; here the fix was making the test able to fail, not adding new capability.
 
-## Battle 29 -- #868 GPU exit-2: two false-confirmation traps before reaching BLOCKED, not fixed
+**SUPERSEDED (append-only, do not rewrite the table above) — 2026-08-05, task F10.** The
+"DELIBERATE HOLD" disposition is RETIRED: `src/tensor_grep/core/retrieval_late.py:4-16` (the
+module-header RETIRED block) records MaxSim late-rerank as a VALIDATED DEAD END, not a paused
+build — decisive negative on the golden set AFTER the role-aware encoder fix already landed
+(ndcg@10 0.068 vs plain RRF 0.305), root cause = model capacity (the 17M-param int8
+`LateOn-Code-edge` model's raw MaxSim ranking is statistically indistinguishable from random on
+in-repo code), NOT the encoder, so re-flipping the same encoder cannot change the verdict.
+Reopen only on BOTH a real `tg`-command install path AND a different encoder clearing the design
+doc's T8 golden-set thresholds; do not re-enable off a partial win on either alone. The original
+hold's lessons stand: `semantic` and `rerank` are different extras, and a test that cannot fail
+when the dependent feature silently no-ops is a broken oracle.
+
+## Battle 29 -- #868 GPU exit-2: two false-confirmation traps, then SETTLED by retiring the rule (50595ef)
 
 | Field | Detail |
 |---|---|
 | **Symptom** | A GPU-path `tg` invocation exits with code 2 (#868); the issue sat RED for days with the cause logged as "unknown." Two sequential root-cause hypotheses were built and killed before the real state was reached. |
 | **Root cause** | Two independent false-confirmation traps, not one bug. **(1)** The live hypothesis (the GPU dispatch path is misrouting) was killed by a control that checked whether `rust_core` — the Python **extension module** — was present and loaded. But the code that actually decides native-vs-Python dispatch is `resolve_native_tg_binary()`, which resolves the compiled **binary** — an adjacent-named, different artifact. The control proved the wrong symbol and falsely exonerated a hypothesis that was never actually tested. **(2)** After the hypothesis was reopened, a two-arm control reproduced CI's exact failure byte-for-byte (same exit code, same stdout); it was called "confirmed" and a fix was dispatched on that basis. `.github/workflows/ci.yml:688` then showed that job **never builds the binary** the control had forced into the picture — the control's mechanism was **sufficient** to produce the same output, but not the **operative** cause in the real CI job, and the fix-dispatch had to be recalled mid-flight. |
-| **Evidence** | #868. Arm 1 named `rust_core` (extension module) present/absent rather than `resolve_native_tg_binary()` (compiled binary); arm 2's byte-for-byte reproduction was traced to `.github/workflows/ci.yml:688`, which shows the accused job path is not the one exercised in real CI. |
-| **Status** | **OPEN / BLOCKED** on two independent things, neither of which is "write more code": (1) the actual cause is now **measurable but unmeasured** — a diagnostic has been deployed but its output has not yet been read; (2) the premise itself is **contract-contested** — the existing tensor-grep exit-code contract treats exit 2 as "incomplete" (`tensor-grep-large-repo-scale-campaign`), but the #868 search in question ran to completion and returned its match, so whether exit-2 is even the right signal to be chasing here is unresolved, not a confirmed bug. |
+| **Evidence** | #868. Arm 1 named `rust_core` (extension module) present/absent rather than `resolve_native_tg_binary()` (compiled binary); arm 2's byte-for-byte reproduction was traced to `.github/workflows/ci.yml:688`, which shows the accused job path is not the one exercised in real CI. The settlement: commit `50595ef` ("ci(diagnostics): measure the GPU dispatch route, and RETIRE the exit-2 rule the contract already rejected (#868)", v1.101.26) — `git log --oneline --grep="#868"` — plus `docs/BACKLOG.md` "#22/F1 `RETIRED`" and the 2026-07-31 session entry. |
+| **Status** | **SETTLED / RETIRED (commit `50595ef`, v1.101.26).** Both former blockers were closed BY RETIRING THE RULE, not by fixing it: (1) the deployed diagnostic (`scripts/diagnose_gpu_delegation_route.py`) measured the dispatch route, closing the "cause UNKNOWN"; (2) the contract contest was resolved by the written contract, which already answered — exit 0 complete match, exit 1 complete no-match, exit 2 incomplete; an unhonoured explicit `--gpu-device-ids` route stays an in-band disclosure (`gpu_evidence_status`/`native_gpu_unavailable` in the JSON envelope) and does NOT independently change the exit code (`docs/BACKLOG.md`, grep "#22/F1"). Do not re-open a GPU exit-code rule without a contract change through `tensor-grep-change-control`. |
 
 **Rule:** Name a control arm by the exact SYMBOL the code branches on ("I set `resolve_native_tg_binary()`
 to X"), never by the capability you believe it stands for ("the GPU extension is present") — two
@@ -624,7 +644,7 @@ These recur across the chronicle; internalize them and you avoid the next re-fig
    vimgrep/column stash-gate looked free until a consumer-contract test caught it — grep the real
    consumers before trusting a profiler-motivated guess that a value is unused off one path.
 9. **Verify every steal/dogfood-ask against the LIVE code before building, not just against the
-   paper/report that suggested it.** Battle 22's 5/5-negative research steal-list, and the 2-of-6
+   paper/report that suggested it.** Battle 22's 6/6-negative research steal-list, and the 2-of-6
    "already-shipped, real defect differs from the report" dogfood-ask surprise in the same pass, both
    trace to skipping this step. A cheap-looking win from an external source (a paper's benchmark, a
    report of a bug) is a HYPOTHESIS about THIS codebase until you've read the actual file:line and, for
@@ -645,8 +665,9 @@ Re-verify these before treating any claim above as current (drift-prone facts ar
 **as of 2026-07-02, v1.17.25**, with Battles 9-14 verified **2026-07-03, v1.19.3**, Battle 9's
 `case_sensitive` correction + Battle 16 verified **2026-07-16, v1.78.1**, Battles 17-22 +
 cross-cutting lesson 9 added **2026-07-22, v1.93.2**, and Battles 23-24 + the Battle 12 addendum +
-Battle 16's evidence-hash/section-letter correction added **2026-07-24, v1.96.0**, and Battles 26-29 +
-Cross-cutting lesson 10 added **2026-07-31, v1.101.24**):
+Battle 16's evidence-hash/section-letter correction added **2026-07-24, v1.96.0**, Battles 26-29 +
+Cross-cutting lesson 10 added **2026-07-31, v1.101.24**, Battle 30 added **2026-08-01, v1.101.27**,
+and the retention updates to Battles 20-23 + 28-29 made **2026-08-12**):
 
 ```bash
 # Current version + latest settled entries
@@ -737,11 +758,21 @@ grep -rn "_find_overlaps\|agent_id" src/tensor_grep/cli/*.py | grep -i ledger
 # them. A re-verify command you have not executed is a claim, not a check.
 grep -n "^rerank" pyproject.toml
 grep -rn "MaxSim\|install-dense\|install_dense" src/tensor_grep/ docs/
+# RETIRED 2026-08-05 (task F10) -- the module-header block is the durable citation
+grep -n "RETIRED 2026-08-05" src/tensor_grep/core/retrieval_late.py
 
 # Battle 29 (#868 GPU exit-2 -- confirm the two accused symbols and the CI job wiring)
 grep -rn "def resolve_native_tg_binary" src/tensor_grep/
 grep -rn "rust_core" src/tensor_grep/ | grep -i import
 sed -n '680,700p' .github/workflows/ci.yml
+# SETTLED/RETIRED (commit 50595ef) -- the exit-2 rule itself was retired, not fixed
+git show 50595ef --stat
+grep -n "#22/F1" docs/BACKLOG.md
+
+# Battle 30 (-q false-zero -- confirm -q lives ONLY in search_passthrough, never _build_cmd)
+grep -n '"-q"' src/tensor_grep/backends/ripgrep_backend.py   # expect ONLY the search_passthrough site
+git show 31f793f --stat   # #876 shipped -q (v1.101.26)
+git show cfc3264 --stat   # #880 moved -q to search_passthrough only (v1.101.27)
 ```
 
 If any command's output no longer matches the entry (e.g. the typer cap moved, a guard file was

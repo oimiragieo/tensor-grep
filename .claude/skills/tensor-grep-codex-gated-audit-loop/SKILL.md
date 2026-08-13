@@ -7,7 +7,7 @@ description: >-
   that must pass identically on the dev desktop AND the CI pytest env, or any security-surface
   change that needs an adversarial gate before merge (A3). Also when a prior fix to the same
   finding already shipped wrong (the twin law). Triggers: "codex-gated", "audit loop",
-  "FIX-BEFORE-MERGE", "SHIP", "audit-fix PR", "adversarial gate", "try to BREAK it". Distinct from
+  "FIX-FIRST", "SHIP", "audit-fix PR", "adversarial gate", "try to BREAK it". Distinct from
   the pre-build plan council (tensor-grep-backlog-campaign) and the change gates
   (tensor-grep-change-control): this is the per-item fix loop itself. Not for first-pass
   feature planning or merge/release administration.
@@ -24,6 +24,21 @@ hypothesis, verify it yourself, fix, re-audit until SHIP.
 hypotheses; the only authority is your own probes run against the real artifact. The loop exists
 because every gate round this wave found real defects — a vacuous guard, a bypassed validator, an
 env-dependent ratchet — that the build agent's own checks did not.
+
+**Verdict vocabulary is FIX-FIRST — unified, never FIX-BEFORE-MERGE.** The canonical shape is A3's
+in AGENTS.md (`SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)` — grep "A3" there); this file
+previously mixed both spellings and the 2026-08-12 retention audit unified on FIX-FIRST. Note:
+`.claude/skill_rules.json`'s keyword entry for this skill still lists the legacy `FIX-BEFORE-MERGE`
+alias (verified 2026-08-12); align it to `FIX-FIRST` when that file is next edited — it sat outside
+this pass's edit scope.
+
+**"The twin law" (this skill's description) is A27/A39 — sweep the twin in the SAME turn.** When a
+fix retires a defect shape, grep sibling adapters/helpers/tests for the same shape immediately: the
+twin that keeps the retired form re-fires the same defect (A27's docstring-in-one-file /
+retired-form-in-its-sibling receipt; A39's class-fix-crosses-to-twins). A prior fix to the same
+finding shipping wrong — the trigger in this skill's description — is usually the twin that was
+never swept, so a re-opened finding starts with a twin-sweep of the original fix's shape, not a
+second patch at the same site.
 
 ## When to use this skill vs a sibling
 
@@ -66,7 +81,10 @@ in full at every merge; it is the loop that produces the diff the gates judge.
   does not survive your probe is dropped with the probe's output recorded.
 - [ ] **Step 5 — Fix + re-audit.** Fold CONFIRMED findings into the SAME PR while it is draft
   (A19: safety/honesty nits fold pre-merge; only cosmetic ones bank). Re-run the RED/GREEN arms,
-  then dispatch codex round N+1 on the new diff. Stop when a round returns only
+  then dispatch codex round N+1 on the new diff. Each round's verdict clears EXACTLY the
+  diff/SHA/plan-hash it reviewed — never a later edit, a sibling worktree, or "the same fix" by
+  description (A51); and the implementer's "fixed" report is a hypothesis until your own probe
+  re-verifies it on the new bytes (A81). Stop when a round returns only
   APPROVE / SHIP (or nits with no behavioral change), and every finding from every intermediate
   round is closed with evidence.
 - [ ] **Step 6 — Record the rounds in the commit message.** Each round: `Codex R<N> <verdict>
@@ -75,14 +93,20 @@ in full at every merge; it is the loop that produces the diff the gates judge.
   merge) apply unchanged.
 
 The 2026-08-08/09 receipts for what "SHIP" actually took: H2 = R1(4)→R2(2)→R3(1)→R4(1)→R5
-APPROVE-WITH-NITS; M1 = R1 FIX-BEFORE-MERGE(4)→R2 SHIP; M3 = R1(3)→R2(3)→R3(1)→R4 seat FAILED
+APPROVE-WITH-NITS; M1 = R1 FIX-FIRST(4)→R2 SHIP; M3 = R1(3)→R2(3)→R3(1)→R4 seat FAILED
 (A10/A74, substituted with the orchestrator's own probes)→SHIP; M14 =
 R1(3)→R2(3 harness defects)→R3 SHIP. Plan on 2–5 codex rounds per security-surface fix; a
 round that returns zero findings on round 1 is the outlier, and is itself worth a second look.
 
+**A FIX-FIRST round may legitimately end with findings PARKED/DEFERRED, not fixed (the Sol R1 F2/F5
+shape).** Parking is a disposition, not a loss: the parked state — which finding, why parked, what
+reopens it — is recorded in the commit/PR audit trail (A28: relay the verdict to the ARTIFACT, not
+just your transcript), never silently dropped. A parked finding that vanishes from the record is
+the exact defect this loop exists to prevent.
+
 ---
 
-## Environment-independence of gated tests (the 2026-08-09 mechanism)
+## Environment-independence of gated tests (the 2026-08-09 mechanism; A85, #984)
 
 **Any test that must pass on BOTH the dev desktop AND the CI pytest env must be env-independent
 BY CONSTRUCTION — a test that passes locally and fails CI on a missing engine is a DEFECT in
@@ -111,7 +135,8 @@ sites are value-checked identically everywhere.
      the census duration — the deterministic BM25-only fallback success arm fires everywhere;
    - AST tools: shim the engine seam — `Pipeline.get_backend`
      (`src/tensor_grep/core/pipeline.py:448`) → a fixed `AstBackend` stub, and
-     `_run_ast_scan_payload` (`src/tensor_grep/cli/main.py:6554`) → a deterministic
+     `_run_ast_scan_payload` (`grep -n "def _run_ast_scan_payload" src/tensor_grep/cli/main.py`;
+     was `:6554`, now `:6784`) → a deterministic
      empty-findings payload — so the tool's REAL success return site (the
      `_inject_mcp_contract_fields` envelope, `src/tensor_grep/cli/mcp_server.py:1125`) is
      exercised on every env.
@@ -216,23 +241,27 @@ env-dependence on the dense model — the 2026-08-09 mechanism above — and a p
 gap). The ratchet, not the fix, was the part that needed two more rounds. `_envelope_base`
 (`mcp_server.py:695`) is the central stamp helper the const is threaded through.
 
-**3. H2 — the front-door-rewrite shadow.** `SEARCH_OPTION_FIRST_FLAGS`
+**3. H2 — the front-door-rewrite shadow (A83, #979).** `SEARCH_OPTION_FIRST_FLAGS`
 (`rust_core/src/main.rs:104`) includes `--count-matches`, so the positional
 `tg PAT . --gpu-device-ids 0 --count-matches` is REWRITTEN into the search-subcommand form by
-`normalize_top_level_search_args` (`rust_core/src/main.rs:1785`) and never reaches
+`normalize_top_level_search_args` (`grep -n "fn normalize_top_level_search_args" rust_core/src/main.rs`;
+was `:1785`, now `:1814`) and never reaches
 `run_positional_cli`'s `validate_positional_native_structured_refusals`
-(`rust_core/src/main.rs:8861`) — the validator was shadowed by the front-door rewrite. On the
+(`grep -n "fn validate_positional_native_structured_refusals" rust_core/src/main.rs`;
+was `:8861`, now `:9182`) — the validator was shadowed by the front-door rewrite. On the
 search path the count/files flags fall through `search_requires_ripgrep_passthrough`
-(`rust_core/src/main.rs:8722`)'s `!json && !ndjson` gate, so with `rg` present the explicit GPU
+(`grep -n "fn search_requires_ripgrep_passthrough" rust_core/src/main.rs`; was `:8722`,
+now `:9043`)'s `!json && !ndjson` gate, so with `rg` present the explicit GPU
 request was SILENTLY DROPPED (exit 0, wrong output); with `rg` absent the pre-existing
-rg-required gate in `handle_ripgrep_search` (`rust_core/src/main.rs:9502`) exited 2 by accident
+rg-required gate in `handle_ripgrep_search` (`grep -n "fn handle_ripgrep_search" rust_core/src/main.rs`;
+was `:9502`, now `:9823`) exited 2 by accident
 with the wrong wording. The fix was a search-form gate in `handle_ripgrep_search` BEFORE the
 rg-passthrough early return — an airtight-ordering argument: for these combos it is the first
 gate in BOTH environments, so the message becomes deterministic rather than dual-env-tolerated.
 Lesson: a validator is only as real as the doors that actually reach it — census the ROUTES
 before trusting the guard.
 
-**4. M3 cross-platform — the fix's escape hatch was Windows-only.** The drive-absolute URI strip
+**4. M3 cross-platform — the fix's escape hatch was Windows-only (A84, #983).** The drive-absolute URI strip
 ran unconditionally: on POSIX the root-anchored `/C:/Windows/evil` became a RELATIVE
 `C:/Windows/evil` that resolved INSIDE the process cwd — recreating the drive-relative escape
 the fix was meant to close, on Linux instead of Windows (Linux CI reddened
@@ -253,7 +282,7 @@ execution, `file:line`-cited findings, round-recording commit messages).
 |---|---|---|
 | **ultra-review** (github.com/alexrolls/ultra-review) | Fleet of narrow-scope reviewers: R1 discover in parallel → R2 cross-examine (each tries to DISPROVE peers' findings; survivors are the defensible ones) → R3 survivors strengthen with concrete fixes → R4 digest; the orchestrator never writes findings; heterogeneous-LLM friendly (Claude + Codex mix). | Codex is our single independent challenger per round (fleet of one — cheaper for a per-item PR); "adversarially confirmed signal" = a finding that survives OUR re-verification, the same survival test applied by a second model; cross-vendor (OpenAI codex vs Anthropic us) gives the heterogeneity. |
 | **AWS Builder Center "a multi-agent security review loop: find, challenge, prove, and fix"** (builder.aws.com/content/3EfBZG9YPytyxOjWOXKhUpFw9cl) | Find (Claude) → Challenge (Codex read-only: "reasons it should not ship, not confirm it looks fine") → Prove (AgentCore sandbox PoC; "a finding from one model is only a hypothesis until a second model, and ideally a real execution, backs it up"; non-reproducing findings set aside for a human) → Patch (Codex writes) → Claude reviews the patch and adjusts → Re-verify (same PoC in a fresh sandbox). Two model vendors; repro-before-fix. | Challenge = our codex gate with the identical "try to BREAK it" framing; Prove = our behavioral RED→GREEN in the repo's real venv/CI (execution, not opinion) — we do not need a sandbox because the tests ARE the execution; Patch+review = codex proposes, WE write/verify the fix (reverse of AWS's roles, same maker-checker separation); repro-before-fix = Step 0's show-the-seam + Step 1's RED. |
-| **ASDLC.io Adversarial Code Review** (asdlc.io/patterns/adversarial-code-review) | Maker-checker separation: Builder (throughput) vs Critic (high-reasoning, must start a NEW session/thread so it evaluates only artifacts, not the builder's reasoning); critic lanes; critics emit PASS-or-violations, never alternative implementations; Review Gate (probabilistic, adversarial) vs Quality Gate (deterministic: syntax/compile/lint/test) vs Acceptance Gate (subjective HITL); negation blindness ⇒ adversarial review needs deterministic backing. | Codex = the Critic in a fresh context, audit-only, verdict-shaped (`SHIP` \| `FIX-BEFORE-MERGE(must-fix list)`), never writing the fix; our RED/GREEN tests = the deterministic Quality Gate backing the probabilistic Review Gate (the exact "negation blindness needs deterministic backing" doctrine); the human merge = the Acceptance Gate. |
+| **ASDLC.io Adversarial Code Review** (asdlc.io/patterns/adversarial-code-review) | Maker-checker separation: Builder (throughput) vs Critic (high-reasoning, must start a NEW session/thread so it evaluates only artifacts, not the builder's reasoning); critic lanes; critics emit PASS-or-violations, never alternative implementations; Review Gate (probabilistic, adversarial) vs Quality Gate (deterministic: syntax/compile/lint/test) vs Acceptance Gate (subjective HITL); negation blindness ⇒ adversarial review needs deterministic backing. | Codex = the Critic in a fresh context, audit-only, verdict-shaped (`SHIP` \| `FIX-FIRST(must-fix list)`), never writing the fix; our RED/GREEN tests = the deterministic Quality Gate backing the probabilistic Review Gate (the exact "negation blindness needs deterministic backing" doctrine); the human merge = the Acceptance Gate. |
 | **Augment Code "Adversarial Code Review: Why the Maker Shouldn't Grade the Checker"** (augmentcode.com/guides/adversarial-code-review) | Fresh-context reviewer with read-only tools (Read/Grep/Glob only) and a pinned, ideally different model family; a SEPARATE fixer applies corrections; new reviewer re-passes the changed diff; rollout starts ADVISORY and only converts to blocking gates on critical findings; permission-level (not prompt-level) authority scoping. | Codex is audit-only by construction — it never edits the tree in the loop; we are the separate fixer; "run advisory first, then gate" = findings are hypotheses (Step 4) until our probes confirm them, and only the draft-PR human merge is a hard gate; pinned different family = codex (OpenAI) reviewing Anthropic-authored diffs. |
 
 ---
@@ -323,3 +352,10 @@ itself. The first `cargo` compile / CI matrix run IS the Rust typecheck gate.
 severity/message (`docs/plans/2026-08-08-backlog-completion-plan.md`): a scan that silently strips a
 composite rule or downgrades severity to defaults is the fail-open shape. CI is the compile oracle;
 the workspace-dogfood rows pin the green, the rule semantics live here.
+
+**The parity oracle for this surface must carry a REAL-artifact arm (A89, #987).** M16's three-arm
+composite-count parity test passed with SPAN FAKES while production read the WRONG ast-grep JSON
+fields (`range.start.index` vs the real 0.42.1 `range.byteOffset.start/end`) — the "parity" was
+pinned against the bug, and only adding a REAL `ast-grep --json` subprocess arm surfaced the
+divergence. Whenever a parity/oracle test can drive the real producer cheaply, it must — a
+fake-backed arm can certify a lie as three arms of agreement.

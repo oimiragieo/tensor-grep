@@ -3,9 +3,9 @@ export const meta = {
   description: 'Re-derive every load-bearing claim in the .claude/skills library against the current tree, and emit a ranked fix queue',
   whenToUse: 'After a high-velocity stretch, before onboarding someone onto the skill library, or whenever a skill has been cited as authority for a decision. Catches the drift class that tests/unit/test_skill_library_drift.py cannot see by design: citations that RESOLVE but point at unrelated code.',
   phases: [
-    { title: 'Ledger', detail: 'derive ground-truth facts by RUNNING the commands' },
+    { title: 'Ledger', detail: 'derive ground-truth facts AND artifact identity by RUNNING the commands' },
     { title: 'Audit', detail: 'semantic re-derivation per skill cluster, waves of 3' },
-    { title: 'Synthesis', detail: 'dedupe, rank by blast radius, emit fix queue' },
+    { title: 'Synthesis', detail: 'exact coverage equality, dedupe, rank by blast radius, emit fix queue' },
   ],
 }
 
@@ -17,12 +17,38 @@ export const meta = {
 // WRONG fact to 11 agents at once (a correct skill count reported as drift),
 // which is the map-ledger amplification failure. So the facts are DERIVED at
 // run time, by an agent that runs the commands and reports their raw output.
+//
+// WHY ARTIFACT IDENTITY (2026-08-12 retention audit, findings H1-H3).
+// The previous revision hardcoded a repo root, recorded no SHA or blob
+// population, and credited ANY truthy cluster response as full coverage -- so
+// it could audit the wrong checkout (split oracle) and report 6/6 clusters
+// covered when members were silently omitted. The ledger now captures the
+// resolved root, HEAD SHA, cleanliness, and a path+blob-OID manifest of every
+// tracked skill file; synthesis requires EXACT set equality between the
+// expected population and the union of reported `skills_audited`, retries
+// omitted skills individually, and treats null/evidence-free lanes as
+// CANNOT_VERIFY -- never as clean.
 // ---------------------------------------------------------------------------
 
 const LEDGER_SCHEMA = {
   type: 'object',
-  required: ['facts', 'raw_output'],
+  required: ['repo_root', 'head_sha', 'git_status', 'skill_manifest', 'facts', 'raw_output'],
   properties: {
+    repo_root: { type: 'string', description: 'output of: git rev-parse --show-toplevel' },
+    head_sha: { type: 'string', description: 'output of: git rev-parse HEAD' },
+    git_status: { type: 'string', description: 'output of: git status --porcelain (empty = clean)' },
+    skill_manifest: {
+      type: 'array',
+      description: 'one row per tracked file under .claude/skills/',
+      items: {
+        type: 'object',
+        required: ['path', 'blob_oid'],
+        properties: {
+          path: { type: 'string' },
+          blob_oid: { type: 'string' },
+        },
+      },
+    },
     facts: {
       type: 'array',
       items: {
@@ -44,10 +70,14 @@ const AUDIT_SCHEMA = {
   required: ['cluster', 'skills_audited', 'verdict', 'anchors_sampled', 'strongest_verified_claim', 'findings'],
   properties: {
     cluster: { type: 'string' },
-    skills_audited: { type: 'array', items: { type: 'string' } },
-    verdict: { type: 'string', enum: ['CLEAN', 'DRIFT_FOUND'] },
-    anchors_sampled: { type: 'integer' },
-    strongest_verified_claim: { type: 'string' },
+    skills_audited: {
+      type: 'array',
+      description: 'folder names actually audited; exact equality with the assigned list is checked downstream',
+      items: { type: 'string' },
+    },
+    verdict: { type: 'string', enum: ['CLEAN', 'DRIFT_FOUND', 'CANNOT_VERIFY'] },
+    anchors_sampled: { type: 'integer', description: 'claims re-derived against the tree; CLEAN with 0 is invalid' },
+    strongest_verified_claim: { type: 'string', description: 'strongest claim actually re-derived + its evidence; never empty' },
     findings: {
       type: 'array',
       items: {
@@ -113,10 +143,14 @@ phase('Ledger')
 const ledger = await agent(
   `${HOUSE}
 
-TASK: derive ground-truth facts for a skill-library audit by RUNNING these commands in
-C:/dev/projects/tensor-grep. Report each command's RAW output. Do not summarise from memory, and do
-not answer from any doc -- the docs are the thing being audited.
+TASK: derive ARTIFACT IDENTITY and ground-truth facts for a skill-library audit by RUNNING these
+commands in the repository checkout you are invoked in. Report each command's RAW output. Do not
+summarise from memory, and do not answer from any doc -- the docs are the thing being audited.
 
+  0a. git rev-parse --show-toplevel      (repo_root)
+  0b. git rev-parse HEAD                 (head_sha)
+  0c. git status --porcelain             (git_status; empty string = clean)
+  0d. git ls-files -s -- .claude/skills/ (skill_manifest: path + blob OID for EVERY tracked file)
   1. python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
   2. grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py
   3. python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/tensor-grep/json'))['info']['version'])"
@@ -127,11 +161,19 @@ not answer from any doc -- the docs are the thing being audited.
   8. python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import mcp_server as m;print(m._TG_MCP_SERVER_CONTRACT_VERSION)"
 
 For each, return name, value, and the exact command as its derivation. A fact without its
-derivation is not a fact -- downstream agents must be able to re-run it.`,
+derivation is not a fact -- downstream agents must be able to re-run it. If the tree is dirty,
+list every dirty path in raw_output; a dirty audit target must be declared in the final receipt.`,
   { label: 'ledger', phase: 'Ledger', schema: LEDGER_SCHEMA, model: 'haiku' },
 )
 
 const LEDGER_TEXT = `
+AUDITED ARTIFACT (every claim below is bound to THIS tree; if you find yourself reading any
+other checkout, STOP and return verdict CANNOT_VERIFY):
+  repo_root = ${ledger?.repo_root || '(missing -- treat identity as UNVERIFIED)'}
+  head_sha  = ${ledger?.head_sha || '(missing)'}
+  git_status = ${ledger?.git_status || '(missing)'}
+  skill_manifest = ${(ledger?.skill_manifest || []).length} tracked files under .claude/skills/
+
 VERIFIED FACTS -- derived live at the start of THIS run by running the commands. Trust these over
 any text you read in a skill or doc; the docs are the artifact under audit.
 ${(ledger?.facts || []).map((f) => `- ${f.name} = ${f.value}\n    derivation: ${f.derivation}`).join('\n')}
@@ -151,8 +193,13 @@ const audits = await inWaves(CLUSTERS, 3, (c, _i, isRetry) =>
     `${LEDGER_TEXT}
 ${HOUSE}
 
-TASK: audit these skills for DRIFT against the current tree. Cluster "${c.key}":
+TASK: audit these skills for DRIFT against the audited tree named above. Cluster "${c.key}":
 ${c.skills.map((s) => `  - .claude/skills/${s}/SKILL.md (+ any REFERENCE.md beside it)`).join('\n')}
+
+skills_audited is checked for EXACT equality with the list above: report a skill ONLY if you
+actually re-derived its claims in the audited tree; omitting one you could not finish is honest,
+padding the list is a coverage fraud. CLEAN requires anchors_sampled >= 1 and a nonempty
+strongest_verified_claim; otherwise return CANNOT_VERIFY.
 
 For every LOAD-BEARING claim, RE-DERIVE it:
   * line ANCHOR      -> grep the claimed SYMBOL and compare to the cited line. Highest-yield check.
@@ -168,40 +215,86 @@ ALSO CHECK THE FILE AGAINST ITSELF -- no gate we own does this, and it is how th
 self-contradiction in this repo shipped (2026-08-02):
   * SELF-CONTRADICTION -> does this file assert a claim AND its refutation? The tell is a
                         correction that landed at ONE site while a duplicate 100+ lines away kept
-                        the refuted version. Receipt: benchmark-and-proof-toolkit corrected a
-                        CONTRACTS.md anchor in its GPU section and left the debunked ':80-82' in
-                        Provenance 150 lines below -- both shipping, each confirming itself on a
-                        local read. Grep the file for every anchor/number it states MORE THAN ONCE
-                        and compare the copies to each other, not only to the tree.
+                        the refuted version. Grep the file for every anchor/number it states MORE
+                        THAN ONCE and compare the copies to each other, not only to the tree.
   * RE-STAMP SMELL     -> text of the form "was :X, now :Y" is the re-stamping anti-pattern, not a
                         fix. Verify Y; if it is wrong, report it AND recommend deleting the number
-                        rather than stamping Z. Receipt: '#578 was :603 now :850' was already wrong
-                        the next day. A stamp resets the clock; the grep is what survives.
-${isRetry ? '\nRETRY: your prior attempt returned nothing. Narrow to the 2 highest-risk skills and RETURN A RESULT.\n' : ''}
+                        rather than stamping Z.
+${isRetry ? '\nRETRY: your prior attempt returned nothing. Narrow to the UNCOVERED skills only, list exactly those in skills_audited, and RETURN A RESULT.\n' : ''}
 Report only drift you MEASURED, with the skill file:line of the wrong text and the repo evidence.`,
     { label: `audit:${c.key}`, phase: 'Audit', schema: AUDIT_SCHEMA, model: 'sonnet' },
   ),
 )
 
+// EXACT COVERAGE EQUALITY (2026-08-12 retention audit, finding H2): a truthy cluster response is
+// NOT coverage. The union of skills_audited must equal the expected population -- no omissions,
+// duplicates, or extras. Omitted skills are retried individually once; anything still missing is
+// CANNOT_VERIFY and stays visible in the receipt.
+const expected = CLUSTERS.flatMap((c) => c.skills)
+const auditedSet = new Set()
+for (const a of audits) {
+  if (a == null) continue
+  for (const s of a.skills_audited || []) auditedSet.add(s)
+}
+const missing = expected.filter((s) => !auditedSet.has(s))
+const extras = [...auditedSet].filter((s) => !expected.includes(s))
+
+if (missing.length > 0) {
+  log(`COVERAGE HOLE: retrying ${missing.length} omitted skills individually: ${missing.join(', ')}`)
+  const retries = await inWaves(
+    missing.map((s) => ({ key: `retry:${s}`, skills: [s] })),
+    3,
+    (u) =>
+      agent(
+        `${LEDGER_TEXT}
+${HOUSE}
+
+TASK: single-skill salvage audit of .claude/skills/${u.skills[0]}/SKILL.md (+ any REFERENCE.md
+beside it) against the audited tree. The cluster pass did not finish this skill; report ONLY this
+one in skills_audited. Same re-derivation rules, same self-contradiction check, same no-re-stamp
+rule. CLEAN requires anchors_sampled >= 1 and a nonempty strongest_verified_claim.`,
+        { label: `salvage:${u.skills[0]}`, phase: 'Audit', schema: AUDIT_SCHEMA, model: 'sonnet' },
+      ),
+  )
+  for (const r of retries) {
+    if (r != null) {
+      audits.push(r)
+      for (const s of r.skills_audited || []) auditedSet.add(s)
+    }
+  }
+}
+
+const finalMissing = expected.filter((s) => !auditedSet.has(s))
 const covered = audits.filter(Boolean)
-const missing = CLUSTERS.length - covered.length
-if (missing > 0) log(`NOT COVERED: ${missing} of ${CLUSTERS.length} clusters returned nothing after retry`)
+const evidenceFree = covered.filter(
+  (a) => a.verdict === 'CLEAN' && ((a.anchors_sampled || 0) < 1 || !(a.strongest_verified_claim || '').trim()),
+)
+for (const a of evidenceFree) log(`EVIDENCE GAP: cluster ${a.cluster} claimed CLEAN with no sampled evidence -- treated as CANNOT_VERIFY`)
+if (finalMissing.length > 0) log(`NOT COVERED: ${finalMissing.join(', ')} -- reported as CANNOT_VERIFY, never clean`)
+if (extras.length > 0) log(`UNEXPECTED skills reported outside the manifest: ${extras.join(', ')}`)
 
 phase('Synthesis')
 const findings = covered.flatMap((a) => (a.findings || []).map((f) => ({ ...f, cluster: a.cluster })))
-log(`${findings.length} findings across ${covered.length}/${CLUSTERS.length} clusters`)
+log(`${findings.length} findings across ${covered.length} payloads; coverage ${expected.length - finalMissing.length}/${expected.length} skills exact`)
 
 const plan = await agent(
   `${LEDGER_TEXT}
 
 You are the chairman. Fold these into ONE ranked fix queue.
 
-AUDITS (${covered.length}/${CLUSTERS.length} clusters returned):
+AUDITS (${covered.length} payloads returned):
 ${JSON.stringify(covered, null, 1)}
 
+COVERAGE LEDGER (authoritative -- do not contradict it):
+  expected population: ${expected.length} skills
+  audited: ${expected.length - finalMissing.length}
+  NOT COVERED (CANNOT_VERIFY): ${finalMissing.length ? finalMissing.join(', ') : 'none'}
+  unexpected extras: ${extras.length ? extras.join(', ') : 'none'}
+  evidence-free CLEAN payloads: ${evidenceFree.length ? evidenceFree.map((a) => a.cluster).join(', ') : 'none'}
+
 RULES:
-- ${missing} cluster(s) returned NOTHING. Do not fabricate results for them; open with an explicit
-  PAYLOAD SHORTFALL line naming each. A zero from a lane that never ran is not a clean lane.
+- If anything is NOT COVERED or evidence-free, open with an explicit PAYLOAD SHORTFALL line naming
+  each item. Do not fabricate results for them; a zero from a lane that never ran is not clean.
 - DISCARD any finding whose evidence is not a file:line or a command+output. Report how many you cut.
 - DEDUPE across clusters: the same drift found twice is ONE item.
 - RANK BY BLAST RADIUS: a wrong FACT a future session would act on (a flag that does not exist, a
@@ -215,9 +308,16 @@ RULES:
 )
 
 return {
+  repo_root: ledger?.repo_root || null,
+  head_sha: ledger?.head_sha || null,
+  git_status: ledger?.git_status || null,
+  skill_manifest_entries: (ledger?.skill_manifest || []).length,
   clusters_dispatched: CLUSTERS.length,
-  clusters_covered: covered.length,
-  not_covered: missing,
+  skills_expected: expected.length,
+  skills_audited: expected.length - finalMissing.length,
+  not_covered: finalMissing,
+  unexpected_skills: extras,
+  coverage_exact: finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
   total_findings: findings.length,
   ledger,
   audits: covered,
