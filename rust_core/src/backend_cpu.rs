@@ -323,6 +323,9 @@ fn swap_leaf_to_symlink_for_test(path: &Path, attacker_target: &Path) -> bool {
         match std::os::unix::fs::symlink(attacker_target, path) {
             Ok(()) => true,
             Err(err) => {
+                if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+                    panic!("TG_REQUIRE_SYMLINK_TESTS set: symlink failed: {err}");
+                }
                 eprintln!("skipping the residual-TOCTOU pin: symlink failed: {err}");
                 false
             }
@@ -333,6 +336,9 @@ fn swap_leaf_to_symlink_for_test(path: &Path, attacker_target: &Path) -> bool {
         match std::os::windows::fs::symlink_file(attacker_target, path) {
             Ok(()) => true,
             Err(err) => {
+                if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+                    panic!("TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows symlink: {err}");
+                }
                 eprintln!(
                     "skipping the residual-TOCTOU pin: cannot create a Windows symlink \
                      in this environment: {err}"
@@ -520,9 +526,19 @@ impl CpuBackend {
         //
         // Directory mode's STATIC symlink exposure is unaffected: walk_directory_entries uses
         // WalkDir's default follow_links(false) (the call is at the WalkDir::new site inside
-        // walk_directory_entries) and both directory routes skip non-is_file() entries. Children
-        // are still re-opened by pathname after enumeration, so the child walk->open swap race
-        // is the same residual, owned by RUST-REPLACE-TOCTOU.
+        // walk_directory_entries) and both directory routes skip non-is_file() entries. Two
+        // residual windows remain, both owned by RUST-REPLACE-TOCTOU and deliberately
+        // unpinned here: (1) children are re-opened by pathname after enumeration, so a child
+        // swapped for a symlink between enumeration and open is still followed; (2) the
+        // DIRECTORY ROOT itself is swapped between this guard's stat and the is_dir() below,
+        // WalkDir's follow_root_links(true) default (walkdir 2.5.0) descends into the
+        // attacker's directory and rewrites its whole tree -- the widest blast radius in this
+        // surface. The swap-gate pin below characterizes the FILE-LEAF window only; the
+        // root window is named here rather than silently implied. Closing the leaf race at
+        // the open sites would use the O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT machinery
+        // already implemented in rust_core/src/safe_write.rs -- deliberately not applied in
+        // this PR because it would also change directory-child open semantics, which is the
+        // TOCTOU row's design pass, not this guard's.
         //
         // FAILS CLOSED. `if let Ok(meta) = ..` would fail OPEN: on any stat error -- a
         // permission denial, a reparse point whose filter driver refuses the query, an EIO --

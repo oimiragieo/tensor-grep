@@ -393,6 +393,11 @@ fn replace_in_place_refuses_to_follow_a_symlinked_file_target() {
     // as a failing security test (A61: the RED reason must be the pinned behavioral assertion,
     // never a setup crash). Same shape as tests/test_ast_rewrite.rs.
     if let Err(err) = std::os::windows::fs::symlink_file(&real, &link) {
+        if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+            panic!(
+                "TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows symlink in this environment: {err}"
+            );
+        }
         eprintln!(
             "skipping replace_in_place_refuses_to_follow_a_symlinked_file_target: \
              cannot create a Windows symlink in this environment: {err}"
@@ -455,6 +460,11 @@ fn replace_directory_mode_skips_symlinked_entries() {
     #[cfg(windows)]
     // CANNOT_MEASURE, not RED -- see the note under the refuse test.
     if let Err(err) = std::os::windows::fs::symlink_file(&outside, &link) {
+        if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+            panic!(
+                "TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows symlink in this environment: {err}"
+            );
+        }
         eprintln!(
             "skipping replace_directory_mode_skips_symlinked_entries: \
              cannot create a Windows symlink in this environment: {err}"
@@ -496,6 +506,11 @@ fn replace_in_place_refuses_a_directory_symlink_root() {
     std::os::unix::fs::symlink(&target_dir, &link).unwrap();
     #[cfg(windows)]
     if let Err(err) = std::os::windows::fs::symlink_dir(&target_dir, &link) {
+        if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+            panic!(
+                "TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows directory symlink in this environment: {err}"
+            );
+        }
         eprintln!(
             "skipping replace_in_place_refuses_a_directory_symlink_root: \
              cannot create a Windows directory symlink in this environment: {err}"

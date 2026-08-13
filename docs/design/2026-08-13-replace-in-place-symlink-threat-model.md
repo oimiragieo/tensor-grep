@@ -56,10 +56,16 @@ closed on `Err(stat)` AND on `file_type().is_symlink()`:
   the leaf only, so an attacker-controlled ancestor directory link still redirects
   statically, with no race. Closing that needs component-wise `openat(O_NOFOLLOW)` /
   handle-relative opens — filed under `RUST-REPLACE-TOCTOU`.
+- **does NOT cover** the **directory-ROOT swap window**: the guard stats the real directory,
+  then `is_dir()`/`WalkDir` re-resolve the path — an attacker who swaps the root for a link
+  between those two points gets WalkDir's `follow_root_links(true)` default to descend into
+  and rewrite their whole target tree (the widest blast radius in this surface). Named here
+  and in the code comment; deliberately **unpinned** (the swap-gate pin characterizes the
+  file-leaf window only) and owned by `RUST-REPLACE-TOCTOU`.
 - **does NOT claim** the race is closed: `symlink_metadata` then `open` remains racy (A38).
   The shipped guard converts a 100%-reliable static **leaf**-symlink overwrite into a race an
-  attacker must win. The residual race — and any walk-time reparse-point descent that survives
-  the probe-backed guard — is owned by `RUST-REPLACE-TOCTOU` (§4).
+  attacker must win. The residual races — leaf swap, walk-time child swap, root swap, and the
+  non-leaf ancestor bypass — are owned by `RUST-REPLACE-TOCTOU` (§4).
 
 ## 4. GATE-W3A-1 resolution — (a) REFUSE
 
