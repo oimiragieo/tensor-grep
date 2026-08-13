@@ -1,6 +1,122 @@
 # CHANGELOG
 
 
+## v1.110.16 (2026-08-13)
+
+### Bug Fixes
+
+- Replace_in_place refuses to follow a symlinked target
+  ([#1010](https://github.com/oimiragieo/tensor-grep/pull/1010),
+  [`d31a051`](https://github.com/oimiragieo/tensor-grep/commit/d31a051f7b3affa67fa1021c2380538d59cce2df))
+
+* docs: threat model for replace_in_place symlink policy (RUST-REPLACE-SYMLINK)
+
+* test: RED arm for replace_in_place symlink follow (RUST-REPLACE-SYMLINK)
+
+RED arm plus test-only fault scaffolding; guard follows in the next commit.
+
+- test_replace.rs: refuse-symlink behavioral RED, regular-file positive control, directory-pin,
+  directory-symlink-root refusal (amendment A1.3), Windows junction-root refusal (GATE-W3A-1 (a)
+  REFUSE, amendment A1.2), and the missing-path pin flipped Ok->Err (amendment A1.4, both arms). -
+  backend_cpu.rs: #[cfg(test)]-only fault fields (force_symlink_metadata_failure, swap_gate),
+  SwapGate, SWAP_GATE_TIMEOUT, swap_leaf_to_symlink_for_test, all allow(dead_code) pending the
+  phase-2 arms.
+
+Threat model: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md (council-approved, 3
+  rounds; junction probe receipt section 5).
+
+* fix: refuse symlink/junction targets in replace_in_place (RUST-REPLACE-SYMLINK)
+
+Guard, in-file fault arms, and the residual-race characterization pin; the tests and scaffolding
+  landed in the RED commit ba93fb6.
+
+- replace_in_place: pre-branch symlink_metadata guard, fail-closed on stat error and on is_symlink
+  (covers symlinks AND Windows junctions on the pinned toolchain -- GATE-W3A-1 (a) REFUSE, probe
+  receipt in the threat model section 5). Residual TOCTOU stated in-code and owned by
+  RUST-REPLACE-TOCTOU. - In-file tests: fail-closed bidirectional pair, missing-path contract pin,
+  and the bounded capacity-1 Event-gated leaf-swap characterization pin (2s CANNOT_MEASURE bound;
+  expected to FLIP when RUST-REPLACE-TOCTOU lands). - The missing-path silent-Ok pin flipped to Err
+  (amendment A1.4).
+
+* fix: pin asserts the swap went THROUGH the link (opus gate F1)
+
+The pin's second assertion read_to_string(&target) followed the swapped-in symlink and compared the
+  attacker's rewritten content against the old leaf, failing on Linux. The load-bearing invariant is
+  structural: the swapped-in link must still be a symlink after the write.
+
+* fix: inject the stat fault through the map_err path (opus gate r2 F1)
+
+A bail! before the real symlink_metadata call meant the fail-closed test passed even if the guard
+  were rewritten fail-open. The injected Err now feeds the same map_err(..)? the production stat
+  uses, so the test observes the actual fail-closed wiring; a .ok()+if-let mutation reds it.
+
+* fix: doc-honesty for non-leaf components + contract-change pin wording (opus gate r3)
+
+- Guard comment and threat model 3 now state the leaf-only scope: a non-leaf ancestor symlink still
+  redirects statically (no race), owned by RUST-REPLACE-TOCTOU (component-wise openat O_NOFOLLOW /
+  handle-reopen). - The missing-path test comment now says contract CHANGE (was silent Ok(())
+  pre-guard), not a compatibility pin.
+
+* fix: strip trailing separators before the symlink stat (opus gate r4 F1)
+
+POSIX lstat("<dirlink>/") resolves through the final symlink, so a raw trailing-slash path passed
+  the guard and handed the link root to WalkDir. The guard now stats a components()-normalized path
+  (empty result falls back to the raw path); the dir-symlink-root test gains a unix
+  trailing-separator arm.
+
+* docs: resolve the two stale follow-ups this PR closes (opus gate r5 F1)
+
+The 2026-08-02 investigation doc still asserted the nonexistent-path silent Ok(()) was current and
+  cited the renamed pin test; both bullets are now marked RESOLVED by RUST-REPLACE-SYMLINK with the
+  new contract, and the in-code directory comment is qualified to STATIC exposure with the child
+  swap race pointed at RUST-REPLACE-TOCTOU.
+
+* fix: file RUST-REPLACE-TOCTOU row + A50 IN_FLIGHT transition (opus gate r6 F1)
+
+Shipped code cited RUST-REPLACE-TOCTOU while no board row existed (A49). This commit files the
+  canonical row (DEMAND_GATED, mechanism + pin-inversion acceptance named), moves
+  RUST-REPLACE-SYMLINK READY->IN_FLIGHT with PR #1010 (A50), retargets the tracker test closed-world
+  sets, names safe_write.rs as the existing O_NOFOLLOW machinery, and fixes the stale
+  investigation-doc sentence. Board governance tests pass (43/43).
+
+* fix: name the root-swap window + make skips observable (opus gate r7)
+
+- Code comment and threat model now name the directory-ROOT swap window (guard stat -> is_dir ->
+  WalkDir follow_root_links(true) descent into an attacker's whole tree) as the widest residual,
+  deliberately unpinned, owned by RUST-REPLACE-TOCTOU; and state why safe_write.rs's O_NOFOLLOW
+  machinery was not applied here (directory-child open semantics = the TOCTOU row's design pass). -
+  TG_REQUIRE_SYMLINK_TESTS=1 promotes the CANNOT_MEASURE skip branches to a panic so an unprivileged
+  runner can no longer go silent-green.
+
+* docs: reconcile board summary counts + junction-child skip wording (opus gate r8)
+
+Board summary lines now say 0 READY / 1 IN_FLIGHT / 6 DEMAND_GATED (18 unfinished with
+  RUST-REPLACE-TOCTOU). Threat model 4 corrects the junction-child claim: children are SKIPPED by
+  the walk filters (guard stats the root only), with the std is_symlink derivation cited.
+
+* fix: arm skip-promotion on CI + junction panic + scope-boundary honesty (opus gate r9 nit)
+
+- test-rust-core sets TG_REQUIRE_SYMLINK_TESTS=1 so the security arms can no longer go silent-green
+  on an unprivileged runner (protected-path deviation authorized by the A3 opus gate; validator
+  suites pass). - The junction test gains the same force-panic branch as its siblings. - Threat
+  model 3 names hardlinks and non-surrogate reparse tags as outside the guard's predicate, so the
+  "does NOT cover" list is not read as exhaustive.
+
+* fix: promote the unlink skip to panic under TG_REQUIRE_SYMLINK_TESTS (opus gate r10 nit)
+
+* docs: pin commentary accuracy (opus gate r11 nits)
+
+- Regex-arm comment no longer claims replace_in_place never inspects the path (the guard stats it
+  first). - recv_timeout expect message names both Timeout and Disconnected causes. -
+  Trailing-separator refusal arm now runs on both platforms.
+
+* docs: deferral rationale + TOCTOU trigger gain the root-swap fire point (opus gate r12 nit)
+
+* docs: fix comment indentation + IN_FLIGHT wording consistency (opus gate r13)
+
+* docs: IN FLIGHT section includes PR #1010 (codex BOARDS-STALE-INFLIGHT)
+
+
 ## v1.110.15 (2026-08-13)
 
 ### Bug Fixes
