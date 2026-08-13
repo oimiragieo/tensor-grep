@@ -98,7 +98,7 @@ and migration planning -- out of scope here.
   `Ok(())` no-op (pinned by the since-renamed
   `test_rust_replace_in_place_direct_file_nonexistent_path_is_currently_a_silent_no_op`); it is
   now an `Err` naming the path per the fail-closed guard.
-- **`RUST-REPLACE-SYMLINK` -- SHIPPED (guard).** Direct-leaf-symlink follow was unchanged; it is
+- **`RUST-REPLACE-SYMLINK` -- guard implemented (PR #1010; board row IN_FLIGHT until publish).** Direct-leaf-symlink follow was unchanged; it is
   now refused at the leaf AND the root (symlinks and Windows junctions on the pinned toolchain).
   The residual race stays open under `RUST-REPLACE-TOCTOU`.
 

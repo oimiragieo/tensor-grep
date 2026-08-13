@@ -540,11 +540,11 @@ impl CpuBackend {
         // root window is named here rather than silently implied. Closing the leaf race at
         // the open sites would use the O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT machinery
         // already implemented in rust_core/src/safe_write.rs -- deliberately not applied in
-// this PR because it touches both open sites AND every directory-child open: applying it
-// there would convert a raced child follow into an Err rather than a silent write -- safe
-// for legitimate use (WalkDir's follow_links(false) already filters static symlink
-// children) but a semantic change to the directory route that belongs in the TOCTOU row's
-// design pass, not this guard's.
+        // this PR because it touches both open sites AND every directory-child open: applying it
+        // there would convert a raced child follow into an Err rather than a silent write -- safe
+        // for legitimate use (WalkDir's follow_links(false) already filters static symlink
+        // children) but a semantic change to the directory route that belongs in the TOCTOU row's
+        // design pass, not this guard's.
         //
         // FAILS CLOSED. `if let Ok(meta) = ..` would fail OPEN: on any stat error -- a
         // permission denial, a reparse point whose filter driver refuses the query, an EIO --
