@@ -577,6 +577,11 @@ fn replace_in_place_refuses_a_directory_junction_root() {
     match status {
         Ok(s) if s.success() => {}
         _ => {
+            if std::env::var_os("TG_REQUIRE_SYMLINK_TESTS").is_some() {
+                panic!(
+                    "TG_REQUIRE_SYMLINK_TESTS set: cannot create a Windows junction in this environment"
+                );
+            }
             eprintln!(
                 "skipping replace_in_place_refuses_a_directory_junction_root: \
                  cannot create a Windows junction in this environment"

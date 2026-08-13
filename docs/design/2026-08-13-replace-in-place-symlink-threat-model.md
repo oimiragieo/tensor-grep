@@ -62,6 +62,13 @@ closed on `Err(stat)` AND on `file_type().is_symlink()`:
   and rewrite their whole target tree (the widest blast radius in this surface). Named here
   and in the code comment; deliberately **unpinned** (the swap-gate pin characterizes the
   file-leaf window only) and owned by `RUST-REPLACE-TOCTOU`.
+- **does NOT cover hardlinks**: `replace_in_place` on a hardlink path still rewrites the shared
+  inode. In-class for the §2 CVEs; no consumer has asked for refusal, and detection would need
+  link-count/identity checks. Noted here so the "does NOT cover" list is not read as exhaustive.
+- **does NOT cover non-surrogate reparse tags**: the guard's predicate is
+  `is_reparse_point && (tag & 0x2000_0000 != 0)` (name-surrogate tags — symlinks and
+  junctions); WCI/WOF-class reparse points pass the guard. Exotic for this surface, but the
+  boundary is the name-surrogate predicate, not "all reparse points".
 - **does NOT claim** the race is closed: `symlink_metadata` then `open` remains racy (A38).
   The shipped guard converts a 100%-reliable static **leaf**-symlink overwrite into a race an
   attacker must win. The residual races — leaf swap, walk-time child swap, root swap, and the
