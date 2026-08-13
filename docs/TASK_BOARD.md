@@ -97,21 +97,22 @@ v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #99
 **CEO packet:** `docs/audits/2026-08-11-ceo-backlog-update.md` (live, 2026-08-11); 2026-08-06 PM and
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
-**Unfinished (buildable queue):** **1 READY row — RUST-REPLACE-SYMLINK** (design-council pass
+**Unfinished (buildable queue):** **0 READY rows** — RUST-REPLACE-SYMLINK is IN_FLIGHT
+(PR #1010, design-council pass
 first; flipped 2026-08-12 on CVE-class evidence carried in the row). The rest of the forward work
 is the world-class roadmap spine per `docs/plans/2026-08-09-worldclass-roadmap.md` — F6-scoped,
 with the 2026-08-12 correction that F6 is MIXED (Python/schema/signing slices buildable-first;
 rust/e2e halves CI/cloud). Blocked/CEO/demand rows: 6 BLOCKED (#89 #90 F5 F6 F8 MCP-SURFACE),
-5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
-MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). Board READY is not a build license when BACKLOG reconcile
+5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). Board READY is not a build license when BACKLOG reconcile
 says BLOCKED (A71/A76).
 
 **Hard stops:** Task 2A not merge-ready (#966 RED by design); no #169 spend; no silent CEO-gate flips;
 MCP wire-contract fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-**Unfinished 17:** 1 READY (RUST-REPLACE-SYMLINK, design-council-first), 6 BLOCKED (#89 #90 F5 F6
-F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 5 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
-MCP-LEAN-DEFAULT CONTINUOUS-REFRESH). 0 IN_FLIGHT (#966 is a parked RED scaffold — advanced
+**Unfinished 18:** 0 READY, 1 IN_FLIGHT (RUST-REPLACE-SYMLINK, PR #1010), 6 BLOCKED (#89 #90 F5 F6
+F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). (#966 is a parked RED scaffold - advanced
 2026-08-12 to MERGEABLE with a live evidence chain, still not an implementation in flight). Board
 READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 

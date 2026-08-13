@@ -76,11 +76,18 @@ consequence — leaf AND root. **Outcome: (a) REFUSE.**
 
 Consequences folded into W3B:
 
-- A **Windows junction test** pins the behavior: `replace_in_place` on a junction (root or a
-  junction encountered as a directory child) returns `Err` and the target directory's files are
-  untouched. Note a junction can only target a **directory** (`mklink /J` refuses file targets),
-  so there is no junction-as-file-leaf case to test; file leaves are symlink-file territory
-  (already covered by the main refuse test). The fixture asserts the junction BITES first
+- A **Windows junction test** pins the behavior: `replace_in_place` on a junction ROOT returns
+  `Err` and the target directory's files are untouched. A junction encountered as a directory
+  CHILD is **skipped, not refused**: the guard only ever stats the root, and children are
+  filtered by walkdir's `follow_links(false)` plus `entry.file_type().is_file()` (a junction
+  child reports `is_symlink() == true` on the pinned toolchain — std
+  `sys/fs/windows.rs` `is_symlink = is_reparse_point && (tag & 0x2000_0000 != 0)` with
+  `IO_REPARSE_TAG_MOUNT_POINT = 0xA000_0003` — so it is not descended and not rewritten; the
+  directory route returns `Ok`). The skip sites are `backend_cpu.rs` `:700` / `:726`-class
+  `is_file()` filters. Note a junction can only target a **directory** (`mklink /J` refuses
+  file targets), so there is no junction-as-file-leaf case to test; file leaves are
+  symlink-file territory (already covered by the main refuse test). The fixture asserts the
+  junction BITES first
   (`symlink_metadata(...).file_type().is_symlink()` is true before the call — A88 fixture
   discipline), with a skip-with-reason (`CANNOT_MEASURE`) if the runner cannot create
   junctions.
