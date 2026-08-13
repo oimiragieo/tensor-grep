@@ -52,10 +52,14 @@ closed on `Err(stat)` AND on `file_type().is_symlink()`:
   `replace_in_place`).
 - **covers** a symlink OR junction ROOT before `is_dir()` can hand it to `WalkDir` — per the
   probe in §5, junctions report `is_symlink() == true` on the pinned toolchain.
+- **does NOT cover** a symlink in a **non-leaf path component**: `symlink_metadata` lstats
+  the leaf only, so an attacker-controlled ancestor directory link still redirects
+  statically, with no race. Closing that needs component-wise `openat(O_NOFOLLOW)` /
+  handle-relative opens — filed under `RUST-REPLACE-TOCTOU`.
 - **does NOT claim** the race is closed: `symlink_metadata` then `open` remains racy (A38).
-  The shipped guard converts a 100%-reliable static-symlink overwrite into a race an attacker
-  must win. The residual race — and any walk-time reparse-point descent that survives the
-  probe-backed guard — is owned by `RUST-REPLACE-TOCTOU` (§4).
+  The shipped guard converts a 100%-reliable static **leaf**-symlink overwrite into a race an
+  attacker must win. The residual race — and any walk-time reparse-point descent that survives
+  the probe-backed guard — is owned by `RUST-REPLACE-TOCTOU` (§4).
 
 ## 4. GATE-W3A-1 resolution — (a) REFUSE
 

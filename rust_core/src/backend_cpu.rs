@@ -509,7 +509,11 @@ impl CpuBackend {
         // RESIDUAL TOCTOU, deliberately not claimed as closed: the path can be swapped
         // between this stat and the open below. Closing it needs O_NOFOLLOW (POSIX) plus
         // FILE_FLAG_OPEN_REPARSE_POINT (Windows) at the open site. This guard turns a
-        // reliable static-symlink overwrite into a race the attacker must win; see
+        // reliable static LEAF-symlink overwrite into a race the attacker must win; it does
+        // NOT cover a symlink in a NON-LEAF path component (symlink_metadata lstats the leaf
+        // only -- an attacker-controlled ancestor directory link still redirects statically,
+        // with no race; component-wise openat(O_NOFOLLOW) / handle-relative opens are filed
+        // under RUST-REPLACE-TOCTOU). See
         // docs/design/2026-08-13-replace-in-place-symlink-threat-model.md.
         //
         // Directory mode is unaffected: walk_directory_entries uses WalkDir's default
@@ -1615,11 +1619,12 @@ mod tests {
 
     #[test]
     fn test_replace_in_place_on_a_missing_path_still_errors_with_the_path_named() {
-        // Compatibility pin for the fail-closed guard: a nonexistent path errored BEFORE the
-        // guard (via the is_file() branch) and errors AFTER it (via symlink_metadata). The
-        // caller-visible contract that must survive is "Err, naming the path" -- not which of
-        // the two produced it. Pinning the contract rather than the message keeps this from
-        // becoming a change-detector test.
+        // Contract-change pin, not a compatibility pin (opus gate r3 F1): a nonexistent path
+        // was a SILENT Ok(()) no-op BEFORE the guard (the old pin test proved it) and is now
+        // Err via the fail-closed symlink_metadata. The contract this PR deliberately changes
+        // and must hold going forward is "Err, naming the path" -- not which producer made it.
+        // Pinning the contract rather than the message keeps this from becoming a
+        // change-detector test.
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("does-not-exist.txt");
 
