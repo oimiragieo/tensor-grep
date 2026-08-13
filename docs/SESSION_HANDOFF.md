@@ -33,6 +33,13 @@ Canonical status index version: 2026-08-12.1
 - Skill-library evolution waves: #1001 (audit of all skills: 21 stale stamps + 7 tier contradictions
   fixed; new release-drift-check skill; A94-A96) and #1002 (coverage-gap analysis; new
   worldclass-roadmap skill; five existing skills extended). All post-merge verified (A29).
+- Session-retention campaign (#1005, merged `5148664`, no release): independent 35/35 skill
+  accuracy audit (7 CLEAN / 28 DRIFT_FOUND / 0 CANNOT_VERIFY); every HIGH/MED substantive drift
+  repaired with file:line-verified edits; MaxSim RETIRED + TG_FIND_DENSE_WEIGHT adaptive-5.0 flip
+  recorded; never-committed 2026-08-07 Session Lessons + CI Cost Discipline sections landed
+  (reconciliation ERRATUM-2); `tg-skill-audit.js` artifact-bound + exact-coverage hardened;
+  `tg-audit-fix-loop.js` phases wired; new `test_skill_rules_registry.py` governance gate. Zero new
+  skills (fold-over-fragmentation). Receipt: `docs/audits/2026-08-12-session-retention-audit.md`.
 - CEO packet: `docs/audits/2026-08-11-ceo-backlog-update.md` (live).
 - In-PR: #966 (Task 2A parked, RED by design). No release in flight.
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
