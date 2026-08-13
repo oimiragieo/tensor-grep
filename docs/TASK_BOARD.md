@@ -120,15 +120,16 @@ post-**v1.110.14**, PyPI-verified 2026-08-11 (`tensor-grep 1.110.14`).
 
 post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-11)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-13)
 
 | PR | Title | Type | State |
 |---|---|---|---|
 | #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design; not Phase 0+1) |
+| #1010 | `fix: replace_in_place refuses to follow a symlinked target` | fix | DRAFT → OPEN when CI green (RUST-REPLACE-SYMLINK implementation; RED proven, A3 opus gate 13 rounds SHIP, codex AUDIT-clear pending final re-check) |
 
 *(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
-(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. #966 is the only open
-PR; do not read it as Task 2A GREEN.)*
+(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs: #966
+(parked Task 2A RED scaffold — do not read it as Task 2A GREEN) and #1010 (RUST-REPLACE-SYMLINK).)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
