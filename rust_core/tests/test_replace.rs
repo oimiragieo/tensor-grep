@@ -521,6 +521,24 @@ fn replace_in_place_refuses_a_directory_symlink_root() {
         "needle here",
         "directory mode followed the root link and rewrote the target"
     );
+
+    // Trailing-separator arm (opus gate r4 F1, POSIX lstat semantics): lstat("<link>/")
+    // resolves THROUGH the final symlink, so an unstripped guard would pass and WalkDir
+    // would rewrite the target. The guard must strip trailing separators before the stat.
+    #[cfg(unix)]
+    {
+        let trailing = format!("{}/", link.display());
+        let result = backend.replace_in_place("needle", "found", &trailing, false, true);
+        assert!(
+            result.is_err(),
+            "a trailing-separator path must still refuse a symlink root, got Ok"
+        );
+        assert_eq!(
+            std::fs::read_to_string(target_dir.join("inside.txt")).unwrap(),
+            "needle here",
+            "the trailing-separator path followed the root link and rewrote the target"
+        );
+    }
 }
 
 #[test]

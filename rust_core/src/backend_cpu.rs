@@ -528,6 +528,20 @@ impl CpuBackend {
         // The test fault is injected as an Err INTO the same map_err path below (never a
         // bail! before the stat), so the fail-closed test observes the real wiring: a guard
         // rewritten fail-open (`.ok()` + if-let) reds that test.
+        //
+        // The stat uses a trailing-separator-stripped path: on POSIX, lstat("<dirlink>/")
+        // resolves THROUGH the final symlink, so a raw caller string with a trailing slash
+        // would pass an is_symlink() check on the unstripped path and hand the link root to
+        // WalkDir (opus gate r4 F1, measured). components() normalization strips trailing
+        // separators without resolving anything; an empty result falls back to the raw path.
+        let guard_path = {
+            let stripped: std::path::PathBuf = path_obj.components().collect();
+            if stripped.as_os_str().is_empty() {
+                path_obj.to_path_buf()
+            } else {
+                stripped
+            }
+        };
         let meta = {
             #[cfg(test)]
             let stat_result = if self
@@ -538,10 +552,10 @@ impl CpuBackend {
             {
                 Err(std::io::Error::other("injected test fault"))
             } else {
-                std::fs::symlink_metadata(path_obj)
+                std::fs::symlink_metadata(&guard_path)
             };
             #[cfg(not(test))]
-            let stat_result = std::fs::symlink_metadata(path_obj);
+            let stat_result = std::fs::symlink_metadata(&guard_path);
             stat_result.map_err(|err| {
                 anyhow::anyhow!(
                     "replace_in_place: cannot determine whether {} is a symlink: {}",
