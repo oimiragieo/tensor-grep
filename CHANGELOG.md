@@ -1,6 +1,178 @@
 # CHANGELOG
 
 
+## v1.110.15 (2026-08-13)
+
+### Bug Fixes
+
+- Bound and retry the flaky public-version-powershell readiness probe (A101)
+  ([#1009](https://github.com/oimiragieo/tensor-grep/pull/1009),
+  [`07fcf99`](https://github.com/oimiragieo/tensor-grep/commit/07fcf9988d051bf0186b059adbc6e0e46b723441))
+
+* fix: bound and retry the flaky public-version-powershell readiness probe (A101)
+
+The windows-agent-readiness public-version-powershell probe flaked 3x in 3 runs: 30s timeout while
+  the pwsh -NoProfile sibling passed in <1s. The third sighting of the same flake is a
+  structural-fix signal, not a rerun signal (A101).
+
+- Check gains opt-in retry_on_timeout (default 0): run_check retries a TimeoutExpired ONLY, bounded,
+  never a non-zero exit or validator failure. - run_check result dicts gain "attempts" (0 on the
+  _command_available early return) so a retried pass stays distinguishable. - The four shell version
+  probes go timeout_s=30 -> 90 with retry_on_timeout=1 (mechanism-independent fix).
+
+TDD receipts: RED arm pinned pre-fix on all four new tests (TypeError: unexpected keyword
+  'retry_on_timeout'; KeyError: 'attempts' x2; AssertionError: public-version-powershell
+  timeout_s=30, expected >= 90); GREEN 48/48; mutation control (unconditional retry) reds the
+  no-retry control with assert 2 == 1. ruff check + ruff format --preview clean.
+
+* fix: clamp retry_on_timeout at a structural ceiling (codex W2A-01)
+
+Codex audit finding W2A-01 [MAJOR]: the A101 retry was bounded only by the caller-controlled
+  integer, so an oversized retry_on_timeout multiplied the probe timeout into an effectively
+  infinite readiness hang.
+
+- _MAX_TIMEOUT_RETRIES = 3; run_check clamps max_attempts at 1 + min(...). - TDD: RED AttributeError
+  (constant missing) on the oversized-clamp test; negative-retry characterization pin passes pre-fix
+  (max(0, ...) already safe); GREEN 50/50 after the clamp.
+
+### Documentation
+
+- 2026-08-12 backlog-closeout campaign (plan rev6, Task2A resume receipts, reconciliation, research
+  receipts; board 2026-08-12.1) ([#1004](https://github.com/oimiragieo/tensor-grep/pull/1004),
+  [`568065a`](https://github.com/oimiragieo/tensor-grep/commit/568065a92a3f3064bf384019f8e7b7e903f20f6f))
+
+* docs: 2026-08-12 backlog-closeout campaign — plan rev6 (codex APPROVE), Task2A resume receipts,
+  stale-branch reconciliation, research receipts; board 2026-08-12.1 (RUST-REPLACE-SYMLINK -> READY)
+  + A79 pin retargets
+
+* docs: append Sol round-1 audit results (FIX-FIRST F1-F6; F1/F3/F4/F6 repaired, F2/F5 remain RED)
+
+- Ceo update to v1.110.14 + reconcile board (2026-08-11)
+  ([#1003](https://github.com/oimiragieo/tensor-grep/pull/1003),
+  [`b6dc0a6`](https://github.com/oimiragieo/tensor-grep/commit/b6dc0a61d462b409a8396ef2ed2cd0bea5a14a41))
+
+Dumbed-down CEO packet (docs/audits/2026-08-11-ceo-backlog-update.md): what worked (8 code fixes
+  across v1.110.11-.14 + skill evolution waves), ALL 28 backlog rows in plain English (17 unfinished
+  = 6 BLOCKED / 5 CEO_GATED / 6 DEMAND_GATED, unchanged; 7 SHIPPED + 4 RETIRED), research-needed
+  table, Task 2A status, and 8 lessons since the last CEO update (A83-A96 + skill waves). No spend
+  requested; no CEO question.
+
+Reconciled TASK_BOARD + SESSION_HANDOFF to v1.110.14 / 2026-08-11.1 (stale v1.110.12, #997-in-flight
+  rows corrected; #997/#1000 merged). Retargeted the governance pin (A79) pointing the live CEO
+  audit at the new packet; all 72 board/skill gates green; ruff format-clean.
+
+- Receipt that H3/H6 audit fixes are already on origin/main
+  ([#1008](https://github.com/oimiragieo/tensor-grep/pull/1008),
+  [`c04fccf`](https://github.com/oimiragieo/tensor-grep/commit/c04fccf44ee7f3efd2294eadf00a8578b53bbe06))
+
+The 2026-08-13 campaign brief ranked two commits on audit/h6-cudf-backend as stranded security
+  fixes. Both are shipped:
+
+- d9e477b (H3, CWE-88 batch-shim) is patch-id equivalent upstream (git cherry prints "-");
+  python_sidecar.rs command_for_executable plus its never_wraps_batch_shim_in_cmd /
+  plain_program_untouched tests. - f1e888c + 928e9b2 (H6, CuDFBackend BackendExecutionError
+  normalization) are patch-distinct but the content is on main at cudf_backend.py /
+  test_cudf_backend.py ("H6 audit" docstring).
+
+git cherry "+" means patch-distinct, not absent. Corroborates the independent 2026-08-12
+  reconciliation audit (one day earlier).
+
+Also records the proposed-only branch/worktree cleanup census: 145 branches, 43 worktrees, 4 dirty
+  worktrees; per-branch ancestor checks with exit codes discriminated; nothing deleted.
+
+- Retain retention-campaign lessons as A97-A102 across AGENTS, skills, handoff, backlog
+  ([#1007](https://github.com/oimiragieo/tensor-grep/pull/1007),
+  [`9738134`](https://github.com/oimiragieo/tensor-grep/commit/9738134c7772bd30e4cd51fba9aa7ebe2efcedfa))
+
+The 2026-08-12/13 session-retention campaign fell into six failure modes of its own; each is
+  promoted to a durable A-law and folded into the relevant skills.
+
+- AGENTS.md: add A97-A102 - A97 interrupted/aborted edit may have ALREADY APPLIED; read back before
+  retrying - A98 a spot-check census of N files is a claim about the ONE file checked - A99 a
+  verifier must be bound to the artifact it audits (root+SHA+manifest, exact coverage) - A100
+  advertised capability must be executed; metadata-only is decoration - A101 third recurrence of a
+  flake = structural-fix signal, not rerun signal - A102 input-brief facts are hypotheses; the
+  builder verifies before writing - Skills folds: docs-and-writing (A97/A98), validation-and-qa
+  (A99/A100), change-control (A102/A98), debugging-playbook (A101). - SESSION_HANDOFF.md +
+  BACKLOG.md: retention-lessons-retained bullets.
+
+The fresh-context adversarial gate that surfaced these is the A18/A29 discipline (independent gate +
+  verify-on-artifact) re-confirmed: author self-verification reported zero regressions; the
+  independent gate found 8.
+
+Docs-only; no release; no product code touched. Verification: 99 governance tests pass; ruff format
+  --check --preview passes on the LF-normalized (committed) form of every changed file.
+
+- Session retention - 35/35 skill accuracy audit, never-committed lesson capture, workflow hardening
+  ([#1005](https://github.com/oimiragieo/tensor-grep/pull/1005),
+  [`5148664`](https://github.com/oimiragieo/tensor-grep/commit/5148664da4cf72a8adf31ebc5deec940b811aca1))
+
+2026-08-12 retention campaign (audit base 568065a, v1.110.14):
+
+- Audited all 35 tracked skills independently (7 waves, artifact-specific receipts): 7 CLEAN / 28
+  DRIFT_FOUND / 0 CANNOT_VERIFY. Ledger: docs/audits/2026-08-12-session-retention-audit.md. No new
+  skills justified (every seat returned trigger-collision NO; fold-over-fragmentation per the Exa
+  "coherent unit" guidance). - Repaired every HIGH/MED substantive finding with file:line-verified
+  edits: MaxSim RETIRED (was HELD/re-run), TG_FIND_DENSE_WEIGHT adaptive-5.0 flip shipped (was
+  default-OFF), Battle 29/28/20/23 statuses, junction-rule mechanism, worktree-store overclaim,
+  installation_health enum, exit-2 wording, MCP 5th registration site, and ~20 more. Dated receipts
+  SUPERSEDED/annotated, never rewritten; drifted anchors converted to grep-the-symbol form with
+  was->now receipts, never re-stamped bare. - Landed the never-committed 2026-08-07 Session Lessons
+  + CI Cost Discipline sections (pickaxe-verified absent from every ref) into AGENTS.md and
+  SESSION_HANDOFF.md with provenance; reconciliation carries ERRATUM-2 (the one-file spot-check that
+  misclassified them as stale). - Fixed the handoff self-contradiction (#89/#90 BLOCKED vs READY)
+  and the AGENTS.md TG_LATE_RERANK / release-intent / CALLER_SCAN ceilings. - Hardened
+  .claude/workflows/tg-skill-audit.js (artifact binding: root/SHA/ blob manifest; exact coverage
+  equality; evidence floor; CANNOT_VERIFY) and wired tg-audit-fix-loop.js's five advertised phases
+  (Seam/RED/GREEN/Gate/ Verify) with a FIX-FIRST-unified verdict vocabulary. - Added
+  tests/unit/test_skill_rules_registry.py (schema + regex-compile + dangling-key governance for
+  .claude/skill_rules.json).
+
+Verification: 117 governance tests passed in the real venv (skill index sync, library drift, rules
+  registry, backlog tracker truth, public docs governance, stamp/release assets, task-board
+  freshness); ruff check + ruff format --preview + mypy clean on the new test; both workflows pass a
+  wrapped node --check. Independent adversarial gate: SHIP-WITH-NITS after F1-F8 repairs; re-gate
+  verified all eight PASS.
+
+- Session-retention closeout - merge receipts (#1005 / 5148664), handoff + backlog campaign notes
+  ([#1006](https://github.com/oimiragieo/tensor-grep/pull/1006),
+  [`19624c1`](https://github.com/oimiragieo/tensor-grep/commit/19624c17e71cf3dc109486dacb44fc22ec914e2f))
+
+- Skill coverage wave + tensor-grep-worldclass-roadmap skill (2026-08-11)
+  ([#1002](https://github.com/oimiragieo/tensor-grep/pull/1002),
+  [`17ded5a`](https://github.com/oimiragieo/tensor-grep/commit/17ded5ae0a60f81cd973c385b0f651c6d4b08dee))
+
+Post-merge coverage audit (subagent, fresh context) mapped every A83-A96 / M16-M17 / doctor-3 /
+  world-class item to skill coverage; 6 gaps found and closed: A87 (static SHIP provisional until
+  first CI compile), A89 (real-artifact parity arms), A92 (escrowed verify-edit evidence), A96
+  (non-ASCII byte-exact edit failures), M16 (Rust scan rule preservation) folded into
+  codex-gated-audit-loop / validation-and-qa / enterprise-review-bundle / docs-and-writing /
+  research-methodology; A93/A95 partials closed.
+
+New skill: tensor-grep-worldclass-roadmap (S1-S7 edit-control-plane spine, Exa-grounded: Occasio
+  OIDC attestation, AET evidence-freshness, Anthropic harness papers). Registered: index 33->34 in
+  AGENTS.md + CLAUDE.md (echo 32->33, folders 34->35), skill_rules.json 22 entries, tg-skill-audit
+  workflow 35/35 folders. SESSION_HANDOFF + BACKLOG receipts. Governance gates 16/16 green.
+
+- Skill-library audit + release-drift-check skill (2026-08-11)
+  ([#1001](https://github.com/oimiragieo/tensor-grep/pull/1001),
+  [`261f5e3`](https://github.com/oimiragieo/tensor-grep/commit/261f5e367024bb1dc444af73bef6fc6dea4b34b9))
+
+* docs: skill-library audit + release-drift-check skill (2026-08-11)
+
+Full 3-wave parallel-agent audit of all 33 in-repo skills against the v1.110.14 factsheet: 21 stale
+  version stamps, 7 language-tier contradictions, doctor schema-3 gaps, and 1 dangling prose
+  fragment corrected. Append-only dated SUPERSEDED blocks for retired tier claims.
+
+New tensor-grep-release-drift-check skill: mechanical post-release governance sweep (stamps vs
+  current tag, derived counts, known-state facts) — a maintenance command, deliberately not a pytest
+  (drift would red every PR). Registered in AGENTS.md/CLAUDE.md index (33 skills) and
+  skill_rules.json. A94-A96 laws captured; SESSION_HANDOFF + BACKLOG campaign note updated.
+  Governance gates green (16 tests).
+
+* docs: extend tg-skill-audit clusters to cover all 34 skill folders
+
+
 ## v1.110.14 (2026-08-11)
 
 ### Bug Fixes
