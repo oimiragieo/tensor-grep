@@ -102,8 +102,9 @@ and migration planning -- out of scope here.
   now refused at the leaf AND the root (symlinks and Windows junctions on the pinned toolchain).
   The residual race stays open under `RUST-REPLACE-TOCTOU`.
 
-Neither follow-up was silently absorbed into "CPU-BACKEND done" -- both remain open rows,
-separate from this task's closure, per `docs/BACKLOG.md`.
+Neither follow-up was silently absorbed into "CPU-BACKEND done" at the time; both were
+subsequently closed by `RUST-REPLACE-SYMLINK` (see the RESOLVED note above), which supersedes
+this paragraph.
 
 ## Gates
 

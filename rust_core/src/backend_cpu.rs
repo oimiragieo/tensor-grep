@@ -508,7 +508,9 @@ impl CpuBackend {
         //
         // RESIDUAL TOCTOU, deliberately not claimed as closed: the path can be swapped
         // between this stat and the open below. Closing it needs O_NOFOLLOW (POSIX) plus
-        // FILE_FLAG_OPEN_REPARSE_POINT (Windows) at the open site. This guard turns a
+        // FILE_FLAG_OPEN_REPARSE_POINT (Windows) at the open site -- machinery already
+        // implemented in rust_core/src/safe_write.rs (see its OpenOptions setup). This guard
+        // turns a
         // reliable static LEAF-symlink overwrite into a race the attacker must win; it does
         // NOT cover a symlink in a NON-LEAF path component (symlink_metadata lstats the leaf
         // only -- an attacker-controlled ancestor directory link still redirects statically,
