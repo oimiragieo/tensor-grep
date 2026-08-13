@@ -288,6 +288,66 @@ struct ReplaceFaultInjection {
     force_literal_child_failure: bool,
     /// Force the next regex-mode child-file replace/write to fail.
     force_regex_child_failure: bool,
+    /// Force the symlink_metadata guard's stat call to fail, without needing a real
+    /// unreadable path. Proves the guard fails CLOSED rather than falling through.
+    #[allow(dead_code)]
+    // consumed by the W3B phase-2 test arms; this allow is removed in that commit
+    force_symlink_metadata_failure: bool,
+
+    /// Event gate for the residual-TOCTOU characterization pin. The writer signals on
+    /// `reached_guard` once it is PAST the no-follow guard and BEFORE the writer opens the
+    /// path, then blocks on `resume` until the second actor acknowledges its swap. Both are
+    /// capacity-1 channels: a `send` never blocks, a `recv` is always `recv_timeout`-bounded,
+    /// so this is a handshake, not a sleep and not a hang vector.
+    #[allow(dead_code)]
+    // consumed by the W3B phase-2 pin arm; this allow is removed in that commit
+    swap_gate: Option<SwapGate>,
+}
+
+#[allow(dead_code)] // consumed by the W3B phase-2 pin arm; this allow is removed in that commit
+#[cfg(test)]
+struct SwapGate {
+    reached_guard: std::sync::mpsc::SyncSender<()>,
+    resume: std::sync::mpsc::Receiver<()>,
+}
+
+#[allow(dead_code)] // consumed by the W3B phase-2 pin arm; this allow is removed in that commit
+#[cfg(test)]
+const SWAP_GATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Replace the leaf `path` with a symlink pointing at `attacker_target`, exactly as an
+/// attacker who wins the TOCTOU race would. Returns false when this environment cannot
+/// create a symlink at all -- CANNOT_MEASURE, not a failed swap (A61).
+#[allow(dead_code)] // consumed by the W3B phase-2 pin arm; this allow is removed in that commit
+#[cfg(test)]
+fn swap_leaf_to_symlink_for_test(path: &Path, attacker_target: &Path) -> bool {
+    if let Err(err) = std::fs::remove_file(path) {
+        eprintln!("skipping the residual-TOCTOU pin: cannot unlink the leaf: {err}");
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        match std::os::unix::fs::symlink(attacker_target, path) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!("skipping the residual-TOCTOU pin: symlink failed: {err}");
+                false
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        match std::os::windows::fs::symlink_file(attacker_target, path) {
+            Ok(()) => true,
+            Err(err) => {
+                eprintln!(
+                    "skipping the residual-TOCTOU pin: cannot create a Windows symlink \
+                     in this environment: {err}"
+                );
+                false
+            }
+        }
+    }
 }
 
 pub struct CpuBackend {
