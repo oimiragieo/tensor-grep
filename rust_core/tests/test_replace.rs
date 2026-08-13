@@ -312,9 +312,10 @@ fn test_rust_replace_in_place_direct_file_nonexistent_path_errors_with_the_path_
 }
 
 // This is an arm that DOES already propagate via `?` today, deterministically and without
-// relying on OS permission bits: an invalid regex pattern fails `RegexBuilder::build()?` before
-// `replace_in_place` even inspects the path. It runs against a real existing file to isolate the
-// failure to the regex build step rather than the path-existence branch characterized above.
+// relying on OS permission bits: an invalid regex pattern fails `RegexBuilder::build()?` after
+// the symlink guard's stat (which passes for a real file) but before the regex is built. It runs
+// against a real existing file to isolate the failure to the regex build step rather than the
+// path-existence branch characterized above.
 #[test]
 fn test_rust_replace_in_place_direct_file_invalid_regex_returns_err() {
     let dir = tempdir().unwrap();
@@ -537,10 +538,10 @@ fn replace_in_place_refuses_a_directory_symlink_root() {
         "directory mode followed the root link and rewrote the target"
     );
 
-    // Trailing-separator arm (opus gate r4 F1, POSIX lstat semantics): lstat("<link>/")
-    // resolves THROUGH the final symlink, so an unstripped guard would pass and WalkDir
-    // would rewrite the target. The guard must strip trailing separators before the stat.
-    #[cfg(unix)]
+    // Trailing-separator arm (opus gate r4 F1): a trailing separator on the raw path must not
+    // defeat the root refusal (POSIX lstat("<link>/") resolves through the final symlink;
+    // Windows normalizes trailing separators in attribute queries but the arm is harmless and
+    // keeps the guard contract pinned on both platforms).
     {
         let trailing = format!("{}/", link.display());
         let result = backend.replace_in_place("needle", "found", &trailing, false, true);

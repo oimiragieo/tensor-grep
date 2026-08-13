@@ -615,7 +615,8 @@ impl CpuBackend {
                     "CANNOT_MEASURE: swap-gate signal channel closed before the writer arrived",
                 );
                 gate.resume.recv_timeout(SWAP_GATE_TIMEOUT).expect(
-                    "CANNOT_MEASURE: no swap acknowledgment within 2s; the handshake deadlocked",
+                    "CANNOT_MEASURE: no swap acknowledgment within 2s (timed out, or the writer \
+                     side of the handshake disconnected)",
                 );
             }
         }
