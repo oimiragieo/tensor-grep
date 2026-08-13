@@ -47,6 +47,10 @@ class Check(NamedTuple):
     validator: Validator | None = None
     required: bool = True
     skip_error_patterns: tuple[str, ...] = ()
+    # A101: opt-in bounded retry for a TIMED-OUT probe only. Never retries a non-zero
+    # exit or a validator failure -- a wrong version must fail on the first attempt.
+    # Default 0 so a blanket retry can never mask a real regression.
+    retry_on_timeout: int = 0
 
 
 _PYTHON_SUBPROCESS_TG_VERSION_PROBE = (
@@ -773,19 +777,26 @@ def build_check_plan(
             if IS_WINDOWS
             else ["tg", "--version"]
         )
+        # A101 (2026-08-13): public-version-powershell flaked 3x in 3 windows-agent-readiness
+        # runs at timeout_s=30 while the pwsh -NoProfile sibling passed in <1s -- Windows
+        # PowerShell 5.1 cold start on a fresh runner is the leading hypothesis, but the fix
+        # is deliberately mechanism-independent: raise the budget AND allow one bounded
+        # timeout retry. The third sighting is a structural-fix signal, not a rerun signal.
         checks.extend([
             Check(
                 name="public-version-powershell",
                 command=powershell_probe,
                 description="Verify profiled shell public tg version.",
-                timeout_s=30,
+                timeout_s=90,
+                retry_on_timeout=1,
                 validator=validate_version_output,
             ),
             Check(
                 name="public-version-cmd",
                 command=["cmd", "/c", "tg --version"],
                 description="Verify cmd.exe public tg version.",
-                timeout_s=30,
+                timeout_s=90,
+                retry_on_timeout=1,
                 validator=validate_version_output,
                 required=False,
             ),
@@ -793,7 +804,8 @@ def build_check_plan(
                 name="public-version-pwsh-noprofile",
                 command=["pwsh", "-NoProfile", "-Command", "tg --version"],
                 description="Verify unprofiled PowerShell public tg version.",
-                timeout_s=30,
+                timeout_s=90,
+                retry_on_timeout=1,
                 validator=validate_version_output,
                 required=False,
             ),
@@ -801,7 +813,8 @@ def build_check_plan(
                 name="public-version-git-bash",
                 command=["bash", "-lc", "command -v tg && tg --version"],
                 description="Verify Git Bash/no-extension shim public tg version.",
-                timeout_s=30,
+                timeout_s=90,
+                retry_on_timeout=1,
                 validator=validate_version_output,
                 required=False,
                 skip_error_patterns=(
@@ -1114,26 +1127,44 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
             "duration_s": round(time.monotonic() - started, 3),
             "command": check.command,
             "message": message,
+            "attempts": 0,
         }
 
     stdout = ""
     stderr = ""
     returncode = 0
+    attempts = 0
+    max_attempts = 1 + max(0, check.retry_on_timeout)
     try:
         if check.command:
             env = dict(os.environ)
             env.setdefault("PYTHONUTF8", "1")
-            completed = subprocess.run(
-                check.command,
-                cwd=repo_root,
-                env=env,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                timeout=check.timeout_s,
-                check=False,
-            )
+            last_timeout: subprocess.TimeoutExpired | None = None
+            completed: subprocess.CompletedProcess[str] | None = None
+            for _ in range(max_attempts):
+                attempts += 1
+                try:
+                    completed = subprocess.run(
+                        check.command,
+                        cwd=repo_root,
+                        env=env,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        capture_output=True,
+                        timeout=check.timeout_s,
+                        check=False,
+                    )
+                except subprocess.TimeoutExpired as exc:
+                    # A101: retry a TIMEOUT only. A non-zero exit or a validator failure
+                    # falls through untouched below and fails on the first attempt.
+                    last_timeout = exc
+                    continue
+                last_timeout = None
+                break
+            if last_timeout is not None:
+                raise last_timeout
+            assert completed is not None  # max_attempts >= 1; all-timeout exits above
             stdout = completed.stdout
             stderr = completed.stderr
             returncode = completed.returncode
@@ -1153,6 +1184,7 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
                             "message": message,
                             "stdout_tail": _bounded_tail_lines(stdout),
                             "stderr_tail": _bounded_tail_lines(stderr),
+                            "attempts": attempts,
                         }
                 raise ReadinessError(
                     f"exit {completed.returncode}; stderr={stderr.strip() or '<empty>'}"
@@ -1180,6 +1212,7 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
         "message": message,
         "stdout_tail": _bounded_tail_lines(stdout),
         "stderr_tail": _bounded_tail_lines(stderr),
+        "attempts": attempts,
     }
 
 
