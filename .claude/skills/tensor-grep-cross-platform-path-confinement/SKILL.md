@@ -37,9 +37,11 @@ opened-identity anchors over resolve-then-act.
 symlinks (`follow_symlinks=False`) — a junctioned/symlinked ANCESTOR under root copied
 OUT-of-root content into the snapshot. The fix was parent-chain-only resolve + containment,
 preserving the leaf's RAW identity (a legitimately tracked out-of-root-pointing leaf symlink is
-stored AS a link, never refused and never followed). See `checkpoint_store.py` (`_resolve_within_root`
-at :149; the create-side parent-chain resolve) and `docs/plans/2026-08-08-backlog-completion-plan.md`
-M1 section.
+stored AS a link, never refused and never followed). See `checkpoint_store.py` (grep
+`def _resolve_parent_within_root` for the create-side parent-chain resolve; the earlier text cited
+`_resolve_within_root` `:149` here, but that is the full-leaf UNDO-side resolver — the create side
+is `_resolve_parent_within_root`, was `:167`, verified `:167` at this SHA; grep the symbol, never a
+stamp) and `docs/plans/2026-08-08-backlog-completion-plan.md` M1 section.
 
 ---
 
@@ -75,6 +77,19 @@ Two security contracts, both violated by the naive `path.resolve()`:
 2. **Handle anchoring (A48):** a leaf no-follow flag does not stop an intermediate PARENT swap.
    Create/open a stable fence, read/publish its protected index relative to the verified confined
    handle, and Event-test swaps before create, after lock, and before publish.
+
+**Honest state at this SHA (grep, don't trust this paragraph):** the shared writer
+`atomic_write_bytes` DELEGATES to `atomic_write_bytes_anchored` (`src/tensor_grep/cli/_index_lock.py`,
+grep `def atomic_write_bytes`), whose parent `dir_fd` is opened POST-publish purely for directory-entry
+fsync durability — it is an FSYNC anchor, NOT an identity-verified parent handle per A38. Receipt /
+key / manifest writes through it therefore carry the leaf `is_symlink()` precheck plus
+`O_EXCL | O_NOFOLLOW` on the temp create, but NO A38 parent-identity anchoring. The
+opened-parent-handle version (A48) is explicitly DEFERRED, not claimed:
+`docs/plans/2026-08-08-backlog-completion-plan.md` (grep `opened-parent-handle`) records it as a
+NAMED follow-up, tracked in-tree as M1-FU1 `CHECKPOINT-A48-HANDLES` (grep that token in
+`checkpoint_store.py`). The Event-gated parent-swap test stays RED-by-design until that lands —
+as of this SHA it is UNWRITTEN (`rg "A48|opened.parent" tests/` returns nothing), so "RED-by-design"
+here means "the A48 contract is unmet and has no test yet", not "an xfail exists".
 
 **Canonicalize-or-fail-closed (A53's "name enforceable primitives"):** "atomic CAS" and "trusted
 path" are goals, not Windows contracts. Name the concrete API and failure behavior; where the
@@ -139,7 +154,8 @@ Windows the alias is a **junction**, exactly the primitive of Part 1.
 **Repo receipts to cite by symbol, not line:** `checkpoint_store.py` `_resolve_within_root` + the
 create-side parent-chain resolve (M1); `lsp_server.py` `_uri_to_path` / `_valid_external_document_uri`
 / `_workspace_edit_refused` (M3 documentChanges confinement); `index.rs` `staleness_reason` /
-`canonical_root_of` / `root_servability_reason` (M17, merged on origin/main as v1.110.12; current tag v1.110.14); AGENTS.md
+`canonical_root_of` / `root_servability_reason` (M17, merged on origin/main as v1.110.12; derive the
+current tag with `git describe --tags --abbrev=0` — a stamped tag here rots on every release); AGENTS.md
 A38/A48/A53/A55/A84. Grep the symbol, never a hardcoded line number.
 
 ---

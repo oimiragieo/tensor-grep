@@ -43,10 +43,15 @@ tg ledger release REPO --claim-id "$CLAIM_ID" --json
   scope UP**: a claim recorded at `core/hooks` is visible from a `list` at the repo root, matched by a
   segment-wise `_scope_contains` check (root-relative POSIX segments), not a naive string-prefix
   compare — so `core/hooks-extra` can no longer false-match a claim scoped to `core/hooks`.
-  `ClaimRecord` gained a stored `scope` field (root-relative POSIX path) that `list`/`release` match
-  against. A `release` with `--claim-id`/`--symbol` that matches nothing now emits `unmatched_reason`
-  + a bounded `live_claims_elsewhere` list (so the caller can see the claim IS there, just not at the
-  path/symbol combination asked for) instead of a bare `released_count: 0`. A **bare-path** release
+   `ClaimRecord` gained a stored `scope` field (root-relative POSIX path), but only `list` matches
+   against it (the `_scope_contains` rollup above). `release` deliberately does NOT scope-match: it
+   matches ONLY by exact `--claim-id`, or `--symbol` restricted to the resolved agent's OWN live
+   claims — the PATH SCOPING paragraph of `release_claim`'s docstring says why (adding rollup-scope
+   matching to release would let one call silently drop an unrelated sibling agent's claim that
+   merely shares a symbol name under a broader/ancestor scope). Scope awareness entered `release`
+   only on the FAILURE path: a `release` with `--claim-id`/`--symbol` that matches nothing now emits
+   `unmatched_reason` + a bounded `live_claims_elsewhere` list (so the caller can see the claim IS
+   there, just not under the id/symbol asked for) instead of a bare `released_count: 0`. A **bare-path** release
   with neither `--claim-id` nor `--symbol` now **fails closed** ("requires --claim-id or --symbol")
   rather than silently no-op'ing.
 - **Migration note:** claim/list/release stores written before #706 (keyed by the pre-fix literal-path
@@ -61,11 +66,20 @@ tg ledger release REPO --claim-id "$CLAIM_ID" --json
   against "a normal edit-verify-commit loop doesn't need to re-claim mid-task."
 - `--agent-id` is never inferred; falls back to `TG_LEDGER_AGENT_ID` then `TG_EVIDENCE_AGENT_ID`
   (else `anonymous` via `prepare --claim`, which also stamps `coordination.claim.agent_id_hint`).
-- **Verify-before-relying on worktrees:** the canonical-store fix resolves a worktree's `.git` FILE to
-  its real common store, so sibling worktrees of one logical repo SHOULD share a claims store — but
-  dogfood-confirm this on your own setup (`tg ledger claim` in worktree A, `tg ledger list` in worktree
-  B) before depending on cross-worktree coordination for something load-bearing; don't assume it from
-  this doc alone.
+- **Worktrees are store BOUNDARIES, not shared stores (verified 2026-08-12 against
+  `ledger_store.py`):** the canonical-store fix walks up to the nearest `.git` entry via
+  `_discover_repo_root`, which only tests `(current / ".git").exists()` and returns that directory
+  — `.exists()` does not care whether `.git` is a directory (normal checkout) or a FILE (git
+  worktree/submodule), and there is ZERO gitdir/commondir resolution anywhere in `src/` (re-verify:
+  `rg -n "commondir" src/` returns nothing). A worktree's `.git` FILE is therefore a boundary
+  marker: each worktree gets its OWN claims store rooted at the worktree directory, and sibling
+  worktrees of one logical repo do NOT share a store — a claim made in worktree A is invisible to
+  `tg ledger list` in worktree B. (An earlier pass of this doc claimed the opposite — "resolves to
+  the real common store, siblings SHOULD share" — which the code never did.) Cross-worktree
+  coordination is thus NOT something the ledger gives you for free; dogfood-confirm on your own
+  setup (`tg ledger claim` in worktree A, `tg ledger list` in worktree B — expect zero overlap)
+  before depending on any cross-worktree visibility for something load-bearing; don't assume it
+  from this doc alone.
 - **External backing for "narrow the claim":** AgenticFlict-class research on AI-authored PRs measures
   merge-conflict rate rising sharply with edit footprint (~9.9% at a 2-line change vs ~30% at 25+ lines,
   ~27.67% overall for AI-authored PRs) — prefer `REPO/src` over whole-repo scope and a single-symbol

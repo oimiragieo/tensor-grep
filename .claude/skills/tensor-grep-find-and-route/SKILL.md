@@ -23,6 +23,11 @@ tg find "session daemon timeout handling" REPO/src --deadline 20 --json
 tg find "session daemon timeout handling" REPO --deadline 30 --json
 ```
 
+- **Multi-word NL examples like the above are dense-favored by default** (flip SHIPPED #191/#634,
+  first released v1.79.0; re-verified 2026-08-12 against v1.110.14): with `TG_FIND_DENSE_WEIGHT`
+  unset (or malformed/non-finite), a genuinely multi-word query gets the adaptive `5.0` weight;
+  single-token queries stay pinned at `1.0`. `TG_FIND_DENSE_WEIGHT=1.0` is the explicit BM25-only
+  (equal-weight) opt-out. See `tensor-grep-semantic-search-campaign` STATUS UPDATE 4.
 - Bounded by default (`--max-repo-files`, `--deadline`, internal chunk cap).
 - Truncation → `result_incomplete` + exit `2` (never silent partial-as-complete).
 - **Bare `tg find "query"` with no PATH does NOT hit the search fast-refuse** — `find` defaults PATH to
@@ -56,7 +61,8 @@ tg route-test REPO/src "improve session daemon timeout" --json
 ```
 
 - Emits `agreement` + per-field `agreement_details` (`file`/`symbol`/`line`).
-- Dogfood (1.91.0): `agreement=true` on tensor-grep/src (~27s alone; can exceed 60s under WSL suite load — budget 90s). **This evidence predates the #693/#250 primary-target ranking fix (v1.91.2) that it is meant to validate — re-collect the `agreement=true` proof on v1.95.0 before citing it as current confirmation of post-fix routing agreement.**
+- Dogfood (1.91.0): `agreement=true` on tensor-grep/src (~27s alone; the old "can exceed 60s under WSL suite load — budget 90s" guidance is SUPERSEDED by the default 60s deadline — see the next bullet). **This evidence predates the #693/#250 primary-target ranking fix (v1.91.2) that it is meant to validate — re-collect the `agreement=true` proof on a current version before citing it as current confirmation of post-fix routing agreement.**
+- **SUPERSEDED (2026-08-12 retention pass, verified against v1.110.14 / base `568065a`): since #672 (first released v1.81.21 — NOT v1.100.0), `route-test` defaults to a 60s wall-clock `--deadline`**, reusing `DEFAULT_AGENT_CLI_DEADLINE_SECONDS = 60.0` (`grep -n "DEFAULT_AGENT_CLI_DEADLINE_SECONDS = " src/tensor_grep/cli/agent_capsule.py` — `:34`; wired at `grep -n "agreement_basis" src/tensor_grep/cli/main.py` — deadline defaulting `:11037-11081`, partial stamping `:10982-10993`). Under defaults it therefore CANNOT exceed ~60s: when either route's build is truncated, the payload additively stamps `partial=true`, `partial_reason="deadline"`, `deadline_limit` (which side(s) truncated), and **`agreement_basis="partial"` — the tell an agent MUST check before trusting `agreement` at face value**; an agreement computed from one or two truncated sides exits 2 and must not read as a full-confidence verdict. A complete run omits all four fields (byte-identical to the pre-#672 payload). `--deadline N` overrides the default; `--no-deadline` restores unbounded running (only then can it exceed 60s).
 - Use before trusting an edit-plan primary when routes might diverge.
 - For the routine single-target case, `tg prepare` already returns a `primary_target` + `confidence` in one call and explicitly supersedes the multi-step `orient`→`search`→`agent`→`route-test`→`callers`→`evidence`→`ledger` loop (see `tensor-grep-prepare`) — reach for `tg route-test` directly when you need the explicit per-field `agreement_details` breakdown, or when reconciling separately-made `context-render`/`edit-plan` calls.
 

@@ -135,6 +135,38 @@ flag-flip** (see Phase 5).
 > is a DIFFERENT scorer from this campaign's BM25/dense/RRF stack (see
 > `code-search-and-retrieval-reference` §3) — do not conflate the two when reading a "ranking fixed"
 > claim.
+>
+> **STATUS UPDATE 4 (2026-08-12 retention pass; verified against v1.110.14, base `568065a`): the
+> `TG_FIND_DENSE_WEIGHT` claim in STATUS UPDATE 2 item (2) above — "default-OFF (`1.0` =
+> byte-identical no-op)" with the flip "a separate, still-open CEO checkpoint" — is FALSE at this
+> SHA. The flip SHIPPED (#191/#634, commit `c1d4ba4`); the CEO checkpoint is closed by it.**
+> Verified resolution rule (`grep -n "_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT"
+> src/tensor_grep/cli/main.py` — `= 5.0` at `main.py:4600`; reader `_find_dense_weight` at
+> `main.py:4613-4684`): unset / empty / malformed / non-finite env → the adaptive
+> `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (`5.0`, the ledger-swept 1:5 bm25:dense ratio) for genuinely
+> multi-word NL queries; a single whitespace-free token stays pinned at `_FIND_DENSE_WEIGHT_DEFAULT`
+> (`1.0`) regardless of the env var's state; explicit `TG_FIND_DENSE_WEIGHT=1.0` is the opt-out back
+> to the old equal-weight fusion (any other finite value, e.g. `=3.0`, is honored verbatim).
+> Evidence (`grep -n "dense-weight flip" CHANGELOG.md`): NL ndcg@10 0.3047->0.4466, zero
+> per-category regression. **Version note (verified, do not propagate the mislabel):** the
+> v1.93.4-era CHANGELOG #712 entry calls this "the v1.93.2 dense-weight flip", but
+> `git tag --contains c1d4ba4` puts the flip commit's FIRST release at **v1.79.0** (its own
+> CHANGELOG entry sits under `## v1.79.0 (2026-07-16)`) — the v1.93.2 label in that later entry is
+> a mislabel. The old item-(2) text above is kept as dated history: it was accurate for the
+> #628/#630 flip-prep era and is closed by the flip.
+>
+> **SUPERSEDED (same 2026-08-12 pass): STATUS UPDATE 2 item (1)'s MaxSim / `TG_LATE_RERANK`
+> "re-run the `tg find` gate" instruction is RETIRED — do NOT re-run.** The module docstring is the
+> authority: `src/tensor_grep/core/retrieval_late.py:4-16` (note: `core/`, not `cli/`) records
+> "RETIRED 2026-08-05 (task F10)". The post-role-aware-encoder-fix re-measurement HAPPENED and was
+> decisively negative: ndcg@10 0.068 vs plain RRF 0.305 (`docs/PAPER.md:469`), root cause model
+> capacity (the 17M-param int8 `LateOn-Code-edge` model's raw MaxSim ranking is statistically
+> indistinguishable from random on in-repo code) — NOT the encoder wiring, so "re-flipping the same
+> encoder will not change the verdict." The module is kept in place, not deleted (the
+> `core/reranker.py` wiring is too load-bearing to touch for a demand-gated feature), reachable only
+> behind the undocumented `TG_LATE_RERANK=1` env var with no `tg`-command install path. Reopen only
+> on BOTH a real `tg`-command install path AND a different encoder clearing the design doc's T8
+> golden-set thresholds — never off a partial win on either alone.
 
 ---
 

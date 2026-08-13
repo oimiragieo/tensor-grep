@@ -41,7 +41,7 @@ tg agent agent-studio/.claude/lib/routing "task" --json
 tg dogfood --root . --output /tmp/dogfood-ws.json
 ```
 
-## Latest sweep (2026-08-11, tg 1.110.14, Windows uvx)
+## Latest sweep (2026-08-11, tg 1.110.13, Windows uvx)
 
 | Category | Result | Notes |
 | --- | --- | --- |
@@ -54,6 +54,14 @@ tg dogfood --root . --output /tmp/dogfood-ws.json
 | Phase-2 `edit-ready` product | ❌ | correctly **refused** now; not implemented |
 
 Artifact: `C:\Users\Public\tg-dogfood-111013.json`.
+
+**Version annotation (2026-08-12):** this section was previously stamped "tg 1.110.14", but the
+cited artifact does NOT cover 1.110.14 — it is decisively a 1.110.13 sweep: the artifact records
+`"version": "1.110.13"` with `"when": "2026-08-11T12:26:56Z"` (BEFORE v1.110.14 was tagged,
+2026-08-11 17:32 UTC), and its sweep script `tg-dogfood-111013.js` pins `VER = '1.110.13'`. No
+1.110.14 sweep artifact exists in `C:\Users\Public` (only 111010/111012/111013). The header above
+was corrected to the version the artifact actually covers; the table rows below are unchanged
+because they match the artifact (`counts.PASS = 21`).
 
 ## Prior sweep (2026-08-05, tg 1.108.2, gotcontext-saddle)
 
@@ -70,6 +78,11 @@ Kept for trend only. Parent refuse class was still recorded as `scan_limit` in t
 | **1.110.10** | saddle+tg ✅ | — | `workspace_root_refused`; 10/10 parser-backed; prepare~6–14s |
 | **1.110.12** | saddle+tg ✅ | — | +M16 scan severity/message; +M17 index root isolation surface; CUJ 21/21 |
 | **1.110.13** | **saddle+tg ✅** | — | +A90 unknown-command fail-closed; CUJ 21/21 |
+
+Table ends at 1.110.13 ON PURPOSE: the latest receipt artifact (`tg-dogfood-111013.json`) is a
+1.110.13 sweep (see the version annotation above), and no 1.110.14 artifact exists. Do NOT add a
+1.110.14 row until a genuine 1.110.14 sweep artifact exists — a trend row without an artifact is a
+fabricated receipt.
 
 ## Sibling skills
 

@@ -137,7 +137,7 @@ has told you to ask only about money.
     status-stamp PRs retarget governance pins; gate tip bytes not archaeological RED SHAs; HIGH
     receipts ≠ Sol SHIP; AMEND_SPINE when READY∩reconcile-BLOCKED.
 
-12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
+12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min — the GATE duration, i.e. the wait for that main run itself to complete; a DIFFERENT referent from the semantic-release-job-alone figure in the drain-cron section below) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.
 14. **A concurrent agent's PR gets an INDEPENDENT gate, and the verdict goes on the PR (2026-07-26, #786).** A PR arriving from another session/worktree is not self-gated by definition, so gate it — then post the verdict as a PR comment with its evidence (what was probed, what the control arm showed). A gate that lives only in your transcript is lost work: the next session re-runs it or reaches a different conclusion, and the author cannot un-draft without waiting on you. Cost: one `gh pr comment`.
 15. **Verify the fix on the MERGED artifact, not only pre-merge (2026-07-26).** Pre-merge proves the BUG is real (control arm on the unpatched tree); it says nothing about whether the FIX behaves on `main` after a squash. Re-run the treatment arm against merged `main` — and check the guard is present *structurally* (e.g. `"_seen" in fn.__code__.co_varnames`) rather than by re-reading the diff.
@@ -145,54 +145,42 @@ has told you to ask only about money.
 
 ---
 
-## Skill library — retiring-fellow taxonomy (27 skills, `.claude/skills/`)
+## Skill library — retiring-fellow taxonomy (count DERIVED, never stamped — see derive box below)
 
 **Ground-truth rule:** verify commands/paths against repo + `tg --help`; re-read each skill's "Provenance and maintenance" when drift suspected. **No skill routes around `tensor-grep-change-control`.**
 
-| # | Skill | Load when… |
-|---|---|---|
-| **CORE** | | |
-| 1 | `tensor-grep-change-control` | Any edit, merge, release, registration change |
-| 2 | `tensor-grep-debugging-playbook` | Symptom triage — routing, bootstrap, dogfood crash |
-| 3 | `tensor-grep-failure-archaeology` | Settled battles — don't re-fight reverted fixes |
-| 4 | `tensor-grep-architecture-contract` | Front door, 4+2 registration, backend fail-closed |
-| 5 | `code-search-and-retrieval-reference` | Domain theory (BM25, IDF, agent-capsule semantics) |
-| 6 | `tensor-grep-config-and-flags` | Flags, env vars, adding a flag checklist |
-| 7 | `tensor-grep-build-and-env` | maturin, uv, Windows/WSL toolchain |
-| 8 | `tensor-grep-run-and-operate` | Running `tg`, install, upgrade, doctor |
-| 9 | `tensor-grep-diagnostics-and-tooling` | `tg --profile`, benchmarks, measure don't guess |
-| 10 | `tensor-grep-validation-and-qa` | CI gates, governance tests, dogfood harness |
-| 11 | `tensor-grep-docs-and-writing` | AGENTS.md pins, changelog, release docs |
-| 12 | `tensor-grep-release-and-positioning` | Push-race, semver, post-publish dogfood depth |
-| **ADVANCED** | | |
-| 13 | `tensor-grep-semantic-search-campaign` | **Flagship:** local hybrid semantic search / CPU moat program |
-| 14 | `tensor-grep-benchmark-and-proof-toolkit` | Speed claims, benchmark artifacts |
-| 15 | `tensor-grep-research-frontier` | SOTA gaps (GPU, LSP, semantic) |
-| 16 | `tensor-grep-research-methodology` | Hypothesis → falsifiable milestone discipline |
-| 17 | `tensor-grep-large-repo-scale-campaign` | Hang/scale-honesty: unscoped-search refusal, `--deadline` end-to-end, exit-2 partial contract |
-| 18 | `tensor-grep-enterprise-agent` | Enterprise agentic readiness gaps -- EvidenceReceipts, codemap, multi-repo workspaces |
-| 19 | `tensor-grep-workspace-dogfood` | Stress-test against a multi-project workspace (monorepo parent, many languages) |
-| 20 | `tensor-grep-prepare` | One-call edit readiness (`tg prepare`) |
-| 21 | `tensor-grep-ledger` | Advisory multi-agent claim/finding-reuse (`tg ledger`) |
-| 22 | `tensor-grep-find-and-route` | Whole-repo hybrid find + route-test (`tg find` / `tg route-test`) |
-| 23 | `tensor-grep-multi-project-search` | Scoped cross-repo search in a workspace-parent root |
-| 24 | `tensor-grep-enterprise-review-bundle` | `review-bundle create/verify` + CI-gate chain |
-| 25 | `tensor-grep-gpu` | Experimental GPU probes (devices/doctor, `--gpu-device-ids`) |
-| 26 | `tensor-grep-backlog-campaign` | This skill — the meta-orchestrator itself |
-| 27 | `tensor-grep-add-language` | **EXTEND** — the symbol-graph language-onboarding checklist (matches CLAUDE.md's `Extend:` bucket). Shipped since this table was last counted |
-| — | `tensor-grep` + `REFERENCE.md` | **Using** `tg` to navigate any repo |
+**Do NOT maintain a numbered table here — tables rot.** This file's table went stale three times
+(20→26→27 headings) and then omitted 7 on-disk skills
+(`tensor-grep-argv-normalization-and-shadowing`, `tensor-grep-codex-gated-audit-loop`,
+`tensor-grep-cross-platform-path-confinement`, `tensor-grep-hermetic-hostile-tests`,
+`tensor-grep-index-fingerprint-freshness`, `tensor-grep-release-drift-check`,
+`tensor-grep-worldclass-roadmap` — verified absent 2026-08-12). Derive the population instead:
 
-**This skill** = meta-orchestrator for generic backlog drain (skill #26 of the library it indexes, up
-from #20 as of the 2026-07-22 session-capture — 6 new registrations, #20-25 above).
-**Semantic-search flagship → #13**, not here. **Scale/hang campaign → #17**, not here.
+```bash
+ls -1d .claude/skills/tensor-grep-*/ | wc -l      # every tensor-grep-* library skill (was 26/27 in
+                                                  # older passes; derived 34 at v1.110.14, 2026-08-12)
+ls -1d .claude/skills/code-search-and-retrieval-reference   # +1: the domain-theory skill
+# the bare .claude/skills/tensor-grep/ usage skill is EXCLUDED by definition (usage docs for the
+# tool itself, not a library entry) — AGENTS.md's gated "**N skills**" sentence counts the same way
+```
 
-**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + table above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism, not this table: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only SOME of the 26 library skills. **Do not trust a number or a name list here** -- this sentence enumerated 12 skills in prose and was wrong three ways by 2026-08-02: the real count was 14, and it named `tensor-grep-large-repo-scale-campaign` as having zero rule when it had since gained one. Derive it:
+**Load-when routing:** use AGENTS.md's "Carrying the project forward -- the in-repo skill library"
+index-by-intent (grep that heading) — it carries the Change-safely / Understand / Operate / Advance /
+Extend / Orchestrate buckets and is pinned to the real folder set by
+`tests/unit/test_skill_index_sync.py`, which this file is not.
+
+**This skill** = meta-orchestrator for generic backlog drain — one entry of the library it indexes
+(the old table's row-number citations rotted with the table; derive the set above).
+**Semantic-search flagship → `tensor-grep-semantic-search-campaign`**, not here.
+**Scale/hang campaign → `tensor-grep-large-repo-scale-campaign`**, not here.
+
+**Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + the derive box above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only SOME of the library skills (count derived, never stamped — same derive box). **Do not trust a number or a name list here** -- this sentence enumerated 12 skills in prose and was wrong three ways by 2026-08-02: the real count was 14, and it named `tensor-grep-large-repo-scale-campaign` as having zero rule when it had since gained one. Derive it:
 
 ```bash
 python -c "import json,os; d=open('.claude/skill_rules.json').read(); \n  lib={x for x in os.listdir('.claude/skills') if x.startswith('tensor-grep-')}; \n  print(sorted(x for x in lib if x not in d))"
 ```
 
-Its silence on a topic is not evidence a skill doesn't apply; the table above stays authoritative for manual routing.
+Its silence on a topic is not evidence a skill doesn't apply; the AGENTS.md index-by-intent stays authoritative for manual routing.
 
 ---
 
@@ -300,6 +288,14 @@ by-design, and one agent was dispatched at finished work (#58). The machine-pars
 index in `docs/TASK_BOARD.md` is the live-status view; `docs/BACKLOG.md` remains the canonical
 prioritized/historical ledger. GitHub remains the PR-state oracle.
 
+**Extend the premise check from board items to BRANCHES/WORKTREES (2026-08-12).** Before dispatching
+a repair on a stale-looking branch, premise-check its CONTENT, not just its existence: `git cherry
+<target> <branch>` proves only PATCH-ID distinctness, never novel content (the same fix can land as a
+different patch); enumerate the branch's touched paths, diff each endpoint against the target, and
+confirm the symbols/tests actually exist on the target; use blob identity
+(`git rev-parse <rev>:<path>`) + pickaxe (`git log -S"<exact string>"`) for historical-blob claims.
+A branch whose "missing" work already landed elsewhere is the same finished-work dispatch as #58.
+
 ### 6 — Implement
 
 | Work type | Tool |
@@ -391,8 +387,17 @@ gh pr merge "$pr" --squash --delete-branch
   merging anything — including `docs:`/`chore:` PRs, which don't bump version but are still unsafe to
   interleave mid-release.
 - **Real wait window ~40–66 min** per release-bearing merge (native-build-smoke + benchmark-regression
-  + semantic-release + publish-pypi). The ~6-min figure is only the semantic-release job in isolation
-  — don't cadence the cron faster than the real window or every fire just re-observes "still in flight".
+  + semantic-release + publish-pypi). The ~6-min figure here is only the **semantic-release job in
+  isolation** (a DIFFERENT referent from Hard rule 12's ~6-min non-releasing GATE duration, "newest
+  main run completed") — don't cadence the cron faster than the real window or every fire just
+  re-observes "still in flight".
+- **Green-gap batch merge (2026-08-12):** when NO release is in flight or planned, non-releasing
+  `docs:`/`test:`/`chore:` PRs may merge back-to-back within ONE green gap — their only gate is the
+  newest main run completed (Hard rule 12). This makes the referents of the two rules explicit:
+  "one merge per fire" above governs RELEASING PRs (one-per-fire stays for them outside a monitored
+  C-batch — Hard rule 10's exception); it does not serialize non-releasing PRs against each other in
+  a release-free gap. The moment a release is in flight or next in the queue, everything falls back
+  to the push-race wait (change-control Part 7 "Precedence").
 - Failed release **self-heals** on next push (tag-derived). Don't panic-rerun.
 - Respect **Hard Rule 10 (WIP CAP)**: if >5 PRs are undrained or the main gate is red, the fire should
   refuse to dispatch a *new build* (merging the existing queue is still fine/expected).
@@ -529,7 +534,7 @@ Exa competitive/prior-art scan → derive edge cases competitors handle or miss 
 
 ---
 
-## Sibling skills (detail in library table above)
+## Sibling skills (detail via the derive box + AGENTS.md index above)
 
 - `tensor-grep-change-control` — gates (load before edit)
 - `tensor-grep-semantic-search-campaign` — flagship CPU-moat program
@@ -556,15 +561,15 @@ recorded id is a landmine, not a fact to stamp; the **skill-count table was re-v
 `tensor-grep-gpu`) and adding the C-batch batch-merge exception + the `/loop`-vs-`CronCreate`
 reconciliation. This skill has no pinned `file:line` code
 citations of its own to drift — it indexes the library, which DOES carry code citations;
-re-verify the count with `ls .claude/skills | grep -c '^tensor-grep-'` (expect **26** -- 26 of the
-table's 27 numbered rows are `tensor-grep-*`-named; `code-search-and-retrieval-reference` (row 5) is
-the one row that doesn't match that grep pattern, so 26 + 1 = the 27 numbered library rows; the bare
-`tensor-grep` dash-row is a 28th folder on disk, intentionally not counted in the "27 skills" figure
-since it's usage-docs for the tool itself, not a library entry) before trusting the "27 skills" stamp
-on a later session. This arithmetic has now gone stale twice (20->26, then 26->27); the count is
+re-verify the count by DERIVING it, never by trusting a stamped number:
+`ls -1d .claude/skills/tensor-grep-*/ | wc -l` for the `tensor-grep-*` folders, plus the one
+`code-search-and-retrieval-reference` folder; the bare `tensor-grep` usage skill is EXCLUDED by
+definition (usage docs for the tool itself, not a library entry). Receipt (recorded once, do not
+re-stamp): the figure was 26/27 in older passes and went stale three times (20→26→27); derived
+**34** at v1.110.14 (2026-08-12). The count is
 ALSO pinned by `tests/unit/test_skill_index_sync.py`, but that gate compares the NAME SET against
 AGENTS.md/CLAUDE.md and does NOT read this number -- so a stale figure here passes CI. Re-run the
-grep, do not trust the stamp. Process
+derive command, do not trust any stamp. Process
 receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
 on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`
 ledger — treat them as durable orchestration discipline, not code facts that can be grep-verified.

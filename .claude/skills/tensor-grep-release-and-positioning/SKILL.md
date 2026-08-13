@@ -164,6 +164,13 @@ before merging the next one. "Safe to interleave" means *after the prior release
 published*, not merely after its PR CI went green (`AGENTS.md` — grep "Safe to interleave" means;
 was `:834`, now `:2282`).
 
+**Converse (A31) — the tick discipline binds ONLY overlap with a release-bearing publish window.**
+When NO release is in flight or planned, non-releasing `docs:`/`test:`/`chore:`/`bench:` PRs may
+batch-merge freely within one green gap: only `fix:`/`feat:` trigger semantic-release, so a
+non-releasing merge creates no publish to race — its gate is just "the newest main run completed".
+Batch the non-releasing, serialize the releasing (`AGENTS.md` — grep "A31" / "Batch the
+non-releasing").
+
 ### 1.5.1 Worked example: the #384-#399 sequence (2026-07-04/05) — 16 PRs, 0 push-race failures
 
 This is not a hypothetical — it is how the "moat P0-6" `--deadline` program plus the round-8
@@ -487,7 +494,7 @@ numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured nu
 | CyBERT / provider-backed `classify` | Opt-in only (`TENSOR_GREP_CLASSIFY_PROVIDER=cybert`), default is local deterministic; useful future reference, not a default performance claim. | `docs/PAPER.md:141-146` |
 | Resident AST worker (`tg worker`) | Opt-in (`TG_RESIDENT_AST=1`), hidden from `--help`, workload-dependent — helps startup-dominated repeated micro-workflows, not the default performance path. | `docs/EXPERIMENTAL.md:5-14` |
 | LSP semantic provider | Opt-in via `--provider lsp|hybrid`; default `native` never starts it. | `docs/CONTRACTS.md:111` |
-| Ranking scorer (`search --rank`, agent capsule, semantic surfaces) | Flat, no-IDF scorer — can silently flip/degrade on corpus change; a degrade-to-ask safety floor exists, the scorer itself is unresolved debt (tracked as capsule-hardening Task #4, ledger B3). Don't market ranking quality without re-checking this. | memory: `tensor-grep-idf-ranking-fragility-2026-06-29`; live detail now only in `tensor-grep-debugging-playbook` §8 — the `AGENTS.md:379` corroboration this cited no longer resolves to anything on this topic (searched for "no-IDF", "flat scorer", "degrade-to-ask" and found zero hits in AGENTS.md; the content moved out of that file entirely, not just to a different line) |
+| Ranking scorer (`search --rank`, agent capsule, semantic surfaces) | Flat, no-IDF scorer — can silently flip/degrade on corpus change; a degrade-to-ask safety floor exists, the scorer itself is unresolved debt (tracked as capsule-hardening Task #4, ledger B3). Don't market ranking quality without re-checking this. | memory: `tensor-grep-idf-ranking-fragility-2026-06-29`; fuller detail in `tensor-grep-debugging-playbook` §8 — and the `AGENTS.md` corroboration is LIVE: `grep -n "IDF" AGENTS.md` finds the "BM25/IDF-ranked surfaces" bullet ("This IDF blast-radius is invisible to the call graph ... Tracked as capsule-hardening Task #4 (ledger B3)"; was cited at `:379`, now `:737` on 2026-08-13 — re-grep before trusting). **CORRECTION (2026-08-13):** the 2026-08-01 claim below that this content "no longer resolves to anything" in AGENTS.md was FALSE — a paraphrase-miss: that pass searched the skill's own wording ("no-IDF", "flat scorer", "degrade-to-ask"; zero hits) instead of the bullet's own vocabulary ("IDF"). A grep zero is UNRESOLVED, never ABSENT — re-test the instrument with the target's own words before concluding content moved. |
 
 ### 2.4 Positioning checklist (before any public claim)
 
@@ -526,8 +533,14 @@ and `needs:` edges unchanged); other `ci.yml` citations in this file shifted by 
 wherever they sit inside the release/publish job group, confirmed line-by-line rather than assumed.
 `AGENTS.md` drifted unpredictably instead — it's restructured content-first, not merely appended-to —
 and one citation (the ranking-scorer row in section 2.3, previously "corroborated live at
-`AGENTS.md:379`") could not be relocated at all: that content no longer exists anywhere in `AGENTS.md`,
-it now lives only in `tensor-grep-debugging-playbook` §8. Every drifted citation above was converted
+`AGENTS.md:379`") was reported on 2026-08-01 as "could not be relocated at all / that content no
+longer exists anywhere in `AGENTS.md`". **That conclusion was itself wrong, corrected 2026-08-13
+(paraphrase-miss receipt):** the 2026-08-01 search used the skill's own wording ("no-IDF", "flat
+scorer", "degrade-to-ask" — zero hits), but the live bullet uses its own vocabulary: `grep -n "IDF"
+AGENTS.md` finds it ("BM25/IDF-ranked surfaces ... Tracked as capsule-hardening Task #4 (ledger
+B3)"; was `:379` at the original cite, now `:737` on 2026-08-13). The fuller write-up ALSO lives in
+`tensor-grep-debugging-playbook` §8, but AGENTS.md never lost the topic — the content is in BOTH.
+Every drifted citation above was converted
 from a bare line number to a grep instruction (job name, symbol, or a short quoted phrase), with a
 `was -> now` pair kept beside it as a drift-rate receipt, not as a number to trust on the next read.
 Per AGENTS.md's own "cite the SYMBOL, not the line" law: re-stamping a citation with today's correct

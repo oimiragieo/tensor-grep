@@ -54,7 +54,11 @@ const VERDICT_SCHEMA = {
   type: 'object',
   required: ['verdict', 'rounds'],
   properties: {
-    verdict: { type: 'string', enum: ['SHIP', 'SHIP-WITH-NITS', 'FIX-BEFORE-MERGE'] },
+    // Canonical A3 vocabulary is SHIP | FIX-FIRST. SHIP-WITH-NITS stays for
+    // gate outputs whose nits are banked (A19); FIX-BEFORE-MERGE is retired
+    // wording for FIX-FIRST (2026-08-12 retention audit: the two vocabularies
+    // coexisting was a self-contradiction).
+    verdict: { type: 'string', enum: ['SHIP', 'SHIP-WITH-NITS', 'FIX-FIRST'] },
     rounds: {
       type: 'array',
       items: {
@@ -70,4 +74,204 @@ const VERDICT_SCHEMA = {
       },
     },
   },
+}
+
+const RED_SCHEMA = {
+  type: 'object',
+  required: ['test_file', 'failure_output', 'reason_class'],
+  properties: {
+    test_file: { type: 'string', description: 'path of the new behavioral test' },
+    failure_output: { type: 'string', description: 'verbatim failing output, pre-fix' },
+    reason_class: { type: 'string', description: 'the exact expected assertion/reason class (A61)' },
+  },
+}
+
+const GREEN_SCHEMA = {
+  type: 'object',
+  required: ['files_changed', 'test_output', 'notes'],
+  properties: {
+    files_changed: { type: 'array', items: { type: 'string' } },
+    test_output: { type: 'string', description: 'verbatim passing output of the RED test' },
+    notes: { type: 'string' },
+  },
+}
+
+const VERIFY_SCHEMA = {
+  type: 'object',
+  required: ['probes', 'all_findings_reproduced'],
+  properties: {
+    probes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['finding', 'command', 'result'],
+        properties: {
+          finding: { type: 'string' },
+          command: { type: 'string' },
+          result: { type: 'string' },
+        },
+      },
+    },
+    all_findings_reproduced: { type: 'boolean' },
+  },
+}
+
+const HOUSE = `
+HOUSE CONSTRAINTS (verbatim, non-negotiable):
+- CPU-SAFE: NEVER run cargo build/test/check/clippy, and NEVER run tests/e2e/test_routing_parity.py
+  (it invokes cargo run). Rust compile evidence comes from PR CI only; rustfmt --check is allowed.
+- Never \`git add .\` / \`git add -A\`; stage explicit paths only.
+- An UNCITED finding is DISCARDED. Every claim needs a file:line or a command plus its output.
+- A FAILED seat / empty payload is a HOLE, not a pass: report it, never paper over it.
+`
+
+const FINDING = (args && (args.finding || (args._text && args._text.join(' ')))) || null
+if (!FINDING) {
+  return {
+    verdict: 'FIX-FIRST',
+    rounds: [],
+    error: 'usage: /tg-audit-fix-loop <H/M finding id + one-line truth> -- nothing to loop on',
+  }
+}
+
+// Phase 1: SEAM -- re-verify the finding on origin/main (never the dirty local
+// tree) and census every door the fix must reach (A83).
+phase('Seam')
+const seam = await agent(
+  `${HOUSE}
+LOAD the skill tensor-grep-codex-gated-audit-loop, and consult
+tensor-grep-argv-normalization-and-shadowing + tensor-grep-cross-platform-path-confinement for
+the census discipline.
+
+FINDING UNDER REPAIR: ${FINDING}
+
+TASK (read-only): re-derive this finding against origin/main. For every symbol it names, run
+git-show origin/main:<file> and confirm the symbol still exists and still misbehaves as claimed
+(A44: bind to the exact SHA you report). Census EVERY argv front-door / parse path a fix must
+reach (A83): a front-door rewrite can shadow the door the finding names. If the finding is FALSE
+or ALREADY FIXED at this SHA, say so in "finding" and return an empty doors list -- do not
+invent work.`,
+  { label: 'seam', phase: 'Seam', schema: SEAM_SCHEMA, model: 'sonnet' },
+)
+
+if (!seam || (seam.doors || []).length === 0) {
+  return {
+    verdict: 'SHIP',
+    rounds: [],
+    note: 'seam phase found nothing to fix (finding false, already fixed, or empty census) -- no loop run',
+    seam,
+  }
+}
+
+const SEAM_TEXT = `
+SEAM LEDGER (derived live from origin/main; work against THIS, never a frozen citation):
+  finding = ${seam.finding}
+  origin_main_sha = ${seam.origin_main_sha}
+  seams = ${JSON.stringify(seam.seams)}
+  doors = ${JSON.stringify(seam.doors)}
+`
+
+// Phase 2: RED -- behavioral test that fails pre-fix for the EXPECTED reason
+// class (A61); hermetic by construction (A85); hostile fixtures must BITE.
+phase('RED')
+const red = await agent(
+  `${HOUSE}
+${SEAM_TEXT}
+LOAD the skill tensor-grep-hermetic-hostile-tests.
+
+TASK: write ONE behavioral test that fails on the current code for the finding above.
+- It must fail with the exact expected assertion/reason class (A61): a crash, import failure,
+  setup error, or skip is NOT a valid RED -- pin the reason class in the test.
+- Env-gated seams are hermetic by construction (A85): never branch on ambient availability.
+- Hostile fixtures must BITE: assert the fixture precondition before trusting the arm.
+- Run it and paste the verbatim failing output. Do NOT fix the code in this phase.
+- Wrap the run in a shell timeout with a per-test --timeout (anti-hang protocol).`,
+  { label: 'red', phase: 'RED', schema: RED_SCHEMA, model: 'sonnet' },
+)
+
+// Phase 3: GREEN -- minimal fix; platform-gate path-shape transforms (A84).
+phase('GREEN')
+const green = await agent(
+  `${HOUSE}
+${SEAM_TEXT}
+RED TEST: ${red ? `${red.test_file} (expected reason class: ${red.reason_class})` : '(RED phase returned nothing -- STOP and report)'}
+
+TASK: make the MINIMAL fix that turns the RED test green for the right reason. Platform-gate any
+path-shape transform (A84). Reach EVERY door in the seam census, not just the one the finding
+named. Run the RED test plus the narrow suites around the touched files; paste verbatim output.
+Stage nothing; the orchestrator owns git.`,
+  { label: 'green', phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
+)
+
+// Phases 4-5: GATE + VERIFY, looped. The gate is a fresh-context adversarial
+// audit (independent of the fix author); verify re-probes every finding with
+// its own commands. A FIX-FIRST verdict feeds one repair round; max 3 rounds.
+const MAX_ROUNDS = 3
+let verdict = null
+const allRounds = []
+let repairContext = ''
+
+for (let round = 1; round <= MAX_ROUNDS; round++) {
+  phase('Gate')
+  const gate = await agent(
+    `${HOUSE}
+${SEAM_TEXT}
+You are the INDEPENDENT adversarial gate. You did not write the fix. Try to BREAK it.
+${repairContext}
+Cite file:line for every finding; default FIX-FIRST if uncertain. Verdicts: SHIP | SHIP-WITH-NITS
+(nits banked per A19) | FIX-FIRST (+file:line + repro + minimal fix per finding). A finding with
+no citation is discarded. Record each as a round row with round=${round}.`,
+    { label: `gate:r${round}`, phase: 'Gate', schema: VERDICT_SCHEMA, model: 'opus' },
+  )
+
+  if (!gate) {
+    verdict = 'FIX-FIRST'
+    allRounds.push({ round, severity: 'GATE-FAILURE', area: 'gate seat returned nothing', file: '-', fix: 're-run the gate; an empty seat is a hole, not a pass' })
+    break
+  }
+  allRounds.push(...(gate.rounds || []).map((r) => ({ ...r, round })))
+  verdict = gate.verdict
+
+  phase('Verify')
+  const verify = await agent(
+    `${HOUSE}
+${SEAM_TEXT}
+TASK: re-probe EVERY finding recorded for round ${round} with YOUR OWN commands (never trust the
+fix author's transcript). Include the RED test's reason class and the door census. Report each
+probe's command + verbatim result.`,
+    { label: `verify:r${round}`, phase: 'Verify', schema: VERIFY_SCHEMA, model: 'sonnet' },
+  )
+
+  if (verdict === 'SHIP' || verdict === 'SHIP-WITH-NITS') break
+
+  if (round < MAX_ROUNDS) {
+    repairContext = `
+PRIOR GATE FINDINGS TO REPAIR (round ${round}):
+${JSON.stringify(gate.rounds || [], null, 1)}
+VERIFY PROBES:
+${verify ? JSON.stringify(verify.probes, null, 1) : '(verify seat returned nothing)'}
+`
+    phase('GREEN')
+    await agent(
+      `${HOUSE}
+${SEAM_TEXT}
+TASK: repair ONLY the gate findings listed below, minimally, then re-run the RED test and the
+narrow suites around the touched files; paste verbatim output.
+${repairContext}`,
+      { label: `repair:r${round}`, phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
+    )
+  }
+}
+
+return {
+  finding: FINDING,
+  verdict,
+  rounds: allRounds,
+  seam,
+  red,
+  green,
+  max_rounds: MAX_ROUNDS,
+  note: verdict === 'SHIP' || verdict === 'SHIP-WITH-NITS'
+    ? 'gate passed; orchestrator owns commit/PR per the usual gates'
+    : 'still FIX-FIRST after the round budget; park honestly with the round receipts (A28: post the verdict as an artifact)',
 }

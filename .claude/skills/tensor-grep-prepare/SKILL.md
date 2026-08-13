@@ -5,7 +5,13 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.110.14** (LIVE 2026-08-11 Windows `uvx` — saddle ~5s; tg `src` `--out`/`--claim` ~22s; prior 1.110.12 CUJ still representative).
+Verified against **tg 1.110.14** — honesty note (2026-08-13): this stamp was bumped from 1.110.13
+by the 2026-08-11 drift sweep (`docs/audits/2026-08-11-skill-audit-findings.md` item 6), but the
+dogfood table below records **no dated 1.110.14 row** — its newest rows are **1.110.13**, and the
+~5s saddle / ~22s `--out`/`--claim` numbers this header previously presented as a LIVE 1.110.14 run
+are byte-for-byte the 1.110.13 receipts. The 1.110.14 stamp therefore currently rests on the
+1.110.13 receipt (prior 1.110.12 CUJ still representative); a future pass must either add a dated
+1.110.14 dogfood row or keep citing 1.110.13, as this header now does.
 
 Note: anonymous `--claim` `agent_id_hint` remains strong (“NOT attributable…” until
 `TG_LEDGER_AGENT_ID` / `TG_EVIDENCE_AGENT_ID` is set).
@@ -26,9 +32,15 @@ Prefer **`REPO/src`**. Default deadline is 60s (like agent cold path); pass `--n
 - `primary_target` + `confidence` + `ask_user_before_editing`
 - `validation_commands`
 - `blast_radius_floor` (callers_count, top_callers, trust summary)
-- `coordination.claim` — args ready; `submitted=true` only with `--claim`; an anonymous claim (no
-  `TG_LEDGER_AGENT_ID` set) additionally stamps `coordination.claim.agent_id_hint` ("set
-  TG_LEDGER_AGENT_ID for a stable identity") so the caller knows why `agent_id` reads `anonymous`
+- `coordination.claim` — args ready; `submitted=true` only with `--claim`; an anonymous claim
+  (neither `TG_LEDGER_AGENT_ID` nor `TG_EVIDENCE_AGENT_ID` set) additionally stamps
+  `coordination.claim.agent_id_hint` with the STRONG hint — "this claim is filed as 'anonymous'
+  and is NOT attributable to you. Set TG_LEDGER_AGENT_ID (or TG_EVIDENCE_AGENT_ID) to a stable
+  per-agent value so other agents can see WHO holds it." — plus the machine-branchable
+  `agent_id_is_anonymous=true` sibling, so the caller knows why `agent_id` reads `anonymous`.
+  (The earlier weak hint "set TG_LEDGER_AGENT_ID for a stable identity" is RETIRED — superseded
+  per the "Strengthened from" comment in `src/tensor_grep/cli/prepare_service.py`; grep
+  "Strengthened from" to re-verify. Do not re-quote the weak form.)
 - `coordination.evidence` — argv/note to emit a receipt without guessing flags
 
 Dogfood:
@@ -77,7 +89,12 @@ under the same repo, not just the exact PATH `prepare` was run against.
 ## Hard stops
 
 1. `ask_user_before_editing.required`
-2. `partial` / `result_incomplete` / exit `2` — do not claim full coverage
+2. `partial` / `partial_reason`, `scan_limit.possibly_truncated`,
+   `blast_radius_floor.possibly_incomplete`, exit `2` — do not claim full coverage. (These are
+   prepare's REAL incompleteness signals — `partial_reason="deadline"` folds into the top-level
+   exit-2 honesty gate; a plain `max_callers` output cap stays exit 0. Note prepare emits NO
+   `result_incomplete` field: `grep -c result_incomplete src/tensor_grep/cli/prepare_service.py`
+   is 0, verified 2026-08-13 — an earlier revision of this hard stop listed it in error.)
 3. Empty `blast_radius_floor` with `source=no_primary_symbol` — narrow PATH or raise budget
 
 ## Dense semantic companion

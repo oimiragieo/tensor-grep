@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-research-frontier
-description: Use when scoping, pitching, planning, or judging a SOTA-advancing bet in tensor-grep (tg) — the OPEN research problems, not a bug fix or a shipped feature. Load when asked "where can tg beat the state of the art / what's the moat / is this worth building", or when touching the six frontier programs: the GPU PFAC many-pattern/resident wedge (Phase-0 shipped v1.75.0-v1.75.4, crossover still unproven), de-fragilizing the flat no-IDF ranking scorer (the IDF blast-radius), closing raw-grep parity via a native launcher/control-plane, the arXiv moat-deepeners (AST-node MCP read/write, graph-traversal tools, intent-aware blast-radius), the parked `tg diff-docs` precision rebuild (naive absence-from-symbol-table doc-drift detection floods 20k+ false positives — the DocPrism trap), or closing the symbol-graph tier's last language gap (C/C++). Everything here is candidate/experimental — to actually build or merge one, route to tensor-grep-change-control; for settled dead-ends, tensor-grep-failure-archaeology.
+description: Use when scoping, pitching, planning, or judging a SOTA-advancing bet in tensor-grep (tg) — the OPEN research problems, not a bug fix or a shipped feature. Load when asked "where can tg beat the state of the art / what's the moat / is this worth building", or when touching the frontier programs: the GPU PFAC many-pattern/resident wedge (Phase-0 shipped v1.75.0-v1.75.4, crossover still unproven), de-fragilizing the flat no-IDF ranking scorer (the IDF blast-radius), closing raw-grep parity via a native launcher/control-plane, the arXiv moat-deepeners (AST-node MCP read/write, graph-traversal tools, intent-aware blast-radius), the parked `tg diff-docs` precision rebuild (naive absence-from-symbol-table doc-drift detection floods 20k+ false positives — the DocPrism trap), or the symbol-graph tier's cross-file caller-confirmation tail (the full 10/10 parser-backed tier — C/C++ included — SHIPPED through Tasks 10A-10E + the F7 wave #957; do NOT re-do the registration layer). Everything here is candidate/experimental — to actually build or merge one, route to tensor-grep-change-control; for settled dead-ends, tensor-grep-failure-archaeology.
 ---
 
 # tensor-grep research frontier
@@ -35,6 +35,13 @@ line was itself wrong** — both that citation (Problem 1) and its Provenance-se
 `:123`); fixed both, this time as a `grep`, not a number. Also re-anchored `_score_symbol`
 (`:8177`/`~7698` -> `:8194`, drift of ~500 lines in a week — `repo_map.py` is still growing fast).
 Everything else in Problems 1-5 and the fused-thesis section was spot-checked, not fully re-walked.
+
+**2026-08-09 pass (logged late, on 2026-08-12).** Problem 6 was SUPERSEDED against origin/main
+`e3feaf5`: Tasks 10D/10E plus the F7 Task 11 wave #957 shipped the full 10/10 parser-backed tier
+(descriptor 10 parser-backed / 0 foundational, tier EMPTY), so Problem 6's open scope narrowed to
+cross-file caller confirmation beyond the include-confirmed band, and the frontmatter's former
+"last language gap (C/C++)" program was retired with it — the still-open programs are the five
+named in the frontmatter plus that Problem-6 tail.
 
 ## When to use this skill — and when a sibling is the right door
 
@@ -376,6 +383,16 @@ No single wedge above is the beyond-SOTA claim. The claim is the **fusion of thr
 **The fused, falsifiable end-state claim:** `tg`-enhanced agent flows beat generic agent baselines on **final task outcomes** (not just retrieval) across model tiers, and the advantage **widens as the model gets cheaper** — because the moat is the harness, not the model. This is not proven; it is the target. Its definition-of-done is `docs/world_class_plan.md` "Definition Of Done" (all 7 conditions) plus a defensible cross-model A/B where the `tg`-enhanced line wins the majority of real-repo task slices at more than one model tier, with caveats kept explicit when a comparator wins a class.
 
 This thesis must not contradict the standing contracts: raw grep is parity, GPU is experimental, provider modes are opt-in. If a "beyond-SOTA" pitch requires bending one of those, it is over-claiming — send it back through `tensor-grep-change-control`.
+
+**Dated snapshot (2026-08-12) — a position check, NOT a timeless exclusivity claim.** As of
+2026-08-12, repository retrieval is visibly commoditizing (FastContext / ContextBench / "Code Isn't
+Memory" all treat repo retrieval/indexing as a solved-enough harness component) while head-bound,
+signed edit-verification receipts remain whitespace: no paper was found shipping them for CODE EDITS
+specifically, and the nearest neighbor is Notarized Agents (arXiv:2606.04193 — receiver-attested
+confidential receipts for GENERIC agent actions, not repo-edit-specific). Source:
+`docs/audits/2026-08-12-research-receipts.md` (Part A1 + context note). Re-check trigger: a
+code-edit-specific signed-receipt paper appears — until then this snapshot stands, and after that
+it must be rewritten from fresh receipts, not extended.
 
 ---
 

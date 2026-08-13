@@ -448,6 +448,11 @@ concrete failure observed this session.
 - **A86 — Stale-ready labels: "ready"/"green" must cite the head's own completed run (2026-08-09, #967/#977).** Two PRs labeled merge-ready carried heads predating the base by several merges; each showed 7 stale tracker-freshness failures that were base-staleness, not content. Any "ready" / "green" label must cite the head SHA's own completed check-run set (A44/A51), and before merging a long-lived branch, rebase onto current main and re-verify — a green-against-stale-base is a Form-10 (branch-unit) false green.
 - **A87 — Static review ≠ typecheck; CI is the ONLY compile oracle for Rust (2026-08-09, #987/#988).** Two Rust audit-fix PRs (M16/M17) each passed multiple codex adversarial static reviews ("no compile defect found"), then the FIRST real CI run found genuine compile errors — E0599 `starts_with` on `&OsStr`, E0308 mismatched types, E0382 borrow-of-moved (`canonical_root`). Static/logic review cannot typecheck; a Rust PR's gate must include "first CI cargo run compiles" BEFORE any codex SHIP verdict is treated as durable. Structural arguments about Rust are hypotheses until the compiler and tests run.
 - **A88 — Dogfood fixtures must BITE (Form 6 applied to the published-wheel dogfood too, 2026-08-09, M1).** Probing the shipped M1 checkpoint junction-containment fix, the wheel "passed" — because the hostile fixture never applied: `mklink /J` silently failed to create a junction when the target directory was NON-EMPTY, so the tree had no junction and the snapshot was trivially safe. Verify the hostile setup actually bites BEFORE trusting a dogfood result: check `os.path.islink()`/junction resolution differs from the plain tree (on Windows, junctions are NOT symlinks — `Path.is_symlink()` is False on a junction; the parent-resolve containment is the guard that matters). A dogfood PASS on a fixture that never applied proves nothing.
+  *ERRATUM (2026-08-12 retention audit): the receipt above attributes the silent failure to a
+  NON-EMPTY target; the actual `mklink /J` contract is that the LINK path must not already exist
+  (the target directory MAY be populated — verified empirically, and the canonical helper
+  `_plant_ancestor_link_or_skip` removes the link path first with a populated target). The law
+  stands; the mechanism sentence is corrected.*
 - **A89 — Real-artifact test arms beat fake-backed ones in parity oracles (2026-08-09, #987).** M16's three-arm composite-count parity test passed with SPAN FAKES while production read the WRONG ast-grep JSON fields (`range.start.index` vs the real 0.42.1 `range.byteOffset.start/end`), so the "parity" was pinned against the bug. Only adding a REAL `ast-grep --json` subprocess arm surfaced the divergence. Whenever a parity/oracle test can drive the real producer cheaply, it must — a fake-backed arm can certify a lie as three arms of agreement. (Extends the Verification-Oracle family: the oracle's INPUT was fake, so the agreement was between the test and its own fiction.)
 - **A90 — Fail closed on unknown subcommands; never fall through to search (2026-08-09, #993 / world-class H1).** The Python bootstrap door (`bootstrap.py:374-383` `_normalize_search_invocation`) returns every unknown-first-arg as search args, so `tg edit-ready --help` prints `Usage: tg search` exit 0 — an agent concludes a nonexistent command exists. Same family as the "registration-completeness" and "scope-honesty" laws, but about the CLI DISPATCH surface: an unknown top-level command must exit non-zero with `error.code=unknown_command` and `nearest[]`, on BOTH front doors (Python `KNOWN_COMMANDS` + native `normalize_top_level_search_args`/`is_known_python_command`), never be swallowed into search. A feature that isn't on the CLI must not be faked by a search fallthrough.
 - **A91 — "No core-Rust logic" never means "no native touch" (2026-08-09, #993).** The public surface is the managed native `tg.exe`; a Python/sidecar feature that misses the native front-door enrollment (`Commands::X` passthrough + `PUBLIC_TOP_LEVEL_COMMANDS` parity test) is invisible through the real binary and its first dogfood fails with the very unknown-command bug it fixes. Every "Python-first" slice must state its both-front-door + 4-site-registration enrollment in the same slice, or it is honest only as "no core-rust LOGIC," never as "no native touch."
@@ -702,7 +707,7 @@ Known current weak spots:
 - Validation commands are hints with provenance. Require `validation_plan[].detection`, do not suggest npm/package-manager commands without `package.json` evidence, do not suggest Python test commands without Python/test/project evidence, and omit commands entirely when no runner evidence exists.
 - Validation commands must align with the selected primary target language unless verified cross-language dependency evidence exists. `validation_alignment` should report filtered mismatches; do not silently pair a TypeScript primary target with pytest-only validation or a Python primary target with JS-only validation.
 - Unbounded broad generated-root scans are hostile to unattended agents. `tg search --files --hidden` and no-ignore/unrestricted fallback scans now refuse roots that are generated/cache/dependency directories, or that contain them, unless the request is bounded by `--glob`, `--type`, or `--max-depth`, or explicitly opts in with `--allow-broad-generated-scan`. Use scoped paths, globs, file types, and `--max-depth` for `tg search` before reaching for opt-in. `--max-repo-files`, `--max-callers`, and `--max-files` are code-intelligence command budgets, not `tg search` flags.
-- `tg map`/`tg orient` and `tg inventory` scan different file-count tiers by design, not by bug: `tg map`/`tg orient` AST-index a bounded set of files (`--max-repo-files` defaults to `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000`, `src/tensor_grep/cli/repo_map.py`, full parse per file; note the separate per-file caller-scan ceiling `CALLER_SCAN_FILE_CEILING = 512`), `tg inventory` walks up to `DEFAULT_MAX_INVENTORY_FILES = 50000` files (`src/tensor_grep/cli/inventory.py`, stat + 8KB sniff, no parse), and a raw `tg search` scans the full tree with no file-count cap. Do not read a larger `tg inventory` total than `tg map`'s `files` count on the same repo as a discrepancy to fix.
+- `tg map`/`tg orient` and `tg inventory` scan different file-count tiers by design, not by bug: `tg map`/`tg orient` AST-index a bounded set of files (`--max-repo-files` defaults to `DEFAULT_AGENT_REPO_MAP_LIMIT = 2000`, `src/tensor_grep/cli/repo_map.py`, full parse per file; note the separate per-file caller-scan ceiling `CALLER_SCAN_FILE_CEILING = 2000` (re-derive: `grep -n "CALLER_SCAN_FILE_CEILING" src/tensor_grep/cli/repo_map.py`; an older prose generation said 512 and was wrong)), `tg inventory` walks up to `DEFAULT_MAX_INVENTORY_FILES = 50000` files (`src/tensor_grep/cli/inventory.py`, stat + 8KB sniff, no parse), and a raw `tg search` scans the full tree with no file-count cap. Do not read a larger `tg inventory` total than `tg map`'s `files` count on the same repo as a discrepancy to fix.
 - Prefer `blast-radius` over `impact --symbol` when direct symbol impact matters.
 - Windows launcher/path-list hardening should force UTF-8 for managed shims and Python path-list output; still scope broad file-list commands to avoid generated-tree volume.
 - If `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, or Python `subprocess.run(["tg", "--version"])` resolves a tensor-grep-owned or self-identifying tensor-grep `Python*\Scripts\tg.exe` ahead of the managed native front door, treat it as installer regression evidence. The Windows installer and `tg repair-launcher` should remove verified-owned launchers or back up self-identifying orphaned tensor-grep launchers instead of only warning about them. If that command reports another product's version, treat it as a foreign PATH-shadow blocker: report remediation and keep readiness failing, but do not delete or overwrite the unrelated launcher unless the operator explicitly runs `tg repair-launcher --allow-foreign-rename`, which backs it up first. Python subprocess resolution is a separate Windows contract because `CreateProcess` can choose a foreign same-directory `tg.exe` even when shells prefer a tensor-grep `tg.com` bridge through `PATHEXT`.
@@ -2294,8 +2299,11 @@ This is a QUALITY benchmark (ndcg@10 / recall@10 on the NL golden set + literal/
 NOT a speed benchmark — run it IN ADDITION to the CLI search benchmark when the change touches the CPU
 search path. Bidirectionally-oracle-validate any new golden query before trusting a delta (an empty/wrong
 answer must FAIL the grader). Add a per-query paired win/loss/tie report before gating a ship on a bare
-40-query mean (see the global `paired-test-power-discipline` skill). `TG_LATE_RERANK` stays OFF — it
-regresses vs plain BM25, entangled with a non-role-aware doc encoder; a harness gap, not a verdict on MaxSim.
+40-query mean (see the global `paired-test-power-discipline` skill). `TG_LATE_RERANK` is RETIRED
+(2026-08-05, task F10): re-measured AFTER the role-aware encoder fix it regressed decisively vs
+plain BM25 (ndcg@10 0.068 vs RRF 0.305; root cause is model capacity, not the encoder) — a
+validated dead end, not a paused build; `retrieval_late.py`'s module docstring is the authority
+and re-flipping the same encoder will not change the verdict.
 
 ## Performance Discipline
 
@@ -2585,6 +2593,13 @@ to reject. On that evidence `test:`-titled #817 and `docs:`-titled #820 were mer
 (the earlier run's cancellation by the later push is benign — see the `cancelled != failure` note),
 while `fix:`-titled #821 was held for the full one-per-publish cycle. Batch the non-releasing,
 serialize the releasing; `gh run view <id> --json jobs` is the whole test.
+**SUPERSEDED in part by A33 (2026-07-26):** the `release-intent` discriminator above is only
+valid for deciding what a PR-triggered run will do. On a MAIN push run `release-intent` is
+ALWAYS skipped (it is a PR-only title validator), so its skip state there proves nothing about
+whether the `Semantic Release` job will publish; on main pushes decide by the commit-title type
+(`fix:`/`feat:`/`perf:` release; `docs:`/`test:`/`chore:`/`ci:`/`build:` do not; `refactor:`
+passes the title gate but does NOT publish under the default angular parser). The dated receipts
+in this paragraph stand; the general rule yields to A33 where they conflict.
 
 ### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
 
@@ -3115,6 +3130,42 @@ The rules, each priced by a row above:
   gets fixed in the doc, the PR title AND body, and the memory file -- a wrong record re-teaches
   the wrong lesson. A dated receipt's quoted output is never edited in place: append a SUPERSEDED
   entry (the live chain: `tensor-grep-enterprise-agent`'s language-coverage row).
+
+## Session Lessons (2026-08-07, campaign continuation)
+
+Dated, drop-in lessons from the audit-campaign drain; the full detail is in `docs/SESSION_HANDOFF.md` "Session Lessons (2026-08-07)".
+
+1. **Never copy working-tree files from a stale local checkout into a worktree branch.** A checkout 2 releases behind `origin/main` makes its working files stale; copying them into a fresh worktree branch silently reverts merged changes (caught by diff review on M13 — reverted the P1 twin-sweep + P2's byte-guard and H4 seed). Apply the DELTA onto a fresh `origin/main` worktree, or `git diff origin/main -- <file>` first.
+2. **`gh pr merge --delete-branch` can abort locally on a dirty tree while the remote merge SUCCEEDS.** Judge by `gh pr view <n> --json mergedAt`, never by the command's exit; in a dirty shared tree, merge without `--delete-branch`.
+3. **A red main run that SKIPS Semantic Release is recoverable by the NEXT main push** (verified live on v1.110.1, after #968's run red on a confirmed `windows-agent-readiness` flake). Diagnose reds by the failing JOB's per-probe summary + "did the same job pass on the PR CI", before calling it environmental.
+4. **A ratchet test firing is a POSITIVE signal**: fix the class → LOWER the ratchet's recorded count in the SAME PR (its failure message says so); it is not a product regression.
+5. **CI's `ruff format --check --preview .` formats Python code fences INSIDE Markdown** — preview-format any committed Markdown containing code fences, or `Formatting & Linting` reds while scoped `.py` checks pass.
+6. **Tight byte/token envelope tests are platform-fragile** (local tmp_path length vs CI; #525 history) — re-pin with a documented margin + substance asserts when a legitimate field growth tips one.
+
+## CI Cost Discipline (2026-08-07, from a real account-cutoff incident)
+
+**You cannot see this cost at the moment you cause it.** You edit YAML; the bill arrives weeks later through a chain of multipliers none of which announce themselves. `macos-latest` is a word in a matrix, not a ~10× rate. 3 OS × 2 Python is four lines of config and **six billed runners**. A private repo looks identical to a public one while billing every minute. Before every workflow change, look the cost up deliberately — intuition has no signal here.
+
+Four things agents get wrong, in the order you'll hit them:
+1. **`paths-ignore` first on a REQUIRED check.** Branch protection never sees the run, waits forever, and every docs PR becomes permanently unmergeable — you converted a cost problem into a delivery outage. Keep the job; skip the steps.
+2. **"Just run it locally in Docker"** as the gate. The CI run is the merge arbiter; a local green proves YOUR machine, not the commit. Fine for pre-flight, wrong for the gate.
+3. **Writing the rule in CLAUDE.md/AGENTS.md.** A documented remedy that nothing enforces is a comment — the author violated several laws the same day they catalogued them; hooks and CI caught it, prose didn't.
+4. **Fixing all the repos.** 3 of 29 were 84% of the bill. Measure first, then fix the ones that ARE the bill.
+
+**The sampling-window trap (ours, emphasised):** when you investigate a CI incident, your natural window is recent runs — which is exactly the window the incident is corrupting. Sampling the 40 most recent runs showed a confident `$0.00` cost because they were billing-blocked and never ran; a "cron firing every 80 seconds" was the block replaying queued schedule events. Before believing any zero, prove your probe can return non-zero on a case you know consumed minutes, and sample from before the incident.
+
+**The ordering that matters:** **cap it → fix the structure → write the skill → optionally the rules.** The cap is first because it's the only control that survives every other control failing — the same reason a pod fire carries `--max-cost-usd`: the cap holds when the careful design has a hole nobody's found yet. Cost-cap and spend-alert controls belong in the repo/pipeline (GitHub Actions budget alerts), not only in prose.
+
+**The enforced mechanism (shipped 2026-08-08, #977 — beyond prose):** a cheap `changes` job detects whether a PR's diff touches code (`src/`, `rust_core/`, `tests/`, `.github/workflows/`, `pyproject.toml`, `Cargo.toml`, `Cargo.lock`, `uv.lock`), and the expensive/cross-platform jobs gate on `if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'` with `needs: [smoke, changes]`. Two hard facts that made it safe:
+1. **PR-only gating is mandatory — `release` `needs:`s every gating job, and a SKIPPED dependency skips a dependent unless it uses `always()`.** Gate on `push` and the publish is silently lost. Main pushes always run the full matrix; only docs-only PRs skip.
+2. **A job skipped by an `if:` counts as SUCCESS for branch protection; `paths-ignore` on the trigger gives NO status → merge deadlock.** Job-level `if:` skip is the only safe cost lever.
+Validator-backed pins that asserted the literal old shape (`needs: smoke`) must be updated to assert SUBSTANCE in the same change — and a council's "these tests survive it" is a hypothesis until the tests are actually run.
+
+> Provenance (2026-08-12 retention audit): these two sections existed ONLY in the dirty
+> `audit/h6-cudf-backend` working tree — never committed to any ref (pickaxe-verified across
+> `--all`). The 2026-08-12 stale-branch reconciliation classified that tree's dirty docs as
+> "stale snapshots, BEHIND not novel" on a one-file spot-check; this content is the counterexample
+> and was landed verbatim by the retention PR rather than cleaned up.
 
 ## Bottom Line
 

@@ -37,7 +37,8 @@ Canonical status index version: 2026-08-12.1
 - In-PR: #966 (Task 2A parked, RED by design). No release in flight.
 - Task 2 is complete as the tracker checkpoint; **Task 2A RED remains correctly blocked** (historical
   local SHA `6367614960327b1a4e00301c8bfdb9b2e4bb453e`, Sol `FIX-FIRST` / 10 HIGH unless superseded).
-- #89/#90 stay READY behind Task 2A. No spend. #169 is the only financial stop.
+- #89/#90 stay BLOCKED behind Task 2A (canonical board `2026-08-12.1`; the earlier "stay READY"
+  wording in this file contradicted the board and is superseded by this line). No spend. #169 is the only financial stop.
 - Enterprise CUJ locked (#958) and dogfooded on published wheel (#962).
 - Closeout campaign remains **Tasks 3–15** (edit/verify/workspace/MCP disclosure and gated
   follow-ons); Task 2A security RED stays blocked ahead of #89/#90 product GREEN.
@@ -48,6 +49,30 @@ Canonical status index version: 2026-08-12.1
   escrowed evidence; self-dogfood≠demand + premise-check plans), A94–A96 (skill stamps rot —
   release-drift-check sweep; a "verified correct" count note is a contract site; non-ASCII defeats
   byte-exact edits).
+
+## Session Lessons (2026-08-07, campaign continuation)
+
+1. **Never copy working-tree files from a stale local checkout into a worktree branch (M13).** A local branch checked out 2 releases behind `origin/main` made its working files stale; copying them into a fresh worktree branch SILENTLY reverted the merged P1/P2 changes (the `timeout=None` twin-sweep, the `< 12000` byte-guard, H4's `_derive_seed_overall`). Caught only by diff review. Method: apply the DELTA onto a fresh `origin/main` worktree (or diff the working file against `origin/main` first), never copy whole files.
+2. **`gh pr merge --delete-branch` can fail locally on a dirty tree while the remote merge SUCCEEDS.** The local branch-delete step aborts on uncommitted changes, but the GitHub merge already happened. Judge by `gh pr view <n> --json mergedAt`, never by the command's exit. And to avoid the local abort entirely, merge without `--delete-branch` in a dirty shared tree.
+3. **A red main run that SKIPS Semantic Release is recoverable by the next push (verified live).** #968's fix was on main, but its run went red on a confirmed flake (`public-version-powershell` 30s timeout; 1/7 probes; green on the PR's own CI), so release was skipped; the next main push re-ran semantic-release and cut v1.110.1. Diagnose a red by the job's per-probe summary (7 passed / 1 failed + probe name) and by "did the same job pass on the PR CI" before calling it environmental.
+4. **A ratchet test firing is a POSITIVE signal, not a regression.** #972's CI failed `test_native_walk_error_ratchet.py` with "sites were FIXED but the ratchet was not lowered (actual 0, recorded 4)". The intended action is to LOWER the recorded count in the SAME PR (the ratchet's own failure message says so); never treat it as a product regression.
+5. **CI's `ruff format --check --preview .` formats Python code fences INSIDE Markdown** — a plan doc committed to a PR redded `Formatting & Linting` while the scoped `--preview` check on `.py` files passed. Run `ruff format --preview` on any committed Markdown containing code fences.
+6. **Tight byte/token envelope tests are platform-fragile.** The llm-compact `<9000` payload test was already a knife-edge (#525); H4's required `confidence.overall` field + CI-vs-local `tmp_path` length tipped it on win/mac only (local 7712, CI ~9000). Re-pin such guards with a documented margin + substance asserts (the structural compaction asserts carry the real intent).
+7. **`gh run watch` here gives no incremental output and can hit the 25-50 min time wall silently.** Prefer a small deterministic poll script on the signal you actually need (e.g., "is PyPI serving the new version") for release-gating, not `--watch`.
+8. **Two PRs adding the SAME new doc path = add/add conflict on merge #2.** #968 and #969 both added the new campaign-plan doc; untracking it from the later PR removed the future conflict.
+9. **Security-class PRs with a SHIP-WITH-NITS adversarial gate**: fold behavioral nits, BANK cosmetic/comment nits + the non-reachable class twin (NIT-2 lsp_provider_setup) as tracked follow-ups ON THE PR COMMENT so the verdict is an artifact, not a transcript (A28).
+10. **CI cost is invisible at edit time — look it up deliberately before any workflow change.** `macos-latest` is a word in a matrix, not a ~10× rate; 3 OS × 2 Python = six billed runners; a private repo bills every minute. This repo's matrix (3 OS × py3.11/3.12, rust stable+nightly, macos-15-intel native-smoke, benchmark-regression, release assets) is exactly that cost profile. Four anti-patterns: (a) `paths-ignore` on a REQUIRED check → branch protection waits forever, docs PRs unmergeable (keep the job, skip steps); (b) "passed in Docker locally" is not a gate (CI is the merge arbiter); (c) a CLAUDE.md/AGENTS.md rule nothing enforces is a comment (use hooks/CI ratchets); (d) fix-the-bill-by-census, not globally (3 of 29 repos were 84%). The sampling-window trap: investigating a billing incident with recent runs reads `$0.00` because billing-blocked runs never ran — prove your probe can return non-zero on a known-burning case and sample from BEFORE the incident. Order: cap → structure → skill → rules; the cap (budget alert / `--max-cost-usd`) is the only control that survives every other failing. Full brief retained in AGENTS.md "CI Cost Discipline" + the change-control skill.
+11. **PR-only gating or the release is LOST.** `release` `needs:`s every gating job, and a SKIPPED dependency skips a dependent job unless it uses `always()`. So a cost gate MUST be `if: github.event_name != 'pull_request' || ...` — main pushes always run the full matrix (release never empty), docs-only PRs skip. Gating anything on `push` without `always()` on release silently skips the publish.
+12. **A job skipped by `if:` counts as SUCCESS for branch protection; `paths-ignore` on the trigger gives NO status → merge deadlock.** This is the verified GitHub behavior that makes the cost gate safe.
+13. **A council's "these tests survive the change" is a HYPOTHESIS, not a measure.** The thinktank said the workflow-configuration tests survive an added `needs` entry — 3 of them pinned the literal `needs: smoke` and broke. The build iteration (running the actual validators) caught it; update validator-backed pins asserting SUBSTANCE in the SAME PR. Prose conclusions don't lose to the test suite — they don't run the test suite.
+14. **A subagent's completion report is not completion** (A7/A23 re-confirmed): the CI build subagent reported progress and made ~zero committed edits; verified the worktree/branch directly and finished the edit myself.
+15. **For mechanical multi-site edits on a load-bearing file, use a deterministic self-asserting script** (exactly-once string anchors that fail loudly on ambiguity), then validate by RUNNING the parsers (`yaml.safe_load` + the governance pytest files against a temp-copied file), not by reading the diff.
+16. **A non-gating (continue-on-error) leg on an expensive runner is pure bill** — macOS×nightly in `test-rust-core` had zero release value; pruning it (matrix `exclude`) saved real money with no coverage loss (nightly still runs linux/windows + weekly cron all channels).
+
+> Provenance (2026-08-12 retention audit): landed verbatim from the dirty
+> `audit/h6-cudf-backend` working tree, where it existed uncommitted on every ref
+> (pickaxe-verified). The stale-branch reconciliation's "stale snapshot" classification did not
+> hold for this section.
 
 ## Historical Milestones
 

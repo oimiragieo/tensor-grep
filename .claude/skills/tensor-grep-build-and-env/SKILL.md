@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-build-and-env
-description: Use when setting up the tensor-grep dev environment from a fresh clone, rebuilding the Rust/PyO3 extension or standalone `tg` binary after touching `rust_core/`, or debugging a build/toolchain problem — uv install, `maturin develop`, `cargo build`, the pinned 1.96.0 Rust toolchain, Python >=3.11 floor, a "hanging" cargo build, cargo/rustc missing from PATH, ruff CRLF false-alarms, a dependency upper-cap silently downgrading tensor-grep on a newer Python, or a flaky/un-retried rustup pinned-toolchain fetch. Gives exact copy-paste setup commands and the traps that have each cost a real cycle.
+description: Use when setting up the tensor-grep dev environment from a fresh clone, rebuilding the Rust/PyO3 extension or standalone `tg` binary after touching `rust_core/`, or debugging a build/toolchain problem — uv install, `maturin develop`, `cargo build`, the pinned 1.96.0 Rust toolchain, Python >=3.11 floor, a "hanging" cargo build, cargo/rustc missing from PATH, ruff CRLF false-alarms, a dependency upper-cap silently downgrading tensor-grep on a newer Python, a flaky/un-retried rustup pinned-toolchain fetch, the CPU-SAFE scope of local Rust compiles on the shared desktop, the A60 WSL-venv destruction trap, the uv.lock hand-splice discipline, or a broken-WSL-stdlib verify-before-trust probe. Gives exact copy-paste setup commands and the traps that have each cost a real cycle.
 ---
 
 # tensor-grep: Build & Environment Runbook
@@ -183,6 +183,17 @@ test_refs_json_deduplicates_parser_call_references` fails this way). Run a full 
 need the extension back.
 
 ## Rebuilding after a Rust-side change
+
+> **CPU-SAFE scope (read before running ANY row below).** This desktop is a SHARED machine, and
+> the table below is a CI-parity REFERENCE, not a local to-do list: on the shared desktop, do NOT
+> run local `cargo` compiles — `cargo build` / `cargo test` / `cargo clippy` / `cargo check` (and
+> repeated `maturin` rebuilds) all invoke `rustc` and can starve the other agents/services on this
+> box. Route compiles to CI (PR/main runs) or cloud subagents; the user can explicitly approve a
+> heavy local build when it is genuinely needed. The ONE local exception is `rustfmt --check`: it
+> is not a compiler (no codegen; parses + formats in milliseconds), so format checks stay local.
+> Sources in `AGENTS.md` (grep, don't trust line numbers): Operating Rule 3 ("keep them scoped on
+> this desktop"), "A12 -- CPU-safe shared-server discipline", "CPU-SAFE forbids compiling", and the
+> rustfmt exception under Local Dev Gotchas ("rustfmt is not a compiler").
 
 | You changed... | Rebuild with | Typical time |
 |---|---|---|
@@ -396,10 +407,49 @@ triggered the on-demand fetch). For a scripted or CI-style bootstrap where you c
 to notice and retry, wrap the first `cargo`/`rustc` invocation after the pin is set in a small
 retry loop, mirroring `test-rust-core`'s Setup Rust step in `.github/workflows/ci.yml`.
 
+### 12. Never point WSL `uv` at the Windows checkout's `.venv` (A60)
+
+**Symptom:** a "quick dependency check" from WSL against the Windows tree (`uv run --no-sync
+--project /mnt/c/...`) — and afterwards the Windows venv is broken or empty.
+**Cause:** WSL `uv` treats the Windows venv as incompatible, **removes it**, and creates an empty
+Linux venv at the same path. A read-shaped probe becomes a shared-environment mutation and forces a
+locked Windows rebuild (`uv sync --frozen` from PowerShell).
+**Fix:** WSL/Cursor worktrees use a **WSL-local venv** (or CI); Windows verification runs from
+PowerShell in the canonical Windows checkout. Never cross those environment roots. If it already
+happened: move the incompatible venv aside, recreate it from Windows with `uv sync --frozen`,
+verify imports/version, and only then resume gates. Source: `AGENTS.md` — grep "A60".
+
+### 13. `uv lock` churns ~280 unrelated lines — hand-splice a new dep instead
+
+**Symptom:** adding one dependency and running a raw `uv lock` produces a huge diff of unrelated
+reformatted GPU/CUDA marker expressions (a local-vs-CI uv-version mismatch), which poisons review
+and the lockfile-drift gates.
+**Fix:** hand-splice ONLY the new dependency's `[[package]]` block (alphabetical position) plus its
+requires-dist / optional-dependency refs. Then VERIFY the splice with the exact command the
+`Dependency & License Audit` gate runs — it must exit 0:
+
+```bash
+uv export --format requirements.txt --all-extras --no-emit-project --locked
+```
+
+Source: `AGENTS.md` Local Dev Gotchas — grep "hand-splice a new dep instead".
+
+### 14. A WSL interpreter can have a broken stdlib — probe before trusting it (2026-08-12)
+
+**Symptom:** a WSL `python` looks usable (`--version` answers) but dies on basic stdlib work, so
+anything you conclude about packages/venvs through it is built on a broken instrument.
+**Fix:** before trusting a WSL interpreter, run the probe: `python -c "import shutil"` — non-zero
+means broken; prefer a WSL-local managed venv over a bare system interpreter. **Record the CHECK
+you ran, not the CONCLUSION**: host state is volatile, so "WSL python failed `import shutil` on
+2026-08-12" is a dated snapshot, not a durable fact a later session may inherit as current.
+
 ## CI parity cheat sheet
 
 What `.github/workflows/ci.yml` actually runs, and the closest local reproduction. Release/publish
-jobs are intentionally omitted here — see `tensor-grep-release-and-positioning`.
+jobs are intentionally omitted here — see `tensor-grep-release-and-positioning`. **CPU-SAFE scope
+applies** (see the note under "Rebuilding after a Rust-side change"): the compile rows in the
+"Local equivalent" column (`cargo build`/`test`/`clippy`/`check`) are CI/cloud work on this shared
+desktop, not local commands; only `rustfmt --check` and the Python-side rows run locally.
 
 | CI job | Checks | Local equivalent |
 |---|---|---|

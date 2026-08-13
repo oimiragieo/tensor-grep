@@ -8,7 +8,8 @@ description: >-
   env-detecting, mutation-asserting that a red-arm control really applied, or adding a positive
   control so a zero cannot read as "clean". Triggers: "hermetic test", "hostile fixture",
   "fixture-BITES precheck", "STILL VACUOUS", "env-independent", "setup-not-assertion", "the fixture
-  never applied", "mutation asserted-applied", "positive control". Sibling of
+  never applied", "mutation asserted-applied", "positive control", "Event-gated parent swap",
+  "RED reason class", "platform arms". Sibling of
   tensor-grep-codex-gated-audit-loop (the loop) and tensor-grep-validation-and-qa (what counts as
   proof); this one is the CONSTRUCTION discipline for hermetic + hostile tests. Not for deciding what
   to test or for merge gates.
@@ -36,23 +37,31 @@ independently proved it is the hostile thing you claim it to be.
 
 ### 1.1 Force a controlled deterministic seam — never env-detect
 
-CI's pytest env lacks the optional engines the dev desktop has. A gated test that reaches a tool's
-success arm through a real engine flips its verdict between the two environments:
+CI's pytest env lacks SOME of the optional engines the dev desktop has — but not all of them; know
+which is which before forcing a seam. A gated test that reaches a tool's success arm through a real
+engine flips its verdict between the two environments:
 
-| Optional engine | Dev desktop | CI pytest env | Flip |
+| Optional engine | Dev desktop | CI pytest env (`test-python`) | Flip |
 |---|---|---|---|
-| ast-grep binary | present | absent | AST tool success arms → absent-dep raise / "unavailable" envelope |
-| tree-sitter native grammars | present | absent | `tg_ast_search` / `tg_scan` success reach |
-| dense model (model2vec) | present/corrupt | absent | `tg_find` dense → BM25 fallback |
-| compiled `rust_core` extension | built | absent | extension-backed probes raise instead of returning |
+| ast-grep binary | present | absent (installed only in the `agent-readiness` job, not `test-python`) | AST-wrapper tool success arms → absent-dep raise / "unavailable" envelope |
+| tree-sitter native grammars | present | **PRESENT** — `test-python` installs `-e ".[dev,ast]"` and the `ast` extra carries every grammar | none — do NOT force a seam for these |
+| dense model (model2vec) | present/corrupt | absent (`semantic` extra not installed) | `tg_find` dense → BM25 fallback |
+| compiled `rust_core` Python extension | built | **PRESENT** — the maturin build backend compiles the PyO3 cdylib as part of the editable install | none — extension-backed probes run |
+| STANDALONE native `tg` binary (`rust_core/target/release/tg`) | built | may be absent — `test-python` never deliberately builds it (maturin builds only the extension cdylib); claim IN DISPUTE, see the non-gating `Task 22 diagnostic` step in `ci.yml` | delegation-route probes → Python route |
+
+(Verified 2026-08-12 against `ci.yml` `test-python` install steps + `pyproject.toml` extras/build
+backend; grep `uv pip install -e ".[dev,ast]"` in `.github/workflows/ci.yml` and `ast =` /
+`build-backend` in `pyproject.toml` to re-derive.)
 
 **The mechanism (M14 census shape, `_AST_ENGINE_SHIM_FAMILIES` in `mcp_server`'s M14 test):** force
 the engine's absence path through a controlled shim whose `__name__` is load-bearing (the tool
 refuses a backend not named `AstBackend`), returning deterministic empty results — so the tool's
 REAL success return site (e.g. `_inject_mcp_contract_fields`, `src/tensor_grep/cli/mcp_server.py`)
-is value-checked identically everywhere. For the dense leg, force `DenseUnavailableError`
-(`src/tensor_grep/core/retrieval_dense.py`, `DenseUnavailableError`) so the deterministic BM25-only
-fallback fires everywhere.
+is value-checked identically everywhere. For the dense leg, the ratchet does NOT raise
+`DenseUnavailableError`: `_force_dense_unavailable` in
+`tests/unit/test_mcp_contract_stamp_ratchet.py` REPLACES `retrieval_dense.dense_available` with a
+deterministic `(False, reason)` tuple, so every venue exercises the same BM25-only fallback success
+path (the same answer the degrade writes into `rank_fallback_reason`).
 
 Checked list for a hermetic gated test:
 
@@ -77,6 +86,19 @@ applied to guards, AGENTS.md), and re-point the ratchet until it does:
 The M14 sequence was the receipt: the ratchet (not the fix) took two extra codex rounds, and each
 round found a harness defect (exception-allowlist masking, env-dependence on the dense model,
 partial-key parity).
+
+### 1.3 Platform arms: target AND non-target (A84)
+
+A gated test that exercises a platform-meaningful path shape (a Windows junction, a drive-absolute
+strip, a `/mnt/c` bridge) must pin BOTH arms: the TARGET platform where the shape is meaningful AND
+the NON-target platform where the transform must be inert (A84). An unconditional platform-shaped
+transform re-creates the escape on the sibling OS — the drive-absolute strip receipt: stripping the
+leading `/` from `/C:/…` unconditionally turns a root-anchored URI into a RELATIVE path on POSIX,
+flipping a confinement check from refused→passed. Gate the transform on `os.name == "nt"` (or its
+POSIX analogue) and pin both arms in a cross-platform test; the junction fixture of Part 2 is the
+same shape (the Windows junction arm plus a sibling symlink arm for the POSIX topology, neither
+covering the other — the A27/A39 twin rule). The real CI OS matrix is the only oracle that catches
+a platform flip; a single-platform local green proves nothing about the sibling arm.
 
 ---
 
@@ -111,16 +133,31 @@ of this discipline (M1, #982). Windows specifics that matter — a junction is N
 - `Path.is_symlink()` is **False** on a junction; `os.walk`/`os.scandir` descend junctions as plain
   directories. So the enemy property is "an ANCESTOR directory that resolves out-of-root", not
   "a leaf link".
-- `mklink /J` **silently fails to create a junction when the target directory is NON-EMPTY** (the
-  A88 dogfood receipt): the wheel "passed" because the hostile fixture never applied. The BITE
-  precheck must assert the redirect actually resolves, AND must assert the negative shape
+- `mklink /J` requires the **LINK path to NOT pre-exist**; the **TARGET may be fully populated**.
+  SUPERSEDED (2026-08-12 — was the A88 dogfood wording): this bullet previously said `mklink /J`
+  "silently fails to create a junction when the target directory is NON-EMPTY". That claim is
+  WRONG, verified 2026-08-12 two ways: (1) an empirical probe on this host — `mklink /J` against a
+  target CONTAINING a file succeeds (exit 0, the junction resolves through to the file), while
+  `mklink /J` onto a PRE-EXISTING link path fails (exit 1, "Cannot create a file when that file
+  already exists", which reads as "silent" only when the checker captures output and looks at the
+  exit code alone); (2) the repo's own fixture helper `_plant_ancestor_link_or_skip`
+  (`tests/unit/test_checkpoint_create_ancestor_confinement.py`) removes the LINK path first
+  (`shutil.rmtree(link)`) and then junctions to a target that CONTAINS `b.txt` — the fixture works
+  precisely because a populated target is fine. The A88 dogfood fixture that "never applied" is
+  therefore best explained by the link path still existing at creation time, not by a populated
+  target (AGENTS.md's A88 entry still carries the old wording — out of scope for this skill, but
+  do not re-cite it as authority for the non-empty-target claim). The BITE precheck stays
+  mandatory regardless: assert the redirect actually resolves, AND assert the negative shape
   (`assert not link.is_symlink()` so a real symlink is not mistaken for a junction). See
-  `_create_junction` / `_assert_fixture_bites` in that test module.
+  `_plant_ancestor_link_or_skip` plus the inline BITE precheck in each test body (grep
+  `fixture is vacuous`) in that test module — there is no `_create_junction` / `_assert_fixture_bites`
+  helper (was: cited here as `_create_junction` / `_assert_fixture_bites`; now: the real symbols).
 
 Checked list for a junction/symlink hostile test:
 
-- [ ] Create the redirect with the repo's platform helper (`_create_junction`,
-      `pytest.skip` on `OSError`/`NotImplementedError` per the standing Windows-symlink rule).
+- [ ] Create the redirect with the repo's platform helper (`_plant_ancestor_link_or_skip` —
+      junction-first on Windows, symlink fallback, `pytest.skip` on `OSError`/`NotImplementedError`
+      only when real link creation is genuinely impossible, per the standing Windows-symlink rule).
 - [ ] **BITE precheck:** prove the redirect resolves into the out-of-root dir before the probe runs;
       abort with "fixture is vacuous" otherwise.
 - [ ] **Negative shape pin:** `assert not link.is_symlink()` when the fixture is meant to be a
@@ -135,13 +172,51 @@ M1's plan (`docs/plans/2026-08-08-backlog-completion-plan.md`, M1 section — gr
 test module both treat the two separately: a leaf symlink is legitimately tracked and stored AS a
 link, while a symlinked OR junctioned *ancestor* under root is refused because the OS traverses it
 transparently and copies out-of-root content. Write a distinct fixture per topology; do not let one
-passing arm "cover" the sibling (the A27/A39/twin rule — and note the create-side guard
-(`checkpoint_store.py` `_resolve_within_root` at :149 / the parent-chain resolve) and the undo-side
-leaf residual are separate contracts.
+passing arm "cover" the sibling (the A27/A39/twin rule) — and note the create-side guard
+(`checkpoint_store.py` `_resolve_parent_within_root`, parent-chain-only resolve) and the undo-side
+full-leaf resolve (`_resolve_within_root`) are separate contracts; see 2.4 for the seam receipt
+(was: this paragraph cited the create-side guard as `_resolve_within_root at :149` — that is the
+UNDO-side symbol with a bare line number; now: both symbols cited by name).
+
+### 2.4 Event-gated parent-swap fixtures (A38/A48) — the TOCTOU a plant-once fixture cannot reach
+
+Planting a link ONCE (2.2/2.3) proves a STATIC out-of-root resolve. It cannot prove the swap race:
+an attacker swapping a PARENT directory or junction BETWEEN the containment check and the
+create/lock/publication step (A38). The construction law for that stronger fixture:
+
+- **Anchor to OPENED, identity-verified parent handles.** Resolve-then-act over path strings is
+  the SHAPE under test, never the oracle — see `tensor-grep-cross-platform-path-confinement`
+  Part 3 (Canonicalize-or-fail-closed vs opened-identity anchoring, A38/A48/A53).
+- **Event-gate the swap** (never wall-clock overlap — a starved runner serializes legitimately and
+  false-fails; assert the blocking CONTRACT with `threading.Event` handshakes, AGENTS.md A17/A27):
+  swap the parent deterministically AFTER the guard's check/lock and BEFORE the step under test, in
+  each of the three windows A48 names — before create, after lock, before publication/read.
+- **Repo seam (verified 2026-08-12, cite by symbol):** the CREATE-side guard is
+  `checkpoint_store.py::_resolve_parent_within_root` (parent-chain-only resolve; the leaf's raw
+  identity survives — called from `create_checkpoint`'s copy loop), and the UNDO-side twin is
+  `_resolve_within_root` (full-leaf resolve over the snapshot dir). Grep
+  `def _resolve_parent_within_root` / `def _resolve_within_root` in
+  `src/tensor_grep/cli/checkpoint_store.py` to re-derive.
+- **Honest current state (A48 DEFERRED):** the atomic-publish helper `atomic_write_bytes_anchored`
+  (`src/tensor_grep/cli/_index_lock.py`) is FSYNC-anchored (data fsync + directory fsync,
+  `O_NOFOLLOW` temp creation, leaf-symlink refusal) but NOT identity-anchored — it does not yet
+  open/verify parent handles. Until A48 lands, a full Event-gated parent-swap RED against the
+  publish path stays **RED-by-design**: the TOCTOU is real and unclosed, so the RED is the correct
+  expected state, not a fixture bug. Write the fixture, mark it RED-by-design with the A48 owner
+  and reopen trigger, and do NOT relax the assertion to green.
 
 ---
 
 ## Part 3 — Mutation asserted-applied (the red-arm must actually RED)
+
+**Behavioral-RED law (A61):** a RED arm must fail for the EXACT expected refusal/reason class. A
+crash, import failure, hang, panic, or setup error is NOT a behavioral RED — it proves the arm
+died BEFORE exercising the contract, and any arm that dies early invalidates the red phase
+(AGENTS.md A61). Pin the expected exception type / message / exit code in the assertion
+(`pytest.raises(ExpectedError, match=...)`, an exact exit code, an exact refusal marker), and
+reject any arm whose failure output does not contain the pinned reason. "Any error is fine"
+allowlists are the same mask here as in Part 1.1's typed-allowlist rule — there on the green arm,
+here on the red one.
 
 A red-arm attempt that silently no-ops is a control arm that never ran (validation-and-qa, "A
 mutation that does not apply is a control arm that never ran"):
@@ -198,10 +273,13 @@ requirements — grep `### M1` / `M17`).
 ```
 [1] env-independence   force the optional-engine seam (never env-detect) -> prove the force
 [2] fixture-BITES      assert the hostile setup actually applied before the probe; abort if not
-[3] junction != symlink  is_symlink()==False on a junction; mklink /J silent-fails on NON-EMPTY
+[3] junction != symlink  is_symlink()==False on a junction; mklink /J needs the LINK path absent (target may be populated)
 [4] mutation REDs      delete a member / stamp / typed allowlist entry -> each must RED
 [5] mutation applied   assert the red-arm mutation actually took (diff / grep) before trusting red
 [6] positive control   the same probe must return non-zero somewhere it should
+[7] RED reason class   a crash/import/hang/panic/setup error is NOT a RED; pin the exact refusal (A61)
+[8] platform arms      pin the target AND the non-target platform arm; the CI OS matrix is the oracle (A84)
+[9] parent-swap TOCTOU Event-gate swaps against opened identity-verified parents; the fsync-anchored publish stays RED-by-design until A48
 ```
 
 The endpoint: a gated test that passes identically on the desktop and CI, whose hostile setup is

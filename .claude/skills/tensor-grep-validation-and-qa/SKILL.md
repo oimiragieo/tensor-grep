@@ -346,6 +346,31 @@ Windows ACL specifics learned the hard way (#281):
   its conclusions. Same class: reconcile the board AT completion, never "next cycle" -- staleness
   accrues exactly one deferral at a time.
 
+### 2026-08-12 campaign bullets (dated)
+
+- **RED-by-design is valid ONLY for the EXPECTED failure-reason class (A61).** A planned-RED test
+  earns its red only when it fails with the expected AssertionError/reason class. A collection
+  error, import failure, fixture/setup crash, or any die-before-the-contract exit is a GATE
+  FAILURE, not a behavioral RED — it proves the harness broke, not that the contract was
+  exercised. Pin the exact expected refusal/reason in the assertion and reject any arm that never
+  reaches it.
+- **Workflow receipt verification must aggregate EVERY per-node receipt and require union ==
+  expected manifest population.** One valid node receipt cannot clear a job: the verifier must
+  collect all per-node receipts, take their UNION, and assert that union equals the expected
+  manifest's full node population — a subset match (or a single node's success) reading as
+  "workflow verified" is the false-zero family applied to receipts.
+- **Live CI evidence binds to the EXACT tested tree and is recorded OUTSIDE it.** A CI verdict is
+  evidence about specific SHAs — record head + base + merge-ref explicitly — and the evidence
+  itself lives OUTSIDE the tested tree (a PR comment, a docs PR), never committed to the tested
+  branch as self-covering proof of itself. A receipt that only exists inside the tree it vouches
+  for is circular.
+- **Shared-filesystem timing wobble must reproduce in ISOLATION before widening any bound.** On a
+  shared dev/CI box, a one-off timing failure is a hypothesis about contention, not about the
+  bound: reproduce the wobble in an isolated run first; if it does not reproduce, the correct
+  response is suspect-instrument (the shared filesystem), never a looser assertion — widening a
+  bound on an unreproduced wobble converts a shared-resource artifact into a permanent weakened
+  contract.
+
 ### A89 — the REAL-ARTIFACT parity arm (2026-08-08/09, M17 wave)
 
 A parity test whose "real" arm is FAKE-BACKED (a stub producer standing in for the shipped binary,
@@ -817,9 +842,11 @@ of drifting unnoticed:
 
 ### Golden/snapshot output tests (a fourth, smaller certified surface)
 
-- `tests/e2e/test_output_golden_contract.py` — 20 `GOLDEN_CASES` (default/`--cpu`/`-o`/`-c`/`-r`/`-n`
-  /binary/`--json`/`--ndjson` combinations) run through both `python-m` and `native` launchers and
-  compared for output parity (`test_output_golden_contract.py:28-60`).
+- `tests/e2e/test_output_golden_contract.py` — **21** `GOLDEN_CASES` (derived 2026-08-12; this
+  spot was stamped "20" — recount the `GOLDEN_CASES = [` list entries, which live at `:56-89`
+  now, was cited `:28-60`; locate with `grep -n "GOLDEN_CASES = \[" tests/e2e/test_output_golden_contract.py`).
+  default/`--cpu`/`-o`/`-c`/`-r`/`-n`/binary/`--json`/`--ndjson` combinations run through both
+  `python-m` and `native` launchers and compared for output parity.
 - `tests/e2e/test_output_snapshots.py` uses the `pytest-snapshot` plugin's `snapshot.assert_match`
   fixture (`pyproject.toml:616`, dev dependency) to pin exact JSON-formatter output, with file-path
   normalization to `<FILE>` so the snapshot stays host-independent
@@ -913,7 +940,7 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 | Directory | What lives there | Run cost |
 |---|---|---|
 | `tests/unit/` (**re-run `ls tests/unit/*.py | wc -l`** -- 291 on 2026-07-27; do not cite the stamp) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
-| `tests/e2e/` (16 files) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
+| `tests/e2e/` (**derive: `ls tests/e2e/test_*.py \| wc -l`** — was stamped 16, then 21, derived **22** at v1.110.14 on 2026-08-12; do not re-stamp the number here) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
 | `tests/integration/` (16 files as of 2026-07-22, up from 11) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
 | `tests/eval/` (2 files as of 2026-07-24 — `test_agent_accuracy.py`, `test_retrieval_quality_regression.py`) | The per-task-pinned capability-regression gate (Part 1 point 13) — a distinct evidence tier from a contract test, opt-in via its own marker (`-m eval`), not run by a bare `pytest tests` collection the same way as `unit`/`e2e`/`integration` | seconds-minutes; requires a built repo-map over real fixtures |
 | `tests/golden/` | Committed golden-output fixtures consumed by `rust_core/tests/test_search_golden.rs`, not itself a pytest dir | n/a |

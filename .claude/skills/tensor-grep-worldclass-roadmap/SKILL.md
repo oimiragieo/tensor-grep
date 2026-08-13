@@ -46,10 +46,10 @@ not a PASS condition** (council HIGH-1).
 | Item | Status | One-line contract |
 |---|---|---|
 | **H1** unknown-command fail-closed + PATH honesty | **SHIPPED** (v1.110.13 unknown_command A90; v1.110.14 doctor schema-3 `pypi_latest`/`shadow_launchers`/`installation_health`) | both front doors exit 2 + `nearest[]`; doctor surfaces PATH-vs-claimed distribution |
-| **S1** fail-closed edit tickets + verify-edit, escrowed | **NEW (re-scoped; THE moat)** | See the S1 contract below — nothing ships until this does |
+| **S1** fail-closed edit tickets + verify-edit, escrowed | **BANKED F6, re-scoped; THE moat** — MIXED disposition (A41, corrected 2026-08-12 per `docs/TASK_BOARD.md` F6): Step 0 shipped (#939); Python/schema/evidence-signing slices buildable-first, native verify-edit + e2e halves CI/cloud-routed | See the S1 contract below — nothing ships until this does |
 | **S2** registration-aware impact-diff | NEW | changed_symbols + registration_sites (allowlists, `@router`, `Commands::`, class registries) + tests_to_run |
 | **S3** next_action machine protocol + budget envelope | NEW (default-OFF additive) | capsule extension; budget envelope for the machine consumer |
-| **S4** warm session resume of decisions | BANKED PARTIALLY | correct the premise before building (daemon holds a symbol map, not a search index) |
+| **S4** warm session resume of decisions | BANKED PARTIALLY | correct the premise before building: `tg session prepare`/`resume` DO NOT EXIST (only top-level `tg prepare`) — the whole `session resume` gate is unbuilt (the doc's own ground-truth correction, §S4) |
 | **S5** head-bound, escrowed evidence chain at CI | BANKED PARTIALLY | rides S1's escrow; receipts pinned to base_sha + fingerprint |
 | **S6** semantic default + why_ranked | BANKED PARTIALLY | additive find UX: `why_ranked` reasons + `install_state` |
 | **S7** federated workspace object | BANKED F8 | Python slice first, rust/e2e later |
