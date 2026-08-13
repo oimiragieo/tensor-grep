@@ -1630,3 +1630,184 @@ def test_flag_sweep_still_fails_an_undisclosed_exit_two(monkeypatch, tmp_path) -
     with pytest.raises(module.ReadinessError) as excinfo:
         module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
     assert "exit=2" in str(excinfo.value)
+
+
+def test_run_check_retries_a_timed_out_probe_before_failing(monkeypatch, tmp_path) -> None:
+    """A101: the public-version-powershell probe flaked 3x in 3 runs at a 30s timeout.
+
+    A single transient timeout must not fail the readiness gate when a retry succeeds.
+    PRE-FIX this fails with AssertionError: assert 'failed' == 'passed', because run_check
+    calls subprocess.run exactly once and its TimeoutExpired handler has no retry.
+    """
+    module = _load_script_module()
+    calls = {"n": 0}
+
+    def fake_run(command, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 0))
+        return subprocess.CompletedProcess(
+            args=command, returncode=0, stdout="tensor-grep 1.110.14\n", stderr=""
+        )
+
+    monkeypatch.setattr(module, "_command_available", lambda command: True)
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    check = module.Check(
+        name="probe-under-test",
+        command=["powershell", "-NoProfile", "-Command", "tg --version"],
+        description="retry probe",
+        timeout_s=90,
+        retry_on_timeout=1,
+    )
+    result = module.run_check(check, repo_root=tmp_path, expected_version="1.110.14")
+
+    assert result["status"] == "passed", result
+    assert result["attempts"] == 2, result
+    assert calls["n"] == 2
+
+
+def test_run_check_does_not_retry_when_retry_on_timeout_is_zero(monkeypatch, tmp_path) -> None:
+    """Control arm for the A101 retry: the retry must be OPT-IN and bounded.
+
+    A blanket retry would double the wall-clock of every genuine hang and mask real
+    regressions. Mutation control: make the loop retry unconditionally and this test
+    must go RED. If it stays green, the retry is not actually bounded.
+    """
+    module = _load_script_module()
+    calls = {"n": 0}
+
+    def always_timeout(command, **kwargs):
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(module, "_command_available", lambda command: True)
+    monkeypatch.setattr(module.subprocess, "run", always_timeout)
+
+    check = module.Check(
+        name="no-retry-control",
+        command=["powershell", "-NoProfile", "-Command", "tg --version"],
+        description="no-retry control",
+        timeout_s=5,
+    )
+    result = module.run_check(check, repo_root=tmp_path, expected_version="1.110.14")
+
+    assert result["status"] == "failed", result
+    assert result["attempts"] == 1, result
+    assert calls["n"] == 1
+
+
+def test_run_check_reports_zero_attempts_when_the_command_is_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    """The early return runs NO subprocess, so attempts must be 0, not 1.
+
+    attempts exists so a retried pass stays distinguishable from a first-attempt pass. A path
+    that never launched the command must be distinguishable from both -- otherwise the field
+    silently means "at least one attempt" and A101's recurrence signal is lost.
+    """
+    module = _load_script_module()
+
+    def must_not_run(command, **kwargs):  # pragma: no cover - the assertion is that it is unreached
+        raise AssertionError(f"subprocess.run must not be called, got {command!r}")
+
+    monkeypatch.setattr(module, "_command_available", lambda command: False)
+    monkeypatch.setattr(module.subprocess, "run", must_not_run)
+
+    check = module.Check(
+        name="unavailable-probe",
+        command=["definitely-not-on-path", "--version"],
+        description="early-return probe",
+        timeout_s=5,
+    )
+    result = module.run_check(check, repo_root=tmp_path, expected_version="1.110.14")
+
+    assert result["attempts"] == 0, result
+    assert result["status"] != "passed", result
+
+
+def test_shell_version_probes_carry_a101_timeout_budget_and_retry(tmp_path) -> None:
+    """A101: record the structural fix on the four shell version probes.
+
+    PRE-FIX this fails with AssertionError on public-version-powershell timeout_s=30
+    (expected >= 90). The probe flaked 3x in 3 runs; the third sighting is a
+    structural-fix signal, not a rerun signal.
+    """
+    module = _load_script_module()
+    checks = module.build_check_plan(
+        repo_root=tmp_path,
+        expected_version="1.110.14",
+        include_shell_probes=True,
+        include_wsl_probe=False,
+        only_shell_probes=True,
+    )
+    by_name = {check.name: check for check in checks}
+    expected = (
+        "public-version-powershell",
+        "public-version-cmd",
+        "public-version-pwsh-noprofile",
+        "public-version-git-bash",
+    )
+    assert set(expected) <= set(by_name), sorted(by_name)
+    for name in expected:
+        check = by_name[name]
+        assert check.timeout_s >= 90, f"{name} timeout_s={check.timeout_s}, expected >= 90"
+        assert check.retry_on_timeout >= 1, f"{name} retry_on_timeout={check.retry_on_timeout}"
+
+
+def test_run_check_clamps_oversized_retry_on_timeout(monkeypatch, tmp_path) -> None:
+    """The retry is OPT-IN but must stay STRUCTURALLY bounded (codex W2A-01).
+
+    retry_on_timeout is caller-controlled: an oversized value would otherwise multiply
+    the probe timeout into an effectively infinite readiness hang. The runner clamps
+    at _MAX_TIMEOUT_RETRIES. PRE-FIX (unclamped) this fails with
+    AssertionError: assert 4 == 1001.
+    """
+    module = _load_script_module()
+    calls = {"n": 0}
+
+    def always_timeout(command, **kwargs):
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(module, "_command_available", lambda command: True)
+    monkeypatch.setattr(module.subprocess, "run", always_timeout)
+
+    check = module.Check(
+        name="oversized-retry",
+        command=["powershell", "-NoProfile", "-Command", "tg --version"],
+        description="oversized retry clamp",
+        timeout_s=5,
+        retry_on_timeout=1000,
+    )
+    result = module.run_check(check, repo_root=tmp_path, expected_version="1.110.14")
+
+    assert result["status"] == "failed", result
+    assert result["attempts"] == 1 + module._MAX_TIMEOUT_RETRIES, result
+    assert calls["n"] == 1 + module._MAX_TIMEOUT_RETRIES
+
+
+def test_run_check_treats_negative_retry_on_timeout_as_zero(monkeypatch, tmp_path) -> None:
+    """Negative retry values must degrade to zero retries, never wrap into huge loops."""
+    module = _load_script_module()
+    calls = {"n": 0}
+
+    def always_timeout(command, **kwargs):
+        calls["n"] += 1
+        raise subprocess.TimeoutExpired(cmd=command, timeout=kwargs.get("timeout", 0))
+
+    monkeypatch.setattr(module, "_command_available", lambda command: True)
+    monkeypatch.setattr(module.subprocess, "run", always_timeout)
+
+    check = module.Check(
+        name="negative-retry",
+        command=["powershell", "-NoProfile", "-Command", "tg --version"],
+        description="negative retry degrades to zero",
+        timeout_s=5,
+        retry_on_timeout=-5,
+    )
+    result = module.run_check(check, repo_root=tmp_path, expected_version="1.110.14")
+
+    assert result["status"] == "failed", result
+    assert result["attempts"] == 1, result
+    assert calls["n"] == 1
