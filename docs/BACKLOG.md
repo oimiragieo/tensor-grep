@@ -47,6 +47,33 @@
 
 
 
+## Recent campaign notes (2026-08-13) - session-retention campaign: 35/35 skill accuracy audit + never-committed lesson capture
+
+- **Scope:** independent accuracy audit of ALL 35 tracked `.claude/skills/*/SKILL.md` (7 waves,
+  artifact-specific receipts) + capture of the 2026-08-12 campaign's lessons across docs/AGENTS/
+  skills/workflows/tools/paper. Base `568065a` (v1.110.14). No release; no spend.
+- **Result:** 7 CLEAN / 28 DRIFT_FOUND / 0 CANNOT_VERIFY; zero new skills justified
+  (fold-over-fragmentation per the Exa "coherent unit" guidance). Every HIGH/MED substantive
+  drift repaired with file:line-verified edits (MaxSim HELD→RETIRED; TG_FIND_DENSE_WEIGHT
+  default-OFF→adaptive-5.0-shipped; Battle 29/28/20/23 statuses; junction-rule mechanism;
+  worktree-store overclaim; installation_health enum; exit-2 wording; MCP 5th registration site;
+  ~20 more). Dated receipts SUPERSEDED/annotated, never rewritten; drifted anchors converted to
+  grep-the-symbol form, never re-stamped bare.
+- **Never-committed capture:** the dirty `audit/h6-cudf-backend` tree carried the 2026-08-07
+  Session Lessons + CI Cost Discipline sections that were never committed to any ref
+  (pickaxe-verified); landed verbatim into AGENTS.md + SESSION_HANDOFF.md with provenance.
+  Reconciliation carries ERRATUM-2 (the one-file spot-check that misclassified them as stale).
+- **Tooling:** `tg-skill-audit.js` hardened (artifact binding: root/SHA/blob manifest; exact
+  coverage equality; evidence floor; CANNOT_VERIFY); `tg-audit-fix-loop.js` five advertised phases
+  wired (Seam/RED/GREEN/Gate/Verify) with FIX-FIRST verdict vocabulary; new
+  `tests/unit/test_skill_rules_registry.py` (schema + regex-compile + dangling-key governance).
+- **Gates:** 117 governance tests passed in the real venv; ruff + mypy clean on the new test;
+  both workflows pass a wrapped `node --check`. Independent adversarial gate FIX-FIRST (8) →
+  repaired → re-gate SHIP-WITH-NITS. PR CI: one known `public-version-powershell` flake,
+  rerun green.
+- **Landed:** PR #1005 (`docs:`), commit `f7bcc9a`, squash-merged `5148664` (2026-08-13).
+  Receipt: `docs/audits/2026-08-12-session-retention-audit.md`.
+
 ## Recent campaign notes (2026-08-12) - backlog-closeout campaign: Task 2A resume + reconciliation + research receipts
 
 - **Plan:** `docs/plans/2026-08-12-backlog-closeout-campaign.md`, rev 6 - 6 revisions through a

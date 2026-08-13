@@ -157,3 +157,24 @@ Zero new skills. All 35 seats returned NO with trigger-collision reasoning (each
 fits an existing skill's trigger/workflow/contract), matching the Exa "coherent unit" guidance:
 folding preserves routing precision; a new skill is owed only when a distinct reusable trigger
 exists. The one genuinely new surface was the governance TEST, not a skill.
+
+## Merge receipt (A28/A29)
+
+- Landed as PR **#1005** (`docs:`; no release), commit `f7bcc9a`, squash-merged to `main` as
+  `5148664da4cf72a8adf31ebc5deec940b811aca1` (2026-08-13T07:13:33Z).
+- PR CI run `31673774966`: first pass 37 success / 10 skipped / 1 failure. The single failure was
+  `windows-agent-readiness` probe `public-version-powershell` ("timed out after 30s" at 31.047s)
+  while the same binary passed `public-version-pwsh-noprofile` (0.453s), `-cmd` (0.203s), and
+  `python-subprocess` (0.141s) in the SAME run — the known profile-loading flake recorded in
+  SESSION_HANDOFF "Session Lessons (2026-08-07)" item 3. `gh run rerun --failed` → all green
+  (38 success / 10 skipped / 0 failure). Diff is docs/skills/workflows/tests only, so it cannot
+  affect that probe.
+- Independent adversarial gate: FIX-FIRST (8 findings) → all repaired → re-gate SHIP-WITH-NITS
+  (all eight PASS). Nits banked per A19 (briefing branch-name typo; empty worktree `.venv`
+  PATH-fallback note; ERRATUM-2 tense).
+- Post-merge main run for `5148664`: `31676896244` completed red on `windows-agent-readiness`
+  ALONE (same `public-version-powershell` 30s-timeout flake; every other job green). `gh run rerun
+  --failed` re-ran that job to restore green. This is the third sighting of this flake in as many
+  runs (#968-era main, PR #1005 first pass, post-merge main) — a recurring environmental probe
+  timeout, not a product regression; the retention diff is docs/skills/workflows/tests only and
+  cannot affect it. Banked as a follow-up to make the probe lenient/longer rather than rerun-driven.
