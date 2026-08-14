@@ -29,7 +29,7 @@ CONTRACTS_PATH = ROOT / "docs" / "CONTRACTS.md"
 MAIN_PATH = ROOT / "src" / "tensor_grep" / "cli" / "main.py"
 LEDGER_STORE_PATH = ROOT / "src" / "tensor_grep" / "cli" / "ledger_store.py"
 AUDIT_859_PATH = ROOT / "docs" / "audits" / "2026-08-01-backlog-verification-receipts.md"
-CEO_AUDIT_PATH = ROOT / "docs" / "audits" / "2026-08-11-ceo-backlog-update.md"
+CEO_AUDIT_PATH = ROOT / "docs" / "audits" / "2026-08-13-ceo-backlog-update.md"
 
 STATUS_HEADING = "## Canonical status index"
 VERSION_PREFIX = "Canonical status index version:"
@@ -801,5 +801,5 @@ def test_handoff_version_and_current_prose() -> None:
     assert "CEO decision-gated — nonfinancial (4)" in ceo_audit
     assert "CEO financial stop (1)" in ceo_audit
     assert "Demand / research gated (6)" in ceo_audit
-    assert "Terminal rows (11)" in ceo_audit
+    assert "Terminal rows (12)" in ceo_audit
     assert "A77" in ceo_audit and "A82" in ceo_audit

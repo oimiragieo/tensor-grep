@@ -359,3 +359,33 @@ fields (`range.start.index` vs the real 0.42.1 `range.byteOffset.start/end`) —
 pinned against the bug, and only adding a REAL `ast-grep --json` subprocess arm surfaced the
 divergence. Whenever a parity/oracle test can drive the real producer cheaply, it must — a
 fake-backed arm can certify a lie as three arms of agreement.
+
+## Campaign-scale round receipts (2026-08-13)
+
+A campaign-scale A3 security gate (the RUST-REPLACE-SYMLINK symlink/junction guard, PR #1010)
+ran **13 opus rounds plus a final codex pass** to SHIP. Lessons that generalize:
+
+- **The adversarial bar is STRICTER than the merge-readiness bar.** Termination happens when the
+  remaining findings are cosmetic/honesty-class, not when the gate returns zero findings
+  (published receipt: one-shot review approval 43% vs iterative adversarial loop 91%, where the
+  adversarial reviewer never reached zero findings yet an independent reviewer approved 7/8 —
+  github.com/kimjune01/refactor-equivalence). Plan on 2-5 codex rounds for a routine item, but
+  budget 10+ for a security-class item; the terminator is findings-CLASS, not round count.
+- **The gate reliably surfaces a small defect taxonomy.** Five classes recurred across the 13
+  rounds: (1) test-fidelity seams (a fault injected BEFORE the stat can never observe a fail-open
+  rewrite — inject the fault INTO the same `map_err` path the production stat uses); (2)
+  scope-honesty residuals (a leaf-only `lstat` leaves non-leaf ancestor links, the directory-ROOT
+  swap window, and trailing-separator resolves through — name each with a filed owner row); (3)
+  board-code consistency (codethat cites a board row must file/update the row in the SAME PR, and
+  the IN_FLIGHT transition belongs in the implementation PR per A50); (4) skip-visibility (a green
+  test that silently skips proves nothing — promote skips to panics via an env var armed in CI,
+  e.g. TG_REQUIRE_SYMLINK_TESTS); (5) commentary accuracy (Send/Sync claims, deferral rationale,
+  Disconnected-vs-Timeout attribution — the rounds keep finding these until every load-bearing
+  comment is re-derived). Check each class explicitly before opening the gate.
+- **Gate-vendor generalization.** codex (gpt-5.6-sol) is the nominal vendor; opus (claude -p
+  --model opus) is the reliable A3 substitute on this box. The per-round contract stays identical:
+  read-only, cite file:line, verdict SHIP | SHIP-WITH-NIT | FIX-FIRST(+file:line+repro+minimal fix),
+  and every fix lands as its OWN commit on the PR branch (unpushed branches never amend — A110).
+- **Stopping rule from the literature:** one clean round is not proof of convergence on a
+  stochastic adversarial gate; prefer a two-consecutive-clean-pass criterion with the second pass
+  run by a DIFFERENT vendor (arxiv.org/html/2605.12280).

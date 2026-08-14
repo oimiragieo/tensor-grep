@@ -424,7 +424,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    load-bearing gap in this discipline).** A dogfood/`tg orient` run mostly exercises a WARM, cached
    path — repo-map/AST-parse state already populated from a prior call — so it can misjudge a change
    whose effect is COLD-path-only. Receipt: a warm end-to-end `tg orient` dogfood read the
-   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:2126`) as **−36% slower**;
+   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:2166` — re-derive with: grep -n '_python_imports_and_symbols' src/tensor_grep/cli/repo_map.py) as **−36% slower**;
    an isolated cold microbench of the same function (fresh process, single pass over distinct inputs)
    showed it is actually **~54% faster** (961ms→446ms) — the warm run never exercised the changed code
    path. To validate a cold-path optimization, microbench the target function directly or clear the
@@ -884,23 +884,23 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-Useful flags on `scripts/agent_readiness.py` (`main()`, `:1155-1237`): `--json` (machine-readable
+Useful flags on `scripts/agent_readiness.py` (`main()`, `:1258` (re-derive with: grep -n '^def main' scripts/agent_readiness.py)): `--json` (machine-readable
 report to stdout), `--no-shell-probes` (skip public shell version probes — used by CI's Linux
 `agent-readiness` job), `--only-shell-probes` (Windows-only shell probes, mutually exclusive with
 `--no-shell-probes` — used by CI's `windows-agent-readiness` job), `--no-wsl-probe`.
 
 **Acceptance semantics:** the script's exit code is `1 if report["summary"]["failed"] else 0`
-(`:1233`) — any failed check fails the whole gate; there is no partial-credit threshold. CI wires two
+(`:1336` — re-derive with: grep -n 'summary.*failed' scripts/agent_readiness.py) — any failed check fails the whole gate; there is no partial-credit threshold. CI wires two
 blocking jobs off it — `agent-readiness` (Ubuntu, `--no-shell-probes --no-wsl-probe`,
 `.github/workflows/ci.yml:121-157`) and `windows-agent-readiness` (Windows,
 `--only-shell-probes`, `:159-193`) — and both are `needs:` of `Semantic Release`
-(`:943`), so a readiness regression blocks the release the same as a routing-parity regression.
+(`release:` job at `ci.yml:1121`, `needs:` at `:1122` — re-derive with: grep -n '^  release:' .github/workflows/ci.yml), so a readiness regression blocks the release the same as a routing-parity regression.
 
 Checks currently in the plan (`build_check_plan`, names verified at
 `scripts/agent_readiness.py:698-1009`): `public-version-{powershell,cmd,pwsh-noprofile,git-bash,wsl,
 python-subprocess}`, `public-doctor-{cmd,pwsh-noprofile}`, `public-windows-launcher-quoted-patterns`,
 `public-search-advertised-flag-sweep`, `repo-cli-build-warmup`, `repo-doctor`,
-`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md:352,379`),
+`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md:710,737`),
 `rg-parity-edges`, `broad-generated-scan-guard`, `ast-info-json`, `ast-run-smoke`,
 `mcp-context-render-smoke`, `mcp-stdio-protocol-smoke`, `agent-capsule`,
 `agent-capsule-mixed-language`, `agent-capsule-hardcases`, `docs-claim-check`. This list drifts with

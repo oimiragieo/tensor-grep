@@ -456,7 +456,7 @@ exactly why this section says "re-verify with git log" instead of asserting a fi
 A new grammar touches three files that several in-flight language PRs are likely to touch
 at once: `tests/unit/test_lang_registry.py` (the `LANGUAGE_REGISTRY.keys()` set-pin test,
 `test_language_registry_has_exactly_the_stage2_languages`), the pyproject `ast` extra
-(`grep -n '^ast = ' pyproject.toml` — was `:600`, now `:614`, plus the mirrored `dev`/`bench` extras), and `uv.lock` (a new
+(`grep -n '^ast = ' pyproject.toml` — was `:600`, now `:614`, now `:621`, plus the mirrored `dev`/`bench` extras), and `uv.lock` (a new
 `tree-sitter-<lang>` `[[package]]` block). When more than one language PR is in flight:
 
 - Drain ONE at a time and rebase each onto the prior, **UNIONing** the assertions — e.g. the
@@ -548,7 +548,7 @@ tg --version
   `_confirm_import_edges` `:17350`->`:17367`; the `elif language_id == "java"` branch
   `:16714-16722`->`:17237-17245`; the Kotlin-example docstring inside
   `_imports_with_lines_for_path` `:6440`->`:6835`; the Java inline extractor
-  `_java_imports_and_symbols` `:4782`->`:4783`; `pyproject.toml`'s `ast` extra `:600`->`:614`).
+  `_java_imports_and_symbols` `:4782`->`:4783`; `pyproject.toml`'s `ast` extra `:600`->`:614`, now `:621`).
   Replaced every one of these with a `grep -n "^def <symbol>"` instruction plus the `was -> now`
   receipt per `AGENTS.md`'s never-re-stamp rule, rather than swapping in a fresh bare number that
   would just rot again. **One substantive content error found and fixed, not just a line-number

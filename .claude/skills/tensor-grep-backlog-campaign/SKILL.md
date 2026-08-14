@@ -276,6 +276,8 @@ Fold findings as ADDED / CONTRADICTED / SUPERSEDED. Competitive/prior-art → de
 
 ### 4 — Council review (`use-thinktank` / Fable) — risk-tiered
 Mandatory for load-bearing / security / concurrency / FFI / public-ship / >$50. Pass verbatim plan. Skip for contained fixes.
+- Multi-round hash-frozen approval loop (2026-08-13 receipt): freeze the artifact hash, run the 8-seat council, apply ONLY the verified findings, re-hash, re-run until N/N APPROVE (5 rounds to 7/7 on docs/plans/2026-08-13-backlog-completion-plan.md). Failed seats are not votes. A step whose content depends on a future verdict must be written NOW as a named GATE with command + trigger + re-approval rule — "EXPAND AT WAVE START" reads as a placeholder to half the council. Cite the artifact hash in every round's question file. (A108)
+
 
 ### 5 — Pre-dispatch gate (`verify-plan-against-code`)
 Adversarial seam verification (`file:line`). BLOCK build until clean.

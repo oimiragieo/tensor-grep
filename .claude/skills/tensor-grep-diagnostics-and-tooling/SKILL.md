@@ -191,7 +191,7 @@ alongside `tg dogfood` (`AGENTS.md:316-323`).
 | `agent-capsule-hardcases` | polyglot monorepo, generated-noise, Rust/Python/JS/TS hardcases | — |
 | `docs-claim-check` | **no subprocess** — reads `AGENTS.md`/`README.md`/`SKILL.md`/`docs/*.md` directly and checks required fragments + version-staleness prose patterns + a banned-phrase list on GPU docs | — |
 
-`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:623`) is the mechanism that
+`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:623`, now `:634`) is the mechanism that
 enforces the **no-oversell rule** described in `AGENTS.md`: it bans phrases like `"mathematically
 guaranteeing"`, `"0ms interpreter lag"`, `"peak theoretical throughput"`, `"GPU-ready"` from
 `docs/benchmarks.md`, `docs/gpu_crossover.md`, and `docs/PAPER.md`, and requires phrases like `"not
@@ -438,7 +438,7 @@ numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py
 `_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
 flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py:1522`), `dogfood`
 command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
-`:10123`, `validate_docs_claims` (`agent_readiness.py:623`), `build_check_plan`
+`:10123`, `validate_docs_claims` (`agent_readiness.py:623`, now `:634`), `build_check_plan`
 (`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
 `benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
 SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also
@@ -453,7 +453,7 @@ not uniform, which is the useful part: **six anchors had not moved at all** —
 helper `:3121`, `_build_doctor_payload` `:3142`, `agent_capsule.py:1522`, and
 `dogfood.py:207` — while **every command registration had**: doctor `:14437`->`:14763`, dogfood
 `:14167`->`:14493`, `find` `:4574`->`:4625`, `route_test` `:10123`->`:10302`, plus the two
-`scripts/agent_readiness.py` helpers (`validate_docs_claims` `:560`->`:623`, `build_check_plan`
+`scripts/agent_readiness.py` helpers (`validate_docs_claims` `:560`->`:623`, now `:634`, `build_check_plan`
 `:698`->`:761`). The rule: **private helpers in `main.py`'s ~2400-3500 band are stable anchors;
 `@app.command()` registrations in the file's tail are not**, because every new `tg` command is
 appended and shifts all of them. So cite a helper by line if you must, but cite a command by its
@@ -476,7 +476,7 @@ registrations in the tail are not. This pass re-derived the same six against `or
 `_doctor_rust_binary_remediation` `:2432`->`:2503`, the GPU probes `:2905`->`:2976` /
 `:2921`->`:2992`, the flavor-mismatch helper `:3121`->`:3206`, `_build_doctor_payload`
 `:3142`->`:3227` — while `agent_capsule.py:1522`, `dogfood.py:207`,
-`agent_readiness.py`'s `validate_docs_claims` `:623`, and `build_check_plan` `:761` (the
+`agent_readiness.py`'s `validate_docs_claims` `:623`, now `:634`, and `build_check_plan` `:761` (the
 already-corrected 07-27 value) stayed exactly put. **The refined rule: it is not "private helper
 vs. command registration" — it is "lives in `main.py`'s own private-helper band vs. lives in a
 separate, smaller file."** `main.py` is the single fastest-growing file in this repo (every new

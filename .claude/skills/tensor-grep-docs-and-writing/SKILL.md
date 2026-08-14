@@ -111,7 +111,7 @@ release-line bullets are prepended above it, e.g. still `:42` as of `v1.95.0` â€
 
 ### Layer C â€” The fast agent-readiness gate (not pytest, runs in seconds)
 
-`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:623`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
+`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:634`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json

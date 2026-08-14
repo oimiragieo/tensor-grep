@@ -7,7 +7,7 @@
 > nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and mixed/terminal
 > corrections—not merely SHIPPING or P0/P1. Update whenever a PR opens/merges or the queue changes.
 > Task-store IDs (`#NNN`) are cross-referenced.
-> **Current closed-world CEO snapshot: 2026-08-12, release `v1.110.14`, tip `b6dc0a6` (re-derive).**
+> **Current closed-world CEO snapshot: 2026-08-13, release `v1.110.16`, merged main `8f7db83`.** Backlog-closeout campaign W1-W4: W1 premise receipt (PR #1008), W2 A101 probe retry (PR #1009, v1.110.15), W3 RUST-REPLACE-SYMLINK threat model + guard (PR #1010, v1.110.16, Merged SHA d31a051), W4 Task 2A repair round 1 receipt on #966. RUST-REPLACE-TOCTOU row filed. See docs/audits/2026-08-13-ceo-backlog-update.md for the live disposition list.
 > Live disposition is the canonical index in `docs/TASK_BOARD.md` (28 rows / 17 unfinished =
 > **1 READY** (RUST-REPLACE-SYMLINK, design-council-first), 6 BLOCKED, 0 IN_FLIGHT, 5 CEO_GATED,
 > 5 DEMAND_GATED). Campaign receipts: `docs/plans/2026-08-12-backlog-closeout-campaign.md` +
@@ -291,6 +291,17 @@
   PR -- it owns the leaf race, walk-time child swap, and non-leaf ancestor bypass; candidate
   machinery: `rust_core/src/safe_write.rs`'s O_NOFOLLOW / FILE_FLAG_OPEN_REPARSE_POINT.
   Threat model: `docs/design/2026-08-13-replace-in-place-symlink-threat-model.md`.
+
+## Recent campaign notes (2026-08-13 campaign closeout)
+
+- Plan `docs/plans/2026-08-13-backlog-completion-plan.md` council-approved 7/7 after 5 rounds.
+- PRs merged: #1008 (W1 premise receipt), #1009 (W2 A101 probe retry -> v1.110.15), #1010
+  (W3 RUST-REPLACE-SYMLINK symlink/junction guard -> v1.110.16, Merged SHA d31a051).
+- A3 adversarial gate: 13 opus rounds converged SHIP; codex security audit cleared. Junction fact
+  settled by bounded pinned-toolchain probe (A107); RUST-REPLACE-TOCTOU row filed for the residuals.
+- W4 Task 2A: Sol re-audit 9/10 HIGH fixed; round-1 F1 untyped-JUnit fix pushed to #966 head
+  1210d8e; parked with receipt (union-merge onto current main is the next Task 2A action).
+- Laws A103-A110 retained in AGENTS.md + CLAUDE.md + skills. Board index 2026-08-13.1.
 
 ## Recent campaign notes (2026-08-06 CEO)
 

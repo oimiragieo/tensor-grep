@@ -81,10 +81,10 @@ next wrong anchor on a slower clock — grep instead.)
 A release is **not** done just because `release` (Semantic Release) went green. It is done when
 `publish-success-gate` is green — that job RE-VERIFIES (not merely re-checks job results) GitHub
 release asset coverage (`scripts/verify_github_release_assets.py`, invoked inside
-`publish-success-gate` — grep the script name in `ci.yml`; was `:1397`, now `:1518`) and PyPI parity
-(`scripts/validate_release_version_parity.py`, same job; was `:1418`, now `:1539`) for the exact tag
+`publish-success-gate` — grep the script name in `ci.yml`; was `:1397`, now `:1577`) and PyPI parity
+(`scripts/validate_release_version_parity.py`, same job; was `:1418`, now `:1598`) for the exact tag
 semantic-release produced — both scripts also run once earlier, inside
-`publish-github-release-assets`/`publish-pypi` themselves (was `:1295`/`:1332`, now `:1416`/`:1453` —
+`publish-github-release-assets`/`publish-pypi` themselves (was `:1295`/`:1332`, now `:1475`/`:1512` —
 two call sites each, grep the same script names), so `publish-success-gate` is a second, independent
 confirmation pass, not the only place these checks run.
 

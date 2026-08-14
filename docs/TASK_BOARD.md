@@ -50,7 +50,7 @@ unchanged: Task 2A not GREEN (#966 drafted, RED by design), W3 rust/e2e shared-b
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-12.1
+Canonical status index version: 2026-08-13.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
@@ -78,26 +78,27 @@ Canonical status index version: 2026-08-12.1
 - [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle; evidence refreshed 2026-08-12 (ast-grep ecosystem growing, zero metavariable-performance demand; LEAVE)
 - [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface; evidence refreshed 2026-08-12 (industry converged on lean/deferred tool loading — Claude Code tool-search, 25k-token doctor warning, AWS guidance; direction confirmed but STILL SEQUENCED AFTER Task 2C per the MCP-SURFACE ladder)
 - [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: approved scoping/design pass for a warm search-index service (not a build); evidence refreshed 2026-08-12 (warm code-index daemons trending to table stakes across agent tooling — Cursor secure-indexing, zoekt-mcp/TriSeek/codescope wave; the banked big-refactor note stands)
-- [ ] **RUST-REPLACE-SYMLINK** — Status: IN_FLIGHT; PR: PR #1010; Trigger: the untrusted-destination threat model is evidenced by fresh 2026 CVEs (sed CVE-2026-5958; uutils GHSA-239g-2685-54x3; Capgo CVE-2026-56236; receipts in docs/audits/2026-08-12-research-receipts.md); design council (3 rounds, GATE-W3A-1 = (a) REFUSE via bounded toolchain probe) resolved the downstream compatibility decision no-follow-by-default; PR ships the fail-closed symlink_metadata guard (covers symlinks and Windows junctions) + root refusal + residual-race characterization pin; closure PR flips to SHIPPED after publish
+- [x] **RUST-REPLACE-SYMLINK** — Status: SHIPPED; PR: PR #1010; Trigger: the untrusted-destination threat model is evidenced by fresh 2026 CVEs (sed CVE-2026-5958; uutils GHSA-239g-2685-54x3; Capgo CVE-2026-56236; receipts in docs/audits/2026-08-12-research-receipts.md); design council (3 rounds, GATE-W3A-1 = (a) REFUSE via bounded toolchain probe) resolved the downstream compatibility decision no-follow-by-default; PR #1010 shipped the fail-closed symlink_metadata guard (covers symlinks and Windows junctions) + root refusal + residual-race characterization pin; Merged SHA: d31a051f7b3affa67fa1021c2380538d59cce2df; released v1.110.16; guard + pin verified on origin/main post-merge (A29)
 - [ ] **RUST-REPLACE-TOCTOU** — Status: DEMAND_GATED; PR: none; Trigger: residual `replace_in_place` races and a static no-race ancestor bypass: (1) the leaf stat-vs-open swap window (pinned OPEN by the characterization pin in `backend_cpu.rs` — that pin INVERTING is this row's acceptance signal), (2) walk-time child swap between enumeration and pathname re-open, (3) a symlink in a non-leaf path component (leaf-only `symlink_metadata`), (4) the directory-ROOT swap window (guard stat to `is_dir()` — the widest blast radius; needs a SECOND swap-gate fire point between the guard and `is_dir()` when built, since the existing pin covers the leaf only); candidate machinery: `O_NOFOLLOW` / `FILE_FLAG_OPEN_REPARSE_POINT` (already implemented in `rust_core/src/safe_write.rs`; applying it at the two open sites converts a raced child follow into an `Err` and is safe for legitimate use because walkdir already filters static symlink children) applied at the replace open sites, or component-wise handle-relative opens
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-12** (backlog-closeout campaign: Task 2A resume + reconciliation +
+Last reconciled: **2026-08-13** (backlog-closeout campaign waves W1-W4: plan council-approved 7/7; W1 receipt + W2 A101 probe-retry + W3A threat model + W3B symlink guard shipped across v1.110.15 / v1.110.16; W4 Task 2A repair round 1 parked with receipt on #966). canonical index `2026-08-13.1`. Task 2A RED remains correctly blocked (advanced, not GREEN).
 research receipts). canonical index `2026-08-12.1`. Task 2A RED remains correctly blocked
 (advanced, not GREEN).
 Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md`
 (#997 → v1.110.13) and `docs/plans/2026-08-08-backlog-completion-plan.md` (M16/M17 wave).
 
-**Public product:** `v1.110.14` on PyPI/GitHub (2026-08-11, tag + release assets + PyPI verified).
+**Public product:** `v1.110.16` on PyPI/GitHub (2026-08-13; v1.110.15 = A101 probe retry #1009, v1.110.16 = RUST-REPLACE-SYMLINK #1010; both tag + release assets + PyPI verified).
 The closeout audit wave, Rust first-CI drain, A90, and doctor PATH-honesty all landed: H2 #979 → v1.110.10,
 M14 #984 → v1.110.10, #987 M16 → v1.110.11, #988 M17 → v1.110.12, #997 A90 → v1.110.13, #1000 doctor →
 v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #995 (M16/M17 receipts),
 #999/#1001/#1002 (skill evolution + new skills). No PRs in flight except #966 (Task 2A, RED by design).
-**CEO packet:** `docs/audits/2026-08-11-ceo-backlog-update.md` (live, 2026-08-11); 2026-08-06 PM and
+**CEO packet:** `docs/audits/2026-08-13-ceo-backlog-update.md` (live, 2026-08-13); 2026-08-11 and
+2026-08-06 packets retained as historical.
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
-**Unfinished (buildable queue):** **0 READY rows** — RUST-REPLACE-SYMLINK is IN_FLIGHT
+**Unfinished (buildable queue):** **0 READY rows**; 0 IN_FLIGHT (RUST-REPLACE-SYMLINK SHIPPED via PR #1010 / v1.110.16). Next buildable: none on the board (A82 holds; roadmap spine remains the queue).
 (PR #1010, design-council pass
 first; flipped 2026-08-12 on CVE-class evidence carried in the row). The rest of the forward work
 is the world-class roadmap spine per `docs/plans/2026-08-09-worldclass-roadmap.md` — F6-scoped,
@@ -110,9 +111,9 @@ says BLOCKED (A71/A76).
 **Hard stops:** Task 2A not merge-ready (#966 RED by design); no #169 spend; no silent CEO-gate flips;
 MCP wire-contract fence; no local `rust_core` cargo on the shared box for W3 halves.
 
-**Unfinished 18:** 0 READY, 1 IN_FLIGHT (RUST-REPLACE-SYMLINK, PR #1010), 6 BLOCKED (#89 #90 F5 F6
+**Unfinished 17:** 0 READY, 0 IN_FLIGHT, 6 BLOCKED (#89 #90 F5 F6
 F8 MCP-SURFACE), 5 CEO_GATED (#48 #72 #77 #131 #169), 6 DEMAND_GATED (#255 DD-006 AST-DSL-PARITY
-MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). (#966 is a parked RED scaffold - advanced
+MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). SHIPPED now stands at 8 (RUST-REPLACE-SYMLINK d31a051, v1.110.16). (#966 is a parked RED scaffold - advanced
 2026-08-12 to MERGEABLE with a live evidence chain, still not an implementation in flight). Board
 READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
@@ -129,7 +130,7 @@ post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
 *(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
 (doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs: #966
-(parked Task 2A RED scaffold — do not read it as Task 2A GREEN) and #1010 (RUST-REPLACE-SYMLINK).)*
+(parked Task 2A RED scaffold - do not read it as Task 2A GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED and published as v1.110.16.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode

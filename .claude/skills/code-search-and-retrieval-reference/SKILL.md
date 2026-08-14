@@ -157,7 +157,7 @@ whenever it is available: it is the stable, results-defining backend for BOTH pa
 native tree-sitter AstBackend uses a DIFFERENT DSL and returns DIFFERENT results, so it must not be
 silently preferred ... Native-as-CPU-default is task #141. Native is reached ONLY as the
 ast-grep-absent fallback for native patterns."* (grep "Prefer the ast-grep wrapper" in
-`ast_workflows.py` -- was `:6692-6697` in `main.py`, then `:6952-6957`). Concretely: the wrapper
+`ast_workflows.py` -- was `:6692-6697` in `main.py`, then `:6952-6957`; now `ast_workflows.py:1231-1232` (grep "Prefer the ast-grep wrapper")). Concretely: the wrapper
 availability check runs **first** (`if _check_backend_available("AstGrepWrapperBackend"): backend =
 _get_cached_backend("AstGrepWrapperBackend")` -- grep `_check_backend_available("AstGrepWrapperBackend")`
 in `ast_workflows.py`; the old `if ast_wrapper.is_available(): backend = ast_wrapper` shape this
@@ -391,7 +391,7 @@ in project memory for the full incident writeup, and `tensor-grep-change-control
 ## 4. PageRank / centrality — and why `tg orient` deliberately does NOT use it
 
 tg has a real, hand-rolled **personalized PageRank** implementation over the reverse-import graph:
-`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:8914`) — damping
+`_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:9174` — re-derive with: grep -n '_personalized_reverse_import_pagerank' src/tensor_grep/cli/repo_map.py) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
 relevant files (grep `_GRAPH_PAGERANK_SEED_FILE_LIMIT` in `repo_map.py` -- was `:319`, now `:327`),
@@ -678,7 +678,7 @@ router, not just `tg find`.
 | Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, all 10 parser-backed refs/callers + 0 foundational defs/imports-only (tier EMPTY) as of the Task 10E C++ final wave -- the "6 parser-backed + 4 foundational as of PR #927" split this row used to quote was the pre-campaign state (`_symbol_navigation_descriptor()` -- re-run it, do not trust this number); grammar-missing fails closed to `resolution_gaps`, never a silent empty result -- see section 2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
 | Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:7929`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
-| Personalized PageRank | `repo_map.py`, grep `def _personalized_reverse_import_pagerank` (was `:8418`, now `:8914`) | alpha=0.85, seeded, answers "relevant to this query" |
+| Personalized PageRank | `repo_map.py`, grep `def _personalized_reverse_import_pagerank` (was `:8418`, now `:9174` — re-derive with: grep -n '_personalized_reverse_import_pagerank' src/tensor_grep/cli/repo_map.py) | alpha=0.85, seeded, answers "relevant to this query" |
 | Central-files centrality | `orient_capsule.py:694` (`_central_files_from_map`, still current) | composite in-degree + fan-in/symbol-density caps — `tg orient`'s deliberate choice over PageRank, answers "what's foundational" |
 | Trigram index | `rust_core/src/index.rs:138,1131` (still current) | falls back to full scan when no literal is extractable (never drops matches) |
 | GIL release | `rust_core/src/lib.rs:32,55` (still current) | `py.detach` (formerly `allow_threads`) around the mmap/scan closure |

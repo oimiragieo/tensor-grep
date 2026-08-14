@@ -66,7 +66,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
-| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. At the time of the incident PR CI did not build the native binary, so the mismatch never surfaced there (DATED — see §19's IN DISPUTE note). | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1894`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
+| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. At the time of the incident PR CI did not build the native binary, so the mismatch never surfaced there (DATED — see §19's IN DISPUTE note). | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1966` — re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 | PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against an EDITABLE install of the release tag's source — not the PyPI wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green; later non-release runs never re-run it | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
 | `Dependency & License Audit` job is red, but your diff doesn't touch any dependency file, and it reds EVERY open PR at once | A newly-disclosed CVE/RUSTSEC advisory against an already-pinned, unmodified dependency -- the strict-on-fixable `pip-audit`/`cargo-audit` gate fails for everyone until the floor moves, not just your branch | `gh run view <run-id> --log-failed` on the `Dependency & License Audit` job -- decode pip-audit's/cargo-audit's OWN structured output for the exact package + advisory ID + fixed-version | [S12](#12-dependency--license-audit-red-on-an-untouched-dependency-newly-disclosed-cve) |
@@ -438,7 +438,7 @@ silent-empty trap in §4, one layer up in the test harness instead of the backen
 
 **Real incident (round-4, commit `ab717a1`, #343 as a follow-up to #342, v1.19.0):** #342 added
 `rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (now at
-`src/tensor_grep/cli/main.py:1973-1974`, inside the tuple starting `:1894`) so `tg search --rank` correctly **refuses** native
+`src/tensor_grep/cli/main.py:1973-1974`, inside the tuple starting `:1966`) so `tg search --rank` correctly **refuses** native (re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py)
 delegation and the BM25 rerank runs in-process instead of via a delegated subprocess.
 `test_search_rank_reorders_by_bm25` (`tests/integration/test_bm25_search_flag.py`) had been written
 against the *old* delegated behavior and read `capfd.readouterr().out`, which had only ever
@@ -459,7 +459,7 @@ instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` impo
 **Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
 delegation/routing/gating change, first ask "does this flag/config still delegate to a real
 subprocess after my change?" — grep the refuse-tuple
-(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1894`) for the field
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1966` — re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py) for the field
 you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
 too.
 
@@ -504,7 +504,7 @@ the two versions being compared (`v1.17.31`→`HEAD`), and a live `cProfile` cap
 regression. Don't design a fix for a slowdown you have not reproduced under a profiler.
 
 **Incident 3 — a warm end-to-end dogfood run hid a real ~54% win (commit `9a2a01c`, PR #719,
-v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:2126`) was merged from
+v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:2166` — re-derive with: grep -n '_python_imports_and_symbols' src/tensor_grep/cli/repo_map.py) was merged from
 three separate `ast.walk(tree)` passes (imports, symbols, dynamic-imports) into one
 dispatch-by-node-type pass — the same general family of redundant-work-elimination fix as the
 "Technique" below (there it's redundant *calls*; here it's redundant *tree walks* over the same
@@ -1208,7 +1208,7 @@ grep -n -A8 "release-tag-smoke:" .github/workflows/ci.yml
 - **A101 — third recurrence of a flake = structural-fix signal, not rerun signal.** A rerun
   self-heals ONCE; the third sighting of the same flake (e.g. `windows-agent-readiness`
   `public-version-powershell` 30s timeout, 3× in 3 runs) means fix the probe (raise the timeout /
-  make it tolerant), not keep rerunning. Record the recurrence count beside the flake.
+  make it tolerant), not keep rerunning. Record the recurrence count beside the flake. **FIXED: PR #1009 → v1.110.15 — scripts/agent_readiness.py `Check.retry_on_timeout` (opt-in, clamped at `_MAX_TIMEOUT_RETRIES = 3`) + the four shell probes timeout_s=90 + retry_on_timeout=1; `attempts` in every run_check result.**
 
 If any of these greps come back empty or materially different, the corresponding row above is
 stale — update it before relying on it, and check whether the fix pointer's target skill
