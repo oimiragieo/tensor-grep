@@ -47,6 +47,42 @@
 
 
 
+## Recent campaign notes (2026-08-14) - W5-W8 closeout: demand dispositions, CEO packets, board final sweep
+
+- **Scope:** the W5-W8 tail of `docs/plans/2026-08-13-backlog-completion-plan.md` (council-approved
+  7/7 after 5 rounds). No product code; no release; no spend. Base `a1c51ee` (v1.110.16).
+- **W5 demand dispositions** (`docs/audits/2026-08-13-demand-gated-dispositions.md`):
+  #255 re-derived (max single-pack anchors 35 of 129 across six never-unionable packs; no named
+  100+-pattern user; both reopen arms unmet) -> LEAVE. DD-006 bounded measurement EXECUTED with a
+  control-valid positive control (20 clients x 60s; single-shot control arm 20/0 meets the
+  plan-frozen threshold verbatim; 5 of 5 live arms showed timeouts at the CLI's own 0.5s budget,
+  the one discriminated arm classified them connect-timeout, 0 refusals/drops, 0 failures at a
+  2.0s budget and single-client) -> the demand condition ("measured concurrent daemon load") is
+  now SATISFIED; the row stays open with the reproduction as its trigger, mechanism hypothesis =
+  default request_queue_size=5 accept backlog under concurrency. AST-DSL-PARITY Exa delta ->
+  LEAVE (peers reach for DSL/parity, not metavariable performance). MCP-LEAN-DEFAULT Exa delta ->
+  direction now SPEC-LEVEL (official MCP progressive discovery / programmatic tool calling),
+  still Task-2C-fenced (contract 1.7.0 re-verified). CONTINUOUS-REFRESH Exa delta -> warm serving
+  demonstrably table stakes (TriSeek v0.4.2, cgh, seekr, Cursor warm builds); scoping-pass reopen
+  stands.
+- **A101 recurrence receipt (W8 acceptance):** `public-version-powershell` flaked **3 times in 3
+  consecutive windows-agent-readiness runs** at `timeout_s=30` before #1009 (v1.110.15) shipped
+  the bounded timeout-retry fix; the third recurrence was the structural-fix signal, per A101.
+- **W6 blocked rows:** six rows, six commands, six recorded results (#89/#90 parked-Task-2A,
+  F5/F6/F8 shared-box ban, MCP-SURFACE 1.7.0 fence); per-row receipt table in
+  `docs/audits/2026-08-13-demand-gated-dispositions.md`. Zero status flips.
+- **W7 CEO packets** (`docs/audits/2026-08-13-ceo-gated-packets.md`): 2026-08-13 deltas on the
+  2026-08-06 base; 8-seat thinktank (7 verdict-bearing, copilot TIMEOUT failed-seat, claude seat
+  substituted sonnet for quota-blocked Fable 5) -> 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY; council
+  named the concrete seams (frozen: `~/.tensor-grep/bin/tg.exe` order, installer,
+  `rust_core/src/main.rs`; rejected: ledger blocking-gate / exit-code path; accepted: ADR +
+  benchmark cold-start stamp; advisory overlap hint + exit-code pin test). #169 pointer only, no
+  recommendation. Five sections each carry the literal `STATUS REMAINS CEO_GATED` terminator.
+- **W8 board sweep:** all five demand-row triggers refreshed from W5 receipts; DD-006 trigger
+  carries the reproduction; closed world re-derived = 29 rows (GATE-W8-2). Index stays
+  `2026-08-13.1`. Raw probe evidence: `artifacts/dd006_*.json` (probe is scratch-only,
+  `.orchestrator/w5/dd006_probe.py`, not committed to `src/`).
+
 ## Recent campaign notes (2026-08-13) - session-retention campaign: 35/35 skill accuracy audit + never-committed lesson capture
 
 - **Scope:** independent accuracy audit of ALL 35 tracked `.claude/skills/*/SKILL.md` (7 waves,
