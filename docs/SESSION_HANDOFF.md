@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-13
+Last updated: 2026-08-14
 
 ## Current Release State
 
@@ -12,6 +12,18 @@ release_docs_current_tag: v1.110.16
 
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-13.1
+- **2026-08-14 W5-W8 closeout (this session):** the plan's tail is now fully executed. W5 demand
+  dispositions (`docs/audits/2026-08-13-demand-gated-dispositions.md`): #255 LEAVE (35 max
+  single-pack anchors, no named user), DD-006 demand condition SATISFIED by the bounded 20-client
+  probe (control-valid single-shot arm 20/0; 5/5 live arms showed timeouts at the CLI's own 0.5s
+  budget, one discriminated arm classified them connect-timeout, zero refusals/drops; reproduction
+  now rides the row trigger; mechanism hypothesis = request_queue_size=5 backlog),
+  AST-DSL-PARITY LEAVE, MCP-LEAN-DEFAULT still Task-2C-fenced (1.7.0 re-verified),
+  CONTINUOUS-REFRESH scoping-pass reopen strengthened. W6: six BLOCKED rows re-derived, per-row
+  receipts in the disposition doc, zero flips. W7 CEO packets
+  (`docs/audits/2026-08-13-ceo-gated-packets.md`): council 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY
+  with concrete seams. W8: board sweep, closed world 29 rows, A101 3x receipt in BACKLOG. No
+  release, no spend, no product code. Probe evidence: `artifacts/dd006_*.json`.
 - 2026-08-12 backlog-closeout campaign (no release): plan
   `docs/plans/2026-08-12-backlog-closeout-campaign.md` rev 6 (3-seat council; codex Sol APPROVE
   after 4 rounds / 21 folded findings). Task 2A ADVANCED: A22 union-merge of `b6dc0a6` flipped
