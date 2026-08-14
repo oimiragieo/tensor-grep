@@ -77,7 +77,7 @@ real smoke test — build help output contains `--pcre2`/`PCRE2`, then actually 
 This matters because of the **fail-closed contract**: `--pcre2` routed through an engine that cannot
 honor PCRE2 semantics must raise, never silently execute as a plain-regex search that returns wrong
 (or merely different) matches (`src/tensor_grep/backends/base.py:7-14`, `BackendExecutionError`;
-grep `**Fail closed**` in `AGENTS.md` -- was line `444`, now `:1668`). A prior incident shipped
+grep `**Fail closed**` in `AGENTS.md` -- was line `444`, now `:2096`). A prior incident shipped
 exactly this bug — a broad `except Exception: pass` around the Rust passthrough silently ran
 `--pcre2` through the non-PCRE2 Python-regex engine — fixed in v1.17.17/18 (see
 `tensor-grep-change-control`, grep `## Part 4` in that skill's `SKILL.md` -- was lines `125-134`,
@@ -327,7 +327,7 @@ tg has **two independent ranking surfaces**, and only one of them actually imple
    presence-count stack, no IDF anywhere in it.** Three layered pieces, not one function — do not
    conflate them:
    - `_score_text_terms` (grep `def _score_text_terms` in `repo_map.py` -- was `:7912`, now
-     `:7929`) — the primitive: counts term hits in a haystack, no rarity weighting.
+     `:8189`) — the primitive: counts term hits in a haystack, no rarity weighting.
    - `_score_symbol` (grep `def _score_symbol` in `repo_map.py` -- was `:8177`, now `:8194`) — the
      actual per-symbol composite scorer, and the thing that produces `symbol["score"]`: name-match
      (`_score_text_terms` on the symbol name, `x3` weight) + kind-match + file-path score
@@ -394,7 +394,7 @@ tg has a real, hand-rolled **personalized PageRank** implementation over the rev
 `_personalized_reverse_import_pagerank` (`src/tensor_grep/cli/repo_map.py:9174` — re-derive with: grep -n '_personalized_reverse_import_pagerank' src/tensor_grep/cli/repo_map.py) — damping
 factor `alpha=0.85` (the standard Google PageRank default), `12` power-iteration steps, a
 personalization vector seeded uniformly over up to `_GRAPH_PAGERANK_SEED_FILE_LIMIT = 64` query-
-relevant files (grep `_GRAPH_PAGERANK_SEED_FILE_LIMIT` in `repo_map.py` -- was `:319`, now `:327`),
+relevant files (grep `_GRAPH_PAGERANK_SEED_FILE_LIMIT` in `repo_map.py` -- was `:319`, now `:335`),
 teleporting back to those seeds rather than to a uniform distribution.
 This feeds descriptive-query file ranking (`graph-centrality` reason) inside `repo_map`/capsule/edit-
 plan retrieval — pure Python, no `networkx` dependency (unlike Aider's repo-map, which uses
@@ -425,13 +425,13 @@ centrality; don't default to whichever is already imported in the module you're 
 A trigram index maps every 3-byte substring ("trigram") appearing in the corpus to the list of files
 containing it (a postings list); a query first extracts the trigrams it must contain, intersects
 their postings lists to get a small file candidate set, then only regex-scans those files instead of
-every file in the corpus. tg's implementation: `TrigramIndex` struct, `rust_core/src/index.rs:138`,
-3-byte keys (`FileTrigramHits = Vec<([u8; 3], u32)>`, line 22), binary bincode
+every file in the corpus. tg's implementation: `TrigramIndex` struct, `rust_core/src/index.rs:151`,
+3-byte keys (`FileTrigramHits = Vec<([u8; 3], u32)>`, line 30), binary bincode
 serialize/deserialize.
 
 **Safety property:** when a pattern has no extractable required literal (e.g. `.*` or an alternation
 with no common substring), the index cannot safely prefilter — the code falls back to a full scan
-"so the index never introduces false negatives" (`index.rs:1131`). A trigram index is a *prefilter*,
+"so the index never introduces false negatives" (`index.rs:1609`). A trigram index is a *prefilter*,
 never a source of truth by itself; getting this fallback wrong would mean silently missing real
 matches, which is strictly worse than being slow.
 
@@ -677,10 +677,10 @@ router, not just `tg find`.
 | AST native vs sidecar | `ast_workflows.py`, grep `def _select_ast_backend_for_pattern` (was `:6655` in `main.py`, then hedged `:6737`, then `:6915`; `main.py`'s copy is now a forwarding shim onto `ast_workflows.py`); `ast_backend.py:505` (`is_available`, still current) | ast-grep WRAPPER is preferred whenever installed; native tree-sitter is a fallback-only path with no GPU gate anymore |
 | Symbol-graph language registry | `lang_registry.py`, `repo_map.py` -- `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (was `:6004-6222` claiming 8 calls, now returns **10**) | 10/10 top-10 languages, all 10 parser-backed refs/callers + 0 foundational defs/imports-only (tier EMPTY) as of the Task 10E C++ final wave -- the "6 parser-backed + 4 foundational as of PR #927" split this row used to quote was the pre-campaign state (`_symbol_navigation_descriptor()` -- re-run it, do not trust this number); grammar-missing fails closed to `resolution_gaps`, never a silent empty result -- see section 2a |
 | BM25 (real IDF) | `retrieval_bm25.py`, `reranker.py` | backs `tg search --rank`/`--bm25` only |
-| Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:7929`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
+| Flat scorer (no IDF) | `repo_map.py`, grep `def _score_text_terms` (was `:7433`, now `:8189`) | backs `tg orient`/`tg agent` symbol ranking — known weak point |
 | Personalized PageRank | `repo_map.py`, grep `def _personalized_reverse_import_pagerank` (was `:8418`, now `:9174` — re-derive with: grep -n '_personalized_reverse_import_pagerank' src/tensor_grep/cli/repo_map.py) | alpha=0.85, seeded, answers "relevant to this query" |
 | Central-files centrality | `orient_capsule.py:694` (`_central_files_from_map`, still current) | composite in-degree + fan-in/symbol-density caps — `tg orient`'s deliberate choice over PageRank, answers "what's foundational" |
-| Trigram index | `rust_core/src/index.rs:138,1131` (still current) | falls back to full scan when no literal is extractable (never drops matches) |
+| Trigram index | `rust_core/src/index.rs:151,1609` (still current) | falls back to full scan when no literal is extractable (never drops matches) |
 | GIL release | `rust_core/src/lib.rs:32,55` (still current) | `py.detach` (formerly `allow_threads`) around the mmap/scan closure |
 | `gil_used` pin | `rust_core/src/lib.rs:353` (still current) | pinned `true`; free-threading needs a full green Linux CI run to re-attempt |
 | LSP framing | `lsp_external_provider.py:91,173` (still current) | `Content-Length` capped at 64MB against a malicious/buggy server |

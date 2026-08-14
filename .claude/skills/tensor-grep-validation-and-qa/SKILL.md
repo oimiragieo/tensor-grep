@@ -714,7 +714,7 @@ Gotchas that each cost a real CI cycle when missed:
   Audit real on-disk endings with `git ls-files --eol` — `git show`/`git cat-file -p` smudge output
   and can report false CR. (`CONTRIBUTING.md:24`)
 - **`mypy` runs in `strict = true` mode** targeting `python_version = "3.11"` syntax even though the
-  repo's CI-tested floor is 3.11-3.12 (`pyproject.toml:114-121`) — new functions need full type
+  repo's CI-tested floor is 3.11-3.12 (`pyproject.toml:559`, `requires-python = ">=3.11"`) — new functions need full type
   annotations (`disallow_untyped_defs = true`); do not rely on inference alone.
 - **`uv run` alone re-syncs the environment to default deps and silently drops optional extras**
   (e.g. `[dev]`'s tree-sitter). If a prior step installed extras deliberately, use `uv run --no-sync`
@@ -848,7 +848,7 @@ of drifting unnoticed:
   default/`--cpu`/`-o`/`-c`/`-r`/`-n`/binary/`--json`/`--ndjson` combinations run through both
   `python-m` and `native` launchers and compared for output parity.
 - `tests/e2e/test_output_snapshots.py` uses the `pytest-snapshot` plugin's `snapshot.assert_match`
-  fixture (`pyproject.toml:616`, dev dependency) to pin exact JSON-formatter output, with file-path
+  fixture (`pyproject.toml:637`, dev dependency) to pin exact JSON-formatter output, with file-path
   normalization to `<FILE>` so the snapshot stays host-independent
   (`test_output_snapshots.py:5-46`). Marker: `pytest.mark.snapshot` (registered in
   `pyproject.toml:43`).
@@ -894,13 +894,13 @@ report to stdout), `--no-shell-probes` (skip public shell version probes — use
 blocking jobs off it — `agent-readiness` (Ubuntu, `--no-shell-probes --no-wsl-probe`,
 `.github/workflows/ci.yml:121-157`) and `windows-agent-readiness` (Windows,
 `--only-shell-probes`, `:159-193`) — and both are `needs:` of `Semantic Release`
-(`release:` job at `ci.yml:1121`, `needs:` at `:1122` — re-derive with: grep -n '^  release:' .github/workflows/ci.yml), so a readiness regression blocks the release the same as a routing-parity regression.
+(`release:` job at `ci.yml:1121`, `needs:` at `:1123` — re-derive with: grep -n '^  release:' .github/workflows/ci.yml), so a readiness regression blocks the release the same as a routing-parity regression.
 
 Checks currently in the plan (`build_check_plan`, names verified at
 `scripts/agent_readiness.py:698-1009`): `public-version-{powershell,cmd,pwsh-noprofile,git-bash,wsl,
 python-subprocess}`, `public-doctor-{cmd,pwsh-noprofile}`, `public-windows-launcher-quoted-patterns`,
 `public-search-advertised-flag-sweep`, `repo-cli-build-warmup`, `repo-doctor`,
-`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md:710,737`),
+`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md:821,848`),
 `rg-parity-edges`, `broad-generated-scan-guard`, `ast-info-json`, `ast-run-smoke`,
 `mcp-context-render-smoke`, `mcp-stdio-protocol-smoke`, `agent-capsule`,
 `agent-capsule-mixed-language`, `agent-capsule-hardcases`, `docs-claim-check`. This list drifts with

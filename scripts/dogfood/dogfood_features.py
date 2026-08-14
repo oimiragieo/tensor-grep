@@ -144,13 +144,13 @@ def _build_fixture(root: Path) -> None:
     (root / "lib.rs").write_text(
         "pub fn parse(input: &str) -> usize {\n    input.len()\n}\n", encoding="utf-8"
     )
-    # A13/#706 ledger PATH-canonicalization dogfood: `_discover_repo_root` only checks a `.git`
+    # #706 ledger PATH-canonicalization dogfood: `_discover_repo_root` only checks a `.git`
     # entry's EXISTENCE (never reads git plumbing), so an empty marker directory is enough to make
     # `ledger claim <root>/sub` and `ledger list <root>` canonicalize to the SAME physical store --
     # proving the rollup fix rather than exercising the (unchanged) non-git literal-path fallback.
     (root / ".git").mkdir(exist_ok=True)
     (root / "sub").mkdir(exist_ok=True)
-    # A10/#703 dynamic-import decoy-exclusion dogfood: a RELATIVE `import_module(...)` call plus a
+    # #703 dynamic-import decoy-exclusion dogfood: a RELATIVE `import_module(...)` call plus a
     # same-named top-level decoy module. Before the fix, a naive resolver could strip the leading
     # dot and match the decoy; the fix must report `dynamic_unresolved` with no resolved edge.
     (root / "dynamic_import_demo.py").write_text(
@@ -162,7 +162,7 @@ def _build_fixture(root: Path) -> None:
 
 
 def _dynamic_import_entry_is_honest(payload: dict) -> tuple[bool, str]:
-    """A10/#703 predicate: the relative ``import_module(".sibling_dynamic", ...)`` entry must be
+    """#703 predicate: the relative ``import_module(".sibling_dynamic", ...)`` entry must be
     stamped ``dynamic_unresolved`` with NO resolved path -- never a same-named decoy edge."""
     entries = [entry for entry in payload.get("imports", []) if entry.get("dynamic")]
     if not entries:
@@ -217,7 +217,7 @@ def main() -> int:
 
         # --- session-capture v1.93.2 dogfood additions ---
 
-        # A13/#706: ledger claim/list/release PATH canonicalization + subtree rollup. Claim scoped
+        # #706: ledger claim/list/release PATH canonicalization + subtree rollup. Claim scoped
         # to a SUBDIRECTORY, then list from the fixture ROOT (an ancestor) must roll the claim up --
         # the exact footgun #706 fixed (claim/list used to resolve two different physical stores).
         claim_code, claim_out, claim_err = _run([
@@ -239,20 +239,20 @@ def main() -> int:
         _record(claim_ok, "ledger claim (subdir)", claim_code, claim_detail, claim_out + claim_err)
         if claim_ok and claim_id:
             check(
-                "ledger list (ancestor rolls up the subdir claim -- A13)",
+                "ledger list (ancestor rolls up the subdir claim -- #706)",
                 ["ledger", "list", fx, "--json"],
                 must_contain=str(claim_id),
             )
 
-        # A12(a): every dense-absent hint (incl. `tg find`'s BM25-only degrade) leads with the
+        # dense-hint: every dense-absent hint (incl. `tg find`'s BM25-only degrade) leads with the
         # one-shot `tg install-dense` command, not the raw module-CLI fetch invocation.
         check(
-            "find (dense-absent hint leads with install-dense -- A12(a))",
+            "find (dense-absent hint leads with install-dense -- dense-hint)",
             ["find", "hub_fn", fx, "--json"],
             must_contain="install-dense",
         )
 
-        # A12(b): a cold/never-warmed session daemon gets an honest `autostart` posture string
+        # daemon-autostart: a cold/never-warmed session daemon gets an honest `autostart` posture string
         # instead of a bare `running: false` that reads as broken. Needs its OWN never-touched
         # directory: `agent --json` above (and `find`/`prepare` below) non-blockingly autostart a
         # daemon for whichever path they're pointed at, which would flip `running` to true and
@@ -260,16 +260,16 @@ def main() -> int:
         doctor_probe = Path(td) / "doctor_probe"
         doctor_probe.mkdir()
         check(
-            "doctor --json (session_daemon.autostart honesty -- A12(b))",
+            "doctor --json (session_daemon.autostart honesty -- daemon-autostart)",
             ["doctor", str(doctor_probe), "--json", "--no-lsp"],
             json_key="session_daemon.autostart",
         )
 
-        # A12(d): `tg prepare --out FILE` persists the full capsule JSON to disk, and refuses to
+        # prepare-out: `tg prepare --out FILE` persists the full capsule JSON to disk, and refuses to
         # write through a pre-existing symlink destination.
         cap_path = Path(td) / "capsule.json"
         check_output_file(
-            "prepare --out (persists valid capsule JSON -- A12(d))",
+            "prepare --out (persists valid capsule JSON -- prepare-out)",
             ["prepare", fx, "hub_fn", "--out", str(cap_path), "--json"],
             cap_path,
         )
@@ -281,20 +281,20 @@ def main() -> int:
             symlink_supported = False
         if symlink_supported:
             check(
-                "prepare --out (refuses a pre-existing symlink dest -- A12(d))",
+                "prepare --out (refuses a pre-existing symlink dest -- prepare-out)",
                 ["prepare", fx, "hub_fn", "--out", str(symlink_path), "--json"],
                 want_exit=1,
                 must_contain="Refusing to write",
             )
         else:
             print(
-                "[SKIP] prepare --out (refuses a pre-existing symlink dest -- A12(d))  "
+                "[SKIP] prepare --out (refuses a pre-existing symlink dest -- prepare-out)  "
                 "(symlink creation unsupported in this environment)"
             )
 
-        # A10/#703: a relative dynamic import never resolves to a same-named top-level decoy.
+        # #703: a relative dynamic import never resolves to a same-named top-level decoy.
         _check_json(
-            "imports (relative dynamic import -> dynamic_unresolved, no decoy edge -- A10)",
+            "imports (relative dynamic import -> dynamic_unresolved, no decoy edge -- #703)",
             ["imports", str(fixture / "dynamic_import_demo.py"), "--json"],
             predicate=_dynamic_import_entry_is_honest,
         )

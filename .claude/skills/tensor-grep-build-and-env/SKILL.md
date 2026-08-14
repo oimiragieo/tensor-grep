@@ -312,7 +312,7 @@ Python; `pip`/`uv` then silently resolve the **entire package** down to the newe
 dependency graph is satisfiable on that interpreter. `requires-python>=3.11` has no upper bound, so it
 can't catch this.
 **Fix:** when a fresh Python yields a suspiciously old `tg --version`, suspect a transitive
-dependency cap (`typer`/`click`/`pydantic` today — `pyproject.toml:566` currently pins
+dependency cap (`typer`/`click`/`pydantic` today — `pyproject.toml:567` currently pins
 `typer>=0.12,<0.26`), not `requires-python`. Fixed for the `typer` case in #310; see the
 `tensor-grep-dep-cap-silent-downgrade-2026-06-30` memory note for the full incident.
 

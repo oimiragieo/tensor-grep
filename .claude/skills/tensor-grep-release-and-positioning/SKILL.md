@@ -460,7 +460,7 @@ numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured nu
 5. **For GPU specifically**: correctness before speed, always. GPU scale gates need 1GB and 5GB rows
    with exact match/file-set correctness for every corpus, no-match must be a valid comparator
    outcome (`rg` exit 1 + empty output vs `tg` no-match), and explicit `--gpu-device-ids` must not
-   silently touch unselected devices (`AGENTS.md` — grep "unselected GPUs"; was `:367`, now `:469`).
+   silently touch unselected devices (`AGENTS.md` — grep "unselected GPUs"; was `:367`, now `:842`).
    Public managed-GPU promotion additionally
    requires `NativeGpuBackend` with `sidecar_used = false`, a direct `rg --json` correctness/timing
    comparison, and the advanced many-fixed-string proof gate versus a fair single-invocation `rg -F
