@@ -121,6 +121,8 @@ HOUSE CONSTRAINTS (verbatim, non-negotiable):
 - CPU-SAFE: NEVER run cargo build/test/check/clippy, and NEVER run tests/e2e/test_routing_parity.py
   (it invokes cargo run). Rust compile evidence comes from PR CI only; rustfmt --check is allowed.
 - Never \`git add .\` / \`git add -A\`; stage explicit paths only.
+- \`git commit --amend\` only while the branch has never been pushed: \`git log --oneline origin/<branch>\` must print nothing first; after a push, make an ordinary second commit (A110).
+- Before any baseline swap (\`git checkout origin/main -- <file>\`, Out-File/patch revert), copy the file's current uncommitted bytes aside; prefer re-editing the single mutated line back (A103).
 - An UNCITED finding is DISCARDED. Every claim needs a file:line or a command plus its output.
 - A FAILED seat / empty payload is a HOLE, not a pass: report it, never paper over it.
 `
@@ -183,9 +185,11 @@ TASK: write ONE behavioral test that fails on the current code for the finding a
 - It must fail with the exact expected assertion/reason class (A61): a crash, import failure,
   setup error, or skip is NOT a valid RED -- pin the reason class in the test.
 - Env-gated seams are hermetic by construction (A85): never branch on ambient availability.
+- Any environment-dependent SKIP branch that cannot be removed panics under an armed env var in CI (A106: the TG_REQUIRE_SYMLINK_TESTS pattern) -- a green run of silent skips proves nothing.
 - Hostile fixtures must BITE: assert the fixture precondition before trusting the arm.
 - Run it and paste the verbatim failing output. Do NOT fix the code in this phase.
-- Wrap the run in a shell timeout with a per-test --timeout (anti-hang protocol).`,
+- Wrap the run in a shell timeout with a per-test --timeout (anti-hang protocol).
+- Bounded test handshakes use capacity-1 channels with recv_timeout on every receive; an expiry panics CANNOT_MEASURE:, never a verdict (A109) -- a capacity-0 rendezvous blocks forever.`,
   { label: 'red', phase: 'RED', schema: RED_SCHEMA, model: 'sonnet' },
 )
 
@@ -203,10 +207,8 @@ Stage nothing; the orchestrator owns git.`,
   { label: 'green', phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
 )
 
-// Phases 4-5: GATE + VERIFY, looped. The gate is a fresh-context adversarial
-// audit (independent of the fix author); verify re-probes every finding with
-// its own commands. A FIX-FIRST verdict feeds one repair round; max 3 rounds.
-const MAX_ROUNDS = 3
+// Phases 4-5: GATE + VERIFY, looped. The gate is a fresh-context adversarial audit (independent of the fix author); verify re-probes every finding with its own commands. A FIX-FIRST verdict feeds one repair round. A104: the gate is a real-finding convergence loop and ends only on independent SHIP, never on round count -- the RUST-REPLACE-SYMLINK guard took 13 rounds plus a final codex pass to SHIP (tensor-grep-codex-gated-audit-loop, "Campaign-scale round receipts"). Budget 10+ rounds for a security-class finding; MAX_ROUNDS is a parking point, not a conclusion.
+const MAX_ROUNDS = 10
 let verdict = null
 const allRounds = []
 let repairContext = ''

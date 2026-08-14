@@ -462,7 +462,7 @@ worktree remove --force <path>`. Never open a PR straight from a worktree's own 
 | 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
 | 2 | `_TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
-- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md`, `grep -n "cannot see set/list/decorator registrations" AGENTS.md`; was `:412`, now `:514` — drifted +102 lines since the 2026-07-23 pass, see Provenance).
+- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md`, `grep -n "cannot see set/list/decorator registrations" AGENTS.md`; was `:412`, now `:887` — drifted +102 lines since the 2026-07-23 pass, see Provenance).
 - Change a pinned contract → update its governance test in the **same PR**.
 
 ### CLI hygiene

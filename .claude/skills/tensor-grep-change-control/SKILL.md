@@ -52,7 +52,7 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Rule:** A subagent's or model's "tests pass" / "N green" / "I fixed it" is a **hypothesis** until **external state** confirms it: an exit code, a real-binary dogfood, or a `file:line` that actually resolves. Re-run any validation a subagent claims to have passed.
 
 **Why / incidents:**
-- Subagents can assert success without executing (`AGENTS.md:434`). Worktree fan-out branches have **no `.venv`**, so an agent's "tests pass" is literally un-runnable in its own tree — you must re-run pytest/ruff/mypy in the real venv before integrating (`AGENTS.md:569`).
+- Subagents can assert success without executing (`AGENTS.md:434`). Worktree fan-out branches have **no `.venv`**, so an agent's "tests pass" is literally un-runnable in its own tree — you must re-run pytest/ruff/mypy in the real venv before integrating (`AGENTS.md:2212,2241`).
 - **Mock-based FFI tests passed GREEN while the real PyO3 bridge was DEAD** — it dropped every forwarded flag and silently fell back to the Python engine. Prove a bridge/FFI change with a **live runtime call into the built extension**, then confirm the flag actually reached `rg` (`AGENTS.md:901`).
 
 **Concrete gate:** For generated/detached code (install scripts, self-upgrade helpers), adversarial-review by **executing** it — `compile()` + `exec()` the generated string and assert behavior (e.g. the checksum gate fires *before* `os.replace`), not substrings (`AGENTS.md:434`).
@@ -70,7 +70,7 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Why / incidents:**
 - **GPU** Phase-0 SHIPPED (v1.75.1-v1.75.4, PRs #594-#597 -- #593/v1.75.0 was an UNRELATED
   `tg orient`/`tg agent` improvement that landed in the same version range by publish order, not part
-  of the GPU wave; AGENTS.md's "GPU Phase-0 hardening wave" addendum records the same range): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion" docs/CONTRACTS.md` — was cited at `:80-82`, now `:123`; the old anchor pointed at the `--column`/`-c` flag list). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:368`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
+  of the GPU wave; AGENTS.md's "GPU Phase-0 hardening wave" addendum records the same range): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion" docs/CONTRACTS.md` — was cited at `:80-82`, now `:123`; the old anchor pointed at the `--column`/`-c` flag list). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:843`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
 - **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md:375`).
 - **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md:366`).
 
@@ -160,7 +160,7 @@ of who owns the file, whether it is tracked by git, or whether CI currently exer
 
 ## Part 2 — The written Operating Rules
 
-From `AGENTS.md` "Operating Rules" (`:383-389`) and `CONTRIBUTING.md`:
+From `AGENTS.md` "Operating Rules" (`:856`) and `CONTRIBUTING.md`:
 
 1. **Start with a failing test when behavior changes** (TDD-first). See `superpowers:test-driven-development`.
 2. **Make the smallest defensible change.**
@@ -313,7 +313,7 @@ gets printed.
 
 **Jargon:** a *ComputeBackend* is a search engine implementation (CPU regex, Rust, GPU, ast-grep, …) behind a common interface (`src/tensor_grep/backends/base.py`).
 
-**Rule (`backends/base.py:7`, `AGENTS.md:438-448`):** Every backend **MUST raise `BackendExecutionError` on a real failure** — never return a clean empty / `0-match` result, and never silently swap to an engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly**; a swallowed failure reaches a coding agent as a trustworthy "no matches" — the one failure a context tool cannot afford.
+**Rule (`backends/base.py:7`, `AGENTS.md:2090`):** Every backend **MUST raise `BackendExecutionError` on a real failure** — never return a clean empty / `0-match` result, and never silently swap to an engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly**; a swallowed failure reaches a coding agent as a trustworthy "no matches" — the one failure a context tool cannot afford.
 
 - **Fail closed** for any flag the fallback cannot preserve — e.g. `--pcre2` through a non-PCRE2 engine must **raise, not swap**.
 - If a degraded fallback is *legitimate* (e.g. heuristic classify when the model is down), make it **visible**: set `fallback_reason` (and a distinct `routing_reason`) on the result so JSON/CLI consumers can tell degraded from real. **Never label heuristic output as model output.**
@@ -522,7 +522,7 @@ security/compatibility behavior gets a stable tracker ID, owner, threat boundary
 
 ## Part 7 — Push discipline & the push-race (one-merge-per-tick)
 
-**The real publish is the `Semantic Release` JOB inside `.github/workflows/ci.yml`**, gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`. `release.yml` is `workflow_dispatch`-only, so a manually-pushed `v*` tag **cannot** bypass semantic-release (`AGENTS.md:838`).
+**The real publish is the `Semantic Release` JOB inside `.github/workflows/ci.yml`**, gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`. `release.yml` is `workflow_dispatch`-only, so a manually-pushed `v*` tag **cannot** bypass semantic-release (`AGENTS.md:2723`).
 
 That job **compiles native assets before publishing → it runs ~6 minutes**, and that entire window is a race window:
 
@@ -611,7 +611,7 @@ actually runs against the post-rebase state.
 
 ### Current wall-time is much bigger than "~6 minutes" — size watchers accordingly (re-verified 2026-07-03, v1.19.x receipts)
 
-The **"~6 minutes" figure above (and at `AGENTS.md:838`) is stale** — it describes only the `Semantic Release` job's own runtime (still accurate: ~4-5 min in isolation), not the real race window. The real danger window is **squash-merge lands → `chore(release)` commit successfully pushed to `main`**, because `Semantic Release` cannot even *start* until every job in its `needs:` list finishes (`.github/workflows/ci.yml:943`), and that list now includes a 4-OS `native-build-smoke` matrix plus `benchmark-regression`. Measured against four consecutive real releases (`gh run view <run-id> --json jobs`, PR merge → `chore(release)` commit timestamp → `gh run` job `completedAt`):
+The **"~6 minutes" figure above (and at `AGENTS.md:2723`) is stale** — it describes only the `Semantic Release` job's own runtime (still accurate: ~4-5 min in isolation), not the real race window. The real danger window is **squash-merge lands → `chore(release)` commit successfully pushed to `main`**, because `Semantic Release` cannot even *start* until every job in its `needs:` list finishes (`.github/workflows/ci.yml:943`), and that list now includes a 4-OS `native-build-smoke` matrix plus `benchmark-regression`. Measured against four consecutive real releases (`gh run view <run-id> --json jobs`, PR merge → `chore(release)` commit timestamp → `gh run` job `completedAt`):
 
 | Release | PR / commit | push → `chore(release)` on `main` | push → `publish-pypi` | push → `release-tag-smoke` (final gate) |
 |---|---|---|---|---|
@@ -850,7 +850,7 @@ have an auditor accept the header — doc-only, no release tag re-verified for t
 | PR-title → release-bump schema | `AGENTS.md` "PR Title And Release Intent"; `CONTRIBUTING.md` "Pull Request and Release Intent" |
 | Push-race mechanism + latest receipt | `AGENTS.md` "Release publish is not instant — the push-race" |
 | Release wall-time / long-pole job (dated 2026-07-03, v1.19.x) | `gh run list --workflow=ci.yml --branch main --limit 5 --json databaseId,createdAt,updatedAt`, then `gh run view <id> --json jobs -q '.jobs[] | {name, startedAt, completedAt, conclusion}'` — check whether `native-build-smoke (macos-15-intel)` / `build-release-native-assets (macos-15-intel, cpu)` / `benchmark-regression (ubuntu-latest)` are still the slowest `needs:` jobs (all 3 confirmed still present as of v1.95.0); re-time push→`chore(release)`→`publish-pypi`→`release-tag-smoke` if the CI matrix has changed since |
-| `TG_RG_TIMEOUT_SECONDS` default | `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (currently `60.0`, `subprocess_policy.py:75`; the `600` figure AGENTS.md still cites at `:378` predates this default and reads as present-tense there — re-verify whether that AGENTS.md line is itself stale before trusting it) |
+| `TG_RG_TIMEOUT_SECONDS` default | `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (currently `60.0`, `subprocess_policy.py:75`; the `600` figure AGENTS.md still cites at `:853` predates this default and reads as present-tense there — re-verify whether that AGENTS.md line is itself stale before trusting it) |
 | Security round-3 sweep files | `AGENTS.md` "Security Hardening Patterns"; files `src/tensor_grep/cli/{checkpoint_store,session_daemon,session_store,mcp_server}.py` |
 | Open round-4 argv item | `AGENTS.md` (native-argv `--` sentinel); `rust_core/src/rg_passthrough.rs` |
 | Dogfood harness present | `ls scripts/dogfood/` (`Dockerfile`, `dogfood_features.py`, `README.md`) |
