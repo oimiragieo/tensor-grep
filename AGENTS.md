@@ -453,6 +453,62 @@ concrete failure observed this session.
   (the target directory MAY be populated — verified empirically, and the canonical helper
   `_plant_ancestor_link_or_skip` removes the link path first with a populated target). The law
   stands; the mechanism sentence is corrected.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
+  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
+  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
+  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
+  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
+  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
+  the Rust-std half is toolchain-version-dependent. Probe receipt:
+  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
 - **A89 — Real-artifact test arms beat fake-backed ones in parity oracles (2026-08-09, #987).** M16's three-arm composite-count parity test passed with SPAN FAKES while production read the WRONG ast-grep JSON fields (`range.start.index` vs the real 0.42.1 `range.byteOffset.start/end`), so the "parity" was pinned against the bug. Only adding a REAL `ast-grep --json` subprocess arm surfaced the divergence. Whenever a parity/oracle test can drive the real producer cheaply, it must — a fake-backed arm can certify a lie as three arms of agreement. (Extends the Verification-Oracle family: the oracle's INPUT was fake, so the agreement was between the test and its own fiction.)
 - **A90 — Fail closed on unknown subcommands; never fall through to search (2026-08-09, #993 / world-class H1).** The Python bootstrap door (`bootstrap.py:374-383` `_normalize_search_invocation`) returns every unknown-first-arg as search args, so `tg edit-ready --help` prints `Usage: tg search` exit 0 — an agent concludes a nonexistent command exists. Same family as the "registration-completeness" and "scope-honesty" laws, but about the CLI DISPATCH surface: an unknown top-level command must exit non-zero with `error.code=unknown_command` and `nearest[]`, on BOTH front doors (Python `KNOWN_COMMANDS` + native `normalize_top_level_search_args`/`is_known_python_command`), never be swallowed into search. A feature that isn't on the CLI must not be faked by a search fallthrough.
 - **A91 — "No core-Rust logic" never means "no native touch" (2026-08-09, #993).** The public surface is the managed native `tg.exe`; a Python/sidecar feature that misses the native front-door enrollment (`Commands::X` passthrough + `PUBLIC_TOP_LEVEL_COMMANDS` parity test) is invisible through the real binary and its first dogfood fails with the very unknown-command bug it fixes. Every "Python-first" slice must state its both-front-door + 4-site-registration enrollment in the same slice, or it is honest only as "no core-rust LOGIC," never as "no native touch."
@@ -469,10 +525,65 @@ concrete failure observed this session.
 - **A102 — Input-brief facts are hypotheses; the builder must verify them against the tree before writing on them (2026-08-13).** Two of seven retention fix-wave seats corrected facts IN THEIR OWN BRIEFS (the dense-weight flip first released v1.79.0, not v1.93.2; route-test #672 shipped v1.81.21, not v1.100.0). A brief's stated facts — like an implementer's output report (A81) — are hypotheses until re-derived from the tree. A seat must verify each load-bearing input fact before writing on it and must report any brief fact that fails verification rather than silently propagating it.
 
 
+- **A103 — A RED-arm baseline swap must snapshot the builder's uncommitted bytes before touching the
+  file (2026-08-13).** Reverting a file to its pre-fix revision (`git checkout origin/main -- <file>`,
+  an `Out-File`/patch apply) inside a builder's worktree destroys whatever uncommitted work the
+  builder had in that file; this session's W2A probe-retry work was clobbered exactly that way and
+  re-applied from the spec. Before any baseline swap, copy the current bytes aside; prefer re-editing
+  the single mutated line back instead of reverting the whole file. Same hazard family as the
+  "git stash is unsafe once parallel worktrees exist" law, single-file variant.
+- **A104 — The A3 adversarial gate is a real-finding convergence loop; it ends only on independent
+  SHIP, never on round count (2026-08-13).** W3B's symlink guard took 13 gate rounds plus a final
+  codex pass, and nearly every round produced a genuine FIX-FIRST, not a nit: a fault-injection seam
+  that bailed before the stat (invisible to a fail-open rewrite), a trailing-separator stat bypass,
+  residuals without a filed owner row, a board row the shipped code cited but nobody had filed, and
+  an unobservable skip path. Each is a reusable finding class; budget 10+ rounds for a security PR.
+  The independent gate still fires after the builder's self-gate is green (A18).
+- **A105 — Normalize the path BEFORE a no-follow stat, and own the residuals a leaf-stat cannot
+  cover (2026-08-13).** On POSIX, `lstat("dirlink/")` resolves THROUGH the final symlink, so a guard
+  that stats the raw caller string lets a trailing-slash path bypass `is_symlink()` and hand a link
+  root to a follow-root walk. Strip trailing separators (e.g. `Path::components().collect()`) before
+  the stat. Separately, `symlink_metadata` lstats the LEAF only: a symlink in a non-leaf ancestor
+  component and the directory-ROOT swap window (stat a real dir, then `is_dir()`/walk re-resolves)
+  are additional residuals that must be named in the code comment, the threat model, AND a filed
+  follow-up row — never silently absorbed (A38/A48/A49).
+- **A106 — A green test that can silently skip is a hazard; promote skips to panics via an env var
+  armed in CI (2026-08-13).** The W3B guard tests' Windows skip branches printed a line and
+  returned, so a run where every node skipped read green while proving nothing about the security
+  fix. The shipped mechanism: every skip site panics with an explicit message when
+  `TG_REQUIRE_SYMLINK_TESTS` is set, and CI arms it. Apply the same promotion to any
+  environment-dependent test whose silent skip would masquerade as coverage (A88 / Oracle Form 3).
+- **A107 — A contested platform fact is settled by a bounded probe on the PINNED toolchain, not by
+  council vote; a law whose embedded claim is superseded must itself carry the SUPERSEDED marker
+  (2026-08-13).** Two W3A council rounds split on whether Windows junctions report
+  `is_symlink()==true` to Rust with seats asserting opposite facts and no common probe. A ~30s
+  std-only `cargo run --release` probe on the pinned Rust 1.96.0 settled it (`is_symlink: true`,
+  `is_symlink_dir: true`) and became the only artifact all seats cite. Consequence: A88's
+  parenthetical "junctions are NOT symlinks" is wrong for this toolchain and must carry an
+  append-only SUPERSEDED note in the law itself and in every skill quoting it (A94).
+- **A108 — Plan-council convergence: hash-freeze each round, fix only the confirmed findings, failed
+  seats are not votes, and a verdict-dependent step is a named GATE, never an expansion marker
+  (2026-08-13).** The campaign plan converged through 5 council rounds: fix the confirmed findings,
+  re-hash the artifact, re-run until N/N APPROVE, with no-verdict seats recorded FAILED and excluded.
+  "EXPAND AT WAVE START" was read as "the steps are not written" by half of round 1 — a step whose
+  content depends on a future verdict must be written NOW as a named gate with an exact command, a
+  concrete pass/fail trigger, and a re-approval rule covering the FAIL branch (A35/A46/A51).
+- **A109 — Bounded test handshakes use capacity-1 channels, never a capacity-0 rendezvous
+  (2026-08-13).** A capacity-0 `sync_channel` `send` blocks forever when its peer never arrives —
+  the unbounded hang the round-3 council caught in a "bounded" swap-gate draft. Capacity-1 channels
+  (non-blocking sends) plus `recv_timeout` on every receive bound every wait; an expiry is a
+  deadlock detector and panics `CANNOT_MEASURE:`, never a verdict (A17).
+- **A110 — `git commit --amend` is safe only while the branch has never been pushed; check for a
+  remote-tracking ref first (2026-08-13).** After a push, amend rewrites history sibling agents may
+  have fetched. The W1B rule: `git log --oneline origin/<branch>` must print nothing (no remote ref)
+  before amending; otherwise make an ordinary second commit. No force-push.
+
+
+
 ## Current Handoff
 release_docs_current_tag: v1.110.16
 
-As of 2026-08-02, the current tagged release state is `v1.110.16`, and the latest complete public PyPI/release-asset distribution is also `v1.110.16`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.16` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-13, the current tagged release state is `v1.110.16`, and the latest complete public PyPI/release-asset distribution is also `v1.110.16`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.16` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
 **2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.

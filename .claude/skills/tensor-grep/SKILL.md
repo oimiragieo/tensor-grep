@@ -101,7 +101,7 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Latest CUJ dogfood: v1.110.14** (2026-08-11, Windows `uvx`, artifact
+**Latest CUJ dogfood: v1.110.14 (unchanged through v1.110.16; re-run the CUJ on the published wheel before the next restamp)** (2026-08-11, Windows `uvx`, artifact
 `C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**). Core CUJ + M16/M17 still green.
 **A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
 (`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for

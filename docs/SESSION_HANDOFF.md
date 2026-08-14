@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-12
+Last updated: 2026-08-13
 
 ## Current Release State
 
@@ -11,7 +11,7 @@ release_docs_current_tag: v1.110.16
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.110.16>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-12.1
+Canonical status index version: 2026-08-13.1
 - 2026-08-12 backlog-closeout campaign (no release): plan
   `docs/plans/2026-08-12-backlog-closeout-campaign.md` rev 6 (3-seat council; codex Sol APPROVE
   after 4 rounds / 21 folded findings). Task 2A ADVANCED: A22 union-merge of `b6dc0a6` flipped

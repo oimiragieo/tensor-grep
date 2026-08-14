@@ -29,7 +29,7 @@ opened-identity anchors over resolve-then-act.
 | Primitive | Windows | POSIX | Confinement-relevant property |
 |---|---|---|---|
 | **Symlink** | needs privilege (or Developer Mode); created by `os.symlink` | ordinary `ln -s` | `Path.is_symlink()` is True; leaf refusals see it |
-| **Junction** (directory reparse point) | `mklink /J`, `New-Item -ItemType Junction` — **NO privilege**; `os.walk` descends it as a plain dir; `Path.is_symlink()` is **False** | does not exist | **The Windows attack primitive.** A junctioned ANCESTOR under root is traversed transparently and reads OUT-of-root content — invisible to a leaf-symlink check |
+| **Junction** (directory reparse point) | `mklink /J`, `New-Item -ItemType Junction` — **NO privilege**; `os.walk` descends it as a plain dir; `Path.is_symlink()` is **False** | does not exist | **The Windows attack primitive.** A junctioned ANCESTOR under root is traversed transparently and reads OUT-of-root content — invisible to a leaf-symlink check | **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
 | **Hardlink** | `mklink /H` (same-volume only) | `ln` | No separate identity; both names resolve to the same inode — a within-root hardlink to an out-of-root inode is not a "link escape" but it IS the same content |
 | **Reparse point / mount point** | volume mount points, file-physical reparse | bind mounts | `followlinks=False` on a walk does not stop a preceding ANCESTOR reparse |
 
@@ -129,16 +129,28 @@ Windows the alias is a **junction**, exactly the primitive of Part 1.
 ## Part 5 — Windows idioms and the fixture that must bite
 
 - Junctions are created UNPRIVILEGED — Windows symlink `pytest.skip` rules do NOT apply to
-  junction fixtures; `mklink /J` **silently fails when the target directory is NON-EMPTY** (A88),
+  junction fixtures; `mklink /J` requires the LINK path must not already exist (the target
+  directory MAY be populated) (A88),
   so the fixture must carry a BITE precheck proving the redirect actually resolves (`os.path.islink()`
   is False on a junction — assert the negative shape; the parent-resolve containment is the guard
-  that matters).
+  that matters). **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
 - `wsl.exe` / WSL paths are a separate domain; the WSL path-domain bridge (path-domain translation,
   `wslpath`/`wslpath -w`) is governed by its own contract — see the Task 2A/2B design language around
   `PathDomainContractV1` in `docs/plans/2026-08-02-backlog-closeout-design.md` (grep
   `PathDomainContract`) for the exhaustive-translation-reason set and the "consumed marker" invariant.
 - A path-shape transform that is platform-meaningful (Part 2) MUST never run un-gated; the CI OS
   matrix is the oracle (A84/A85).
+
+
+### Settling contested platform facts with a bounded probe (2026-08-13, A107)
+
+When review seats assert opposite facts about a toolchain-version-dependent platform behavior,
+do not re-vote — probe. A tiny std-only `cargo run --release` program (positive + negative
+controls: known-symlink and known-regular fixtures) on the PINNED toolchain settled the
+junction question for Rust 1.96.0 in ~30s and became the only artifact all seats cite
+(probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5).
+If the result supersedes a documented claim (e.g. A88's "junctions are NOT symlinks"), the
+superseded claim itself carries an append-only SUPERSEDED note — never silently rewritten (A94).
 
 ---
 
@@ -163,12 +175,12 @@ A38/A48/A53/A55/A84. Grep the symbol, never a hardcoded line number.
 ## Quick reference
 
 ```
-[1] primitives   name the platform primitive (junction != symlink != hardlink) you protect against
+[1] primitives   name the platform primitive (junction != symlink != hardlink) you protect against **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
 [2] transforms   gate platform-meaningful shape transforms; pin BOTH arms cross-platform
 [3] identity     preserve raw leaf; anchor to opened verified parent handles (not resolve-then-act)
 [4] canonical    canonicalize for IDENTITY, then compare the opened/canonical-relative object
 [5] REPRO        a wrong-tree serve needs an ALIAS/SWAP topology (junction), never the naive RED
-[6] fixtures     junction fixtures need NO privilege but mklink /J silent-fails on NON-EMPTY — BITE it
+[6] fixtures     junction fixtures need NO privilege but mklink /J requires LINK path absent (target MAY be populated) — BITE it
 ```
 
 The endpoint: confinement that holds on BOTH platforms because the primitive is named, the transform
