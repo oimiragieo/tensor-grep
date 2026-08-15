@@ -359,3 +359,13 @@ anything below before relying on it — a wrong runbook is worse than none.
   `docs/audits/2026-08-12-stale-branch-reconciliation.md`).
 
 If any command above no longer matches what's in this file, update the skill in the same change.
+
+
+## Retention (2026-08-15) — CEO packets + demand design
+
+- Live CEO dumbed-down packet: docs/audits/2026-08-15-ceo-backlog-update.md. Campaign prose goes
+  under ## Campaign note (YYYY-MM-DD), never under ## Canonical status index (A71).
+- Design-on-main ≠ SHIPPED (A122). Update Triggers in-body when a design packet lands; do not flip
+  DEMAND_GATED to SHIPPED on docs alone.
+- Operator Fable waiver is recorded on the PR and in AGENTS.md A117 — do not invent clearance.
+

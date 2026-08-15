@@ -41,6 +41,17 @@ whose board update rode the row's Trigger in-body. The long worked example lives
   user with a 100+-pattern workload" is a decision or an appearance, not a measurement. Do not
   fabricate a probe for it; record the condition as unmet (the W5A #255 shape) and stop.
 
+
+
+## Retention (2026-08-15) — after demand is satisfied
+
+- Freeze **three** time numbers, not one (A120): probe duration, frozen grace, enclosing shell
+  timeout. Outer timeout must **strictly exceed** duration + grace; equal timeouts are Sol REVISE.
+- Demand SATISFIED does not ship a fix (A122). A design packet on main is still not product code.
+- If the fix raises 
+equest_queue_size, pair it with a fail-closed aggregate pre-auth concurrency
+  cap (A121 / R7) or the design is incomplete.
+
 ## The workflow
 
 ### Step 0 - re-derive the Trigger verbatim from origin/main

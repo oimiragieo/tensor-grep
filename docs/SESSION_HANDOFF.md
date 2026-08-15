@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 ## Current Release State
 
@@ -13,21 +13,25 @@ release_docs_current_tag: v1.110.16
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-13.1
 
-### 2026-08-14 — DD-006 Phase-1 docs packet (accept-side bound)
+### 2026-08-15 — CEO update + A117–A122 retention
 
-Docs-only Phase-1 packet on branch `docs/dd006-accept-bound-auth-packet`
-(worktree; base `93078ef3ec758a02982cb5bea1d4450fb9beb28c`). **REV-DRAFT-3**
-(closes Sol's REV-DRAFT-1 and REV-DRAFT-2 findings; Sol approved REV-DRAFT-3). Points:
+Dumbed-down CEO packet: `docs/audits/2026-08-15-ceo-backlog-update.md`. Public product still
+`v1.110.16`. Closed-world 29/17 unfinished (0 READY). DD-006 design packet #1015 merged
+(`0710219`); Fable waived for that docs packet only; product build still needs deliberate go.
+Laws A117–A122 retained in AGENTS.md / CLAUDE.md / MEMORY.md / skills. Only open PR: #966
+(parked RED). Spend $0.
 
-- Requirements: `docs/requirements/dd006-accept-side-bound.md` (REV-DRAFT-3)
-- Design: `docs/design/dd006-accept-side-bound.md` (DD-006-PERF = Option A + R7
-  aggregate pre-auth bound; DD-006-HONESTY = Option B mandatory for full close)
-- Decisions: `docs/decisions/dd006-campaign-scope-2026-08-14.md` (`tt_quick`
-  Option A; Sol audit-closure notes; full parent close = PERF + HONESTY)
+### 2026-08-14 — DD-006 Phase-1 docs packet (accept-side bound) — MERGED
 
-Hard gates: **no product implementation in this packet**; **CEO authorization**
-required before build; DD-006 stays open (demand SATISFIED, design awaits auth).
-Zero production-implementation claims. Orchestrator owns git commit/push.
+Docs-only Phase-1 packet merged as PR **#1015** / `0710219` (base `93078ef`; Sol exact-commit
+APPROVE on `abebd62`; Fable waived per operator). **REV-DRAFT-3** on main:
+
+- Requirements: `docs/requirements/dd006-accept-side-bound.md`
+- Design: `docs/design/dd006-accept-side-bound.md` (DD-006-PERF = Option A + R7; DD-006-HONESTY = Option B mandatory for full close)
+- Decisions: `docs/decisions/dd006-campaign-scope-2026-08-14.md`
+
+Hard gates: **no product implementation in that packet**; **deliberate build authorization**
+still required for product code (A117/A122); DD-006 stays open (demand SATISFIED, design on main).
 
 - **2026-08-14 W5-W8 closeout (this session):** the plan's tail is now fully executed. W5 demand
   dispositions (`docs/audits/2026-08-13-demand-gated-dispositions.md`): #255 LEAVE (35 max

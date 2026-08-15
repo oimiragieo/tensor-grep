@@ -125,7 +125,7 @@ Claude Code guidance for the **tensor-grep** repository.
   become a specific class in prose); a corrected census closes only after its location inventory
   is mechanically re-derived; wave receipts are per-row tables, never group sentences; never let
   `uv run` create a venv inside a bare worktree (run worktree tests from the main checkout's
-  venv targeting worktree paths).
+  venv targeting worktree paths). **A117–A122 (2026-08-15, DD-006 design-packet closeout):** operator “skip Fable” waives that seat for the named docs packet only — not product code, spend, or CEO_GATED flips (extends A74); local `gh pr merge` failure is not remote truth when another worktree owns `main` (judge `mergedAt` / API); docs-only PR job skips are not a cheap main push; enclosing shell timeout must strictly exceed probe duration (+ grace); raising `request_queue_size` without a fail-closed aggregate pre-auth concurrency cap enlarges DoS admission; demand SATISFIED + design on main is not SHIPPED (parent DD-006 still needs PERF + HONESTY product code under a deliberate build go).
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,

@@ -423,3 +423,12 @@ without a line anchor; the per-finding closure and hash chain are committed at
 The docs-round receipts for what APPROVE took: 4 rounds on a pure-docs branch, with the final
 round returning only nits already folded - same stopping rule as code rounds (a round's verdict
 clears exactly the bytes it reviewed, A51/A46).
+
+
+## Retention (2026-08-15) — measurement envelopes
+
+- When auditing a probe plan, require outer shell timeout **strictly greater** than probe duration
+  (+ frozen grace). Equal timeouts are REVISE (A120; DD-006 Sol REV-DRAFT-2).
+- Backlog/listen raises without an aggregate pre-auth concurrency cap are BLOCKER-class for
+  ThreadingMixIn daemons (A121).
+

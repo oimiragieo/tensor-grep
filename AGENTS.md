@@ -601,11 +601,37 @@ concrete failure observed this session.
   pytest`); run worktree tests from the MAIN checkout's venv targeting worktree paths
   (`uv run --no-sync python -m pytest "<worktree>/tests/..."`) and remove any accidentally-created
   worktree `.venv` immediately.
+- **A117 — Operator “skip Fable” waives that design-audit seat for the named docs packet only
+  (2026-08-15).** It does not authorize product code, spend, CEO_GATED flips, or treating a
+  quota substitute as durable clearance (extends A74). Record the waiver on the PR; Sol/Codex
+  exact-commit APPROVE still required for the packet bytes.
+- **A118 — Local `gh pr merge` failure is not remote truth when another worktree owns `main`
+  (2026-08-15).** `fatal: 'main' is already used by worktree` can abort locally after GitHub
+  already merged. Judge `gh pr view --json mergedAt`; use the merge API if needed; never assume
+  “failed” means “not merged,” and never double-merge.
+- **A119 — Docs-only PR job skips are not a cheap main push (2026-08-15).** The PR `changes`
+  gate may skip expensive jobs; `push` to `main` always runs the full matrix. Do not forecast
+  main wall-clock from PR skipped-job green.
+- **A120 — Enclosing shell timeout must strictly exceed probe duration (+ frozen grace)
+  (2026-08-15).** A shell `timeout` equal to the probe’s wall duration is Sol REVISE: the
+  probe cannot finish cleanly. Freeze duration, grace, and outer timeout as three numbers.
+- **A121 — Raising `request_queue_size` without a finite fail-closed aggregate pre-auth
+  concurrency cap enlarges DoS admission (2026-08-15).** `ThreadingMixIn` spawns a thread per
+  accept; a larger listen backlog without R7 is incomplete DD-006-PERF design (Sol BLOCKER-1).
+- **A122 — Demand SATISFIED + design packet on main is not SHIPPED (2026-08-15).** Parent
+  DD-006 still needs both DD-006-PERF and DD-006-HONESTY product code under a separate
+  deliberate build go (TDD + A3). Do not close the board row on docs alone.
 
 
 
 ## Current Handoff
 release_docs_current_tag: v1.110.16
+
+**2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
+Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 CEO_GATED,
+6 DEMAND_GATED (8 SHIPPED + 4 RETIRED). DD-006 design packet merged (#1015 / `0710219`); demand
+SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
+New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
 
 As of 2026-08-13, the current tagged release state is `v1.110.16`, and the latest complete public PyPI/release-asset distribution is also `v1.110.16`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.16` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 

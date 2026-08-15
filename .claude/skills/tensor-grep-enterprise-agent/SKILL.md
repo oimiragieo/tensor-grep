@@ -111,3 +111,11 @@ degrade (`rank_fallback_reason`). For enterprise launch-bar dogfood use prepare 
 review-bundle → ledger (and plain `tg search`), or install `tensor-grep[semantic]` /
 `tg install-dense` first. Isolate HOME when probing `tg evidence emit --sign` without a key
 (AGENTS.md **A70**, **A73**).
+
+
+## Retention (2026-08-15)
+
+- DD-006: demand proven + design on main (#1015) is still an open row until PERF+HONESTY product
+  code ships under deliberate authorization (A122). Do not treat the design packet as CUJ-complete.
+- Skip-Fable waivers do not clear enterprise security gates on daemon acceptor code (A117/A3).
+

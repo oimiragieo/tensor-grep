@@ -619,3 +619,15 @@ just as certainly go stale on the next `AGENTS.md` growth pass. Do not "fix" the
 - When implementation PRs merge, do not leave the row `IN_FLIGHT` “for next cycle” (**A72**). Same
   turn: `SHIPPED` + Closure PR + Merged SHA, or the CEO snapshot lies.
 - Never put free-form bullets under `## Canonical status index` (**A71**).
+
+
+## Retention (2026-08-15) — gate waivers vs build licenses
+
+- **A117:** “Skip Fable” (or quota-blocked Fable) is not a product-build license. Explicit operator
+  waiver covers the named docs/design packet after Sol exact-commit APPROVE; product still needs a
+  deliberate go + TDD + A3 where security-class.
+- **A122:** Enumerate unfinished rows with mixed dispositions (demand SATISFIED / design landed /
+  build not started) — do not flatten to READY or SHIPPED.
+- CEO packet template: what worked, ALL unfinished rows by bucket, research list, 5+ lessons since
+  prior CEO update, then retain laws in AGENTS/CLAUDE/MEMORY/skills in the same change.
+

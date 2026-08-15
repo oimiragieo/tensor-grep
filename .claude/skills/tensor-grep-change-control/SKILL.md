@@ -867,3 +867,13 @@ have an auditor accept the header — doc-only, no release tag re-verified for t
   claim about the one file checked; use a mechanical per-file diff or explicit per-file disposition.
 
 If any command above no longer matches, update this skill in the same change — a wrong runbook is worse than none.
+
+
+## Retention (2026-08-15) — merge + docs CI traps
+
+- **A118:** Local gh pr merge can fail with main already used by another worktree while GitHub
+  already merged. Judge gh pr view --json mergedAt (or the merge API); never double-merge.
+- **A119:** Docs-only PR changes skips are not a cheap main push — main always runs the full matrix.
+- **A117:** Operator “skip Fable” waives that seat for the named docs packet only — not product code,
+  spend, or CEO_GATED flips (extends A74).
+
