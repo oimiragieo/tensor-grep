@@ -12,6 +12,23 @@ release_docs_current_tag: v1.110.16
 
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-13.1
+
+### 2026-08-14 — DD-006 Phase-1 docs packet (accept-side bound)
+
+Docs-only Phase-1 packet on branch `docs/dd006-accept-bound-auth-packet`
+(worktree; base `93078ef3ec758a02982cb5bea1d4450fb9beb28c`). **REV-DRAFT-3**
+(closes Sol's REV-DRAFT-1 and REV-DRAFT-2 findings; Sol approved REV-DRAFT-3). Points:
+
+- Requirements: `docs/requirements/dd006-accept-side-bound.md` (REV-DRAFT-3)
+- Design: `docs/design/dd006-accept-side-bound.md` (DD-006-PERF = Option A + R7
+  aggregate pre-auth bound; DD-006-HONESTY = Option B mandatory for full close)
+- Decisions: `docs/decisions/dd006-campaign-scope-2026-08-14.md` (`tt_quick`
+  Option A; Sol audit-closure notes; full parent close = PERF + HONESTY)
+
+Hard gates: **no product implementation in this packet**; **CEO authorization**
+required before build; DD-006 stays open (demand SATISFIED, design awaits auth).
+Zero production-implementation claims. Orchestrator owns git commit/push.
+
 - **2026-08-14 W5-W8 closeout (this session):** the plan's tail is now fully executed. W5 demand
   dispositions (`docs/audits/2026-08-13-demand-gated-dispositions.md`): #255 LEAVE (35 max
   single-pack anchors, no named user), DD-006 demand condition SATISFIED by the bounded 20-client
