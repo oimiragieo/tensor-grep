@@ -550,7 +550,7 @@ remove a config burden — can produce a collision. An explicit identity input t
 trusts for correctness (not just labeling) is not friction to be removed; removing it removes the
 only thing preventing the collision.
 
-## Battle 28 -- MaxSim reranking's absence is a deliberate hold, not a `tg install-dense` coverage gap (#15)
+## Battle 28 -- MaxSim reranking is RETIRED (F10), not a `tg install-dense` coverage gap (#15)
 
 | Field | Detail |
 |---|---|
@@ -608,6 +608,15 @@ and Battle 25 (a banked hypothesis not re-derived against real code) on the plan
 them CONSUME the thing the flag changes. A flag that alters/suppresses output belongs to the
 consumers that stream it, not the ones that parse it. Anyone who "tidies" `-q` back into the
 shared `_build_cmd` re-ships this exact false zero.
+
+## Battle 31 -- DD-006 design-on-main ≠ shipped (2026-08-15)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | Demand SATISFIED + design packet merged to `main` reads as the row being done; skip-Fable looks like build clearance. |
+| **Root cause** | Docs/requirements/design/decisions are an authorization *stage*, not product delivery. Operator Fable waiver covers the named packet only. |
+| **Evidence** | A117 (Fable waiver ≠ product/spend/CEO_GATED license); A122 (parent DD-006 still needs DD-006-PERF + DD-006-HONESTY under deliberate build go + TDD+A3). Skill: `tensor-grep-design-authorization-ladder`. |
+| **Status** | **SETTLED as process law.** Do not close the board row on docs alone; do not start `src/` from a Fable waiver. |
 
 ---
 
@@ -749,13 +758,13 @@ grep -rn "scope_defaulted\|defaulted.scope\|scope_disclosure" src/tensor_grep/
 # Battle 27 (anonymous --claim sentinel-id retention -- confirm no auto-derivation was reintroduced)
 grep -rn "_find_overlaps\|agent_id" src/tensor_grep/cli/*.py | grep -i ledger
 
-# Battle 28 (MaxSim rerank-extra deliberate hold -- confirm rerank still has no install path)
+# Battle 28 (MaxSim RETIRED F10 -- confirm still no install path + RETIRED module header)
 # `^rerank`, NOT a quoted form: the extra is declared BARE (`rerank = [...]`) at pyproject.toml:627.
 # The first version of this line searched for `"rerank"`/`'rerank'` and returned NOTHING, exit 1 --
-# which a reader re-verifying Battle 28 would have read as "the rerank extra is gone, the hold is
-# over". A false zero, shipped inside the file that teaches the false-zero trap. Caught by an
-# independent audit that actually RAN every re-verify command in this block instead of eyeballing
-# them. A re-verify command you have not executed is a claim, not a check.
+# which a reader re-verifying Battle 28 would have read as "the rerank extra is gone". A false zero,
+# shipped inside the file that teaches the false-zero trap. Caught by an independent audit that
+# actually RAN every re-verify command in this block instead of eyeballing them. A re-verify
+# command you have not executed is a claim, not a check.
 grep -n "^rerank" pyproject.toml
 grep -rn "MaxSim\|install-dense\|install_dense" src/tensor_grep/ docs/
 # RETIRED 2026-08-05 (task F10) -- the module-header block is the durable citation

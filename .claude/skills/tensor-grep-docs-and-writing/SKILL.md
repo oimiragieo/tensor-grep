@@ -46,7 +46,7 @@ Every governed doc has one job. Do not duplicate another doc's job into it — t
 | `docs/SESSION_HANDOFF.md` | **Live** handoff: current release state, weak spots, per-slice PR/dogfood evidence ledger | yes | `test_public_docs_governance.py` (heavy) |
 | `docs/CONTINUATION_PLAN.md` | Historical workstream map; secondary to `SESSION_HANDOFF.md` for "what's current" | yes | `test_public_docs_governance.py` |
 | `docs/CONTRACTS.md` | API/CLI/data backward-compatibility guarantees, validated compatibility set | yes | `test_public_docs_governance.py` + `test_enterprise_docs_governance.py` |
-| `docs/BACKLOG.md` | **The canonical prioritized/historical work ledger** — task-store-synced descriptions, priorities, receipts, and per-release history (SHIPPING/SHIPPED/CEO-FACING sections). After Task 2 lands it, the machine-parsed `## Canonical status index` in `docs/TASK_BOARD.md` becomes the live-status view and `test_backlog_tracker_truth.py` pins its grammar/population. Until then, use the latest dated closed-world reconciliation audit referenced by BACKLOG and reconcile it with GitHub PR truth. BACKLOG is deliberately not content-pinned wholesale because it changes repeatedly during a campaign. | no | Current interim: dated audit + existing board freshness tests; after Task 2: `test_backlog_tracker_truth.py` |
+| `docs/BACKLOG.md` | **The canonical prioritized/historical work ledger** — task-store-synced descriptions, priorities, receipts, and per-release history (SHIPPING/SHIPPED/CEO-FACING sections). The machine-parsed `## Canonical status index` in `docs/TASK_BOARD.md` is the live-status view; `test_backlog_tracker_truth.py` pins its grammar/population. Reconcile BACKLOG with the board and GitHub PR truth. BACKLOG is deliberately not content-pinned wholesale because it changes repeatedly during a campaign. | no | `test_backlog_tracker_truth.py` |
 | `docs/PAPER.md` | Optimization/benchmark history, **including rejected/failed attempts** — append dated notes, never delete history | GPU dogfood `post-\`vX\`` labels only | `test_public_docs_governance.py` (GPU-story tests) |
 | `docs/benchmarks.md` | Accepted benchmark artifacts, frozen comparator sets/scenario packs | GPU dogfood labels | heavy pins across both governance files |
 | `docs/gpu_crossover.md` | GPU crossover story / promotion gates | GPU dogfood labels | pinned |
@@ -359,3 +359,13 @@ anything below before relying on it — a wrong runbook is worse than none.
   `docs/audits/2026-08-12-stale-branch-reconciliation.md`).
 
 If any command above no longer matches what's in this file, update the skill in the same change.
+
+
+## Retention (2026-08-15) — CEO packets + demand design
+
+- Live CEO dumbed-down packet: docs/audits/2026-08-15-ceo-backlog-update.md. Campaign prose goes
+  under ## Campaign note (YYYY-MM-DD), never under ## Canonical status index (A71).
+- Design-on-main ≠ SHIPPED (A122). Update Triggers in-body when a design packet lands; do not flip
+  DEMAND_GATED to SHIPPED on docs alone.
+- Operator Fable waiver is recorded on the PR and in AGENTS.md A117 — do not invent clearance.
+

@@ -525,10 +525,10 @@ tg search "pattern" --glob "*.py" C:\repo
 
 Same rule for file listing — prefer a scoped root over `tg search --files . --hidden --no-ignore`
 across a large workspace; see `.claude/skills/tensor-grep/SKILL.md` for the broad-generated-scan
-guardrail (`--allow-broad-generated-scan`). For the campaign history and what is genuinely still
-open on this front (task `#52` end-to-end `--deadline` honesty on a *legitimately large, in-scope*
-repo, and `#390`'s daemon-path deadline gap — neither is the unscoped-hang bug this section covers),
-see `tensor-grep-large-repo-scale-campaign`.
+guardrail (`--allow-broad-generated-scan`). Task `#390`'s warm-daemon deadline gap is **CLOSED**:
+`session_store.WARM_DAEMON_DEFAULT_DEADLINE_SECONDS` bounds those requests. Residual deadline
+overruns are separate findings, not evidence that the daemon path is unbounded. For remaining
+large-repo campaign history, see `tensor-grep-large-repo-scale-campaign`.
 
 ## 11. Exit codes — the layered contract (READ THIS before scripting `tg`)
 

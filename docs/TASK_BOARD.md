@@ -18,6 +18,14 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
+## Campaign note (2026-08-15)
+
+CEO update: `docs/audits/2026-08-15-ceo-backlog-update.md`. Public product `v1.110.16`
+(unchanged). DD-006 design packet merged (#1015 / `0710219`); Fable waived for that docs
+packet only (A117); product build still needs a deliberate go. Index stays `2026-08-13.1`.
+STOP unchanged: Task 2A (#966 parked RED), W3 rust/e2e shared-box ban, MCP wire fence, #169,
+CEO_GATED. New laws A117-A122.
+
 ## Campaign note (2026-08-14)
 
 Public product is **`v1.110.16`** (unchanged; no release this campaign). The 2026-08-14 W5-W8
@@ -85,7 +93,7 @@ Canonical status index version: 2026-08-13.1
 - [x] **REF-CALL-REGISTRY** — Status: SHIPPED; PR: PR #940; Trigger: Task 9 registry-driven refs/callers; implementation #915 plus seam pin #940; Implementation PRs: PR #915, PR #940; Closure PR: PR #963; Merged SHA: 3dbe85b127003ee0464ac3cbe1ba6831bd49fdcc
 - [x] **F10** — Status: RETIRED; PR: none; Trigger: 2026-08-05 caller/installability census (docs/BACKLOG.md dated entry) found MaxSim reachable only via an undocumented `TG_LATE_RERANK=1` env var + a manual `python -m tensor_grep.core.retrieval_late --fetch` (no `tg` command provisions it) AND decisively negative on the golden set even after the role-aware encoding fix (ndcg@10 0.068 vs 0.305 RRF, root cause model capacity); reopen only on both a `tg`-command install path and a stronger encoder clearing the golden-set gate
 - [x] **DD-004** — Status: RETIRED; PR: none; Trigger: 2026-08-05 retirement receipt (docs/BACKLOG.md dated entry) — INFO/WEAKENED loud `RuntimeError` re-raise at `cpu_backend.py:811` is not empty-success; typed boundary already banked in AGENTS.md Backend Fail-Closed Contract; reopen only if a backend path returns clean empty success on real failure or a consumer requires uniform `BackendExecutionError` typing across that site
-- [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence; DEMAND CONDITION NOW SATISFIED by the 2026-08-14 bounded probe (20 clients x 60s, control-valid single-shot arm 20/0; 5 of 5 live arms showed timeouts at the CLI's own 0.5s budget, the one discriminated arm classified them connect-timeout, 0 refusals/drops, 0 failures at a 2.0s budget and single-client; soft accept-path latency under concurrency, mechanism hypothesis = default request_queue_size=5 backlog; see docs/audits/2026-08-13-demand-gated-dispositions.md W5B). Reopen on: authorization for the bounded accept-side bound design (queue-size raise or accept-budget note); per the plan this row stays open with the reproduction as its trigger
+- [ ] **DD-006** — Status: DEMAND_GATED; PR: none; Trigger: measured concurrent daemon load or denial-of-service evidence; DEMAND CONDITION NOW SATISFIED by the 2026-08-14 bounded probe (20 clients x 60s, control-valid single-shot arm 20/0; 5 of 5 live arms showed timeouts at the CLI's own 0.5s budget, the one discriminated arm classified them connect-timeout, 0 refusals/drops, 0 failures at a 2.0s budget and single-client; soft accept-path latency under concurrency, mechanism hypothesis = default request_queue_size=5 backlog; see docs/audits/2026-08-13-demand-gated-dispositions.md W5B). Design packet merged PR #1015 (`0710219`; Sol APPROVE; Fable waived for docs only). Reopen on: deliberate authorization for product DD-006-PERF + DD-006-HONESTY build (TDD + A3); per A122 docs alone do not SHIP the parent row; reproduction remains the demand trigger
 - [ ] **AST-DSL-PARITY** — Status: DEMAND_GATED; PR: none; Trigger: demand for full structural DSL parity and a preprocessor-aware oracle; Exa delta 2026-08-14 (ast-grep Rust tree-sitter rewrite shipped ~22% end-to-end faster; NL-to-DSL arXiv 2507.02107; peers reach for DSL/parity, not metavariable performance; zero perf-blocked consumer; LEAVE)
 - [ ] **MCP-LEAN-DEFAULT** — Status: DEMAND_GATED; PR: none; Trigger: client demand and compatibility evidence for changing the default surface; Exa delta 2026-08-14 (lean-by-default is now SPEC-LEVEL — official MCP client-best-practices codifies progressive discovery/catalog-inspect-execute and programmatic tool calling, up to 85% token reduction; AWS 8-param guidance); direction confirmed but STILL SEQUENCED AFTER Task 2C per the MCP-SURFACE ladder (contract version 1.7.0 re-verified on origin/main)
 - [ ] **CONTINUOUS-REFRESH** — Status: DEMAND_GATED; PR: none; Trigger: approved scoping/design pass for a warm search-index service (not a build); Exa delta 2026-08-14 (warm serving now demonstrably table stakes — TriSeek v0.4.2 multi-harness warm daemon + memo layer, cgh watch-first code graph, seekr, Cursor cloud-agent warm builds; the one-global-daemon-many-roots shape is the peer pattern; scoping-pass reopen stands)
@@ -105,8 +113,7 @@ The closeout audit wave, Rust first-CI drain, A90, and doctor PATH-honesty all l
 M14 #984 → v1.110.10, #987 M16 → v1.110.11, #988 M17 → v1.110.12, #997 A90 → v1.110.13, #1000 doctor →
 v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #995 (M16/M17 receipts),
 #999/#1001/#1002 (skill evolution + new skills). No PRs in flight except #966 (Task 2A, RED by design).
-**CEO packet:** `docs/audits/2026-08-13-ceo-backlog-update.md` (live, 2026-08-13); 2026-08-11 and
-2026-08-06 packets retained as historical.
+**CEO packet:** `docs/audits/2026-08-15-ceo-backlog-update.md` (live, 2026-08-15; dumbed-down). Prior: `docs/audits/2026-08-13-ceo-backlog-update.md` (campaign closeout) and `docs/audits/2026-08-11-ceo-backlog-update.md` (historical).
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
 **Unfinished (buildable queue):** **0 READY rows**; 0 IN_FLIGHT (RUST-REPLACE-SYMLINK SHIPPED via PR #1010 / v1.110.16). Next buildable: none on the board (A82 holds; roadmap spine remains the queue).

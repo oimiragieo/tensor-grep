@@ -419,6 +419,21 @@ PowerShell in the canonical Windows checkout. Never cross those environment root
 happened: move the incompatible venv aside, recreate it from Windows with `uv sync --frozen`,
 verify imports/version, and only then resume gates. Source: `AGENTS.md` — grep "A60".
 
+### 13. Never run bare `uv` inside an isolated worktree (A116)
+
+**Symptom:** a worktree acquires an empty `.venv`, then `uv run` fails or validates against the
+wrong environment. **Cause:** a worktree is not a self-contained development environment; bare
+`uv run` can initialize its own empty virtual environment. **Fix:** run the canonical checkout's
+main venv while targeting paths in the worktree; do not create or repair a worktree-local `.venv`
+for verification.
+
+### 13b. Never recurse `$TEMP` looking for skill drafts
+
+**Symptom:** a status/discovery probe hangs ~100s+ and exits `-1` (`4294967295`) with empty
+output. **Cause:** `Get-ChildItem -Recurse $env:TEMP` walks locked Windows temp trees. **Fix:**
+assert the worktree path (`Test-Path .claude/skills/<skill>/SKILL.md` + `git status --porcelain`
+on that path). Top-level `$TEMP` filter only; never full recurse.
+
 ### 13. `uv lock` churns ~280 unrelated lines — hand-splice a new dep instead
 
 **Symptom:** adding one dependency and running a raw `uv lock` produces a huge diff of unrelated

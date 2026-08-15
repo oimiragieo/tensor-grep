@@ -59,7 +59,9 @@
   the one discriminated arm classified them connect-timeout, 0 refusals/drops, 0 failures at a
   2.0s budget and single-client) -> the demand condition ("measured concurrent daemon load") is
   now SATISFIED; the row stays open with the reproduction as its trigger, mechanism hypothesis =
-  default request_queue_size=5 accept backlog under concurrency. AST-DSL-PARITY Exa delta ->
+  default request_queue_size=5 accept backlog under concurrency. The DD-006 design packet merged as
+  PR #1015; reopening product work requires deliberate authorization for the PERF + HONESTY build.
+  AST-DSL-PARITY Exa delta ->
   LEAVE (peers reach for DSL/parity, not metavariable performance). MCP-LEAN-DEFAULT Exa delta ->
   direction now SPEC-LEVEL (official MCP progressive discovery / programmatic tool calling),
   still Task-2C-fenced (contract 1.7.0 re-verified). CONTINUOUS-REFRESH Exa delta -> warm serving
@@ -100,14 +102,11 @@
   ADVISORY-ONLY; copilot TIMEOUT recorded as a FAILED seat, not a blocker; the claude seat
   sat `sonnet` because Fable 5 was quota-blocked at dispatch (substitution recorded in the
   synthesis header + CEO packet doc, never presented as a Fable verdict).
-- **New skill in flight (sibling agent C):** `tensor-grep-demand-gate-measurement` - the
-  bounded demand-gate measurement method with the DD-006 worked example (frozen
-  thresholds, single-shot vs looped control arms, discriminated failure classes, positive
-  control, CANNOT_MEASURE, honest-soft severity). Skill count goes 34 -> 35; the
-  AGENTS.md/CLAUDE.md index and `**N skills**` sentences are updated by sibling agent A in
-  the same wave. The docs-artifact audit-loop learnings FOLD into the existing
-  `tensor-grep-codex-gated-audit-loop` skill (FOLD_INTO_EXISTING bias; no second new
-  skill).
+- **Landed skill:** `tensor-grep-demand-gate-measurement` documents the bounded demand-gate
+  measurement method with the DD-006 worked example (frozen thresholds, single-shot vs looped
+  control arms, discriminated failure classes, positive control, CANNOT_MEASURE, honest-soft
+  severity). The docs-artifact audit-loop learnings FOLD into the existing
+  `tensor-grep-codex-gated-audit-loop` skill (FOLD_INTO_EXISTING bias; no second new skill).
 
 ## Recent campaign notes (2026-08-13) - session-retention campaign: 35/35 skill accuracy audit + never-committed lesson capture
 

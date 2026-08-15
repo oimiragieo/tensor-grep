@@ -41,13 +41,24 @@ whose board update rode the row's Trigger in-body. The long worked example lives
   user with a 100+-pattern workload" is a decision or an appearance, not a measurement. Do not
   fabricate a probe for it; record the condition as unmet (the W5A #255 shape) and stop.
 
+
+
+## Retention (2026-08-15) — after demand is satisfied
+
+- Freeze **three** time numbers, not one (A120): probe duration, frozen grace, enclosing shell
+  timeout. Outer timeout must **strictly exceed** duration + grace; equal timeouts are Sol REVISE.
+- Demand SATISFIED does not ship a fix (A122). A design packet on main is still not product code.
+- If the fix raises 
+equest_queue_size, pair it with a fail-closed aggregate pre-auth concurrency
+  cap (A121 / R7) or the design is incomplete.
+
 ## The workflow
 
 ### Step 0 - re-derive the Trigger verbatim from origin/main
 
 The row's Trigger text is the ONLY authority on the reopen condition. Read it from `origin/main`,
-not the dirty local tree and not memory: `git show origin/main:docs/TASK_BOARD.md` and read the
-row's `Trigger:` field (DD-006's row is `docs/TASK_BOARD.md:88`). Restate the condition in the
+not the dirty local tree and not memory: `git show origin/main:docs/TASK_BOARD.md`, then
+`grep -n "\*\*DD-006\*\*" docs/TASK_BOARD.md`, and read that row's `Trigger:` field. Restate the condition in the
 plan in the row's own words ("measured concurrent daemon load or denial-of-service evidence"), and
 make every threshold below answer THAT condition, not a friendlier paraphrase.
 

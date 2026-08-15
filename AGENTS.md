@@ -601,11 +601,37 @@ concrete failure observed this session.
   pytest`); run worktree tests from the MAIN checkout's venv targeting worktree paths
   (`uv run --no-sync python -m pytest "<worktree>/tests/..."`) and remove any accidentally-created
   worktree `.venv` immediately.
+- **A117 — Operator “skip Fable” waives that design-audit seat for the named docs packet only
+  (2026-08-15).** It does not authorize product code, spend, CEO_GATED flips, or treating a
+  quota substitute as durable clearance (extends A74). Record the waiver on the PR; Sol/Codex
+  exact-commit APPROVE still required for the packet bytes.
+- **A118 — Local `gh pr merge` failure is not remote truth when another worktree owns `main`
+  (2026-08-15).** `fatal: 'main' is already used by worktree` can abort locally after GitHub
+  already merged. Judge `gh pr view --json mergedAt`; use the merge API if needed; never assume
+  “failed” means “not merged,” and never double-merge.
+- **A119 — Docs-only PR job skips are not a cheap main push (2026-08-15).** The PR `changes`
+  gate may skip expensive jobs; `push` to `main` always runs the full matrix. Do not forecast
+  main wall-clock from PR skipped-job green.
+- **A120 — Enclosing shell timeout must strictly exceed probe duration (+ frozen grace)
+  (2026-08-15).** A shell `timeout` equal to the probe’s wall duration is Sol REVISE: the
+  probe cannot finish cleanly. Freeze duration, grace, and outer timeout as three numbers.
+- **A121 — Raising `request_queue_size` without a finite fail-closed aggregate pre-auth
+  concurrency cap enlarges DoS admission (2026-08-15).** `ThreadingMixIn` spawns a thread per
+  accept; a larger listen backlog without R7 is incomplete DD-006-PERF design (Sol BLOCKER-1).
+- **A122 — Demand SATISFIED + design packet on main is not SHIPPED (2026-08-15).** Parent
+  DD-006 still needs both DD-006-PERF and DD-006-HONESTY product code under a separate
+  deliberate build go (TDD + A3). Do not close the board row on docs alone.
 
 
 
 ## Current Handoff
 release_docs_current_tag: v1.110.16
+
+**2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
+Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 CEO_GATED,
+6 DEMAND_GATED (8 SHIPPED + 4 RETIRED). DD-006 design packet merged (#1015 / `0710219`); demand
+SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
+New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
 
 As of 2026-08-13, the current tagged release state is `v1.110.16`, and the latest complete public PyPI/release-asset distribution is also `v1.110.16`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.110.16` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
@@ -2240,11 +2266,11 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `profile-guided-byte-identical-optimization` — find a lever on the shipped wheel + prove output
     byte-identical; the warm/cold measurement trap (see "Optimization Discipline" above).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **35 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **36 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`, `tensor-grep-hermetic-hostile-tests` (env-independent gated tests + hostile fixtures that must BITE), `tensor-grep-cross-platform-path-confinement` (junction vs symlink vs drive-absolute confinement, Windows+POSIX), `tensor-grep-release-drift-check` (post-release sweep: version stamps, derived counts, known-state facts vs the current tag, SUPERSEDED append-only fix discipline).
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`, `tensor-grep-argv-normalization-and-shadowing` (front-door rewrites, `--` hygiene, shape-monotonic routing), `tensor-grep-index-fingerprint-freshness` (index reuse/staleness identity, M17).
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-worldclass-roadmap` (the edit-control-plane roadmap: S1 verify-edit escrow, S2-S7 contracts, H1), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
-  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos), `tensor-grep-demand-gate-measurement` (the bounded demand-gate measurement method with the DD-006 worked example).
+  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos), `tensor-grep-demand-gate-measurement` (the bounded demand-gate measurement method with the DD-006 worked example), `tensor-grep-design-authorization-ladder` (demand→design packet→Sol→optional Fable waiver→deliberate build; A117/A122).
   - **Extend:** `tensor-grep-add-language` (the symbol-graph language-onboarding checklist).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook), `tensor-grep-codex-gated-audit-loop` (the per-item codex-gated fix loop: RED→codex gate→re-audit→SHIP; env-independent gated tests).
 - When working ON tensor-grep, use `tg search`/`tg defs`/`tg callers` for code navigation rather than generic grep/find — this exercises the tool's own surfaces and catches routing regressions early (mind the scoped-path workaround above).
@@ -2811,6 +2837,7 @@ Do not manually create release tags when semantic-release is active.
 
 Small, non-obvious traps that have each cost a real cycle on this desktop. None are version-specific.
 
+- **`uv run` in a bare worktree creates an empty `.venv` (A116, 2026-08-14).** Run worktree tests from the MAIN checkout's venv targeting worktree paths; delete any accidentally-created worktree `.venv` immediately.
 - **`git commit -m "..."` with backticks runs command substitution.** A message containing `` `...` `` (e.g. a fenced identifier) is interpreted by the shell and mangles the commit. Use `git commit -F <file>` or a single-quoted `<<'EOF'` heredoc for any message with backticks, `$`, or `!`.
 - **cargo/rustc are off `PATH` here — and a "hanging" Rust build is almost always a false alarm.** Use `C:/Users/oimir/.cargo/bin/cargo.exe` (or prepend `~/.cargo/bin` to `PATH`). What looks like a hang is slow LTO that *completes*: `maturin develop` is ~15 s, a `--release` build is minutes. Do not kill it as hung; let it finish. (The build command for stale in-tree binaries is under the doctor note above.)
 - **Verify FFI / PyO3 bridge changes against the REAL compiled extension, not mocks.** This is the "Dogfood the Real Binary" trap one layer down: mock-based tests passed green while the *real* bridge was dead (it dropped every forwarded flag and silently fell back to the Python engine). Prove a bridge change with a live runtime call into the built extension, then confirm the flag actually reached `rg`.
