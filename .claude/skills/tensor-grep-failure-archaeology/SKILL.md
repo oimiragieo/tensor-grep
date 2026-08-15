@@ -758,13 +758,13 @@ grep -rn "scope_defaulted\|defaulted.scope\|scope_disclosure" src/tensor_grep/
 # Battle 27 (anonymous --claim sentinel-id retention -- confirm no auto-derivation was reintroduced)
 grep -rn "_find_overlaps\|agent_id" src/tensor_grep/cli/*.py | grep -i ledger
 
-# Battle 28 (MaxSim rerank-extra deliberate hold -- confirm rerank still has no install path)
+# Battle 28 (MaxSim RETIRED F10 -- confirm still no install path + RETIRED module header)
 # `^rerank`, NOT a quoted form: the extra is declared BARE (`rerank = [...]`) at pyproject.toml:627.
 # The first version of this line searched for `"rerank"`/`'rerank'` and returned NOTHING, exit 1 --
-# which a reader re-verifying Battle 28 would have read as "the rerank extra is gone, the hold is
-# over". A false zero, shipped inside the file that teaches the false-zero trap. Caught by an
-# independent audit that actually RAN every re-verify command in this block instead of eyeballing
-# them. A re-verify command you have not executed is a claim, not a check.
+# which a reader re-verifying Battle 28 would have read as "the rerank extra is gone". A false zero,
+# shipped inside the file that teaches the false-zero trap. Caught by an independent audit that
+# actually RAN every re-verify command in this block instead of eyeballing them. A re-verify
+# command you have not executed is a claim, not a check.
 grep -n "^rerank" pyproject.toml
 grep -rn "MaxSim\|install-dense\|install_dense" src/tensor_grep/ docs/
 # RETIRED 2026-08-05 (task F10) -- the module-header block is the durable citation

@@ -427,6 +427,13 @@ wrong environment. **Cause:** a worktree is not a self-contained development env
 main venv while targeting paths in the worktree; do not create or repair a worktree-local `.venv`
 for verification.
 
+### 13b. Never recurse `$TEMP` looking for skill drafts
+
+**Symptom:** a status/discovery probe hangs ~100s+ and exits `-1` (`4294967295`) with empty
+output. **Cause:** `Get-ChildItem -Recurse $env:TEMP` walks locked Windows temp trees. **Fix:**
+assert the worktree path (`Test-Path .claude/skills/<skill>/SKILL.md` + `git status --porcelain`
+on that path). Top-level `$TEMP` filter only; never full recurse.
+
 ### 13. `uv lock` churns ~280 unrelated lines — hand-splice a new dep instead
 
 **Symptom:** adding one dependency and running a raw `uv lock` produces a huge diff of unrelated
