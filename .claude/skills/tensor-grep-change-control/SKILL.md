@@ -876,4 +876,10 @@ If any command above no longer matches, update this skill in the same change —
 - **A119:** Docs-only PR changes skips are not a cheap main push — main always runs the full matrix.
 - **A117:** Operator “skip Fable” waives that seat for the named docs packet only — not product code,
   spend, or CEO_GATED flips (extends A74).
+- **A120:** A shell timeout must exceed the probe duration plus grace; otherwise the harness,
+  rather than the subject, creates the timeout.
+- **A121:** Raising `request_queue_size` without an aggregate pre-auth cap enlarges the DoS surface.
+- **A122:** Demand evidence plus a merged design is not shipment; product work still needs explicit
+  authorization and its required build/security gates. See `tensor-grep-demand-gate-measurement` for
+  the demand proof and `tensor-grep-design-authorization-ladder` for design authorization.
 

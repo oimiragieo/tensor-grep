@@ -16,6 +16,12 @@ Last updated: 2026-08-15 (CEO update)
 6. No spend. No nonfinancial CEO question required this turn. #169 is the only financial stop.
 7. New laws **A117–A122** (skip-Fable ≠ build; remote merge truth; docs PR skips ≠ cheap main;
    shell timeout > probe; backlog+R7; demand+design ≠ shipped). Prior **A111–A116** retained.
+   - **A111:** Commit every cited plan/spec into the merged tree.
+   - **A112:** A frozen control threshold must be met verbatim or the arm is CANNOT_MEASURE.
+   - **A113:** Claim only the failure class the raw artifact distinguishes.
+   - **A114:** Re-derive corrected census locations mechanically.
+   - **A115:** Record wave receipts as per-row tables, not group claims.
+   - **A116:** Do not let bare `uv run` create a worktree venv; use the main venv against worktree paths.
 
 ## External state at the snapshot
 

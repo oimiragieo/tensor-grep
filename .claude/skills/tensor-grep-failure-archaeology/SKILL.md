@@ -550,7 +550,7 @@ remove a config burden — can produce a collision. An explicit identity input t
 trusts for correctness (not just labeling) is not friction to be removed; removing it removes the
 only thing preventing the collision.
 
-## Battle 28 -- MaxSim reranking's absence is a deliberate hold, not a `tg install-dense` coverage gap (#15)
+## Battle 28 -- MaxSim reranking is RETIRED (F10), not a `tg install-dense` coverage gap (#15)
 
 | Field | Detail |
 |---|---|
@@ -608,6 +608,15 @@ and Battle 25 (a banked hypothesis not re-derived against real code) on the plan
 them CONSUME the thing the flag changes. A flag that alters/suppresses output belongs to the
 consumers that stream it, not the ones that parse it. Anyone who "tidies" `-q` back into the
 shared `_build_cmd` re-ships this exact false zero.
+
+## Battle 31 -- DD-006 design-on-main ≠ shipped (2026-08-15)
+
+| Field | Detail |
+|---|---|
+| **Symptom** | Demand SATISFIED + design packet merged to `main` reads as the row being done; skip-Fable looks like build clearance. |
+| **Root cause** | Docs/requirements/design/decisions are an authorization *stage*, not product delivery. Operator Fable waiver covers the named packet only. |
+| **Evidence** | A117 (Fable waiver ≠ product/spend/CEO_GATED license); A122 (parent DD-006 still needs DD-006-PERF + DD-006-HONESTY under deliberate build go + TDD+A3). Skill: `tensor-grep-design-authorization-ladder`. |
+| **Status** | **SETTLED as process law.** Do not close the board row on docs alone; do not start `src/` from a Fable waiver. |
 
 ---
 

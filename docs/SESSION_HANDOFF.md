@@ -48,11 +48,9 @@ still required for product code (A117/A122); DD-006 stays open (demand SATISFIED
 - **2026-08-14 session capture (post-#1013):** dated receipt
   `docs/audits/2026-08-14-session-capture.md` (what shipped, DD-006 method + run matrix,
   codex 4-round gate with R4 APPROVE on `7b7f3c8`, council seat accounting, Exa deltas,
-  A111-A116 provenance). New in-repo skill `tensor-grep-demand-gate-measurement` is being
-  added by sibling agent C (skill count 34 -> 35; the AGENTS.md/CLAUDE.md index is updated
-  by another agent). DD-006 follow-up: the accept-side bound design (queue-size raise or
-  accept-budget note) awaits authorization; the row stays open with the reproduction as
-  its trigger. #966 parked draft stays parked.
+  A111-A116 provenance). The in-repo skill `tensor-grep-demand-gate-measurement` landed.
+  DD-006's design packet merged as PR #1015; remaining work is the authorized product build.
+  The row stays open with the reproduction as its trigger. #966 parked draft stays parked.
 - 2026-08-12 backlog-closeout campaign (no release): plan
   `docs/plans/2026-08-12-backlog-closeout-campaign.md` rev 6 (3-seat council; codex Sol APPROVE
   after 4 rounds / 21 folded findings). Task 2A ADVANCED: A22 union-merge of `b6dc0a6` flipped

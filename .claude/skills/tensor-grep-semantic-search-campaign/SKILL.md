@@ -84,22 +84,14 @@ flag-flip** (see Phase 5).
 > superseding this skill's toy `eval_bm25_quality.py` as the Phase-4-style
 > discriminating gate for `tg find` specifically) — gate-run result: `rrf` beats
 > `bm25` by **+0.195 ndcg@10 / +0.30 recall@10**, bidirectional-oracle-validated
-> (internal; public numbers stay CEO-gated #72). Two further pieces are STILL
-> evidence-gated, not shipped-as-default: (1) **optional MaxSim late rerank**
-> (`TG_LATE_RERANK`) stays OFF — the original gate-run showed it regressing vs plain
-> BM25, entangled with a harness gap (`retrieval_late.py:328-333`'s `build_late_encoder`
-> was wired with a single DOCUMENT-role encoder for both roles). **That specific gap was
-> FIXED since (#189 Item 1, "role-aware query encoding", re-verified 2026-07-24 against
-> v1.96.0): `load_late_reranker` now wires a QUERY-role encoder
-> (`build_late_encoder(model, is_query=True)`) separately from the DOCUMENT-role
-> encoder.** Whether a fresh gate-run now shows MaxSim beating or still trailing plain
-> BM25 is UNVERIFIED by this pass — re-run the `tg find` gate before trusting either
-> the old regression verdict or assuming it now passes; (2) the
-> `TG_FIND_DENSE_WEIGHT` query-adaptive knob (see `tensor-grep-config-and-flags`) is
-> default-OFF (`1.0` = byte-identical no-op) with real evidence in hand (a 1:5
-> bm25:dense weight lifts NL ndcg@10 by +0.14 with zero per-category regression) — the
-> default-flip itself is a separate, still-open CEO checkpoint (product taste, not an
-> engineering gate). **Receipt (real-corpus-dogfood-beats-fixture-green):** the query
+> (internal; public numbers stay CEO-gated #72). Two related dispositions are:
+> (1) **MaxSim late rerank** (`TG_LATE_RERANK`)
+> is **RETIRED** (task F10): the post-role-aware-encoder measurement was decisively negative;
+> `retrieval_late.py` records the retirement. Do not re-run the same encoder expecting a
+> different verdict. (2) `TG_FIND_DENSE_WEIGHT` (see `tensor-grep-config-and-flags`) now
+> adaptively applies `5.0` to multi-word queries when unset, empty, malformed, or non-finite;
+> single-token queries remain `1.0`, and explicit `TG_FIND_DENSE_WEIGHT=1.0` opts out.
+> **Receipt (real-corpus-dogfood-beats-fixture-green):** the query
 > classifier that scopes `TG_FIND_DENSE_WEIGHT` to multi-word queries was originally a
 > `split_terms()` morpheme-count floor (`> 2` morphemes = NL); it passed its synthetic
 > literal-golden fixture but a real-repo dogfood on tensor-grep's own `src/` caught it
@@ -561,8 +553,8 @@ drifted; date-stamp any change.
   `_can_passthrough_rg` moved the most, `3883`→`5249`); fixed `INDEX_VERSION=1` → the
   now-current `INDEX_VERSION=2`; and corrected a stale STATUS UPDATE 2 claim (the
   `retrieval_late.py` doc-role-encoder harness gap it cited as blocking `TG_LATE_RERANK` was
-  fixed by #189 Item 1 since that note was written — the MaxSim verdict itself is unverified by
-  this pass). This was a targeted re-verification of THIS skill's own claims, not a full re-walk
+  fixed by #189 Item 1 since that note was written; the later F10 measurement retired MaxSim).
+  This was a targeted re-verification of THIS skill's own claims, not a full re-walk
   of every sibling skill or every historical receipt (e.g. the 2026-07-16 `+0.195 ndcg@10`
   gate-run number in STATUS UPDATE 2 is a dated point-in-time receipt, left as-is).
   **Skill-library drift audit, 2026-08-01, against `v1.101.27`:** every `main.py`/`AGENTS.md`

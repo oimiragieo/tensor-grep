@@ -57,8 +57,8 @@ equest_queue_size, pair it with a fail-closed aggregate pre-auth concurrency
 ### Step 0 - re-derive the Trigger verbatim from origin/main
 
 The row's Trigger text is the ONLY authority on the reopen condition. Read it from `origin/main`,
-not the dirty local tree and not memory: `git show origin/main:docs/TASK_BOARD.md` and read the
-row's `Trigger:` field (DD-006's row is `docs/TASK_BOARD.md:88`). Restate the condition in the
+not the dirty local tree and not memory: `git show origin/main:docs/TASK_BOARD.md`, then
+`grep -n "\*\*DD-006\*\*" docs/TASK_BOARD.md`, and read that row's `Trigger:` field. Restate the condition in the
 plan in the row's own words ("measured concurrent daemon load or denial-of-service evidence"), and
 make every threshold below answer THAT condition, not a friendlier paraphrase.
 
