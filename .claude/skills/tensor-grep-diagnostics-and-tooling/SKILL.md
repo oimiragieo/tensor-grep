@@ -191,7 +191,7 @@ alongside `tg dogfood` (`AGENTS.md:316-323`).
 | `agent-capsule-hardcases` | polyglot monorepo, generated-noise, Rust/Python/JS/TS hardcases | — |
 | `docs-claim-check` | **no subprocess** — reads `AGENTS.md`/`README.md`/`SKILL.md`/`docs/*.md` directly and checks required fragments + version-staleness prose patterns + a banned-phrase list on GPU docs | — |
 
-`docs-claim-check` (`validate_docs_claims` in `agent_readiness.py:623`, now `:634`) is the mechanism that
+`docs-claim-check` (`validate_docs_claims` -- `grep -n "^def validate_docs_claims" scripts/agent_readiness.py`; `:634` as of 2026-08-14) is the mechanism that
 enforces the **no-oversell rule** described in `AGENTS.md`: it bans phrases like `"mathematically
 guaranteeing"`, `"0ms interpreter lag"`, `"peak theoretical throughput"`, `"GPU-ready"` from
 `docs/benchmarks.md`, `docs/gpu_crossover.md`, and `docs/PAPER.md`, and requires phrases like `"not
@@ -438,7 +438,7 @@ numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py
 `_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
 flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py:1522`), `dogfood`
 command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
-`:10123`, `validate_docs_claims` (`agent_readiness.py:623`, now `:634`), `build_check_plan`
+`:10123`, `validate_docs_claims` (`grep -n "^def validate_docs_claims" scripts/agent_readiness.py` -- `:634` as of 2026-08-14), `build_check_plan`
 (`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
 `benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
 SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also

@@ -166,6 +166,39 @@ list every dirty path in raw_output; a dirty audit target must be declared in th
   { label: 'ledger', phase: 'Ledger', schema: LEDGER_SCHEMA, model: 'haiku' },
 )
 
+// ---------------------------------------------------------------------------
+// DYNAMIC SKILL ENUMERATION (2026-08-14, W6 retention wave).
+// CLUSTERS above is frozen at authoring time; a skill folder added after it
+// (for example tensor-grep-demand-gate-measurement, created by a sibling
+// agent) would be silently unaudited -- the stale-list defect class A99 exists
+// to prevent. The ledger already records EVERY tracked file under
+// .claude/skills/ with a blob OID, so the closed-world folder set is derived
+// from that manifest, and any folder the clusters do not name is dispatched as
+// an automatic catch-all cluster. A new skill is therefore covered without
+// editing this file.
+// ---------------------------------------------------------------------------
+const SKILLS_PREFIX = '.claude/skills/'
+const manifestFolders = [
+  ...new Set(
+    (ledger?.skill_manifest || [])
+      .map((row) => (row && row.path) || '')
+      .filter((p) => p.startsWith(SKILLS_PREFIX))
+      .map((p) => p.slice(SKILLS_PREFIX.length).split('/')[0])
+      .filter((name) => name && !name.includes('.')),
+  ),
+]
+const clusteredFolders = new Set(CLUSTERS.flatMap((c) => c.skills))
+const unassigned = manifestFolders.filter((f) => !clusteredFolders.has(f)).sort()
+const clusters =
+  unassigned.length > 0
+    ? [...CLUSTERS, { key: 'unassigned-auto', skills: unassigned }]
+    : CLUSTERS
+if (unassigned.length > 0) {
+  log(
+    `DYNAMIC COVERAGE: ${unassigned.length} skill folder(s) absent from the static cluster map; auto-dispatched as cluster "unassigned-auto": ${unassigned.join(', ')}`,
+  )
+}
+
 const LEDGER_TEXT = `
 AUDITED ARTIFACT (every claim below is bound to THIS tree; if you find yourself reading any
 other checkout, STOP and return verdict CANNOT_VERIFY):
@@ -188,7 +221,7 @@ half that gate cannot see: whether the cited line still CONTAINS what the skill 
 `
 
 phase('Audit')
-const audits = await inWaves(CLUSTERS, 3, (c, _i, isRetry) =>
+const audits = await inWaves(clusters, 3, (c, _i, isRetry) =>
   agent(
     `${LEDGER_TEXT}
 ${HOUSE}
@@ -230,7 +263,7 @@ Report only drift you MEASURED, with the skill file:line of the wrong text and t
 // NOT coverage. The union of skills_audited must equal the expected population -- no omissions,
 // duplicates, or extras. Omitted skills are retried individually once; anything still missing is
 // CANNOT_VERIFY and stays visible in the receipt.
-const expected = CLUSTERS.flatMap((c) => c.skills)
+const expected = clusters.flatMap((c) => c.skills)
 const auditedSet = new Set()
 for (const a of audits) {
   if (a == null) continue
@@ -312,11 +345,12 @@ return {
   head_sha: ledger?.head_sha || null,
   git_status: ledger?.git_status || null,
   skill_manifest_entries: (ledger?.skill_manifest || []).length,
-  clusters_dispatched: CLUSTERS.length,
+  clusters_dispatched: clusters.length,
   skills_expected: expected.length,
   skills_audited: expected.length - finalMissing.length,
   not_covered: finalMissing,
   unexpected_skills: extras,
+  dynamic_skills: unassigned,
   coverage_exact: finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
   total_findings: findings.length,
   ledger,

@@ -1,6 +1,6 @@
 export const meta = {
   name: 'tg-audit-fix-loop',
-  description: 'Run the codex-gated adversarial audit-fix loop on a verified H/M finding: behavioral RED -> minimal fix -> independent codex gate -> verify every finding with your own probes -> re-audit until SHIP. Loads the tensor-grep-codex-gated-audit-loop skill.',
+  description: 'Run the codex-gated adversarial audit-fix loop on a verified H/M finding: behavioral RED -> minimal fix -> independent codex gate -> verify every finding with your own probes -> re-audit until SHIP. Loads the tensor-grep-codex-gated-audit-loop skill. Also expresses a docs-artifact audit round (findings against committed docs with per-round artifact hash chains).',
   whenToUse: 'Fixing a verified audit finding (H/M) that needs a draft PR; writing a gated test that must pass identically on the desktop AND CI pytest env; any security-surface change needing an adversarial gate before merge (A3); or a fix to a finding a prior fix already shipped wrong (the twin law).',
   phases: [
     { title: 'Seam', detail: 're-verify the finding on origin/main with git-show (never the dirty local tree); census the argv-rewrite doors (A83) — see skills tensor-grep-argv-normalization-and-shadowing (front-door rewrites, shape-monotonic routing) and tensor-grep-cross-platform-path-confinement (junction/drive-absolute confinement) for the seam-phase census' },
@@ -47,6 +47,19 @@ const SEAM_SCHEMA = {
       },
     },
     doors: { type: 'array', description: 'every argv front-door / parse path the fix must reach (A83 census)' },
+    artifact_kind: {
+      type: 'string',
+      enum: ['code', 'docs'],
+      description: "'code' (default) or 'docs' for a finding against a committed docs artifact (doc, plan, census count, receipt claim -- not runtime code)",
+    },
+    artifact_sha256: {
+      type: 'string',
+      description: 'docs artifacts only: SHA-256 of the canonical artifact bytes bound on origin/main (A46/A111)',
+    },
+    nothing_to_fix: {
+      type: 'boolean',
+      description: 'true when the finding is false or already fixed at this SHA, for any artifact kind',
+    },
   },
 }
 
@@ -70,6 +83,10 @@ const VERDICT_SCHEMA = {
           area: { type: 'string' },
           file: { type: 'string' },
           fix: { type: 'string' },
+          artifact_sha256: {
+            type: 'string',
+            description: 'SHA-256 of the artifact bytes this round reviewed (per-round hash chain; required for docs rounds)',
+          },
         },
       },
     },
@@ -150,13 +167,18 @@ FINDING UNDER REPAIR: ${FINDING}
 TASK (read-only): re-derive this finding against origin/main. For every symbol it names, run
 git-show origin/main:<file> and confirm the symbol still exists and still misbehaves as claimed
 (A44: bind to the exact SHA you report). Census EVERY argv front-door / parse path a fix must
-reach (A83): a front-door rewrite can shadow the door the finding names. If the finding is FALSE
-or ALREADY FIXED at this SHA, say so in "finding" and return an empty doors list -- do not
-invent work.`,
+reach (A83): a front-door rewrite can shadow the door the finding names.
+
+ARTIFACT KIND: if the finding is against a committed DOCS artifact (a doc, plan, census count,
+or receipt claim -- not runtime code), set artifact_kind="docs", bind the canonical bytes with
+git-show origin/main:<file> and record their SHA-256 in artifact_sha256 (A46/A111: commit the
+plan you cite), and re-derive each named claim against those bytes. Doors may be empty for a
+docs finding; that does NOT mean nothing to fix. If the finding is FALSE or ALREADY FIXED at
+this SHA -- code or docs -- set nothing_to_fix=true and do not invent work.`,
   { label: 'seam', phase: 'Seam', schema: SEAM_SCHEMA, model: 'sonnet' },
 )
 
-if (!seam || (seam.doors || []).length === 0) {
+if (!seam || seam.nothing_to_fix === true || ((seam.doors || []).length === 0 && seam.artifact_kind !== 'docs')) {
   return {
     verdict: 'SHIP',
     rounds: [],
@@ -189,7 +211,12 @@ TASK: write ONE behavioral test that fails on the current code for the finding a
 - Hostile fixtures must BITE: assert the fixture precondition before trusting the arm.
 - Run it and paste the verbatim failing output. Do NOT fix the code in this phase.
 - Wrap the run in a shell timeout with a per-test --timeout (anti-hang protocol).
-- Bounded test handshakes use capacity-1 channels with recv_timeout on every receive; an expiry panics CANNOT_MEASURE:, never a verdict (A109) -- a capacity-0 rendezvous blocks forever.`,
+- Bounded test handshakes use capacity-1 channels with recv_timeout on every receive; an expiry panics CANNOT_MEASURE:, never a verdict (A109) -- a capacity-0 rendezvous blocks forever.
+- If seam.artifact_kind === "docs" the RED is a REPRODUCTION, not a behavioral test: paste the
+  exact false passage from the committed artifact bytes with its SHA-256, and name the falsity
+  class (wrong count, missing receipt, untracked-plan citation, ...). Put the doc path in
+  test_file, the verbatim false passage + hash in failure_output, and the falsity class in
+  reason_class. No test file is written for a docs RED.`,
   { label: 'red', phase: 'RED', schema: RED_SCHEMA, model: 'sonnet' },
 )
 
@@ -203,7 +230,11 @@ RED TEST: ${red ? `${red.test_file} (expected reason class: ${red.reason_class})
 TASK: make the MINIMAL fix that turns the RED test green for the right reason. Platform-gate any
 path-shape transform (A84). Reach EVERY door in the seam census, not just the one the finding
 named. Run the RED test plus the narrow suites around the touched files; paste verbatim output.
-Stage nothing; the orchestrator owns git.`,
+Stage nothing; the orchestrator owns git.
+- If seam.artifact_kind === "docs": the minimal fix is a docs edit to the committed artifact.
+  Record the post-edit SHA-256 in notes, paste the re-derivation that proves the claim now true
+  as test_output, and run any repo doc-governance test that consumes the edited file (pytest is
+  allowed; cargo is not). Stage nothing; the orchestrator owns git.`,
   { label: 'green', phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
 )
 
@@ -222,7 +253,11 @@ You are the INDEPENDENT adversarial gate. You did not write the fix. Try to BREA
 ${repairContext}
 Cite file:line for every finding; default FIX-FIRST if uncertain. Verdicts: SHIP | SHIP-WITH-NITS
 (nits banked per A19) | FIX-FIRST (+file:line + repro + minimal fix per finding). A finding with
-no citation is discarded. Record each as a round row with round=${round}.`,
+no citation is discarded. Record each as a round row with round=${round}.
+- For a docs artifact (seam.artifact_kind === "docs"), re-read the committed bytes, try to
+  falsify every claim, and record the artifact_sha256 you reviewed on every round row -- the
+  per-round hash chain is what makes an APPROVE-on-a-hash a checkable claim (W6 codex 4-round
+  receipt).`,
     { label: `gate:r${round}`, phase: 'Gate', schema: VERDICT_SCHEMA, model: 'opus' },
   )
 
@@ -240,7 +275,9 @@ no citation is discarded. Record each as a round row with round=${round}.`,
 ${SEAM_TEXT}
 TASK: re-probe EVERY finding recorded for round ${round} with YOUR OWN commands (never trust the
 fix author's transcript). Include the RED test's reason class and the door census. Report each
-probe's command + verbatim result.`,
+probe's command + verbatim result.
+- For a docs artifact, re-probe means re-deriving the doc's counts/claims with your own commands
+  against the edited bytes and comparing to the round's recorded artifact_sha256.`,
     { label: `verify:r${round}`, phase: 'Verify', schema: VERIFY_SCHEMA, model: 'sonnet' },
   )
 

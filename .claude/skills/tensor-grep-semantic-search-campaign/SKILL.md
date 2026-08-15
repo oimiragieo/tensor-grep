@@ -221,7 +221,7 @@ of v1.17.25.
 - Flag: `--rank` (alias `--bm25`), default OFF. `SearchConfig.rank_bm25 = False` (`config.py:183`, re-verified 2026-07-24 against v1.96.0). The dense leg's own flag sits right below it: `SearchConfig.semantic_rank = False` (`config.py:188`).
 - It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 68, `--bm25` line 69, `--semantic` line 70 — re-verified 2026-07-24) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
 - Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` and `and not config.semantic_rank` (`grep -n "not config.rank_bm25\|not config.semantic_rank" src/tensor_grep/cli/main.py`; was `main.py:5249-5250` at v1.96.0, now `main.py:5462-5463` at v1.101.27 — this seam has already drifted twice inside two weeks, cite the grep, not the number), so the request runs the tg engine and results are re-ordered right after match aggregation — the `elif config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call (`grep -n "elif config.rank_bm25 and all_results.matches\|rerank_by_bm25" src/tensor_grep/cli/main.py`; was `main.py:8067-8069`, now `main.py:8411-8414`).
-- User docs: `README.md:38` and `README.md:147-148`.
+- User docs: `grep -n -- "--rank" README.md` (feature bullet `:39`, example `:172-173` as of 2026-08-14; were `:38` and `:147-148` at the v1.96.0 pass).
 
 **Bottom line:** the **lexical leg (BM25) and the persisted-index building blocks
 already exist and ship default-OFF.** The campaign adds the **dense leg + RRF fusion
@@ -308,8 +308,8 @@ Ship nothing new. **This is a legitimate, non-embarrassing outcome** if the dens
 does not beat the BM25 baseline on both retrieval quality and editor-plane latency.
 "No speed/quality claim without measured numbers vs the baseline" (change-control
 gate C) cuts both ways: if the numbers aren't there, the correct move is to keep the
-shipped `--rank` baseline and record the negative result. `README.md:212`
-(re-verified 2026-07-24 against v1.96.0) states the rule explicitly: extend lexical
+shipped `--rank` baseline and record the negative result. `grep -n -- "demonstrably beats" README.md` -- `:237` as of 2026-08-14 (was `:212` at the v1.96.0 pass)
+states the rule explicitly: extend lexical
 (BM25) re-ranking with AST-shaped chunking or semantic re-ranking **only when it
 demonstrably beats the shipped `tg search --rank` baseline on both retrieval quality
 and editor-plane benchmarks.**
@@ -415,7 +415,7 @@ confirm `--rank` is actually wired in `main.py`.
 
 ### Phase 4 — Measure (the real gate)
 
-Two measurements, both required (`README.md:212`, re-verified 2026-07-24):
+Two measurements, both required (`grep -n -- "demonstrably beats" README.md` -- `:237` as of 2026-08-14, was `:212`):
 
 1. **Retrieval quality on a realistic corpus** (not the toy). Use
    `benchmarks/eval_late_rerank_quality.py` — the LIVE, chunker/ranking-sensitive harness (it actually
