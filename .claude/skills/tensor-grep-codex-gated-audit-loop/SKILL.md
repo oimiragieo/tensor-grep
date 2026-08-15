@@ -389,3 +389,37 @@ ran **13 opus rounds plus a final codex pass** to SHIP. Lessons that generalize:
 - **Stopping rule from the literature:** one clean round is not proof of convergence on a
   stochastic adversarial gate; prefer a two-consecutive-clean-pass criterion with the second pass
   run by a DIFFERENT vendor (arxiv.org/html/2605.12280).
+
+## Docs-artifact audit rounds (2026-08-14, W5-W8 closeout)
+
+The loop also runs on DOCS-only branches, and the 2026-08-14 closeout docs branch took codex
+(gpt-5.6-sol) four rounds to APPROVE: R1 five findings (control threshold, undifferentiated
+timeout claim, missing W6/A101 receipts, untracked plan) all fixed -> R2 two LOW (plan
+ASCII-census falsehood, trailing space) fixed -> R3 one LOW (census location inventory) fixed
+-> R4 APPROVE on `7b7f3c8`. Three reusable rules (session ledger
+`.orchestrator/w6/retention-ledger.md` section 3 - orchestrator scratch, untracked, named here
+without a line anchor; the per-finding closure and hash chain are committed at
+`docs/audits/2026-08-13-demand-gated-dispositions.md:231`):
+
+- **Census notes inside committed artifacts are auditable content (A114).** A plan's census note
+  claims a total AND a named location inventory. The totals can be right while the named lines
+  are wrong, so re-derive BOTH mechanically - the count by counting, the locations by resolving
+  each named symbol with a script, never from memory of the file. Three audit rounds on one
+  paragraph is the tell (codex L-01/L-03). Gate the prose with the same rigor as code; a
+  location inventory that was hand-stamped is a claim, not a receipt.
+- **Hash-chain recording for normalized artifacts (A46 extension / A111).** When a committed
+  artifact is formatter-normalized at commit time (the closeout plan was ruff-preview-
+  normalized), record the pre-format witness hash AND each audit round's hash beside a note of
+  exactly what normalization changed (ASCII-census note, one trailing space - no semantic
+  content). Each round's verdict then binds to its exact bytes, and every seat verifies the same
+  method/path (A46).
+- **Commit the plan you cite (H-02).** Docs merged onto main must not cite plan/spec paths that
+  do not exist in the merged tree; an untracked council-approved plan breaks every citation
+  downstream. Commit the previously-untracked approved artifact in the same change and record
+  its committed SHA-256 - the H-02 finding closed exactly this way, and the final committed
+  plan SHA-256 `BE1C85DDCB3BC598CF2A5D2DC38A6B7AD980DA97D6938A4B1695A089C60BF6EE` is the
+  receipt (hash chain recorded at `docs/audits/2026-08-13-demand-gated-dispositions.md:249`).
+
+The docs-round receipts for what APPROVE took: 4 rounds on a pure-docs branch, with the final
+round returning only nits already folded - same stopping rule as code rounds (a round's verdict
+clears exactly the bytes it reviewed, A51/A46).

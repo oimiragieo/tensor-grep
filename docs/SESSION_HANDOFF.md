@@ -24,6 +24,14 @@ Canonical status index version: 2026-08-13.1
   (`docs/audits/2026-08-13-ceo-gated-packets.md`): council 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY
   with concrete seams. W8: board sweep, closed world 29 rows, A101 3x receipt in BACKLOG. No
   release, no spend, no product code. Probe evidence: `artifacts/dd006_*.json`.
+- **2026-08-14 session capture (post-#1013):** dated receipt
+  `docs/audits/2026-08-14-session-capture.md` (what shipped, DD-006 method + run matrix,
+  codex 4-round gate with R4 APPROVE on `7b7f3c8`, council seat accounting, Exa deltas,
+  A111-A116 provenance). New in-repo skill `tensor-grep-demand-gate-measurement` is being
+  added by sibling agent C (skill count 34 -> 35; the AGENTS.md/CLAUDE.md index is updated
+  by another agent). DD-006 follow-up: the accept-side bound design (queue-size raise or
+  accept-budget note) awaits authorization; the row stays open with the reproduction as
+  its trigger. #966 parked draft stays parked.
 - 2026-08-12 backlog-closeout campaign (no release): plan
   `docs/plans/2026-08-12-backlog-closeout-campaign.md` rev 6 (3-seat council; codex Sol APPROVE
   after 4 rounds / 21 folded findings). Task 2A ADVANCED: A22 union-merge of `b6dc0a6` flipped

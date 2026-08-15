@@ -137,7 +137,7 @@ picks between them per query:
 
 | Backend | File | Availability gate |
 |---|---|---|
-| `AstBackend` (native) | `src/tensor_grep/backends/ast_backend.py:133` | `is_available()` checks **only** whether `tree_sitter` is importable (`ast_backend.py:505-519`) — **no GPU/CUDA/`torch_geometric` gate anymore.** That gate was real once (see the "Corrected" note below) but was deleted in #542 (v1.65.0, 2026-07-12); the current docstring says outright: *"AstBackend.search() is pure tree-sitter query matching -- it never touches torch, CUDA, or any graph-learning library ... gating a fully-functional CPU backend behind an unrelated GPU dependency was itself the bug."* |
+| `AstBackend` (native) | `grep -n "^class AstBackend" src/tensor_grep/backends/ast_backend.py` -- `:142` as of 2026-08-14 (was `:133`) | `is_available()` checks **only** whether `tree_sitter` is importable (`grep -n "def is_available" src/tensor_grep/backends/ast_backend.py` -- `:608` as of 2026-08-14, was `:505-519`) — **no GPU/CUDA/`torch_geometric` gate anymore.** That gate was real once (see the "Corrected" note below) but was deleted in #542 (v1.65.0, 2026-07-12); the current docstring says outright: *"AstBackend.search() is pure tree-sitter query matching -- it never touches torch, CUDA, or any graph-learning library ... gating a fully-functional CPU backend behind an unrelated GPU dependency was itself the bug."* |
 | `AstGrepWrapperBackend` (sidecar) | `src/tensor_grep/backends/ast_wrapper_backend.py:85` | shells out to an installed `ast-grep`/`sg`/`sg.exe`/`ast-grep.exe` binary via `shutil.which` (lines 111-123) |
 
 `tree-sitter` parses source into a concrete syntax tree; a **metavariable** like `$FUNC` or the
@@ -775,7 +775,7 @@ hundreds (`mcp_server.py` grew from ~4500 to ~7700 lines on unrelated feature wo
 200 (`AGENTS.md`'s cited "Fail closed" bullet moved from line 220 to line 444). §3's own quick-
 reference-table citation for `_score_text_terms` (`repo_map.py:7912`) had silently disagreed with
 its own body-text citation for the same symbol (`repo_map.py:7001`) since at least the prior pass —
-both are now the same, correct, current line. One correction was substantive, not just a line
+both are now the same, correct, current line. **SUPERSEDED (2026-08-14 retention pass):** `_score_text_terms` has drifted again since that pass -- `grep -n "^def _score_text_terms" src/tensor_grep/cli/repo_map.py` now yields `:8189`, not `:7912`; the quick-reference table row above already carries the current number. One correction was substantive, not just a line
 number: §2's AST-routing description was **backwards**. `AstBackend.is_available()` no longer gates
 on `torch_geometric`/CUDA — that gate was deleted in #542 (v1.65.0, 2026-07-12, 11 days before this
 doc's own original "current" baseline was first written) — and the router has PREFERRED

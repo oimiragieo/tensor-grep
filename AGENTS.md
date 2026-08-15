@@ -577,6 +577,30 @@ concrete failure observed this session.
   remote-tracking ref first (2026-08-13).** After a push, amend rewrites history sibling agents may
   have fetched. The W1B rule: `git log --oneline origin/<branch>` must print nothing (no remote ref)
   before amending; otherwise make an ordinary second commit. No force-push.
+- **A111 — Commit the plan you cite (2026-08-14).** Docs merged onto main must not cite
+  plan/spec paths that do not exist in the merged tree; an untracked council-approved plan
+  breaks every citation downstream (codex H-02). When committing a previously-untracked
+  approved artifact, record the pre-format witness hash AND the committed hash (A46 extension).
+- **A112 — A plan-frozen control threshold is met verbatim or the arm is CANNOT_MEASURE
+  (2026-08-14).** A looped probe whose control reports 1600 where the plan froze
+  `failures == 20` needs a single-shot arm that reports exactly 20; recharacterizing the frozen
+  number as "illustrative" is a plan violation, not a fix (codex C-01).
+- **A113 — Claim only what the raw artifact discriminates (2026-08-14).** 5/5 arms timed
+  out, but only the ONE discriminated arm may be called connect-timeout; an undifferentiated
+  `TimeoutError` cannot be upgraded to a specific class in prose, and environment readings
+  (CPU%) the harness did not record are observations, not data (codex H-01).
+- **A114 — A corrected census is not closed until its location inventory is mechanically
+  re-derived (2026-08-14).** Totals can be right while the named lines are wrong; a census
+  note's own prose is auditable content, and three audit rounds on one paragraph is the tell
+  (codex L-01/L-03). Re-derive locations with a script, never from memory of the file.
+- **A115 — Wave receipts are per-row tables, not group sentences (2026-08-14).** "Six rows,
+  six commands, six recorded results" asserted as one sentence is a claim, not a receipt; each
+  row gets its own command and output in a table (codex C-02; A98 applied to board waves).
+- **A116 — Never let `uv run` create a venv inside a bare worktree (2026-08-14).**
+  `uv run pytest` in a worktree without `.venv` creates an empty broken venv (`No module named
+  pytest`); run worktree tests from the MAIN checkout's venv targeting worktree paths
+  (`uv run --no-sync python -m pytest "<worktree>/tests/..."`) and remove any accidentally-created
+  worktree `.venv` immediately.
 
 
 
@@ -2216,11 +2240,11 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
   - `profile-guided-byte-identical-optimization` — find a lever on the shipped wheel + prove output
     byte-identical; the warm/cold measurement trap (see "Optimization Discipline" above).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **34 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **35 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`, `tensor-grep-hermetic-hostile-tests` (env-independent gated tests + hostile fixtures that must BITE), `tensor-grep-cross-platform-path-confinement` (junction vs symlink vs drive-absolute confinement, Windows+POSIX), `tensor-grep-release-drift-check` (post-release sweep: version stamps, derived counts, known-state facts vs the current tag, SUPERSEDED append-only fix discipline).
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`, `tensor-grep-argv-normalization-and-shadowing` (front-door rewrites, `--` hygiene, shape-monotonic routing), `tensor-grep-index-fingerprint-freshness` (index reuse/staleness identity, M17).
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-worldclass-roadmap` (the edit-control-plane roadmap: S1 verify-edit escrow, S2-S7 contracts, H1), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
-  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos).
+  - **Advance (SOTA):** `tensor-grep-semantic-search-campaign`, `tensor-grep-benchmark-and-proof-toolkit`, `tensor-grep-research-frontier`, `tensor-grep-research-methodology`, `tensor-grep-large-repo-scale-campaign` (bounding scale/deadline on large repos), `tensor-grep-demand-gate-measurement` (the bounded demand-gate measurement method with the DD-006 worked example).
   - **Extend:** `tensor-grep-add-language` (the symbol-graph language-onboarding checklist).
   - **Orchestrate:** `tensor-grep-backlog-campaign` (the multi-PR drain+build campaign playbook), `tensor-grep-codex-gated-audit-loop` (the per-item codex-gated fix loop: RED→codex gate→re-audit→SHIP; env-independent gated tests).
 - When working ON tensor-grep, use `tg search`/`tg defs`/`tg callers` for code navigation rather than generic grep/find — this exercises the tool's own surfaces and catches routing regressions early (mind the scoped-path workaround above).

@@ -83,6 +83,32 @@
   `2026-08-13.1`. Raw probe evidence: `artifacts/dd006_*.json` (probe is scratch-only,
   `.orchestrator/w5/dd006_probe.py`, not committed to `src/`).
 
+## Recent campaign notes (2026-08-14) - W5-W8 closeout + session capture
+
+- **Session-capture receipt:** everything learned this session (shipped state, DD-006
+  measured method + run matrix, codex gate rounds, council seat accounting, Exa deltas,
+  A111-A116 provenance, follow-ups) is captured in
+  `docs/audits/2026-08-14-session-capture.md`, written so a junior analyst can pick it up.
+- **Codex 4-round audit receipt:** gpt-5.6-sol audited the docs branch in four rounds -
+  R1 5 findings (control threshold, undifferentiated timeout claim, missing W6/A101
+  receipts, untracked plan) fixed; R2 2 LOW (plan ASCII-census falsehood, trailing space)
+  fixed; R3 1 LOW (census location inventory) fixed; R4 APPROVE on `7b7f3c8`. The
+  round-by-round closure and the plan hash chain survive in the disposition doc's
+  Codex-audit-closure section (the raw reports were scratch in the removed
+  w8-docs-closeout worktree).
+- **Thinktank seat accounting:** 8 seats, 7 verdict-bearing, 7/7 HYBRID-ACCEPTED /
+  ADVISORY-ONLY; copilot TIMEOUT recorded as a FAILED seat, not a blocker; the claude seat
+  sat `sonnet` because Fable 5 was quota-blocked at dispatch (substitution recorded in the
+  synthesis header + CEO packet doc, never presented as a Fable verdict).
+- **New skill in flight (sibling agent C):** `tensor-grep-demand-gate-measurement` - the
+  bounded demand-gate measurement method with the DD-006 worked example (frozen
+  thresholds, single-shot vs looped control arms, discriminated failure classes, positive
+  control, CANNOT_MEASURE, honest-soft severity). Skill count goes 34 -> 35; the
+  AGENTS.md/CLAUDE.md index and `**N skills**` sentences are updated by sibling agent A in
+  the same wave. The docs-artifact audit-loop learnings FOLD into the existing
+  `tensor-grep-codex-gated-audit-loop` skill (FOLD_INTO_EXISTING bias; no second new
+  skill).
+
 ## Recent campaign notes (2026-08-13) - session-retention campaign: 35/35 skill accuracy audit + never-committed lesson capture
 
 - **Scope:** independent accuracy audit of ALL 35 tracked `.claude/skills/*/SKILL.md` (7 waves,

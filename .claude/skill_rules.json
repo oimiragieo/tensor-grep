@@ -94,6 +94,11 @@
             "minKeywordHits": 1,
             "keywords": ["junction", "symlink", "drive-absolute", "reparse point", "path confinement", "within_root", "canonicalize", "opened identity", "mklink /J", "out-of-root", "CWE-59", "CWE-1386"]
         },
+        "tensor-grep-demand-gate-measurement": {
+            "priority": "medium",
+            "minKeywordHits": 1,
+            "keywords": ["demand-gated", "demand gate", "bounded measurement", "reopen condition", "positive control"]
+        },
         "tensor-grep-index-fingerprint-freshness": {
             "priority": "medium",
             "minKeywordHits": 1,

@@ -116,13 +116,22 @@ def _build_path_index(root: Path) -> dict[str, list[Path]]:
     """
     index: dict[str, list[Path]] = {}
     for path in root.rglob("*"):
+        # Key the skip on the REPO-RELATIVE parts, not the absolute path. The absolute parts of a
+        # worktree checkout themselves contain "worktrees" (`.../.claude/worktrees/w6-*`), so the
+        # absolute-keyed check skipped the ENTIRE tree when the tool was run from a worktree --
+        # 628 phantom FILE_MISSING findings on a tree where every cited file existed (2026-08-14,
+        # W6 retention wave). The skip list exists to exclude COPIES of the tree inside the repo
+        # (.claude/worktrees/*, .venv, site-packages); repo-relative parts capture that shape at
+        # any checkout location, and main-checkout behavior is unchanged.
+        #
         # Skip BEFORE stat()-ing. A dangling symlink inside a nested venv
         # (`rust_core/.venv/bin/python` -> a Linux interpreter that does not exist on Windows)
         # raises OSError WinError 1920 from `is_file()` and aborted the entire audit before it
         # checked a single anchor -- which is why this tool had stopped being run at all. The
         # skip list already excludes those trees; applying it first makes the exclusion actually
         # protective instead of merely intended.
-        if any(part in _SKIP_PATH_PARTS for part in path.parts):
+        rel = path.relative_to(root)
+        if any(part in _SKIP_PATH_PARTS for part in rel.parts):
             continue
         try:
             if not path.is_file():
@@ -131,7 +140,6 @@ def _build_path_index(root: Path) -> dict[str, list[Path]]:
             # Unreadable entry (dangling link, permission, reparse point). Not indexable, and a
             # crash here would take the whole audit down for one bad file.
             continue
-        rel = path.relative_to(root)
         parts = rel.parts
         for depth in range(1, len(parts) + 1):
             key = "/".join(parts[len(parts) - depth :])

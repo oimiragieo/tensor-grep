@@ -67,7 +67,7 @@ rust_core/src/main.rs` — `:7581`).
 |---|---|---|---|
 | `TG_SIDECAR_PYTHON` | `sys.executable` | Python executable used for sidecar-backed commands (classify, GPU sidecar). | `main.py:188`, `main.py:533` |
 | `TG_NATIVE_TG_BINARY` (alias `TG_MCP_TG_BINARY`) | auto-resolved | Path to the native `tg` binary front door used by Python-backed commands. Priority 1 override; stale in-tree dev builds (`rust_core/target/{debug,release}/tg.exe`) are otherwise skipped unless pinned here. | `main.py:189`, `runtime_paths.py:238-248` |
-| `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR` (alias `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR`) | `cpu` | `nvidia`/`cuda` prefers the NVIDIA release-native front-door asset (`tg-*-nvidia.exe`), with CPU fallback; anything else normalizes to `cpu`. | `main.py:7276`, `main.py:454-473` |
+| `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR` (alias `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR`) | `cpu` | `nvidia`/`cuda` prefers the NVIDIA release-native front-door asset (`tg-*-nvidia.exe`), with CPU fallback; anything else normalizes to `cpu`. | `main.py` (`grep -n "def _normalize_native_frontdoor_flavor" src/tensor_grep/cli/main.py` -- `:550` as of 2026-08-14; the prior `:7276`/`:454-473` cites were stale) |
 | `TG_RG_PATH` | auto-resolved | Path to the `rg` executable used for text-search passthrough. | `main.py:191`, `runtime_paths.py:281` |
 | `TG_FORCE_CPU` | off | Force CPU routing for search commands (boolean convention). | `main.py:192`, `main.py:2758` |
 | `TG_RUST_FIRST_SEARCH` | off | Opt-in: prefer the Rust native front door before Python bootstrap logic for search dispatch. | `bootstrap.py:242` |
@@ -353,7 +353,7 @@ flag shipped earlier (`#395`, issue #53), was hardened into a true wall-clock bo
   truncation (`inventory.py:303-304`, dogfood 2026-07-05) — exactly the bug this two-cause split
   exists to prevent from recurring.
 - **Known narrow gap (low-priority, not load-bearing): the walk's initial listing of the SCANNED
-  ROOT itself is not deadline-interruptible.** `_iter_repo_files` (`repo_map.py:1143`), on the
+  ROOT itself is not deadline-interruptible.** `_iter_repo_files` (`grep -n "^def _iter_repo_files" src/tensor_grep/cli/repo_map.py` -- `:1183` as of 2026-08-14, was `:1143`), on the
   `max_files is not None` branch `inventory` always takes (it always calls with
   `max_files=max_files + 1`, `inventory.py:231-236`), does one eager, unconditional
   `entries = list(os.scandir(normalized_root))` (`repo_map.py:1009-1010`) before any deadline
@@ -407,11 +407,11 @@ Adding a new field to `SearchConfig` (`src/tensor_grep/core/config.py`) is a **t
 concern, separate from the 4-site command table and the 2-site search-flag table above — and it is
 easy to miss because it fails silently, not loudly.
 
-**Why it exists**: `_can_delegate_to_native_tg_search` (`main.py:3709`) hands an entire search
+**Why it exists**: `_can_delegate_to_native_tg_search` (`grep -n "^def _can_delegate_to_native_tg_search" src/tensor_grep/cli/main.py` -- `:4095` as of 2026-08-14, was `:3709`) hands an entire search
 off to the native `tg` subprocess, which `sys.exit()`s **before** the Python-side BM25 rerank and
 the in-backend file sort ever run. Any `SearchConfig` field that is output-affecting but neither
-forwarded into the native argv (`_build_native_tg_search_command`, `main.py:3731`) nor listed in the refuse-tuple
-`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`main.py:1894` onward) gets **silently dropped** —
+forwarded into the native argv (`_build_native_tg_search_command` -- `grep -n "^def _build_native_tg_search_command" src/tensor_grep/cli/main.py`, `:4117` as of 2026-08-14, was `:3731`) nor listed in the refuse-tuple
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (`grep -n "_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS = " src/tensor_grep/cli/main.py` -- `:1966` as of 2026-08-14, was `:1894` onward) gets **silently dropped** —
 the search still runs and returns a result, just the wrong one (unranked/unsorted), which is worse
 than a crash because suppression reads as absence. This is the same bug class as the `-u`/`-uu`
 no-op fixed in `#336`; the receipt this time was `#342` (commit `5e6f780`, v1.18.6->v1.19.0 range):
@@ -489,8 +489,8 @@ sites fails CI, not just warns (`AGENTS.md:196`). There is also a standalone che
 Setting an env var is not the same as confirming it took effect — a bad float value silently falls
 back to the default (see the Timeouts table). `tg doctor --json` echoes back the *currently observed*
 value for the routing/timeout/LSP-budget env vars it knows about, under an `env` key that only includes
-vars that are actually set (`_build_doctor_payload`, `main.py:3142-3164`; the `env` dict comprehension
-at `main.py:3000` filters to `os.environ.get(key)` truthy). It reports:
+vars that are actually set (`_build_doctor_payload` -- `grep -n "^def _build_doctor_payload" src/tensor_grep/cli/main.py`, `:3452` as of 2026-08-14, was `:3142-3164`; the `env` filter (built from the `env_keys` list -- `grep -n "env_keys = " src/tensor_grep/cli/main.py`, `:3463` as of 2026-08-14, was `:3000`)
+filters to `os.environ.get(key)` truthy). It reports:
 `TG_NATIVE_TG_BINARY`, `TG_FORCE_CPU`, `TG_RESIDENT_AST`, `TG_RUST_FIRST_SEARCH`, `TG_RUST_EARLY_RG`,
 `TG_RUST_EARLY_POSITIONAL_RG`, `TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS`,
 `TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS`, `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS`, plus the
