@@ -458,6 +458,22 @@ jobs:
       - name: File-size budget (ratchet)
         run: python scripts/file_size_budget.py --report
 
+      # The companion ratchet to the one above, and the reason the three biggest offenders
+      # cannot simply be split. Python resolves a bare name through the DEFINING module's
+      # globals, so a function calling a monkeypatched name as a bare identifier is welded to
+      # the module the tests patch: move it and the test still passes while production runs the
+      # unpatched original -- a silent false green, which is the class of defect this repo has
+      # paid for most. `docs/design/2026-08-19-split-floor-escape.md` converts those call sites
+      # to `_self.NAME(...)`; this gate pins the remaining count per module so a conversion
+      # cannot be half-done and believed complete, and a cleaned module cannot silently regress.
+      # Fail-closed both ways -- growth fails, and progress not banked into the pin also fails,
+      # because a pin above the real count accepts a range and a range is where a regression
+      # hides. Perturbation-proved on 2026-08-19: injecting one bare call into mcp_server.py
+      # took it 125 -> 126 and the gate exited 1; reverting restored a byte-identical file and
+      # exit 0. Mutation controls in tests/unit/test_bare_call_ratchet.py.
+      - name: Bare-call ratchet (split-floor, Route A)
+        run: python scripts/bare_call_ratchet.py --report
+
       # rg-argv-grammar differential fuzz (task #269): five rounds of the #264-class root-
       # `.gitignore` fix each found "an argv form nobody enumerated" in
       # `bootstrap._search_path_args_raw` (the Python-only rg-passthrough's positional-path

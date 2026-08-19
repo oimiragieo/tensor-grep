@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "Bare calls to monkeypatched symbols, per module. See scripts/bare_call_ratchet.py.",
+    "These are the Route A conversion targets from docs/design/2026-08-19-split-floor-escape.md.",
+    "Each number may only go DOWN, and every decrease must be banked here in the same commit --",
+    "the ratchet fails on a pin left above the real count, because a pin above the count accepts",
+    "a range, and a range is where a later regression hides.",
+    "Measured against main at 79cb220 on 2026-08-19."
+  ],
+  "bare_calls": {
+    "src/tensor_grep/cli/main.py": 102,
+    "src/tensor_grep/cli/mcp_server.py": 125,
+    "src/tensor_grep/cli/repo_map.py": 166
+  }
+}
