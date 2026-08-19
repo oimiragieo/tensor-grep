@@ -29,9 +29,6 @@ from tensor_grep.cli.ast_workflow_rules import (
     _emit_ast_run_remediation,
     _extract_rule_pattern,
     _inject_run_json_fields,
-    _load_ast_project_data,
-    _match_node_identity,
-    _rule_member_patterns,
     _rule_needs_ast_grep_wrapper,
     _safe_stdout_line,
     _suffix_for_language,
@@ -43,6 +40,14 @@ from tensor_grep.cli.ast_workflow_rules import (
 from tensor_grep.cli.ast_workflow_rules import (
     _iter_yaml_files as _iter_yaml_files,
 )
+
+# EXPLICIT re-exports (`X as X`). cli/main.py imports these three THROUGH this facade,
+# and mypy runs with implicit_reexport off, so a plain `from ... import X` here is a
+# private binding as far as the type checker is concerned -- runtime resolves it fine
+# and `mypy` fails with attr-defined. Caught by CI, not locally.
+from tensor_grep.cli.ast_workflow_rules import (
+    _load_ast_project_data as _load_ast_project_data,
+)
 from tensor_grep.cli.ast_workflow_rules import (
     _load_rule_specs_and_meta as _load_rule_specs_and_meta,
 )
@@ -50,10 +55,16 @@ from tensor_grep.cli.ast_workflow_rules import (
     _load_test_data_and_meta as _load_test_data_and_meta,
 )
 from tensor_grep.cli.ast_workflow_rules import (
+    _match_node_identity as _match_node_identity,
+)
+from tensor_grep.cli.ast_workflow_rules import (
     _pattern_is_native_shaped as _pattern_is_native_shaped,
 )
 from tensor_grep.cli.ast_workflow_rules import (
     _precompute_orchestration_hints as _precompute_orchestration_hints,
+)
+from tensor_grep.cli.ast_workflow_rules import (
+    _rule_member_patterns as _rule_member_patterns,
 )
 from tensor_grep.cli.ast_workflow_rules import (
     _select_ast_backend_name_for_pattern as _select_ast_backend_name_for_pattern,
