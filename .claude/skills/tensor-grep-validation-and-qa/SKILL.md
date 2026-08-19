@@ -392,6 +392,36 @@ is `SHIP-PROVISIONAL` until the first CI compile of the head SHA completes (the 
 typecheck gate); a self-gate's suite selection is a hypothesis until the matrix runs — state which
 suites ran and which were skipped alongside any self-verified result.
 
+- **A CHECK-RUN LIST WITH UNEXPANDED MATRIX PLACEHOLDERS IS A SKIPPED JOB, AND IT LOOKS LIKE A
+  PASS (2026-08-19).** A green PR whose checks read `test-python (${{ matrix.os }}, py${{
+  matrix.python-version }})` did not run those lanes -- the job was never instantiated, so the
+  matrix was never expanded. Any summary that counts `failures == 0` reports this as success.
+  Measured three times in one campaign: a 3,500-line refactor merged having run ZERO tests; the
+  doc/skill governance suites never ran on doc changes; and the FORMATTER never ran on doc
+  changes, so a docs PR reddened `main` and surfaced days later on an unrelated code PR. The
+  root cause is the same each time -- `ci.yml`'s cost-smart `changes` filter is a HAND-WRITTEN
+  PATH LIST, and it watched a narrower set than the jobs behind it depend on. **Before calling a
+  PR green, require EXPANDED lane names** (`awk -F'\t' '$1 ~ /test-python \(/'` and assert a
+  count), not merely zero failures. None of the three was found by reading `ci.yml`.
+
+- **A CI JOB'S NAME IS NOT ITS FAILURE (2026-08-19).** `Formatting & Linting` runs ruff AND mypy;
+  it failed on mypy while a cycle was spent reproducing ruff. Read the failing STEP
+  (`gh api .../jobs/<id> --jq '.steps[] | select(.conclusion=="failure") | .name'`) before
+  reproducing anything.
+
+- **A SPLIT HAS A HARD FLOOR SET BY TEST-PATCH TOPOLOGY, AND mypy ADDS A SPLIT-ONLY FAILURE CLASS
+  (2026-08-19).** Python resolves bare names through the DEFINING module's globals, so every
+  function referencing a monkeypatched name by bare identifier must stay co-located with wherever
+  the test's `setattr` lands. Measured on `benchmarks/run_gpu_native_benchmarks.py`: that
+  call-graph closure is 1,752 lines / 17 functions, so the file CANNOT reach a 1,500-line limit by
+  splitting. Derive the closure before scoping a wave -- a line count is not a split plan, and
+  lowering a ratchet pin is the honest outcome where the floor binds. Separately, after any split,
+  `from .impl import X` in the facade is a PRIVATE binding under mypy's `implicit_reexport =
+  false` (runtime resolves it; mypy fails `attr-defined`). It cannot appear pre-split, because the
+  symbol was locally defined and nothing was re-exported. Use `from .impl import X as X`, then
+  re-check that `ruff --fix` did not merge the import blocks back and drop names -- its organiser
+  silently dropped six in this same campaign.
+
 Related global skill: `measure-what-it-claims` (same family, generalised beyond this repo).
 
 ## Part 1 — What counts as evidence here (in order of trust)
