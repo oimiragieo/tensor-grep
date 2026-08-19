@@ -1,6 +1,233 @@
 # CHANGELOG
 
 
+## v1.110.17 (2026-08-19)
+
+### Bug Fixes
+
+- Pin JSON_OUTPUT_VERSION into the wheel + add file-size budget ratchet
+  ([#1017](https://github.com/oimiragieo/tensor-grep/pull/1017),
+  [`76214da`](https://github.com/oimiragieo/tensor-grep/commit/76214da68f3eb6f06e25be3e80208942be4e40ab))
+
+* fix: pin JSON_OUTPUT_VERSION into the wheel + add file-size budget ratchet
+
+DC-001 (the user-visible half). _json_output_version() regex-scraped JSON_OUTPUT_VERSION out of
+  rust_core/src/main.rs via Path(__file__).resolve().parents[3]. In a dev checkout parents[3] is the
+  repo root, so it worked and every local check agreed. In a wheel it resolves to the directory
+  above site-packages, where rust_core/ does not exist at all (pyproject's [tool.maturin] include
+  list does not ship it) -- the lookup raised OSError and the function silently returned a hardcoded
+  1.
+
+Latent only because the Rust constant currently IS 1. The first bump would have left every published
+  install stamping a stale version/schema_version into every --json envelope, with no error
+  anywhere: wrong, not broken.
+
+Both definition sites (cli/main.py and cli/audit_manifest.py) now read a shipped literal,
+  core.result.JSON_OUTPUT_VERSION, cross-pinned to the Rust constant by a test that runs where both
+  are visible. The modules are bound rather than the value (import result as ..., not from result
+  import CONST) so the constant stays late-bound and monkeypatchable; early binding would have made
+  the red arm below impossible to write.
+
+RED arm, observed failing at both sites, at the intended reason: assert 1 == 4242 A naive "returns
+  the right number in a wheel" test would have been VACUOUS here, because the buggy fallback and the
+  correct answer are both 1 today. The test substitutes a sentinel so the two arms actually differ.
+
+FILE-SIZE BUDGET. The CEO's enterprise standard (contracts <=500, core <=1500, tests <=2000,
+  fixtures <=2000) had no enforcing mechanism anywhere in CI or the suite -- grep-verified, with a
+  positive control proving the grep finds the repo's other governance gates. A standard with no
+  mechanism is a wish, which is how 35 files on main drifted past it.
+
+Every hand-scoped count of that population was wrong. A first glob said 19; the gate's own census
+  said 33; run against real main (this branch's base, 65 commits newer) it is 35, including two Rust
+  files no earlier pass had seen. The gate therefore derives its census from git ls-files every run
+  and trusts no written number, including its own.
+
+The drift is also ACTIVE, which is the argument for a ratchet rather than a one-off cleanup: across
+  those same 65 commits main.py grew +342 lines, test_cli_modes.py +362, and index.rs +1069, all
+  while nothing objected.
+
+scripts/file_size_budget.py grandfathers the 35 at their measured counts and is fail-closed in BOTH
+  directions: a new violation fails, an allowlisted file that GROWS fails, and an entry whose file
+  has dropped under its limit must be retired or the gate fails. An exception cannot outlive the
+  violation it documents, so the allowlist can only shrink and every refactor wave shows up as a
+  provable decrease.
+
+All four rules were observed FIRING before being trusted (mutation controls in
+  tests/unit/test_file_size_budget.py, plus an end-to-end perturbation: inject a 1601-line file ->
+  exit 1 naming it; grow an allowlisted file by one line -> RATCHET REGRESSION; revert -> exit 0,
+  file byte-identical). The gate then caught this very commit twice -- once when the DC-001
+  docstring pushed main.py over its pin, and again when the allowlist baselined on a stale tree met
+  real main. Both times the fix was to obey the gate, not to re-pin around it.
+
+DOCS. README, docs/tool_comparison.md and docs/ENGINEER_ONBOARDING.md all still advertised a stale
+  language split; the live product (repo_map._symbol_navigation_descriptor()) reports 10
+  parser-backed / 0 foundational. tool_comparison.md was understating tg against a competitor (8 vs
+  10 deep-tier), so that correction is in our favour -- and therefore ships beside the caveat that
+  our ten are in-file only, since correcting a number upward without stating its limit is the mirror
+  error. ENGINEER_ONBOARDING.md was printing the CORRECT descriptor directly beneath its own wrong
+  hand-counted table, under a heading reading "NEVER HAND-COUNT THIS".
+
+Dated audit receipts under docs/audits/ and BACKLOG.md were deliberately left alone: they correctly
+  record what was true when written.
+
+Council: 7-seat thinktank, 7/7 verdicts, 6x PATH B + 1x PATH D, for
+  mechanism-first-then-staged-waves over a big-bang refactor. The copilot seat was down on a stale
+  pinned model slug (its OBSERVED output, not the quota the gate's hint guessed) and did not vote.
+
+Tests on this branch's tree: 35 in the new suites, 153 across the envelope/audit/docs-governance
+  surface. ruff check clean on tracked scope; the 17 local ruff-format hits are a Windows CRLF
+  artifact, proven by a paired LF/CRLF control on byte-identical content (LF "already formatted",
+  CRLF "would be reformatted") and by CI being green on Linux for those same files -- deliberately
+  not "fixed", because that would have broken CI.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: 2026-08-19 enterprise code audit report
+
+The full audit behind the preceding commit. Verdict FAIL, on exactly one mandatory rule -- 35 files
+  over the size limits without a documented exception. Recorded separately from the pass/fail bit:
+  no unrefuted security finding above Low across eight probed vectors, and a junior analyst CAN
+  rebuild the load-bearing features from the committed docs.
+
+Includes the eleven REFUTED security/test suspicions, because a refutation is a complete deliverable
+  and an audit that only records confirmations is not calibrated.
+
+Section 12 records the six instrument failures hit DURING the audit -- the population miscounted
+  three times, a substring grep that falsely cleared two dead imports, a "137 files" format count
+  that was pure local-toolchain error, a CRLF artifact that would have broken CI if "fixed", an
+  allowlist baselined on a stale tree, and a premise check whose zero was unresolved rather than
+  negative. Those are the most transferable output here.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- 2026-08-15 CEO update + A117-A122 lesson retention
+  ([#1016](https://github.com/oimiragieo/tensor-grep/pull/1016),
+  [`9280992`](https://github.com/oimiragieo/tensor-grep/commit/92809921220e14e1b8e1139b5b0ee5818644aa24))
+
+* docs: 2026-08-15 CEO update + A117-A122 lesson retention
+
+Dumbed-down CEO packet after DD-006 design merge (#1015). Retains skip-Fable vs build-license,
+  remote merge truth, docs-PR vs main CI, probe timeout envelope, backlog+R7, and design-on-main !=
+  shipped.
+
+* docs: skill library 36 + design-authorization-ladder retention
+
+Add design-authorization-ladder (DD-006 demand→packet→Sol→waiver→build), fix audited skill drifts,
+  wire skill_rules/audit workflow, bump AGENTS/CLAUDE index to 36, retain A116 worktree-venv gotcha.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* docs: retain TEMP-recurse probe hang anti-pattern
+
+Record the failed whole-$TEMP skill-discovery walk (exit -1) in debugging + build-and-env playbooks;
+  clarify Battle 28 re-verify as RETIRED (F10).
+
+---------
+
+- Add DD-006 accept-bound design packet
+  ([`0710219`](https://github.com/oimiragieo/tensor-grep/commit/07102199393d7ec916e2289f288348983aff9bb5))
+
+Records the Sol-approved, no-code DD-006 requirements and design gate so a future implementation has
+  explicit bounded-admission and attribution contracts.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+- Re-derive post-merge skill anchors + wire A103-A110 into the audit workflow
+  ([#1012](https://github.com/oimiragieo/tensor-grep/pull/1012),
+  [`a1c51ee`](https://github.com/oimiragieo/tensor-grep/commit/a1c51eea2f140e3b8ac2d0fbd5f7c0d875eece89))
+
+Post-merge verification of the retention PR found 17 anchors invalidated by the PR's own AGENTS.md
+  law block plus first-pass drift: re-anchored in 11 skills (validation-and-qa,
+  architecture-contract, code-search-reference, config-and-flags, semantic-search-campaign,
+  diagnostics-and-tooling, change-control, release-and-positioning, large-repo-scale-campaign,
+  backlog-campaign, build-and-env). tg-audit-fix-loop.js gains A104 (MAX_ROUNDS 3->10 parking-point
+  semantics), A110+A103 house rules, and A106/A109 RED-prompt clauses; dogfood_features.py strips
+  dead scratchpad A-scheme prefixes. Gates: 13/13 skill tests, ruff clean.
+
+- Retain A103-A110, reconcile board/skills to v1.110.16 (2026-08-13b retention)
+  ([#1011](https://github.com/oimiragieo/tensor-grep/pull/1011),
+  [`91c2220`](https://github.com/oimiragieo/tensor-grep/commit/91c222079afb90400a87436ce72b4ba8d567c6eb))
+
+Session retention from the backlog-closeout campaign (W1-W4):
+
+- AGENTS.md gains laws A103-A110: baseline-swap snapshots; the A3 gate as a 10+ round real-finding
+  loop; path normalization before no-follow stats with named residuals; skip-visibility env
+  promotion; bounded pinned-toolchain probe fact settlement (+ A88 SUPERSEDED note for the junction
+  claim); hash-frozen council rounds; capacity-1 handshakes; amend-only-pre-push. - CLAUDE.md law
+  digest extended (A97-A110). - Board index 2026-08-13.1: RUST-REPLACE-SYMLINK SHIPPED (PR #1010,
+  merged SHA d31a051, v1.110.16); 17 unfinished; new CEO packet
+  docs/audits/2026-08-13-ceo-backlog-update.md (tracker test retargeted, A79). - 15 skills corrected
+  against origin/main: 20 findings (3 SUPERSEDED junction claims, 8 STALE statuses/stamps, 9
+  SYMBOL_MOVED anchors re-derived); codex-gated-audit-loop gains the 13-round gate receipt + defect
+  taxonomy; backlog-campaign gains the multi-round council-loop pointer;
+  cross-platform-path-confinement gains the bounded-probe settlement section. - Governance: 63/63
+  tracker+drift+index+freshness tests; ruff format --preview clean.
+
+- Session-capture fan-out - A111-A116, skill audit fixes, new demand-gate skill
+  ([#1014](https://github.com/oimiragieo/tensor-grep/pull/1014),
+  [`93078ef`](https://github.com/oimiragieo/tensor-grep/commit/93078ef3ec758a02982cb5bea1d4450fb9beb28c))
+
+Five-agent retention fan-out (map-ledger-first) off e1a2b61. No product code, no release, no spend.
+
+- AGENTS.md/CLAUDE.md: laws A111-A116 (commit-the-plan-you-cite; frozen control thresholds met
+  verbatim or CANNOT_MEASURE; claim only what the raw artifact discriminates; census location
+  inventory re-derived mechanically; per-row wave receipts; never uv-run-create a venv in a
+  worktree). Skill index 34->35 with the new skill in Advance (SOTA). Also repairs the pre-existing
+  mangled CLAUDE.md A94-A110 summary line (5607-char 6x-duplicated A97/A103/A110 blocks -> one clean
+  line, A97 class). - New skill tensor-grep-demand-gate-measurement (bounded demand-gate
+  measurement; DD-006 worked example in references/; Exa-grounded via
+  .orchestrator/w6/exa-research.md). skill_rules.json trigger added. codex-gated-audit-loop extended
+  with a docs-artifact audit-rounds section (the 4-round W5-W8 loop). - Skill accuracy triple-check:
+  8 skills fixed for anchor drift (20+ bare main.py:mcp_server.py anchors converted to grep
+  instructions with was->now receipts), 27 clean; audit driven by skill_anchor_audit.py (46
+  SYMBOL_MOVED baseline -> 4 deliberate survivors). - Tools: tg-skill-audit.js dynamic skill
+  enumeration (a 36th skill is covered with zero edits); tg-audit-fix-loop.js docs-round allowance
+  (artifact_kind/artifact_sha256, hash chain, docs finding no longer swallowed by the empty-doors
+  bail); skill_anchor_audit.py worktree-path skip fixed (628 phantom FILE_MISSING -> 0; rel-parts
+  keying). - Docs: docs/audits/2026-08-14-session-capture.md (junior-analyst-grade receipt), BACKLOG
+  dated entry, SESSION_HANDOFF dated block.
+
+Gates (main venv -> worktree paths): skill-index-sync + skill-library-drift + backlog_tracker_truth
+  + task_board_freshness = 63 passed; ruff check + format clean on skill_anchor_audit.py;
+  skill_rules.json valid JSON; git diff --check clean; full scoped pytest 271 passed (1 known
+  load-timing SLA flake, passes in the main checkout).
+
+- W5-w8 closeout - demand dispositions, CEO packets, board sweep
+  ([#1013](https://github.com/oimiragieo/tensor-grep/pull/1013),
+  [`e1a2b61`](https://github.com/oimiragieo/tensor-grep/commit/e1a2b613a4f922f519ddc5b293b40f5de70eb3c4))
+
+Executes the tail of docs/plans/2026-08-13-backlog-completion-plan.md (council-approved 7/7 after 5
+  rounds; the plan and its spec are committed with this PR so the cited paths exist on the merged
+  tree). No product code, no release, no spend. Base a1c51ee (v1.110.16).
+
+- W5 demand dispositions: #255 re-derived (max single-pack 35 anchors, no named user) -> LEAVE.
+  DD-006 bounded probe EXECUTED: single-shot control arm 20/0 meets the plan-frozen threshold
+  verbatim; 5 of 5 live arms showed timeouts at the CLI's own 0.5s budget, the one discriminated arm
+  classified them connect-timeout, zero refusals/drops, zero failures at a 2.0s budget or single
+  client - the demand condition is SATISFIED and the reproduction rides the row trigger (mechanism
+  hypothesis: default request_queue_size=5 accept backlog). AST-DSL-PARITY Exa delta LEAVE;
+  MCP-LEAN-DEFAULT now SPEC-LEVEL but still Task-2C-fenced (contract 1.7.0 re-verified);
+  CONTINUOUS-REFRESH scoping-pass reopen strengthened. - W6: six BLOCKED rows, six commands, six
+  recorded results (per-row receipt table in the disposition doc), zero flips. - W7 CEO packets:
+  8-seat thinktank (7 verdict-bearing; copilot TIMEOUT failed-seat; claude seat on sonnet, Fable 5
+  quota-blocked) -> 7/7 HYBRID-ACCEPTED / ADVISORY-ONLY with concrete seams named. Five sections
+  each carry the literal STATUS REMAINS CEO_GATED terminator; #169 pointer only. - W8: demand-row
+  triggers refreshed; closed world re-derived = 29 rows (GATE-W8-2); A101 3x recurrence receipt
+  recorded in BACKLOG. Index stays 2026-08-13.1.
+
+Independent codex audit (gpt-5.6-sol) returned REVISE on the first revision with 5 findings (control
+  threshold, undifferentiated timeout claims, missing W6/A101 receipts, untracked plan); all five
+  closed as recorded in the disposition doc's closure section.
+
+Governance: test_backlog_tracker_truth.py by path 43 passed; -k backlog_tracker-or-task_board 54
+  passed; handoff/backlog/task_board/ skill_index 62 passed; ruff check clean; changed files
+  format-clean.
+
+
 ## v1.110.16 (2026-08-13)
 
 ### Bug Fixes
