@@ -42,15 +42,47 @@ def test_collector_finds_a_large_real_surface() -> None:
     )
 
 
-def test_both_setattr_forms_are_collected() -> None:
+def test_all_three_patch_forms_are_collected() -> None:
     """A collector matching one syntactic form undercounts the surface.
 
-    Measured: a regex matching only the object form reported 658 sites where the
-    AST walk finds >2000 -- which is why this asserts on the STYLE mix rather
-    than on a total.
+    This has now been wrong twice, in the same direction, which is why the
+    assertion is on the STYLE MIX rather than on a total:
+
+      * a regex matching only `setattr(mod, "X", v)` reported 658 sites where the
+        AST walk finds >2100;
+      * the first AST version still missed plain `mod.X = v` rebinding, and
+        reported ZERO exposure for a module whose tests patch it that way
+        throughout. A split brief was written on that false zero (wave 2).
+
+    A missing style is not a smaller number -- it is a whole shape of exposure
+    reported as absent.
     """
     styles = {site.style for site in mpa.collect_patch_sites()}
-    assert styles == {"string", "object"}, f"only collected {styles}"
+    assert styles == {"string", "object", "assign"}, f"only collected {styles}"
+
+
+def test_control_direct_attribute_assignment_is_collected(tmp_path: Path) -> None:
+    """Mutation control for Form C, the form that was missed.
+
+    `module.X = fake` is not a monkeypatch call, so nothing about the setattr
+    matcher would ever surface it -- yet it mutates the same module attribute and
+    a split breaks it identically.
+    """
+    test_file = tmp_path / "test_sample.py"
+    test_file.write_text(
+        "from tensor_grep.cli import repo_map\n\n\ndef test_x():\n    repo_map.build_thing = None\n",
+        encoding="utf-8",
+    )
+    tree = mpa._parse(test_file)
+    assert tree is not None
+    assigns = [
+        n
+        for n in __import__("ast").walk(tree)
+        if isinstance(n, __import__("ast").Assign)
+        and isinstance(n.targets[0], __import__("ast").Attribute)
+    ]
+    assert len(assigns) == 1, "fixture does not contain the shape under test"
+    assert assigns[0].targets[0].attr == "build_thing"
 
 
 def test_known_heavily_patched_module_is_present() -> None:

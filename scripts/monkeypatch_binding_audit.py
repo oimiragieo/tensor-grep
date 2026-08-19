@@ -60,7 +60,11 @@ class PatchSite:
     lineno: int
     target_module: str
     attribute: str
-    style: str  # "string" -> setattr("a.b.C", v)   |   "object" -> setattr(mod, "C", v)
+    # "string" -> setattr("a.b.C", v) | "object" -> setattr(mod, "C", v)
+    # "assign" -> mod.C = v : a plain rebinding, not a monkeypatch call, but it
+    #             mutates the same module attribute and a split breaks it the same
+    #             way. See collect_patch_sites Form C for why it is counted.
+    style: str
 
 
 @dataclass
@@ -162,6 +166,28 @@ def collect_patch_sites() -> list[PatchSite]:
                         dotted = f"{base}.{rest}" if base and rest else (base or None)
                 if dotted:
                     sites.append(PatchSite(rel, node.lineno, dotted, attr, "object"))
+
+        # Form C: plain rebinding -- `repo_map.build_thing = fake`.
+        #
+        # Not a monkeypatch call at all, and therefore invisible to the two forms
+        # above, but it mutates a module attribute in exactly the same way and a
+        # split breaks it in exactly the same way. Found the hard way during wave 2:
+        # this collector reported ZERO exposure for a module whose tests patch it
+        # this way throughout, and the split brief was written on that false zero.
+        # Had the split trusted it, the patched primitives would have moved to a
+        # submodule and the tests would have gone green against dead attributes.
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if not isinstance(target, ast.Attribute):
+                    continue
+                base = target.value
+                if not isinstance(base, ast.Name):
+                    continue
+                dotted = aliases.get(base.id)
+                if dotted:
+                    sites.append(PatchSite(rel, node.lineno, dotted, target.attr, "assign"))
 
     return sites
 
