@@ -158,7 +158,7 @@ detail (starting/stopping the daemon, `tg session daemon start|status|stop`) liv
 
 | Var | Default | Effect | Source |
 |---|---|---|---|
-| `TG_CAPSULE_INLINE_CALLERS` | off (`env_flag_enabled`-style on-values: `1`/`true`/`yes`/`on`) | When on, `tg agent`/`tg prepare` prepend `# tg: callers=N (top: a, b)` to the PRIMARY snippet's source, reusing already-collected blast-radius evidence (no new scan). Off by default for a stronger reason than most flags here: it **mutates** `snippets[i].source`/`line_map`/`token_estimate` on the primary snippet (an inserted line shifts both the displayed source and its line-number mapping, and raises the token estimate ~+2.8%), rather than only adding a new field — a consumer that diffs/re-parses `source` byte-for-byte will see it change. An additive `snippets[i].inline_structural_annotation` field is also added. py/js/ts/rs comment syntax only; fails closed (no annotation) for any other language. `callers=N` is only ever emitted on a verified count; token-budget truncation is fail-closed (never silently drops the annotation without accounting for its cost). | `agent_capsule.py:1941` (`_CAPSULE_INLINE_CALLER_ANNOTATION_ENV`) |
+| `TG_CAPSULE_INLINE_CALLERS` | off (`env_flag_enabled`-style on-values: `1`/`true`/`yes`/`on`) | When on, `tg agent`/`tg prepare` prepend `# tg: callers=N (top: a, b)` to the PRIMARY snippet's source, reusing already-collected blast-radius evidence (no new scan). Off by default for a stronger reason than most flags here: it **mutates** `snippets[i].source`/`line_map`/`token_estimate` on the primary snippet (an inserted line shifts both the displayed source and its line-number mapping, and raises the token estimate ~+2.8%), rather than only adding a new field — a consumer that diffs/re-parses `source` byte-for-byte will see it change. An additive `snippets[i].inline_structural_annotation` field is also added. py/js/ts/rs comment syntax only; fails closed (no annotation) for any other language. `callers=N` is only ever emitted on a verified count; token-budget truncation is fail-closed (never silently drops the annotation without accounting for its cost). | `agent_capsule_constants.py` (find it: `grep -n "_CAPSULE_INLINE_CALLER_ANNOTATION_ENV = " src/tensor_grep/cli/agent_capsule_constants.py`) (`_CAPSULE_INLINE_CALLER_ANNOTATION_ENV`) |
 
 ### MCP security gate (default-OFF)
 
@@ -554,7 +554,7 @@ against `main.py:4007-4072`.
 Re-verified as of 2026-07-22 (v1.93.2): the 3 native-delegation cites (`_can_delegate_to_native_tg_search`
 → `main.py:3698`, `_build_native_tg_search_command` → `main.py:3731`,
 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` → `main.py:1894`); the new `TG_CAPSULE_INLINE_CALLERS`
-catalog row (`agent_capsule.py:1941`); the new "Internal constants" subsection
+catalog row (`agent_capsule_constants.py` (find it: `grep -n "_CAPSULE_INLINE_CALLER_ANNOTATION_ENV = " src/tensor_grep/cli/agent_capsule_constants.py`)); the new "Internal constants" subsection
 (`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`, defined in `io/scan_limits.py`, re-exported by
 `io/directory_scanner.py`); and the `tg prepare --out`
 worked non-registration example. The rest of this file (env-var catalog, front-door tables, GPU/LSP/
