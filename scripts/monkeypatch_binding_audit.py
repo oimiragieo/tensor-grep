@@ -215,6 +215,71 @@ def find_early_bound_imports(module_file: Path, symbols: set[str]) -> dict[str, 
     return dict(hazards)
 
 
+def spec_loaded_targets() -> dict[str, list[str]]:
+    """Files loaded by tests via ``spec_from_file_location`` -> the tests that load them.
+
+    THE BLIND SPOT THIS EXISTS TO ANNOUNCE
+    --------------------------------------
+    Everything above attributes a patch site to a DOTTED MODULE. A test that does::
+
+        spec = importlib.util.spec_from_file_location(name, "benchmarks/foo.py")
+        module = importlib.util.module_from_spec(spec)
+        ...
+        monkeypatch.setattr(module, "run_command", fake)
+
+    never puts ``benchmarks/foo.py`` into the ``tensor_grep`` namespace, so the collector
+    filters it out and the file reports ZERO patch sites. That zero is wrong in the most
+    dangerous direction: it says "safe to split" about a file whose every entry point is
+    monkeypatched.
+
+    This cost two real briefs. The blind spot was documented in the auditor's own PR
+    message and then briefed against anyway -- a limitation you have written down is not
+    a limitation you have applied. Hence a mechanism instead of a note.
+
+    WHAT THIS DELIBERATELY DOES NOT DO
+    ----------------------------------
+    It does not count symbols. The module is typically produced by a helper and handed to
+    tests through a fixture, so precise attribution needs cross-function dataflow. Rather
+    than invent a number, this reports the RISK at file granularity: "this target is
+    spec-loaded by N test files; the per-symbol count above is not valid for it."
+
+    An honest "cannot enumerate" beats a confident zero.
+    """
+    targets: dict[str, list[str]] = defaultdict(list)
+    for path in _tracked("tests/**/*.py"):
+        tree = _parse(path)
+        if tree is None:
+            continue
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+            if name != "spec_from_file_location":
+                continue
+            # The loaded path is usually NOT a literal argument here: the common shape is
+            # a helper taking `rel_path` and doing `root / rel_path`, with the real paths
+            # in a module-level list. Matching only the call's own arguments therefore
+            # finds almost nothing -- measured: it missed the very file that had already
+            # fooled two briefs.
+            #
+            # So once a file is known to spec-load ANYTHING, attribute every
+            # repo-relative `.py` string constant in that file as a candidate target.
+            # Deliberately over-broad: a false "this may be spec-loaded" costs a reader
+            # one grep, while a false "clean" costs a silently-broken refactor.
+            for const in ast.walk(tree):
+                if (
+                    isinstance(const, ast.Constant)
+                    and isinstance(const.value, str)
+                    and const.value.endswith(".py")
+                    and "/" in const.value
+                ):
+                    targets[const.value].append(rel)
+            break  # one spec-load is enough to scan this file's constants once
+    return {k: sorted(set(v)) for k, v in targets.items()}
+
+
 def module_to_path(dotted: str) -> Path | None:
     rel = Path("src") / Path(*dotted.split("."))
     for candidate in (rel.with_suffix(".py"), rel / "__init__.py"):
@@ -261,6 +326,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.module:
         reports = {k: v for k, v in reports.items() if args.module in k}
         if not reports:
+            # "No dotted module matches" is EXACTLY the case the spec-loaded blind spot
+            # produces, so returning here would suppress the warning in the only
+            # situation it exists for. Caught while testing this very fix against the
+            # file that had already fooled two briefs.
+            spec_hits = {
+                target: files
+                for target, files in spec_loaded_targets().items()
+                if args.module in target
+            }
+            if spec_hits:
+                print(
+                    f"no patched DOTTED MODULE matches {args.module!r} -- but it is "
+                    f"SPEC-LOADED by tests, so that zero means UNRESOLVED, not clean:",
+                    file=sys.stderr,
+                )
+                for target, files in sorted(spec_hits.items()):
+                    print(f"  {target}", file=sys.stderr)
+                    for testfile in files[:4]:
+                        print(f"      loaded by {testfile}", file=sys.stderr)
+                    if len(files) > 4:
+                        print(f"      ... and {len(files) - 4} more", file=sys.stderr)
+                return 1
             print(f"no patched module matches {args.module!r}", file=sys.stderr)
             return 2
 
@@ -277,6 +364,24 @@ def main(argv: list[str] | None = None) -> int:
             f"{len(report.sites):>6} {len(report.patched_attributes):>8} "
             f"{hazards:>8}  {report.module}"
         )
+
+    spec_targets = spec_loaded_targets()
+    if spec_targets:
+        print(
+            "\nSPEC-LOADED TARGETS -- the counts above DO NOT COVER THESE\n"
+            "A test that loads a file via spec_from_file_location and patches the\n"
+            "resulting module object never enters the tensor_grep namespace, so the\n"
+            "collector reports ZERO sites for it. Treat a zero for any path below as\n"
+            "UNRESOLVED, never as 'safe to split'.\n"
+        )
+        for target, testfiles in sorted(spec_targets.items()):
+            if args.module and args.module not in target:
+                continue
+            print(f"  {target}")
+            for testfile in testfiles[:4]:
+                print(f"      loaded by {testfile}")
+            if len(testfiles) > 4:
+                print(f"      ... and {len(testfiles) - 4} more test file(s)")
 
     if total_hazards:
         print("\nEARLY-BINDING HAZARDS")
