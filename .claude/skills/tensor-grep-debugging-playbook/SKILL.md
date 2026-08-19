@@ -1215,3 +1215,38 @@ grep -n -A8 "release-tag-smoke:" .github/workflows/ci.yml
 If any of these greps come back empty or materially different, the corresponding row above is
 stale — update it before relying on it, and check whether the fix pointer's target skill
 (`tensor-grep-architecture-contract`, `tensor-grep-change-control`, etc.) needs the same update.
+
+### A hung CI job, and the four `gh` readings that lie about it (2026-08-19)
+
+`native-build-smoke (ubuntu-latest)` sat **2h21m**, then 29m, then 39m on one step, blocking two
+PRs. Diagnosing it was entirely a matter of not believing four plausible readings.
+
+**1. Find a sibling before blaming the runner.** The same run's other legs finished normally:
+
+| leg | duration |
+|---|---|
+| macos-latest | 9m51s |
+| macos-15-intel | 11m35s |
+| windows-latest | 11m39s |
+| **ubuntu-latest** | **hung** |
+
+A degraded box moves its siblings too. They never moved, so the step is the subject. (The same
+run is the strongest control available — same moment, same pool, same commit.)
+
+**2. Ask which STEP, not which job.** `gh api repos/<o>/<r>/actions/jobs/<id> --jq '.steps[]'`
+gives per-step status. Here: step 9, *"Ensure ripgrep is available"* — `sudo apt-get update &&
+install ripgrep`, unbounded, so a stalled mirror runs to the 6h job limit while emitting nothing.
+**An unbounded step is indistinguishable from a slow one from the outside.**
+
+**3. `gh run view --log-failed` returns EMPTY while the RUN is in progress** — even when the JOB
+has completed and failed. That empty read looks exactly like "no failures". Go at the job
+directly: `gh api repos/<o>/<r>/actions/jobs/<id>/logs`.
+
+**4. Two greps that lie in the log itself.** `grep -iE 'error'` matches `--error-format=json` in
+every rustc invocation — hundreds of lines of noise that look like findings. Strip the timestamp
+prefix first (`sed 's/^[0-9T:.Z-]* //'`) and anchor the pattern. And a check name containing
+`${{ matrix.os }}` unexpanded means the job **never instantiated** — so a wall of red including
+`publish-pypi` and `Semantic Release` can be nothing but a cancellation you performed yourself.
+
+**Then it passed in 6 minutes on the next attempt.** Intermittency is the argument FOR a bound,
+not for reruns: `timeout-minutes` converts an invisible multi-hour stall into a fast, legible red.

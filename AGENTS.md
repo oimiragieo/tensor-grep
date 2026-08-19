@@ -3480,3 +3480,71 @@ Reported floor **1,190** ("split is viable"). Real floor **1,527** — above the
   three patched names; rewriting those three call sites to qualified lookups freed the whole
   function. Route A from `docs/design/2026-08-19-split-floor-escape.md` works at function
   granularity, so a file can be rescued by converting a handful of call sites rather than all 337.
+
+## A Green Gate Bounds One Failure Mode, Never The Family It Belongs To (2026-08-19, merge wave)
+
+Six receipts from landing five PRs in one evening. Every one is a check that was **working
+exactly as designed** and still let something through, because the thing it caught and the
+thing that bit were neighbours rather than the same defect.
+
+| the gate | what it genuinely catches | what walked past it |
+|---|---|---|
+| `test_skill_library_drift` | a citation pointing **past the end** of a file | a citation that still **resolves** and now points at unrelated code |
+| a PR's own CI | that branch, against the base it was cut from | a conflict with a second PR that is also green |
+| `for i in 1 2 3; do … done` | a transient failure on attempts 1–2 | **exhaustion** — the loop exits 0 on its last iteration regardless |
+| `file_size_budget` | growth of an allowlisted file | growth re-pinned in the same commit, which the gate then calls clean |
+| a 30s wall-clock bound | a drain regression | PowerShell's startup, which is what it was actually measuring |
+| `gh pr checks` | a job that ran and failed | a job that **never instantiated** (`${{ matrix.os }}` unexpanded) |
+
+**The wrong-target citation is the sharpest one.** Wave 4 took `agent_capsule.py` from 3,652 to
+926 lines. CI failed six citations for pointing past 926 — correct, and it fixed itself into
+looking complete. A seventh, `code-search-and-retrieval-reference/SKILL.md`'s `:294`, stayed
+**green**, because 294 is inside 926; it had simply stopped describing the symbol it named. Only
+a grep for every citation into the split file found it. **After shrinking a file, the gate's
+silence covers exactly the citations it cannot judge.**
+
+And a split moves symbols between FILES, not just lines: `_CAPSULE_INLINE_CALLER_ANNOTATION_ENV`
+landed in a new `agent_capsule_constants.py`, so its citation was wrong in both coordinates.
+Grep the SYMBOL across `src/`, never inside the file you split.
+
+### The corollaries worth carrying
+
+- **A retry added to fix a hang can silently reintroduce the failure it was guarding.** Bounding
+  the CI ripgrep install needed three attempts around `apt-get`; a bash `for` loop exits 0 on its
+  final iteration whether or not the body worked, so an exhausted retry would have handed the job
+  on with no `rg` — and the rg-parity suites then resolve nothing and **silently skip**, the exact
+  outcome that step exists to prevent. Assert the POSTCONDITION (`command -v rg`), never the
+  loop's status.
+- **A ratchet you re-pin is a cost, not a pass.** `file_size_budget` failed its own author on its
+  first real encounter (`main.rs` 15094 → 15159). Folding a stale paragraph recovered a few lines;
+  the residual +33 was genuine, so the pin moved. That is legitimate and it is also the weakest
+  possible outcome — record the bump and the reason it was not avoidable, or the gate quietly
+  becomes a comment.
+- **Two green PRs are not a green union, and the collision does not need to be subtle.** #1025
+  retires two allowlist entries, #1033 retires a third, and the entries are adjacent lines — git
+  conflicts, both PRs are green, and neither CI run can see it because each ran against its own
+  base. Merge a union locally and run the gate on it BEFORE queueing.
+- **Before blaming the runner for a hung job, look at its siblings in the same run.**
+  `native-build-smoke (ubuntu-latest)` sat 2h21m, then 29m, then 39m on `apt-get install ripgrep`
+  while macOS (9m51s), macOS-intel (11m35s) and windows (11m39s) finished normally in the SAME
+  runs. A degraded box moves its siblings; they never moved. Then it passed in 6 minutes on the
+  next attempt — so the flake is intermittent, which is the argument for `timeout-minutes`
+  rather than for reruns.
+- **An unbounded step is indistinguishable from a slow one.** It emits nothing, so hours pass
+  before anyone looks. Any step that reaches the network gets a timeout.
+
+### Instrument notes from the same wave
+
+- **`gh run view --log-failed` returns EMPTY while the RUN is in progress, even when the JOB has
+  completed and failed.** Query the job by id (`gh api …/actions/jobs/<id>/logs`). An empty log
+  read as "no failures" is the false zero this file has now paid for repeatedly.
+- **Grep the log for `error` and you match `--error-format=json` in every rustc invocation.**
+  Strip the timestamp, anchor the pattern, and count before reading.
+- **A cancellation you performed reads as a 9-job failure.** The tell is unexpanded
+  `${{ matrix.os }}` in the check name: those jobs never instantiated, so they cannot have failed.
+- **Python eats a trailing backslash in a non-raw string.** Anchor text copied out of Rust or
+  bash that ends lines with `\` silently joins, and the replace then matches nothing — twice in
+  one session. Use `r"""…"""` for any anchor carrying an escape.
+- **Require `count == 1` before any scripted replace.** That assertion caught two different tests
+  in `main.rs` sharing a byte-identical timed-run block; a blind replace would have edited the
+  wrong test and looked fine.

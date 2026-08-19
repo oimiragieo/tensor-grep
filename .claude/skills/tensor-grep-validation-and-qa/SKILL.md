@@ -1195,3 +1195,32 @@ Re-verify before relying on them:
 
 If any command above no longer matches, update this skill in the same change — a wrong runbook is
 worse than none.
+
+### A gate bounds ONE failure mode, not the family it belongs to (2026-08-19)
+
+Not a new Form — the ten Forms are about a check that cannot discriminate. This is the
+neighbouring problem: a check that discriminates **correctly**, on a narrower property than
+its name suggests, so its silence is read as covering the whole family.
+
+Canonical write-up with the full table: `AGENTS.md`, "A Green Gate Bounds One Failure Mode,
+Never The Family It Belongs To".
+
+The three that bite hardest here:
+
+- **`test_skill_library_drift` fails a citation past END-OF-FILE. It cannot see a citation
+  that still resolves and now points at the wrong code.** After wave 4 shrank
+  `agent_capsule.py` 3,652 → 926, CI failed six citations and stayed silent on a seventh at
+  `:294` — inside the file, and no longer describing the symbol it named. Grep every citation
+  into a file you shrink; the gate's silence covers exactly the ones it cannot judge. A split
+  also moves symbols between FILES, so grep the SYMBOL across `src/`.
+- **A retry loop reports success on exhaustion.** `for i in 1 2 3; do … done` exits 0 on its
+  last iteration whatever the body did. A retry added to fix a hang therefore reintroduces the
+  silent-skip it was protecting against, unless you assert the POSTCONDITION rather than the
+  loop's status.
+- **A ratchet that gets re-pinned in the same commit reports clean.** Re-pinning is sometimes
+  correct, but it is the weakest outcome available; write down the residual and why it was not
+  avoidable, or the gate degrades into a comment.
+
+**Before trusting a gate's silence, say out loud which property it actually asserts, then ask
+what the NEIGHBOURING failure looks like.** If the neighbour is indistinguishable from silence,
+you need a second probe, not more confidence in the first.
