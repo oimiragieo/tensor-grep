@@ -131,8 +131,8 @@ python benchmarks/run_gpu_benchmarks.py --output artifacts/bench_run_gpu_benchma
 
 Treat `SKIP` as expected infrastructure state, not a fake failure — CyBERT may skip when Triton is
 unreachable, and the whole artifact reports top-level `status: "SKIP"` when no operational GPU
-device is detected (`run_gpu_benchmarks.py:1525`, `benchmark_pattern`/`devices` still recorded so the
-skip is diagnosable). **GPU is experimental and currently not a promotion-ready path** — read the
+device is detected (find the emitter with `grep -n '"SKIP"' benchmarks/run_gpu_benchmarks.py` --
+`benchmark_pattern`/`devices` are still recorded there so the skip is diagnosable). **GPU is experimental and currently not a promotion-ready path** — read the
 "GPU claims need a stricter bar" section below before trusting any GPU number as a win.
 
 ### 6. Token-economy / tokens-per-correct-answer (CANDIDATE — gated on #72, not yet a committed benchmark)
