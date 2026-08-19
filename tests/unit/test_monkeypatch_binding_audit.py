@@ -182,3 +182,72 @@ def test_cli_module_filter_narrows_the_report() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert "repo_map" in result.stdout
     assert "tensor_grep.cli.bootstrap\n" not in result.stdout
+
+
+# --------------------------------------------------------------------------
+# The spec-loaded blind spot.
+#
+# The collector attributes patch sites to DOTTED MODULES. A file loaded via
+# `spec_from_file_location` and patched on the resulting object never enters the
+# tensor_grep namespace, so it reports ZERO sites -- a zero that says "safe to
+# split" about a file whose every entry point is monkeypatched.
+#
+# That zero misled two separate refactor briefs, the second AFTER the limitation
+# had been written into this tool's own PR message. These tests are the mechanism
+# that replaces the note.
+# --------------------------------------------------------------------------
+
+
+def test_spec_loaded_targets_sees_a_substantial_population() -> None:
+    """Positive control: an empty result would make every warning below vacuous."""
+    targets = mpa.spec_loaded_targets()
+    assert len(targets) > 3, (
+        f"only found {len(targets)} spec-loaded targets; 37 test files use "
+        "spec_from_file_location, so a near-empty result means the detector broke"
+    )
+
+
+def test_spec_loaded_targets_flags_the_file_that_misled_two_briefs() -> None:
+    """The concrete regression: this file reports zero dotted-module sites."""
+    targets = mpa.spec_loaded_targets()
+    hit = [t for t in targets if "run_gpu_native_benchmarks" in t]
+    assert hit, (
+        "run_gpu_native_benchmarks.py is spec-loaded and heavily patched, but the "
+        "detector no longer flags it -- the blind spot is back"
+    )
+    assert any("test_benchmark_scripts" in f for f in targets[hit[0]])
+
+
+def test_filtered_run_warns_instead_of_reporting_a_bare_no_match() -> None:
+    """`--module <spec-loaded file>` must WARN (exit 1), not say 'no match' (exit 2).
+
+    This is the arm the first version of the fix got wrong: `main()` returned early
+    on an empty dotted-module set, which is EXACTLY the state the blind spot
+    produces -- so the warning never printed in the only case it existed for.
+    """
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--module", "run_gpu_native"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 1, f"expected the spec-loaded warning path, got {result.returncode}"
+    combined = result.stdout + result.stderr
+    assert "SPEC-LOADED" in combined
+    assert "UNRESOLVED" in combined
+
+
+def test_a_genuinely_absent_module_still_reports_no_match() -> None:
+    """The discriminating control.
+
+    Without this, a detector that flagged everything would pass the test above and
+    make `--module` useless -- every miss would look like a blind-spot hit.
+    """
+    result = subprocess.run(
+        [sys.executable, str(_MODULE_PATH), "--module", "totally_nonexistent_xyz"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2, "a real miss must stay exit 2, not become a warning"
+    assert "SPEC-LOADED" not in (result.stdout + result.stderr)
