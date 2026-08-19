@@ -110,11 +110,11 @@ cannot yet say *"enterprise size-compliant."*
 
 | Control area | Status | Severity | Evidence | Required action |
 |---|---|---|---|---|
-| **File sizing** | ❌ FAIL | High | 35 files over budget; max 19,733 vs 1,500 (13.2×). `scripts/file_size_budget.py --report` | Ratchet landed (#1017); burn down in waves (§10) |
+| **File sizing** | ❌ FAIL | High | 35 over budget at audit time; **32 after waves 1-2** (3 retired). Max 19,733 vs 1,500 (13.2x) | Ratchet landed (#1017); waves 3-8 remain (§10) |
 | **Size enforcement mechanism** | ✅ FIXED | — | Was absent (grep + positive control). Now `scripts/file_size_budget.py` + CI step + 28 mutation-controlled tests | Keep the allowlist monotonically shrinking |
 | **Spec alignment** | ⚠️ UNABLE TO VERIFY | Medium | No product spec or upfront design doc exists (`docs/design/` = 1 planning doc) | DOC-003: adopt a lightweight design-doc convention |
 | **Design alignment** | ✅ PASS | — | `docs/architecture.md` matches code; routing order cited to `routing.rs:222`, front door to `main.rs:1238`, both verified | — |
-| **Data contracts** | ⚠️ PARTIAL | High→fixed | DC-001 fixed; DC-002 (producer/consumer parity untested) open | DC-002: add a live two-producer diff test |
+| **Data contracts** | ✅ FIXED | High->fixed | DC-001, DC-002 and DC-003 all closed. The DC-002 test found DC-003 before it was even automated | Keep the parity diff gating |
 | **Implementation quality** | ✅ PASS with debt | Medium | Fail-closed contract intact; no mutable-default args; timeouts present at sampled sites | Module decomposition (§10) |
 | **Unit tests** | ✅ PASS with gaps | Medium | 389 files; duplicate-test-name class **absent** (verified). TEST-005: `tests/eval/` never invoked by CI | Wire the eval gate into CI |
 | **Mocks & fixtures** | ✅ PASS | Low | `tests/fixtures/` < 3k LOC total; **no secrets** (scanned); no oversized shared fixture | — |
@@ -233,7 +233,38 @@ the things that actually constrain behaviour — rather than a spec that does no
   regression**, not a consolidation.
 - **Remediation:** §10 reconciliation. Blind merge is not defensible; this is measured, not asserted.
 
-### TEST-005 — Agent-accuracy golden-set gate never runs in CI · **MEDIUM** · OPEN
+### CI-001/002/003 — The cost-smart path filter watched less than its jobs depended on · **HIGH** · ✅ ALL FIXED
+
+**The most valuable finding of this audit, and it was not in the original report** — it was found by
+watching PRs from the remediation itself come back green.
+
+`ci.yml`'s `changes` job decides whether the expensive lanes run, by diffing the PR against a fixed
+path list. Three separate populations were missing from that list, and each produced a *green PR
+that had tested nothing relevant*:
+
+| ID | unwatched | what silently skipped | receipt | fixed |
+|---|---|---|---|---|
+| CI-001 | `scripts/`, `benchmarks/` | `test-python`, `test-rust-core`, `Formatting & Linting` | a 3,500-line refactor of `validate_release_assets.py` merged with **every test lane `conclusion: "skipped"`** | #1022 |
+| CI-002 | `docs/`, `.claude/skills/` | the doc/skill **governance** suites | this repo's documented failure mode is docs contradicting the product; the tests that catch it did not run on doc changes | #1024 |
+| CI-003 | `docs/` → `static-analysis` | the **formatter** | `ruff format` formats Python inside markdown fences; a docs PR merged a bad fence and red-ed `main`, surfacing on an unrelated code PR | #1027 |
+
+**The shape is one bug, three times: the filter enumerated paths, while the jobs behind it depended
+on a broader set.** An enumeration that must be kept in sync by hand drifts — which is the same
+class as the size standard having no mechanism, and the same class as a prose enumeration of a
+codebase's own laws.
+
+**CI-003 was self-inflicted, which is the sharpest part.** The audit's own remediation shipped
+`docs/session_daemon_protocol.md` through the hole CI-002 had just documented. Confirmed genuine
+rather than a Windows CRLF artifact by re-running `ruff format --check --preview` on an LF-normalised
+copy.
+
+**How each was detected matters more than each fix.** None came from reading `ci.yml`. All three came
+from noticing that a check-run list contained *unexpanded matrix placeholders*
+(`test-python (${{ matrix.os }}, ...)`), which is what a never-instantiated job looks like — and is
+visually indistinguishable from a pass in a summary count. Any monitor that counts
+`failures == 0` reports these as green.
+
+### TEST-005 — Agent-accuracy golden-set gate never runs in CI · **MEDIUM** · ✅ FIXED
 
 - **Evidence:** `.github/workflows/ci.yml:435-440` documents `pytest tests/eval -m eval`; grepping
   every workflow for a `run:` line invoking `tests/eval` finds **none** — all three occurrences are
@@ -243,7 +274,7 @@ the things that actually constrain behaviour — rather than a spec that does no
 - **Remediation:** add an explicit CI step, or delete the gate and the comment. A gate nobody runs
   is worse than no gate: it is believed.
 
-### DC-002 — Producer/consumer parity is untested · **MEDIUM** · OPEN
+### DC-002 — Producer/consumer parity is untested · **MEDIUM** · ✅ FIXED
 
 - **Evidence:** `rust_core/tests/test_schema_compat.rs:7-45` deserializes committed
   `docs/examples/*.json`. `tests/unit/test_harness_api_docs.py` asserts the same static files.
@@ -251,8 +282,25 @@ the things that actually constrain behaviour — rather than a spec that does no
 - **Risk:** Rust and Python are each checked against the same hand-maintained fixtures. If both
   drift the same way, or the fixtures go stale, nothing catches it — **two methods sharing an
   assumption are one method run twice.**
-- **Remediation:** run the native binary and the Python sidecar on one fixture repo and diff the
-  envelopes.
+- **Fix:** `tests/unit/test_producer_envelope_parity.py`, gated in `native-build-smoke` (the only job
+  that both builds the binary and has the deps) with `TG_PARITY_REQUIRE=1` so a missing binary
+  **fails** rather than skips — a test that skips everywhere is a test that does not exist. Verified
+  running, not skipping, on all four platforms.
+- **It paid for itself before it was automated:** doing the diff by hand for five minutes found
+  **DC-003** below.
+
+### DC-003 — One Rust payload hardcoded the schema version · **MEDIUM** · ✅ FIXED
+
+- **Found by:** the DC-002 method, run manually — i.e. by the check this audit said did not exist.
+- **Evidence:** of 18 JSON-payload sites in `rust_core/src/main.rs`, seventeen used
+  `JSON_OUTPUT_VERSION`; the `unsupported_flag` error payload wrote `"version": 1` /
+  `"schema_version": 1` as literals.
+- **Risk:** on the next bump, seventeen payloads report the new version and this one silently keeps
+  the old — in an error payload, which is what a consumer parses when it is already confused.
+- **Closure:** two value substitutions, `main.rs` byte-for-byte the same length (the file-size ratchet
+  rejected the explanatory comment, so the rationale lives in the test). Guarded by a Python
+  source-shape test with four controls, including one proving a literal *inside a comment* does not
+  trip it.
 
 ### TEST-004 — `pytest.mark.gpu` skip hook is dead code · ❌ **REFUTED 2026-08-19**
 
@@ -489,7 +537,7 @@ the red arm impossible to write.)*
 | 4 | `ruff check` clean on tracked scope | — | ✅ Done |
 | 5 | PR #1017 green on CI | _owner_ | ⏳ In flight |
 | 6 | TEST-005: `tests/eval` wired into CI as a gating step | — | ✅ Done |
-| 7 | DC-002: live two-producer envelope diff | — | ✅ Done |
+| 7 | DC-002: live two-producer envelope diff | -- | Done, and gated in native-build-smoke |
 | 8 | TEST-004 / TEST-006 | — | ❌ Refuted / inspected — no action |
 | 9 | Daemon HMAC protocol documented | _owner_ | ☐ Open |
 | 10 | Branch/worktree reconciliation per §10 | _owner_ | ☐ Open |
@@ -541,10 +589,38 @@ transferable output:
    the tree before touching anything, which is the single step separating a wrong finding from a
    wrong fix.
 
-**The pattern across all seven: the instrument failed, not the subject.** Five were searches whose
-zero meant "did not look there" rather than "not present"; two were toolchain or staleness
-artifacts. None was caught by re-reading code — reading code confirms what the code says, and in
-every one of these the code and the measurement disagreed. Each was caught by a control.
+8. **A `cp` from a stale checkout reverted 65 commits of CI config.** Building the TEST-005 fix, the
+   orchestrator copied `.github/workflows/ci.yml` from a local tree 65 commits behind into a
+   worktree cut from `origin/main`. It deleted the `changes` job, ten `needs:` guards, a
+   **security-test guard from PR #1010** (`TG_REQUIRE_SYMLINK_TESTS`), and a matrix exclusion — and
+   merged green, because nothing compares a workflow file to the version it replaces. Repaired in
+   #1022. Durable rule: never `cp` a whole file from a stale tree into a fresh worktree; edit the
+   fresh copy in place.
+9. **A byte-identical control was run from the wrong directory.** Verifying the wave-2 split, the
+   baseline script was executed from `/tmp`, where its `__file__`-relative repo-root resolution
+   fails: exit 1, 0 bytes, and a confident "DIFFERS" verdict. Re-run with both versions in place:
+   byte-identical. **A 0-byte difference is the shape most easily misread as a real finding.**
+10. **A CI monitor used `jq`, which is not installed on this box.** It emitted nothing for twenty
+    minutes — indistinguishable from "still running". Silence is not a signal.
+11. **A probe validated under conditions the real call never runs under.** The parity test's
+    `_is_executable` guard ran the binary with no `cwd` and passed; the real call runs with
+    `cwd=<corpus>`, where the relative path CI passes does not resolve. The guard vouched for a
+    binary that then vanished. **A guard whose setup differs from the call it guards is a second
+    opinion about a different question.**
+12. **A `grep -c` counted the fix's own documentation.** Checking that wave-1's hazard symbols stayed
+    in the facade, the grep found all three inside the *extracted* module — apparently contradicting
+    the agent. Every hit was a docstring or comment, one of which literally states those symbols stay
+    behind. The agent was right; the check was wrong.
+
+**The pattern across all twelve: the instrument failed, not the subject.** Seven were searches whose
+zero (or hit) meant something other than what it appeared to; the rest were staleness, toolchain, or
+setup artifacts. None was caught by re-reading code — reading code confirms what the code says, and
+in every one of these the code and the measurement disagreed. **Each was caught by a control, and
+four of the twelve were the auditor's own instruments rather than the codebase's.**
+
+That ratio — roughly twelve instrument failures against five real code defects — is the audit's most
+transferable result. In a codebase this heavily pre-hardened, the measurement layer is where the
+defects live.
 
 **Not completed.** Everything in §1's "evidence unavailable" list, plus: the `.claude/skills/`
 corpus was sampled rather than audited (one skill file is known to carry four contradicting values of
