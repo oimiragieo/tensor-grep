@@ -100,3 +100,77 @@ def test_detector_does_not_confuse_a_substring() -> None:
     """`scripts` must not be satisfied by `.github/workflows/scripts-foo`."""
     decoy = "CODE_FILES=$(git diff --name-only base...HEAD -- src scriptsfoo tests"
     assert not re.search(r"(?<![\w/.])scripts(?![\w/.])", decoy)
+
+
+# --------------------------------------------------------------------------
+# The docs filter and the job it gates.
+#
+# A docs-only PR correctly skips the expensive lanes -- but the doc-governance tests
+# lived in test-python and skipped with them, so the checks that catch doc/product
+# drift were not running on the changes most likely to cause it. `docs-governance`
+# closes that; these tests keep it closed.
+# --------------------------------------------------------------------------
+
+_DOC_FILTER_LINE = re.compile(r"DOC_FILES=\$\(git diff --name-only[^)]*")
+
+#: Paths whose change can invalidate a doc claim or dangle a skill citation.
+REQUIRED_DOC_PATHS = ("docs", ".claude/skills", "mkdocs.yml", "README.md", "AGENTS.md")
+
+
+def _doc_filter_line() -> str:
+    source = CI_WORKFLOW.read_text(encoding="utf-8")
+    match = _DOC_FILTER_LINE.search(source)
+    assert match is not None, (
+        "could not find the `changes` job's DOC_FILES git-diff line in ci.yml. If the "
+        "docs gate was restructured, update this test -- do NOT delete it."
+    )
+    return match.group(0)
+
+
+@pytest.mark.parametrize("path", REQUIRED_DOC_PATHS)
+def test_doc_filter_watches_path(path: str) -> None:
+    line = _doc_filter_line()
+    assert re.search(rf"(?<![\w/.]){re.escape(path)}(?![\w/.])", line), (
+        f"the docs filter does not watch {path!r}. A PR touching only that path would "
+        "skip the doc-governance suite, which is exactly the suite that catches a doc "
+        f"drifting from the product.\nfilter line: {line}"
+    )
+
+
+def test_docs_governance_job_exists_and_is_gated_on_both_signals() -> None:
+    """It must run on docs changes AND on code changes.
+
+    Code-only is not sufficient (a docs-only PR would skip it), and docs-only is not
+    sufficient either -- the 2026-08-19 audit's actual finding ran the other way: the
+    PRODUCT moved to 10 parser-backed languages and three docs kept claiming 6+4. A
+    code change can invalidate a doc's claim without touching a single doc file.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    jobs = workflow["jobs"]
+    assert "docs-governance" in jobs, "the docs-governance job was removed"
+
+    job = jobs["docs-governance"]
+    assert "changes" in job["needs"], "docs-governance must consume the changes outputs"
+
+    condition = " ".join(str(job["if"]).split())
+    assert "outputs.docs" in condition, "must run when docs changed"
+    assert "outputs.code" in condition, (
+        "must ALSO run when code changed -- a code change can invalidate a doc claim, "
+        "which is the direction the audit actually found broken"
+    )
+
+    assert "docs" in jobs["changes"]["outputs"], "the changes job must expose a docs output"
+
+
+def test_docs_governance_runs_the_suites_that_catch_drift() -> None:
+    """Pin the suite list. A silently-shrunk list is how this gate would decay."""
+    source = CI_WORKFLOW.read_text(encoding="utf-8")
+    for suite in (
+        "test_public_docs_governance.py",
+        "test_enterprise_docs_governance.py",
+        "test_skill_library_drift.py",
+        "test_skill_index_sync.py",
+    ):
+        assert suite in source, f"docs-governance no longer runs {suite}"
