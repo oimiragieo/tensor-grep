@@ -816,8 +816,14 @@ of drifting unnoticed:
 
 ### 3. Release-asset validation
 
-- `scripts/validate_release_assets.py` — a standalone validator (`validate_all()` at
-  `scripts/validate_release_assets.py:3577`, CLI entry `main()` at `:3736`) that checks
+- `scripts/validate_release_assets.py` — a standalone validator (`validate_all()`, CLI entry
+  `main()`; locate both with
+  `grep -n '^def validate_all\|^def main' scripts/validate_release_assets.py`). Since the
+  2026-08-19 size-campaign split it is a thin FACADE over `scripts/_release_assets_checks/`
+  (ci_workflow, release_workflow, workflow_checks, docs_and_manifest_checks); the primitives the
+  tests patch — `_read`, `_version_from_*` — deliberately stayed in the facade, because a test
+  patching a module attribute that production no longer reads passes while the code under it is
+  unchanged. Invoke and import it exactly as before. It checks
   release/package-manager asset consistency: README canonical-doc links and release markers, `uv.lock`
   editable version parity with `pyproject.toml`/`rust_core/Cargo.toml`/`npm/package.json`, and more.
   Run it directly: `uv run python scripts/validate_release_assets.py` — exit 0 and
