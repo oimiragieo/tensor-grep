@@ -440,6 +440,38 @@ check + `ruff format --preview` + mypy + a live smoke test, not just the worktre
 surface; (4) THEN open the PR. Clean up after: `git checkout main; git reset --hard origin/main; git
 worktree remove --force <path>`. Never open a PR straight from a worktree's own "all green" claim.
 
+### Splitting an oversized file — the PRE-SPLIT citation sweep (2026-08-19, three receipts)
+
+Waves 2, 3 and 4 of the file-size campaign each shipped, each went red in CI, and each red
+had the **same** single cause: shrinking a file dangled `file.py:NNN` citations in
+`.claude/skills/`. Three times is not bad luck, so the sweep moves BEFORE the split.
+
+**Before you split `X.py`, and again before you push:**
+
+```bash
+grep -rnE 'X[a-z_]*\.py:[0-9]+' .claude/skills/ AGENTS.md CLAUDE.md docs/
+```
+
+Then re-anchor every hit **by symbol**, never by a fresh line number
+(`AGENTS.md`, "Cite the SYMBOL, not the line") — hand over the locating grep instead:
+
+```markdown
+`agent_capsule_constants.py` (find it: `grep -n "_CAPSULE_INLINE_CALLER_ANNOTATION_ENV = " src/…`)
+```
+
+**A split can also change the FILE, not just the line.** Wave 4 moved
+`_CAPSULE_INLINE_CALLER_ANNOTATION_ENV` into a new `agent_capsule_constants.py`, so the old
+citation was wrong in both coordinates. Grep for the symbol across `src/`, not inside the
+file you split.
+
+🚨 **The gate cannot catch the dangerous half.** `test_skill_library_drift.py` fails a
+citation that points **past the end** of a file. It says nothing about one that still
+resolves and now points at unrelated code. Wave 4 shrank `agent_capsule.py` 3,652 → 926 and
+`code-search-and-retrieval-reference/SKILL.md`'s `:294` stayed **green** while landing inside
+a different function — CI caught six of seven, and the seventh would have shipped. The grep
+above is what found it; the gate is not a substitute. `/tg-skill-audit`
+(`.claude/workflows/tg-skill-audit.js`) covers that half deliberately.
+
 ### FFI / Rust-core
 
 `maturin develop` (cargo at `C:/Users/oimir/.cargo/bin/cargo.exe`, ~15s) → call the real `.pyd`. Never trust `*args/**kwargs` mocks ("mock-green-but-dead bridge").

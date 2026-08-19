@@ -375,7 +375,7 @@ fresh repro attempt — but the underlying hazard (a flat, no-IDF score can tie,
 through several non-relevance fields before `name`) is real and unresolved. It is covered by a
 **degrade-to-ask safety floor**, not a ranking fix: if the post-tie primary target is still an
 unrequested "marker" helper, `agent_capsule.py`'s `_primary_target_is_unrequested_marker_helper`
-(`agent_capsule.py:294`) forces `ask_user=True` rather than silently auto-picking it. The flat no-IDF
+(now `agent_capsule_targets.py` -- find it: `grep -rn "^def _primary_target_is_unrequested_marker_helper" src/tensor_grep/cli/`) forces `ask_user=True` rather than silently auto-picking it. The flat no-IDF
 scorer family itself remains deferred debt — do not assume it has been fixed just because the unsafe
 *consequence* was mitigated, and do not mistake the `query_match_rank` bucketing or the #254/A7
 heuristics for an IDF fix: they are relevance refinements layered on the same rarity-blind foundation,
