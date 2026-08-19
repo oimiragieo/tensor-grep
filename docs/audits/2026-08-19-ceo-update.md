@@ -194,10 +194,32 @@ We now have a tool that measures it, but it was blind to a whole category twice.
 honest about what it *cannot* see. Whether a fully precise measurement is worth building is an open
 question.
 
-**3. Should the limit be 1,500 or 1,000?**
-Your brief said 1,500; the audit template said 1,000. We gated at 1,500. At 1,000, **11 more files**
-violate (46 total). This is a one-line change whenever you want it — but it should be a decision,
-not a drift.
+**3. ~~Should the limit be 1,500 or 1,000?~~ — SETTLED at 1,500, with the cost of the stricter tier
+measured.**
+
+Not actually an open question: the brief said **≤1,500** and that is what the gate enforces. The
+audit template's 1,000 was a documentation inconsistency, not a competing instruction. Recorded here
+so it stops resurfacing.
+
+The stricter tier's cost, re-derived on current `main` (`CORE_LIMIT = 1000` is a one-line change):
+**17 additional files**, not the 11 quoted earlier in this document. That earlier number was
+measured before waves 2–4 and rotted — the same hand-carried-number failure this report lists as a
+lesson, committed inside the report itself.
+
+**And three of the 17 are files this campaign created:**
+
+| file | lines | origin |
+|---|---|---|
+| `scripts/_release_assets_checks/ci_workflow.py` | 1,221 | wave 2 |
+| `benchmarks/gpu_native_bench_gates.py` | 1,148 | wave 3 |
+| `benchmarks/gpu_bench_support.py` | 1,060 | wave 3 |
+
+That is a real structural point, not a curiosity. **A split targets the limit it is given, so its
+output lands just under that limit.** Every wave run at 1,500 produces files in the 1,000–1,500 band.
+If the limit ever tightens, the campaign's own output becomes the next campaign's backlog — so
+tightening it is cheapest *before* the remaining waves, not after. That is the only reason the
+question is worth revisiting at all, and it is a scheduling fact rather than a decision pending on
+anyone.
 
 **4. Are the big Rust files splittable at all on our setup?**
 We cannot compile Rust on this machine (shared box). Every Rust change costs a full CI round-trip.
