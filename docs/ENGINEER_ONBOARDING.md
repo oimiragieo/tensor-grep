@@ -32,8 +32,12 @@ useful to humans for the same reasons. It layers three tiers on one command surf
 
   | tier | languages | what you actually get |
   |---|---|---|
-  | **Parser-backed (9)** | C, C#, Go, Java, JavaScript, PHP, Python, Rust, TypeScript | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse |
-  | **Foundational (1)** | C++ | `defs` + `imports` are real; **`refs` / `callers` / `blast-radius` fall back to a REGEX heuristic** |
+  | **Parser-backed (10)** | C, C#, C++, Go, Java, JavaScript, PHP, Python, Rust, TypeScript | `defs` / `refs` / `callers` / `blast-radius` resolved from a real parse, **in-file** |
+  | **Foundational (0)** | *(empty)* | C++ was the last occupant; Task 10E promoted it and closed the tier |
+
+  The uneven depth that remains is **cross-file, not per-language**: every one of the ten still
+  falls back to a text prefilter for cross-file caller confirmation, and says so via
+  `resolution_gaps` instead of returning a proven zero.
 
   **NEVER HAND-COUNT THIS. Ask the product:**
 
