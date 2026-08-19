@@ -837,8 +837,15 @@ jobs:
       # (`benchmarks/rg.zip`) is Windows-only -- there is no darwin or linux binary committed --
       # so without this step both macOS legs would resolve no `rg` and SILENTLY skip, which is
       # exactly how a gate stops gating.
+      # BOUNDED deliberately. Observed twice on 2026-08-19, both on ubuntu: this step sat
+      # in_progress for 2h21m and then 29m while the macOS and windows legs of the SAME run
+      # finished in 10-12 minutes. An unbounded apt stall runs to the 6h job limit, so the
+      # PR is blocked for hours by a step that emits nothing -- indistinguishable, from the
+      # outside, from a slow build. `timeout-minutes` turns that into a fast, legible red;
+      # the retry absorbs the transient mirror failure that is the usual cause.
       - name: Ensure ripgrep is available
         shell: bash
+        timeout-minutes: 6
         run: |
           set -euo pipefail
           if command -v rg >/dev/null 2>&1; then
@@ -847,9 +854,25 @@ jobs:
           fi
           case "$RUNNER_OS" in
             macOS) brew install ripgrep ;;
-            Linux) sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep ;;
+            Linux)
+              for attempt in 1 2 3; do
+                if sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep; then
+                  break
+                fi
+                echo "apt attempt $attempt failed; retrying in 10s" >&2
+                sleep 10
+              done
+              ;;
             Windows) echo "Windows resolves the committed benchmarks/rg.zip fallback" ;;
           esac
+          # A retry loop that exhausts its attempts must not look like success: `for` exits 0
+          # on the last iteration regardless, so assert the POSTCONDITION rather than trusting
+          # the loop's status.
+          if [ "$RUNNER_OS" != "Windows" ] && ! command -v rg >/dev/null 2>&1; then
+            echo "ripgrep still unavailable after 3 attempts -- failing rather than letting" >&2
+            echo "the rg-parity suites resolve no rg and SILENTLY skip." >&2
+            exit 1
+          fi
 
       # Every e2e suite that needs the real compiled native binary MUST run against it here:
       # `test-python` never builds `rust_core/target/release/tg` (maturin builds only the
