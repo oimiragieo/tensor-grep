@@ -7,8 +7,7 @@
     "fixture": 2000
   },
   "grandfathered": {
-    "benchmarks/run_gpu_benchmarks.py": 1925,
-    "benchmarks/run_gpu_native_benchmarks.py": 3364,
+    "benchmarks/run_gpu_native_benchmarks.py": 1919,
     "rust_core/src/backend_ast.rs": 2553,
     "rust_core/src/backend_ast_workflow.rs": 2109,
     "rust_core/src/backend_cpu.rs": 1817,
