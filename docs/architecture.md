@@ -168,6 +168,12 @@ Three cooperating stores live under a project's `.tensor-grep/` directory:
   (`session_daemon.py:50`) that serves session requests from a response cache, authenticated with
   HMAC (`hashlib`/`hmac`/`secrets` imports, `session_daemon.py:5-9`). It is what `--daemon`-routed
   session/context-render/edit-plan calls hit for the warm path described in `docs/CONTRACTS.md`.
+  The full wire protocol and security model -- token generation and `0o600` atomic-mode storage,
+  the constant-time gate, the fail-closed-when-tokenless policy, the authenticate-before-dispatch
+  ordering, and the 1 MiB pre-auth read bound -- is specified in
+  [`docs/session_daemon_protocol.md`](session_daemon_protocol.md). That page exists because this
+  paragraph was, until 2026-08-19, the *only* documentation of it: everything else lived in code
+  comments, which is not a spec a reader can rebuild from.
 - `cli/checkpoint_store.py` snapshots a scope into `.tensor-grep/checkpoints/` before a risky edit
   and supports undo (`checkpoint_store.py:20-21`); it raises `CheckpointCorruptError` when a
   snapshot blob is missing or unreadable rather than silently no-op'ing an undo
