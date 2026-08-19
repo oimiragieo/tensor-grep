@@ -86,9 +86,21 @@ def _is_executable(candidate: Path) -> bool:
 
 
 def _native_binary() -> Path | None:
+    """Resolve the native binary to an ABSOLUTE path.
+
+    Absolute matters: both producers are invoked with `cwd=<corpus>` (a tmp dir),
+    so a relative binary path resolves against the corpus rather than the repo and
+    dies with FileNotFoundError. That is not hypothetical -- CI passed
+    `rust_core/target/release/tg`, `_is_executable` probed it with no `cwd` and
+    succeeded from the workspace root, and the real call then failed from the
+    corpus dir. The probe validated under different conditions than the call it
+    was vouching for, which made a correct binary look absent.
+    """
     override = os.environ.get("TG_PARITY_NATIVE_BINARY")
     if override:
-        candidate = Path(override)
+        candidate = Path(override).expanduser()
+        if not candidate.is_absolute():
+            candidate = (REPO_ROOT / candidate).resolve()
         return candidate if _is_executable(candidate) else None
     try:
         sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -96,11 +108,11 @@ def _native_binary() -> Path | None:
 
         resolved = resolve_native_tg_binary()
         if resolved is not None:
-            return Path(resolved)
+            return Path(resolved).resolve()
     except Exception:
         pass
     found = shutil.which("tg")
-    return Path(found) if found else None
+    return Path(found).resolve() if found else None
 
 
 def _require_binary() -> Path:
@@ -158,6 +170,30 @@ def _python_envelope(corpus_dir: Path) -> dict:
     code, out = _run(env_python, corpus_dir)
     assert code in (0, 1), f"python exited {code}: {out[:400]}"
     return json.loads(out)
+
+
+def test_relative_binary_override_is_resolved_against_the_repo_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression control for the CI failure this test caused on its first run.
+
+    CI sets TG_PARITY_NATIVE_BINARY=rust_core/target/release/tg -- a RELATIVE path.
+    Both producers are invoked with `cwd=<corpus>`, so a relative path resolves
+    against the corpus and the binary vanishes. `_is_executable` did not catch it,
+    because it probed with no `cwd` and therefore succeeded from the workspace
+    root: the probe passed under conditions the real call never runs under.
+
+    Asserting on `_native_binary`'s OUTPUT rather than on subprocess behaviour, so
+    this control runs on any machine.
+    """
+    monkeypatch.setenv("TG_PARITY_NATIVE_BINARY", "some/relative/path/tg")
+    monkeypatch.setattr(
+        sys.modules[__name__], "_is_executable", lambda _candidate: True, raising=True
+    )
+    resolved = _native_binary()
+    assert resolved is not None
+    assert resolved.is_absolute(), f"{resolved} is not absolute; subprocess cwd would break it"
+    assert str(REPO_ROOT) in str(resolved), "relative override must anchor to the repo root"
 
 
 def test_documented_divergences_are_all_explained() -> None:
