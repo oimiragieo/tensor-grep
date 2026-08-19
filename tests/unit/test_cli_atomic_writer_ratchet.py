@@ -1512,8 +1512,10 @@ _EXPECTED_HELPER_BACKED = {
     ("ledger_store.py", "record_finding", "tensor_grep.cli._index_lock.atomic_write_json"),
     ("session_store.py", "_write_json_atomic", "tensor_grep.cli._index_lock.atomic_write_json"),
     # --- H2 (backlog closeout): routed through the shared helper family in this task ---
+    # `_batch_search_snippets` moved to `ast_workflow_rules.py` in the enterprise
+    # file-size campaign Wave 1 split (ast_workflows.py was 1996 lines).
     (
-        "ast_workflows.py",
+        "ast_workflow_rules.py",
         "_batch_search_snippets",
         "tensor_grep.cli._index_lock.atomic_write_bytes",
     ),
