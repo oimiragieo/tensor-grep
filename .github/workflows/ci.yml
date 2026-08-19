@@ -361,6 +361,18 @@ jobs:
             echo "no .tg-registration.toml present; skipping registration check"
           fi
 
+      # Enterprise file-size budget (CEO standard, 2026-08-19). Contracts <=500, core engine
+      # <=1500, tests <=2000, fixtures <=2000. Before this gate the standard had NO mechanism
+      # anywhere in CI or the suite (grep-verified with a positive control), which is how 33
+      # files drifted past it. Those 33 are grandfathered in scripts/file_size_allowlist.json at
+      # their measured counts; the gate is fail-closed BOTH ways -- a new violation fails, an
+      # allowlisted file that GROWS fails, and an entry whose file has shrunk under its limit
+      # must be retired or the gate fails. So the pinned number can only go down, and each
+      # refactor wave shows up as a provable decrease. Mutation controls live in
+      # tests/unit/test_file_size_budget.py (all four rules observed firing, 2026-08-19).
+      - name: File-size budget (ratchet)
+        run: python scripts/file_size_budget.py --report
+
       # rg-argv-grammar differential fuzz (task #269): five rounds of the #264-class root-
       # `.gitignore` fix each found "an argv form nobody enumerated" in
       # `bootstrap._search_path_args_raw` (the Python-only rg-passthrough's positional-path

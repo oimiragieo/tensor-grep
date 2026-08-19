@@ -11,7 +11,6 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -45,6 +44,7 @@ from tensor_grep.cli.runtime_paths import (
     resolve_ripgrep_binary,
     translate_path_for_windows_binary,
 )
+from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 
@@ -1940,17 +1940,16 @@ def _print_version(*, verbose: bool = False) -> None:
             print(line)
 
 
-@lru_cache(maxsize=1)
 def _json_output_version() -> int:
-    try:
-        main_rs = Path(__file__).resolve().parents[3] / "rust_core" / "src" / "main.rs"
-        match = re.search(
-            r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;",
-            main_rs.read_text(encoding="utf-8"),
-        )
-    except OSError:
-        match = None
-    return int(match.group(1)) if match else 1
+    """Wire-schema version for the ``--json`` envelope (DC-001).
+
+    Reads the shipped literal rather than scraping ``rust_core/src/main.rs``:
+    that scrape resolved through ``parents[3]`` -- the repo root in a dev
+    checkout, but the directory above ``site-packages`` in a wheel, where
+    ``rust_core/`` is absent, so it caught ``OSError`` and silently returned a
+    hardcoded 1 forever. See ``core.result.JSON_OUTPUT_VERSION``; cross-pinned
+    by ``tests/unit/test_json_output_version_pin.py``."""
+    return _JSON_OUTPUT_VERSION_CONTRACT.JSON_OUTPUT_VERSION
 
 
 def _with_schema_version(payload: dict[str, Any], *, version: int | None = None) -> dict[str, Any]:

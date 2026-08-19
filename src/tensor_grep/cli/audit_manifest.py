@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
-import re
 import subprocess
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -12,6 +11,7 @@ from typing import Any
 
 from tensor_grep.cli._index_lock import atomic_write_json
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
+from tensor_grep.core import result as _json_version_contract
 
 _AUDIT_INDEX_VERSION = 1
 _TG_DIRNAME = ".tensor-grep"
@@ -36,15 +36,13 @@ _REVIEW_BUNDLE_REQUIRED_COMPONENTS = frozenset({"audit_manifest"})
 
 
 def _json_output_version() -> int:
-    main_rs = Path(__file__).resolve().parents[3] / "rust_core" / "src" / "main.rs"
-    try:
-        match = re.search(
-            r"const\s+JSON_OUTPUT_VERSION\s*:\s*u32\s*=\s*(\d+)\s*;",
-            main_rs.read_text(encoding="utf-8"),
-        )
-    except OSError:
-        match = None
-    return int(match.group(1)) if match else 1
+    """Wire-schema version for the audit-manifest envelope.
+
+    Second of the two former scrape sites fixed under DC-001 -- see
+    ``tensor_grep.core.result.JSON_OUTPUT_VERSION`` for why a runtime scrape of
+    ``rust_core/src/main.rs`` can never work in a wheel install.
+    """
+    return _json_version_contract.JSON_OUTPUT_VERSION
 
 
 def _envelope(*, routing_reason: str = "audit-manifest-verify") -> dict[str, Any]:

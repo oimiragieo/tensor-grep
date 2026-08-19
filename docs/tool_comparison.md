@@ -143,8 +143,28 @@ agent can safely do with an answer:
 
 | Tier | Languages | What an agent can do with the answer |
 | --- | --- | --- |
-| Parser-backed refs/callers | C#, Go, Java, JavaScript, PHP, Python, Rust, TypeScript | `tg refs` / `tg callers` / `tg blast-radius` return AST-verified reference and call sites. A complete-scan "no callers found" here is evidence for a rename or a deletion. Java (Task 10A), C# (Task 10B), and PHP (Task 10C) joined this tier IN-FILE only: a same-file reference/call is AST-verified, but cross-file caller confirmation still relies on the same literal-text prefilter every language uses when it has no import resolver, because none of the three has a package/source-root resolver (import_update_target) shipped yet -- a resolution_gaps entry still names that gap. |
-| Foundational defs/imports only | C, C++ | `tg defs` / `tg imports` are parser-backed and fail closed (an unparseable file becomes a named `resolution_gaps` entry, never a silent skip). But `tg refs` / `tg callers` / `tg blast-radius` fall through to a text heuristic: hits are candidate sites to read, not resolved call edges, and "no callers found" is not evidence of anything. |
+| Parser-backed refs/callers | C, C#, C++, Go, Java, JavaScript, PHP, Python, Rust, TypeScript | `tg refs` / `tg callers` / `tg blast-radius` return AST-verified reference and call sites. A complete-scan "no callers found" here is evidence for a rename or a deletion. |
+| Foundational defs/imports only | *(empty)* | No language sits in this tier any more. C (Task 10D) and C++ (Task 10E) were the last two, promoted in the final wave. |
+
+**The gap that remains is cross-file, not per-language.** All ten are AST-verified IN-FILE: a
+same-file reference or call is resolved from a real parse. Cross-file caller confirmation still
+falls back to the same literal-text prefilter for **every** language, because no
+package/source-root resolver (`import_update_target`) ships yet; a `resolution_gaps` entry names
+that gap per language rather than letting it pass as a proven zero. C++'s confirmed band is
+deliberately narrower than the rest (bare-identifier, qualified calls, and explicit `this->`, never
+an arbitrary receiver -- see `lang_cpp.py`'s Task 10E docstring for the inheritance/`auto`/template
+reasoning).
+
+Do not hand-count this table. Ask the product, which derives it from the live registry:
+
+```bash
+PYTHONPATH=src python -c "from tensor_grep.cli import repo_map; print(repo_map._symbol_navigation_descriptor())"
+# parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:
+```
+
+This split has been wrong in four separate documents at four different values (6+4, 5+5, 8+2,
+9+1) while the registry moved underneath them. The one-liner above is the only source that cannot
+go stale.
 
 Each refs/callers entry in a JSON payload also carries its own per-file `provenance` field, so a
 consumer can branch on how a specific answer was produced instead of memorizing this table.
@@ -153,9 +173,9 @@ consumer can branch on how a specific answer was produced instead of memorizing 
 breakdown — ~30 bespoke tree-sitter languages with resolved call edges, ~60 regex, ~165
 signature-only — and its deep tier covers all ten of `tg`'s languages plus roughly twenty more
 (2026-08-01 survey, `docs/positioning/2026-08-01-policy-layer-moat.md`, each claim carrying a dated
-URL). On the apples-to-apples deep tier the count is roughly 8 vs 30, in Gortex's favor (Java, C#,
-and PHP joined `tg`'s deep tier in-file only, Tasks 10A/10B/10C -- see the caveat in the table
-above). Serena's
+URL). On the apples-to-apples deep tier the count is roughly 10 vs 30, in Gortex's favor — and
+`tg`'s ten are in-file resolved, with cross-file confirmation still on the text prefilter, so the
+gap in resolved-edge terms is wider than 10-vs-30 alone suggests. Serena's
 40+ comes from wrapping LSP servers. Tiered language disclosure itself is normal industry practice
 (Semgrep's maturity levels, Sourcegraph's precise/syntactic/search-based navigation, Zed's
 LSP-vs-highlighting split, nvim-treesitter's per-grammar tiers), so this table is table stakes, not

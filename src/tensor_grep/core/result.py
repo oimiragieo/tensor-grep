@@ -1,5 +1,23 @@
 from dataclasses import dataclass, field
 
+#: Wire-schema version stamped into every ``--json`` / ``--ndjson`` envelope as both
+#: ``version`` and ``schema_version``.
+#:
+#: This is a LITERAL on purpose (DC-001, 2026-08-19). It was previously derived at
+#: runtime by regex-scraping ``const JSON_OUTPUT_VERSION`` out of
+#: ``rust_core/src/main.rs`` through ``Path(__file__).resolve().parents[3]``. That
+#: works in a dev checkout, where parents[3] is the repo root -- and can never work in
+#: a wheel, where it resolves to the directory above ``site-packages`` and ``rust_core/``
+#: is simply absent (pyproject's ``[tool.maturin] include`` does not ship it). The
+#: scrape caught ``OSError`` and defaulted to 1, so every published install would have
+#: gone on reporting a stale schema version, silently, from the first bump onward.
+#:
+#: Keep this in lockstep with ``JSON_OUTPUT_VERSION`` in ``rust_core/src/main.rs``.
+#: ``tests/unit/test_json_output_version_pin.py`` cross-pins the two and fails CI if
+#: they diverge; it runs only from a dev checkout, which is the one place both sources
+#: are visible at once.
+JSON_OUTPUT_VERSION = 1
+
 
 def strip_line_terminator(text: str) -> str:
     r"""Strip AT MOST one trailing ``\n`` from a raw line's text -- never a trailing ``\r``.
