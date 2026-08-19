@@ -100,6 +100,5 @@ def test_no_hardcoded_version_literals_in_rust_json_payloads() -> None:
     assert sites == [], (
         "hardcoded schema-version literal(s) in a Rust JSON payload -- these go "
         f"stale the day {_CONSTANT_NAME} is bumped, while every sibling payload "
-        "updates:\n"
-        + "\n".join(f"  rust_core/src/main.rs:{n}: {t}" for n, t in sites)
+        "updates:\n" + "\n".join(f"  rust_core/src/main.rs:{n}: {t}" for n, t in sites)
     )
