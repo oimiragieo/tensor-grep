@@ -4215,6 +4215,37 @@ mod tests {
     /// Cross-platform "write ~2.5MB to stdout, fast, without reading anything" command: large
     /// enough to exceed a typical OS pipe buffer (commonly 4-64KB), so a successful capture here
     /// proves the wait path drains output concurrently instead of deadlocking against a full pipe.
+    /// The SAME interpreter as [`platform_large_stdout_command`], writing a handful of
+    /// bytes instead of 2.6MB.
+    ///
+    /// This exists to be subtracted. On windows the large-output producer is PowerShell,
+    /// whose interpreter STARTUP -- not our drain -- dominates elapsed wall clock and is
+    /// what varies on a loaded runner; on unix it is `dd`, which starts in ~2ms. That
+    /// asymmetry is why only windows ever produced a false red here. Timing this twin in
+    /// the same test run cancels startup and runner load, leaving the drain.
+    fn platform_small_stdout_command() -> (&'static str, Vec<String>) {
+        if cfg!(windows) {
+            (
+                "powershell",
+                vec![
+                    "-NoProfile".to_string(),
+                    "-NonInteractive".to_string(),
+                    "-Command".to_string(),
+                    "[Console]::Out.Write('A')".to_string(),
+                ],
+            )
+        } else {
+            (
+                "dd",
+                vec![
+                    "if=/dev/zero".to_string(),
+                    "bs=1".to_string(),
+                    "count=1".to_string(),
+                ],
+            )
+        }
+    }
+
     fn platform_large_stdout_command() -> (&'static str, Vec<String>) {
         if cfg!(windows) {
             (
@@ -4310,9 +4341,40 @@ mod tests {
         // weaker "drains, but pathologically slowly" regression (e.g. a hand-rolled poll loop
         // reading a tiny buffer at a low duty cycle), which is why it is kept rather than deleted.
         let timeout_ms = 60_000;
-        // Half the timeout: comfortably above any legitimate spawn-plus-2.6MB cost on a loaded
-        // runner, and comfortably below the limit, so the two bounds can never contradict.
-        let slow_drain_bound = Duration::from_millis(timeout_ms / 2);
+        // 2026-08-19: this is now a PAIRED bound, not an absolute one.
+        //
+        // The absolute form measured the GENERATOR, not the subject. On windows the producer
+        // is PowerShell, whose startup dominates elapsed time and swings with runner load; on
+        // unix it is `dd` (~2ms), which is why every observed false red here has been windows.
+        // The bound was already widened once for exactly this reason (10s -> 30s, see the
+        // paragraph above) and then failed again at 35.1s against the widened 30s on
+        // 2026-08-19. Widening a third time buys months, not correctness.
+        //
+        // So: time the same interpreter writing a few bytes, and subtract. Startup and runner
+        // load appear in BOTH arms and cancel; what remains is attributable to draining 2.6MB.
+        // A pathologically slow drain (a tiny-buffer, low-duty-cycle poll loop) still blows the
+        // allowance, because it inflates the large arm ONLY -- so the guard the paragraph above
+        // argues for keeping is kept, and only its confound is removed.
+        let drain_allowance = Duration::from_millis(timeout_ms / 4);
+
+        let (baseline_program, baseline_args) = platform_small_stdout_command();
+        let baseline_template = command_template(baseline_program, &baseline_args);
+        let baseline_started = Instant::now();
+        let baseline_result = run_validation_command(
+            "test",
+            &baseline_template,
+            None,
+            &baseline_template,
+            std::path::Path::new("."),
+            timeout_ms,
+        );
+        let baseline = baseline_started.elapsed();
+        assert!(
+            baseline_result.success,
+            "the baseline spawn must succeed or it cannot be subtracted from anything; \
+             a failed baseline means the interpreter is unavailable, not that drain is fast. \
+             got: {baseline_result:?}"
+        );
 
         let started = Instant::now();
         let result = run_validation_command(
@@ -4334,11 +4396,14 @@ mod tests {
             "expected >1MB of captured stdout (pipe-buffer-exceeding), got {} bytes",
             result.stdout.len()
         );
+        let drain_cost = elapsed.saturating_sub(baseline);
         assert!(
-            elapsed < slow_drain_bound,
-            "expected the large-output command to finish well under the {timeout_ms}ms timeout \
-             (drain is pathologically slow, though not deadlocked -- a deadlock would have failed \
-             the success assertion above); took {elapsed:?}, bound {slow_drain_bound:?}"
+            drain_cost < drain_allowance,
+            "drain is pathologically slow, though not deadlocked -- a deadlock would have failed \
+             the success assertion above. Draining 2.6MB cost {drain_cost:?} after subtracting a \
+             {baseline:?} baseline spawn of the same interpreter (total {elapsed:?}), against an \
+             allowance of {drain_allowance:?}. Because the baseline is subtracted, a merely slow \
+             or loaded runner does NOT reach this assertion; a real drain regression does."
         );
     }
 
