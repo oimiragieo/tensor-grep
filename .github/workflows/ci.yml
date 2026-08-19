@@ -820,6 +820,34 @@ jobs:
           python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
           python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
 
+      # DC-002: the ONLY job that can run this, for exactly the reason the comment above
+      # gives -- `test-python` has the deps but never builds the release binary; this job
+      # builds the binary and (since that fix) has the deps.
+      #
+      # The two JSON producers were each validated against the SAME committed
+      # docs/examples/*.json fixtures and never against each other, so a shared drift or a
+      # stale fixture was invisible to both suites. Doing the diff by hand found DC-003
+      # (#1020) in five minutes.
+      #
+      # TG_PARITY_REQUIRE=1 is the anti-skip guard: this test skips when no native binary
+      # is resolvable, which is right on a laptop and WRONG here, where the binary was just
+      # built two steps up. With the flag set, a missing binary FAILS instead of skipping --
+      # otherwise the test would quietly become a permanent no-op in the one job that can
+      # actually run it, and report as a passing suite.
+      - name: Producer envelope parity (DC-002)
+        shell: bash
+        env:
+          PYTHONPATH: src
+          TG_PARITY_REQUIRE: "1"
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export TG_PARITY_NATIVE_BINARY="rust_core/target/release/tg.exe"
+          else
+            export TG_PARITY_NATIVE_BINARY="rust_core/target/release/tg"
+          fi
+          python -m pytest tests/unit/test_producer_envelope_parity.py -v --tb=short -p no:cacheprovider
+
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
     needs: [smoke, changes]
