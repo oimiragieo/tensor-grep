@@ -132,7 +132,21 @@ def measure(rel_path: str, dotted: str) -> None:
             if isinstance(sub, ast.Name):
                 bare_refs[name].add(sub.id)
 
-    closure = {n for n, refs in bare_refs.items() if refs & patched}
+    # A function the tests PATCH is itself locked -- `monkeypatch.setattr(mod, "f", ...)`
+    # rebinds an attribute on THIS module object, so `f` must be defined here or the patch
+    # lands on a module nothing reads.
+    #
+    # The first version of this tool omitted exactly this and locked only the REFERENCERS.
+    # It therefore reported agent_capsule.py as 5 functions / 1,190 lines -- "split is
+    # viable" -- when the real floor was 10 / 1,527, i.e. NOT viable. All 9 of that
+    # module's patched symbols are themselves top-level functions here, and none was
+    # counted. Wave 4 was briefed on that wrong number.
+    #
+    # The undercount ran in the DANGEROUS direction: a too-low floor reads as permission
+    # to split. Only the tool's stated "this is a lower bound" hedge kept that from
+    # becoming a wasted wave.
+    closure = {n for n in funcs if n in patched}
+    closure |= {n for n, refs in bare_refs.items() if refs & patched}
     # Transitive: a function that bare-calls a locked function is locked too.
     changed = True
     while changed:

@@ -3440,3 +3440,43 @@ together — its organiser silently dropped six names from a merged block in thi
 - **AST-equality as the split proof** (`ast.dump(ast.parse(ast.unparse(node)))`, 0 missing / 0
   extra / 0 mismatched) — stronger than a passing suite, and obtainable when no runtime baseline
   exists.
+
+## A Tool Honest About Its Direction Of Error Stays Useful When It Is Wrong (2026-08-19)
+
+Same-day sequel to the instrument law above, and the sharpest single receipt in it.
+
+`scripts/measure_split_floor.py` was built to answer "can this file reach the line limit by
+splitting?" It measures the lines welded to a module by test patches. Its first version **omitted
+the most obvious members of that set: the patched functions themselves.**
+`monkeypatch.setattr(mod, "f", ...)` rebinds an attribute on `mod`, so `f` must be defined in `mod`
+— but the tool locked only the functions that *reference* `f`. All nine of `agent_capsule.py`'s
+patched symbols are top-level functions in it, and none was counted.
+
+Reported floor **1,190** ("split is viable"). Real floor **1,527** — above the limit.
+
+**Two things made this a correction instead of a wasted wave:**
+
+1. **The tool declared its direction of error.** Its docstring said *"this is a LOWER bound; a
+   number over the limit is decisive, a number under it is encouraging, not a guarantee."* That
+   sentence is the whole reason a wrong number stayed safe: the "cannot split" verdicts were
+   unaffected (undercounting only pushes them further over), and the one verdict the error could
+   corrupt — "viable" — was already labelled as non-binding.
+2. **The dispatched agent re-derived rather than trusting the brief**, and reported the mismatch as
+   a finding. Fifth consecutive wave in this campaign where the brief was wrong and the agent
+   caught it.
+
+### The transferable rules
+
+- **When you build a measuring tool, state which way it errs, in the tool.** Not "this is
+  approximate" — *which direction*, and *which conclusion that makes unsafe*. A tool that says "I
+  under-report" lets a reader keep the half of its output that still holds.
+- **The dangerous direction is the permissive one.** Here a too-low floor reads as permission to
+  act. Bias any estimate that gates an action toward over-reporting the obstacle.
+- **Cross-validate a new tool against an independently derived answer before briefing from it.**
+  The corrected tool now returns 10 functions / 1,527 lines, matching the agent's independent
+  derivation exactly. That agreement is what makes it trustworthy — not that it ran clean.
+- **A locked function can be locked transitively without being patched itself**, and that is the
+  escape hatch. `build_agent_capsule_from_map` (834 lines) was locked only because it bare-called
+  three patched names; rewriting those three call sites to qualified lookups freed the whole
+  function. Route A from `docs/design/2026-08-19-split-floor-escape.md` works at function
+  granularity, so a file can be rescued by converting a handful of call sites rather than all 337.

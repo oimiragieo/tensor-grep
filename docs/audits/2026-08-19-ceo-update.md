@@ -159,10 +159,16 @@ lower bound of what **must** stay in a file because tests hook into it:
 
 | file | total | lines LOCKED to the file | can splitting reach 1,500? |
 |---|---|---|---|
-| `cli/repo_map.py` | 19,708 | **11,025** | **No** |
-| `cli/main.py` | 17,605 | **9,453** | **No** |
-| `cli/mcp_server.py` | 7,876 | **5,554** | **No** |
-| `cli/agent_capsule.py` | 3,652 | 1,190 | **Yes** |
+| `cli/repo_map.py` | 19,708 | **11,731** | **No** |
+| `cli/main.py` | 17,605 | **10,172** | **No** |
+| `cli/mcp_server.py` | 7,876 | **5,852** | **No** |
+| `cli/agent_capsule.py` | 3,652 | 1,527 | **No** — split anyway, see below |
+
+*These numbers were corrected the same day. The first version of the tool forgot to count the
+patched functions **themselves** — it only counted the functions that call them — and reported
+`agent_capsule` as 1,190 ("splittable") when the real floor was 1,527. We split it successfully
+anyway, but by using an escape hatch on one function, not because the estimate was right. The three
+big files moved further out of reach, so the "No" verdicts got stronger, not weaker.*
 
 **Three of the four biggest Python files cannot reach the limit by splitting at all.** Not "it's
 hard" — the code that must stay behind is already 4–7× the limit on its own. Wave 3 discovered this

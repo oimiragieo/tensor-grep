@@ -12,10 +12,29 @@ limit, given that **they cannot get there by moving code**.
 
 | module | total | lines LOCKED to this file | reachable by splitting? |
 |---|---|---|---|
-| `cli/repo_map.py` | 19,708 | **11,025** | no |
-| `cli/main.py` | 17,605 | **9,453** | no |
-| `cli/mcp_server.py` | 7,876 | **5,554** | no |
-| *(`cli/agent_capsule.py`)* | *3,652* | *1,190* | *yes — wave 4* |
+| `cli/repo_map.py` | 19,708 | **11,731** | no |
+| `cli/main.py` | 17,605 | **10,172** | no |
+| `cli/mcp_server.py` | 7,876 | **5,852** | no |
+| *(`cli/agent_capsule.py`)* | *3,652* | *1,527* | *no — see correction* |
+
+> **CORRECTED 2026-08-19, same day.** The first version of this table read 11,025 / 9,453 / 5,554 /
+> **1,190**, from a tool that omitted the most obvious members of the locked set: **the patched
+> functions themselves.** `monkeypatch.setattr(mod, "f", ...)` rebinds an attribute on that module,
+> so `f` must live there — yet the tool locked only the functions that *reference* `f`. All nine of
+> `agent_capsule`'s patched symbols are top-level functions in it, and none was counted.
+>
+> The error ran in the **dangerous direction**: a too-low floor reads as permission to split.
+> `agent_capsule.py` was briefed to wave 4 as "viable" at 1,190 when the true floor was 1,527 —
+> above the limit. The wave succeeded anyway, but by using the escape hatch in §3 on one function,
+> not because the brief was right.
+>
+> Only the tool's stated *"this is a lower bound; a number under the limit is encouraging, not a
+> guarantee"* kept that from being a wasted wave. **A tool honest about its direction of error stays
+> useful when it is wrong.**
+>
+> The corrected tool now reports 10 functions / 1,527 lines for `agent_capsule`, matching what the
+> wave-4 agent derived independently. The three larger modules moved further **over** the limit, so
+> every "no" above strengthens.
 
 **Why anything is locked at all.** Python resolves a bare name through the *defining* module's
 globals. A test does `monkeypatch.setattr(main, "resolve_native_tg_binary", fake)`; that rebinds an
