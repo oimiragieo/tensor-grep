@@ -296,12 +296,32 @@ requires checking whether each producing scorer clamps. Reported honestly as a l
 *The repo already self-corrected one instance of this class at
 `test_context_tests_source_limit_and_deadline.py:770-778`.*
 
-### TEST-006 — Absolute wall-clock assertions · **LOW** · OPEN
+### TEST-006 — Absolute wall-clock assertions · **LOW** · ⚖️ **INSPECTED — no change warranted**
 
 Absolute bounds at `test_cli_deadline_coverage_gaps.py:716` (`<0.6`),
-`test_symbol_daemon_autostart.py:681` (`<2.5`), and ~8 others. The repo already converted
-`test_index_lock_concurrency.py` to a same-run ratio after two flakes; these have not been.
-Contention detectors on a shared box.
+`test_symbol_daemon_autostart.py:681` (`<2.5`), and ~8 others. The audit flagged them as
+candidates for the same-run-ratio treatment the repo already applied to
+`test_index_lock_concurrency.py` after two flakes.
+
+**On inspection, the two tightest — the ones most likely to flake — should stay as they are.**
+Both are documented, not naive:
+
+| site | bound | against | margin |
+|---|---|---|---|
+| `test_cli_deadline_coverage_gaps.py:716` | `<0.6` | 0.15s budget; ~0.8s if the deadline is dropped | 4× the budget, 25% under the failure signal |
+| `test_symbol_daemon_autostart.py:681` | `<2.5` | `_DAEMON_START_TIMEOUT_SECONDS` = 5.0s | exactly half the blocking threshold |
+
+Applying this repo's own "classify each match, do not sweep" rule — *does some other assertion
+already prove what this one claims?* — the answer is no in both cases. Nothing else shows the
+deadline was threaded into the warm scan; and `len(spawn_calls) == 1` proves a spawn happened, not
+that it was **non-blocking**. Each timing assert is the **sole proof of its property**, and each
+bound was derived from the real failure signal rather than picked.
+
+Converting them to same-run ratios would require manufacturing a baseline arm (an unbounded run)
+that does not exist in either test. That is added machinery and added risk for no gain.
+
+**Disposition: no change.** The remaining ~8 looser bounds (`<4.0`, `<10.0`, `<40.0`) are lower
+flake risk still and were not individually adjudicated — stated rather than swept.
 
 ### REFUTED (reported per the standard — a refutation is a complete deliverable)
 
@@ -411,10 +431,10 @@ every Rust wave is a CI round-trip with no local red arm.
 | Priority | Action | Files | Validation |
 |---|---|---|---|
 | ~~P1~~ | ~~Wire `tests/eval` into CI (TEST-005)~~ | `ci.yml` | **Done** — a separate gating step *after* the unit run (so it cannot mask them, which is what the original exclusion protected), single matrix leg, 3 tests / 138s verified passing first |
-| P1 | Live two-producer envelope diff (DC-002) | new test | Must fail when one producer is mutated |
+| ~~P1~~ | ~~Live two-producer envelope diff (DC-002)~~ | — | **Done** — `test_producer_envelope_parity.py`, gated in `native-build-smoke` with `TG_PARITY_REQUIRE=1` so a missing binary fails rather than skips. It found DC-003 by hand before it was even automated. |
 | ~~P2~~ | ~~Resolve `pytest.mark.gpu` dead hook (TEST-004)~~ | — | **REFUTED** — the marker is applied via `pytestmark = [...]`; the originating grep matched only the decorator form. Actioning it would have deleted a live skip gate |
 | P2 | Document the daemon HMAC protocol (§9 #12) | new doc | — |
-| P3 | Convert absolute wall-clock asserts to same-run ratios (TEST-006) | ~10 test files | Copy `test_index_lock_concurrency.py`'s pattern |
+| ~~P3~~ | ~~Convert absolute wall-clock asserts (TEST-006)~~ | — | **Inspected, no change warranted** — the two tightest are each the sole proof of their property, with bounds derived from the real failure signal. See TEST-006. |
 | P3 | Classify the 11 tautological range asserts (TEST-002) | 11 sites | Check each scorer's clamp |
 
 ### Repository reconciliation (HYG-001) — replaces "merge all worktrees"
@@ -469,8 +489,8 @@ the red arm impossible to write.)*
 | 4 | `ruff check` clean on tracked scope | — | ✅ Done |
 | 5 | PR #1017 green on CI | _owner_ | ⏳ In flight |
 | 6 | TEST-005: `tests/eval` wired into CI as a gating step | — | ✅ Done |
-| 7 | DC-002: live two-producer envelope diff | _owner_ | ☐ Open |
-| 8 | TEST-004 | — | ❌ Refuted on re-verification — no action |
+| 7 | DC-002: live two-producer envelope diff | — | ✅ Done |
+| 8 | TEST-004 / TEST-006 | — | ❌ Refuted / inspected — no action |
 | 9 | Daemon HMAC protocol documented | _owner_ | ☐ Open |
 | 10 | Branch/worktree reconciliation per §10 | _owner_ | ☐ Open |
 | 11 | **CEO decision on PR #966** ("not GREEN, do not merge") | **CEO** | ☐ Escalated |
