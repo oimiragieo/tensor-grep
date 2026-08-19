@@ -12,10 +12,29 @@ limit, given that **they cannot get there by moving code**.
 
 | module | total | lines LOCKED to this file | reachable by splitting? |
 |---|---|---|---|
-| `cli/repo_map.py` | 19,708 | **11,025** | no |
-| `cli/main.py` | 17,605 | **9,453** | no |
-| `cli/mcp_server.py` | 7,876 | **5,554** | no |
-| *(`cli/agent_capsule.py`)* | *3,652* | *1,190* | *yes — wave 4* |
+| `cli/repo_map.py` | 19,708 | **11,731** | no |
+| `cli/main.py` | 17,605 | **10,172** | no |
+| `cli/mcp_server.py` | 7,876 | **5,852** | no |
+| *(`cli/agent_capsule.py`)* | *3,652* | *1,527* | *no — see correction* |
+
+> **CORRECTED 2026-08-19, same day.** The first version of this table read 11,025 / 9,453 / 5,554 /
+> **1,190**, from a tool that omitted the most obvious members of the locked set: **the patched
+> functions themselves.** `monkeypatch.setattr(mod, "f", ...)` rebinds an attribute on that module,
+> so `f` must live there — yet the tool locked only the functions that *reference* `f`. All nine of
+> `agent_capsule`'s patched symbols are top-level functions in it, and none was counted.
+>
+> The error ran in the **dangerous direction**: a too-low floor reads as permission to split.
+> `agent_capsule.py` was briefed to wave 4 as "viable" at 1,190 when the true floor was 1,527 —
+> above the limit. The wave succeeded anyway, but by using the escape hatch in §3 on one function,
+> not because the brief was right.
+>
+> Only the tool's stated *"this is a lower bound; a number under the limit is encouraging, not a
+> guarantee"* kept that from being a wasted wave. **A tool honest about its direction of error stays
+> useful when it is wrong.**
+>
+> The corrected tool now reports 10 functions / 1,527 lines for `agent_capsule`, matching what the
+> wave-4 agent derived independently. The three larger modules moved further **over** the limit, so
+> every "no" above strengthens.
 
 **Why anything is locked at all.** Python resolves a bare name through the *defining* module's
 globals. A test does `monkeypatch.setattr(main, "resolve_native_tg_binary", fake)`; that rebinds an
@@ -37,16 +56,33 @@ This was learned the expensive way in wave 3, *after* an agent had been dispatch
 | | Route A — late binding | Route B — repoint the tests |
 |---|---|---|
 | what changes | bare calls inside the module become attribute lookups | every test patch site moves to the new module path |
-| `main.py` | 102 | 378 |
-| `repo_map.py` | 166 | 295 |
-| `mcp_server.py` | 69 | 105 |
-| **total edits** | **337** | **778** |
-| files touched | **3** | **79 test files** |
+| `main.py` | 102 | 376 |
+| `repo_map.py` | 166 | 296 |
+| `mcp_server.py` | 125 | 115 |
+| **total edits** | **393** | **787** |
+| files touched | **3** | **75 distinct test files** (82 module-file pairs; 7 shared) |
 | verifiable how? | an AST query: *"is there any bare call to a patched name left?"* | by reading each edit |
 | failure mode if wrong | the call breaks loudly at runtime | **a test silently patches the wrong module and passes** |
 
+> **CORRECTED 2026-08-19 (second correction to this doc).** The first version of this table
+> read 102 / 166 / **69** / **337**, measured by `scripts/cost_split_floor_routes.py` while it
+> resolved its repo root from a **hardcoded absolute path** — so every run measured one
+> particular checkout no matter where it was invoked, and that checkout sits on an unrelated
+> branch with dozens of uncommitted files. Its sibling `scripts/measure_split_floor.py` already
+> resolved the root from `__file__`; the two disagreed, and the wrong one produced these numbers.
+>
+> The script is fixed and the table above is re-measured against real `main`. **The
+> recommendation is unaffected** — Route A still wins ~2× (393 vs 787), and it is still 3 files
+> against 75. (Both the old "79" and the raw new "82" were per-module SUMS; 7 test files patch
+> more than one of the three modules, so Route B's real blast radius is the union, 75.)
+> **The SEQUENCING rationale in §5 was not unaffected**, and is corrected there.
+>
+> Same lesson as the split-floor tool one section up, from the opposite direction: that tool was
+> honest about erring LOW and stayed usable when wrong. This one gave no indication it was
+> reading a different tree at all, so nothing about its output invited a second look.
+
 **Route A is 2.3× less work, lives in 3 files instead of 79, and its failure mode is loud.**
-Route B's failure mode is precisely the false green this campaign exists to prevent, repeated 778
+Route B's failure mode is precisely the false green this campaign exists to prevent, repeated 787
 times with no gate that can see it.
 
 **Recommendation: Route A.**
@@ -79,13 +115,14 @@ file `_probe` ends up in. The function is now free to move.
 when its own body executes, so `from tensor_grep.cli import main` inside `main.py` is circular.
 `sys.modules[__name__]` is the same object, already registered, and costs one dict lookup.
 
-The work concentrates in a handful of hot symbols, which is what makes 337 tractable:
+The work concentrates in a handful of hot symbols, which is what makes 393 tractable:
 
 - `repo_map.py`: `build_repo_map` ×15, `_read_source_text_cached` ×14,
   `_deadline_monotonic_from_seconds` ×11, `_iter_repo_files` ×8, `build_symbol_defs_from_map` ×7
 - `main.py`: `_native_tg_version_matches` ×12, `resolve_native_tg_binary` ×7,
   `_maybe_symbol_command_via_running_daemon` ×6, `_doctor_tg_candidate_version` ×5
-- `mcp_server.py`: `resolve_native_tg_binary` ×3, `_embedded_rewrite_available` ×3
+- `mcp_server.py`: `_inject_mcp_contract_fields` **×54**, `resolve_native_tg_binary` ×3,
+  `_embedded_rewrite_available` ×3, `Pipeline` ×2, `_execute_embedded_rewrite_json` ×2
 
 ## 4. The gate that makes it safe
 
@@ -96,7 +133,7 @@ AST query the costing tool already runs:
 > patched symbol.
 
 Ship that as a test **before** any conversion, with the count pinned at its current value (102 /
-166 / 69) and ratcheting to zero — exactly the pattern `scripts/file_size_budget.py` already uses.
+166 / 125) and ratcheting to zero — exactly the pattern `scripts/file_size_budget.py` already uses.
 Then the conversion cannot be partially done and believed complete, and a future edit cannot
 reintroduce a bare call.
 
@@ -107,8 +144,20 @@ comment.
 ## 5. Sequencing, and the honest risk
 
 1. Ship the bare-call ratchet with counts pinned at today's values. No behaviour change.
-2. Convert one module — **`mcp_server.py` first**: fewest edits (69), fewest test files (7), and the
-   smallest blast radius of the three.
+2. Convert one module — **`mcp_server.py` first**, but NOT for the reason first given here.
+   It does not have the fewest edits: at 125 it sits between `main.py` (102) and `repo_map.py`
+   (166). It goes first because of **blast radius and shape**, which the corrected numbers
+   actually strengthen:
+
+   - **8 test files** depend on it, against 19 for `main.py` and 55 for `repo_map.py`. If a
+     conversion goes wrong, this is much the cheapest place to find out.
+   - **54 of its 125 sites are a single symbol** (`_inject_mcp_contract_fields`). That is 43% of
+     the module's Route A work in one mechanically uniform, uniformly reviewable pattern —
+     whereas `main.py`'s heaviest symbol appears 12 times and its 102 sites are spread thin.
+
+   A raw edit count was the wrong metric to sequence on: 102 scattered one-off edits across 19
+   test files' worth of surface is not obviously safer than 125 edits of which 54 are the same
+   line.
 3. Only then split it. The split becomes ordinary once the floor is gone.
 4. Repeat for `main.py`, then `repo_map.py` (largest, and 54 test files depend on it).
 
@@ -121,7 +170,7 @@ comment.
   `run_gpu_native_benchmarks.py`.
 - The split-floor measure is a **lower bound**. It does not model class methods, closures, or
   `global` rebinding, and it is blind to `spec_from_file_location`-loaded modules. Converting all
-  337 may not drop the locked set to zero. Re-measure after each module rather than assuming.
+  393 may not drop the locked set to zero. Re-measure after each module rather than assuming.
 - **This is a design project, not a cleanup wave.** It should get an adversarial review before any
   code moves — the repo's own rule for load-bearing changes — because the failure mode it is
   guarding against is invisible to a passing test suite.

@@ -3348,3 +3348,203 @@ Work like this:
 
 Do not use code-intelligence budget flags as `tg search` options; scope `tg search` with paths, globs, file types, and depth.
 
+
+## The Instrument Fails More Than The Subject: 12 vs 5 In One Audit (2026-08-19)
+
+A full enterprise audit + 13-PR remediation. **Eight classic security vectors were probed and
+eight came back already hardened.** The real defects were ~5, and **12 instrument failures**
+occurred while finding them — **5 of the 12 were the auditor's own probes, not the codebase's.**
+
+In a repo this heavily pre-hardened, that ratio is the finding: budget verification effort on
+the assumption that your measurement is wrong before the code is. Every one of the 12 was caught
+by a CONTROL, never by re-reading code — reading code confirms what the code says, and in each
+case the code and the measurement disagreed.
+
+### A path filter is an ENUMERATION, and enumerations drift — three holes, one class
+
+`ci.yml`'s cost-smart `changes` job gates the expensive lanes on a hand-written path list. Three
+populations were missing from it, and each produced a **green PR that had tested nothing
+relevant**:
+
+| unwatched | what silently skipped | fixed |
+|---|---|---|
+| `scripts/`, `benchmarks/` | every test lane — a 3,500-line refactor merged having run zero tests | #1022 |
+| `docs/`, `.claude/skills/` | the doc/skill governance suites, in a repo whose documented failure mode is docs contradicting the product | #1024 |
+| `docs/` -> `static-analysis` | **the formatter** — `ruff format` formats Python inside markdown fences, so a docs PR reddened `main` and surfaced on an unrelated code PR | #1027 |
+
+**None of the three was found by reading `ci.yml`.** All three were found by noticing
+**unexpanded matrix placeholders** in a check-run list — `test-python (${{ matrix.os }}, ...)` is
+what a never-instantiated job looks like, and it is visually identical to a pass in any summary
+that counts `failures == 0`. **Require EXPANDED lane names before calling a PR green.**
+
+The third was self-inflicted: the remediation shipped a doc through the hole the previous fix had
+just documented.
+
+### A limitation you have WRITTEN DOWN is not a limitation you have APPLIED
+
+The monkeypatch binding auditor is blind to modules loaded via `spec_from_file_location`. That was
+documented in the tool's own PR message (#1018) — and a refactor brief was written against it two
+hours later ("zero patch sites, risk is low"; the real count was ~150). Only converting it into a
+MECHANISM stopped it: the tool now prints a `SPEC-LOADED` warning and exits 1 rather than
+reporting a confident zero. **A prose limitation gets violated by its own author.**
+
+### A CI job's NAME is not its failure
+
+`Formatting & Linting` failed on **mypy** — that job runs both. Reproducing the wrong tool wasted
+a cycle; reading the log gave the answer in one step.
+
+### Splitting a file has a HARD FLOOR set by test-patch topology
+
+Python resolves bare names through the **defining module's** globals, so every function
+referencing a monkeypatched name by bare identifier must stay physically co-located with wherever
+the test's `setattr` lands. For `run_gpu_native_benchmarks.py` that call-graph closure is
+**1,752 lines / 17 functions** — the file cannot reach a 1,500-line limit by splitting at all.
+
+**Derive the closure of monkeypatched names before scoping a split wave. A line count is not a
+split plan.** Expect the same wall on `cli/main.py` and `cli/repo_map.py`; those need dependency
+injection, not file moves. Lowering a ratchet pin is the honest outcome there — forcing the number
+down means changing behaviour to satisfy a gate, which is the failure the gate exists to prevent.
+
+### mypy strict makes a facade re-export a SPLIT-ONLY failure class
+
+After a split, `from .impl import X` in the facade is a PRIVATE binding under
+`implicit_reexport = false`: runtime resolves it, mypy fails `attr-defined`. It cannot appear
+before the split, because the symbol was locally defined and nothing was re-exported. Use
+`from .impl import X as X`, and re-check that `ruff --fix` did not merge the import blocks back
+together — its organiser silently dropped six names from a merged block in this same campaign.
+
+### Four more, each a probe rather than a subject
+
+- **`cp` from a stale tree into a fresh worktree reverted 65 commits of `ci.yml`** — the `changes`
+  job, ten `needs:` guards, a security-test guard from PR #1010, and a matrix exclusion — and
+  MERGED GREEN, because nothing compares a workflow file to the version it replaces. Edit the
+  fresh copy in place.
+- **A byte-identical control run from `/tmp`** returned exit 1 and 0 bytes because the script
+  resolves its repo root from `__file__`; the verdict read "DIFFERS". A 0-byte difference is the
+  shape most easily misread as a real finding.
+- **A CI monitor built on `jq`, which is not installed here**, emitted nothing for twenty minutes.
+  Silence is indistinguishable from "still running".
+- **`grep -c` counted the fix's own docstring** — twice — and each time appeared to contradict a
+  correct agent. Count AST nodes, not substrings.
+
+### What worked, and is worth repeating
+
+- **A grandfathered fail-closed RATCHET beat a big-bang refactor.** A 7-seat council was 7/7
+  against the big bang. The ratchet then caught the campaign's OWN work three times, and each time
+  the correct move was to obey it rather than re-pin around it.
+- **A gate that derives its own census.** Every hand-scoped count of the violating population was
+  wrong (19 -> 33 -> 35). Numbers must come from the product at execution time.
+- **Subagents told to distrust the brief.** Briefs were wrong in FOUR consecutive waves and the
+  agent caught it every time. State plainly that prior briefs were wrong and that a false premise
+  is a finding, not a failure.
+- **AST-equality as the split proof** (`ast.dump(ast.parse(ast.unparse(node)))`, 0 missing / 0
+  extra / 0 mismatched) — stronger than a passing suite, and obtainable when no runtime baseline
+  exists.
+
+## A Tool Honest About Its Direction Of Error Stays Useful When It Is Wrong (2026-08-19)
+
+Same-day sequel to the instrument law above, and the sharpest single receipt in it.
+
+`scripts/measure_split_floor.py` was built to answer "can this file reach the line limit by
+splitting?" It measures the lines welded to a module by test patches. Its first version **omitted
+the most obvious members of that set: the patched functions themselves.**
+`monkeypatch.setattr(mod, "f", ...)` rebinds an attribute on `mod`, so `f` must be defined in `mod`
+— but the tool locked only the functions that *reference* `f`. All nine of `agent_capsule.py`'s
+patched symbols are top-level functions in it, and none was counted.
+
+Reported floor **1,190** ("split is viable"). Real floor **1,527** — above the limit.
+
+**Two things made this a correction instead of a wasted wave:**
+
+1. **The tool declared its direction of error.** Its docstring said *"this is a LOWER bound; a
+   number over the limit is decisive, a number under it is encouraging, not a guarantee."* That
+   sentence is the whole reason a wrong number stayed safe: the "cannot split" verdicts were
+   unaffected (undercounting only pushes them further over), and the one verdict the error could
+   corrupt — "viable" — was already labelled as non-binding.
+2. **The dispatched agent re-derived rather than trusting the brief**, and reported the mismatch as
+   a finding. Fifth consecutive wave in this campaign where the brief was wrong and the agent
+   caught it.
+
+### The transferable rules
+
+- **When you build a measuring tool, state which way it errs, in the tool.** Not "this is
+  approximate" — *which direction*, and *which conclusion that makes unsafe*. A tool that says "I
+  under-report" lets a reader keep the half of its output that still holds.
+- **The dangerous direction is the permissive one.** Here a too-low floor reads as permission to
+  act. Bias any estimate that gates an action toward over-reporting the obstacle.
+- **Cross-validate a new tool against an independently derived answer before briefing from it.**
+  The corrected tool now returns 10 functions / 1,527 lines, matching the agent's independent
+  derivation exactly. That agreement is what makes it trustworthy — not that it ran clean.
+- **A locked function can be locked transitively without being patched itself**, and that is the
+  escape hatch. `build_agent_capsule_from_map` (834 lines) was locked only because it bare-called
+  three patched names; rewriting those three call sites to qualified lookups freed the whole
+  function. Route A from `docs/design/2026-08-19-split-floor-escape.md` works at function
+  granularity, so a file can be rescued by converting a handful of call sites rather than all 337.
+
+## A Green Gate Bounds One Failure Mode, Never The Family It Belongs To (2026-08-19, merge wave)
+
+Six receipts from landing five PRs in one evening. Every one is a check that was **working
+exactly as designed** and still let something through, because the thing it caught and the
+thing that bit were neighbours rather than the same defect.
+
+| the gate | what it genuinely catches | what walked past it |
+|---|---|---|
+| `test_skill_library_drift` | a citation pointing **past the end** of a file | a citation that still **resolves** and now points at unrelated code |
+| a PR's own CI | that branch, against the base it was cut from | a conflict with a second PR that is also green |
+| `for i in 1 2 3; do … done` | a transient failure on attempts 1–2 | **exhaustion** — the loop exits 0 on its last iteration regardless |
+| `file_size_budget` | growth of an allowlisted file | growth re-pinned in the same commit, which the gate then calls clean |
+| a 30s wall-clock bound | a drain regression | PowerShell's startup, which is what it was actually measuring |
+| `gh pr checks` | a job that ran and failed | a job that **never instantiated** (`${{ matrix.os }}` unexpanded) |
+
+**The wrong-target citation is the sharpest one.** Wave 4 took `agent_capsule.py` from 3,652 to
+926 lines. CI failed six citations for pointing past 926 — correct, and it fixed itself into
+looking complete. A seventh, `code-search-and-retrieval-reference/SKILL.md`'s `:294`, stayed
+**green**, because 294 is inside 926; it had simply stopped describing the symbol it named. Only
+a grep for every citation into the split file found it. **After shrinking a file, the gate's
+silence covers exactly the citations it cannot judge.**
+
+And a split moves symbols between FILES, not just lines: `_CAPSULE_INLINE_CALLER_ANNOTATION_ENV`
+landed in a new `agent_capsule_constants.py`, so its citation was wrong in both coordinates.
+Grep the SYMBOL across `src/`, never inside the file you split.
+
+### The corollaries worth carrying
+
+- **A retry added to fix a hang can silently reintroduce the failure it was guarding.** Bounding
+  the CI ripgrep install needed three attempts around `apt-get`; a bash `for` loop exits 0 on its
+  final iteration whether or not the body worked, so an exhausted retry would have handed the job
+  on with no `rg` — and the rg-parity suites then resolve nothing and **silently skip**, the exact
+  outcome that step exists to prevent. Assert the POSTCONDITION (`command -v rg`), never the
+  loop's status.
+- **A ratchet you re-pin is a cost, not a pass.** `file_size_budget` failed its own author on its
+  first real encounter (`main.rs` 15094 → 15159). Folding a stale paragraph recovered a few lines;
+  the residual +33 was genuine, so the pin moved. That is legitimate and it is also the weakest
+  possible outcome — record the bump and the reason it was not avoidable, or the gate quietly
+  becomes a comment.
+- **Two green PRs are not a green union, and the collision does not need to be subtle.** #1025
+  retires two allowlist entries, #1033 retires a third, and the entries are adjacent lines — git
+  conflicts, both PRs are green, and neither CI run can see it because each ran against its own
+  base. Merge a union locally and run the gate on it BEFORE queueing.
+- **Before blaming the runner for a hung job, look at its siblings in the same run.**
+  `native-build-smoke (ubuntu-latest)` sat 2h21m, then 29m, then 39m on `apt-get install ripgrep`
+  while macOS (9m51s), macOS-intel (11m35s) and windows (11m39s) finished normally in the SAME
+  runs. A degraded box moves its siblings; they never moved. Then it passed in 6 minutes on the
+  next attempt — so the flake is intermittent, which is the argument for `timeout-minutes`
+  rather than for reruns.
+- **An unbounded step is indistinguishable from a slow one.** It emits nothing, so hours pass
+  before anyone looks. Any step that reaches the network gets a timeout.
+
+### Instrument notes from the same wave
+
+- **`gh run view --log-failed` returns EMPTY while the RUN is in progress, even when the JOB has
+  completed and failed.** Query the job by id (`gh api …/actions/jobs/<id>/logs`). An empty log
+  read as "no failures" is the false zero this file has now paid for repeatedly.
+- **Grep the log for `error` and you match `--error-format=json` in every rustc invocation.**
+  Strip the timestamp, anchor the pattern, and count before reading.
+- **A cancellation you performed reads as a 9-job failure.** The tell is unexpanded
+  `${{ matrix.os }}` in the check name: those jobs never instantiated, so they cannot have failed.
+- **Python eats a trailing backslash in a non-raw string.** Anchor text copied out of Rust or
+  bash that ends lines with `\` silently joins, and the replace then matches nothing — twice in
+  one session. Use `r"""…"""` for any anchor carrying an escape.
+- **Require `count == 1` before any scripted replace.** That assertion caught two different tests
+  in `main.rs` sharing a byte-identical timed-run block; a blind replace would have edited the
+  wrong test and looked fine.

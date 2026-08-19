@@ -27,10 +27,16 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
+# Resolve the root from THIS FILE, never from an absolute path. A hardcoded cwd made
+# every run measure one particular checkout no matter where it was invoked -- so running
+# it inside a worktree silently reported the other tree's numbers, and on any other
+# machine it would not run at all. `scripts/measure_split_floor.py` already did this
+# correctly; the two siblings disagreed, and the wrong one produced the figures that
+# reached the design doc.
 ROOT = Path(
     subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        cwd=r"C:\dev\projects\tensor-grep",
+        cwd=Path(__file__).resolve().parent,
         capture_output=True,
         text=True,
         check=True,
