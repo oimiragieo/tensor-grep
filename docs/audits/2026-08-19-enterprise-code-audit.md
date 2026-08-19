@@ -119,7 +119,7 @@ cannot yet say *"enterprise size-compliant."*
 | **Unit tests** | ✅ PASS with gaps | Medium | 389 files; duplicate-test-name class **absent** (verified). TEST-005: `tests/eval/` never invoked by CI | Wire the eval gate into CI |
 | **Mocks & fixtures** | ✅ PASS | Low | `tests/fixtures/` < 3k LOC total; **no secrets** (scanned); no oversized shared fixture | — |
 | **Security** | ✅ PASS | — | 8 vectors probed, 8 refuted, each with citation | — |
-| **Operations / CI** | ⚠️ PARTIAL | Medium | 26 CI jobs; TEST-004: `pytest.mark.gpu` skip hook is dead code | Remove the hook or apply the marker |
+| **Operations / CI** | ✅ FIXED | Medium | TEST-005: the eval gate had no CI invocation path — now a gating step. TEST-004 **refuted**, the gpu hook is live | Keep the eval step gating |
 | **Documentation** | ✅ PASS with drift | Medium | 16/20 sections present or partial; DOC-001/002 fixed this pass | §9 gaps |
 | **Repo hygiene** | ❌ FAIL | Medium | 54 worktrees, ~140 branches, 1 open PR marked "do not merge" | §10 reconciliation |
 
@@ -254,13 +254,27 @@ the things that actually constrain behaviour — rather than a spec that does no
 - **Remediation:** run the native binary and the Python sidecar on one fixture repo and diff the
   envelopes.
 
-### TEST-004 — `pytest.mark.gpu` skip hook is dead code · **LOW** · OPEN
+### TEST-004 — `pytest.mark.gpu` skip hook is dead code · ❌ **REFUTED 2026-08-19**
 
-- **Evidence:** `tests/conftest.py:27-33` implements a `pytest_collection_modifyitems` hook skipping
-  `gpu`-keyword items without CUDA. Repo-wide grep for `pytest.mark.gpu` usage: **zero**, despite the
-  marker being declared at `pyproject.toml:37`.
-- **Risk:** either vestigial, or GPU tests are running unconditionally and relying on internal
-  `torch.cuda.is_available()` checks. Either way the declared safety net is inert.
+**The finding was wrong, and the way it was wrong is the lesson.**
+
+- **Claimed:** `tests/conftest.py` implements a `pytest_collection_modifyitems` hook skipping
+  `gpu`-keyword items without CUDA, but a repo-wide grep for `pytest.mark.gpu` returned **zero**
+  usages — so the safety net was inert.
+- **Reality:** the marker is applied at (at least) `tests/integration/test_cudf_read_text.py:3`,
+  `test_gpu_memory.py:5`, and `test_pipeline_e2e.py:3` — all via
+  `pytestmark = [pytest.mark.gpu, pytest.mark.integration]`. The originating grep matched only the
+  **decorator** form `@pytest.mark.gpu` and could never have matched the module-level list form.
+- **Mechanism of the error:** a zero from a grep is UNRESOLVED, not ABSENT — the guard was present
+  in a shape the search did not cover. This repo has a named law for exactly this, and the audit
+  reproduced it anyway.
+- **Consequence had it been actioned:** "removing vestigial code" would have deleted a live skip
+  gate, and every GPU test would then have run unconditionally on non-CUDA runners.
+- **Disposition:** no change. Recorded rather than deleted, so the refutation survives.
+
+*A refutation is a complete deliverable. This one is kept prominently because it was found by
+re-verifying a sub-agent's finding against the tree before acting on it — which is the only step
+that separates a wrong finding from a wrong fix.*
 
 ### DOC-001 / DOC-002 — Stale language-tier claims · **MEDIUM** · ✅ FIXED
 
@@ -304,6 +318,7 @@ Contention detectors on a shared box.
 | Duplicate test names shadowing coverage | **Refuted** — zero hits repo-wide |
 | Secrets in fixtures | **Refuted** — zero hits |
 | Mutable default arguments | **Refuted** (weak negative — standard pattern, large file set) |
+| `pytest.mark.gpu` hook is dead code | **Refuted on re-verification** — applied via `pytestmark = [...]` at 3+ integration files; the originating grep matched only `@pytest.mark.gpu`. This one was a *finding of this audit*, caught before it became a wrong fix |
 
 ---
 
@@ -395,9 +410,9 @@ every Rust wave is a CI round-trip with no local red arm.
 
 | Priority | Action | Files | Validation |
 |---|---|---|---|
-| P1 | Wire `tests/eval` into CI (TEST-005) | `ci.yml` | The gate is *seen failing* on a seeded regression before being trusted |
+| ~~P1~~ | ~~Wire `tests/eval` into CI (TEST-005)~~ | `ci.yml` | **Done** — a separate gating step *after* the unit run (so it cannot mask them, which is what the original exclusion protected), single matrix leg, 3 tests / 138s verified passing first |
 | P1 | Live two-producer envelope diff (DC-002) | new test | Must fail when one producer is mutated |
-| P2 | Resolve `pytest.mark.gpu` dead hook (TEST-004) | `conftest.py`, `pyproject.toml` | — |
+| ~~P2~~ | ~~Resolve `pytest.mark.gpu` dead hook (TEST-004)~~ | — | **REFUTED** — the marker is applied via `pytestmark = [...]`; the originating grep matched only the decorator form. Actioning it would have deleted a live skip gate |
 | P2 | Document the daemon HMAC protocol (§9 #12) | new doc | — |
 | P3 | Convert absolute wall-clock asserts to same-run ratios (TEST-006) | ~10 test files | Copy `test_index_lock_concurrency.py`'s pattern |
 | P3 | Classify the 11 tautological range asserts (TEST-002) | 11 sites | Check each scorer's clamp |
@@ -453,9 +468,9 @@ the red arm impossible to write.)*
 | 3 | DOC-001/002 language-tier drift corrected | — | ✅ Done (#1017) |
 | 4 | `ruff check` clean on tracked scope | — | ✅ Done |
 | 5 | PR #1017 green on CI | _owner_ | ⏳ In flight |
-| 6 | TEST-005: `tests/eval` wired into CI **and seen failing on a seeded regression** | _owner_ | ☐ Open |
+| 6 | TEST-005: `tests/eval` wired into CI as a gating step | — | ✅ Done |
 | 7 | DC-002: live two-producer envelope diff | _owner_ | ☐ Open |
-| 8 | TEST-004: `pytest.mark.gpu` hook resolved | _owner_ | ☐ Open |
+| 8 | TEST-004 | — | ❌ Refuted on re-verification — no action |
 | 9 | Daemon HMAC protocol documented | _owner_ | ☐ Open |
 | 10 | Branch/worktree reconciliation per §10 | _owner_ | ☐ Open |
 | 11 | **CEO decision on PR #966** ("not GREEN, do not merge") | **CEO** | ☐ Escalated |
@@ -499,6 +514,17 @@ transferable output:
    PR's actual base.
 6. **A marker-file premise check returned `branch=0` for three audit branches** because the file path
    was wrong. Reported as UNRESOLVED, not as absent — a grep zero is not evidence.
+7. **A finding of this audit was itself wrong** (TEST-004). A sub-agent grepped `@pytest.mark.gpu`,
+   found zero, and concluded the skip hook was dead code. The marker is applied via
+   `pytestmark = [pytest.mark.gpu, ...]` — the list form the decorator pattern cannot match.
+   Acting on it would have deleted a live gate. Caught only by re-verifying the finding against
+   the tree before touching anything, which is the single step separating a wrong finding from a
+   wrong fix.
+
+**The pattern across all seven: the instrument failed, not the subject.** Five were searches whose
+zero meant "did not look there" rather than "not present"; two were toolchain or staleness
+artifacts. None was caught by re-reading code — reading code confirms what the code says, and in
+every one of these the code and the measurement disagreed. Each was caught by a control.
 
 **Not completed.** Everything in §1's "evidence unavailable" list, plus: the `.claude/skills/`
 corpus was sampled rather than audited (one skill file is known to carry four contradicting values of
