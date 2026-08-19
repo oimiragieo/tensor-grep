@@ -33,6 +33,34 @@ jobs:
       - name: Validate PR title for semantic release
         run: python scripts/validate_pr_title_semver.py
 
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.code.outputs.code }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          fetch-depth: 0
+      - id: code
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            # `scripts` and `benchmarks` added 2026-08-19. Their omission was a hole,
+            # not a saving: scripts/ holds validate_release_assets.py (gates the
+            # release), check_repo_hygiene.py (its own CI job) and file_size_budget.py
+            # (the size ratchet). A PR touching only scripts/ therefore skipped
+            # test-python, test-rust-core and Formatting & Linting and reported green
+            # having tested nothing -- while tests/unit/test_release_assets_validation.py
+            # (5,258 lines) exists purely to test one of those files. The suite ran when
+            # the TESTS changed but not when their SUBJECT did. Measured on PR #1021: a
+            # 3,500-line refactor of validate_release_assets.py, fully green, every test
+            # lane `conclusion: skipped`. Pinned by tests/unit/test_ci_code_path_filter.py.
+            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)
+          else
+            CODE_FILES="main-push"
+          fi
+          if [ -n "$CODE_FILES" ]; then echo "code=true" >> "$GITHUB_OUTPUT"; else echo "code=false" >> "$GITHUB_OUTPUT"; fi
+
   repo-hygiene:
     name: repo-hygiene
     runs-on: ubuntu-latest
@@ -120,7 +148,8 @@ jobs:
 
   agent-readiness:
     name: agent-readiness
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -158,7 +187,8 @@ jobs:
 
   windows-agent-readiness:
     name: windows-agent-readiness
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -276,7 +306,8 @@ jobs:
 
   static-analysis:
     name: Formatting & Linting
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -371,7 +402,8 @@ jobs:
 
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -457,35 +489,33 @@ jobs:
         # job rather than repeating the claim as settled.
         run: uv run pytest tests -v --tb=short -m "not eval"
 
-      # The other half of the `-m "not eval"` exclusion above (audit finding TEST-005,
-      # 2026-08-19). Excluding tests/eval/ from the BLANKET run is correct and must stay:
-      # collection sorts tests/eval/ ahead of tests/unit/, and pyproject's `-x` fail-fast
-      # means one failure there would abort before a single unit test ran -- the
-      # flaky-e2e-masks-unit-tests trap this repo has already been bitten by once.
+      # The other half of the `-m "not eval"` exclusion above (audit finding TEST-005).
+      # Excluding tests/eval/ from the BLANKET run is correct and stays: collection sorts
+      # tests/eval/ ahead of tests/unit/, and `-x` fail-fast means one failure there would
+      # abort before a single unit test ran. But having correctly excluded it, nobody added
+      # the step that runs it -- the comment above tells a HUMAN to run it, and no
+      # automation follows an instruction. Measured: zero `run:` lines in any workflow
+      # invoked tests/eval. A gate nobody runs is worse than no gate, because it is believed.
       #
-      # But having correctly excluded it, nobody ever added the step that runs it. The
-      # comment above said "Run it explicitly via `pytest tests/eval -m eval -v -s`" --
-      # an instruction addressed to a human, which no automation follows. Measured: zero
-      # `run:` lines in any workflow invoked tests/eval, so a 15-case ranking regression
-      # gate read as covered and executed never. A gate nobody runs is worse than no gate,
-      # because it is believed.
-      #
-      # As a SEPARATE step it runs after the unit tests have already reported, so its
-      # failure can never mask them -- which is what the exclusion was protecting.
-      #
-      # Deliberately NOT continue-on-error: a non-gating accuracy gate is decorative.
-      # Single matrix leg on purpose: ~2m20s of real `tg prepare` subprocess calls, and
-      # ranking is platform-independent, so paying it 6x buys nothing. If a future
-      # regression ever proves platform-specific, widen this condition rather than
-      # softening the gate.
+      # A SEPARATE step, so it runs after the unit tests have reported and its failure can
+      # never mask them -- which is what the exclusion was protecting. Deliberately NOT
+      # continue-on-error: a non-gating accuracy gate is decorative. Single matrix leg:
+      # ~2m20s of real `tg prepare` subprocess calls, and ranking is platform-independent.
       - name: Agent-accuracy eval gate (tests/eval)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: uv run pytest tests/eval -v --tb=short -m eval
 
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
+    env:
+      # RUST-REPLACE-SYMLINK (PR #1010): promote CANNOT_MEASURE symlink-test skips to a panic so
+      # an unprivileged runner cannot go silent-green on the security arms. GitHub-hosted runners
+      # hold SeCreateSymbolicLinkPrivilege; if a leg reds here it is a real environment finding,
+      # not a product regression.
+      TG_REQUIRE_SYMLINK_TESTS: "1"
     # #145: nightly Rust is unstable by design (a wall-clock-timing test on this leg has blocked
     # the release gate 3x on wholly non-product flakes). Only the nightly leg is non-gating here --
     # it still RUNS and stays VISIBLE (so a real nightly regression is seen and can be triaged), but
@@ -500,6 +530,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust_channel: [stable, nightly]
+        # CI-cost discipline (thinktank-ratified): the macOS x nightly leg runs a
+        # non-gating signal (continue-on-error) at ~10x the Linux rate for zero release value.
+        # Nightly still runs on linux/windows every PR and all channels weekly via the cron.
+        exclude:
+          - os: macos-latest
+            rust_channel: nightly
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       
@@ -556,7 +592,8 @@ jobs:
   # build/test, no CUDA toolkit required) that runs on every PR so a break is caught immediately.
   cuda-feature-check:
     name: cuda-feature-check (${{ matrix.os }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -636,7 +673,8 @@ jobs:
 
   search-golden-parity:
     name: search-golden-parity (windows-latest)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -663,7 +701,8 @@ jobs:
 
   native-build-smoke:
     name: native-build-smoke (${{ matrix.os }})
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -781,9 +820,38 @@ jobs:
           python -m pip install --disable-pip-version-check -r "${RUNNER_TEMP:-/tmp}/tg-runtime-deps.txt"
           python -m pytest tests/e2e/test_native_*.py -v --tb=short -p no:cacheprovider
 
+      # DC-002: the ONLY job that can run this, for exactly the reason the comment above
+      # gives -- `test-python` has the deps but never builds the release binary; this job
+      # builds the binary and (since that fix) has the deps.
+      #
+      # The two JSON producers were each validated against the SAME committed
+      # docs/examples/*.json fixtures and never against each other, so a shared drift or a
+      # stale fixture was invisible to both suites. Doing the diff by hand found DC-003
+      # (#1020) in five minutes.
+      #
+      # TG_PARITY_REQUIRE=1 is the anti-skip guard: this test skips when no native binary
+      # is resolvable, which is right on a laptop and WRONG here, where the binary was just
+      # built two steps up. With the flag set, a missing binary FAILS instead of skipping --
+      # otherwise the test would quietly become a permanent no-op in the one job that can
+      # actually run it, and report as a passing suite.
+      - name: Producer envelope parity (DC-002)
+        shell: bash
+        env:
+          PYTHONPATH: src
+          TG_PARITY_REQUIRE: "1"
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            export TG_PARITY_NATIVE_BINARY="rust_core/target/release/tg.exe"
+          else
+            export TG_PARITY_NATIVE_BINARY="rust_core/target/release/tg"
+          fi
+          python -m pytest tests/unit/test_producer_envelope_parity.py -v --tb=short -p no:cacheprovider
+
   test-gpu-linux:
     name: test-gpu-nvidia (ubuntu-latest, cuDF)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -834,7 +902,8 @@ jobs:
 
   benchmark-regression:
     name: benchmark-regression (ubuntu-latest)
-    needs: smoke
+    needs: [smoke, changes]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
