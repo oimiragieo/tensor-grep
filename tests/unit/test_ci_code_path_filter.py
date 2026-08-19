@@ -164,6 +164,26 @@ def test_docs_governance_job_exists_and_is_gated_on_both_signals() -> None:
     assert "docs" in jobs["changes"]["outputs"], "the changes job must expose a docs output"
 
 
+def test_static_analysis_also_runs_on_docs_changes() -> None:
+    """`ruff format` formats Python inside markdown fences, so docs can break it.
+
+    Gating Formatting & Linting on `code` alone let a docs-only PR merge a fence whose
+    aligned trailing comments failed `ruff format --check --preview .` (PR #1023). The
+    break then surfaced on the next unrelated CODE PR, attributing it to the wrong
+    author and blocking work that had nothing to do with it.
+    """
+    import yaml
+
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+    condition = " ".join(str(workflow["jobs"]["static-analysis"]["if"]).split())
+    assert "outputs.docs" in condition, (
+        "Formatting & Linting must run on docs changes -- ruff formats Python blocks "
+        "inside markdown, so a docs-only PR can red the formatter gate with nothing "
+        "watching"
+    )
+    assert "outputs.code" in condition, "must still run on code changes"
+
+
 def test_docs_governance_runs_the_suites_that_catch_drift() -> None:
     """Pin the suite list. A silently-shrunk list is how this gate would decay."""
     source = CI_WORKFLOW.read_text(encoding="utf-8")

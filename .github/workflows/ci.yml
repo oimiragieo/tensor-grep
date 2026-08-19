@@ -368,7 +368,21 @@ jobs:
   static-analysis:
     name: Formatting & Linting
     needs: [smoke, changes]
-    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
+    # ALSO gated on `docs`, not just `code` (2026-08-19). `ruff format` formats Python
+    # blocks INSIDE markdown fences, so a docs-only PR can break `ruff format --check
+    # --preview .` -- and until now those PRs skipped this job entirely, so nothing
+    # caught it. Measured the hard way: PR #1023 merged a doc whose Python fence had
+    # aligned trailing comments, main's formatter gate went red, and the failure
+    # surfaced on the NEXT unrelated code PR (#1025) rather than on the change that
+    # caused it. Confirmed genuine rather than a Windows CRLF artifact by re-running
+    # the check on an LF copy of the same file.
+    #
+    # This is the cheap lane (one ubuntu runner), so widening it costs a docs PR a few
+    # minutes and buys back the ability to attribute a formatting break to its author.
+    if: >-
+      github.event_name != 'pull_request'
+      || needs.changes.outputs.code == 'true'
+      || needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read

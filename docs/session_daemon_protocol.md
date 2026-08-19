@@ -66,11 +66,11 @@ Every request carries the token in a top-level `"token"` field
 
 ```python
 if not self.token:
-    return False                                   # fail closed, see below
+    return False  # fail closed, see below
 provided = request.get(_DAEMON_TOKEN_FIELD)
 if not isinstance(provided, str) or not provided:
     return False
-return hmac.compare_digest(provided, self.token)   # constant time
+return hmac.compare_digest(provided, self.token)  # constant time
 ```
 
 `hmac.compare_digest` is required, not stylistic: a plain `==` short-circuits on the
