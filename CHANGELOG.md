@@ -1,6 +1,803 @@
 # CHANGELOG
 
 
+## v1.110.19 (2026-08-19)
+
+### Bug Fixes
+
+- Repair the formatter gate I broke in #1023, and make docs run it
+  ([#1027](https://github.com/oimiragieo/tensor-grep/pull/1027),
+  [`c2d654a`](https://github.com/oimiragieo/tensor-grep/commit/c2d654ae50cf3f53cb5115faf6ef97873ac5fb26))
+
+I RED-ED MAIN'S FORMATTER GATE AND ONLY FOUND OUT VIA AN UNRELATED PR.
+
+#1023 added docs/session_daemon_protocol.md with aligned trailing comments inside a ```python fence.
+  `ruff format` formats Python INSIDE markdown, so `ruff format --check --preview .` -- the exact CI
+  command -- goes red on it.
+
+It merged because `static-analysis` is gated on `changes.outputs.code`, and a docs-only PR sets that
+  false. The job never ran. The break then surfaced on #1025, an unrelated Wave-1 refactor, which is
+  the worst possible place: it attributes the failure to the wrong author and blocks work that had
+  nothing to do with it.
+
+Confirmed GENUINE, not the Windows CRLF artifact this repo has been bitten by: re-ran the check on
+  an LF-normalised copy of the same file and it still wanted the reformat. The diff is exactly the
+  comment alignment:
+
+- return False # fail closed, see below + return False # fail closed, see below
+
+TWO FIXES, one root cause.
+
+1. The doc is reformatted. `ruff format --check --preview` on an LF copy: clean.
+
+2. `static-analysis` now gates on `code OR docs`. This is the THIRD instance of the same hole in
+  this campaign -- scripts/ skipped the test lanes (#1022), docs skipped the governance suites
+  (#1024), and now docs skipped the FORMATTER. Each time the filter watched a narrower set than the
+  jobs behind it actually depend on.
+
+Deliberately widening only this ONE job rather than adding `docs` to the code filter:
+  static-analysis is a single ubuntu runner, so a docs PR pays a few minutes. Adding docs to the
+  code filter would drag 6 test-python legs, 5 rust legs and 4 native-build-smoke legs onto every
+  typo fix, which is the cost the cost-smart gate exists to avoid.
+
+Pinned by a test asserting the `if` references BOTH outputs, with the reason in the docstring so the
+  next person widening or narrowing it meets the argument rather than just the rule.
+
+18 filter tests pass; ruff check clean; the reformatted doc verified clean on LF.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **audit**: Announce the spec-loaded blind spot instead of reporting a false zero
+  ([#1030](https://github.com/oimiragieo/tensor-grep/pull/1030),
+  [`e8f4b80`](https://github.com/oimiragieo/tensor-grep/commit/e8f4b803cb4144deffcaf5a041ce677996a966b5))
+
+The auditor attributes patch sites to DOTTED MODULES. A file loaded via `spec_from_file_location`
+  and patched on the resulting object never enters the tensor_grep namespace, so it reports ZERO
+  sites -- a zero that says "safe to split" about a file whose every entry point is monkeypatched.
+
+That zero misled TWO refactor briefs. The second one was written AFTER the limitation had been
+  documented in this tool's own PR message (#1018). A limitation you have written down is not a
+  limitation you have applied; only a mechanism is. Hence this.
+
+WHAT IT DELIBERATELY DOES NOT DO
+
+It does not count symbols. The module is typically produced by a helper and handed to tests through
+  a fixture, so precise attribution needs cross-function dataflow. Inventing a number there would be
+  the same error in a new coat. It reports RISK at file granularity: "this target is spec-loaded by
+  N test files; the per-symbol count above is not valid for it." An honest "cannot enumerate" beats
+  a confident zero.
+
+TWO BUGS IN MY OWN FIX, BOTH CAUGHT BY TESTING IT AGAINST THE FILE THAT CAUSED IT
+
+1. `main()` returned early when no dotted module matched -- which is EXACTLY the state the blind
+  spot produces. The warning never printed in the only case it existed for. A fix that cannot fire
+  on its own motivating example. 2. The first detector only read path LITERALS passed to
+  `spec_from_file_location`. The real shape passes a VARIABLE (`root / rel_path`), with the paths in
+  a module-level list, so it matched almost nothing -- including, again, the exact file. Widened:
+  once a file is known to spec-load anything, every repo-relative `.py` constant in it is a
+  candidate target. Deliberately over-broad; a false "may be spec-loaded" costs one grep, a false
+  "clean" costs a silently-broken refactor.
+
+VERIFIED ON THREE ARMS, including the discriminating one
+
+--module run_gpu_native -> WARNS, exit 1, names both loading test files --module
+  validate_release_assets-> WARNS (wave 2's file, same shape) --module totally_nonexistent_xyz->
+  plain "no match", exit 2, NO warning
+
+The third arm is the one that matters: without it, a detector that flagged everything would pass the
+  first two and make `--module` useless, since every miss would look like a blind-spot hit.
+
+17 tests pass (4 new, incl. a positive control that an empty target set fails loudly). ruff clean;
+  file-size gate green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Continuous Integration
+
+- Restore the ci.yml clobbered in #1019, and widen the path filter to cover scripts/
+  ([#1022](https://github.com/oimiragieo/tensor-grep/pull/1022),
+  [`3294ea4`](https://github.com/oimiragieo/tensor-grep/commit/3294ea44c54bd2c0950490a4fb734bdcbfa463d6))
+
+* ci: restore the ci.yml I clobbered in #1019, and widen the path filter
+
+I BROKE MAIN AND THIS FIXES IT.
+
+Building #1019 I copied .github/workflows/ci.yml from my LOCAL working tree into a worktree cut from
+  origin/main. My local checkout sits on a branch 65 commits behind main, so the copy silently
+  reverted every ci.yml change in those 65 commits. It merged green because nothing compares a
+  workflow file to the version it replaced.
+
+Deleted by that merge, now restored:
+
+- the entire `changes:` cost-smart gate job - `needs: [smoke, changes]` + its `if:` guard on TEN
+  jobs - `TG_REQUIRE_SYMLINK_TESTS: "1"` on test-rust-core -- a security-test guard from PR #1010
+  that promotes CANNOT_MEASURE symlink skips to a panic, i.e. exactly an anti-silent-green control -
+  the macOS x nightly matrix exclusion (thinktank-ratified CI-cost discipline)
+
+Restored by checking out ci.yml at 76214da (the commit before my regression) and re-applying only my
+  two intended edits. The net diff against that file is now exactly those two additions and nothing
+  else -- verified by diffing rather than by reading.
+
+This is the "VERIFY AGAINST ORIGIN/MAIN, NOT STALE LOCAL" law in my own memory, violated by me, in
+  the same session in which I wrote a report about instrument failures. The class is not new; the
+  discipline is to never `cp` a whole file from a stale tree into a fresh worktree -- edit the fresh
+  copy in place.
+
+SECOND FIX, a real pre-existing hole found while diagnosing the first.
+
+The `changes` filter watched `src rust_core tests .github/workflows pyproject.toml Cargo.toml
+  Cargo.lock uv.lock`. It did NOT watch `scripts` or `benchmarks`.
+
+That is a hole, not a saving. scripts/ holds validate_release_assets.py (gates the release),
+  check_repo_hygiene.py (its own CI job) and file_size_budget.py (the size ratchet). A PR touching
+  only scripts/ therefore skipped test-python, test-rust-core and Formatting & Linting and reported
+  GREEN having tested nothing -- while tests/unit/test_release_assets_validation.py, 5,258 lines,
+  exists purely to test one of those files. The suite ran when the TESTS changed but not when their
+  SUBJECT did.
+
+Measured, not theorised: PR #1021 refactors 3,500 lines of validate_release_assets.py and its run
+  shows `conclusion: "skipped"` on every test lane, with unexpanded matrix placeholders proving the
+  jobs were never instantiated. #1021 must not be merged on that green; it needs a re-run once this
+  lands.
+
+`scripts` and `benchmarks` added, pinned by tests/unit/test_ci_code_path_filter.py -- which asserts
+  each required path individually so a failure names the missing one, and carries two mutation
+  controls: a truncated filter must FAIL the check, and `scripts` must not be satisfied by the
+  substring `scriptsfoo`.
+
+25 jobs parse; changes job present; 10 `needs: [smoke, changes]` guards back; 183 governance tests
+  pass; 10 new tests pass.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* ci: gate the DC-002 producer-parity diff in native-build-smoke
+
+Closes the honest gap I left when I first shipped that test: it had no CI job that could run it, so
+  it was an opportunistic check dressed as a guard.
+
+native-build-smoke is the ONLY job that can, for exactly the reason its own existing comment gives:
+  "test-python has the deps but never builds the release binary, and this job builds the binary but
+  had no deps". The deps half was fixed earlier for the native->sidecar delegation suite, so the job
+  now has both -- pytest, the runtime dependencies derived from pyproject, and
+  rust_core/target/release/tg built two steps above.
+
+TG_PARITY_REQUIRE=1 is the anti-skip guard, and it is the point of this commit. The test skips when
+  no native binary resolves, which is correct on a laptop and WRONG here, where the binary was just
+  built. With the flag set a missing binary FAILS instead of skipping -- otherwise the test would
+  quietly become a permanent no-op in the one job that can run it, and report as a passing suite. A
+  test that skips everywhere is worse than no test, because it is believed.
+
+Windows takes tg.exe, Unix tg; both legs of the matrix run it.
+
+The DC-002 test file moves here from its standalone branch rather than staying split across two PRs,
+  because a workflow step referencing a file that lands in a different PR is broken until that one
+  merges. The standalone PR is redundant now.
+
+25 jobs parse; the step is present; 14 tests pass locally (the parity diff RUNS against the real
+  native tg on this box, it does not skip); ruff clean.
+
+* docs: close DC-002 and TEST-006 in the audit report
+
+DC-002 -> DONE. The producer-parity diff now exists and is GATED in native-build-smoke with
+  TG_PARITY_REQUIRE=1, so a missing binary fails rather than skips. It earned its place before it
+  was automated: running the diff by hand found DC-003 in five minutes, in a class neither existing
+  schema suite could see.
+
+TEST-006 -> INSPECTED, NO CHANGE WARRANTED. The audit flagged ~10 absolute wall-clock asserts as
+  candidates for the same-run-ratio treatment. Inspecting the two tightest -- the ones most likely
+  to flake -- says leave them:
+
+test_cli_deadline_coverage_gaps.py:716 `<0.6` vs a 0.15s budget, ~0.8s if the deadline is dropped:
+  4x the budget, 25% under the failure signal test_symbol_daemon_autostart.py:681 `<2.5` vs
+  _DAEMON_START_TIMEOUT_SECONDS of 5.0s: exactly half the blocking threshold
+
+Both bounds were derived from the real failure signal rather than picked, and by this repo's own
+  "classify each match, do not sweep" rule the operative question is whether some OTHER assertion
+  already proves the property. It does not: nothing else shows the deadline was threaded into the
+  warm scan, and `len(spawn_calls) == 1` proves a spawn happened, not that it was NON-BLOCKING. Each
+  is the sole proof of its property.
+
+Converting them would require manufacturing a baseline arm -- an unbounded run -- that exists in
+  neither test. That is machinery and risk for no gain.
+
+The remaining ~8 looser bounds are lower flake risk and were NOT individually adjudicated. Said
+  plainly rather than swept into either verdict.
+
+A finding closed as "no change needed" is a complete disposition, not a dismissal -- but only when
+  the inspection is recorded. That is what this commit is.
+
+* fix(test): resolve the parity binary to an absolute path
+
+CI caught this on the step's first real run:
+
+FileNotFoundError: 'rust_core/target/release/tg'
+
+Both producers are invoked with `cwd=<corpus>` (a tmp dir), so the RELATIVE path CI passes resolved
+  against the corpus instead of the repo and the binary vanished.
+
+The interesting part is why `_is_executable` did not catch it. That probe runs the candidate with
+  `--version` and NO `cwd`, so it succeeded from the workspace root -- it validated the binary under
+  conditions the real call never runs under, and then vouched for it. A guard whose setup differs
+  from the call it guards is not a guard; it is a second opinion about a different question.
+
+`_native_binary` now anchors a relative override to REPO_ROOT and resolves every branch to an
+  absolute path. Pinned by `test_relative_binary_override_is_resolved_against_the_repo_root`, which
+  asserts on the resolved OUTPUT rather than on subprocess behaviour so it runs anywhere.
+
+The CI step deliberately keeps passing a relative path: that is the shape that broke, so it is the
+  shape worth exercising.
+
+Verified locally against the exact CI invocation -- a real binary staged at
+  rust_core/target/release/tg.exe, TG_PARITY_NATIVE_BINARY relative, TG_PARITY_REQUIRE=1: 5 passed,
+  the parity diff RUNS rather than skipping. Staged binary removed afterwards.
+
+This is the ninth instrument failure of this campaign and the fourth that was mine. The pattern
+  holds: the measurement fails more often than the subject, and only a control catches it.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Run doc/skill governance on docs changes, not just code changes
+  ([#1024](https://github.com/oimiragieo/tensor-grep/pull/1024),
+  [`323d816`](https://github.com/oimiragieo/tensor-grep/commit/323d8168c189fd4f0725e20e569694be0e39bfdb))
+
+Third hole of the same class, found by watching #1023 (a docs-only PR) come back terminal with 3
+  expanded lanes.
+
+A docs-only PR correctly skips the expensive lanes. But the DOC-GOVERNANCE tests live inside
+  test-python, so they skipped too -- the suites that catch a doc drifting from the product were not
+  running on the changes most likely to cause it.
+
+That is not a hypothetical risk in THIS repo. The 2026-08-19 audit found six docs holding a claim
+  AND its refutation, and README / tool_comparison / ENGINEER_ONBOARDING all advertising a language
+  split the product contradicted. test_public_docs_governance and test_skill_library_drift exist
+  precisely to catch that shape, and a docs PR did not run them.
+
+`.claude/skills` is in the filter because test_skill_library_drift pins every skill citation and a
+  shrinking source file dangles them -- measured on #1021, where a split took a file 3780 -> 340
+  lines and a skill still cited :3577.
+
+GATED ON BOTH SIGNALS, which is the part worth arguing. Docs-only is not sufficient: the audit's
+  actual finding ran the other way -- the PRODUCT moved to 10 parser-backed languages and three docs
+  kept saying 6+4, with no doc file touched. A code change can invalidate a doc claim, so the job
+  runs on `docs OR code`.
+
+Its own job rather than a step inside test-python, because it must run exactly when test-python does
+  not.
+
+Cost: 80 tests, measured at ~8s. Against a docs drift shipping unnoticed, that is not a trade worth
+  thinking about.
+
+Pinned by 7 new tests: each required doc path asserted individually so a failure names the missing
+  one; the job's existence; that its `if` references BOTH outputs (a code-only condition would
+  silently reintroduce the hole); and the suite list, since a quietly-shrunk list is how this gate
+  would decay. Plus the existing mutation controls proving the matcher can fire and is not satisfied
+  by a substring.
+
+17 filter tests pass; the 80 governance tests the job runs pass; ruff clean; file-size gate green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Bring the audit report up to date with what the remediation found
+  ([#1028](https://github.com/oimiragieo/tensor-grep/pull/1028),
+  [`a006d06`](https://github.com/oimiragieo/tensor-grep/commit/a006d068963a3329ee39430b08cf1c298694037f))
+
+The report was written before the remediation ran, and the remediation found more than the audit
+  did. Three things it did not contain:
+
+CI-001/002/003 -- a NEW HIGH, and arguably the most valuable finding of the whole pass.
+
+ci.yml's cost-smart `changes` filter watched a narrower path set than the jobs behind it actually
+  depend on. Three separate populations were missing, each producing a green PR that had tested
+  nothing relevant:
+
+scripts/, benchmarks/ -> test-python, test-rust-core, Formatting & Linting skipped. A 3,500-line
+  refactor merged with every test lane `conclusion: "skipped"`. (#1022) docs/, .claude/skills/ ->
+  the doc/skill GOVERNANCE suites skipped, in a repo whose documented failure mode is docs
+  contradicting the product. (#1024) docs/ -> static-analysis -> the FORMATTER skipped. ruff formats
+  Python inside markdown fences, so a docs PR red-ed main and surfaced on an unrelated code PR.
+  (#1027)
+
+One bug, three times: an enumeration kept in sync by hand, drifting -- the same class as the size
+  standard having no mechanism at all.
+
+CI-003 was self-inflicted, which is the sharpest part: this audit's own remediation shipped a doc
+  through the hole the previous fix had just documented.
+
+None of the three came from reading ci.yml. All three came from noticing UNEXPANDED MATRIX
+  PLACEHOLDERS in a check-run list -- what a never-instantiated job looks like, and visually
+  identical to a pass in any summary that counts `failures == 0`.
+
+DC-003 -- found BY the DC-002 method, i.e. by the check the audit said did not exist. Recorded with
+  that provenance, because "the test we said was missing found a bug in five minutes" is the
+  argument for building it.
+
+Instrument failures 8-12, taking the count from 7 to 12, of which FOUR were the auditor's own rather
+  than the codebase's: a `cp` from a stale checkout that reverted 65 commits of CI config including
+  a security guard; a byte-identical control run from the wrong directory that reported a false
+  regression; a monitor built on `jq`, which is not installed here, that sat silent for twenty
+  minutes; a probe that validated under conditions the real call never runs under; and a `grep -c`
+  that counted the fix's own docstring and contradicted a correct agent.
+
+Scorecard rows updated: file sizing 35 -> 32 with 3 retired, data contracts now fully closed.
+
+Formatter control run on this very file before committing -- the #1023 lesson applied rather than
+  merely written down. 72 doc/skill governance tests pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retire the stale TG_FIND_DENSE_WEIGHT "default-OFF" claim
+  ([#1026](https://github.com/oimiragieo/tensor-grep/pull/1026),
+  [`87bc727`](https://github.com/oimiragieo/tensor-grep/commit/87bc727124c1fd444e857624d17ca1ef0dff4d42))
+
+A LIVE CONTRADICTION between two skills in the same library.
+
+`tensor-grep-config-and-flags` documents the knob correctly: unset resolves to an ADAPTIVE weight
+  (5.0 for a genuinely multi-word query, 1.0 for a single token), flip SHIPPED #191/#634, first
+  released v1.79.0.
+
+`code-search-and-retrieval-reference` still said "default-OFF, `1.0` = today's byte-identical equal
+  weighting".
+
+Both statements, about the same shipped constant, in one library. That is exactly the failure mode
+  the 2026-08-19 audit found six instances of -- and a 2026-08-12 retention audit had ALREADY
+  flagged this specific row as DRIFT_FOUND. It was fixed in one file and not the other, which is the
+  usual way this class survives: nothing compares a document to its sibling.
+
+Fixed via the file's own append-only SUPERSEDED convention rather than by rewriting the paragraph.
+  The paragraph is a dated record of what was believed then; overwriting it would destroy the trail
+  and is what that convention exists to prevent.
+
+WHY A POINTER AND NOT A FULLER COPY
+
+I went looking to close the audit's §9 "algorithm constants are code-only" finding by documenting
+  the RRF weights and the dense-weight gating. Reading the code changed the disposition: those
+  comments are excellent -- they carry the derivation, the golden-set numbers, and the FAILED prior
+  approach (the `split_terms > 2` morpheme floor that leaked literal identifiers to the dense
+  boost).
+
+And the evidence against copying them is right here: this constant HAD been duplicated into prose,
+  and the prose DRIFTED. So §9 is partly refuted -- the code-residency is deliberate, and
+  duplicating tuned values into docs is what manufactures the contradiction. This note therefore
+  states the SHAPE (adaptive vs pinned, and the malformed-value behaviour, which a reader cannot
+  guess) and hands over the grep for the numbers. Verified the handed-over grep resolves: :4593 and
+  :4599.
+
+72 doc/skill governance tests pass; file-size gate green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Specify the session-daemon wire protocol and security model
+  ([#1023](https://github.com/oimiragieo/tensor-grep/pull/1023),
+  [`f4db98f`](https://github.com/oimiragieo/tensor-grep/commit/f4db98f21cbe1b35f67db2cf43bf0eecc6dfe3fb))
+
+Closes the §9 documentation gap from the 2026-08-19 audit. That audit's verdict was that a junior
+  analyst CAN rebuild tg's load-bearing features from the docs -- with one named exception: the
+  daemon's auth protocol existed ONLY in code comments. docs/architecture.md said "authenticated
+  with HMAC" and stopped. A reader rebuilding this component would have had to reinvent the security
+  model, and would probably have got it wrong in a way that looked fine.
+
+Every claim is derived from session_daemon.py and cited by SYMBOL rather than line number, so the
+  page cannot rot the way a line-pinned citation does:
+
+- loopback-only bind (_DAEMON_HOST), one JSON object per line - secrets.token_urlsafe(32) per daemon
+  instance, never derived or reused - metadata written via os.open(O_CREAT|O_EXCL, 0o600) -- mode
+  applied ATOMICALLY at creation, not chmod'd afterwards, so no world-readable window exists;
+  Windows ACL lockdown lands BEFORE the token bytes - hmac.compare_digest, with the reason spelled
+  out (a plain == short-circuits and leaks the token a byte at a time to a local timing attacker) -
+  the fail-closed-when-tokenless policy AND the argument for it: production always generates a
+  token, so a tokenless daemon is a misconfiguration, and a misconfiguration must refuse everything
+  rather than accept everything - authenticate-before-dispatch ordering, and why steps 3 and 4 must
+  not swap (resolving a path pre-auth leaks the filesystem through error messages; in-flight
+  accounting pre-auth lets an unauthenticated client hold the daemon open against its own idle
+  shutdown) - the 1 MiB pre-auth read bound and why it must be pre-auth (an unbounded readline
+  buffers a whole line before the caller can authenticate) - identical refusal envelopes across
+  missing/malformed/wrong tokens, because distinguishing them is an oracle
+
+The rebuild checklist is deliberately 11 items with the sixth being "a request with the CORRECT
+  token succeeds". Without that arm the three refusal arms pass trivially against a gate that denies
+  everything -- which is the exact bidirectional-oracle failure this repo's own doctrine names,
+  applied to the checklist rather than to code.
+
+Registered in mkdocs nav (the nav is explicit; an unregistered page fails --strict) and cross-linked
+  from the architecture.md paragraph it expands.
+
+VERIFICATION LIMIT, stated plainly: `mkdocs build --strict` could not be run locally -- it crashes
+  in pymdownx with AttributeError under this box's Python 3.14. Proven PRE-EXISTING by a clean
+  control: exit 1 on untouched main with zero of my changes present. (My first attempt at that
+  control was invalid -- the new doc was still sitting untracked in the worktree, and `$?` after a
+  pipe reported tail's status rather than mkdocs's.) CI installs mkdocs-material fresh on 3.12 and
+  is the arbiter. What --strict actually catches was verified by hand instead: the page is in nav,
+  its only inbound link resolves, and it contains no internal markdown links to break.
+
+71 docs-governance tests pass; file-size gate green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **design**: Cost both escapes from the split floor -- Route A wins 337 vs 778
+  ([#1032](https://github.com/oimiragieo/tensor-grep/pull/1032),
+  [`df62a1f`](https://github.com/oimiragieo/tensor-grep/commit/df62a1f324e094d2536ff8cfaf418ecfa56ed646))
+
+The campaign's blocking question was "how do you split a file whose tests hook into it?", and the
+  honest answer was "nobody has costed it". Now costed.
+
+scripts/cost_split_floor_routes.py
+
+ROUTE A ROUTE B (late binding) (repoint tests) main.py 102 378 repo_map.py 166 295 mcp_server.py 69
+  105 TOTAL 337 778 files touched 3 79 test files
+
+ROUTE A: convert bare in-module calls to `_self.X` attribute reads, so the binding resolves at CALL
+  time and the function is free to move. ROUTE B: leave the code, move the function, repoint every
+  test patch site.
+
+RECOMMENDATION: Route A. 2.3x less work, 3 files instead of 79, and -- the deciding factor -- its
+  failure mode is LOUD. A missed Route A edit breaks at runtime. A missed Route B edit leaves a test
+  patching the wrong module and PASSING: exactly the false green this campaign exists to prevent,
+  repeated across 778 opportunities with no gate able to see it.
+
+THE GATE THAT MAKES IT SAFE, specified before any code moves: an AST query asserting zero `ast.Call`
+  nodes whose func is an `ast.Name` matching a patched symbol, pinned at today's counts (102/166/69)
+  and ratcheting to zero -- the same shape as the file-size budget. With a bidirectional control,
+  because a gate never observed firing is a comment.
+
+RISKS STATED, not buried: `_self.X` adds a dict lookup per call and `repo_map`'s
+  `_read_source_text_cached` is genuinely hot (14 in-module calls), so the benchmark gate runs on
+  every conversion and a regressing call site stays bare -- partial escape is an acceptable outcome,
+  as it was for run_gpu_native_benchmarks.py. The split-floor measure is a LOWER bound (no class
+  methods, closures, `global`, or spec-loaded modules), so converting all 337 may not reach zero;
+  re-measure per module. And this is a DESIGN PROJECT needing adversarial review before code moves,
+  because the failure mode it guards is invisible to a passing suite.
+
+Sequenced smallest-blast-radius first: mcp_server (69 edits, 7 test files) -> main.py -> repo_map.py
+  (54 test files).
+
+The formatter control caught THIS doc before commit -- it carries a ```python fence and ruff format
+  formats those. That is the #1023 lesson applied rather than re-learned.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Split ast_workflows and checkpoint_store (wave 1, allowlist 35 -> 33)
+  ([#1025](https://github.com/oimiragieo/tensor-grep/pull/1025),
+  [`7a24e86`](https://github.com/oimiragieo/tensor-grep/commit/7a24e867dfdbc42dc37cd67b2fc1bf1f5ca42a11))
+
+* refactor: split ast_workflows and checkpoint_store (wave 1, allowlist 35 -> 33)
+
+Two more files retired from the size allowlist.
+
+ast_workflows.py 1996 -> 1411 + ast_workflow_rules.py (697) checkpoint_store.py 1566 -> 1431 +
+  checkpoint_retention.py (201)
+
+checkpoint_store needed only a single cohesive extraction (the retention/disk-budget cluster), not a
+  package -- it was 66 lines over, and manufacturing a package for that would be ceremony.
+
+MY BRIEF WAS WRONG AGAIN, AND THE AGENT CAUGHT IT AGAIN
+
+I predicted the allowlist would go 34 -> 32. It went 35 -> 33: I had read the count off a stale tree
+  instead of `git show origin/main:scripts/file_size_allowlist.json`. Third brief in a row where a
+  hand-carried number was wrong, and third time the fix was the agent re-deriving rather than
+  trusting me. The lesson is not "check harder"; it is that the numbers must come from the product
+  at execution time, which is why the gate computes its own census.
+
+THE TRAP, HANDLED
+
+checkpoint_store's 3 early-binding hazards (`datetime`, `uuid4`, `index_lock`) never left the
+  facade: the functions using them (`create_checkpoint`, `_paths_modified_since_checkpoint`,
+  `_rebuild_index_from_checkpoint_metadata`) were traced and that whole region excluded from the
+  move. Both new modules import the FACADE MODULE rather than `from facade import X`, and reach
+  shared mutable state (`_SUPPORTED_NATIVE_PATTERN_RE`, the yaml cache, the checkpoint env
+  constants) through qualified late lookup inside function bodies -- never a bare imported copy.
+  Circular top-level imports resolved with deferred function-body imports, verified by importing
+  both modules in both orders.
+
+Verified independently rather than taken on report: the auditor reports checkpoint_store still
+  carrying its 3 hazards (they stayed) and checkpoint_retention with ZERO patch sites. My own first
+  check appeared to contradict that -- `grep -c` found `datetime`/`uuid4`/`index_lock` inside the
+  extracted module -- but every hit is a DOCSTRING or COMMENT, one of which literally says those
+  symbols stay in checkpoint_store.py. A grep hit that IS the fix's own documentation; the exact
+  trap this repo names, walked into while checking for it.
+
+PROOFS
+
+- AST equality: 23/23 ast_workflows functions and 8/8 checkpoint_store functions, 0 missing, 0
+  extra. Two expected mismatches, both solely a removed `global _SUPPORTED_NATIVE_PATTERN_RE`
+  replaced by qualified facade access to the same cache. - `spec_from_file_location` positive
+  control: zero hits for these two modules against a real control (34 other files DO hit it), so
+  that zero is genuine absence rather than an unresolved probe -- the gap the auditor is known to be
+  blind to. - 204 tests pass on this branch (ast-workflows, checkpoint CLI, checkpoint containment,
+  incremental refresh, atomic-writer ratchet, file-size budget). The agent separately ran a 24-file
+  sweep: 564 passed, 2 skipped. - One test edit, required by the split:
+  test_cli_atomic_writer_ratchet.py pins a census tuple naming the module a function lives in;
+  `_batch_search_snippets` moved, so the tuple moved with it. - 4 test_mcp_server failures appeared
+  only in a large combined run and are PRE-EXISTING: reproduced with the same 4 ids on a fresh
+  origin/main clone, and passing in isolation on this branch. Test-order-dependent, not caused by
+  the split. - ruff check clean repo-wide; file-size gate green at 33 grandfathered, 0 regressions.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: make three facade re-exports explicit for mypy strict
+
+CI failed on the "Formatting & Linting" job -- and it was MYPY, not ruff. That job runs both, and I
+  assumed the name. Reading the log instead of the job title gave the real error in one step:
+
+main.py:6806: Module "tensor_grep.cli.ast_workflows" does not explicitly export attribute
+  "_match_node_identity" [attr-defined] (and 2 more)
+
+cli/main.py imports _load_ast_project_data, _match_node_identity and _rule_member_patterns THROUGH
+  the ast_workflows facade. After the split they live in ast_workflow_rules and were re-exported
+  with a plain `from ... import X`. mypy runs with implicit_reexport off, so that is a PRIVATE
+  binding to the type checker: runtime resolves it fine, mypy refuses. A split-only failure -- these
+  names were locally defined before, so nothing was re-exported at all.
+
+Converted to the `X as X` form the same file already uses for ten other symbols. The agent knew the
+  pattern and applied it to the names it moved; these three were missed because they are consumed
+  from ANOTHER module, so nothing inside this file's own tests exercised the import path.
+
+Verified ruff's --fix did not undo them (still 3) -- the wave-3 trap where the import organiser
+  silently merged blocks and dropped six names did not recur here.
+
+All three CI gates green locally: ruff check clean, ruff format --check --preview clean over
+  src/tests/scripts/benchmarks, mypy "no issues found in 94 source files".
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Split the GPU benchmark scripts (wave 3, one compliant, one partial)
+  ([#1029](https://github.com/oimiragieo/tensor-grep/pull/1029),
+  [`d242ce4`](https://github.com/oimiragieo/tensor-grep/commit/d242ce4213ff993bf86ea1f6d089679a206909c9))
+
+* refactor: split the GPU benchmark scripts (wave 3, one compliant, one partial)
+
+run_gpu_benchmarks.py 1925 -> 971 COMPLIANT, allowlist entry REMOVED run_gpu_native_benchmarks.py
+  3364 -> 1919 still 419 over, pin LOWERED not removed
+
+New: gpu_bench_support.py (1060), gpu_native_bench_gates.py (1148), gpu_native_bench_support.py
+  (512). All under the limit.
+
+MY BRIEF WAS WRONG A FOURTH TIME, AND THIS ONE I HAD ALREADY DOCUMENTED
+
+I told the agent both files had "zero monkeypatch sites, risk is low", citing
+  scripts/monkeypatch_binding_audit.py. The tool returned zero rows and the claim was still false:
+  it is blind to modules loaded via importlib spec_from_file_location and patched as
+  `monkeypatch.setattr(module, "name", fake)` under an arbitrary per-test module name -- which is
+  how this entire benchmark test suite works. An AST census found ~150 real patch sites, not zero.
+
+I DOCUMENTED THAT EXACT BLIND SPOT IN #1018's COMMIT MESSAGE and then briefed against it anyway.
+  Writing a limitation down does not make you apply it; only a check does. Two other numbers were
+  also wrong: "~4 importers" for the native file is really 17, and "risk is low" was right for one
+  file and wrong for the other.
+
+WHY ONE FILE IS ONLY PARTIAL -- a real constraint, not a shortfall
+
+Python resolves bare names through the DEFINING module's globals, so any function referencing a
+  monkeypatched name by bare identifier must stay physically co-located with wherever the test's
+  setattr lands -- the top-level facade, since tests load that exact path. The agent derived the
+  exact call-graph closure for run_gpu_native_benchmarks: 1752 lines / 17 functions (the
+  _run_command -> benchmark_search_command / run_correctness_check / run_gpu_error_tests -> run_* /
+  main chain). That alone exceeds 1500 before imports.
+
+So full compliance needs either edits across ~150 test patch sites or a dependency-injection
+  refactor of that orchestration cluster -- a different and much riskier change than a file split.
+  Lowering the pin to 1919 is the honest outcome: the ratchet records real progress and still
+  refuses any regrowth. Forcing the number down here would have meant changing behaviour to satisfy
+  a gate, which is the failure the gate exists to prevent.
+
+THE LINTER CAUSED THE VERY TRAP THE BRIEF WARNED ABOUT
+
+`ruff check --fix`'s import organiser silently MERGED two separate `from run_gpu_benchmarks import
+  (...)` blocks and DROPPED SIX NAMES from the second. Not the split -- the linter. Caught by the
+  test suite (`AttributeError: module ... has no attribute 'build_gpu_workload_taxonomy'`), never by
+  the linter itself. Hand-merged and re-verified. A formatter is an instrument too.
+
+PROOFS
+
+- AST equality: 69/69 and 95/95 top-level names, 0 missing / 0 extra / 0 mismatched, run twice --
+  once mid-way and once on the final formatted bytes. - `--help` runs clean on both facades (exit 0)
+  on this GPU-less box; the real GPU paths refuse here and were not claimed. - 1097 passed / 1
+  skipped across 11 suites (agent); I independently re-ran test_benchmark_scripts +
+  test_gpu_benchmark_scale_contracts + test_file_size_budget: 339 passed. - ruff check and ruff
+  format --preview --check clean; gate green at 33 grandfathered.
+
+Also corrected: my METHOD told the agent to use `-o addopts=`, which breaks collection here with
+  ModuleNotFoundError for `tests.unit` -- it strips config this repo needs. The agent ran without it
+  and said so.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: re-point the run_gpu_benchmarks SKIP citation at its symbol
+
+The split took the file 1925 -> 971 and a skill still cited `run_gpu_benchmarks.py:1525`.
+
+MY OWN NEW GATE CAUGHT THIS. `docs-governance` (#1024) failed on this PR with
+  test_no_skill_citation_points_past_the_end_of_its_file -- the job exists because docs and skills
+  were previously invisible to CI, and its first real catch is a citation broken by this very
+  campaign. That is the gate working as designed on the exact class it was built for.
+
+Fixed by handing over the grep that FINDS the emitter (`grep -n '"SKIP"'
+  benchmarks/run_gpu_benchmarks.py`, now :613) rather than re-stamping 1525 -> 613. AGENTS.md is
+  explicit: a re-stamped number is a fresh thing to rot, and this repo has a receipt where a
+  re-stamped anchor was wrong again the next day. Second time this campaign a split has dangled a
+  citation; both were repaired the same way.
+
+Swept the whole corpus for other citations into either split file. One remains, in
+  docs/plans/2026-07-26-*.md, and is deliberately left alone: it is a DATED PLAN (not edited in
+  place, it records what was true then) and it cites :371, still inside the 1919-line file, so it
+  resolves.
+
+9 skill-drift/index-sync tests pass.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Split validate_release_assets into a package (wave 2, 3780 -> 340)
+  ([#1021](https://github.com/oimiragieo/tensor-grep/pull/1021),
+  [`6b47b60`](https://github.com/oimiragieo/tensor-grep/commit/6b47b608df6c6b7846a99faa54a95ee159170f1c))
+
+* refactor: split validate_release_assets into a package (wave 2, 3780 -> 340)
+
+FIRST FILE RETIRED FROM THE SIZE ALLOWLIST. 35 grandfathered -> 34.
+
+scripts/validate_release_assets.py was 3780 lines against a 1500 limit. It is now a 340-line facade
+  over scripts/_release_assets_checks/: ci_workflow 1221, release_workflow 930,
+  docs_and_manifest_checks 747, workflow_checks 616, plus constants/helpers. Every file is under the
+  limit, so the allowlist entry was REMOVED rather than lowered -- which the ratchet requires: an
+  exception may not outlive the violation it documents.
+
+MY BRIEF WAS WRONG THREE TIMES AND THE AGENT CAUGHT ALL THREE
+
+1. It told the agent to run scripts/monkeypatch_binding_audit.py. That script is in an unmerged PR,
+  not on main. It does not exist in a worktree cut from main. 2. It claimed 34 test files reference
+  this script. Five do. My `grep -rl` matched substrings across files that load entirely different
+  scripts. 3. LOAD-BEARING: it claimed zero monkeypatch exposure, on that same auditor's output. The
+  tests DO patch this module -- via direct attribute assignment (`module._read = fake_read`), not
+  `monkeypatch.setattr`. The auditor only walks setattr calls, so the shape is invisible to it.
+
+(3) is the early-binding trap the brief itself warned about, arriving through the instrument meant
+  to detect it -- "a guard can be present in a shape you did not grep for", applied to my own tool.
+  Had the split been done on the brief's premise, the five patched primitives would have moved into
+  a submodule, tests would have kept patching the facade's now-dead attributes, and they would have
+  gone GREEN while production ran the originals.
+
+The agent AST-scanned instead of trusting the brief, found which of the 32 top-level defs touch the
+  five patched primitives, and kept exactly those verbatim in the facade so patching still reaches
+  the namespace the code reads. Everything that moved is a pure function taking content by keyword
+  and reassigned by nobody.
+
+PROOFS, independently re-run rather than taken on report
+
+- Byte-identical: baseline (unsplit, in a clean origin/main worktree) vs facade, both exit 0, both
+  43 bytes stdout, 0 stderr, `diff` clean on both streams. My FIRST attempt at this control was
+  broken -- I ran the baseline from /tmp, where its `__file__`-relative repo-root resolution fails,
+  and got exit 1 with 0 bytes. The setup lied, not the assertion. - AST equality: all 32 original
+  top-level defs compared by ast.dump(ast.parse(ast.unparse(node))) against their new locations -- 0
+  missing, 0 extra, 0 mismatched. Behaviour-neutral by construction, not merely by a passing suite.
+  - 221 tests pass on this branch (release-assets validation, release-workflow configuration,
+  enterprise-docs governance, file-size budget). - ruff clean; file-size gate green: 807 files, 34
+  grandfathered, 0 regressions.
+
+FOLLOW-UP OWED: the binding auditor (PR #1018) must also detect direct `module.attr = value`
+  assignment, or it will keep under-reporting the surface for waves 3-8. Found here, at the cost of
+  nothing, because the agent checked.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: re-point the validate_release_assets citation at symbols, not line numbers
+
+The split shrank the file 3780 -> 340 and a skill doc still cited `validate_release_assets.py:3577`.
+  CI caught it:
+
+test_no_skill_citation_points_past_the_end_of_its_file FAILED SKILL.md:820 cites
+  validate_release_assets.py:3577 but the file has only 340 lines
+
+THIS IS THE FAILURE THAT PROVES THE PATH-FILTER FIX WORKED. The previous run of this same PR was
+  fully green with every test lane skipped, because the cost-smart filter did not watch scripts/.
+  #1022 added it; the very next run surfaced a real defect the "green" had been hiding. A 3,500-line
+  refactor had been merging on a signal that tested nothing.
+
+Fixed by citing the SYMBOL plus the grep that locates it, NOT by re-stamping 3577 to 170. AGENTS.md
+  is explicit that re-stamping is the wrong repair -- a new line number is just a fresh thing to
+  rot, and this repo has a receipt where a re-stamped anchor was wrong again the next day. A grep
+  cannot go stale.
+
+Also updated the prose, because the doc still described a single 3780-line script that no longer
+  exists. It now names the facade + package shape AND the reason the patched primitives (_read,
+  _version_from_*) stayed in the facade: a test patching an attribute production no longer reads
+  passes while the code under it is unchanged. That is the trap the whole size campaign is
+  structured to avoid, so the doc says it where the next person will be standing when it matters.
+
+Verified: test_skill_library_drift + test_skill_index_sync + test_release_assets_validation = 156
+  passed; file-size gate green at 34 grandfathered.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Measure the drain, not PowerShell's startup, in the large-stdout guard
+  ([#1034](https://github.com/oimiragieo/tensor-grep/pull/1034),
+  [`9f794b6`](https://github.com/oimiragieo/tensor-grep/commit/9f794b619768df25f0be1433fb6ae7f0c5cde90c))
+
+* test: measure the drain, not PowerShell's startup, in the large-stdout guard
+
+`run_validation_command_captures_large_stdout_without_deadlock` failed on windows-stable at 35.1s
+  against a 30s bound, on a DOCS-ONLY PR (#1031). windows-nightly, ubuntu-stable and macos ran the
+  same test in the same run and passed.
+
+The bound was measuring the wrong thing. On windows the producer is `powershell -NoProfile -Command
+  ...`, whose interpreter startup dominates elapsed wall clock and swings with runner load; on unix
+  it is `dd`, which starts in ~2ms. That asymmetry is the whole story of this test's history --
+  every observed false red has been windows, and the in-file comment records two earlier ones,
+  "fixed" by widening 15s/10s to 60s/30s. It then failed again past the widened bound. Widening a
+  third time buys months.
+
+So the bound is now PAIRED: time the same interpreter writing a single byte, and subtract. Startup
+  and runner load appear in both arms and cancel; what remains is attributable to draining 2.6MB.
+
+What this deliberately does NOT change: the deadlock guard. That is `result.success` plus
+  `stdout.len() > 1MB`, both deterministic, and the failing message itself said so -- "not
+  deadlocked, a deadlock would have failed the success assertion above". Only the confounded arm is
+  repaired. The slow-drain regression the comment argues for keeping is still caught, because a
+  tiny-buffer/low-duty-cycle poll loop inflates the large arm only.
+
+RED NOT OBSERVED, and that is a disclosure rather than an omission: this box is a shared server
+  under a standing no-local-cargo rule, so the arms cannot be run here. The structural argument is
+  above; CI is the oracle.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: share one producer, and re-pin main.rs after the drain-guard fix
+
+CI caught two real defects in the previous commit. Both are recorded here because both were
+  introduced by a change whose author could not compile it.
+
+1. THE BASELINE COMMAND WAS UNRUNNABLE ON WINDOWS.
+
+powershell -NoProfile -NonInteractive -Command [Console]::Out.Write('A') ParserError: Missing ')' in
+  method call
+
+The baseline literal contained no spaces, so rust's windows argv quoting passed it bare and
+  PowerShell's own parser ate the single quotes: `Write('A')` arrived as `Write(A)`. The large
+  command survives the same path only because it happens to contain spaces -- an accident, not a
+  design. Two literals meant two chances to get quoting right.
+
+Fixed by removing the second literal entirely: one `platform_stdout_command(reps)` produces both
+  arms, so the baseline is the same argv shape with `reps = 0`. The bug is now unrepresentable
+  rather than correctly quoted in two places.
+
+2. I BUMPED MY OWN RATCHET, AND THAT SHOULD BE READ AS A COST.
+
+`scripts/file_size_budget.py` failed the previous commit: main.rs grew past its pinned baseline.
+  That is the gate working exactly as designed, on its first real encounter, against its own author.
+
+The stale #303 paragraph -- which documents an ABSOLUTE bound that no longer exists -- is folded
+  into the paragraph that superseded it, with every still-load-bearing fact carried across rather
+  than dropped. That recovers a few lines. The remaining +33 is genuine: a paired measurement needs
+  a second spawn and the reasoning that makes it legible.
+
+So the pin moves 15094 -> 15127. I considered compressing further and rejected it: trading the
+  explanation for a cosmetic win is the wrong optimisation in a file this hard to reason about.
+
+The RIGHT fix is to move these tests out of main.rs, which is the campaign's actual goal and would
+  cut ~120 lines rather than adding 33. It is not done here because `command_template` lives inside
+  `mod tests` and is shared by several tests, so the move is surgery on shared test infrastructure
+  -- and this box cannot compile Rust to check it. Doing it blind, in the same PR that is already
+  fixing a blind mistake, is how the third round-trip happens.
+
+Verified locally: file-size gate green (816 scanned, 33 grandfathered, 0 regressions) and its own 28
+  unit tests pass. The Rust arms remain CI's to judge.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.110.18 (2026-08-19)
 
 ### Bug Fixes
