@@ -614,6 +614,26 @@ cannot change the verdict, and the old "entangled with a non-role-aware doc enco
 longer applies. Reopen only on BOTH a real `tg`-command install path AND a different encoder
 clearing the design doc's T8 golden-set thresholds. Do not re-run the old experiment.
 
+**SUPERSEDED (append-only, do not rewrite the paragraph above) — 2026-08-19, enterprise audit: the
+`TG_FIND_DENSE_WEIGHT` "default-OFF, `1.0` = today's byte-identical equal weighting" framing is
+RETIRED.** The flip SHIPPED (#191/#634, first released v1.79.0). Unset now resolves to an ADAPTIVE
+weight, not to `1.0`: `5.0` (the ledger-swept 1:5 bm25:dense ratio) for a genuinely multi-word
+query, and `1.0` for a single whitespace-free token — the literal/identifier case, which stays
+pinned at `1.0` regardless of the env value. A malformed or non-finite value is treated as unset
+and falls to the adaptive `5.0` rather than being clamped to `1.0`, so a typo cannot silently opt
+an operator out of the improved default. Explicit `TG_FIND_DENSE_WEIGHT=1.0` is the opt-out back
+to equal-weight fusion.
+
+Ask the code, not this paragraph:
+`grep -n '_FIND_DENSE_WEIGHT_DEFAULT = \|_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT = ' src/tensor_grep/cli/main.py`
+
+*Why this note exists, and why it is a pointer rather than a fuller copy:* the stale claim survived
+here for months while `tensor-grep-config-and-flags` carried the corrected one, so the library held
+a fact AND its refutation in two files at once — the failure mode the 2026-08-19 audit found six
+instances of. A 2026-08-12 retention audit had already flagged this exact row as DRIFT_FOUND. The
+constants are deliberately code-resident; duplicating tuned values into prose is what produced this
+drift in the first place, so this note states the shape and hands over the grep.
+
 ---
 
 ## 10. Query-shape classification — a tokenizer is not a word-splitter (added 2026-07-16)
