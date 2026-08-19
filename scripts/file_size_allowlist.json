@@ -21,7 +21,6 @@
     "rust_core/tests/test_public_native_cli_parity.rs": 2318,
     "rust_core/tests/test_routing.rs": 2995,
     "rust_core/tests/test_schema_compat.rs": 4412,
-    "src/tensor_grep/cli/agent_capsule.py": 3652,
     "src/tensor_grep/cli/ast_workflows.py": 1996,
     "src/tensor_grep/cli/bootstrap.py": 1696,
     "src/tensor_grep/cli/checkpoint_store.py": 1566,
