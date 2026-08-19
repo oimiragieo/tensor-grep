@@ -152,11 +152,36 @@ merged. One draft PR (#966) is titled *"not GREEN, do not merge"* and stays that
 
 ## What needs research (not just doing)
 
-**1. How to split a file whose tests hook into it — the blocking question.**
-This is the wall in front of `main.py` and `repo_map.py`. Two candidate approaches:
-dependency injection (change how the code gets its collaborators), or a coordinated edit across
-~150–290 test hook sites. **Neither has been costed.** Everything after wave 3 depends on this
-answer, so it should be researched before more splitting is attempted.
+**1. ~~How to split a file whose tests hook into it~~ — MEASURED, and the news is bad.**
+
+This was the open question. It now has a number. `scripts/measure_split_floor.py` computes the
+lower bound of what **must** stay in a file because tests hook into it:
+
+| file | total | lines LOCKED to the file | can splitting reach 1,500? |
+|---|---|---|---|
+| `cli/repo_map.py` | 19,708 | **11,025** | **No** |
+| `cli/main.py` | 17,605 | **9,453** | **No** |
+| `cli/mcp_server.py` | 7,876 | **5,554** | **No** |
+| `cli/agent_capsule.py` | 3,652 | 1,190 | **Yes** |
+
+**Three of the four biggest Python files cannot reach the limit by splitting at all.** Not "it's
+hard" — the code that must stay behind is already 4–7× the limit on its own. Wave 3 discovered this
+the expensive way on a smaller file; this tool now answers it before an agent is dispatched.
+
+*Cross-checked:* the patched-symbol counts (48 / 66 / 9) match the independent binding auditor
+exactly. The measure is a lower bound — a number over the limit is decisive, a number under it is
+encouraging rather than a guarantee.
+
+**What this means for the plan.** The remaining Python work splits three ways:
+
+- **`agent_capsule.py`** — splittable now. That is the next wave.
+- **Test files** (`test_cli_modes.py` and friends) — no facade problem at all; tests are the ones
+  *doing* the patching. Splittable, and the largest single win available.
+- **`main.py`, `repo_map.py`, `mcp_server.py`** — need dependency injection or coordinated edits
+  across 48–66 patch symbols each. **This is a design project, not a cleanup task**, and it should
+  be scoped and reviewed on its own before anyone starts.
+
+The still-open half: *which* of those two approaches, and what it costs. That has not been designed.
 
 **2. Whether the test-hook count is the right metric at all.**
 We now have a tool that measures it, but it was blind to a whole category twice. It is currently
