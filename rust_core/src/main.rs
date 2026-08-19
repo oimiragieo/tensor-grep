@@ -1417,8 +1417,8 @@ fn main_inner() -> anyhow::Result<()> {
             json_render_conflicts.join(", ")
         );
         let payload = serde_json::json!({
-            "version": 1,
-            "schema_version": 1,
+            "version": JSON_OUTPUT_VERSION,
+            "schema_version": JSON_OUTPUT_VERSION,
             "ok": false,
             "error": "unsupported_flag",
             "detail": detail,
