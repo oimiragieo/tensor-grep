@@ -4215,15 +4215,16 @@ mod tests {
     /// Cross-platform "write ~2.5MB to stdout, fast, without reading anything" command: large
     /// enough to exceed a typical OS pipe buffer (commonly 4-64KB), so a successful capture here
     /// proves the wait path drains output concurrently instead of deadlocking against a full pipe.
-    /// The SAME interpreter as [`platform_large_stdout_command`], writing a handful of
-    /// bytes instead of 2.6MB.
+    /// `reps` writes of 64KiB. `reps = 0` is the spawn-only BASELINE: same
+    /// interpreter, same argv shape, no output -- so timing it isolates interpreter
+    /// startup from drain cost.
     ///
-    /// This exists to be subtracted. On windows the large-output producer is PowerShell,
-    /// whose interpreter STARTUP -- not our drain -- dominates elapsed wall clock and is
-    /// what varies on a loaded runner; on unix it is `dd`, which starts in ~2ms. That
-    /// asymmetry is why only windows ever produced a false red here. Timing this twin in
-    /// the same test run cancels startup and runner load, leaving the drain.
-    fn platform_small_stdout_command() -> (&'static str, Vec<String>) {
+    /// One parameterised producer rather than two literals, deliberately. A separate
+    /// short baseline literal contained no spaces, so rust's windows argv quoting
+    /// passed it unquoted and PowerShell stripped the inner single quotes
+    /// (`Write('A')` arrived as `Write(A)`, a ParserError). Sharing the shape makes
+    /// that unrepresentable instead of correctly quoted in two places.
+    fn platform_stdout_command(reps: usize) -> (&'static str, Vec<String>) {
         if cfg!(windows) {
             (
                 "powershell",
@@ -4231,31 +4232,9 @@ mod tests {
                     "-NoProfile".to_string(),
                     "-NonInteractive".to_string(),
                     "-Command".to_string(),
-                    "[Console]::Out.Write('A')".to_string(),
-                ],
-            )
-        } else {
-            (
-                "dd",
-                vec![
-                    "if=/dev/zero".to_string(),
-                    "bs=1".to_string(),
-                    "count=1".to_string(),
-                ],
-            )
-        }
-    }
-
-    fn platform_large_stdout_command() -> (&'static str, Vec<String>) {
-        if cfg!(windows) {
-            (
-                "powershell",
-                vec![
-                    "-NoProfile".to_string(),
-                    "-NonInteractive".to_string(),
-                    "-Command".to_string(),
-                    "$s = 'A' * 65536; for ($i = 0; $i -lt 40; $i++) { [Console]::Out.Write($s) }"
-                        .to_string(),
+                    format!(
+                        "$s='A'*65536;for($i=0;$i -lt {reps};$i++){{[Console]::Out.Write($s)}}"
+                    ),
                 ],
             )
         } else {
@@ -4264,7 +4243,7 @@ mod tests {
                 vec![
                     "if=/dev/zero".to_string(),
                     "bs=65536".to_string(),
-                    "count=40".to_string(),
+                    format!("count={reps}"),
                 ],
             )
         }
@@ -4323,41 +4302,29 @@ mod tests {
 
     #[test]
     fn run_validation_command_captures_large_stdout_without_deadlock() {
-        let (program, args) = platform_large_stdout_command();
+        let (program, args) = platform_stdout_command(40);
         let template = command_template(program, &args);
         // Generous but bounded: if the pipe-fill deadlock footgun (rust-lang#45572) were
         // reintroduced (e.g. a hand-rolled spawn + wait_timeout + wait_with_output instead of
         // process_control's drain-while-timing-out wait), the child would block writing to a
         // full, undrained pipe and this call would hit the timeout and report failure instead of
         // completing quickly -- this is a regression guard, not just a happy-path check.
-        //
-        // #303: the wall-clock bound below is DERIVED from this timeout rather than being an
-        // independent constant. The two were previously 15s and 10s, which left a 5s window where
-        // a merely-slow runner produced a fully correct result (success + >1MB captured, i.e. the
-        // pipes demonstrably drained) that still failed the clock -- a false red, twice observed
-        // on windows CI. A deadlock cannot land in that window: it exhausts the time limit and
-        // `terminate_for_timeout` kills the child, so `result.success` is false and the FIRST
-        // assertion fires. The clock is therefore not what catches a deadlock; it catches the
-        // weaker "drains, but pathologically slowly" regression (e.g. a hand-rolled poll loop
-        // reading a tiny buffer at a low duty cycle), which is why it is kept rather than deleted.
         let timeout_ms = 60_000;
-        // 2026-08-19: this is now a PAIRED bound, not an absolute one.
+        // The bound below is PAIRED, not absolute, and it is not what catches a deadlock --
+        // a deadlock exhausts the limit, `terminate_for_timeout` kills the child, and the
+        // FIRST assertion fires on `result.success`. What it catches is the weaker "drains,
+        // but pathologically slowly" regression (a poll loop reading a tiny buffer at a low
+        // duty cycle), which is why it is kept rather than deleted.
         //
-        // The absolute form measured the GENERATOR, not the subject. On windows the producer
-        // is PowerShell, whose startup dominates elapsed time and swings with runner load; on
-        // unix it is `dd` (~2ms), which is why every observed false red here has been windows.
-        // The bound was already widened once for exactly this reason (10s -> 30s, see the
-        // paragraph above) and then failed again at 35.1s against the widened 30s on
-        // 2026-08-19. Widening a third time buys months, not correctness.
-        //
-        // So: time the same interpreter writing a few bytes, and subtract. Startup and runner
-        // load appear in BOTH arms and cancel; what remains is attributable to draining 2.6MB.
-        // A pathologically slow drain (a tiny-buffer, low-duty-cycle poll loop) still blows the
-        // allowance, because it inflates the large arm ONLY -- so the guard the paragraph above
-        // argues for keeping is kept, and only its confound is removed.
+        // It is paired because the absolute form measured the GENERATOR: windows spawns
+        // PowerShell (startup dominates and swings with runner load), unix spawns `dd`
+        // (~2ms). Every false red here has therefore been windows -- twice under #303 at
+        // 15s/10s, then again at 35.1s after that was widened to 60s/30s. Subtracting a
+        // spawn-only run of the SAME interpreter cancels startup and load; a real drain
+        // regression still blows the allowance, because it inflates the large arm only.
         let drain_allowance = Duration::from_millis(timeout_ms / 4);
 
-        let (baseline_program, baseline_args) = platform_small_stdout_command();
+        let (baseline_program, baseline_args) = platform_stdout_command(0);
         let baseline_template = command_template(baseline_program, &baseline_args);
         let baseline_started = Instant::now();
         let baseline_result = run_validation_command(
