@@ -440,6 +440,37 @@ check + `ruff format --preview` + mypy + a live smoke test, not just the worktre
 surface; (4) THEN open the PR. Clean up after: `git checkout main; git reset --hard origin/main; git
 worktree remove --force <path>`. Never open a PR straight from a worktree's own "all green" claim.
 
+
+### Subagent fan-out on shared-pin surfaces (2026-08-20, 11-PR tri-split receipts)
+
+The multi-writer discipline when several agents split/move code concurrently. Full law:
+`AGENTS.md`, "An Environment DIFFERENCE Can Be The Only Instrument That Sees A Defect".
+
+- **One agent owns each shared file per wave.** `scripts/file_size_allowlist.json`'s cli
+  entries are ADJACENT LINES: two green PRs that each edit one line conflict pairwise.
+  Brief every agent to change exactly its own line; resolve at merge with the lower pin.
+- **Union-merge all open PRs touching a shared pin/census before queueing any.** A branch cut
+  before a gate merged is green against a world without the gate — twice this campaign the
+  union failed where every branch passed.
+- **Every split brief must require the FOUR-shape patch sweep** (`patch("dotted")`,
+  `patch.object`, `monkeypatch.setattr`, `mod.X =`) against the target module, and must state:
+  on a box without the native binary, local green CANNOT clear the native-path branch — CI is
+  the only arm that takes it. Three rounds of one bypass class shipped before this was written
+  down.
+- **Relocated handlers/emitters must be excluded from source censuses with the reason inline**
+  (moving a file does not audit it), and source-scanning tests must census the FAMILY
+  (`glob("repo_map*.py")` with a `len(paths) > 1` scan-ran control), or the count silently
+  stops covering the emitter that moved.
+- **Monitors: key on `PR:head-sha`** (first-terminal-state keying goes silent after a re-push)
+  and print an explicit exit line so stream-end is not mistaken for a hang.
+- **A dead agent's worktree**: diff it against its branch before reasoning about its CI — both
+  session-limit deaths this campaign left verified-but-uncommitted fixes, i.e. local-green /
+  CI-red on the same head.
+- **Read every agent report as a hypothesis and verify against the code.** The fleet's reports
+  were good, and still: one agent's "environment failure" was a real bypass, another's line
+  counts were exact, a third corrected MY count. Verification is where half this campaign's
+  defects were caught.
+
 ### Splitting an oversized file — the PRE-SPLIT citation sweep (2026-08-19, three receipts)
 
 Waves 2, 3 and 4 of the file-size campaign each shipped, each went red in CI, and each red

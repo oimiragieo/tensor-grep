@@ -3548,3 +3548,51 @@ Grep the SYMBOL across `src/`, never inside the file you split.
 - **Require `count == 1` before any scripted replace.** That assertion caught two different tests
   in `main.rs` sharing a byte-identical timed-run block; a blind replace would have edited the
   wrong test and looked fine.
+
+## An Environment DIFFERENCE Can Be The Only Instrument That Sees A Defect (2026-08-20, tri-split fan-out)
+
+Eleven PRs from eight subagents split the three giant modules in one day (`main.py`
+17,983 → 13,523, `repo_map.py` 19,762 → 15,243, `mcp_server.py` 8,028 → 5,341, plus two Rust
+test extractions). The campaign's durable finding is about evidence, not refactoring.
+
+**The bare-call patch bypass was STRUCTURALLY invisible on the dev box.** Tests patch
+`mcp_server._resolve_native_tg_binary_for_mcp` to `(None, None)` to force the embedded path.
+A split child called it BARE, so the patch never intercepted. Locally there is no built native
+binary, so the embedded branch is taken either way and the test passes — **local green was not
+weak evidence, it was NO evidence**, because the only branch the bug lives on cannot be taken
+here. CI (binary built) resolved the real binary, took the native path, and the mock was never
+called. Three rounds of this class shipped before the sweep was made exhaustive.
+
+- When a test's mechanism is "patch X to force branch B", ask which environments can take the
+  OTHER branch. A box that cannot take it cannot falsify the patch's delivery.
+- `cost_split_floor_routes.patch_sites` models only the `setattr` shapes. The full set tests
+  actually use is FOUR: `patch("dotted.string")`, `patch.object(mod, "name")`,
+  `monkeypatch.setattr(mod, "name", …)`, and `mod.X = …`. A "0 bare calls" verdict from a
+  narrower model is narrower than it reads — the `main.py` split agent additionally showed the
+  ratchet is blind to patched *attribute* calls and patched *constants*.
+- Sweep per target module: every name tests patch on it, by all four shapes, intersected with
+  what the module bound on `origin/main` — then zero bare uses in every extracted child.
+
+### The rest of the fan-out's receipts, compressed
+
+- **Union-merge every concurrently-open PR touching a shared pin/census BEFORE queueing.** It
+  caught two defects no branch's own CI could see: branches cut before #1046's handler ceiling
+  existed were green against a world without the gate, and three PRs' adjacent-line allowlist
+  edits conflicted pairwise while each was green alone. (Second campaign this week; now a
+  standing step, not a discovery.)
+- **A monitor keyed on first-terminal-state goes silent forever after a re-push.** Key on
+  `PR:head-sha` so every push gets its own verdict, and print an explicit exit line ("no open
+  PRs remain") so stream-end is distinguishable from a hang. Same family as the job-KEY-vs-NAME
+  selector failure the 2026-08-19 law records: the guard was on the result, the defect was in
+  the population.
+- **A dead subagent's worktree is a local-green/CI-red generator.** Both session-limit deaths
+  left verified-but-UNCOMMITTED fixes: the worktree passed, CI on the same head failed. When an
+  agent dies, diff its worktree against its branch before reasoning about its CI.
+- **Briefing the traps prevents repeats, not new members of the class.** Agents given the full
+  trap list still hit: rustfmt disagreeing with a dedent (the one thing they could not
+  compile-check — resolved by applying CI's own diff verbatim), a decorator running at
+  sibling-import time, `Path.write_text` CRLF on `eol=lf` files, and a ratchet's module column.
+  The briefs made them CATCH these; catching is the realistic goal.
+- **Relocated code must not re-audit itself into a census.** Moving a file does not audit it:
+  extend the exclusion set with the reason inline, never raise the ceiling on the strength of a
+  `git mv`. Three split PRs each needed this, each in their own merge round.
