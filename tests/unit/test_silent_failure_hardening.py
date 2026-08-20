@@ -72,15 +72,14 @@ PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 # They should be classified when `cli/main.py` itself is, and this whole block retired together.
 _EXCLUDED_MODULES = frozenset({
     "cli/main.py",
-    "cli/mcp_server.py",
-    # extracted from cli/mcp_server.py by the same split campaign; their broad handlers are
-    # byte-identical relocations of handlers that were already outside this census because
-    # mcp_server.py is excluded. Moving a file does not audit it -- counting them would raise
-    # the ceiling on the strength of a git mv, which the comment above this pin forbids. They
-    # get classified when mcp_server.py itself is, and this block retires with it.
-    "cli/mcp_rewrite_tools.py",
-    "cli/mcp_audit_tools.py",
-    "cli/mcp_symbol_tools.py",
+    # W1-a (2026-08-20) RETIRED the four `cli/mcp_*` exclusions -- `cli/mcp_server.py`,
+    # `cli/mcp_rewrite_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_symbol_tools.py`. All 57
+    # of their broad handlers were read in their enclosing functions and dispositioned in
+    # `docs/audits/2026-08-20-handler-dispositions.json` (55 INTENTIONAL-BOUNDARY, each with a
+    # behavioural fail-closed arm in `tests/unit/test_w1a_mcp_handler_fail_closed.py`;
+    # 2 SILENT-SWALLOW, both hardened, RED arms in
+    # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
+    # ceiling bump to absorb a `git mv`.
     # extracted from cli/main.py, unaudited for the same reason it is
     "cli/ast_scan.py",
     "cli/doctor_report.py",
@@ -94,7 +93,20 @@ _EXCLUDED_MODULES = frozenset({
 # pass -- classify the new site first (see AGENTS.md's verification-oracle family, Form 1: "what
 # would this check show if the thing were broken?" -- for THIS check, an unreviewed new broad
 # handler is exactly the broken thing it exists to catch).
-TOTAL_BROAD_HANDLERS_CEILING = 139
+#
+# W1-a ceiling arithmetic (plan W1.3 rule 5: base = the CURRENTLY MERGED ceiling on origin/main,
+# re-derived at rebase time -- never arithmetic-forwarded from a stale base):
+#     base (origin/main, merged by W1-d)                        139
+#   + cli/mcp_server.py                                          35
+#   + cli/mcp_symbol_tools.py                                    10
+#   + cli/mcp_audit_tools.py                                      8
+#   + cli/mcp_rewrite_tools.py                                    4
+#   ------------------------------------------------------------
+#                                                               196
+# The two hardened SILENT-SWALLOW sites are still `except Exception`, so hardening them by
+# DISCLOSURE (rather than by narrowing the type) does not reduce the count -- the docstring
+# above lists three hardening moves and only the first removes a handler from this population.
+TOTAL_BROAD_HANDLERS_CEILING = 196
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

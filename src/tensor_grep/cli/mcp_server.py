@@ -1056,9 +1056,7 @@ def tg_mcp_capabilities() -> str:
 
 
 def _record_generated_audit_manifest(payload: object) -> None:
-    if not isinstance(payload, dict):
-        return
-    audit_manifest = payload.get("audit_manifest")
+    audit_manifest = payload.get("audit_manifest") if isinstance(payload, dict) else None
     if not isinstance(audit_manifest, dict):
         return
     manifest_path = audit_manifest.get("path")
@@ -1068,7 +1066,8 @@ def _record_generated_audit_manifest(payload: object) -> None:
         from tensor_grep.cli.audit_manifest import record_audit_manifest
 
         record_audit_manifest(manifest_path)
-    except Exception:
+    except Exception as exc:  # W1-a: was a bare `return`; stderr, not the wire payload
+        print(f"[tg-mcp] audit-history append failed for {manifest_path}: {exc}", file=sys.stderr)
         return
 
 
@@ -3742,15 +3741,15 @@ def tg_session_open(
     except Exception as exc:
         return _session_exception_payload(path=path, message=str(exc), detail={})
 
-    # M13: add tracked_file_count which counts source + test files (related_paths)
-    # to complement file_count which only counts non-test source files.
+    # M13: tracked_file_count counts source + test files (related_paths); file_count does not.
+    degraded: dict[str, object]
     try:
         session_payload = get_session(result.session_id, path)
         repo_map = session_payload.get("repo_map") or {}
         related_paths = repo_map.get("related_paths") or []
-        tracked_file_count = len(related_paths)
-    except Exception:
-        tracked_file_count = result.file_count
+        tracked_file_count, degraded = len(related_paths), {}
+    except Exception as exc:  # W1-a: was a SILENT-SWALLOW (see the disposition ledger)
+        tracked_file_count, degraded = result.file_count, {"tracked_file_count_error": str(exc)}
 
     return json.dumps(
         {
@@ -3759,6 +3758,7 @@ def tg_session_open(
             "schema_version": _json_output_version(),
             **result.__dict__,
             "tracked_file_count": tracked_file_count,
+            **degraded,
         },
         indent=2,
     )

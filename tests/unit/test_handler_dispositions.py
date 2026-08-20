@@ -156,6 +156,73 @@ def test_ledger_completeness_scoped_to_audited_modules() -> None:
     )
 
 
+def test_identity_scheme_has_no_same_named_sibling_ambiguity() -> None:
+    """W1-a: the CHECKED INVARIANT behind the identity scheme, resolved rather than assumed.
+
+    THE AMBIGUITY W1-d FLAGGED. ``handler_index_within_symbol`` is counted per SYMBOL NAME, not
+    per symbol NODE (see ``_real_handlers_for_module``'s ``per_symbol_counter``). If one module
+    defines two functions with the SAME NAME -- e.g. a ``_walk`` closure repeated inside two
+    different outer functions, which the lang modules already do -- and BOTH hold broad
+    handlers, their records share a name and the index becomes a running count ACROSS both
+    definitions. Nothing collides and nothing is orphaned (the indices stay distinct and
+    ``_real_handlers_for_module`` carries each handler's own enclosing span), but the record no
+    longer names WHICH definition it describes, and inserting a broad handler into the earlier
+    definition silently RENUMBERS every later one, re-pointing existing records at different
+    handlers with the completeness and locatability checks still green.
+
+    THE RESOLUTION CHOSEN, and why. Not a schema change: deepening the key to a qualified path
+    would force the two merged W1-d records to be re-derived and would move the identity scheme
+    while three slices are still mid-flight against it. Instead the PRECONDITION under which
+    the flat key is unambiguous is asserted here, for the audited population only, so the day it
+    stops holding this test fails and NAMES the module -- rather than a later slice silently
+    inheriting an ambiguous key. If it ever fires, deepen the key then, with the whole ledger
+    migrated in one commit.
+
+    NOTE this deliberately scopes to AUDITED modules. Same-named siblings elsewhere in the tree
+    are harmless until that module enters the ledger, and asserting over the whole package would
+    make an unrelated module's refactor fail a gate about ledger identity.
+    """
+
+    offenders: list[str] = []
+    for module in sorted(_audited_modules_so_far()):
+        path = PY_SRC / module
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+        holders: dict[str, list[int]] = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            has_broad = any(
+                _is_broad_handler(handler)
+                for sub in ast.walk(node)
+                if isinstance(sub, ast.Try)
+                for handler in sub.handlers
+            )
+            if has_broad:
+                holders.setdefault(node.name, []).append(node.lineno)
+
+        for name, linenos in sorted(holders.items()):
+            if len(linenos) > 1:
+                offenders.append(f"{module}::{name} defined at lines {sorted(linenos)}")
+
+    assert not offenders, (
+        "the flat (module, enclosing_symbol, handler_index_within_symbol) identity key is "
+        "AMBIGUOUS for these audited symbols -- two same-named definitions each hold at least "
+        "one broad handler, so the index runs across both and a future insertion renumbers "
+        "records onto the wrong handlers. Deepen the identity key to a qualified symbol path "
+        "and migrate the whole ledger in one commit; do not hand-patch indices. "
+        f"Offenders: {offenders}"
+    )
+
+    # Positive control: the walk above must have SEEN the audited population, or an empty
+    # `offenders` list would be a scan that never ran rather than a clean bill (AGENTS.md:
+    # "no zero is reported without a control").
+    audited = _audited_modules_so_far()
+    if audited:
+        seen = sum(len(_real_handlers_for_module(m)) for m in audited)
+        assert seen > 0, "invariant scan saw zero handlers across audited modules -- dead scan"
+
+
 def test_ledger_uniqueness() -> None:
     """No IDENTITY triple appears twice. lineno is NOT consulted -- two records that agree on
     (module, enclosing_symbol, handler_index_within_symbol) are the same handler even if their
