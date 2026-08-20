@@ -1,6 +1,8 @@
 # Design: escaping the split floor on the three un-splittable modules
 
-**Status:** proposal, unreviewed. **Date:** 2026-08-19.
+**Status:** step 1 shipped (#1036); the CONVERSION (steps 2-4) is still a proposal and still
+**unreviewed** — it needs the adversarial review named in §5 before any call site changes.
+**Date:** 2026-08-19.
 **Decides:** how `cli/main.py`, `cli/repo_map.py` and `cli/mcp_server.py` reach the 1,500-line
 limit, given that **they cannot get there by moving code**.
 
@@ -132,18 +134,30 @@ AST query the costing tool already runs:
 > For each of the three modules: **zero** `ast.Call` nodes whose `func` is an `ast.Name` matching a
 > patched symbol.
 
-Ship that as a test **before** any conversion, with the count pinned at its current value (102 /
-166 / 125) and ratcheting to zero — exactly the pattern `scripts/file_size_budget.py` already uses.
-Then the conversion cannot be partially done and believed complete, and a future edit cannot
-reintroduce a bare call.
+**SHIPPED 2026-08-19 as PR #1036** — `scripts/bare_call_ratchet.py`, pinned in
+`scripts/bare_call_pins.json` at 102 / 125 / 166, wired into the `static-analysis` job beside
+the file-size ratchet, with 17 mutation tests in `tests/unit/test_bare_call_ratchet.py`. It is
+fail-closed in all four directions the file-size ratchet uses, including the unusual one: a count
+BELOW its pin also fails, because a pin above the real count accepts a range, and a range is
+where a later regression hides.
 
-**Bidirectional control required:** the test must be seen to FAIL on a deliberately reintroduced
-bare call before it is trusted, per the repo's standing rule that a gate never observed firing is a
-comment.
+**The bidirectional control was run, not assumed.** One bare call injected into `mcp_server.py`:
+
+    ARM 1  clean          125 == pin   exit 0
+    ARM 2  +1 bare call   126 >  pin   exit 1, naming the file and the fix
+    ARM 3  reverted       125 == pin   exit 0, file byte-identical (sha 1ff472cb…)
+
+The exit codes were re-measured without a pipe after a first reading took `tail`'s status and
+printed a false `exit=0` — the trap that once let a commit land on red in this repo.
+
+**What a zero here will NOT mean.** No bare call left is not the same as splittable: this AST
+query does not model class methods, closures, `global` rebinding, or `spec_from_file_location`.
+Re-run `scripts/measure_split_floor.py` when a module reaches zero rather than inferring the
+floor from it.
 
 ## 5. Sequencing, and the honest risk
 
-1. Ship the bare-call ratchet with counts pinned at today's values. No behaviour change.
+1. ~~Ship the bare-call ratchet with counts pinned at today's values.~~ **DONE — PR #1036**, 2026-08-19. No behaviour change; see §4 for the perturbation receipt.
 2. Convert one module — **`mcp_server.py` first**, but NOT for the reason first given here.
    It does not have the fewest edits: at 125 it sits between `main.py` (102) and `repo_map.py`
    (166). It goes first because of **blast radius and shape**, which the corrected numbers
