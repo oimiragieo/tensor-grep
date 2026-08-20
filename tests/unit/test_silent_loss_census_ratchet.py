@@ -110,7 +110,22 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # CAUTION for whoever drains this next: FALLBACK-ASSIGN is NOT safe as a general rule -- it
     # also matched checkpoint_store's #297 data-loss. See the header note on where the
     # "model the class" rule stops.
-    "main.py": 15,
+    # 15 -> 6 + 5 + 4 by the cli/main.py SPLIT (2026-08-20,
+    # docs/design/2026-08-19-split-floor-escape.md). NOT a fix and NOT a regression: nine of the
+    # fifteen handlers moved, byte-identical, into two extracted siblings, and this census is
+    # keyed by FILE. The arithmetic is spelled out because this file has been burned by a hand
+    # count before, and because the invariant that matters here is CONSERVATION, not each
+    # per-file number:
+    #     main.py 6  +  doctor_report.py 5  +  windows_launcher.py 4  =  15, the old pin exactly.
+    # Measured, not asserted: `_census()` over the six modules (main.py plus its five children)
+    # totals 15 and the other three children contribute 0. Every one of the nine relocated sites
+    # is in the already-audited families recorded above -- FALLBACK-ASSIGN (the doctor PATH scans
+    # and the launcher scan) and OUTPUT-BUCKET (the launcher cleanup's `failed.append(...)`) --
+    # so the audit that accepted them still applies; moving a file does not re-open it.
+    # Retire these two entries together with main.py's when that module is drained.
+    "main.py": 6,
+    "doctor_report.py": 5,
+    "windows_launcher.py": 4,
     # 10 -> 6 by #297: three real fixes (the undo commit phase destroying a file whose bytes it
     # had failed to capture, so the revert could not restore it) plus one FALSE POSITIVE that the
     # detector no longer reports -- the undo pre-flight accumulates into `missing` and then raises

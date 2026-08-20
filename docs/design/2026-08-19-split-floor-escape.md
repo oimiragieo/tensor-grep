@@ -194,3 +194,42 @@ floor from it.
 Whether the limit is 1,500 or 1,000 (the brief and the audit template disagree; at 1,000, eleven
 more files violate), and whether the four oversized **Rust** files are tractable at all given that
 this development box cannot compile Rust and every attempt is a CI round-trip.
+
+## 7. Step 3 for `main.py`, executed 2026-08-20
+
+`cli/main.py` **17,983 -> 13,523 lines** (-4,460), into five siblings:
+
+| module | lines | what |
+|---|---|---|
+| `cli/native_frontdoor.py` | 658 | PyPI version discovery, checksum-gated asset install, managed metadata |
+| `cli/windows_launcher.py` | 1,011 | `tg.exe` COM bridges, Python-Scripts shadow removal, user PATH, scheduled refresh |
+| `cli/doctor_report.py` | 1,344 | the `_doctor_*` probe family |
+| `cli/doctor_payload.py` | 737 | `_build_doctor_payload` + `_render_doctor_payload` |
+| `cli/ast_scan.py` | 1,170 | the `tg scan --ruleset` pipeline |
+| `cli/_main_binding.py` | 66 | the shared late-bound `_self` |
+
+Three things the conversion in §3 did **not** cover, each of which would have been a silent
+false green, and each found by reading rather than by a gate:
+
+1. **`_self` cannot be `sys.modules[__name__]` in a sibling.** `main.py` is mid-import when it
+   imports the siblings, so a sibling must resolve `main` *later than its own import*.
+   `cli/_main_binding.py` does it with a proxy whose `__getattr__` looks `main` up at attribute-
+   access time — which only ever happens inside a function body.
+2. **The bare-call ratchet counts `ast.Call` on an `ast.Name`, so it cannot see two live cases.**
+   `subprocess` is patched on `main` and reached as `subprocess.run(...)` — an *attribute* call
+   on a name, which the ratchet does not count; and `_MAX_NATIVE_ASSET_DOWNLOAD_BYTES` is a
+   patched CONSTANT, read as a plain Name load, not a call at all. Both had to be qualified to
+   `_self.` by hand. A zero from the ratchet is narrower than it reads.
+3. **A function-local `import subprocess` shadows the module global**, so
+   `_doctor_rust_binary_version` never saw the patch before the move. A blanket rewrite to
+   `_self.subprocess` would have newly *exposed* it — a behaviour change disguised as a
+   mechanical one. That one call site is deliberately left bare, with the reason in the file.
+
+The dynamic half of the property — a patch applied to `main` reaching code that now lives in a
+sibling — is pinned by `tests/unit/test_main_split_late_binding.py`, perturbation-proved:
+removing the mechanism from `doctor_payload.py` turns it red naming the unpatched value
+(`1.104.0` instead of `9.9.9-probe`), and the revert is byte-identical.
+
+Not attempted here: `main.py` is still 9x the limit. `search_command` alone is 1,717 lines and
+`upgrade` is 717, and both are `@app.command()`-decorated, so moving them means moving Typer
+registration out of the file the four registration sites document.

@@ -646,8 +646,11 @@ def test_agent_capsule_marker_query_keeps_exe_bridge_marker_primary():
 
     payload = _agent_payload(repo_root, "harden Windows exe bridge marker")
 
+    # `_write_windows_exe_bridge_marker` moved out of cli/main.py into cli/windows_launcher.py
+    # on 2026-08-20 (the main.py split). This assertion follows the SYMBOL's real home, which is
+    # what the capsule is supposed to name.
     assert payload["primary_target"]["file"] == str(
-        (repo_root / "src" / "tensor_grep" / "cli" / "main.py").resolve()
+        (repo_root / "src" / "tensor_grep" / "cli" / "windows_launcher.py").resolve()
     )
     assert payload["primary_target"]["symbol"] == "_write_windows_exe_bridge_marker"
 
