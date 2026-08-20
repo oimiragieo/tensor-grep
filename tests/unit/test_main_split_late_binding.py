@@ -51,10 +51,22 @@ def test_moved_doctor_payload_sees_a_patch_applied_to_main(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """`_build_doctor_payload` lives in cli/doctor_payload.py; the probe it calls is patched
-    on `main`. Control arm first, so a no-op patch cannot pass."""
+    on `main`. Control arm first, so a no-op patch cannot pass.
+
+    `_latest_pypi_tensor_grep_version` is stubbed for BOTH arms: the real one is a live HTTPS
+    call to pypi.org with a 15s timeout, and a unit test must not depend on the network (or pay
+    for it twice). Stubbing it is not a hole in what this test checks -- it is itself a moved
+    symbol reached through `_self`, so the stub only holds if the mechanism under test works.
+    """
+    monkeypatch.setattr(cli_main, "_latest_pypi_tensor_grep_version", lambda *a, **k: None)
+
     real = doctor_report._doctor_installed_version()
     control = doctor_payload._build_doctor_payload(str(tmp_path), with_lsp=False)
     assert control["version"] == real
+    assert control["pypi_latest"] is None, (
+        "the pypi stub is applied to `main` but read from the moved module -- if this is not "
+        "None the late-binding mechanism is already broken and the arms below prove nothing"
+    )
     assert real != "9.9.9-probe"
 
     monkeypatch.setattr(cli_main, "_doctor_installed_version", lambda: "9.9.9-probe")
