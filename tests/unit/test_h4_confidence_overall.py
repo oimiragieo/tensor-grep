@@ -59,7 +59,14 @@ def test_lightweight_seed_emits_derived_overall(tmp_path: Path) -> None:
     assert seed_confidence["overall"] == round(
         max(seed_confidence["file"], seed_confidence["symbol"]), 3
     )
-    assert 0.0 <= seed_confidence["overall"] <= 1.0
+    # H6 audit: `_derive_seed_overall` (repo_map.py:10918-10936) is `max(file, symbol)`, and
+    # both inputs come from `_confidence_from_score`, which clamps to [0.0, 1.0]
+    # (repo_map.py:10912-10915, proven load-bearing in
+    # test_edit_plan_seed.py::test_confidence_from_score_clamp_is_load_bearing) -- so
+    # `0.0 <= overall <= 1.0` can never fail here and was pure noise. Pinned to the exact
+    # value this deterministic fixture produces (verified 3x): file=1.0, symbol=0.5 ->
+    # overall=1.0.
+    assert seed_confidence["overall"] == 1.0
 
 
 def test_filtered_alignment_cap_inherits_into_overall(tmp_path: Path) -> None:
