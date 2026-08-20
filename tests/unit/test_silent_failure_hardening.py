@@ -63,6 +63,14 @@ _EXCLUDED_MODULES = frozenset({
     "cli/main.py",
     "cli/repo_map.py",
     "cli/mcp_server.py",
+    # extracted from cli/mcp_server.py by the same split campaign; their broad handlers are
+    # byte-identical relocations of handlers that were already outside this census because
+    # mcp_server.py is excluded. Moving a file does not audit it -- counting them would raise
+    # the ceiling on the strength of a git mv, which the comment above this pin forbids. They
+    # get classified when mcp_server.py itself is, and this block retires with it.
+    "cli/mcp_rewrite_tools.py",
+    "cli/mcp_audit_tools.py",
+    "cli/mcp_symbol_tools.py",
     # extracted from cli/repo_map.py by the same split campaign; byte-identical relocations of
     # handlers already outside this census because repo_map.py is excluded. Moving a file does
     # not audit it -- counting them would raise the ceiling on the strength of a git mv, which
