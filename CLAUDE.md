@@ -82,7 +82,16 @@ Claude Code guidance for the **tensor-grep** repository.
   gate will ACCEPT, and the `[tool.semantic_release]` block for what will actually SHIP.
   The code is not lost — an unreleased `refactor:` publishes with the next `fix:`/`feat:` merge — but
   a refactor-ONLY run leaves `main` unpublished while every tracker reads "shipped". The repo
-  squash-merges, so the PR TITLE *is* the release semantic. A CWE-88 security fix was scoped as a
+  squash-merges, so the PR TITLE is *usually* the release semantic — **but not always, and the
+  exception bit me on 2026-08-19.** GitHub's squash uses the PR title only when the PR has MORE
+  THAN ONE commit; with a **single-commit PR it defaults to that commit's own subject**, and
+  retitling the PR changes nothing. PR #1036 was deliberately titled `ci:` to avoid a release and
+  merged as `feat: bare-call ratchet …`, because it was one commit whose message said `feat:`.
+  Result: a MINOR version bump published for a dev-only CI gate, against an explicit prediction
+  of "no release". **Semantic-release parses the COMMIT ON MAIN, never the PR title** — so verify
+  with `git log --format='%s' <last-tag>..origin/main | grep -E '^(fix|feat|perf)'` AFTER merging,
+  not by reading the PR. On a single-commit PR, fix the COMMIT subject (amend and force-push the
+  branch) or add a second commit; retitling alone is a no-op. A CWE-88 security fix was scoped as a
   `chore:` PR on 2026-08-01 — it would have merged, closed the ticket, and **never published**, with
   every tracker reading "shipped". Ask what the title does to the release BEFORE merging.
   **Committed is not shipped, and merged is not released**: verify on the PUBLISHED artifact, and
