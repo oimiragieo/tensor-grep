@@ -1,8 +1,8 @@
 # Plan: the world-class closeout campaign
 
-**Date:** 2026-08-20. **Revision:** r2 (council round 1 returned REVISE from all three substantive
-seats; every finding is dispositioned in appendix A). **Status:** DRAFT — awaiting re-audit. Not a
-build licence.
+**Date:** 2026-08-20. **Revision:** r3. Council round 1 returned REVISE from three seats
+(dispositioned in appendix A); round 2 returned REVISE from two live seats with narrow, textual
+findings (dispositioned in appendix B). **Status:** DRAFT — awaiting re-audit. Not a build licence.
 **Base:** `origin/main` at `7dfff2f` (`refactor: split mcp_server.py into
 mcp_rewrite_tools/mcp_audit_tools/mcp_symbol_tools (#1051)`). Public product `v1.111.0`.
 **Branch this plan lives on:** `docs/worldclass-closeout-plan`.
@@ -111,7 +111,7 @@ mean three different things.
 | `W4-c` | `backend_cpu.rs` marker manifest, then decide | REQUIRED (the manifest; the extraction is conditional on it) | W4 |
 | `W4-d` | the three Python test giants | REQUIRED | W4 |
 | `W4-e` | `test_schema_compat.rs` + `test_routing.rs` | REQUIRED | W4 |
-| `W4-f` | re-pin `main.rs` 15127 to 15126, and every pin W5 moves | REQUIRED (was "W3-b" in r1; renumbered into the wave that owns the file) | W4 |
+| `W4-f` | allowlist integration: the `main.rs` stale-pin re-pin (W4.6) plus every pin W5-a/W5-b/W4-b/W4-c/W4-e moves | REQUIRED (was "W3-b" in r1; renumbered into the wave that owns the file) | W4 |
 | `W5-a` | `gpu_native.rs` test extraction | REQUIRED | W5 |
 | `W5-b` | `main.rs` test extraction | REQUIRED | W5 |
 | `W5-c` | `main.rs` architecture pass | **DEFERRED — flag only.** Deliverable is the flag and a filed row; **no implementation is authorised** | none |
@@ -130,7 +130,7 @@ W1, W2, W6 and W4-a/W4-d are mutually independent by file set.
 W3-a is **gated on W1** (its costing reads the modules W1 is editing).
 W4-b, W4-c, W4-e, W5-a, W5-b are all Rust and all share one CI lane.
 
-    W1 (a -> d -> b -> c, serialized on the gate file) --+--> W3-a (design only)
+    W1 (W1-d -> W1-a -> W1-b -> W1-c, serialized on the gate file) --+--> W3-a (design only)
     W2 (a, c parallel; b in its own release window) -----|
     W6 (a -> b) ----------------------------------------+
     W4-a, W4-d  (Python + one small Rust, independent)
@@ -138,16 +138,27 @@ W4-b, W4-c, W4-e, W5-a, W5-b are all Rust and all share one CI lane.
         W5-a -> W5-b -> W4-b -> W4-c -> W4-e
         (W4-f re-pins after EACH of these, before the next starts)
 
-**The r1 diagram was wrong** and is corrected here: it showed W4 and W5 as fully parallel lanes while
-the text said W4-b and W4-e were CI-serialised behind W5. An orchestrator reading only the diagram
-would have dispatched them concurrently.
+**The diagram has now been wrong twice, the same way.** r1 showed W4 and W5 as fully parallel lanes
+while the text said W4-b and W4-e were CI-serialised behind W5; r2 fixed that and then wrote the W1
+order as `a -> d -> b -> c` while W1.2, the merge order and appendix A all said
+`W1-d -> W1-a -> W1-b -> W1-c`. Both are the same defect class — **a diagram is a second copy of the
+body, and a second copy drifts.** The order is defined in exactly one place, the total merge order
+below; the diagram is a picture of it and must be re-read against it on every revision.
 
 **Total merge order** (one PR at a time; `[REL]` marks a publishing merge that needs its own window):
 
-1. `W1-d`  2. `W1-a`  3. `W1-b`  4. `W1-c`  5. `W6-a`  6. `W6-b`  7. `W4-a`  8. `W4-d`(×3 PRs)
-9. `W5-a` 10. `W4-f`(pin) 11. `W5-b` 12. `W4-f`(pin) 13. `W4-b` 14. `W4-f`(pin) 15. `W4-c`
-16. `W4-e` 17. `W4-f`(`main.rs` 15127→15126, folded into step 12 if convenient)
-18. `W2-a` 19. `W2-c` 20. **`W2-b` `[REL]`** 21. `W3-a` 22. closeout manifest.
+1. `W1-d`  2. `W1-a`  3. `W1-b`  4. `W1-c`  5. `W6-a`  6. `W6-b`  7. `W4-a`  8. `W4-d`(**witness commit first**, then ×3 split PRs — see W4.4)
+9. `W5-a` 10. `W4-f`(pin) 11. `W5-b` 12. `W4-f`(pin, **including the `main.rs` stale-pin re-pin**)
+13. `W4-b` 14. `W4-f`(pin) 15. `W4-c` 16. `W4-f`(pin) 17. `W4-e` 18. `W4-f`(pin)
+19. `W2-a` 20. `W2-c` 21. **`W2-b` `[REL]`** 22. `W3-a` 23. closeout manifest.
+
+**Every Rust merge is followed by a `W4-f` pin step — all five, without exception.** r2 listed pin
+steps after W5-a, W5-b and W4-b but omitted them after W4-c and W4-e, while W4.2 scopes W4-f to
+"every pin W4-c/W4-e moves". An extraction that shrinks a file without lowering its pin leaves the
+allowlist above the measured count, which the budget ratchet fails on its next run — so the omission
+would have reddened `main` at the following step. If a `W4-f` step finds nothing to change (the
+extraction did not move a line count), it is recorded as a **no-op** in the closeout manifest rather
+than skipped silently; a skipped step and an empty step are not the same evidence.
 
 `W2-b` is deliberately last among code changes: it is the only publishing merge, and putting it after
 the Rust lane means no Rust CI round-trip is ever queued inside a release window.
@@ -259,7 +270,22 @@ the ceiling by the full count, suite green, nothing proved. The fix is a committ
 that can fail.
 
 **Artifact:** `docs/audits/2026-08-20-handler-dispositions.json` — one record per broad handler in the
-formerly-excluded population, keyed by a **fingerprint** that does not rot on a line shift:
+formerly-excluded population, keyed by a fingerprint. **Which fields are identity and which are
+advisory is stated, because r2 claimed line-shift stability while the schema carried a `lineno`:**
+
+- **IDENTITY** = the triple `(module, enclosing_symbol, handler_index_within_symbol)`. This is what
+  uniqueness and completeness are computed over, and it is stable under any edit that does not rename
+  the symbol or reorder handlers within it.
+- **ADVISORY** = `lineno`. It exists so a human can jump to the site. It is **never** part of identity,
+  so a line shift cannot orphan a record or manufacture a duplicate. It is still *checked*, but only
+  for plausibility: the locatability assertion requires it to fall inside the enclosing symbol's span,
+  which catches a record edited by hand against a stale copy of the file without making ordinary code
+  motion a failure.
+- If a symbol is renamed or its handlers are reordered, the identity changes and the record must be
+  re-derived, not hand-patched — that is the intended cost of a rename, and the completeness assertion
+  is what surfaces it.
+
+The record shape:
 
     {"module": "cli/mcp_audit_tools.py",
      "lineno": 642,
@@ -271,12 +297,22 @@ formerly-excluded population, keyed by a **fingerprint** that does not rot on a 
      "hardened_in": "<PR number, or null for the two non-defect categories>"}
 
 **Gate:** `tests/unit/test_handler_dispositions.py`, which must enforce, each as its own assertion:
-- **completeness** — every handler in the independently derived population (from
-  `scripts/handler_census.py`, not from the ledger) has exactly one record;
-- **uniqueness** — no fingerprint appears twice;
-- **locatability** — every record's `(module, enclosing_symbol, handler_index_within_symbol)` resolves
-  to a real broad handler in the current tree, and its `lineno` is within that symbol's span (a stale
-  `lineno` is a warning that fails, not a silent pass);
+- **completeness, scoped to what has actually been audited so far** — the ledger is append-only and
+  the slices merge serially, so a full-population check would be unsatisfiable at every intermediate
+  merge, and an implementer facing an unsatisfiable assertion invents an unstated scope. The rule is
+  therefore explicit: **at any commit, every broad handler in the modules REMOVED from
+  `_EXCLUDED_MODULES` so far (cumulatively, up to and including this slice) has exactly one record,
+  and no record exists for a module still excluded.** Both directions are asserted — a missing record
+  fails, and so does a record for a module nobody has audited yet, which is how a slice claiming
+  credit for work it did not do gets caught. The population is derived from
+  `scripts/handler_census.py` against the current exclusion set, never from the ledger. Expected
+  ledger sizes per merge follow from W1.1's per-module counts: **W1-d -> 2, W1-a -> 59, W1-b -> 82,
+  W1-c -> 128.** `len(ledger) == 128` is therefore only true at W1-c, and it is reached by the
+  cumulative rule rather than asserted as a hardcoded final number;
+- **uniqueness** — no IDENTITY triple appears twice (`lineno` is not consulted);
+- **locatability** — every record's IDENTITY triple resolves to a real broad handler in the current
+  tree, and its advisory `lineno` falls within that symbol's span (a `lineno` outside it fails loudly
+  rather than passing silently);
 - **vocabulary** — `category` is one of the three; no free text;
 - **evidence non-emptiness** — `evidence` and `reason` are both non-empty and not equal to each other.
 
@@ -567,7 +603,7 @@ that moved the count, or in an immediately following PR that lands before the ne
 | `rust_core/src/backend_ast.rs` | 2,553 | `:2053-2553` (500); two further `#[cfg(test)]` attributes are nested inside items at `:53` and `:1428` and do NOT move | about 2,052 | no |
 | `rust_core/src/backend_cpu.rs` | 1,817 | **SIX** top-level markers (`:282,303,309,315,1088,1778`) plus seven nested attributes inside items (`:356,382,572,607,671,754,811`) — not one block | unknown until the manifest exists | **manifest first** |
 | `rust_core/src/gpu_native.rs` | 4,952 | `:4443-4911` (468), with 41 lines of PROD code AFTER it | about 4,484 | no |
-| `rust_core/src/main.rs` | 15,126 | `:2984-7473` (4,489) | about 10,637 | no (7.1x) |
+| `rust_core/src/main.rs` | 15,126 (pinned 15127 — see W4.6) | `:2984-7473` (4,489) | about 10,637 | no (7.1x) |
 
 > Two of those spans were **re-derived here and disagree with the design doc**, which was written
 > before #1048/#1049 landed: `python_sidecar.rs`'s second marker is at `:1490`, not `:1491`, and
@@ -601,7 +637,7 @@ visibility change. Python test files split freely, with one caveat below. Worst 
 | **W4-c** | `backend_cpu.rs` — **derive a marker manifest FIRST** (see below), then decide | **M** |
 | **W4-d** | the three Python test giants — one file per PR, three PRs | **L** |
 | **W4-e** | `rust_core/tests/test_schema_compat.rs` (4,412) plus `test_routing.rs` (2,995) | **M** |
-| **W4-f** | allowlist integration: `main.rs` 15127→15126, plus every pin W5-a/W5-b/W4-b/W4-c/W4-e moves | **S** |
+| **W4-f** | allowlist integration: the `main.rs` stale-pin re-pin (W4.6) plus every pin W5-a/W5-b/W4-b/W4-c/W4-e moves | **S** |
 
 **W4-c's manifest is the deliverable before any extraction.** Commit
 `docs/audits/2026-08-20-backend-cpu-test-markers.json`: for every `#[cfg(test)]` in the file, its line,
@@ -632,16 +668,31 @@ shadows the other. The AST duplicate-name check r1 promised in prose is now an e
 
 ### W4.4 — Acceptance tests
 
-**Per Python family** `[LOCAL]` — all three families, not just `test_cli_modes*` as in r1. Before the
-split, capture the node-ID manifest; after, compare as sets:
+**Per Python family** `[LOCAL]` — all three families, not just `test_cli_modes*` as in r1.
 
-    python -m pytest tests/unit/test_cli_modes.py --collect-only -q > .tg-pre-cli_modes.txt
-    python -m pytest tests/unit/test_benchmark_scripts.py --collect-only -q > .tg-pre-bench.txt
-    python -m pytest tests/unit/test_mcp_server.py --collect-only -q > .tg-pre-mcp.txt
+**The pre-split manifest must be an independent witness, committed BEFORE the split.** r2 wrote the
+baseline to an uncommitted `.tg-pre-*.txt` in the implementer's working tree, which makes the check a
+**split oracle**: the arm that is supposed to constrain the split is regenerable by the person doing
+the split, so re-capturing it afterwards passes trivially and proves nothing. The fix is sequencing
+plus provenance:
+
+1. In a **separate, earlier commit containing no source change** (`test:` class, non-releasing), write
+   the three manifests to `tests/manifests/pre_split_<family>.txt`, commit them, and record their
+   `sha256` in that commit's body. That commit is the witness; the split PR branches **from** it.
+2. The split PR **may not modify those three files.** A diff touching them is an automatic reject --
+   state it in the PR checklist — and the closeout manifest re-derives each `sha256` at the final SHA
+   and compares it against the value in the witness commit body.
+
+Capture command, run once, in the witness commit only:
+
+    python -m pytest tests/unit/test_cli_modes.py --collect-only -q > tests/manifests/pre_split_cli_modes.txt
+    python -m pytest tests/unit/test_benchmark_scripts.py --collect-only -q > tests/manifests/pre_split_bench.txt
+    python -m pytest tests/unit/test_mcp_server.py --collect-only -q > tests/manifests/pre_split_mcp.txt
+    python -c "import hashlib,pathlib; [print(hashlib.sha256(q.read_bytes()).hexdigest(), q) for q in sorted(pathlib.Path('tests/manifests').glob('pre_split_*.txt'))]"
 
 then, after the split, per family (shown for `cli_modes`; identical for the other two):
 
-    python -c "import subprocess,sys,glob; pre={l.split('::',1)[1] for l in open('.tg-pre-cli_modes.txt') if '::' in l}; out=subprocess.run([sys.executable,'-m','pytest','--collect-only','-q',*glob.glob('tests/unit/test_cli_modes*.py')],capture_output=True,text=True).stdout; post=[l.split('::',1)[1] for l in out.splitlines() if '::' in l]; dupes=[n for n in set(post) if post.count(n)>1]; print('pre',len(pre),'post',len(post),'unique',len(set(post)),'dupes',len(dupes)); sys.exit(0 if set(post)==pre and not dupes else 1)"
+    python -c "import subprocess,sys,glob; pre={l.split('::',1)[1] for l in open('tests/manifests/pre_split_cli_modes.txt') if '::' in l}; out=subprocess.run([sys.executable,'-m','pytest','--collect-only','-q',*glob.glob('tests/unit/test_cli_modes*.py')],capture_output=True,text=True).stdout; post=[l.split('::',1)[1] for l in out.splitlines() if '::' in l]; dupes=[n for n in set(post) if post.count(n)>1]; print('pre',len(pre),'post',len(post),'unique',len(set(post)),'dupes',len(dupes)); sys.exit(0 if set(post)==pre and not dupes else 1)"
 
 Expected: `pre 545 post 545 unique 545 dupes 0`, exit 0. The **node-name set** must be identical (not
 merely the count), and the duplicate detector must find zero — that is the AST identity gate, executable.
@@ -677,10 +728,33 @@ stays over its limit. Both halves were loose. Corrected:
 | W4-f re-pins | n/a — pins only | 0 |
 
 **Conservative floor: `violations: 29`** (W4-a alone, the only guaranteed removal).
-**Ambition: `violations: 22`** (all conditional removals land).
+**Ambition: `violations: 23`** — the per-slice maxima in the table above are 1 + 0 + 1 + 3 + 2 + 0 =
+**7**, and 30 - 7 = 23. (r2 wrote 22, which no row supports. The closeout manifest reconciles reality
+either way, but this section exists precisely to stop loose arithmetic, so it does not get to contain
+any.)
 Anything in between is a success with its shortfall named per file. **The closeout manifest records the
 actual number and, for every file that did not clear, the measured residual and its allowlist
 disposition** — that is the reconciliation r1 was missing.
+
+### W4.6 — The `main.rs` stale pin (the one number, stated once)
+
+`scripts/file_size_allowlist.json` pins `rust_core/src/main.rs` at **15127**. The file measures
+**15126**. The ratchet permits a shrink without a pin update, so this is green today — and it means one
+line of regrowth is currently free. **W4-f re-pins it to the measured value.** Every other mention of
+this pin in the plan refers here rather than restating the digits; r2 spelled the same pair three
+different ways in three places (`15,126` / `15127` / `15126`), which is how a transcription error
+enters a JSON file that a ratchet then enforces.
+
+`[LOCAL]` acceptance:
+
+    python scripts/file_size_budget.py --report
+    python -c "import json,sys; a=json.load(open('scripts/file_size_allowlist.json'))['grandfathered']['rust_core/src/main.rs']; print('pin', a); sys.exit(0 if a==15126 else 1)"
+
+Expected **after the W4-f re-pin and before W5-b**: `0 regressions`, and the pin prints `15126`
+(exit 0). Run today, before the re-pin, the second command exits **1** printing `pin 15127` — that is
+the RED arm, and it is the proof the assertion can fail. After W5-b the same
+assertion is re-derived against the post-extraction measurement, not against this literal — the
+literal is correct only for the pre-extraction file, and W4-f owns keeping it true.
 
 ---
 
@@ -742,7 +816,8 @@ sibling tests — it moves with the block, so it does not block this move, but i
 attempt to split those tests across multiple files.
 
 `[CI]` acceptance: `test-rust-core` green; run ID, head SHA, job population, sorted test-name set equal
-before and after. **No allowlist edit**; W4-f moves the pin 15,126 → ~10,637 at order step 12.
+before and after. **No allowlist edit**; W4-f moves the `main.rs` pin down to the post-extraction
+measurement (about 10,637) at order step 12.
 *State plainly:* this does not clear the limit and is not claimed to.
 
 **W5-c — `main.rs` architecture pass: DEFERRED, FLAG ONLY.**
@@ -979,3 +1054,21 @@ All three returned REVISE. Every finding is taken except the two marked NOT TAKE
 | `tg find` quality unverified (deepseek 6D) | **TAKEN as a stated gap, not as coverage** — section 3.6 names `search-golden-parity` as parity-only mitigation and routes the real quality run to FU-2's CI lane. Running `eval_late_rerank_quality.py` locally is forbidden by constraint 1. |
 | W3-a acceptance should be labelled "reviewer gate, not machine gate" (deepseek 1B) | **NOT TAKEN as worded** — instead of labelling the weak gate honestly, r2 replaced it with a real machine gate (`check_costing_doc.py`). The label would have been honest; the checker is better. The *judgement* of whether the recommendation is correct remains a reviewer gate, and section 4.3 names that reviewer. |
 | codex 9 (W4 premise contradiction), codex 2, codex 14 partial restatements | folded into the rows above; no separate action. |
+
+---
+
+## Appendix B — disposition of council round 2
+
+Seats: cursor and droid/deepseek, both REVISE. Cursor confirmed every round-1 fix is present in the
+operative text; deepseek confirmed the wave-deliverable phrasing is unambiguous. Findings were narrow
+and textual, so r3 is surgical — no restructuring. All six taken.
+
+| finding | disposition |
+|---|---|
+| §2 diagram writes the W1 order as `a -> d -> b -> c` while W1.2, the merge order and appendix A say `W1-d -> W1-a -> W1-b -> W1-c` | **TAKEN** — diagram corrected. Also recorded as a *recurrence*: this is the second round in a row a diagram contradicted its own body (r1's W4-vs-W5 lanes). §2 now states that the order is defined in exactly one place — the total merge order — and the diagram is a picture of it that must be re-read against it every revision. |
+| W1.4 completeness is defined against the full formerly-excluded population, but slices merge serially with an append-only ledger, so intermediate merges cannot satisfy it and an implementer would invent an unstated scope | **TAKEN** — completeness is now explicitly *cumulative*: at any commit, every handler in the modules removed from `_EXCLUDED_MODULES` so far has exactly one record, **and** no record exists for a still-excluded module (both directions, so a slice cannot claim credit for unaudited work). Derived per-merge expectations written in: W1-d → 2, W1-a → 59, W1-b → 82, W1-c → 128, with `len(ledger) == 128` reached by the rule rather than hardcoded. |
+| W4.4's node-ID set equality is a split oracle — the pre-split capture is an uncommitted `.tg-pre-*.txt` under the implementer's control, so regenerating it post-split passes trivially | **TAKEN** — the baseline becomes an independent witness: three manifests written to `tests/manifests/pre_split_*.txt` and committed in a **separate earlier commit with no source change**, their `sha256` recorded in that commit body, the split PR branched from it and forbidden to modify them, and the closeout manifest re-deriving each hash at the final SHA. The comparison command now reads the committed path. |
+| the merge order omits `W4-f` re-pin steps after W4-c and W4-e, though W4.2 scopes W4-f to "every pin W4-c/W4-e moves" — the allowlist would drift and the ratchet fail on the next run | **TAKEN** — pin steps inserted after all five Rust merges (order is now 23 steps). Added the rule that a `W4-f` step which finds nothing to change is recorded as a **no-op**, not skipped: a skipped step and an empty step are not the same evidence. |
+| W4.5 ambition arithmetic: per-slice maxima sum to 7 removals from 30, so ambition is 23, not 22 | **TAKEN** — corrected to 23 with the addition shown inline (1+0+1+3+2+0 = 7). The section exists to stop loose arithmetic, so it does not get to contain any. |
+| define the ledger fingerprint precisely (line-shift stability is claimed while the schema carries `lineno`); normalize the `main.rs` pin spelling (three spellings in three places) | **TAKEN, both** — the fingerprint is now split into **IDENTITY** = `(module, enclosing_symbol, handler_index_within_symbol)`, over which uniqueness and completeness are computed, and **ADVISORY** = `lineno`, which is never part of identity but is still range-checked against the enclosing symbol's span; a rename or handler reorder changes identity and forces re-derivation. The pin gets one home, **W4.6**, which states `15127` pinned / `15126` measured once with its own acceptance command; every other mention now refers to W4.6 instead of restating digits. |
+
