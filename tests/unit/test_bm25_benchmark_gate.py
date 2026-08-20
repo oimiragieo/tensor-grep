@@ -5,6 +5,8 @@ import sys
 from pathlib import Path
 from types import ModuleType
 
+import pytest
+
 
 def _load_eval_module() -> ModuleType:
     root = Path(__file__).resolve().parents[2]
@@ -61,7 +63,18 @@ def test_run_eval_pins_exact_metrics_on_the_deterministic_corpus(tmp_path: Path)
     assert metrics.mrr_at_k == 1.0, (
         f"mrr@10 on the deterministic corpus is pinned at 1.0, got {metrics.mrr_at_k}"
     )
-    assert metrics.precision_at_k == 0.1, (
+    # `approx` for this one ONLY, and not as a loosening: precision@10 is a mean of 1/10
+    # terms, and 0.1 is not exactly representable in binary floating point. py3.12 summed to
+    # exactly 0.1 while py3.11 produced 0.09999999999999999, so an `==` here fails on the
+    # interpreter's summation order rather than on retrieval quality -- a red arm for the
+    # wrong reason, which is its own kind of useless check.
+    #
+    # recall and mrr stay EXACT: both are 1.0, which IS exactly representable, and both held
+    # on every interpreter in CI. Do not relax them to match this line.
+    #
+    # The tolerance is tight enough to remain discriminating: any real regression moves
+    # precision by a whole 1/10 step, ~9 orders of magnitude larger than rel=1e-9.
+    assert metrics.precision_at_k == pytest.approx(0.1, rel=1e-9), (
         "precision@10 is pinned at 0.1 -- one relevant file per query over a top-10 window. "
         f"got {metrics.precision_at_k}"
     )
