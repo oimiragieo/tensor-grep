@@ -55,6 +55,17 @@ _EXCLUDED_MODULES = frozenset({
     "cli/main.py",
     "cli/repo_map.py",
     "cli/mcp_server.py",
+    # extracted from cli/repo_map.py by the same split campaign; byte-identical relocations of
+    # handlers already outside this census because repo_map.py is excluded. Moving a file does
+    # not audit it -- counting them would raise the ceiling on the strength of a git mv, which
+    # the comment above the pin forbids. Classified when repo_map.py itself is; retire together.
+    "cli/repo_map_cache.py",
+    "cli/repo_map_lang_java.py",
+    "cli/repo_map_lang_js.py",
+    "cli/repo_map_lang_python.py",
+    "cli/repo_map_lang_rust.py",
+    "cli/repo_map_output_budget.py",
+    "cli/repo_map_regex_fallback.py",
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
