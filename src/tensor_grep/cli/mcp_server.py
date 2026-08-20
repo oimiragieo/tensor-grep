@@ -1425,8 +1425,23 @@ _MAX_INLINE_RULES = 100
 # modules bind those names at THEIR import time (see mcp_rewrite_tools.py's module
 # docstring). noqa: E402/I001 -- ordering here is load-bearing, not style.
 from tensor_grep.cli.mcp_rewrite_tools import (  # noqa: E402, I001
+    _audit_diff_error as _audit_diff_error,
+    _audit_history_error as _audit_history_error,
+    _audit_manifest_error as _audit_manifest_error,
     _build_index_search_command as _build_index_search_command,
     _build_rewrite_command as _build_rewrite_command,
+    _classify_native_rewrite_failure as _classify_native_rewrite_failure,
+    _compute_plan_digest as _compute_plan_digest,
+    _execute_rewrite_json_command as _execute_rewrite_json_command,
+    _index_search_error as _index_search_error,
+    _native_unavailable_error as _native_unavailable_error,
+    _normalize_rewrite_json_payload as _normalize_rewrite_json_payload,
+    _produce_rewrite_plan_json as _produce_rewrite_plan_json,
+    _review_bundle_error as _review_bundle_error,
+    _rewrite_envelope as _rewrite_envelope,
+    _rewrite_error as _rewrite_error,
+    _ruleset_scan_error as _ruleset_scan_error,
+    _validate_rewrite_inputs as _validate_rewrite_inputs,
     _embedded_rewrite_available as _embedded_rewrite_available,
     _execute_embedded_rewrite_json as _execute_embedded_rewrite_json,
     _execute_rewrite_diff_command as _execute_rewrite_diff_command,

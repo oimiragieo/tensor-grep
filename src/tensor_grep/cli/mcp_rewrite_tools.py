@@ -690,13 +690,13 @@ def execute_rewrite_plan_json(
     lang: str,
     path: str = ".",
 ) -> tuple[str, int]:
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input"), 1
     pattern = _restore_variadic_metavar_escaping(pattern)
     replacement = _restore_variadic_metavar_escaping(replacement)
 
-    rewrite_json = _produce_rewrite_plan_json(
+    rewrite_json = _self._produce_rewrite_plan_json(
         pattern=pattern,
         replacement=replacement,
         lang=lang,
@@ -727,7 +727,7 @@ def _check_apply_plan_drift(
     match count to the caller-supplied expectations. Inputs must already be
     validated and metavar-unescaped. No files are written by this check.
     """
-    plan_json = _produce_rewrite_plan_json(
+    plan_json = _self._produce_rewrite_plan_json(
         pattern=pattern,
         replacement=replacement,
         lang=lang,
@@ -824,7 +824,7 @@ def execute_rewrite_apply_json(
         load_apply_policy,
     )
 
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input"), 1
     pattern = _restore_variadic_metavar_escaping(pattern)

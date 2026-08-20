@@ -462,7 +462,7 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
     except ValueError as exc:
         return _rewrite_error(str(exc), code="invalid_input")
 
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
 
@@ -1053,7 +1053,7 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     except ValueError as exc:
         return _rewrite_error(str(exc), code="invalid_input")
 
-    validation_error = _validate_rewrite_inputs(pattern, lang, path)
+    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
 
