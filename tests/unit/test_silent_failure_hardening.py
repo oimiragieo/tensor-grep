@@ -51,10 +51,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 
 # The three modules a concurrent audit owns; this census must not collide with edits there.
+#
+# EXTENDED 2026-08-20 by the `cli/main.py` split (PR for
+# docs/design/2026-08-19-split-floor-escape.md): the five modules below are `cli/main.py`,
+# relocated. Their 23 broad handlers are byte-identical to handlers that were already outside
+# this census yesterday because `cli/main.py` is excluded -- moving a file does not audit it, so
+# counting them now would raise the ceiling 137 -> 160 on the strength of a `git mv`, which is
+# exactly the "raise the pin to make unreviewed handlers pass" this file's own comment forbids.
+# They should be classified when `cli/main.py` itself is, and this whole block retired together.
 _EXCLUDED_MODULES = frozenset({
     "cli/main.py",
     "cli/repo_map.py",
     "cli/mcp_server.py",
+    # extracted from cli/main.py, unaudited for the same reason it is
+    "cli/_main_binding.py",
+    "cli/ast_scan.py",
+    "cli/doctor_payload.py",
+    "cli/doctor_report.py",
+    "cli/native_frontdoor.py",
+    "cli/windows_launcher.py",
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
