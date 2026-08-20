@@ -175,7 +175,7 @@ tg ledger find C:\repo --symbol open_session --artifact-kind evidence-receipt --
 ```
 
 Never blocks an edit — a claim is advisory, and overlaps are reported for the caller to decide, not
-enforced. Slice 1 (`claim`/`release`/`list`, `main.py:16297`/`16415`/`16523`) canonicalizes its store to
+enforced. Slice 1 (`claim`/`release`/`list` -- `main.py`'s `ledger_claim`/`ledger_release`/`ledger_list`) canonicalizes its store to
 the nearest `.git` ancestor (worktree-aware; v1.93.0/#706 — before this, each command resolved the store
 from the literal PATH argument, so `claim core/hooks` + `list .` silently used two different stores).
 Slice 2 (`ledger_record` -- `grep -n "^def ledger_record" src/tensor_grep/cli/main.py`, `:17510` as of 2026-08-14, was `:17323`; `ledger_find` -- `grep -n "^def ledger_find" src/tensor_grep/cli/main.py`, `:17604` as of 2026-08-14, was `:17417`) got the SAME fix in #850
@@ -291,7 +291,7 @@ tg checkpoint undo --last C:\repo --json            # restore the newest checkpo
 `checkpoint undo` (`main.py:13485`) takes `checkpoint_id` as an optional positional, or `--last` to
 restore the newest checkpoint for `path` without naming an ID — do not pass both
 (`main.py:13504`/`13510`). If `checkpoint_id` resolves to an existing filesystem path, the error
-message suggests `--last` explicitly (`main.py:13527`), which is a strong signal the two
+message suggests `--last` explicitly (`main.py`'s `checkpoint_undo`), which is a strong signal the two
 positionals (`checkpoint_id`, `path`) got confused.
 
 ## 6. AST scan (built-in rule packs) and structural run/rewrite
@@ -304,8 +304,8 @@ tg scan --rule my-rule.yml --json                            # single custom rul
 ```
 
 `scan` (`grep -n "^def scan" src/tensor_grep/cli/main.py` -- `:14533` as of 2026-08-14, was `:14000`) accepts positional `PATHS`, or `--path` (default `.`) when using a
-built-in ruleset — the two are mutually exclusive (`main.py:13834`), as are `--rule`,
-`--ruleset`, and `--inline-rules` with each other (`main.py:13827`). Useful narrowing flags:
+built-in ruleset — the two are mutually exclusive (`main.py`'s `scan`), as are `--rule`,
+`--ruleset`, and `--inline-rules` with each other (the same guard in `scan`). Useful narrowing flags:
 `--glob`/`-g`, `--type`/`-t`, `--max-depth`, `--filter`/`-f` (regex over loaded rule IDs). Baseline
 workflow: `--baseline FILE` / `--write-baseline FILE` compare or snapshot matched-finding
 fingerprints; `--suppressions FILE` / `--write-suppressions FILE` mark or record accepted findings
@@ -327,7 +327,7 @@ tg run --pattern 'def $NAME($$$ARGS): $$$BODY' --rewrite 'def $NAME($$$ARGS) -> 
 
 `run` (`grep -n "^def run" src/tensor_grep/cli/main.py` -- `:17740` as of 2026-08-14, was `:17149`) takes the AST pattern positionally (or via `--pattern`/`-p`) and an
 optional `PATH`; supplying only a path that exists with no pattern is a hard error
-(`main.py:16921`, `typer.Exit(2)`), not a silent zero-match. `--rewrite`/`-r` sets the replacement,
+(`main.py`'s `run`, `typer.Exit(2)`), not a silent zero-match. `--rewrite`/`-r` sets the replacement,
 `--apply` writes it, `--verify` runs tests after applying, `--checkpoint` wraps the apply in a
 checkpoint, `-U`/`--update-all` is an ast-grep-compatible alias for apply-all (requires
 `--rewrite`). Read-only structural-search extras: `--selector`, `--strictness`, `--stdin`,
@@ -430,7 +430,7 @@ tg dogfood --json --root C:\repo --timeout-s 170
 ```
 `dogfood` (`grep -n "^def dogfood" src/tensor_grep/cli/main.py` -- `:15059` as of 2026-08-14, was `:14493`) runs the agent-readiness gate and prints a one-page verdict; it "writes
 only explicit `--output` and a sibling readiness report" next to it — it does not write anywhere by
-default with no `--output` given (docstring at `main.py:14167`+). Flags:
+default with no `--output` given (docstring on `main.py`'s `dogfood`). Flags:
 `--root` (default `.`), `--output PATH`, `--expected-version` (defaults to `pyproject.toml`),
 `--json`, `--progress auto|always|never` (stderr only), `--progress-interval-s` (30.0),
 `--timeout-s` (170.0, the nested `agent_readiness.py` child budget), `--no-shell-probes`,
@@ -453,7 +453,7 @@ managed native front-door refresh when the sidecar version moved ahead of the na
 tg repair-launcher --json
 tg repair-launcher --allow-foreign-rename --json     # only for a foreign tg.exe you own
 ```
-`repair-launcher` (`main.py:14402`, Windows-relevant) removes a verified or self-identifying stale
+`repair-launcher` (`main.py`'s `repair_launcher`, Windows-relevant) removes a verified or self-identifying stale
 `tensor-grep` Python `Scripts\tg.exe` launcher that shadows the managed native front door on PATH.
 `--allow-foreign-rename` additionally moves aside a **foreign** (non-tensor-grep) `tg.exe` — use it
 only when you own that binary.
