@@ -102,7 +102,7 @@ Canonical status index version: 2026-08-13.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-13** (backlog-closeout campaign waves W1-W4: plan council-approved 7/7; W1 receipt + W2 A101 probe-retry + W3A threat model + W3B symlink guard shipped across v1.110.15 / v1.110.16; W4 Task 2A repair round 1 parked with receipt on #966). canonical index `2026-08-13.1`. Task 2A RED remains correctly blocked (advanced, not GREEN).
+Last reconciled: **2026-08-20** (backlog-closeout campaign waves W1-W4: plan council-approved 7/7; W1 receipt + W2 A101 probe-retry + W3A threat model + W3B symlink guard shipped across v1.110.15 / v1.110.16; W4 Task 2A repair round 1 parked with receipt on #966). canonical index `2026-08-13.1`. Task 2A RED remains correctly blocked (advanced, not GREEN). (2026-08-19/20 size-and-hygiene campaign: 10 PRs merged — wave 1 and wave 4 splits, the file-size and bare-call ratchets, the drain-guard and ripgrep-hang CI fixes, the split-floor costing correction, plus Route A step 2 on mcp_server (#1040, in flight). Allowlisted oversized files 35 → 30. Released v1.110.19 and v1.111.0. Repo hygiene: worktrees 58 → 2, local branches 174 → 2, remote branches 13 → 4 — everything removed was archived first to `~/.tensor-grep-worktree-archive/2026-08-20` as patches, untracked-file copies, and two verified git bundles.)
 research receipts). canonical index `2026-08-12.1`. Task 2A RED remains correctly blocked
 (advanced, not GREEN).
 Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md`
@@ -112,7 +112,7 @@ Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-co
 The closeout audit wave, Rust first-CI drain, A90, and doctor PATH-honesty all landed: H2 #979 → v1.110.10,
 M14 #984 → v1.110.10, #987 M16 → v1.110.11, #988 M17 → v1.110.12, #997 A90 → v1.110.13, #1000 doctor →
 v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #995 (M16/M17 receipts),
-#999/#1001/#1002 (skill evolution + new skills). No PRs in flight except #966 (Task 2A, RED by design).
+#999/#1001/#1002 (skill evolution + new skills). Open PRs derived live 2026-08-20: #1040 (Route A step 2) only. #966 was CLOSED as a stale PR at CEO request; its branch `task2a-round60-red` is retained on origin and the scaffold is unchanged -- the Task 2A rows below still gate #89/#90.
 **CEO packet:** `docs/audits/2026-08-15-ceo-backlog-update.md` (live, 2026-08-15; dumbed-down). Prior: `docs/audits/2026-08-13-ceo-backlog-update.md` (campaign closeout) and `docs/audits/2026-08-11-ceo-backlog-update.md` (historical).
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
@@ -135,7 +135,7 @@ MCP-LEAN-DEFAULT CONTINUOUS-REFRESH RUST-REPLACE-TOCTOU). SHIPPED now stands at 
 2026-08-12 to MERGEABLE with a live evidence chain, still not an implementation in flight). Board
 READY is not a build license when BACKLOG reconcile says BLOCKED (A71/A76/A82).
 
-post-**v1.110.14**, PyPI-verified 2026-08-11 (`tensor-grep 1.110.14`).
+post-**v1.111.0**, PyPI-verified 2026-08-20 (`tensor-grep 1.111.0`, installed from the index with `--refresh` and dogfooded both arms: a real symbol resolves, a fabricated one returns `no_match=True`).
 
 post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
@@ -143,12 +143,11 @@ post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | DRAFT — do-not-merge (RED by design; not Phase 0+1) |
+| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | CLOSED 2026-08-20 as a stale PR; branch `task2a-round60-red` RETAINED on origin. RED by design, never merged. Task 2A remains BLOCKED. |
 | #1010 | `fix: replace_in_place refuses to follow a symlinked target` | fix | DRAFT → OPEN when CI green (RUST-REPLACE-SYMLINK implementation; RED proven, A3 opus gate 13 rounds SHIP, codex AUDIT-clear pending final re-check) |
 
 *(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
-(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs: #966
-(parked Task 2A RED scaffold - do not read it as Task 2A GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED and published as v1.110.16.)*
+(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs 2026-08-20: #1040 only. #966 CLOSED (branch retained; Task 2A still BLOCKED, not GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED, v1.110.16.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
