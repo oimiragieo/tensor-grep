@@ -180,6 +180,24 @@ NATIVE_SEARCH_RS = Path("rust_core/src/native_search.rs")
 MAIN_RS = Path("rust_core/src/main.rs")
 REPO_MAP_PY = Path("src/tensor_grep/cli/repo_map.py")
 
+
+def repo_map_family_source() -> str:
+    """Every module the repo_map surface is spread across, concatenated.
+
+    repo_map.py was split into per-dialect / per-stage siblings, so a census pinned to the
+    one path silently stops covering whatever moved -- and reads GREEN while doing it. Glob
+    the family instead, and assert the glob found more than the base file so an empty or
+    single-file result can never pass for a completed scan.
+    """
+    paths = sorted(REPO_MAP_PY.parent.glob("repo_map*.py"))
+    assert REPO_MAP_PY in paths, f"repo_map.py not found; the glob resolved {paths}"
+    assert len(paths) > 1, (
+        "expected repo_map.py plus its extracted siblings; found only "
+        f"{[p.name for p in paths]} -- has the census lost its subject?"
+    )
+    return "\n".join(p.read_text(encoding="utf-8") for p in paths)
+
+
 # The bullet that RECORDS the retracted wording. The stale phrases legitimately appear inside it
 # and must not be searched for there -- quoting a retraction is the opposite of asserting it.
 _RETRACTION_MARKER = "PREVIOUS TEXT, recorded because deleting a retracted claim silently"
@@ -390,7 +408,7 @@ def test_contracts_says_result_incomplete_alone_is_not_a_completeness_check() ->
     complete result and the premise fires, because the doc's load-bearing warning is precisely
     that the object's PRESENCE proves nothing.
     """
-    repo_map = REPO_MAP_PY.read_text(encoding="utf-8")
+    repo_map = repo_map_family_source()
     contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
 
     # PREMISE -- `_apply_symbol_token_budget` still stamps `token_budget` on BOTH paths: the
@@ -427,7 +445,7 @@ def test_contracts_documents_that_the_two_scan_count_fields_can_disagree() -> No
 
     Pinned against the SOURCE: collapse the two producers into one field and the premise fires.
     """
-    repo_map = REPO_MAP_PY.read_text(encoding="utf-8")
+    repo_map = repo_map_family_source()
     contracts = CONTRACTS_PATH.read_text(encoding="utf-8")
 
     # PREMISE -- the two counts are still written by SEPARATE blocks with separate meanings.
