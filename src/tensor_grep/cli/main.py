@@ -31,18 +31,32 @@ from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
 from tensor_grep.cli.runtime_paths import (
-    _native_tg_version,
-    _native_tg_version_matches,
+    _native_tg_version as _native_tg_version,
+)
+from tensor_grep.cli.runtime_paths import (
+    _native_tg_version_matches as _native_tg_version_matches,
+)
+from tensor_grep.cli.runtime_paths import (
     env_flag_disabled,
     env_flag_enabled,
     gpu_probe_timeout_s,
-    inspect_native_tg_binary,
-    is_cross_domain_native_binary,
     iter_in_tree_native_tg_binaries,
     native_frontdoor_metadata_path,
-    resolve_native_tg_binary,
-    resolve_ripgrep_binary,
-    translate_path_for_windows_binary,
+)
+from tensor_grep.cli.runtime_paths import (
+    inspect_native_tg_binary as inspect_native_tg_binary,
+)
+from tensor_grep.cli.runtime_paths import (
+    is_cross_domain_native_binary as is_cross_domain_native_binary,
+)
+from tensor_grep.cli.runtime_paths import (
+    resolve_native_tg_binary as resolve_native_tg_binary,
+)
+from tensor_grep.cli.runtime_paths import (
+    resolve_ripgrep_binary as resolve_ripgrep_binary,
+)
+from tensor_grep.cli.runtime_paths import (
+    translate_path_for_windows_binary as translate_path_for_windows_binary,
 )
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core.observability import nvtx_range
@@ -66,6 +80,24 @@ from tensor_grep.io.scan_limits import (
     UNBOUNDED_VENDORED_ROOT_DIR_NAMES,
 )
 from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
+
+# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
+# globals, welding the caller to this file -- move it and the test still passes while
+# production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
+#
+# The two branches are load-bearing. At runtime only `sys.modules[__name__]` works (the
+# module is mid-import, so importing itself by name would be circular), but that is typed
+# `ModuleType`, whose `__getattr__` returns `Any` -- under a single-branch form every
+# converted call returns Any and mypy raises `no-any-return` at each concrete-returning
+# caller. The TYPE_CHECKING branch never executes; it exists so the checker resolves
+# `_self` to this module and keeps every real signature.
+#
+# scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
+if TYPE_CHECKING:
+    from tensor_grep.cli import main as _self
+else:
+    _self = sys.modules[__name__]
 
 if TYPE_CHECKING:
     from tensor_grep.backends.base import ComputeBackend
@@ -324,7 +356,7 @@ def _cli_package_version() -> str:
 
         return version("tensor-grep")
     except Exception:
-        return _read_project_version_fallback()
+        return _self._read_project_version_fallback()
 
 
 _PYPI_JSON_URL = "https://pypi.org/pypi/tensor-grep/json"
@@ -774,7 +806,7 @@ def _native_frontdoor_checksum_error(
     """
     import hashlib
 
-    expected = _expected_asset_sha256(checksums_text, asset_name)
+    expected = _self._expected_asset_sha256(checksums_text, asset_name)
     if not expected:
         return f"no published checksum for {asset_name}; refusing to trust the download"
     actual = hashlib.sha256(asset_path.read_bytes()).hexdigest().lower()
@@ -844,7 +876,7 @@ def _write_native_frontdoor_metadata(
 def _install_release_native_frontdoor(
     version: str, destination: Path
 ) -> _NativeFrontdoorInstallResult:
-    candidates = _native_frontdoor_download_candidates(version)
+    candidates = _self._native_frontdoor_download_candidates(version)
     if not candidates:
         raise RuntimeError("no release-native front-door asset is available for this platform")
 
@@ -852,7 +884,7 @@ def _install_release_native_frontdoor(
     # CHECKSUMS.txt BEFORE installing/executing it, matching the fail-closed posture
     # of the installers (scripts/install.sh, install.ps1, npm/install.js). Without
     # the manifest nothing can be verified, so refuse rather than trust the download.
-    checksums_text = _fetch_native_frontdoor_checksums(version)
+    checksums_text = _self._fetch_native_frontdoor_checksums(version)
     if checksums_text is None:
         raise RuntimeError(
             "release-native front-door asset install refused: could not fetch "
@@ -865,11 +897,11 @@ def _install_release_native_frontdoor(
         temp_path = destination.with_name(f"{destination.name}.{uuid4().hex}.tmp")
         try:
             try:
-                _download_native_frontdoor_asset(url, temp_path)
+                _self._download_native_frontdoor_asset(url, temp_path)
             except Exception as exc:
                 download_errors.append(f"{candidate.flavor} asset unavailable: {exc}")
                 continue
-            checksum_error = _native_frontdoor_checksum_error(
+            checksum_error = _self._native_frontdoor_checksum_error(
                 temp_path, candidate.asset_name, checksums_text
             )
             if checksum_error is not None:
@@ -877,8 +909,8 @@ def _install_release_native_frontdoor(
                 continue
             if not sys.platform.startswith("win"):
                 temp_path.chmod(0o755)
-            temp_version = _native_tg_version(temp_path)
-            if not _native_tg_version_matches(version, temp_version):
+            temp_version = _self._native_tg_version(temp_path)
+            if not _self._native_tg_version_matches(version, temp_version):
                 download_errors.append(
                     f"{candidate.flavor} asset failed smoke test: downloaded native tg "
                     f"front door reported {temp_version or 'no version'} instead of {version}"
@@ -896,8 +928,8 @@ def _install_release_native_frontdoor(
             # and gives the destination its own explicit symlink-refusal check).
             install_mode = None if sys.platform.startswith("win") else 0o755
             atomic_write_bytes_anchored(destination, temp_path.read_bytes(), mode=install_mode)
-            installed_version = _native_tg_version(destination)
-            if not _native_tg_version_matches(version, installed_version):
+            installed_version = _self._native_tg_version(destination)
+            if not _self._native_tg_version_matches(version, installed_version):
                 if previous_bytes is not None:
                     atomic_write_bytes_anchored(destination, previous_bytes, mode=install_mode)
                 else:
@@ -907,7 +939,7 @@ def _install_release_native_frontdoor(
                     f"tg front door reported {installed_version or 'no version'} instead of {version}"
                 )
                 continue
-            _write_native_frontdoor_metadata(
+            _self._write_native_frontdoor_metadata(
                 destination,
                 version=version,
                 candidate=candidate,
@@ -1010,13 +1042,13 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
             shim_path = directory / shim_name
             if not shim_path.is_file():
                 continue
-            version = _doctor_tg_candidate_version(shim_path)
+            version = _self._doctor_tg_candidate_version(shim_path)
             if _doctor_tg_version_looks_like_tensor_grep(version):
                 return True
         return False
 
     path_values = [os.environ.get("PATH", "")]
-    fresh_path = _doctor_fresh_shell_path_value()
+    fresh_path = _self._doctor_fresh_shell_path_value()
     if fresh_path and fresh_path not in path_values:
         path_values.append(fresh_path)
 
@@ -1024,7 +1056,7 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
     bridges: list[Path] = []
     seen: set[str] = set()
     for path_value in path_values:
-        for candidate in _doctor_path_tg_candidates(path_value):
+        for candidate in _self._doctor_path_tg_candidates(path_value):
             candidate_path = Path(str(candidate.get("path") or ""))
             candidate_name = candidate_path.name.lower()
             if candidate_name not in {"tg.com", "tg.exe"}:
@@ -1036,7 +1068,7 @@ def _windows_stale_tensor_grep_com_bridges(expected_version: str, native_path: P
                 continue
             if candidate_name == "tg.exe" and not str(version).strip().lower().startswith("tg "):
                 continue
-            if _native_tg_version_matches(expected_version, version):
+            if _self._native_tg_version_matches(expected_version, version):
                 continue
             _add_path(candidate_path)
 
@@ -1125,7 +1157,7 @@ def _windows_tensor_grep_python_launcher_scan(
         return [], []
 
     path_values = [os.environ.get("PATH", "")]
-    fresh_path = _doctor_fresh_shell_path_value()
+    fresh_path = _self._doctor_fresh_shell_path_value()
     if fresh_path and fresh_path not in path_values:
         path_values.append(fresh_path)
 
@@ -1134,7 +1166,7 @@ def _windows_tensor_grep_python_launcher_scan(
     seen: set[str] = set()
     for path_value in path_values:
         native_seen = False
-        for candidate in _doctor_path_tg_candidates(path_value):
+        for candidate in _self._doctor_path_tg_candidates(path_value):
             candidate_path = Path(str(candidate.get("path") or ""))
             if _same_path(candidate_path, native_path):
                 native_seen = True
@@ -1151,7 +1183,10 @@ def _windows_tensor_grep_python_launcher_scan(
 
             version = candidate.get("version")
             shadows_managed_native = not native_seen
-            if _native_tg_version_matches(expected_version, version) and not shadows_managed_native:
+            if (
+                _self._native_tg_version_matches(expected_version, version)
+                and not shadows_managed_native
+            ):
                 continue
 
             if not _doctor_tg_version_looks_like_tensor_grep(version):
@@ -1286,14 +1321,14 @@ def _refresh_windows_tensor_grep_com_bridges(
         return []
     paths = bridge_paths
     if paths is None:
-        paths = _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
+        paths = _self._windows_stale_tensor_grep_com_bridges(expected_version, native_path)
 
     refreshed: list[Path] = []
     for bridge_path in paths:
         shutil.copy2(native_path, bridge_path)
         _write_windows_exe_bridge_marker(bridge_path)
-        installed_version = _native_tg_version(bridge_path)
-        if not _native_tg_version_matches(expected_version, installed_version):
+        installed_version = _self._native_tg_version(bridge_path)
+        if not _self._native_tg_version_matches(expected_version, installed_version):
             raise RuntimeError(
                 "refreshed PATH tg.com bridge reported "
                 f"{installed_version or 'no version'} instead of {expected_version}: "
@@ -1382,7 +1417,7 @@ def _windows_python_subprocess_resolution_blocker(
     if not sys.platform.startswith("win") or not path_value:
         return None
 
-    candidate = _doctor_python_subprocess_path_tg_candidate(path_value)
+    candidate = _self._doctor_python_subprocess_path_tg_candidate(path_value)
     if not candidate:
         return None
 
@@ -1427,8 +1462,8 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
     if not sys.platform.startswith("win"):
         return payload
 
-    expected_version = _doctor_installed_version()
-    native_tg_binary = resolve_native_tg_binary()
+    expected_version = _self._doctor_installed_version()
+    native_tg_binary = _self.resolve_native_tg_binary()
     payload["expected_version"] = expected_version
     payload["managed_native"] = str(native_tg_binary) if native_tg_binary else None
     if native_tg_binary is None or not native_tg_binary.is_file():
@@ -1441,9 +1476,9 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         })
         return payload
 
-    native_version = _doctor_tg_candidate_version(native_tg_binary)
+    native_version = _self._doctor_tg_candidate_version(native_tg_binary)
     payload["managed_native_version"] = native_version
-    if not _native_tg_version_matches(expected_version, native_version):
+    if not _self._native_tg_version_matches(expected_version, native_version):
         payload.update({
             "status": "blocked_managed_native_version_mismatch",
             "message": (
@@ -1454,7 +1489,7 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         })
         return payload
 
-    candidate = _doctor_python_subprocess_path_tg_candidate()
+    candidate = _self._doctor_python_subprocess_path_tg_candidate()
     if not candidate:
         payload.update({
             "status": "blocked_no_python_subprocess_tg",
@@ -1471,7 +1506,7 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         "pre_repair_launcher_kind": candidate_kind,
     })
 
-    if _same_path(candidate_path, native_tg_binary) and _native_tg_version_matches(
+    if _same_path(candidate_path, native_tg_binary) and _self._native_tg_version_matches(
         expected_version,
         candidate_version,
     ):
@@ -1483,19 +1518,19 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         return payload
 
     if candidate_kind == "python-entrypoint":
-        cleanup_message = _remove_windows_stale_tensor_grep_python_launchers(
+        cleanup_message = _self._remove_windows_stale_tensor_grep_python_launchers(
             expected_version,
             native_tg_binary,
         )
         payload["cleanup_message"] = cleanup_message
-        post_candidate = _doctor_python_subprocess_path_tg_candidate()
+        post_candidate = _self._doctor_python_subprocess_path_tg_candidate()
         post_path = Path(str(post_candidate.get("path") or "")) if post_candidate else None
         post_version = post_candidate.get("version") if post_candidate else None
         payload["post_repair_version"] = post_version
         if (
             post_path is not None
             and _same_path(post_path, native_tg_binary)
-            and _native_tg_version_matches(expected_version, post_version)
+            and _self._native_tg_version_matches(expected_version, post_version)
         ):
             payload.update({
                 "status": "repaired",
@@ -1563,9 +1598,9 @@ def _repair_windows_python_subprocess_launcher(*, allow_foreign_rename: bool) ->
         os.replace(candidate_path, backup_path)
         try:
             shutil.copy2(native_tg_binary, candidate_path)
-            post_version = _doctor_tg_candidate_version(candidate_path)
+            post_version = _self._doctor_tg_candidate_version(candidate_path)
             payload["post_repair_version"] = post_version
-            if not _native_tg_version_matches(expected_version, post_version):
+            if not _self._native_tg_version_matches(expected_version, post_version):
                 raise RuntimeError(
                     "repaired tg.exe reported "
                     f"{post_version or 'no version'} instead of {expected_version}"
@@ -1621,7 +1656,7 @@ def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | Non
 
     fresh_shell_blocker = _windows_python_subprocess_resolution_blocker(
         managed_dir=managed_dir,
-        path_value=_doctor_fresh_shell_path_value(),
+        path_value=_self._doctor_fresh_shell_path_value(),
     )
 
     if not messages and not fresh_shell_blocker:
@@ -1658,15 +1693,15 @@ def _schedule_windows_native_frontdoor_refresh(
     # expected sha256 into each payload entry so the detached helper can verify
     # each download WITHOUT importing main.py.  Fail-closed: skip any candidate
     # whose sha256 can't be resolved; refuse to schedule if none remain.
-    checksums_text = _fetch_native_frontdoor_checksums(expected_version)
+    checksums_text = _self._fetch_native_frontdoor_checksums(expected_version)
     if checksums_text is None:
         raise RuntimeError(
             "release-native front-door asset refresh refused: could not fetch "
             f"CHECKSUMS.txt for v{expected_version}; refusing to schedule an unverified native binary refresh"
         )
     verifiable_entries: list[dict[str, str]] = []
-    for candidate, url in _native_frontdoor_download_candidates(expected_version):
-        sha256 = _expected_asset_sha256(checksums_text, candidate.asset_name)
+    for candidate, url in _self._native_frontdoor_download_candidates(expected_version):
+        sha256 = _self._expected_asset_sha256(checksums_text, candidate.asset_name)
         if sha256 is None:
             continue
         verifiable_entries.append({
@@ -1874,18 +1909,18 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
         return None
 
     messages: list[str] = []
-    path_order_message = _ensure_windows_managed_native_first_on_path(native_path)
+    path_order_message = _self._ensure_windows_managed_native_first_on_path(native_path)
     if path_order_message:
         messages.append(path_order_message)
-    stale_python_launcher_message = _remove_windows_stale_tensor_grep_python_launchers(
+    stale_python_launcher_message = _self._remove_windows_stale_tensor_grep_python_launchers(
         expected_version,
         native_path,
     )
     if stale_python_launcher_message:
         messages.append(stale_python_launcher_message)
-    stale_com_bridges = _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
-    current_version = _native_tg_version(native_path) if native_path.is_file() else None
-    if not _native_tg_version_matches(expected_version, current_version):
+    stale_com_bridges = _self._windows_stale_tensor_grep_com_bridges(expected_version, native_path)
+    current_version = _self._native_tg_version(native_path) if native_path.is_file() else None
+    if not _self._native_tg_version_matches(expected_version, current_version):
         try:
             install_result = _install_release_native_frontdoor(expected_version, native_path)
         except OSError as exc:
@@ -1910,7 +1945,7 @@ def _refresh_managed_native_frontdoor(expected_version: str) -> str | None:
         )
 
     try:
-        refreshed_bridges = _refresh_windows_tensor_grep_com_bridges(
+        refreshed_bridges = _self._refresh_windows_tensor_grep_com_bridges(
             expected_version, native_path, stale_com_bridges
         )
     except OSError as exc:
@@ -2154,7 +2189,7 @@ def _doctor_session_daemon_autostart_status() -> str:
     this string can never drift from the runtime behavior it describes into a new lie of its
     own (e.g. claiming "on-first-use" while an operator has explicitly disabled autostart).
     """
-    if _session_daemon_autostart_enabled():
+    if _self._session_daemon_autostart_enabled():
         return "on-first-use (not yet warmed)"
     return "disabled (TG_SESSION_DAEMON_AUTOSTART is off, or CI was detected)"
 
@@ -2173,7 +2208,7 @@ def _doctor_session_daemon_status(path: str) -> dict[str, Any]:
 
 def _upgrade_running_session_daemon_snapshot(path: str = ".") -> dict[str, Any] | None:
     try:
-        status = _doctor_session_daemon_status(path)
+        status = _self._doctor_session_daemon_status(path)
     except Exception:
         return None
     if status.get("running") is not True:
@@ -2191,7 +2226,7 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
     if not root:
         return None
     try:
-        current = _doctor_session_daemon_status(root)
+        current = _self._doctor_session_daemon_status(root)
     except Exception as exc:
         current = {"running": False, "status_error": str(exc)}
     if current.get("running") is True:
@@ -2496,7 +2531,7 @@ def _doctor_rust_binary_version_matches(
 ) -> bool | None:
     if rust_binary_version is None:
         return None
-    return _native_tg_version_matches(expected_version, rust_binary_version)
+    return _self._native_tg_version_matches(expected_version, rust_binary_version)
 
 
 def _doctor_tg_version_looks_like_tensor_grep(version_text: str | None) -> bool:
@@ -2558,8 +2593,8 @@ def _doctor_skipped_native_tg_binaries(
             resolved = candidate
         if selected_resolved is not None and resolved == selected_resolved:
             continue
-        version = _native_tg_version(resolved)
-        version_matches = _native_tg_version_matches(expected_version, version)
+        version = _self._native_tg_version(resolved)
+        version_matches = _self._native_tg_version_matches(expected_version, version)
         if version_matches:
             continue
         skipped.append({
@@ -2924,7 +2959,7 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             seen.add(key)
             candidates.append({
                 "path": str(resolved),
-                "version": _doctor_tg_candidate_version(resolved),
+                "version": _self._doctor_tg_candidate_version(resolved),
             })
     return candidates
 
@@ -2957,16 +2992,16 @@ def _doctor_python_subprocess_path_tg_candidate(
             seen.add(key)
             return {
                 "path": str(resolved),
-                "version": _doctor_tg_candidate_version(resolved),
+                "version": _self._doctor_tg_candidate_version(resolved),
             }
     return None
 
 
 def _doctor_fresh_shell_path_tg_candidates() -> list[dict[str, str | None]]:
-    fresh_path_value = _doctor_fresh_shell_path_value()
+    fresh_path_value = _self._doctor_fresh_shell_path_value()
     if not fresh_path_value:
         return []
-    return _doctor_path_tg_candidates(fresh_path_value)
+    return _self._doctor_path_tg_candidates(fresh_path_value)
 
 
 def _doctor_path_tg_launcher_warning(
@@ -3140,8 +3175,8 @@ def _doctor_gpu_status() -> dict[str, Any]:
     # Observability tiers — installed and usable are computed here; promotion_proof is
     # filled in by _build_doctor_payload() after the search_runtime_probe runs.
     status["tier"] = {
-        "installed": _doctor_gpu_tier_installed(),
-        "usable": _doctor_gpu_tier_usable(),
+        "installed": _self._doctor_gpu_tier_installed(),
+        "usable": _self._doctor_gpu_tier_usable(),
         "promotion_proof": False,
     }
     return status
@@ -3238,7 +3273,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
     # resolve a Linux TemporaryDirectory path. Detect that cross-domain mismatch and bridge the
     # sentinel path via wslpath before it becomes argv; the shared helper also raises the probe
     # timeout floor since a WSL -> Windows exec can legitimately take longer.
-    cross_domain = is_cross_domain_native_binary(native_tg_binary)
+    cross_domain = _self.is_cross_domain_native_binary(native_tg_binary)
     probe_timeout_s = gpu_probe_timeout_s(cross_domain=cross_domain)
 
     sentinel = "tg doctor gpu runtime probe"
@@ -3247,7 +3282,7 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
         probe_file.write_text(f"{sentinel}\n", encoding="utf-8")
         probe_target = str(probe_file)
         if cross_domain:
-            translated = translate_path_for_windows_binary(probe_file)
+            translated = _self.translate_path_for_windows_binary(probe_file)
             if translated is None:
                 base["status"] = "path_domain_mismatch"
                 base["error"] = (
@@ -3458,7 +3493,7 @@ def _build_doctor_payload(
         root = resolved_config.parent
     else:
         resolved_config = root / "sgconfig.yml"
-    native_tg_binary = resolve_native_tg_binary()
+    native_tg_binary = _self.resolve_native_tg_binary()
     env_keys = [
         "TG_NATIVE_TG_BINARY",
         "TG_FORCE_CPU",
@@ -3471,13 +3506,13 @@ def _build_doctor_payload(
         "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS",
         _DOCTOR_LSP_PROBE_TIMEOUT_ENV,
     ]
-    installed_version = _doctor_installed_version()
+    installed_version = _self._doctor_installed_version()
     # NIT-1 + MF-2 (#172): compute rust_binary_version BEFORE the inspect_native_tg_binary call
     # (it used to be computed after) so it can be threaded through as version_text below --
     # inspect_native_tg_binary's own internal _native_tg_version call would otherwise spawn a
     # SECOND `tg --version` subprocess against the identical native_tg_binary that this line
     # already spawned one for.
-    rust_binary_version = _doctor_rust_binary_version(native_tg_binary)
+    rust_binary_version = _self._doctor_rust_binary_version(native_tg_binary)
     # P0-2 (#171): surface the native-frontdoor flavor metadata that inspect_native_tg_binary
     # already computes (merging installed-vs-requested asset flavor) -- until now this was only
     # consumed by benchmarks/run_benchmarks.py and benchmarks/run_gpu_native_benchmarks.py, so
@@ -3486,7 +3521,7 @@ def _build_doctor_payload(
     # in-tree dev build never writes tg-native-metadata.json), so every lookup below is a safe
     # `.get(...)` returning None.
     native_frontdoor_inspection = (
-        inspect_native_tg_binary(
+        _self.inspect_native_tg_binary(
             native_tg_binary,
             expected_version=installed_version,
             version_text=rust_binary_version,
@@ -3508,7 +3543,7 @@ def _build_doctor_payload(
         rust_binary_version=rust_binary_version,
         rust_binary_version_matches=rust_binary_version_matches,
     )
-    skipped_native_tg_binaries = _doctor_skipped_native_tg_binaries(
+    skipped_native_tg_binaries = _self._doctor_skipped_native_tg_binaries(
         installed_version,
         native_tg_binary,
     )
@@ -3516,8 +3551,8 @@ def _build_doctor_payload(
         candidate.get("version_status") == "stale" for candidate in skipped_native_tg_binaries
     ):
         rust_binary_version_status = "stale-skipped"
-    rust_core_extension_available = _doctor_rust_core_extension_available()
-    path_tg_candidates = _doctor_path_tg_candidates()
+    rust_core_extension_available = _self._doctor_rust_core_extension_available()
+    path_tg_candidates = _self._doctor_path_tg_candidates()
     path_tg_first_raw_version = path_tg_candidates[0].get("version") if path_tg_candidates else None
     path_tg_first_version = (
         str(path_tg_first_raw_version) if path_tg_first_raw_version is not None else None
@@ -3527,7 +3562,7 @@ def _build_doctor_payload(
         path_tg_first_path,
         path_tg_first_version,
     )
-    fresh_shell_path_tg_candidates = _doctor_fresh_shell_path_tg_candidates()
+    fresh_shell_path_tg_candidates = _self._doctor_fresh_shell_path_tg_candidates()
     fresh_shell_path_tg_first_raw_version = (
         fresh_shell_path_tg_candidates[0].get("version") if fresh_shell_path_tg_candidates else None
     )
@@ -3545,7 +3580,7 @@ def _build_doctor_payload(
         fresh_shell_path_tg_first_path,
         fresh_shell_path_tg_first_version,
     )
-    python_subprocess_path_tg_first = _doctor_python_subprocess_path_tg_candidate()
+    python_subprocess_path_tg_first = _self._doctor_python_subprocess_path_tg_candidate()
     python_subprocess_path_tg_first_raw_version = (
         python_subprocess_path_tg_first.get("version") if python_subprocess_path_tg_first else None
     )
@@ -3612,7 +3647,7 @@ def _build_doctor_payload(
                 candidate_path,
             ))
     gpu_status = _doctor_gpu_status()
-    gpu_status["search_runtime_probe"] = _doctor_gpu_search_runtime_probe(native_tg_binary)
+    gpu_status["search_runtime_probe"] = _self._doctor_gpu_search_runtime_probe(native_tg_binary)
     # audit M10: gpu.available reflects whether a CUDA device is *present*, not whether the
     # GPU search runtime actually routes through NativeGpuBackend. Surface an honest
     # search_ready boolean derived from the runtime probe so callers don't read
@@ -3744,18 +3779,18 @@ def _build_doctor_payload(
         ),
         "shell_escaping_guidance": _doctor_shell_escaping_guidance(),
         "gpu": gpu_status,
-        "ast_grep": _doctor_ast_grep_status(),
+        "ast_grep": _self._doctor_ast_grep_status(),
         "ast_cache": _doctor_ast_cache_status(str(root), str(resolved_config)),
         "resident_worker": _doctor_resident_worker_status(str(root)),
         "env": {key: os.environ[key] for key in env_keys if os.environ.get(key)},
-        "session_daemon": _doctor_session_daemon_status(str(root)),
+        "session_daemon": _self._doctor_session_daemon_status(str(root)),
         "dense_model": _doctor_dense_model_status(),
     }
 
     # A90 PATH-honesty (docs/plans/2026-08-11-doctor-path-honesty.md): surface the resolved
     # `tg`-vs-expected-wheel mismatch and the wheel-vs-PyPI drift as an aggregate health signal
     # so a foreign 0.32.0 shadow or a stale install is UNMISSABLE, not just scattered booleans.
-    pypi_latest = _latest_pypi_tensor_grep_version()
+    pypi_latest = _self._latest_pypi_tensor_grep_version()
     payload["pypi_latest"] = pypi_latest
     installed_behind_pypi = _doctor_installed_behind_pypi(installed_version, pypi_latest)
     payload["installed_behind_pypi"] = installed_behind_pypi
@@ -3802,7 +3837,7 @@ def _build_doctor_payload(
     )
     if with_lsp:
         lsp_providers = _doctor_apply_lsp_missing_component_remediation(
-            _doctor_apply_lsp_workspace_warnings(_doctor_lsp_provider_statuses(str(root)))
+            _doctor_apply_lsp_workspace_warnings(_self._doctor_lsp_provider_statuses(str(root)))
         )
         lsp_providers_by_language = _doctor_lsp_providers_by_language(lsp_providers)
         payload["lsp"] = {
@@ -5917,7 +5952,7 @@ def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") 
 
 
 def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
-    candidates = [resolve_native_tg_binary(), resolve_ripgrep_binary()]
+    candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
     last_completed: subprocess.CompletedProcess[str] | None = None
     for candidate in candidates:
         if not candidate or not candidate.exists():
@@ -8283,13 +8318,13 @@ def search_command(
                 json_mode=True,
                 exit_code=2,
             )
-    native_tg_binary = resolve_native_tg_binary()
+    native_tg_binary = _self.resolve_native_tg_binary()
     if (
         native_tg_binary is not None
         and not guarded_broad_root
         and not explicit_hidden_search_root
         and not (json and explicit_rg_format)
-        and _can_delegate_to_native_tg_search(
+        and _self._can_delegate_to_native_tg_search(
             config,
             ndjson=ndjson,
             files_mode=files,
@@ -8299,7 +8334,7 @@ def search_command(
         )
     ):
         sys.exit(
-            _delegate_to_native_tg_search(
+            _self._delegate_to_native_tg_search(
                 native_tg_binary,
                 pattern=pattern,
                 paths=paths_to_search,
@@ -9048,7 +9083,7 @@ def calibrate(
     ),
 ) -> None:
     """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
-    native_tg_binary = resolve_native_tg_binary()
+    native_tg_binary = _self.resolve_native_tg_binary()
     if native_tg_binary is None:
         # audit L10: calibrate is unsupported without the native binary (and on CPU-only
         # boxes the native binary itself exits non-zero when CUDA is unavailable). tg's
@@ -9827,7 +9862,7 @@ def _maybe_symbol_command_via_running_daemon(
     is refreshed once before being served, so warm output matches cold output on a changed
     tree (must-fix 5).
     """
-    if not _session_daemon_autostart_enabled():
+    if not _self._session_daemon_autostart_enabled():
         return None
     if provider != "native":
         return None
@@ -9881,7 +9916,7 @@ def _maybe_orient_via_running_daemon(
     below. `orient` has no semantic-provider concept (no --provider flag), so unlike the symbol
     commands/agent there is no provider gate here.
     """
-    if not _session_daemon_autostart_enabled():
+    if not _self._session_daemon_autostart_enabled():
         return None
     daemon_path = _daemon_directory_path(path)
     if daemon_path is None:
@@ -9940,7 +9975,7 @@ def _maybe_agent_via_running_daemon(
     available on the daemon's cached map) is discarded here exactly like a transport error, so the
     caller's cold path (which DOES have the rescue) runs instead.
     """
-    if not _session_daemon_autostart_enabled():
+    if not _self._session_daemon_autostart_enabled():
         return None
     if provider != "native":
         return None
@@ -10440,7 +10475,7 @@ def agent(
         # session's cached repo_map cannot honor a fresh per-request scan deadline), mirroring
         # refs/callers/impact/blast-radius's own daemon gate.
         daemon_payload = (
-            _maybe_agent_via_running_daemon(
+            _self._maybe_agent_via_running_daemon(
                 path=resolved_path,
                 query=resolved_query,
                 max_files=max_files,
@@ -11992,7 +12027,7 @@ def defs(
         # entirely when a --deadline was requested; a warm session's cached repo_map cannot honor
         # a fresh per-request scan deadline).
         payload = (
-            _maybe_symbol_command_via_running_daemon(
+            _self._maybe_symbol_command_via_running_daemon(
                 command="defs",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -12221,7 +12256,7 @@ def impact(
         # warm/cold hybrid.
         daemon_callers_payload: dict[str, Any] | None = None
         daemon_impact_payload = (
-            _maybe_symbol_command_via_running_daemon(
+            _self._maybe_symbol_command_via_running_daemon(
                 command="impact",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -12233,7 +12268,7 @@ def impact(
             else None
         )
         if daemon_impact_payload is not None and not daemon_impact_payload.get("no_match"):
-            daemon_callers_payload = _maybe_symbol_command_via_running_daemon(
+            daemon_callers_payload = _self._maybe_symbol_command_via_running_daemon(
                 command="callers",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -12374,7 +12409,7 @@ def refs(
         # --deadline was requested (a warm session's cached repo_map cannot honor a fresh
         # per-request scan deadline) so that flag combination always takes the cold path.
         payload = (
-            _maybe_symbol_command_via_running_daemon(
+            _self._maybe_symbol_command_via_running_daemon(
                 command="refs",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -12481,7 +12516,7 @@ def callers(
         # --deadline was requested (a warm session's cached repo_map cannot honor a fresh
         # per-request scan deadline) so that flag combination always takes the cold path.
         payload = (
-            _maybe_symbol_command_via_running_daemon(
+            _self._maybe_symbol_command_via_running_daemon(
                 command="callers",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -12888,7 +12923,7 @@ def blast_radius(
         # wrapper, which calls _apply_blast_radius_output_limits internally) -- apply the same
         # helper here so warm output matches cold output byte-for-byte.
         payload = (
-            _maybe_symbol_command_via_running_daemon(
+            _self._maybe_symbol_command_via_running_daemon(
                 command="blast_radius",
                 path=resolved_path,
                 symbol=resolved_symbol,
@@ -14781,7 +14816,7 @@ def scan(
     if not json_output and not sarif:
         typer.echo(f"{scan_banner} based on {project_cfg['config_path']}...")
     try:
-        payload = _run_ast_scan_payload(
+        payload = _self._run_ast_scan_payload(
             project_cfg,
             rules,
             routing_reason=routing_reason,
@@ -15344,7 +15379,7 @@ def doctor(
 
     Reports Windows shell guidance for PowerShell literal patterns and cmd.exe metacharacters.
     """
-    payload = _build_doctor_payload(path, config=config, with_lsp=with_lsp)
+    payload = _self._build_doctor_payload(path, config=config, with_lsp=with_lsp)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
         return
@@ -16013,7 +16048,7 @@ def upgrade() -> None:
     try:
         daemon_snapshot = _upgrade_running_session_daemon_snapshot()
         previous_version = _installed_version()
-        latest_version = _latest_pypi_tensor_grep_version()
+        latest_version = _self._latest_pypi_tensor_grep_version()
         exact_latest_requested = False
         if latest_version is not None and (
             previous_version is None
@@ -16074,7 +16109,7 @@ def upgrade() -> None:
     except RuntimeError as e:
         if _looks_like_windows_self_update_lock(str(e)):
             previous_version = _installed_version()
-            latest_version = _latest_pypi_tensor_grep_version()
+            latest_version = _self._latest_pypi_tensor_grep_version()
             expected_version = ""
             if latest_version is not None and (
                 previous_version is None
@@ -16087,7 +16122,7 @@ def upgrade() -> None:
                 package_spec = "tensor-grep"
             native_path = _managed_native_frontdoor_path()
             path_order_message = (
-                _ensure_windows_managed_native_first_on_path(native_path)
+                _self._ensure_windows_managed_native_first_on_path(native_path)
                 if native_path is not None
                 else None
             )
@@ -16096,7 +16131,7 @@ def upgrade() -> None:
                 # entry on the parent side so the detached helper can verify each
                 # download WITHOUT importing main.py.  Fail-closed: skip any candidate
                 # whose sha256 can't be resolved; refuse to schedule if none remain.
-                _native_checksums = _fetch_native_frontdoor_checksums(expected_version)
+                _native_checksums = _self._fetch_native_frontdoor_checksums(expected_version)
                 if _native_checksums is None:
                     raise RuntimeError(
                         "release-native front-door asset refresh refused: could not fetch "
@@ -16104,8 +16139,8 @@ def upgrade() -> None:
                         "an unverified native binary refresh"
                     ) from None
                 native_assets = []
-                for _cand, _url in _native_frontdoor_download_candidates(expected_version):
-                    _sha256 = _expected_asset_sha256(_native_checksums, _cand.asset_name)
+                for _cand, _url in _self._native_frontdoor_download_candidates(expected_version):
+                    _sha256 = _self._expected_asset_sha256(_native_checksums, _cand.asset_name)
                     if _sha256 is None:
                         continue
                     native_assets.append({
@@ -16121,7 +16156,7 @@ def upgrade() -> None:
             else:
                 native_assets = []
             bridge_paths = (
-                _windows_stale_tensor_grep_com_bridges(expected_version, native_path)
+                _self._windows_stale_tensor_grep_com_bridges(expected_version, native_path)
                 if expected_version and native_path is not None
                 else []
             )
@@ -17702,7 +17737,7 @@ def ledger_find(
 @app.command("update")
 def update() -> None:
     """Alias for upgrade."""
-    upgrade()
+    _self.upgrade()
 
 
 @app.command(name="ast-info")
@@ -17870,7 +17905,7 @@ def worker(
     stop: bool = typer.Option(False, "--stop", help="Stop the active resident worker."),
 ) -> None:
     """Internal command to manage the experimental Resident AST Worker."""
-    native_tg_binary = resolve_native_tg_binary()
+    native_tg_binary = _self.resolve_native_tg_binary()
     if native_tg_binary is None:
         typer.echo("Error: native tg binary not found for worker command.", err=True)
         raise typer.Exit(2)
@@ -17898,7 +17933,7 @@ def main_entry() -> None:
         first_arg = sys.argv[1]
 
         if first_arg == "--pcre2-version":
-            candidates = [resolve_native_tg_binary(), resolve_ripgrep_binary()]
+            candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():
@@ -17929,7 +17964,7 @@ def main_entry() -> None:
     known_commands = _KNOWN_COMMANDS
 
     if len(sys.argv) == 1:
-        app(args=["--help"], prog_name="tg", windows_expand_args=False)
+        _self.app(args=["--help"], prog_name="tg", windows_expand_args=False)
         return
 
     if len(sys.argv) > 1:
@@ -17941,7 +17976,7 @@ def main_entry() -> None:
         ):
             sys.argv.insert(1, "search")
 
-    app(prog_name="tg", windows_expand_args=False)
+    _self.app(prog_name="tg", windows_expand_args=False)
 
 
 if __name__ == "__main__":

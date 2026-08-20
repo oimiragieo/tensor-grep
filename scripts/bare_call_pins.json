@@ -11,7 +11,6 @@
     "it, because an unpinned module with a non-zero count is an UNPINNED OFFENDER."
   ],
   "bare_calls": {
-    "src/tensor_grep/cli/main.py": 102,
     "src/tensor_grep/cli/repo_map.py": 166
   }
 }
