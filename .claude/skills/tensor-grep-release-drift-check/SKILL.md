@@ -74,6 +74,53 @@ Ground truth holder: `docs/audits/2026-08-11-skill-audit-facts.md` (the last ful
    `installation_health`, env `TG_DOCTOR_OFFLINE` — v1.110.14), the merged PR numbers, and any
    new env vars. A fact that is now false is a SUPERSEDED candidate.
 
+4. **`mcp` dependency maintenance re-derivation (trigger T1 of the MCP 2.0 pin-and-defer
+   decision).** `docs/design/2026-08-20-mcp-2-0-exposure-decision.md` pins `mcp` to the
+   maintained `1.x` branch (`pyproject.toml`'s `mcp>=…,<2`) rather than migrating to the 2.0 wire
+   protocol, and names six reopen triggers. Trigger `T1` (`upstream_maintenance_end`) and trigger
+   `T6` (`time_bounded_revalidation`) are the two this sweep can re-derive mechanically; run this
+   on every post-release pass:
+
+   ```bash
+   python -c "
+   import urllib.request, json, re, pathlib, datetime
+   from packaging.version import Version
+   req = urllib.request.Request('https://pypi.org/pypi/mcp/json', headers={'User-Agent': 'tg-release-drift-check'})
+   data = json.load(urllib.request.urlopen(req, timeout=15))
+   v1 = sorted(
+       (v for v in data['releases'] if re.match(r'^1\.\d+\.\d+\$', v)),
+       key=Version,
+   )
+   latest_v1 = v1[-1] if v1 else None
+   floor_match = re.search(r'mcp>=([0-9.]+),<2', pathlib.Path('pyproject.toml').read_text(encoding='utf-8'))
+   floor = floor_match.group(1) if floor_match else None
+   record_text = pathlib.Path('docs/design/2026-08-20-mcp-2-0-exposure-decision.md').read_text(encoding='utf-8')
+   revalidate_by = re.search(r'revalidate_by:\s*([0-9-]+)', record_text).group(1)
+   expired = datetime.date.today() >= datetime.date.fromisoformat(revalidate_by)
+   if latest_v1 is None:
+       print('CANNOT_MEASURE: no 1.x release found on PyPI')
+   elif expired:
+       print(f'EXPIRED: revalidate_by {revalidate_by} has elapsed (T6)')
+   elif floor and Version(latest_v1) > Version(floor):
+       print(f'MAINTAINED: mcp {latest_v1} > floor {floor}')
+   elif floor and Version(latest_v1) == Version(floor):
+       print(f'MAINTAINED: floor {floor} already at maintained head')
+   else:
+       print(f'STALE: no newer 1.x release than floor {floor}; revalidate_by {revalidate_by} not yet elapsed')
+   "
+   ```
+
+   Verdicts are always one of the four **labelled** outcomes above — never a bare zero, and a
+   fetch failure prints `CANNOT_MEASURE`, not `MAINTAINED`. `EXPIRED` or a maintenance-end notice
+   on the `v1.x` branch means the decision record's T1/T6 triggers fired: reopen
+   `docs/design/2026-08-20-mcp-2-0-exposure-decision.md` rather than silently re-pinning. `STALE`
+   is informational — report it, do not fail the sweep on it. This mirrors the guidance in
+   `docs/design/2026-08-20-mcp-2-0-exposure-decision.md`'s "Wired monitoring (T1)" section; that
+   record is the source of truth for the trigger definitions, this skill is only where the
+   mechanical half of them is re-run. Per Part 2 below, this stays a maintenance command, not a
+   pytest — the MCP maintainers' release cadence is out of tg's control and a hard gate here would
+   red every unrelated PR the day `1.x` goes quiet for a sprint.
+
 ## Part 2 — Fix it (append-only SUPERSEDED, never rewrite-as-if-new)
 
 Precedent and law: this repo's `code-search-and-retrieval-reference` Task-10D/10E notes are the
