@@ -112,7 +112,7 @@ Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-co
 The closeout audit wave, Rust first-CI drain, A90, and doctor PATH-honesty all landed: H2 #979 → v1.110.10,
 M14 #984 → v1.110.10, #987 M16 → v1.110.11, #988 M17 → v1.110.12, #997 A90 → v1.110.13, #1000 doctor →
 v1.110.14. Docs: #993 (roadmap), #994 (A90–A93), #992 (A87–A89 capture), #995 (M16/M17 receipts),
-#999/#1001/#1002 (skill evolution + new skills). Open PRs derived live 2026-08-20: #1040 (Route A step 2) only. #966 was CLOSED as a stale PR at CEO request; its branch `task2a-round60-red` is retained on origin and the scaffold is unchanged -- the Task 2A rows below still gate #89/#90.
+#999/#1001/#1002 (skill evolution + new skills). Open PRs derived live 2026-08-20 (post-fan-out): NONE — #1040/#1042/#1043 (Route A, all three giants) and the 11-PR subagent campaign (#1044–#1053) all MERGED; giants now main.py 13,523 / repo_map.py 15,243 / mcp_server.py 5,341, tri-split union GREEN on main. #966 was CLOSED as a stale PR at CEO request; its branch `task2a-round60-red` is retained on origin and the scaffold is unchanged -- the Task 2A rows below still gate #89/#90.
 **CEO packet:** `docs/audits/2026-08-15-ceo-backlog-update.md` (live, 2026-08-15; dumbed-down). Prior: `docs/audits/2026-08-13-ceo-backlog-update.md` (campaign closeout) and `docs/audits/2026-08-11-ceo-backlog-update.md` (historical).
 morning packets retained as historical (A77–A82 receipts + pre-ship counts).
 
@@ -147,7 +147,7 @@ post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 | #1010 | `fix: replace_in_place refuses to follow a symlinked target` | fix | DRAFT → OPEN when CI green (RUST-REPLACE-SYMLINK implementation; RED proven, A3 opus gate 13 rounds SHIP, codex AUDIT-clear pending final re-check) |
 
 *(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
-(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs 2026-08-20: #1040 only. #966 CLOSED (branch retained; Task 2A still BLOCKED, not GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED, v1.110.16.)*
+(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs 2026-08-20 post-fan-out: NONE (#1040–#1053 all merged). #966 CLOSED (branch retained; Task 2A still BLOCKED, not GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED, v1.110.16.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode
