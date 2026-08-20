@@ -756,11 +756,11 @@ In `build_check_plan`, in the `checks.extend([...])` block that constructs the f
 `skip_error_patterns` and `validator` exactly as they are. Add one comment above the block:
 
 ```python
-        # A101 (2026-08-13): public-version-powershell flaked 3x in 3 windows-agent-readiness
-        # runs at timeout_s=30 while the pwsh -NoProfile sibling passed in <1s -- Windows
-        # PowerShell 5.1 cold start on a fresh runner is the leading hypothesis, but the fix
-        # is deliberately mechanism-independent: raise the budget AND allow one bounded
-        # timeout retry. The third sighting is a structural-fix signal, not a rerun signal.
+# A101 (2026-08-13): public-version-powershell flaked 3x in 3 windows-agent-readiness
+# runs at timeout_s=30 while the pwsh -NoProfile sibling passed in <1s -- Windows
+# PowerShell 5.1 cold start on a fresh runner is the leading hypothesis, but the fix
+# is deliberately mechanism-independent: raise the budget AND allow one bounded
+# timeout retry. The third sighting is a structural-fix signal, not a rerun signal.
 ```
 
 - [ ] **Step 14: Run to GREEN**

@@ -13,7 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 from mcp import types
@@ -32,43 +32,96 @@ from tensor_grep.cli.incompleteness import disclosed_incomplete
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
-    _build_doctor_payload,
     _build_rulesets_payload,
     _execute_find,
     _format_unbounded_large_root_scan_error,
     _format_unbounded_vendored_root_scan_error,
     _load_inline_rule_specs,
-    _run_ast_scan_payload,
     _search_with_cpu_fallback,
     _set_semantic_rank_fallback_reason,
     _should_refuse_unbounded_large_root_scan,
     _should_refuse_unbounded_vendored_root_scan,
 )
-from tensor_grep.cli.orient_capsule import build_orient_capsule_json
+from tensor_grep.cli.main import (
+    _build_doctor_payload as _build_doctor_payload,
+)
+from tensor_grep.cli.main import (
+    _run_ast_scan_payload as _run_ast_scan_payload,
+)
+from tensor_grep.cli.orient_capsule import (
+    build_orient_capsule_json as build_orient_capsule_json,
+)
 from tensor_grep.cli.repo_map import (
     _apply_context_token_budget,
     _deadline_monotonic_from_seconds,
     build_context_pack,
-    build_context_render,
-    build_file_importers,
     build_file_imports,
-    build_repo_map,
-    build_symbol_blast_radius,
-    build_symbol_blast_radius_render,
-    build_symbol_callers,
-    build_symbol_defs,
-    build_symbol_impact,
-    build_symbol_refs,
-    build_symbol_source,
+)
+from tensor_grep.cli.repo_map import (
+    build_context_render as build_context_render,
+)
+from tensor_grep.cli.repo_map import (
+    build_file_importers as build_file_importers,
+)
+from tensor_grep.cli.repo_map import (
+    build_repo_map as build_repo_map,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_blast_radius as build_symbol_blast_radius,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_blast_radius_render as build_symbol_blast_radius_render,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_callers as build_symbol_callers,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_defs as build_symbol_defs,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_impact as build_symbol_impact,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_refs as build_symbol_refs,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_source as build_symbol_source,
 )
 from tensor_grep.cli.rule_packs import resolve_rule_pack
-from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+from tensor_grep.cli.runtime_paths import (
+    resolve_native_tg_binary as resolve_native_tg_binary,
+)
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
-from tensor_grep.core.pipeline import ConfigurationError, Pipeline
+from tensor_grep.core.pipeline import (
+    ConfigurationError,
+)
+from tensor_grep.core.pipeline import (
+    Pipeline as Pipeline,
+)
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner
+
+# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
+# welding the calling function to this file -- move it and the test still passes while
+# production runs the unpatched original. `_self.NAME(...)` resolves at CALL time against the
+# module object, so the patch is seen wherever the function ends up living.
+#
+# The two-branch form is load-bearing, not style. At runtime `sys.modules[__name__]` is the
+# only option: the module is mid-import when this line executes, so importing itself by name
+# would be circular. But that expression is typed `ModuleType`, whose `__getattr__` returns
+# `Any` -- so under a single-branch form every converted call returns Any and mypy raises
+# `no-any-return` at each caller declared to return something concrete (measured: 12 errors on
+# this file alone). The TYPE_CHECKING branch is never executed; it exists so the type checker
+# resolves `_self` to this module and keeps every real signature.
+#
+# scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
+if TYPE_CHECKING:
+    from tensor_grep.cli import mcp_server as _self
+else:
+    _self = sys.modules[__name__]
 
 
 def _mcp_server_version() -> str:
@@ -951,7 +1004,7 @@ def _native_unavailable_error(
 
 def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
     try:
-        return resolve_native_tg_binary(), None
+        return _self.resolve_native_tg_binary(), None
     except FileNotFoundError as exc:
         return None, str(exc)
 
@@ -1113,7 +1166,7 @@ def _mcp_capabilities_payload() -> dict[str, Any]:
         "cli_version": _mcp_server_version(),
         "native_tg": native_tg_payload,
         "embedded_rewrite": {
-            "available": _embedded_rewrite_available(),
+            "available": _self._embedded_rewrite_available(),
         },
         "tools": [
             {"name": name, **capability}
@@ -1351,7 +1404,7 @@ def _build_rewrite_command(
     test_cmd: str | None = None,
 ) -> list[str]:
     command = [
-        str(resolve_native_tg_binary()),
+        str(_self.resolve_native_tg_binary()),
         "run",
         "--lang",
         lang,
@@ -1389,7 +1442,7 @@ def _build_rewrite_command(
 
 def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
     return [
-        str(resolve_native_tg_binary()),
+        str(_self.resolve_native_tg_binary()),
         "search",
         "--index",
         "--json",
@@ -1572,7 +1625,7 @@ def _produce_rewrite_plan_json(
     """
     native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
     if native_tg is None:
-        if not _embedded_rewrite_available():
+        if not _self._embedded_rewrite_available():
             return _native_unavailable_error(
                 tool="tg_rewrite_plan",
                 payload=_rewrite_envelope(),
@@ -1581,7 +1634,7 @@ def _produce_rewrite_plan_json(
                     "or embedded native rewrite support."
                 ),
             )
-        return _execute_embedded_rewrite_json(
+        return _self._execute_embedded_rewrite_json(
             pattern=pattern,
             replacement=replacement,
             lang=lang,
@@ -1879,7 +1932,7 @@ def execute_rewrite_apply_json(
                 ),
                 1,
             )
-        if not _embedded_rewrite_available():
+        if not _self._embedded_rewrite_available():
             return (
                 _native_unavailable_error(
                     tool="tg_rewrite_apply",
@@ -1898,7 +1951,7 @@ def execute_rewrite_apply_json(
                 checkpoint_payload = create_checkpoint(path).__dict__
             except Exception as exc:
                 return _rewrite_error(f"Failed to create checkpoint: {exc}", code="checkpoint"), 1
-        rewrite_json = _execute_embedded_rewrite_json(
+        rewrite_json = _self._execute_embedded_rewrite_json(
             pattern=pattern,
             replacement=replacement,
             lang=lang,
@@ -2262,14 +2315,14 @@ def _broad_root_scan_refusal_result(
             payload["lang"] = lang
         # M14: this helper is shared by tg_search / tg_ast_search but is unreachable by
         # black-box census probes -- route through the injector like every other envelope.
-        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     return f"tg: {message}"
 
 
 @_register_legacy_tool  # type: ignore
 def tg_rulesets() -> str:
     """Return metadata for built-in security and compliance rulesets."""
-    return _inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
 
 
 def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
@@ -2612,7 +2665,7 @@ def tg_ruleset_scan(
     except ValueError as exc:
         return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
     try:
-        payload = _run_ast_scan_payload(
+        payload = _self._run_ast_scan_payload(
             project_cfg,
             rules,
             routing_reason=scan_routing_reason,
@@ -2682,7 +2735,7 @@ def tg_ruleset_scan(
             path=path,
         )
     # M14: the scan success payload is assembled inline and crossed the wire un-stamped.
-    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -2714,9 +2767,9 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
         from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
 
         effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_repo_map(path, max_repo_files=effective_max_repo_files),
+                _self.build_repo_map(path, max_repo_files=effective_max_repo_files),
                 indent=2,
             )
         )
@@ -2787,8 +2840,8 @@ def tg_orient(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
-            build_orient_capsule_json(
+        return _self._inject_mcp_contract_fields(
+            _self.build_orient_capsule_json(
                 path,
                 max_tokens=max_tokens,
                 max_central_files=max_central_files,
@@ -2878,8 +2931,10 @@ def tg_doctor(
             return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
-            json.dumps(_build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2)
+        return _self._inject_mcp_contract_fields(
+            json.dumps(
+                _self._build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2
+            )
         )
     except Exception as exc:  # propagate as structured error, never a raw exception
         payload = _envelope_base(
@@ -2920,7 +2975,7 @@ def tg_context_pack(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
         )
     except FileNotFoundError:
@@ -2994,7 +3049,7 @@ def tg_edit_plan(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 build_context_edit_plan(
                     query,
@@ -3079,9 +3134,9 @@ def tg_context_render(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_context_render(
+                _self.build_context_render(
                     query,
                     path,
                     max_files=max_files,
@@ -3179,7 +3234,7 @@ def tg_agent_capsule(
     try:
         from tensor_grep.cli.agent_capsule import build_agent_capsule
 
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 build_agent_capsule(
                     query,
@@ -3265,7 +3320,7 @@ def tg_session_edit_plan(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_context_edit_plan(
                     session_id,
@@ -3362,7 +3417,7 @@ def tg_session_context_render(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_context_render(
                     session_id,
@@ -3450,7 +3505,7 @@ def tg_session_blast_radius(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_blast_radius(
                     session_id,
@@ -3558,7 +3613,7 @@ def tg_session_file_importers(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_file_importers(
                     session_id,
@@ -3635,12 +3690,12 @@ def tg_symbol_blast_radius_plan(
         payload["max_depth"] = max(0, int(max_depth))
         payload["path"] = path
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
     try:
         # M14: build_symbol_blast_radius_plan returns a bare dict crossed the wire exactly;
         # the injector stamps (and re-serializes) the final JSON like every tool envelope.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 build_symbol_blast_radius_plan(
                     symbol,
@@ -3667,7 +3722,7 @@ def tg_symbol_blast_radius_plan(
             "code": "invalid_input",
             "message": f"Path not found: {Path(path).expanduser().resolve()}",
         }
-        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -3682,7 +3737,7 @@ def tg_symbol_blast_radius_plan(
             "message": str(exc),
             "retryable": False,
         }
-        return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -3742,7 +3797,7 @@ def tg_session_blast_radius_render(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_blast_radius_render(
                     session_id,
@@ -3851,7 +3906,7 @@ def tg_session_blast_radius_plan(
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
     try:
         # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 session_blast_radius_plan(
                     session_id,
@@ -3943,9 +3998,9 @@ def tg_symbol_defs(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_defs(
+                _self.build_symbol_defs(
                     symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
                 ),
                 indent=2,
@@ -4011,9 +4066,9 @@ def tg_symbol_source(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_source(
+                _self.build_symbol_source(
                     symbol, path, semantic_provider=provider, max_repo_files=max_repo_files
                 ),
                 indent=2,
@@ -4078,9 +4133,9 @@ def tg_symbol_impact(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_impact(
+                _self.build_symbol_impact(
                     symbol,
                     path,
                     semantic_provider=provider,
@@ -4154,9 +4209,9 @@ def tg_symbol_refs(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_refs(
+                _self.build_symbol_refs(
                     symbol,
                     path,
                     semantic_provider=provider,
@@ -4230,9 +4285,9 @@ def tg_symbol_callers(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_callers(
+                _self.build_symbol_callers(
                     symbol,
                     path,
                     semantic_provider=provider,
@@ -4302,7 +4357,7 @@ def tg_file_imports(file: str) -> str:
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
     try:
-        return _inject_mcp_contract_fields(json.dumps(build_file_imports(file), indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(build_file_imports(file), indent=2))
     except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
@@ -4381,9 +4436,9 @@ def tg_file_importers(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_file_importers(
+                _self.build_file_importers(
                     file, path, max_repo_files=max_repo_files, deadline_seconds=deadline
                 ),
                 indent=2,
@@ -4452,9 +4507,9 @@ def tg_symbol_blast_radius(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_blast_radius(
+                _self.build_symbol_blast_radius(
                     symbol,
                     path,
                     max_depth=max_depth,
@@ -4543,9 +4598,9 @@ def tg_symbol_blast_radius_render(
         return json.dumps(payload, indent=2)
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
-                build_symbol_blast_radius_render(
+                _self.build_symbol_blast_radius_render(
                     symbol,
                     path,
                     max_depth=max_depth,
@@ -4726,7 +4781,7 @@ def tg_find(
 
     envelope = json.loads(JsonFormatter().format(result))
     envelope = {"query": query, "path": path, **envelope}
-    return _inject_mcp_contract_fields(json.dumps(envelope, indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(envelope, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -4817,7 +4872,7 @@ def tg_search(
                 "error": {"code": "invalid_input", "message": str(exc)},
             }
             # M14: this no-scan error envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
         return f"Search failed: {exc}"
 
     rendered_file_limit = max(0, max_files if max_files is not None else 15)
@@ -4836,7 +4891,7 @@ def tg_search(
         no_messages=True,
     )
 
-    pipeline = Pipeline(config=config)
+    pipeline = _self.Pipeline(config=config)
     backend = pipeline.get_backend()
     selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
     selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
@@ -4990,7 +5045,9 @@ def tg_search(
                             },
                         }
                         # M14: error envelope crossed the wire un-stamped.
-                        return _inject_mcp_contract_fields(json.dumps(error_payload, indent=2))
+                        return _self._inject_mcp_contract_fields(
+                            json.dumps(error_payload, indent=2)
+                        )
                     return f"Search failed: semantic backend error: {exc}"
             else:
                 # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
@@ -5033,7 +5090,7 @@ def tg_search(
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
                 # M14: the no-match structured envelope crossed the wire un-stamped.
-                return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+                return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
             capped_note = (
                 f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
                 if empty_scan_capped
@@ -5065,7 +5122,7 @@ def tg_search(
                 if all_results.rank_fallback_reason:
                     count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
                 # M14: the count envelope crossed the wire un-stamped.
-                return _inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
+                return _self._inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
             return (
                 f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
                 f"{_routing_summary(all_results)}"
@@ -5128,7 +5185,7 @@ def tg_search(
             if all_results.rank_fallback_reason:
                 payload["rank_fallback_reason"] = all_results.rank_fallback_reason
             # M14: the results envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
         # Format the results into a readable string for the LLM
         output = [
@@ -5209,7 +5266,7 @@ def tg_ast_search(
     except ValueError as exc:
         if structured_json:
             # M14: confinement-refusal envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "pattern": pattern,
@@ -5225,7 +5282,7 @@ def tg_ast_search(
     normalized_max_repo_files = max(1, int(max_repo_files))
     config = SearchConfig(ast=True, lang=lang, no_messages=True)
     try:
-        pipeline = Pipeline(config=config)
+        pipeline = _self.Pipeline(config=config)
         backend = pipeline.get_backend()
     except ConfigurationError as exc:
         # Fail closed with a STRUCTURED "unavailable" error instead of letting the
@@ -5236,7 +5293,7 @@ def tg_ast_search(
         # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
         if structured_json:
             # M14: unavailable envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "pattern": pattern,
@@ -5256,7 +5313,7 @@ def tg_ast_search(
     if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
         if structured_json:
             # M14: unavailable envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "pattern": pattern,
@@ -5385,7 +5442,7 @@ def tg_ast_search(
         if all_results.is_empty:
             if structured_json:
                 # M14: no-match envelope crossed the wire un-stamped.
-                return _inject_mcp_contract_fields(
+                return _self._inject_mcp_contract_fields(
                     json.dumps(
                         {
                             "pattern": pattern,
@@ -5452,7 +5509,7 @@ def tg_ast_search(
                 for m in matches
             ]
             # M14: results envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "pattern": pattern,
@@ -5509,7 +5566,7 @@ def tg_ast_search(
     except Exception as e:
         if structured_json:
             # M14: exception envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "pattern": pattern,
@@ -5546,7 +5603,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     except ValueError as exc:
         if structured_json:
             # M14: confinement-refusal envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "file_path": file_path,
@@ -5576,7 +5633,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
         if not lines:
             if structured_json:
                 # M14: empty/unreadable envelope crossed the wire un-stamped.
-                return _inject_mcp_contract_fields(
+                return _self._inject_mcp_contract_fields(
                     json.dumps(
                         {
                             "file_path": file_path,
@@ -5605,7 +5662,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
 
         if structured_json:
             # M14: the success envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "file_path": file_path,
@@ -5642,7 +5699,7 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     except Exception as e:
         if structured_json:
             # M14: exception envelope crossed the wire un-stamped.
-            return _inject_mcp_contract_fields(
+            return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
                         "file_path": file_path,
@@ -5670,7 +5727,7 @@ def tg_devices(json_output: bool = True) -> str:
     if json_output:
         # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
         # through the injector like every other tool envelope.
-        return _inject_mcp_contract_fields(json.dumps(payload))
+        return _self._inject_mcp_contract_fields(json.dumps(payload))
 
     if not inventory.devices:
         return "No routable GPUs detected."
@@ -5897,7 +5954,7 @@ def tg_audit_manifest_verify(
         # M14: verify_audit_manifest_json serializes a flat CLI payload with no MCP
         # envelope -- stamp at the tool seam (the error arms above already embed the
         # const via _audit_manifest_error).
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             verify_audit_manifest_json(
                 manifest_path,
                 signing_key=signing_key,
@@ -5933,7 +5990,9 @@ def tg_audit_history(path: str = ".") -> str:
         return _audit_history_error(str(exc), code="invalid_input")
 
     try:
-        return _inject_mcp_contract_fields(json.dumps(list_audit_history_payload(path), indent=2))
+        return _self._inject_mcp_contract_fields(
+            json.dumps(list_audit_history_payload(path), indent=2)
+        )
     except FileNotFoundError as exc:
         return _audit_history_error(str(exc), code="not_found")
     except ValueError as exc:
@@ -5978,7 +6037,7 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         return _audit_diff_error(str(exc), code="invalid_input")
 
     try:
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             json.dumps(
                 diff_audit_manifests_payload(previous_manifest, current_manifest),
                 indent=2,
@@ -6064,7 +6123,7 @@ def tg_review_bundle_create(
         # M14: create_review_bundle_json serializes a flat CLI payload with no MCP envelope --
         # stamp at the tool seam (the error arms above already embed the const via
         # _review_bundle_error).
-        return _inject_mcp_contract_fields(
+        return _self._inject_mcp_contract_fields(
             create_review_bundle_json(
                 manifest_path,
                 scan_path=scan_path,
@@ -6128,7 +6187,7 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
         # M14: verify_review_bundle_json serializes a flat CLI payload with no MCP envelope --
         # stamp at the tool seam (the error arms above already embed the const via
         # _review_bundle_error).
-        return _inject_mcp_contract_fields(verify_review_bundle_json(bundle_path))
+        return _self._inject_mcp_contract_fields(verify_review_bundle_json(bundle_path))
     except FileNotFoundError as exc:
         return _review_bundle_error(
             str(exc),
@@ -6418,7 +6477,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
             detail={},
         )
 
-    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -6455,7 +6514,7 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
         )
 
     # M14: the refreshed-session payload crossed the wire un-stamped.
-    return _inject_mcp_contract_fields(json.dumps(payload.__dict__, indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(payload.__dict__, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -6531,7 +6590,7 @@ def tg_session_context(
             query=query,
         )
 
-    return _inject_mcp_contract_fields(json.dumps(payload, indent=2))
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -6654,19 +6713,19 @@ def tg_navigate(
         if action == "defs":
             if symbol is None:
                 return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return tg_symbol_defs(
+            return _self.tg_symbol_defs(
                 symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
             )
         if action == "source":
             if symbol is None:
                 return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return tg_symbol_source(
+            return _self.tg_symbol_source(
                 symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
             )
         if action == "refs":
             if symbol is None:
                 return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return tg_symbol_refs(
+            return _self.tg_symbol_refs(
                 symbol=symbol,
                 path=path,
                 provider=provider,
@@ -6676,7 +6735,7 @@ def tg_navigate(
         if action == "callers":
             if symbol is None:
                 return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return tg_symbol_callers(
+            return _self.tg_symbol_callers(
                 symbol=symbol,
                 path=path,
                 provider=provider,
@@ -6686,11 +6745,11 @@ def tg_navigate(
         if action == "imports":
             if file is None:
                 return _meta_missing_param_error("tg_navigate", action, "file")
-            return tg_file_imports(file=file)
+            return _self.tg_file_imports(file=file)
         if action == "importers":
             if file is None:
                 return _meta_missing_param_error("tg_navigate", action, "file")
-            return tg_file_importers(
+            return _self.tg_file_importers(
                 file=file, path=path, max_repo_files=max_repo_files, deadline=deadline
             )
         return _meta_unknown_action_error("tg_navigate", action, _TG_NAVIGATE_ACTIONS)
@@ -6761,9 +6820,11 @@ def tg_impact(
 
     try:
         if action == "impact":
-            return tg_symbol_impact(symbol=symbol, path=path, provider=provider, deadline=deadline)
+            return _self.tg_symbol_impact(
+                symbol=symbol, path=path, provider=provider, deadline=deadline
+            )
         if action == "blast_radius":
-            return tg_symbol_blast_radius(
+            return _self.tg_symbol_blast_radius(
                 symbol=symbol,
                 path=path,
                 max_depth=max_depth,
@@ -6772,7 +6833,7 @@ def tg_impact(
                 deadline=deadline,
             )
         if action == "blast_radius_plan":
-            return tg_symbol_blast_radius_plan(
+            return _self.tg_symbol_blast_radius_plan(
                 symbol=symbol,
                 path=path,
                 max_depth=max_depth,
@@ -6782,7 +6843,7 @@ def tg_impact(
                 max_repo_files=max_repo_files,
             )
         if action == "blast_radius_render":
-            return tg_symbol_blast_radius_render(
+            return _self.tg_symbol_blast_radius_render(
                 symbol=symbol,
                 path=path,
                 max_depth=max_depth,
@@ -6849,7 +6910,7 @@ def _tg_query_dispatch(
     `workspace_roots` loop below. Assumes `path` is ALREADY confined."""
     if action == "text":
         search_pattern = pattern if pattern is not None else query
-        return tg_search(
+        return _self.tg_search(
             pattern=search_pattern,
             path=path,
             case_sensitive=case_sensitive,
@@ -6872,7 +6933,7 @@ def _tg_query_dispatch(
     if action == "ast":
         if pattern is None or lang is None:
             return _meta_missing_param_error("tg_query", action, "pattern and lang")
-        return tg_ast_search(
+        return _self.tg_ast_search(
             pattern=pattern,
             lang=lang,
             path=path,
@@ -6886,7 +6947,7 @@ def _tg_query_dispatch(
         effective_max_tokens = (
             max_tokens if max_tokens is not None else _DEFAULT_MCP_FIND_MAX_TOKENS
         )
-        return tg_find(
+        return _self.tg_find(
             query=query_text,
             path=path,
             limit=limit,
@@ -6897,7 +6958,7 @@ def _tg_query_dispatch(
     if action == "index":
         if pattern is None:
             return _meta_missing_param_error("tg_query", action, "pattern")
-        return tg_index_search(pattern=pattern, path=path)
+        return _self.tg_index_search(pattern=pattern, path=path)
     return _meta_unknown_action_error("tg_query", action, _TG_QUERY_ACTIONS)
 
 
@@ -6993,7 +7054,7 @@ def tg_query(
 
     try:
         if confined_roots is None:
-            return _tg_query_dispatch(
+            return _self._tg_query_dispatch(
                 action,
                 pattern=pattern,
                 query=query,
@@ -7041,7 +7102,7 @@ def tg_query(
                 if loop_deadline_monotonic is None
                 else max(0.1, loop_deadline_monotonic - time.monotonic())
             )
-            single_text = _tg_query_dispatch(
+            single_text = _self._tg_query_dispatch(
                 action,
                 pattern=pattern,
                 query=query,
@@ -7162,9 +7223,9 @@ def tg_context(
     try:
         max_tokens_kwargs: dict[str, Any] = {} if max_tokens is None else {"max_tokens": max_tokens}
         if action == "pack":
-            return tg_context_pack(query=query, path=path, **max_tokens_kwargs)
+            return _self.tg_context_pack(query=query, path=path, **max_tokens_kwargs)
         if action == "edit_plan":
-            return tg_edit_plan(
+            return _self.tg_edit_plan(
                 query=query,
                 path=path,
                 max_files=max_files,
@@ -7175,7 +7236,7 @@ def tg_context(
                 provider=provider,
             )
         if action == "render":
-            return tg_context_render(
+            return _self.tg_context_render(
                 query=query,
                 path=path,
                 max_files=max_files,
@@ -7191,7 +7252,7 @@ def tg_context(
                 **max_tokens_kwargs,
             )
         if action == "capsule":
-            return tg_agent_capsule(
+            return _self.tg_agent_capsule(
                 query=query,
                 path=path,
                 max_files=max_files,
@@ -7257,18 +7318,18 @@ def tg_explore(
 
     try:
         if action == "orient":
-            return tg_orient(
+            return _self.tg_orient(
                 path=path,
                 max_tokens=max_tokens,
                 max_central_files=max_central_files,
                 ignore=ignore,
             )
         if action == "repo_map":
-            return tg_repo_map(path=path, max_repo_files=max_repo_files)
+            return _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
         if action == "doctor":
-            return tg_doctor(path=path, config=config, with_lsp=with_lsp)
+            return _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
         if action == "devices":
-            return tg_devices(json_output=json_output)
+            return _self.tg_devices(json_output=json_output)
         return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
     except Exception as exc:
         payload = _meta_envelope(tool="tg_explore", action=action)
@@ -7369,20 +7430,20 @@ def tg_session(
 
     try:
         if action == "open":
-            return tg_session_open(path=path, max_repo_files=max_repo_files)
+            return _self.tg_session_open(path=path, max_repo_files=max_repo_files)
         if action == "list":
-            return tg_session_list(path=path)
+            return _self.tg_session_list(path=path)
         if action == "show":
-            return tg_session_show(session_id=cast(str, session_id), path=path)
+            return _self.tg_session_show(session_id=cast(str, session_id), path=path)
         if action == "refresh":
-            return tg_session_refresh(session_id=cast(str, session_id), path=path)
+            return _self.tg_session_refresh(session_id=cast(str, session_id), path=path)
         if action == "context":
             if query is None:
                 return _meta_missing_param_error("tg_session", action, "query")
             max_tokens_kwargs: dict[str, Any] = (
                 {} if max_tokens is None else {"max_tokens": max_tokens}
             )
-            return tg_session_context(
+            return _self.tg_session_context(
                 session_id=cast(str, session_id),
                 query=query,
                 path=path,
@@ -7393,7 +7454,7 @@ def tg_session(
         if action == "edit_plan":
             if query is None:
                 return _meta_missing_param_error("tg_session", action, "query")
-            return tg_session_edit_plan(
+            return _self.tg_session_edit_plan(
                 session_id=cast(str, session_id),
                 query=query,
                 path=path,
@@ -7409,7 +7470,7 @@ def tg_session(
             if query is None:
                 return _meta_missing_param_error("tg_session", action, "query")
             max_tokens_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
-            return tg_session_context_render(
+            return _self.tg_session_context_render(
                 session_id=cast(str, session_id),
                 query=query,
                 path=path,
@@ -7429,7 +7490,7 @@ def tg_session(
         if action == "blast_radius":
             if symbol is None:
                 return _meta_missing_param_error("tg_session", action, "symbol")
-            return tg_session_blast_radius(
+            return _self.tg_session_blast_radius(
                 session_id=cast(str, session_id),
                 symbol=symbol,
                 path=path,
@@ -7440,7 +7501,7 @@ def tg_session(
         if action == "blast_radius_plan":
             if symbol is None:
                 return _meta_missing_param_error("tg_session", action, "symbol")
-            return tg_session_blast_radius_plan(
+            return _self.tg_session_blast_radius_plan(
                 session_id=cast(str, session_id),
                 symbol=symbol,
                 path=path,
@@ -7453,7 +7514,7 @@ def tg_session(
         if action == "blast_radius_render":
             if symbol is None:
                 return _meta_missing_param_error("tg_session", action, "symbol")
-            return tg_session_blast_radius_render(
+            return _self.tg_session_blast_radius_render(
                 session_id=cast(str, session_id),
                 symbol=symbol,
                 path=path,
@@ -7470,7 +7531,7 @@ def tg_session(
         if action == "file_importers":
             if file is None:
                 return _meta_missing_param_error("tg_session", action, "file")
-            return tg_session_file_importers(
+            return _self.tg_session_file_importers(
                 session_id=cast(str, session_id),
                 file=file,
                 path=path,
@@ -7531,7 +7592,7 @@ def tg_scan(
 
     try:
         if action == "scan":
-            return tg_ruleset_scan(
+            return _self.tg_ruleset_scan(
                 ruleset=ruleset,
                 inline_rules=inline_rules,
                 path=path,
@@ -7550,7 +7611,7 @@ def tg_scan(
                 max_evidence_snippet_chars=max_evidence_snippet_chars,
             )
         if action == "rulesets":
-            return tg_rulesets()
+            return _self.tg_rulesets()
         return _meta_unknown_action_error("tg_scan", action, _TG_SCAN_ACTIONS)
     except Exception as exc:
         payload = _meta_envelope(tool="tg_scan", action=action)
@@ -7621,25 +7682,25 @@ def tg_audit(
         if action == "manifest_verify":
             if manifest_path is None:
                 return _meta_missing_param_error("tg_audit", action, "manifest_path")
-            return tg_audit_manifest_verify(
+            return _self.tg_audit_manifest_verify(
                 manifest_path=manifest_path,
                 signing_key=signing_key,
                 previous_manifest=previous_manifest,
             )
         if action == "history":
-            return tg_audit_history(path=path)
+            return _self.tg_audit_history(path=path)
         if action == "diff":
             if previous_manifest is None or current_manifest is None:
                 return _meta_missing_param_error(
                     "tg_audit", action, "previous_manifest and current_manifest"
                 )
-            return tg_audit_diff(
+            return _self.tg_audit_diff(
                 previous_manifest=previous_manifest, current_manifest=current_manifest
             )
         if action == "bundle_create":
             if manifest_path is None:
                 return _meta_missing_param_error("tg_audit", action, "manifest_path")
-            return tg_review_bundle_create(
+            return _self.tg_review_bundle_create(
                 manifest_path=manifest_path,
                 scan_path=scan_path,
                 checkpoint_id=checkpoint_id,
@@ -7649,7 +7710,7 @@ def tg_audit(
         if action == "bundle_verify":
             if bundle_path is None:
                 return _meta_missing_param_error("tg_audit", action, "bundle_path")
-            return tg_review_bundle_verify(bundle_path=bundle_path)
+            return _self.tg_review_bundle_verify(bundle_path=bundle_path)
         return _meta_unknown_action_error("tg_audit", action, _TG_AUDIT_ACTIONS)
     except Exception as exc:
         payload = _meta_envelope(tool="tg_audit", action=action)
@@ -7688,13 +7749,13 @@ def tg_checkpoint(
 
     try:
         if action == "create":
-            return tg_checkpoint_create(path=path)
+            return _self.tg_checkpoint_create(path=path)
         if action == "list":
-            return tg_checkpoint_list(path=path)
+            return _self.tg_checkpoint_list(path=path)
         if action == "undo":
             if checkpoint_id is None:
                 return _meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
-            return tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
+            return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
         return _meta_unknown_action_error("tg_checkpoint", action, _TG_CHECKPOINT_ACTIONS)
     except Exception as exc:
         payload = _meta_envelope(tool="tg_checkpoint", action=action)
@@ -7761,9 +7822,11 @@ def tg_rewrite(
 
     try:
         if action == "plan":
-            return tg_rewrite_plan(pattern=pattern, replacement=replacement, lang=lang, path=path)
+            return _self.tg_rewrite_plan(
+                pattern=pattern, replacement=replacement, lang=lang, path=path
+            )
         if action == "apply":
-            return tg_rewrite_apply(
+            return _self.tg_rewrite_apply(
                 pattern=pattern,
                 replacement=replacement,
                 lang=lang,
@@ -7779,7 +7842,9 @@ def tg_rewrite(
                 expected_match_count=expected_match_count,
             )
         if action == "diff":
-            return tg_rewrite_diff(pattern=pattern, replacement=replacement, lang=lang, path=path)
+            return _self.tg_rewrite_diff(
+                pattern=pattern, replacement=replacement, lang=lang, path=path
+            )
         return _meta_unknown_action_error("tg_rewrite", action, _TG_REWRITE_ACTIONS)
     except Exception as exc:
         payload = _meta_envelope(tool="tg_rewrite", action=action)

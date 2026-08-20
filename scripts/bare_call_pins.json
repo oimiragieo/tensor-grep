@@ -5,11 +5,13 @@
     "Each number may only go DOWN, and every decrease must be banked here in the same commit --",
     "the ratchet fails on a pin left above the real count, because a pin above the count accepts",
     "a range, and a range is where a later regression hides.",
-    "Measured against main at 79cb220 on 2026-08-19."
+    "Measured against main at 79cb220 on 2026-08-19.",
+    "mcp_server.py RETIRED 2026-08-20: Route A conversion complete, 125 -> 0. Its absence here",
+    "is the record that the module is converted; the ratchet fails if a bare call reappears in",
+    "it, because an unpinned module with a non-zero count is an UNPINNED OFFENDER."
   ],
   "bare_calls": {
     "src/tensor_grep/cli/main.py": 102,
-    "src/tensor_grep/cli/mcp_server.py": 125,
     "src/tensor_grep/cli/repo_map.py": 166
   }
 }
