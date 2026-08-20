@@ -655,7 +655,7 @@ def _produce_rewrite_plan_json(
     apply-side drift check (audit A1), so both observe identical plan semantics.
     Inputs must already be validated and metavar-unescaped by the caller.
     """
-    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
     if native_tg is None:
         if not _self._embedded_rewrite_available():
             return _native_unavailable_error(
@@ -949,7 +949,7 @@ def execute_rewrite_apply_json(
                 1,
             )
 
-    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
     checkpoint_payload: dict[str, Any] | None = None
     if native_tg is None:
         if verify or audit_manifest or audit_signing_key or lint_cmd or test_cmd:

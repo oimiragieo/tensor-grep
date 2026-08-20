@@ -433,7 +433,7 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
             path=path,
         )
 
-    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
     if native_tg is None:
         payload = _index_search_envelope()
         payload["query"] = pattern
@@ -1057,7 +1057,7 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
 
-    native_tg, _native_error = _resolve_native_tg_binary_for_mcp()
+    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
     if native_tg is None:
         return _native_unavailable_error(
             tool="tg_rewrite_diff",
