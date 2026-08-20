@@ -133,7 +133,13 @@ def _assert_enriched_edit_plan_seed(
         assert edit_plan_seed["edit_ordering"][0] == str(primary_file.resolve())
     else:
         assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
-    assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
+    # H6 audit: `rollback_risk` is always `round(min(1.0, max(0.0, risk)), 3)`
+    # (repo_map.py:13489-13512) -- a `0.0 <= x <= 1.0` bound check can never fail; the
+    # clamp is proven load-bearing by
+    # test_edit_plan_seed.py::test_rollback_risk_clamp_is_load_bearing_{upper,lower}_bound.
+    # This helper is shared across call sites with differing fixtures (8 in this file), so
+    # assert the property it CAN check: the field is really a float.
+    assert isinstance(edit_plan_seed["rollback_risk"], float)
     assert {
         "import_resolution_quality",
         "parser_backed_count",
@@ -153,7 +159,12 @@ def _assert_enriched_edit_plan_seed(
         assert {"command", "scope", "runner", "confidence", "detection"} <= set(step)
         assert step["scope"] in {"symbol", "file", "repo"}
         assert step["detection"] in {"detected", "heuristic", "generic"}
-        assert 0.0 <= step["confidence"] <= 1.0
+        # H6 audit: step confidence is always `round(min(1.0, max(0.0, confidence)), 3)`
+        # (repo_map.py:12013-12030, same clamp shape proven load-bearing by
+        # test_edit_plan_seed.py::test_confidence_from_score_clamp_is_load_bearing) -- a
+        # `0.0 <= x <= 1.0` bound check can never fail. This helper is shared across
+        # 8 differing fixtures, so assert the property it CAN check.
+        assert isinstance(step["confidence"], float)
 
 
 def _assert_navigation_pack(
@@ -219,7 +230,10 @@ def _assert_navigation_pack(
         assert isinstance(group["roles"], list)
         assert group["roles"]
     assert isinstance(navigation_pack["edit_ordering"], list)
-    assert 0.0 <= navigation_pack["rollback_risk"] <= 1.0
+    # H6 audit: same clamp as edit_plan_seed['rollback_risk'] above -- unlike that shared
+    # helper, `_assert_navigation_pack` has exactly one call site in this file with one
+    # deterministic fixture, so pin the exact value (verified 3x): 0.0.
+    assert navigation_pack["rollback_risk"] == 0.0
 
 
 def _without_profiling(payload: dict[str, object]) -> dict[str, object]:
@@ -4643,7 +4657,12 @@ def test_tg_session_context_render_uses_cached_repo_map(tmp_path, monkeypatch):
         primary_file=sample_path,
         primary_symbol_name="add",
     )
-    assert 0.0 <= rendered["edit_plan_seed"]["confidence"]["symbol"] <= 1.0
+    # H6 audit: `confidence["symbol"]` is `_confidence_from_score(...)`, clamped to
+    # [0.0, 1.0] (repo_map.py:10912-10915, proven load-bearing by
+    # test_edit_plan_seed.py::test_confidence_from_score_clamp_is_load_bearing) -- a
+    # `0.0 <= x <= 1.0` bound check can never fail. Single call site, deterministic
+    # fixture: pin the exact value (verified 3x): 0.5.
+    assert rendered["edit_plan_seed"]["confidence"]["symbol"] == 0.5
     assert "rendered_context" in rendered
 
 

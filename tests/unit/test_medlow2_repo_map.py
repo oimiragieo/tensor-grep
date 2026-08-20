@@ -225,7 +225,12 @@ class TestBuildSymbolDefsClassAndScore:
         for defn in result.get("definitions", []):
             assert "score" in defn, f"Missing 'score' key in definition: {defn}"
             assert isinstance(defn["score"], float)
-            assert 0.0 <= defn["score"] <= 1.0
+            # H6 audit: `_definition_confidence_score` (repo_map.py:16337-16358) always
+            # returns `round(max(0.0, min(1.0, score)), 3)` -- a `0.0 <= x <= 1.0` bound check
+            # on that output can never fail; the clamp's endpoints are proven load-bearing by
+            # `test_lsp_provenance_does_not_exceed_1` above. Pinned to the exact value this
+            # deterministic fixture produces (verified 3x): every 'run' definition scores 0.95.
+            assert defn["score"] == 0.95, defn
 
     def test_alpha_method_gets_alpha_class(self, two_class_fixture: Path) -> None:
         repo_map = build_repo_map(str(two_class_fixture))

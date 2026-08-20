@@ -522,7 +522,13 @@ def test_suggested_edits_include_dependent_file_spans_and_rationale(
     assert first["edit_kind"] in {"caller-update", "dependency-update"}
     assert isinstance(first["rationale"], str)
     assert first["rationale"]
-    assert 0.0 <= first["confidence"] <= 1.0
+    # H6 audit: `first["confidence"]` is produced by `_suggested_edit_confidence` ->
+    # `_confidence_from_score`, which clamps to `round(min(1.0, max(0.0, value)), 3)`
+    # (repo_map.py:10912-10915) -- a `0.0 <= x <= 1.0` bound check on that output can never
+    # fail. Pinned to the exact value this deterministic fixture produces (both renderers,
+    # verified 3x): the clamp itself is proven load-bearing by
+    # test_confidence_from_score_clamp_is_load_bearing below.
+    assert first["confidence"] == 1.0
 
 
 @pytest.mark.parametrize("renderer", RENDERERS)
@@ -1081,3 +1087,50 @@ def test_validation_test_discovery_clean_tree_is_the_control_arm(tmp_path: Path)
 
     assert flag.hit is False
     assert flag.count == 0
+
+
+# ---------------------------------------------------------------------------
+# H6 audit (range-assert vacuity sweep): dedicated adversarial proof that the
+# confidence/rollback-risk clamp helpers are LOAD-BEARING, not decorative. The many
+# `0.0 <= x <= 1.0` bound checks scattered across the integration-style tests above (and in
+# test_cli_modes.py / test_mcp_server.py's `_assert_enriched_edit_plan_seed` /
+# `_assert_navigation_pack` helpers) can never fail on real fixture data because every
+# producer already clamps its output -- so this is where the [0, 1] CONTRACT itself is
+# actually proven, with adversarial (out-of-normal-range) inputs that would violate the
+# bound if either `min(1.0, ...)` or `max(0.0, ...)` were ever dropped.
+# ---------------------------------------------------------------------------
+
+
+def test_rollback_risk_clamp_is_load_bearing_upper_bound() -> None:
+    """A pathological `test_count` (negative) drives the unclamped formula's
+    `-(0.25 * coverage_factor)` term deeply positive -- proving `min(1.0, ...)` is load-bearing,
+    not redundant given the formula's normal-input range."""
+    risk = repo_map._rollback_risk_from_blast_radius(
+        dependent_matches=[],
+        caller_symbol_count=10,
+        test_count=-1000,
+        max_depth=2,
+    )
+    assert risk == 1.0
+
+
+def test_rollback_risk_clamp_is_load_bearing_lower_bound() -> None:
+    """A pathological negative `caller_symbol_count` drives the unclamped formula negative --
+    proving `max(0.0, ...)` is load-bearing."""
+    risk = repo_map._rollback_risk_from_blast_radius(
+        dependent_matches=[{"depth": 0}],
+        caller_symbol_count=-100,
+        test_count=0,
+        max_depth=2,
+    )
+    assert risk == 0.0
+
+
+def test_confidence_from_score_clamp_is_load_bearing() -> None:
+    """A very large raw `score` drives `0.35 + score / 20.0` far past 1.0 -- proving
+    `_confidence_from_score`'s `min(1.0, ...)` clamp (shared by `_suggested_edit_confidence`,
+    the seed/navigation-pack `confidence.file/symbol/test/overall` fields, and every
+    `validation_plan` step's `confidence`) is load-bearing."""
+    assert repo_map._confidence_from_score(1000) == 1.0
+    assert repo_map._confidence_from_score(0) == 0.0
+    assert repo_map._confidence_from_score(-5) == 0.0

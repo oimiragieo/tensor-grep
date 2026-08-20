@@ -247,7 +247,15 @@ def _assert_enriched_edit_plan_seed(
         assert edit_plan_seed["edit_ordering"][0] == str(primary_file.resolve())
     else:
         assert all(isinstance(path, str) for path in edit_plan_seed["edit_ordering"])
-    assert 0.0 <= edit_plan_seed["rollback_risk"] <= 1.0
+    # H6 audit: `rollback_risk` is always `round(min(1.0, max(0.0, risk)), 3)`
+    # (repo_map.py:13489-13512) -- a `0.0 <= x <= 1.0` bound check can never fail; the
+    # clamp is proven load-bearing by
+    # test_edit_plan_seed.py::test_rollback_risk_clamp_is_load_bearing_{upper,lower}_bound.
+    # This helper is shared by call sites with genuinely different fixtures (a bare
+    # `create_invoice` with 0 rollback risk vs a `build_invoice -> create_invoice` caller
+    # chain with nonzero risk), so a single exact pin here would be wrong for one of them
+    # -- assert the property this shared helper CAN check: the field is really a float.
+    assert isinstance(edit_plan_seed["rollback_risk"], float)
     assert isinstance(edit_plan_seed["validation_plan"], list)
     assert edit_plan_seed["validation_plan"]
     for step in edit_plan_seed["validation_plan"]:
@@ -256,7 +264,12 @@ def _assert_enriched_edit_plan_seed(
         assert step["scope"] in {"symbol", "file", "repo"}
         assert isinstance(step["runner"], str)
         assert step["detection"] in {"detected", "heuristic", "generic"}
-        assert 0.0 <= step["confidence"] <= 1.0
+        # H6 audit: step confidence is always `round(min(1.0, max(0.0, confidence)), 3)`
+        # (repo_map.py:12013-12030, same clamp shape proven load-bearing by
+        # test_edit_plan_seed.py::test_confidence_from_score_clamp_is_load_bearing) -- a
+        # `0.0 <= x <= 1.0` bound check can never fail. This helper is shared across
+        # fixtures with different validation plans, so assert the property it CAN check.
+        assert isinstance(step["confidence"], float)
 
 
 def _assert_navigation_pack(
@@ -322,7 +335,10 @@ def _assert_navigation_pack(
         assert isinstance(group["roles"], list)
         assert group["roles"]
     assert isinstance(navigation_pack["edit_ordering"], list)
-    assert 0.0 <= navigation_pack["rollback_risk"] <= 1.0
+    # H6 audit: same clamp as edit_plan_seed['rollback_risk'] above -- unlike that shared
+    # helper, `_assert_navigation_pack` has exactly one call site (test_cli_modes.py) with
+    # one deterministic fixture, so pin the exact value (verified 3x): 0.0.
+    assert navigation_pack["rollback_risk"] == 0.0
 
 
 class _FakeScanner:
@@ -6073,7 +6089,12 @@ def test_blast_radius_json_returns_transitive_symbol_radius(tmp_path):
     assert payload["files"][0] == str(module_path.resolve())
     assert payload["affected_files"] == payload["files"]
     assert payload["blast_radius_score"] is not None
-    assert 0.0 <= payload["blast_radius_score"] <= 1.0
+    # H6 audit: `blast_radius_score` is `round(min(1.0, evidence_score /
+    # evidence_denominator), 3)` with a non-negative numerator and a `max(1, ...)`
+    # denominator (repo_map.py:19307), so it can never be negative and the upper clamp
+    # makes >1.0 unreachable -- pin the exact value this deterministic fixture produces
+    # (verified 3x): 0.75.
+    assert payload["blast_radius_score"] == 0.75
     assert str(service_path.resolve()) in payload["files"]
     assert str(api_path.resolve()) in payload["files"]
     assert payload["tests"][0] == str(test_path.resolve())
