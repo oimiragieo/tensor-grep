@@ -15,9 +15,9 @@ import tomllib
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from contextlib import nullcontext
-from functools import lru_cache, wraps
+from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, cast
 from urllib.parse import unquote, urlparse
 
 from tensor_grep.cli import (
@@ -31,6 +31,375 @@ from tensor_grep.cli import (
 )
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
+from tensor_grep.cli.repo_map_cache import (
+    _MTIME_CACHE_CLEAR_REGISTRY as _MTIME_CACHE_CLEAR_REGISTRY,
+)
+from tensor_grep.cli.repo_map_cache import (
+    _SOURCE_READ_CACHE_MAXSIZE as _SOURCE_READ_CACHE_MAXSIZE,
+)
+from tensor_grep.cli.repo_map_cache import (
+    _mtime_aware_cache as _mtime_aware_cache,
+)
+from tensor_grep.cli.repo_map_cache import (
+    _resolved_path_str as _resolved_path_str,
+)
+from tensor_grep.cli.repo_map_lang_java import (
+    _java_import_declaration_text as _java_import_declaration_text,
+)
+from tensor_grep.cli.repo_map_lang_java import (
+    _java_imports_and_symbols as _java_imports_and_symbols,
+)
+from tensor_grep.cli.repo_map_lang_java import (
+    _java_imports_with_lines as _java_imports_with_lines,
+)
+from tensor_grep.cli.repo_map_lang_java import (
+    _java_parser_symbol_sources as _java_parser_symbol_sources,
+)
+from tensor_grep.cli.repo_map_lang_java import (
+    _java_references_and_calls_for_registry as _java_references_and_calls_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_node_test_file_command as _javascript_node_test_file_command,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_repo_fallback_command as _javascript_repo_fallback_command,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_runner_fallback_command as _javascript_runner_fallback_command,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_runner_file_command as _javascript_runner_file_command,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_runner_specific_command as _javascript_runner_specific_command,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _javascript_test_script_uses_node_test as _javascript_test_script_uses_node_test,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ast_omitted_relative_lines as _js_ast_omitted_relative_lines,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_candidate_files as _js_ts_candidate_files,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_default_export_name as _js_ts_default_export_name,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_default_import_bindings as _js_ts_default_import_bindings,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_dynamic_import_hit as _js_ts_dynamic_import_hit,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_file_imports_symbol_from_definition as _js_ts_file_imports_symbol_from_definition,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_has_import_bindings as _js_ts_has_import_bindings,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_import_match_details as _js_ts_import_match_details,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_import_update_target as _js_ts_import_update_target,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_imports_with_lines as _js_ts_imports_with_lines,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_module_candidates as _js_ts_module_candidates,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_module_match_details as _js_ts_module_match_details,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_module_matches_definition as _js_ts_module_matches_definition,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_named_import_bindings as _js_ts_named_import_bindings,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_namespace_import_bindings as _js_ts_namespace_import_bindings,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_parser_symbol_sources as _js_ts_parser_symbol_sources,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_parser_symbols as _js_ts_parser_symbols,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_provider_alias_calls as _js_ts_provider_alias_calls,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_references_and_calls as _js_ts_references_and_calls,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_references_and_calls_for_registry as _js_ts_references_and_calls_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_repo_context as _js_ts_repo_context,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_resolve_exported_symbol as _js_ts_resolve_exported_symbol,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_resolve_imported_symbol as _js_ts_resolve_imported_symbol,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_symbol_name_node as _js_ts_symbol_name_node,
+)
+from tensor_grep.cli.repo_map_lang_js import (
+    _js_ts_symbol_names as _js_ts_symbol_names,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_ast_omitted_relative_lines as _python_ast_omitted_relative_lines,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_candidate_roots as _python_candidate_roots,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_classify_ref_kind as _python_classify_ref_kind,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_decorator_qualname as _python_decorator_qualname,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_dynamic_import_call_is_relative as _python_dynamic_import_call_is_relative,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_dynamic_import_entry_for_call as _python_dynamic_import_entry_for_call,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_file_imports_symbol_from_definition as _python_file_imports_symbol_from_definition,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_import_update_target as _python_import_update_target,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_import_update_target_for_registry as _python_import_update_target_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_imports_and_symbols as _python_imports_and_symbols,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_imports_with_lines as _python_imports_with_lines,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_module_candidates as _python_module_candidates,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_module_match_details as _python_module_match_details,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_module_matches_definition as _python_module_matches_definition,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_module_parts as _python_module_parts,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_parametrized_test_function_candidates as _python_parametrized_test_function_candidates,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_provider_alias_calls as _python_provider_alias_calls,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_provider_alias_calls_for_registry as _python_provider_alias_calls_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_references_and_calls_for_registry as _python_references_and_calls_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_relative_base_dir as _python_relative_base_dir,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_symbol_sources as _python_symbol_sources,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_arg_to_dir as _python_sys_path_arg_to_dir,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_dunder_file as _python_sys_path_dunder_file,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_file_dir_expr as _python_sys_path_file_dir_expr,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_file_dirname_expr as _python_sys_path_file_dirname_expr,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_file_parent_expr as _python_sys_path_file_parent_expr,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_hack_dirs as _python_sys_path_hack_dirs,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_hack_roots as _python_sys_path_hack_roots,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_here_aliases as _python_sys_path_here_aliases,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_insert_or_append_arg as _python_sys_path_insert_or_append_arg,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_join_suffix as _python_sys_path_join_suffix,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_os_path_call_args as _python_sys_path_os_path_call_args,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_static_str as _python_sys_path_static_str,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_sys_path_truediv_suffix as _python_sys_path_truediv_suffix,
+)
+from tensor_grep.cli.repo_map_lang_python import (
+    _python_test_function_candidates as _python_test_function_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_ast_omitted_relative_lines as _rust_ast_omitted_relative_lines,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_crate_entry_for_path as _rust_crate_entry_for_path,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_file_imports_symbol_from_definition as _rust_file_imports_symbol_from_definition,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_file_level_command as _rust_file_level_command,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_file_references_symbol_from_definition as _rust_file_references_symbol_from_definition,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_impl_method_candidates as _rust_impl_method_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_impl_owner_type as _rust_impl_owner_type,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_import_update_target as _rust_import_update_target,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_imports_with_lines as _rust_imports_with_lines,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_mod_declarations as _rust_mod_declarations,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_base_dir as _rust_module_base_dir,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_candidates as _rust_module_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_file_for_declaration as _rust_module_file_for_declaration,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_match_details as _rust_module_match_details,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_matches_definition as _rust_module_matches_definition,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_tree_for_entry as _rust_module_tree_for_entry,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_module_tree_lookup as _rust_module_tree_lookup,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_parser_symbol_sources as _rust_parser_symbol_sources,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_parser_symbols as _rust_parser_symbols,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_partial_candidate_paths as _rust_partial_candidate_paths,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_provider_alias_calls as _rust_provider_alias_calls,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_references_and_calls as _rust_references_and_calls,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_references_and_calls_for_registry as _rust_references_and_calls_for_registry,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_repo_context as _rust_repo_context,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_resolve_use_binding as _rust_resolve_use_binding,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_symbol_reference_candidates as _rust_symbol_reference_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_test_attribute_kind as _rust_test_attribute_kind,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_test_function_candidates as _rust_test_function_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_test_function_candidates_from_source as _rust_test_function_candidates_from_source,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_tokio_test_function_candidates as _rust_tokio_test_function_candidates,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_use_binding_match_details as _rust_use_binding_match_details,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_use_bindings as _rust_use_bindings,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_uses_nested_test_target as _rust_uses_nested_test_target,
+)
+from tensor_grep.cli.repo_map_lang_rust import (
+    _rust_workspace_entry_for_crate as _rust_workspace_entry_for_crate,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _apply_blast_radius_output_limits as _apply_blast_radius_output_limits,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _apply_context_token_budget as _apply_context_token_budget,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _apply_source_output_budget as _apply_source_output_budget,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _apply_symbol_field_output_limit as _apply_symbol_field_output_limit,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _apply_symbol_token_budget as _apply_symbol_token_budget,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _render_context_parts as _render_context_parts,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _render_part_path as _render_part_path,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _render_part_score as _render_part_score,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _render_part_sort_key as _render_part_sort_key,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    _render_source_block as _render_source_block,
+)
+from tensor_grep.cli.repo_map_output_budget import (
+    apply_repo_map_output_limits as apply_repo_map_output_limits,
+)
+from tensor_grep.cli.repo_map_regex_fallback import (
+    _regex_imports_and_symbols as _regex_imports_and_symbols,
+)
+from tensor_grep.cli.repo_map_regex_fallback import (
+    _regex_references_and_calls as _regex_references_and_calls,
+)
+from tensor_grep.cli.repo_map_regex_fallback import (
+    _regex_symbol_sources as _regex_symbol_sources,
+)
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 # Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
@@ -50,8 +419,6 @@ if TYPE_CHECKING:
     from tensor_grep.cli import repo_map as _self
 else:
     _self = sys.modules[__name__]
-
-_CacheR = TypeVar("_CacheR")
 
 # ---------------------------------------------------------------------------
 # B7: mtime-aware cache decorator for path-keyed file-content helpers.
@@ -75,13 +442,6 @@ def _mtime_key(path_str: str) -> tuple[int, int]:
         return (-1, -1)
 
 
-# Fix A / Guard 3: every _mtime_aware_cache-decorated function registers its cache_clear
-# here so a warm daemon can sweep ALL of them in one call when a session is refreshed/detected
-# stale. Without this, a same-(mtime_ns,size) edit landing between two daemon calls could keep
-# serving a stale cached parse/read forever (the mtime key alone can't tell them apart).
-_MTIME_CACHE_CLEAR_REGISTRY: list[Callable[[], None]] = []
-
-
 def _clear_all_source_caches() -> None:
     """Sweep every _mtime_aware_cache-decorated cache (Fix A / Guard 3).
 
@@ -98,73 +458,6 @@ def _clear_all_source_caches() -> None:
     _JS_TS_REPO_CONTEXTS.clear()
     _RUST_REPO_CONTEXTS.clear()
     lang_go.clear_go_repo_context_cache()
-
-
-# Fix B: the JS/TS import-resolution path (_js_ts_module_candidates / _js_ts_candidate_files /
-# _js_ts_resolve_exported_symbol / _js_ts_import_match_details / _normalized_repo_root) calls
-# Path.resolve() on the SAME handful of path strings thousands of times per caller_scan --
-# profiled at ~27,669 resolve() calls / ~83,114 nt._getfinalpathname syscalls on a real repo
-# (~18s of ~22s wall time), because caller_scan re-derives candidate module paths for every
-# (candidate file, definition file) pair even when the underlying importer path / repo root /
-# module name repeats across pairs. Path.resolve() is a pure function of the path string for the
-# lifetime of a single resolution (no dependency on the target FILE's mtime -- it's a syscall
-# that walks the filesystem to canonicalize the string), so memoize it directly by string.
-#
-# Guard 3 (daemon safety): this is a PLAIN lru_cache, not _mtime_aware_cache -- there's no single
-# file whose mtime this could key off (the input is a path STRING, not a file whose bytes we're
-# reading), and a moved file / retargeted symlink mid-session could change what a given string
-# resolves to. Register its cache_clear in the same _MTIME_CACHE_CLEAR_REGISTRY sweep the parse
-# cache uses so a daemon session refresh/detected-staleness flushes it too.
-@lru_cache(maxsize=8192)
-def _resolved_path_str(path_str: str) -> str:
-    return str(Path(path_str).resolve())
-
-
-_MTIME_CACHE_CLEAR_REGISTRY.append(_resolved_path_str.cache_clear)
-
-
-def _mtime_aware_cache(
-    maxsize: int = 256,
-) -> Callable[[Callable[..., _CacheR]], Callable[..., _CacheR]]:
-    """Decorator: like @lru_cache but includes file mtime+size in the key.
-
-    The decorated function must take the file path (str) as its first
-    positional argument.  All remaining arguments must be hashable. Generic over the
-    return type so decorated functions keep their precise signature for type-checking.
-    """
-
-    def decorator(fn: Callable[..., _CacheR]) -> Callable[..., _CacheR]:
-        cache: dict[tuple[Any, ...], _CacheR] = {}
-        lock = threading.Lock()
-
-        @wraps(fn)
-        def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
-            mtime_key = _self._mtime_key(path_str)
-            cache_key = (path_str, mtime_key, args, tuple(sorted(kwargs.items())))
-            with lock:
-                if cache_key in cache:
-                    return cache[cache_key]
-            result = fn(path_str, *args, **kwargs)
-            with lock:
-                # Evict oldest entry when the cache is full.
-                if len(cache) >= maxsize:
-                    try:
-                        oldest = next(iter(cache))
-                        del cache[oldest]
-                    except StopIteration:
-                        pass
-                cache[cache_key] = result
-            return result
-
-        def cache_clear() -> None:
-            with lock:
-                cache.clear()
-
-        wrapper.cache_clear = cache_clear  # type: ignore[attr-defined]
-        _MTIME_CACHE_CLEAR_REGISTRY.append(cache_clear)
-        return cast("Callable[..., _CacheR]", wrapper)
-
-    return decorator
 
 
 JSON_OUTPUT_VERSION = 1
@@ -1509,7 +1802,6 @@ def _file_contains_literal_symbol(path: Path, symbol: str) -> bool:
 # Guard 4: bound both the entry count (maxsize) and the per-entry size (byte cap) so this
 # cache cannot be dominated by one giant generated file sitting in memory. Files above the cap
 # bypass the cache entirely and are read directly, mirroring _SYMBOL_LITERAL_SEED_MAX_BYTES.
-_SOURCE_READ_CACHE_MAXSIZE = 4096
 
 
 def _read_source_cached(path_str: str) -> bytes:
@@ -1684,28 +1976,6 @@ def _file_may_import_symbol_definition(path: Path, definition_files: list[str]) 
             if alias and alias.encode("utf-8") in lowered:
                 return True
     return False
-
-
-@_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
-def _js_ts_has_import_bindings(path_str: str) -> bool:
-    """True iff *path_str* has >=1 real JS/TS import binding (named/default/namespace).
-
-    Backs the sound gate in _file_may_import_symbol_definition above. Fails OPEN (True) on a
-    read error, matching the fail-open stat/read-error arms just above it (:1269-70, :1275-76)
-    -- an unreadable file must never be silently excluded from the caller/import-graph scan.
-    """
-    try:
-        source = _self._read_source_text_cached(path_str)
-    except (OSError, UnicodeDecodeError):
-        return True
-    if any(
-        str(binding.get("statement_kind", "import")) == "import"
-        for binding in _js_ts_named_import_bindings(source)
-    ):
-        return True
-    if _js_ts_default_import_bindings(source):
-        return True
-    return bool(_js_ts_namespace_import_bindings(source))
 
 
 def _literal_symbol_seed_files(
@@ -1965,99 +2235,6 @@ def _is_python_dynamic_import_call(node: ast.Call) -> bool:
     )
 
 
-def _python_dynamic_import_call_is_relative(node: ast.Call) -> bool:
-    """True when a ``__import__(...)`` call is unambiguously or possibly RELATIVE via its
-    ``level`` argument (5th positional, or the ``level=`` keyword) -- ``__import__``'s own
-    relative-import marker is this integer, separate from ``import_module``'s leading-dot
-    module-string convention (the caller checks that with a plain ``.startswith(".")`` on the
-    literal module name instead, since ``import_module`` has no ``level`` parameter at all --
-    this always returns ``False`` for an ``import_module``/bare-``import_module`` call, harmlessly).
-
-    A non-literal ``level`` value (a variable, an expression) can't be proven to be the safe
-    default of ``0``, so it is conservatively treated as relative too -- the same "can't prove
-    it's safe" fail-closed posture as every other honesty check in this module (e.g. the
-    non-literal-argument case just above, or the #152 sys.path-hack idiom matcher).
-    """
-    level_arg: ast.expr | None = None
-    if len(node.args) >= 5:
-        level_arg = node.args[4]
-    else:
-        for keyword in node.keywords:
-            if keyword.arg == "level":
-                level_arg = keyword.value
-                break
-    if level_arg is None:
-        return False
-    if isinstance(level_arg, ast.Constant) and isinstance(level_arg.value, int):
-        return level_arg.value != 0
-    return True  # non-literal level -- can't prove it's 0, fail closed (treat as relative)
-
-
-def _python_dynamic_import_entry_for_call(node: ast.AST) -> dict[str, Any] | None:
-    """Given a single AST node, return its dynamic-import entry dict if `node` is one of the 3
-    dynamic-import call shapes -- ``__import__(...)``, bare ``import_module(...)``, or
-    ``importlib.import_module(...)`` (see `_is_python_dynamic_import_call`) -- else `None`. The
-    returned dict is shaped like the static entries `_python_imports_with_lines` emits (`module`,
-    `line`, `level`) plus two #93 SUB-1 markers: `dynamic` (always `True` here) and
-    `dynamic_unresolved` (`True` when there is no static-string-literal target to resolve at all
-    -- the first argument isn't a literal, e.g. a variable or an f-string -- OR when the literal
-    names a RELATIVE import this slice deliberately does not attempt to resolve, see below).
-
-    Both `_python_imports_with_lines` (opt10 F4.2) and `_python_imports_and_symbols` (opt10
-    lever-1) fold this per-node check into their own single `ast.walk(tree)` pass instead of
-    paying for a second whole-tree walk. This used to be the loop body of a separate whole-tree
-    helper, `_python_dynamic_import_entries` -- pulled out unchanged (same literal-extraction,
-    same relative-literal fail-closed check, same entry shape) so `_python_imports_with_lines`
-    could fold it into its existing walk (opt10 F4.2) while `_python_imports_and_symbols` kept
-    calling `_python_dynamic_import_entries` wholesale for its own separate walk. Once opt10
-    lever-1 migrated that last remaining caller to call this per-node function directly too,
-    `_python_dynamic_import_entries` had zero callers left and was removed as dead code -- there
-    is no longer a standalone whole-tree dynamic-import walk anywhere in this module.
-
-    Fails CLOSED on the non-literal-argument case: `module` is `""` rather than a guessed name --
-    asserting a fabricated edge for an import whose target we can't actually read would be a
-    precision regression in a moat feature (see `_resolve_raw_import_entry` /
-    `_confirm_import_edges`, which both skip resolution entirely when `dynamic_unresolved` is
-    set).
-
-    Also fails CLOSED on a RELATIVE literal -- a leading-dot `import_module(".sibling",
-    package=...)` module string, or an `__import__(name, ..., level=N)` call with a nonzero (or
-    non-literal, unprovable) `level` (`_python_dynamic_import_call_is_relative` above -- scope
-    slice #6, the tractable dynamic-import LITERAL slice). Both forms carry a real literal name,
-    kept here (unlike the non-literal case, `module` is NOT blanked to `""` -- nothing is
-    fabricated, the literal text is exactly what the source says), but the downstream absolute
-    resolver (`_python_module_candidates`) must never see it: its `_python_module_parts` splitter
-    drops a leading empty component from `".sibling".split(".")`, so an unguarded relative
-    literal would silently be searched for as if it were the ABSOLUTE module "sibling" -- a
-    PROVEN false-edge risk (a same-named-but-unrelated top-level file can exist anywhere in the
-    search roots) not merely a theoretical one. Resolving the relative form correctly needs a
-    second, chained lookup (resolve the `package`/enclosing-package argument to a directory
-    FIRST, only then walk it by the relative level) that this slice does not build -- out of
-    scope per the "no false edges, missing is fine" contract; a future slice can add it.
-    `package` itself is never read here (a non-literal `package` -- the overwhelmingly common
-    real-world shape, `package=__name__`/`package=__package__` -- couldn't be resolved statically
-    anyway, and even a literal `package` string is left for that future slice), so this is a pure
-    detect-and-refuse guard on the `module`/`level` shape alone.
-    """
-    if not isinstance(node, ast.Call) or not _is_python_dynamic_import_call(node):
-        return None
-    literal_module: str | None = None
-    if node.args and isinstance(node.args[0], ast.Constant) and isinstance(node.args[0].value, str):
-        literal_module = node.args[0].value
-    dynamic_unresolved = literal_module is None
-    if literal_module is not None and (
-        literal_module.startswith(".") or _python_dynamic_import_call_is_relative(node)
-    ):
-        dynamic_unresolved = True
-    return {
-        "module": literal_module or "",
-        "line": int(node.lineno),
-        "level": 0,
-        "dynamic": True,
-        "dynamic_unresolved": dynamic_unresolved,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Content-addressed, memory-bounded AST parse cache backing _cached_ast_parse below.
 #
@@ -2181,137 +2358,6 @@ def _ast_cache_clear() -> None:
 
 _cached_ast_parse.cache_info = _ast_cache_info  # type: ignore[attr-defined]
 _cached_ast_parse.cache_clear = _ast_cache_clear  # type: ignore[attr-defined]
-
-
-def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    if path.suffix != ".py":
-        return [], []
-
-    try:
-        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return [], []
-
-    imports: list[str] = []
-    symbols: list[dict[str, Any]] = []
-
-    # opt10/lever-1 speed fix: merge the imports / symbols / dynamic-import scans into a SINGLE
-    # `ast.walk(tree)` pass instead of three separate whole-tree walks (one for imports, one for
-    # symbols, and a third buried inside `_python_dynamic_import_entries`) -- the same
-    # single-walk-plus-helper-reuse pattern #716 already shipped for the sibling
-    # `_python_imports_with_lines` (see that function's own comment, and its F4.2 test, in
-    # tests/unit/test_file_deps.py). `ast.Import`, `ast.ImportFrom`, `ast.ClassDef`,
-    # `ast.FunctionDef`/`ast.AsyncFunctionDef`, and `ast.Call` are mutually-exclusive node
-    # subclasses, so each node dispatches to at most one branch below -- identical in effect to
-    # filtering three separate walks for three disjoint predicates and concatenating the
-    # results. The trailing `sorted(dict.fromkeys(imports))` + `symbols.sort(...)` below make
-    # append ORDER irrelevant, so interleaving all three kinds of appends into one walk is
-    # byte-identical to the old three-walk output. See
-    # test_python_imports_and_symbols_merges_all_three_walks_into_one (walk-count + output-
-    # identity proof).
-    #
-    # Nested-scope recall fix (companion to the same change in `_python_imports_with_lines`):
-    # `ast.walk` (not `tree.body`) so a plain `import`/`from ... import` STATEMENT nested inside a
-    # function body, an `if`/`try` block, or an `if TYPE_CHECKING:` guard feeds this alias-graph
-    # list too. This list becomes `repo_map["imports"]` (`build_repo_map`'s per-file entries),
-    # which is the ONLY source `_reverse_importers`'s alias PREFILTER reads (see
-    # `build_file_importers_from_map`, `build_symbol_callers_from_map`,
-    # `build_symbol_blast_radius_from_map`, `build_context_render`'s agent-capsule scoring) --
-    # a candidate file whose ONLY import of a target is scope-nested was previously invisible to
-    # the prefilter, so it never even reached the reverse `tg importers` CONFIRM step
-    # (`_confirm_import_edges`) regardless of that step's own recall. Verified low-risk: this is a
-    # strict superset (`ast.walk` visits everything `tree.body` did, plus more), it only ADDS
-    # entries (recall-only, never removes/reorders an existing one), and the full relevant test
-    # suite (agent/blast-radius/callers/refs/orient/importers, 500+ tests) is green across this
-    # change with zero new failures.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.append(alias.name)
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                imports.append(node.module)
-                for alias in node.names:
-                    imports.append(f"{node.module}.{alias.name}")
-            elif node.level:
-                # `from . import x` / `from .. import x` -- no dotted module text, only
-                # relative dots plus the imported names (which may themselves be sibling
-                # submodules, e.g. `from . import helpers` importing `helpers.py`). Recording
-                # the bare alias name keeps this import in the reverse-import alias graph
-                # (`_reverse_importers`/`_module_aliases_for_path`) so `tg importers` can even
-                # PREFILTER a sibling `from . import X` importer -- omitting it here (unlike
-                # `_python_imports_with_lines`, which already records it for the forward
-                # `tg imports` primitive) was a genuine recall gap, not an intentional
-                # exclusion (#74 review fix). The precise per-candidate CONFIRM step
-                # (`_python_module_matches_definition`) still disambiguates which file it
-                # actually resolves to -- this only widens the prefilter's candidate set.
-                for alias in node.names:
-                    imports.append(alias.name)
-        elif isinstance(node, ast.ClassDef):
-            symbols.append(
-                _symbol_record(
-                    name=node.name,
-                    kind="class",
-                    file=path,
-                    start_line=node.lineno,
-                    end_line=getattr(node, "end_lineno", node.lineno),
-                )
-            )
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            symbols.append(
-                _symbol_record(
-                    name=node.name,
-                    kind="function",
-                    file=path,
-                    start_line=node.lineno,
-                    end_line=getattr(node, "end_lineno", node.lineno),
-                )
-            )
-        elif isinstance(node, ast.Call):
-            # #93 SUB-1: fold in dynamic-import call targets (only the STATICALLY resolvable
-            # ones -- an unresolved dynamic import has no literal name to add to this
-            # alias-graph prefilter list; see `_python_dynamic_import_entry_for_call`) so a file
-            # that ONLY reaches a target dynamically is still discoverable as a candidate by the
-            # reverse `tg importers` prefilter (`_reverse_importers`), not just by the forward
-            # `tg imports` primitive. Reuses `_python_dynamic_import_entry_for_call` -- the
-            # ALREADY-TESTED per-node helper `_python_imports_with_lines` folds into its own
-            # single walk too (see that function) -- instead of calling the whole-tree
-            # `_python_dynamic_import_entries(tree)` this call site used to call, so the
-            # dynamic-import check rides the SAME walk as the import/symbol checks above instead
-            # of paying for a separate (third) whole-tree `ast.walk`. This was
-            # `_python_dynamic_import_entries`'s last remaining caller -- with it migrated to the
-            # per-node helper too, that whole-tree function had zero callers left and was removed
-            # as dead code (opt10 lever-1).
-            #
-            # #703 gate NIT-1 fix: a plain `entry["module"]` truthiness check is NOT actually
-            # equivalent to "statically resolvable" -- `_python_dynamic_import_entry_for_call`
-            # marks a RELATIVE literal (leading-dot `import_module(".sibling", package=...)`) or
-            # an explicit-nonzero-`level` `__import__(...)` as `dynamic_unresolved` too, and
-            # unlike the non-literal-argument case, those keep their real literal text in
-            # `module` (nothing is fabricated/blanked, see that helper's docstring) rather than
-            # blanking it to `""`. So an unresolved-but-non-blank literal like `".sibling"` must
-            # not slip into `imports`, which becomes `repo_map["imports"]` -- the alias graph
-            # `tg blast-radius`'s reverse SCORING prefilter
-            # (`_reverse_import_distances`/`_reverse_importers`) reads. A
-            # same-named-but-unrelated top-level file (`_import_alias_candidates` + the
-            # substring test in `_import_graph_bonus`) could then fuzzy-match that unresolved
-            # literal and be pulled into `affected_files`/`dependent_files` -- even though the
-            # precise `tg importers` edge (`_resolve_raw_import_entry` / `_confirm_import_edges`)
-            # already excludes it correctly, since THAT path has always skipped resolution
-            # whenever `dynamic_unresolved` is set. Requiring `not entry["dynamic_unresolved"]`
-            # here makes this prefilter honor the exact same "no false edges, missing is fine"
-            # contract the precise resolvers already enforce. Pinned by
-            # test_blast_radius_excludes_unresolved_dynamic_literal_fuzzy_match
-            # (regression-lock) and test_blast_radius_legitimate_dependent_ranking_pin (proves
-            # the legitimate reverse-scoring ranking is unaffected) in
-            # tests/unit/test_file_deps.py.
-            entry = _python_dynamic_import_entry_for_call(node)
-            if entry is not None and entry["module"] and not entry["dynamic_unresolved"]:
-                imports.append(str(entry["module"]))
-
-    imports = sorted(dict.fromkeys(imports))
-    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
-    return imports, symbols
 
 
 @lru_cache(maxsize=1)
@@ -2451,78 +2497,6 @@ def _line_span_from_offsets(source: str, start_offset: int, end_offset: int) -> 
     return start_line, max(start_line, end_line)
 
 
-def _js_ts_named_import_bindings(source: str) -> list[dict[str, Any]]:
-    bindings: list[dict[str, Any]] = []
-    pattern = re.compile(
-        r"(?P<statement_kind>import|export)\s+(?:type\s+)?\{(?P<specifiers>[^}]+)\}\s*from\s*[\"'](?P<module>[^\"']+)[\"']",
-        re.MULTILINE | re.DOTALL,
-    )
-    for match in pattern.finditer(source):
-        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
-        module_name = match.group("module").strip()
-        specifiers = match.group("specifiers")
-        statement_kind = match.group("statement_kind").strip()
-        for raw_specifier in specifiers.split(","):
-            specifier = raw_specifier.strip()
-            if not specifier:
-                continue
-            if " as " in specifier:
-                imported, local = (part.strip() for part in specifier.split(" as ", 1))
-            else:
-                imported = specifier
-                local = specifier
-            if imported and local:
-                bindings.append({
-                    "module": module_name,
-                    "imported": imported,
-                    "local": local,
-                    "statement_kind": statement_kind,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                })
-    return bindings
-
-
-def _js_ts_namespace_import_bindings(source: str) -> list[dict[str, str]]:
-    bindings: list[dict[str, str]] = []
-    pattern = re.compile(
-        r"""(?x)
-        import\s+\*\s+as\s+(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s+from\s*["'](?P<module>[^"']+)["']
-        """
-    )
-    for match in pattern.finditer(source):
-        bindings.append({
-            "module": match.group("module").strip(),
-            "local": match.group("local").strip(),
-        })
-    return bindings
-
-
-def _js_ts_default_import_bindings(source: str) -> list[dict[str, Any]]:
-    bindings: list[dict[str, Any]] = []
-    pattern = re.compile(
-        r"""(?x)
-        import
-        \s+
-        (?!type\b)
-        (?P<local>[A-Za-z_][A-Za-z0-9_]*)
-        \s*
-        (?:,\s*\{[^}]*\})?
-        \s+from\s*["'](?P<module>[^"']+)["']
-        """,
-        re.MULTILINE | re.DOTALL,
-    )
-    for match in pattern.finditer(source):
-        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
-        bindings.append({
-            "module": match.group("module").strip(),
-            "local": match.group("local").strip(),
-            "start_line": start_line,
-            "end_line": end_line,
-        })
-    return bindings
-
-
 def _normalized_repo_root(repo_root: Path | str | None) -> Path | None:
     if repo_root is None:
         return None
@@ -2595,51 +2569,6 @@ def _prime_js_ts_repo_context(root: Path) -> dict[str, Any]:
     return _remember_repo_context(_JS_TS_REPO_CONTEXTS, key, context)
 
 
-def _js_ts_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
-    normalized_root = _normalized_repo_root(repo_root)
-    if normalized_root is None:
-        return {
-            "root": None,
-            "tsconfig": {
-                "exists": False,
-                "base_url": None,
-                "paths": [],
-            },
-            "re_export_cache": {},
-        }
-    cached = _get_repo_context_cache_entry(_JS_TS_REPO_CONTEXTS, str(normalized_root))
-    if cached is not None:
-        return cached
-    return _prime_js_ts_repo_context(normalized_root)
-
-
-def _js_ts_candidate_files(base: Path) -> list[Path]:
-    # Fix B: called once per (importer, module) candidate lookup, and the same `base` string
-    # recurs across many definition_file iterations in caller_scan -- route every resolve()
-    # through the cached helper.
-    normalized_base = Path(_resolved_path_str(str(base)))
-    candidates: list[Path] = []
-    if normalized_base.suffix in _JS_TS_SUFFIXES:
-        candidates.append(normalized_base)
-    else:
-        candidates.extend(
-            Path(_resolved_path_str(str(normalized_base.with_suffix(suffix))))
-            for suffix in sorted(_JS_TS_SUFFIXES)
-        )
-        candidates.extend(
-            Path(_resolved_path_str(str((normalized_base / "index").with_suffix(suffix))))
-            for suffix in sorted(_JS_TS_SUFFIXES)
-        )
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        current = str(candidate)
-        if current not in seen:
-            deduped.append(candidate)
-            seen.add(current)
-    return deduped
-
-
 def _expand_js_ts_tsconfig_target(
     module_name: str,
     pattern: str,
@@ -2655,273 +2584,6 @@ def _expand_js_ts_tsconfig_target(
     token_end = len(module_name) - len(suffix) if suffix else len(module_name)
     token = module_name[len(prefix) : token_end]
     return target.replace("*", token, 1)
-
-
-def _js_ts_module_candidates(
-    importer_path: Path,
-    module_name: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any]:
-    if module_name.startswith("."):
-        # Fix B: same (importer_path, module_name) pair recurs across many definition_file
-        # iterations of caller_scan -- cache the resolve() by string.
-        base = Path(_resolved_path_str(str(importer_path.parent / module_name)))
-        return {
-            "paths": _js_ts_candidate_files(base),
-            "provenance": [],
-            "confidence": 1.0,
-        }
-
-    context = _js_ts_repo_context(repo_root)
-    tsconfig = context.get("tsconfig", {})
-    base_dir_str = str(
-        tsconfig.get("base_url")
-        or context.get("root")
-        or _resolved_path_str(str(importer_path.parent))
-    )
-    base_dir = Path(_resolved_path_str(base_dir_str))
-
-    for current in tsconfig.get("paths", []):
-        pattern = str(current.get("pattern", ""))
-        targets = [str(target) for target in current.get("targets", []) if target]
-        for target in targets:
-            expanded = _expand_js_ts_tsconfig_target(module_name, pattern, target)
-            if expanded is None:
-                continue
-            return {
-                "paths": _js_ts_candidate_files(Path(_resolved_path_str(str(base_dir / expanded)))),
-                "provenance": ["tsconfig-path-alias"],
-                "confidence": 0.88,
-            }
-
-    if tsconfig.get("base_url"):
-        return {
-            "paths": _js_ts_candidate_files(Path(_resolved_path_str(str(base_dir / module_name)))),
-            "provenance": ["tsconfig-base-url"],
-            "confidence": 0.76,
-        }
-
-    return {"paths": [], "provenance": [], "confidence": 0.0}
-
-
-def _js_ts_module_match_details(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any]:
-    candidate_info = _js_ts_module_candidates(importer_path, module_name, repo_root)
-    # Fix B: definition_path is constant for the entire outer symbol scan across every
-    # candidate/importer pair -- avoid re-resolving it on every call.
-    resolved_definition = _resolved_path_str(definition_path)
-    if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
-        return {
-            "matched": True,
-            "provenance": list(candidate_info["provenance"]),
-            "confidence": float(candidate_info["confidence"] or 1.0),
-        }
-
-    if not module_name.startswith(".") and _module_path_matches_definition(
-        module_name, definition_path
-    ):
-        return {
-            "matched": True,
-            "provenance": ["partial-resolution"],
-            "confidence": 0.2,
-        }
-
-    return {"matched": False, "provenance": [], "confidence": 0.0}
-
-
-def _js_ts_symbol_names(path: Path) -> set[str]:
-    symbols = _js_ts_parser_symbols(path)
-    if not symbols:
-        _, symbols = _regex_imports_and_symbols(path)
-    return {str(symbol.get("name", "")) for symbol in symbols if symbol.get("name")}
-
-
-def _js_ts_default_export_name(source: str, path: Path) -> str | None:
-    direct_patterns = [
-        re.compile(
-            r"export\s+default\s+(?:async\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
-            re.MULTILINE,
-        ),
-        re.compile(r"export\s+default\s+class\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE),
-        re.compile(r"export\s+default\s+([A-Za-z_][A-Za-z0-9_]*)\s*;", re.MULTILINE),
-    ]
-    for pattern in direct_patterns:
-        match = pattern.search(source)
-        if not match:
-            continue
-        candidate = match.group(1).strip()
-        if candidate in _js_ts_symbol_names(path):
-            return candidate
-    return None
-
-
-def _js_ts_resolve_exported_symbol(
-    module_path: Path,
-    exported_name: str,
-    repo_root: Path | str | None = None,
-    *,
-    _depth: int = 0,
-    _visited: set[tuple[str, str]] | None = None,
-) -> dict[str, Any] | None:
-    normalized_root = _normalized_repo_root(repo_root)
-    # Fix B: this resolve() runs BEFORE the re_export_cache lookup below, so an uncached
-    # resolve() here defeats that cache's purpose on repeat calls for the same module path.
-    normalized_module = Path(_resolved_path_str(str(module_path.expanduser())))
-    if normalized_module.suffix not in _JS_TS_SUFFIXES:
-        return None
-
-    context = _js_ts_repo_context(normalized_root)
-    cache_key = (str(normalized_module), exported_name)
-    cached = context["re_export_cache"].get(cache_key)
-    if cached is not None:
-        return dict(cached) if isinstance(cached, dict) else None
-
-    visited = set() if _visited is None else set(_visited)
-    if _depth >= 5 or cache_key in visited:
-        context["re_export_cache"][cache_key] = None
-        return None
-    visited.add(cache_key)
-
-    try:
-        source = normalized_module.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        context["re_export_cache"][cache_key] = None
-        return None
-
-    if exported_name == "default":
-        direct_default = _js_ts_default_export_name(source, normalized_module)
-        if direct_default:
-            result = {
-                "symbol": direct_default,
-                "definition_file": str(normalized_module),
-                "provenance": ["default-import"],
-                "confidence": 0.95,
-            }
-            context["re_export_cache"][cache_key] = dict(result)
-            return result
-    elif exported_name in _js_ts_symbol_names(normalized_module):
-        result = {
-            "symbol": exported_name,
-            "definition_file": str(normalized_module),
-            "provenance": [],
-            "confidence": 0.95,
-        }
-        context["re_export_cache"][cache_key] = dict(result)
-        return result
-
-    for binding in _js_ts_named_import_bindings(source):
-        if (
-            str(binding.get("statement_kind", "")) != "export"
-            or str(binding.get("local", "")) != exported_name
-        ):
-            continue
-        candidate_info = _js_ts_module_candidates(
-            normalized_module,
-            str(binding.get("module", "")),
-            normalized_root,
-        )
-        for candidate in candidate_info["paths"]:
-            nested = _js_ts_resolve_exported_symbol(
-                candidate,
-                str(binding.get("imported", "")),
-                normalized_root,
-                _depth=_depth + 1,
-                _visited=visited,
-            )
-            if nested is None:
-                continue
-            provenance = _dedupe_labels([
-                *list(candidate_info.get("provenance", [])),
-                *list(nested.get("provenance", [])),
-                "re-export-chain",
-            ])
-            confidence = float(nested.get("confidence", 0.2))
-            if float(candidate_info.get("confidence", 0.0)) > 0.0:
-                confidence = min(confidence, float(candidate_info["confidence"]))
-            result = {
-                "symbol": str(nested.get("symbol", exported_name)),
-                "definition_file": str(nested.get("definition_file", normalized_module)),
-                "provenance": provenance,
-                "confidence": round(confidence, 3),
-            }
-            context["re_export_cache"][cache_key] = dict(result)
-            return result
-
-    context["re_export_cache"][cache_key] = None
-    return None
-
-
-def _js_ts_resolve_imported_symbol(
-    importer_path: Path,
-    module_name: str,
-    imported_name: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any] | None:
-    candidate_info = _js_ts_module_candidates(importer_path, module_name, repo_root)
-    for candidate in candidate_info["paths"]:
-        resolved = _js_ts_resolve_exported_symbol(candidate, imported_name, repo_root)
-        if resolved is None:
-            continue
-        provenance = _dedupe_labels([
-            *list(candidate_info.get("provenance", [])),
-            *list(resolved.get("provenance", [])),
-        ])
-        confidence = float(resolved.get("confidence", 0.2))
-        if float(candidate_info.get("confidence", 0.0)) > 0.0:
-            confidence = min(confidence, float(candidate_info["confidence"]))
-        return {
-            "symbol": str(resolved.get("symbol", imported_name)),
-            "definition_file": str(resolved.get("definition_file", candidate)),
-            "provenance": provenance,
-            "confidence": round(confidence, 3),
-        }
-    return None
-
-
-def _js_ts_import_match_details(
-    importer_path: Path,
-    *,
-    module_name: str,
-    imported_name: str,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-    is_default: bool = False,
-) -> dict[str, Any] | None:
-    # Fix B: definition_path is constant across every binding/candidate iteration of the outer
-    # caller_scan any()-loop -- avoid re-resolving it per call.
-    resolved_definition = _resolved_path_str(definition_path)
-    resolved = _js_ts_resolve_imported_symbol(
-        importer_path,
-        module_name,
-        "default" if is_default else imported_name,
-        repo_root,
-    )
-    if resolved is not None:
-        if (
-            str(resolved.get("definition_file")) == resolved_definition
-            and str(resolved.get("symbol")) == symbol
-        ):
-            return {
-                "provenance": list(resolved.get("provenance", [])),
-                "confidence": float(resolved.get("confidence", 0.95)),
-            }
-        return None
-
-    if is_default:
-        return None
-
-    details = _js_ts_module_match_details(importer_path, module_name, definition_path, repo_root)
-    if details["matched"] and imported_name == symbol:
-        return {
-            "provenance": list(details.get("provenance", [])),
-            "confidence": float(details.get("confidence", 0.95)),
-        }
-    return None
 
 
 def _split_top_level_list(text: str) -> list[str]:
@@ -2998,79 +2660,6 @@ def _flatten_rust_use_items(expression: str, prefix: str = "") -> list[str]:
             continue
         flattened.append(f"{combined_prefix}::{item}".strip(":") if combined_prefix else item)
     return flattened
-
-
-def _rust_use_bindings(source: str) -> list[dict[str, Any]]:
-    bindings: list[dict[str, Any]] = []
-    pattern = re.compile(r"(?:pub\s+)?use\s+([^;]+);", re.MULTILINE | re.DOTALL)
-    for match in pattern.finditer(source):
-        start_line, end_line = _line_span_from_offsets(source, match.start(), match.end())
-        for item in _flatten_rust_use_items(match.group(1)):
-            normalized = item.strip()
-            if not normalized:
-                continue
-            if normalized.endswith("::*"):
-                module_glob = normalized[:-3].strip()
-                if not _is_valid_rust_use_path(module_glob):
-                    continue
-                bindings.append({
-                    "module": module_glob,
-                    "wildcard": True,
-                    "start_line": start_line,
-                    "end_line": end_line,
-                })
-                continue
-
-            if " as " in normalized:
-                imported_path, local_name = (part.strip() for part in normalized.rsplit(" as ", 1))
-            else:
-                imported_path = normalized
-                local_name = normalized.rsplit("::", 1)[-1].strip()
-
-            # Reject false-positive matches (e.g. the word ``use`` inside a doc
-            # comment) so downstream path resolution never receives whitespace.
-            if not _is_valid_rust_use_path(imported_path):
-                continue
-
-            if "::" in imported_path:
-                module_name, imported_name = imported_path.rsplit("::", 1)
-            else:
-                module_name = ""
-                imported_name = imported_path
-
-            bindings.append({
-                "module": module_name.strip(),
-                "imported": imported_name.strip(),
-                "local": local_name.strip(),
-                "path": imported_path.strip(),
-                "wildcard": False,
-                "start_line": start_line,
-                "end_line": end_line,
-            })
-    return bindings
-
-
-def _rust_mod_declarations(source: str) -> list[str]:
-    pattern = re.compile(
-        r"^\s*(?:pub\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;\s*$",
-        re.MULTILINE,
-    )
-    return [match.group(1).strip() for match in pattern.finditer(source)]
-
-
-def _rust_module_base_dir(module_file: Path) -> Path:
-    if module_file.name in {"lib.rs", "main.rs", "mod.rs"}:
-        return module_file.parent.resolve()
-    return (module_file.parent / module_file.stem).resolve()
-
-
-def _rust_module_file_for_declaration(module_file: Path, module_name: str) -> Path | None:
-    base_dir = _rust_module_base_dir(module_file)
-    candidates = [
-        (base_dir / f"{module_name}.rs").resolve(),
-        (base_dir / module_name / "mod.rs").resolve(),
-    ]
-    return next((candidate for candidate in candidates if candidate.is_file()), None)
 
 
 def _build_rust_module_tree(
@@ -3185,268 +2774,6 @@ def _prime_rust_repo_context(root: Path) -> dict[str, Any]:
     return _remember_repo_context(_RUST_REPO_CONTEXTS, key, context)
 
 
-def _rust_repo_context(repo_root: Path | str | None) -> dict[str, Any]:
-    normalized_root = _normalized_repo_root(repo_root)
-    if normalized_root is None:
-        return {
-            "root": None,
-            "workspace": {
-                "exists": False,
-                "members": {},
-            },
-            "mod_tree_cache": {},
-        }
-    cached = _get_repo_context_cache_entry(_RUST_REPO_CONTEXTS, str(normalized_root))
-    if cached is not None:
-        return cached
-    return _prime_rust_repo_context(normalized_root)
-
-
-def _rust_crate_entry_for_path(path: Path) -> Path | None:
-    normalized_path = path.expanduser().resolve()
-    candidates = [normalized_path.parent, *normalized_path.parents]
-    src_root = next((parent for parent in candidates if parent.name == "src"), None)
-    if src_root is None:
-        return None
-    lib_path = (src_root / "lib.rs").resolve()
-    if lib_path.is_file():
-        return lib_path
-    main_path = (src_root / "main.rs").resolve()
-    if main_path.is_file():
-        return main_path
-    if normalized_path.name in {"lib.rs", "main.rs"} and normalized_path.parent == src_root:
-        return normalized_path
-    return None
-
-
-def _rust_module_tree_for_entry(
-    entry_path: Path,
-    repo_root: Path | str | None = None,
-) -> dict[str, str]:
-    normalized_entry = entry_path.expanduser().resolve()
-    context = _rust_repo_context(repo_root if repo_root is not None else normalized_entry.parent)
-    cache_key = str(normalized_entry)
-    cached = context["mod_tree_cache"].get(cache_key)
-    if cached is not None:
-        return dict(cached)
-    module_tree = _build_rust_module_tree(normalized_entry)
-    context["mod_tree_cache"][cache_key] = dict(module_tree)
-    return module_tree
-
-
-def _rust_workspace_entry_for_crate(
-    crate_name: str,
-    repo_root: Path | str | None = None,
-) -> Path | None:
-    context = _rust_repo_context(repo_root)
-    members = context.get("workspace", {}).get("members", {})
-    member_path = members.get(_normalize_rust_crate_name(crate_name))
-    return Path(str(member_path)).expanduser().resolve() if member_path else None
-
-
-def _rust_module_tree_lookup(
-    entry_path: Path,
-    module_parts: list[str],
-    repo_root: Path | str | None = None,
-) -> Path | None:
-    if not module_parts:
-        return entry_path.expanduser().resolve()
-    module_tree = _rust_module_tree_for_entry(entry_path, repo_root)
-    resolved = module_tree.get("::".join(module_parts))
-    return Path(resolved).expanduser().resolve() if resolved else None
-
-
-def _rust_partial_candidate_paths(
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> list[dict[str, Any]]:
-    normalized_root = _normalized_repo_root(repo_root)
-    if normalized_root is None:
-        return []
-
-    normalized_definition = Path(definition_path).expanduser().resolve()
-    inferred_candidates: list[dict[str, Any]] = []
-    module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
-    if not module_parts or module_parts[0] in {"crate", "self", "super"}:
-        return inferred_candidates
-
-    external_entry = (normalized_root / module_parts[0] / "src" / "lib.rs").resolve()
-    if not external_entry.is_file():
-        fallback_entry = (normalized_root / module_parts[0] / "src" / "main.rs").resolve()
-        if fallback_entry.is_file():
-            external_entry = fallback_entry
-        else:
-            return inferred_candidates
-
-    candidate_path = _rust_module_tree_lookup(external_entry, module_parts[1:], normalized_root)
-    if candidate_path is None and not module_parts[1:]:
-        candidate_path = external_entry
-    if candidate_path is not None and candidate_path == normalized_definition:
-        provenance = ["partial-resolution"]
-        if module_parts[1:]:
-            provenance.append("mod-declaration")
-        inferred_candidates.append({
-            "path": str(candidate_path),
-            "provenance": provenance,
-            "confidence": 0.2,
-        })
-    return inferred_candidates
-
-
-def _rust_module_candidates(
-    importer_path: Path,
-    module_name: str,
-    repo_root: Path | str | None = None,
-) -> list[dict[str, Any]]:
-    parts = [part.strip() for part in module_name.split("::") if part.strip()]
-    if not parts:
-        return []
-
-    normalized_root = _normalized_repo_root(repo_root)
-    normalized_importer = importer_path.expanduser().resolve()
-    candidates: list[dict[str, Any]] = []
-
-    def _add_candidate(path: Path | None, provenance: list[str], confidence: float) -> None:
-        if path is None:
-            return
-        resolved_path = str(path.expanduser().resolve())
-        if any(str(current["path"]) == resolved_path for current in candidates):
-            return
-        candidates.append({
-            "path": resolved_path,
-            "provenance": list(provenance),
-            "confidence": float(confidence),
-        })
-
-    crate_entry = _rust_crate_entry_for_path(normalized_importer)
-    if parts[0] == "crate" and crate_entry is not None:
-        _add_candidate(
-            _rust_module_tree_lookup(crate_entry, parts[1:], normalized_root),
-            ["mod-declaration"] if parts[1:] else [],
-            0.95,
-        )
-    elif normalized_root is not None:
-        workspace_entry = _rust_workspace_entry_for_crate(parts[0], normalized_root)
-        if workspace_entry is not None:
-            _add_candidate(
-                _rust_module_tree_lookup(workspace_entry, parts[1:], normalized_root),
-                ["workspace-crate", *(["mod-declaration"] if parts[1:] else [])],
-                0.92,
-            )
-
-    start = normalized_importer.parent
-    while start.name == "":
-        start = start.parent
-
-    heuristic_parts = list(parts)
-    if heuristic_parts[0] == "crate":
-        crate_root = next(
-            (
-                parent
-                for parent in [normalized_importer.parent, *normalized_importer.parents]
-                if parent.name == "src"
-            ),
-            None,
-        )
-        if crate_root is not None:
-            start = crate_root.resolve()
-        heuristic_parts = heuristic_parts[1:]
-    else:
-        while heuristic_parts and heuristic_parts[0] == "super":
-            start = start.parent
-            heuristic_parts = heuristic_parts[1:]
-        if heuristic_parts and heuristic_parts[0] == "self":
-            heuristic_parts = heuristic_parts[1:]
-
-    if heuristic_parts:
-        base = start.joinpath(*heuristic_parts).resolve()
-        # Defensive guard: a malformed module name (e.g. a mis-parsed doc
-        # comment) can yield a base path whose final component has an empty
-        # name, which makes ``with_suffix`` raise ``ValueError``. Skip the
-        # ``.rs`` sibling in that case rather than crashing symbol lookup.
-        try:
-            rust_sibling = base.with_suffix(".rs")
-        except ValueError:
-            rust_sibling = None
-        _add_candidate(rust_sibling, [], 1.0)
-        _add_candidate(base / "mod.rs", [], 1.0)
-
-    return candidates
-
-
-def _rust_module_match_details(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any]:
-    resolved_definition = str(Path(definition_path).expanduser().resolve())
-    module_parts = [part.strip() for part in module_name.split("::") if part.strip()]
-    for candidate in _rust_module_candidates(importer_path, module_name, repo_root):
-        if str(candidate.get("path")) == resolved_definition:
-            return {
-                "matched": True,
-                "provenance": list(candidate.get("provenance", [])),
-                "confidence": float(candidate.get("confidence", 1.0)),
-            }
-
-    for candidate in _rust_partial_candidate_paths(module_name, definition_path, repo_root):
-        if str(candidate.get("path")) == resolved_definition:
-            return {
-                "matched": True,
-                "provenance": list(candidate.get("provenance", [])),
-                "confidence": float(candidate.get("confidence", 0.2)),
-            }
-
-    if module_parts and module_parts[0] in {"crate", "self", "super"}:
-        return {"matched": False, "provenance": [], "confidence": 0.0}
-    if module_parts and _rust_workspace_entry_for_crate(module_parts[0], repo_root) is not None:
-        return {"matched": False, "provenance": [], "confidence": 0.0}
-    if _module_path_matches_definition(module_name, definition_path):
-        return {
-            "matched": True,
-            "provenance": ["partial-resolution"],
-            "confidence": 0.2,
-        }
-    return {"matched": False, "provenance": [], "confidence": 0.0}
-
-
-def _rust_use_binding_match_details(
-    importer_path: Path,
-    binding: dict[str, Any],
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any] | None:
-    imported_name = str(binding.get("imported", ""))
-    local_name = str(binding.get("local", ""))
-    definition_stem = Path(definition_path).with_suffix("").name.lower()
-    if not (
-        bool(binding.get("wildcard"))
-        or imported_name.lower() == symbol.lower()
-        or local_name.lower() == symbol.lower()
-        or imported_name.lower() == definition_stem
-    ):
-        return None
-
-    for module_name in [str(binding.get("module", "")), str(binding.get("path", ""))]:
-        if not module_name:
-            continue
-        details = _rust_module_match_details(
-            importer_path,
-            module_name,
-            definition_path,
-            repo_root,
-        )
-        if details["matched"]:
-            return {
-                "provenance": list(details.get("provenance", [])),
-                "confidence": float(details.get("confidence", 1.0)),
-            }
-    return None
-
-
 def _extract_rust_impl_block(source: str, start_index: int) -> str:
     depth = 0
     block_start = -1
@@ -3463,165 +2790,6 @@ def _extract_rust_impl_block(source: str, start_index: int) -> str:
             if depth == 0 and block_start >= 0:
                 return source[block_start:index]
     return ""
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str, ...]:
-    path = Path(definition_path)
-    if path.suffix not in _RUST_SUFFIXES:
-        return ()
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ()
-
-    impl_pattern = re.compile(
-        rf"\bimpl(?:\s*<[^{{>]*>)?\s+{re.escape(symbol)}(?:\s*<[^{{>]*>)?\s*\{{",
-        re.MULTILINE,
-    )
-    method_pattern = re.compile(r"(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)")
-    candidates: list[str] = []
-    for match in impl_pattern.finditer(source):
-        block = _extract_rust_impl_block(source, match.end() - 1)
-        if not block:
-            continue
-        candidates.extend(method_match.group(1) for method_match in method_pattern.finditer(block))
-    return tuple(dict.fromkeys(candidates))
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _rust_impl_owner_type(definition_path: str, line_number: int) -> str | None:
-    path = Path(definition_path)
-    if path.suffix not in _RUST_SUFFIXES:
-        return None
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    impl_pattern = re.compile(
-        r"\bimpl(?:\s*<[^{}>]*>)?\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s*<[^{}>]*>)?\s*\{",
-        re.MULTILINE,
-    )
-    for match in impl_pattern.finditer(source):
-        start_line = source.count("\n", 0, match.start()) + 1
-        block = _extract_rust_impl_block(source, match.end() - 1)
-        if not block:
-            continue
-        end_index = match.end() - 1 + len(block) + 1
-        end_line = source.count("\n", 0, end_index) + 1
-        if start_line <= line_number <= end_line:
-            return match.group(1)
-    return None
-
-
-@_mtime_aware_cache(maxsize=512)  # B7: mtime+size in key; replaces plain @lru_cache
-def _rust_symbol_reference_candidates(definition_path: str, symbol: str) -> tuple[str, ...]:
-    candidates = [symbol]
-    candidates.extend(_rust_impl_method_candidates(definition_path, symbol))
-    return tuple(dict.fromkeys(candidate for candidate in candidates if candidate))
-
-
-def _rust_file_references_symbol_from_definition(
-    file_path: Path,
-    symbol: str,
-    definition_path: str,
-) -> bool:
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return False
-
-    reference_candidates = _rust_symbol_reference_candidates(definition_path, symbol)
-    if not reference_candidates:
-        return False
-
-    for candidate in reference_candidates:
-        if re.search(rf"\b{re.escape(candidate)}\b", source):
-            return True
-        if re.search(rf"(?:\.|::){re.escape(candidate)}\s*\(", source):
-            return True
-    return False
-
-
-def _rust_resolve_use_binding(
-    importer_path: Path,
-    binding: dict[str, Any],
-    symbol: str,
-    repo_root: Path | str | None = None,
-    _seen: frozenset[tuple[str, str]] | None = None,
-) -> dict[str, Any] | None:
-    # Cycle guard. This function follows `use` re-export chains by recursing on
-    # the nested binding, and Rust re-exports are a GRAPH, not a tree: a crate
-    # root that does `pub use rules::x::{...}` while a submodule re-exports back
-    # toward the root closes a loop, and the recursion never terminates.
-    #
-    # Receipt: `tg refs . <symbol> --json` on a 594-file Rust workspace
-    # (claude-code-hydron) died with `RecursionError: maximum recursion depth
-    # exceeded`, ~1000 frames of this function, rc=1 and no stdout -- so it took
-    # out EVERY refs query on that repo, not just the cyclic symbol.
-    #
-    # It DOES reproduce on a two-module fixture, but only when the searched
-    # symbol differs from the re-exported name: a matching name hits the early
-    # return above the recursive call. See
-    # test_cyclic_rust_pub_use_reexport_terminates.
-    #
-    # The key is (resolved importer path, imported name): the same file reached
-    # again for the same name is a cycle, while the same file for a DIFFERENT
-    # name is legitimate work and must not be pruned.
-    key = (str(importer_path).casefold(), str(binding.get("imported", "")).casefold())
-    seen = _seen or frozenset()
-    if key in seen:
-        return None
-    seen = seen | {key}
-    imported_name = str(binding.get("imported", ""))
-    local_name = str(binding.get("local", ""))
-    wildcard = bool(binding.get("wildcard"))
-
-    module_names = [str(binding.get("module", "")), str(binding.get("path", ""))]
-    for module_name in module_names:
-        if not module_name:
-            continue
-        for candidate in _rust_module_candidates(importer_path, module_name, repo_root):
-            if not str(candidate.get("path")):
-                continue
-            candidate_path = Path(str(candidate["path"]))
-            if (
-                wildcard
-                or imported_name.lower() == symbol.lower()
-                or local_name.lower() == symbol.lower()
-            ):
-                return {
-                    "symbol": symbol,
-                    "definition_file": str(candidate_path),
-                    "provenance": list(candidate.get("provenance", [])),
-                    "confidence": float(candidate.get("confidence", 1.0)),
-                }
-            try:
-                candidate_source = candidate_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            for nested_binding in _rust_use_bindings(candidate_source):
-                nested_imported = str(nested_binding.get("imported", ""))
-                nested_local = str(nested_binding.get("local", ""))
-                if imported_name.lower() not in {nested_imported.lower(), nested_local.lower()}:
-                    continue
-                nested_resolved = _rust_resolve_use_binding(
-                    candidate_path, nested_binding, symbol, repo_root, seen
-                )
-                if nested_resolved is None:
-                    continue
-                return {
-                    "symbol": symbol,
-                    "definition_file": str(nested_resolved.get("definition_file", candidate_path)),
-                    "provenance": list(candidate.get("provenance", []))
-                    + list(nested_resolved.get("provenance", [])),
-                    "confidence": min(
-                        float(candidate.get("confidence", 1.0)),
-                        float(nested_resolved.get("confidence", 1.0)),
-                    ),
-                }
-    return None
 
 
 def _definition_module_parts(path: str) -> list[str]:
@@ -3659,168 +2827,6 @@ def _module_path_matches_definition(module_name: str, definition_path: str) -> b
     if not module_parts or not definition_parts:
         return False
     return definition_parts[-len(module_parts) :] == module_parts
-
-
-def _js_ts_module_matches_definition(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> bool:
-    return bool(
-        _js_ts_module_match_details(
-            importer_path,
-            module_name,
-            definition_path,
-            repo_root,
-        )["matched"]
-    )
-
-
-def _rust_module_matches_definition(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> bool:
-    return bool(
-        _rust_module_match_details(
-            importer_path,
-            module_name,
-            definition_path,
-            repo_root,
-        )["matched"]
-    )
-
-
-# Fix A / Guard 1: this scans+parses the importer file (ast.parse for Python, regex/AST for
-# JS/TS/Rust) once PER (file, definition) PAIR, and caller_scan calls it in an any() loop over
-# every definition_file for every candidate file -- N definitions means N re-reads/re-parses of
-# the same file. @_mtime_aware_cache requires a str first-positional arg (its wrapper keys the
-# cache on path_str directly), so the parameter is `path_str: str` here, not `Path` -- callers
-# that still pass a Path work at runtime (Path(path_str) below accepts either), but the one hot
-# call site (build_symbol_callers_from_map's _should_scan_for_symbol_callers) is updated to pass
-# str(current) explicitly so the cache key is a plain, consistently-typed string.
-#
-# Guard 4: bound the cache's entry count -- this key includes symbol+definition_path+repo_root,
-# so it can grow faster than a plain per-file cache; keep it generous but finite.
-def _python_file_imports_symbol_from_definition(
-    file_path: Path,
-    source: str,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> bool:
-    try:
-        tree = _cached_ast_parse(source)
-    except SyntaxError:
-        return False
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            if any(
-                _module_path_matches_definition(alias.name, definition_path) for alias in node.names
-            ):
-                return True
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                if not _module_path_matches_definition(node.module, definition_path):
-                    continue
-                if any(
-                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
-                ):
-                    return True
-            elif node.level:
-                # `from . import helpers` / `from .. import helpers` -- no dotted `node.module`
-                # text, only relative dots plus the imported name(s). This bare form BINDS THE
-                # SUBMODULE ITSELF (like `ast.Import`, not a `from X import symbol` name
-                # binding), so match on module path alone -- mirrors #460's fix for the forward
-                # `_python_imports_and_symbols`/`_python_imports_with_lines` extractors (the `tg
-                # imports`/`tg importers` primitive), applied here to the callers/blast-radius
-                # consumer path, which was still silently dropping this shape (audit #81 #3): the
-                # old `if not node.module: continue` guard skipped every bare relative import, so
-                # a sibling `from . import helpers` consumer was invisible to `tg callers`/`tg
-                # blast-radius` even though `tg importers` already found it.
-                if any(
-                    _module_path_matches_definition(alias.name, definition_path)
-                    for alias in node.names
-                ):
-                    return True
-    return False
-
-
-def _js_ts_file_imports_symbol_from_definition(
-    file_path: Path,
-    source: str,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> bool:
-    bindings = _js_ts_named_import_bindings(source)
-    default_bindings = _js_ts_default_import_bindings(source)
-    namespace_bindings = _js_ts_namespace_import_bindings(source)
-    return (
-        any(
-            _js_ts_import_match_details(
-                file_path,
-                module_name=str(binding["module"]),
-                imported_name=str(binding["imported"]),
-                symbol=symbol,
-                definition_path=definition_path,
-                repo_root=repo_root,
-            )
-            is not None
-            for binding in bindings
-            if str(binding.get("statement_kind", "import")) == "import"
-        )
-        or any(
-            _js_ts_import_match_details(
-                file_path,
-                module_name=str(binding["module"]),
-                imported_name="default",
-                symbol=symbol,
-                definition_path=definition_path,
-                repo_root=repo_root,
-                is_default=True,
-            )
-            is not None
-            for binding in default_bindings
-        )
-        or any(
-            _js_ts_module_matches_definition(
-                file_path,
-                binding["module"],
-                definition_path,
-                repo_root,
-            )
-            for binding in namespace_bindings
-        )
-    )
-
-
-def _rust_file_imports_symbol_from_definition(
-    file_path: Path,
-    source: str,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> bool:
-    bindings = _rust_use_bindings(source)
-    if any(
-        _rust_use_binding_match_details(
-            file_path,
-            binding,
-            symbol,
-            definition_path,
-            repo_root,
-        )
-        is not None
-        for binding in bindings
-    ):
-        return True
-    if _is_test_file(file_path):
-        return _rust_file_references_symbol_from_definition(file_path, symbol, definition_path)
-    return False
 
 
 @_mtime_aware_cache(maxsize=2048)  # Fix A: mtime+size in key; replaces per-call read+parse
@@ -3894,197 +2900,6 @@ def _direct_validation_import_count_from_repo_map(
         ):
             count += 1
     return count
-
-
-def _python_import_update_target(
-    file_path: Path,
-    symbol: str,
-    definition_path: str,
-) -> dict[str, Any] | None:
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    try:
-        tree = _cached_ast_parse(source)
-    except SyntaxError:
-        return None
-
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                if _module_path_matches_definition(alias.name, definition_path):
-                    return {
-                        "start_line": int(node.lineno),
-                        "end_line": int(getattr(node, "end_lineno", node.lineno)),
-                        "module": alias.name,
-                        "provenance": "parser-backed",
-                    }
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                if not _module_path_matches_definition(node.module, definition_path):
-                    continue
-                if any(
-                    alias.name in {"*", symbol} or alias.asname == symbol for alias in node.names
-                ):
-                    return {
-                        "start_line": int(node.lineno),
-                        "end_line": int(getattr(node, "end_lineno", node.lineno)),
-                        "module": node.module,
-                        "provenance": "parser-backed",
-                    }
-            elif node.level:
-                # Mirror the sibling fix in _python_file_imports_symbol_from_definition above
-                # (audit #81 #3): `from . import helpers` has no dotted `node.module`, only
-                # relative dots + the imported name(s), which bind the SUBMODULE itself.
-                for alias in node.names:
-                    if _module_path_matches_definition(alias.name, definition_path):
-                        return {
-                            "start_line": int(node.lineno),
-                            "end_line": int(getattr(node, "end_lineno", node.lineno)),
-                            "module": alias.name,
-                            "provenance": "parser-backed",
-                        }
-    return None
-
-
-def _js_ts_import_update_target(
-    file_path: Path,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any] | None:
-    try:
-        source = _self._read_source_text_cached(str(file_path))
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    # PERF increment 1 / read site 5 (Fable-designed, the "surprise 5th" site): this used to
-    # re-read + re-parse the file on every (file, symbol, definition) pair -- edit-plan seeding
-    # and _build_import_graph_consumers_from_map call it once per definition_file, profiled at
-    # ~26% of edit_plan wall time. Share the parse product with every other JS/TS extractor via
-    # the same (path, mtime, size)-keyed cache instead of parsing locally.
-    parsed = _parsed_source_and_tree(str(file_path))
-    if parsed is not None:
-        _parsed_source, _source_bytes, tree = parsed
-        stack = [tree.root_node]
-        while stack:
-            node = stack.pop()
-            if node.type == "import_statement":
-                statement = source[node.start_byte : node.end_byte]
-                for binding in _js_ts_default_import_bindings(statement):
-                    if (
-                        _js_ts_import_match_details(
-                            file_path,
-                            module_name=str(binding.get("module", "")),
-                            imported_name="default",
-                            symbol=symbol,
-                            definition_path=definition_path,
-                            repo_root=repo_root,
-                            is_default=True,
-                        )
-                        is not None
-                    ):
-                        return {
-                            "start_line": int(node.start_point[0] + 1),
-                            "end_line": int(node.end_point[0] + 1),
-                            "module": str(binding.get("module", "")),
-                            "provenance": "parser-backed",
-                        }
-                for binding in _js_ts_named_import_bindings(statement):
-                    if (
-                        str(binding.get("statement_kind", "import")) == "import"
-                        and _js_ts_import_match_details(
-                            file_path,
-                            module_name=str(binding.get("module", "")),
-                            imported_name=str(binding.get("imported", "")),
-                            symbol=symbol,
-                            definition_path=definition_path,
-                            repo_root=repo_root,
-                        )
-                        is not None
-                    ):
-                        return {
-                            "start_line": int(node.start_point[0] + 1),
-                            "end_line": int(node.end_point[0] + 1),
-                            "module": str(binding.get("module", "")),
-                            "provenance": "parser-backed",
-                        }
-            stack.extend(reversed(node.children))
-
-    for binding in _js_ts_default_import_bindings(source):
-        if (
-            _js_ts_import_match_details(
-                file_path,
-                module_name=str(binding.get("module", "")),
-                imported_name="default",
-                symbol=symbol,
-                definition_path=definition_path,
-                repo_root=repo_root,
-                is_default=True,
-            )
-            is not None
-        ):
-            return {
-                "start_line": int(binding.get("start_line", 0)),
-                "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
-                "module": str(binding.get("module", "")),
-                "provenance": "heuristic",
-            }
-
-    for binding in _js_ts_named_import_bindings(source):
-        if (
-            str(binding.get("statement_kind", "import")) == "import"
-            and _js_ts_import_match_details(
-                file_path,
-                module_name=str(binding.get("module", "")),
-                imported_name=str(binding.get("imported", "")),
-                symbol=symbol,
-                definition_path=definition_path,
-                repo_root=repo_root,
-            )
-            is not None
-        ):
-            return {
-                "start_line": int(binding.get("start_line", 0)),
-                "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
-                "module": str(binding.get("module", "")),
-                "provenance": "heuristic",
-            }
-    return None
-
-
-def _rust_import_update_target(
-    file_path: Path,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any] | None:
-    try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
-
-    for binding in _rust_use_bindings(source):
-        if (
-            _rust_use_binding_match_details(
-                file_path,
-                binding,
-                symbol,
-                definition_path,
-                repo_root,
-            )
-            is None
-        ):
-            continue
-        return {
-            "start_line": int(binding.get("start_line", 0)),
-            "end_line": int(binding.get("end_line", binding.get("start_line", 0))),
-            "module": str(binding.get("module", "")) or str(binding.get("path", "")),
-            "provenance": "heuristic",
-        }
-    return None
 
 
 def _import_update_target(
@@ -4533,298 +3348,6 @@ def _dedupe_symbol_records(symbols: list[dict[str, Any]]) -> list[dict[str, Any]
     return deduped
 
 
-def _js_ts_dynamic_import_hit(line: str) -> tuple[str, bool] | None:
-    """Detect a dynamic ``import(...)`` call or a ``require(...)`` call NOT already covered by
-    the assignment-anchored static regexes above (bare ``require("x");`` with no assignment,
-    ``require(...)``/``import(...)`` used as a sub-expression, or either call form given a
-    non-literal argument).
-
-    Returns ``(module, dynamic_unresolved)`` -- ``module`` is ``""`` when the argument isn't a
-    static string literal (a variable, template literal, or expression), and
-    ``dynamic_unresolved`` is ``True`` in that case -- or ``None`` when neither call form is
-    present on this line.
-
-    #93 SUB-1 recall fix: this is ADDITIVE to the static regexes, never a replacement -- callers
-    only consult this after their own assignment-anchored match comes back empty, so a plain
-    ``const x = require("y")`` line is still reported exactly once (via the static path), not
-    twice. Known limitation (accepted, same "precision over guessing" posture as the rest of
-    this file's regex heuristics): a fully INDIRECT alias -- `const req = require; req("y");` --
-    is not traced; there is no literal `require(`/`import(` call shape on the second line for
-    this to match.
-    """
-    literal_match = re.search(r'\b(?:import|require)\s*\(\s*["\']([^"\']+)["\']\s*\)', line)
-    if literal_match:
-        return literal_match.group(1), False
-    if re.search(r"\b(?:import|require)\s*\(", line):
-        return "", True
-    return None
-
-
-def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
-        return [], []
-
-    try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
-    except (OSError, UnicodeDecodeError):
-        return [], []
-
-    imports: list[str] = []
-    symbols: list[dict[str, Any]] = []
-
-    for line_number, line in enumerate(lines, start=1):
-        if path.suffix in _JS_TS_SUFFIXES:
-            import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
-            export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
-            require_match = re.match(
-                r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)"
-                r'\s*=\s*require\(["\']([^"\']+)["\']\)',
-                line,
-            )
-            class_match = re.match(
-                r"^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            function_match = re.match(
-                r"^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            variable_function_match = re.match(
-                r"^\s*(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
-            )
-            commonjs_export_function_match = re.match(
-                r"^\s*(?:module\.)?exports\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
-            )
-            object_export_function_match = re.match(
-                r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
-            )
-            if import_match:
-                imports.append(import_match.group(1))
-            if export_from_match:
-                imports.append(export_from_match.group(1))
-            if require_match:
-                imports.append(require_match.group(1))
-            else:
-                # #93 SUB-1: `import("x")` call-form and a require(...) not shaped like the
-                # assignment-anchored regex above. Only the statically-resolvable literal is
-                # useful to this alias-graph prefilter list -- an unresolved (non-literal) hit
-                # has no name to add.
-                dynamic_hit = _js_ts_dynamic_import_hit(line)
-                if dynamic_hit is not None and dynamic_hit[0]:
-                    imports.append(dynamic_hit[0])
-            if class_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=class_match.group(1),
-                        kind="class",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-            if function_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=function_match.group(1),
-                        kind="function",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-            for current_match in (
-                variable_function_match,
-                commonjs_export_function_match,
-                object_export_function_match,
-            ):
-                if current_match is None:
-                    continue
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=current_match.group(1),
-                        kind="function",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-        elif path.suffix in _RUST_SUFFIXES:
-            use_match = re.match(r"^\s*use\s+([^;]+);", line)
-            fn_match = re.match(
-                r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            struct_match = re.match(
-                r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            enum_match = re.match(
-                r"^\s*(?:pub\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            trait_match = re.match(
-                r"^\s*(?:pub\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
-            )
-            if use_match:
-                imports.append(use_match.group(1).strip())
-            if fn_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=fn_match.group(1),
-                        kind="function",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-            if struct_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=struct_match.group(1),
-                        kind="struct",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-            if enum_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=enum_match.group(1),
-                        kind="enum",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-            if trait_match:
-                end_line, _ = _extract_braced_block(lines, line_number - 1)
-                symbols.append(
-                    _symbol_record(
-                        name=trait_match.group(1),
-                        kind="trait",
-                        file=path,
-                        start_line=line_number,
-                        end_line=end_line,
-                    )
-                )
-
-    imports = sorted(dict.fromkeys(imports))
-    return imports, _dedupe_symbol_records(symbols)
-
-
-def _js_ts_symbol_name_node(node: Any) -> Any | None:
-    name_node = node.child_by_field_name("name")
-    if name_node is not None:
-        return name_node
-    for child in node.children:
-        if child.type in {"identifier", "property_identifier", "private_property_identifier"}:
-            return child
-    return None
-
-
-def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _JS_TS_SUFFIXES:
-        return []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return []
-    _source, source_bytes, tree = parsed
-    symbols: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    kind_by_node_type = {
-        "function_declaration": "function",
-        "class_declaration": "class",
-        "method_definition": "method",
-    }
-
-    def _walk(node: Any) -> None:
-        if node.type in kind_by_node_type:
-            name_node = _js_ts_symbol_name_node(node)
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    symbols.append(
-                        _symbol_record(
-                            name=name,
-                            kind=kind_by_node_type[node.type],
-                            file=path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
-                        )
-                    )
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
-    return symbols
-
-
-def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _RUST_SUFFIXES:
-        return []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return []
-    _source, source_bytes, tree = parsed
-    symbols: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _walk(node: Any) -> None:
-        kind_map = {
-            "function_item": "function",
-            "struct_item": "struct",
-            "enum_item": "enum",
-            "trait_item": "trait",
-        }
-        if node.type in kind_map:
-            name_node = node.child_by_field_name("name")
-            if name_node is None:
-                for child in node.children:
-                    if child.type == "identifier":
-                        name_node = child
-                        break
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    symbols.append(
-                        _symbol_record(
-                            name=name,
-                            kind=kind_map[node.type],
-                            file=path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
-                        )
-                    )
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
-    return symbols
-
-
 # PATH A Stage 2: Java's kind map (shared between the symbol extractor below and
 # `_java_parser_symbol_sources`, mirroring the two Rust functions above that each inline their
 # own copy). classes/interfaces/enums/records -> "class"; methods/constructors -> "function",
@@ -4846,161 +3369,6 @@ _JAVA_SYMBOL_KIND_MAP: dict[str, str] = {
 # dotted name via node-text + strip is therefore simpler and more robust than chasing child
 # field names, and naturally preserves a trailing `.*` for a wildcard import.
 _JAVA_IMPORT_STRIP_RE = re.compile(r"^import\s+(?:static\s+)?(.*?)\s*;?\s*$", re.DOTALL)
-
-
-def _java_import_declaration_text(node: Any, source_bytes: bytes) -> str:
-    text = _tree_sitter_node_text(source_bytes, node).strip()
-    match = _JAVA_IMPORT_STRIP_RE.match(text)
-    return match.group(1).strip() if match else text
-
-
-def _java_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    """Foundational-tier Java extractor: classes/interfaces/enums/records/methods/constructors
-    plus raw import declarations, in ONE tree walk (mirrors `_python_imports_and_symbols`'s
-    combined shape, since Java -- like Python -- has no separate regex-heuristic extractor to
-    split imports from symbols the way the JS/TS/Rust split does).
-
-    Fail-closed like Go (mirrors `_python_imports_and_symbols`'s guard): parser-None or a
-    read/parse error returns ``([], [])``, never a partial regex degrade -- Java has no regex
-    fallback (see the `.java` branch in `_imports_and_symbols_for_path` below).
-    """
-    if path.suffix not in _JAVA_SUFFIXES:
-        return [], []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return [], []
-    _source, source_bytes, tree = parsed
-
-    imports: list[str] = []
-    symbols: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _walk(node: Any) -> None:
-        if node.type == "import_declaration":
-            imports.append(_java_import_declaration_text(node, source_bytes))
-        elif node.type in _JAVA_SYMBOL_KIND_MAP:
-            name_node = node.child_by_field_name("name")
-            if name_node is None:
-                for child in node.children:
-                    if child.type == "identifier":
-                        name_node = child
-                        break
-            if name_node is not None:
-                name = _node_text(name_node)
-                if _is_clean_symbol_name(name):
-                    symbols.append(
-                        _symbol_record(
-                            name=name,
-                            kind=_JAVA_SYMBOL_KIND_MAP[node.type],
-                            file=path,
-                            start_line=node.start_point[0] + 1,
-                            end_line=node.end_point[0] + 1,
-                        )
-                    )
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    imports = sorted(dict.fromkeys(imports))
-    symbols.sort(key=lambda item: (item["file"], item["line"], item["kind"], item["name"]))
-    return imports, symbols
-
-
-def _java_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    """`tg source` extractor for Java -- exact source block for a named class/interface/enum/
-    record/method/constructor. Mirrors `_rust_parser_symbol_sources` exactly, reusing the shared
-    cached parse product (`_parsed_source_and_tree`) instead of re-parsing directly."""
-    if path.suffix not in _JAVA_SUFFIXES:
-        return []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return []
-    _source, source_bytes, tree = parsed
-    sources: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _walk(node: Any) -> None:
-        if node.type in _JAVA_SYMBOL_KIND_MAP:
-            name_node = node.child_by_field_name("name")
-            if name_node is None:
-                for child in node.children:
-                    if child.type == "identifier":
-                        name_node = child
-                        break
-            if name_node is not None and _node_text(name_node) == symbol:
-                block = _node_text(node)
-                if block and not block.endswith("\n"):
-                    block = f"{block}\n"
-                sources.append({
-                    "name": symbol,
-                    "kind": _JAVA_SYMBOL_KIND_MAP[node.type],
-                    "file": str(path),
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "source": block,
-                })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
-    return sources
-
-
-def _java_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    """`tg imports` extractor for Java -- one row per `import_declaration` STATEMENT with its
-    1-based line number (mirrors `_rust_imports_with_lines`'s shape/role exactly, but tree-sitter
-    -backed rather than regex-backed since Java has no regex fallback)."""
-    if path.suffix not in _JAVA_SUFFIXES:
-        return []
-    try:
-        file_size = path.stat().st_size
-    except OSError:
-        file_size = 0
-    if file_size > _max_parse_bytes():
-        return []
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return []
-    _source, source_bytes, tree = parsed
-
-    entries: list[dict[str, Any]] = []
-
-    def _walk(node: Any) -> None:
-        if node.type == "import_declaration":
-            entries.append({
-                "module": _java_import_declaration_text(node, source_bytes),
-                "line": node.start_point[0] + 1,
-            })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    return entries
-
-
-def _python_classify_ref_kind(node: ast.AST, parent: ast.AST | None, *, in_annotation: bool) -> str:
-    """Classify an already-matched Python Name/Attribute reference node (T1 additive).
-
-    Only called for nodes the existing matcher already emits a row for (moat P0-T1: classify
-    EXISTING rows, never widen the match set -- that would change row counts). Precedence: a
-    node that IS the callee of its parent ``ast.Call`` is "call" even inside an annotation
-    subtree (unlikely but keeps the check order simple); otherwise annotation subtrees are
-    "type"; a bare ``ast.Attribute`` is "field"; anything else is "value".
-    """
-    if isinstance(parent, ast.Call) and parent.func is node:
-        return "call"
-    if in_annotation:
-        return "type"
-    if isinstance(node, ast.Attribute):
-        return "field"
-    return "value"
 
 
 def _python_references_and_calls(
@@ -5080,113 +3448,6 @@ def _python_references_and_calls(
     return references, calls
 
 
-def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
-        return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-        tree = _cached_ast_parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return []
-
-    lines = source.splitlines()
-    alias_names = {symbol}
-
-    def _binding_name(value: ast.AST) -> str | None:
-        if isinstance(value, ast.Name):
-            return value.id
-        if isinstance(value, ast.Attribute):
-            return value.attr
-        return None
-
-    def _assignment_targets(target: ast.AST) -> list[str]:
-        if isinstance(target, ast.Name):
-            return [target.id]
-        if isinstance(target, (ast.Tuple, ast.List)):
-            names: list[str] = []
-            for current in target.elts:
-                names.extend(_assignment_targets(current))
-            return names
-        return []
-
-    changed = True
-    while changed:
-        changed = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                for imported_alias in node.names:
-                    imported_name = str(imported_alias.name).split(".")[-1]
-                    if imported_name not in alias_names:
-                        continue
-                    local_name = imported_alias.asname or imported_name
-                    if local_name and local_name not in alias_names:
-                        alias_names.add(local_name)
-                        changed = True
-            elif isinstance(node, ast.Import):
-                for imported_alias in node.names:
-                    imported_name = str(imported_alias.name).split(".")[-1]
-                    if imported_name not in alias_names:
-                        continue
-                    local_name = imported_alias.asname or imported_name
-                    if local_name and local_name not in alias_names:
-                        alias_names.add(local_name)
-                        changed = True
-            elif isinstance(node, ast.Assign):
-                binding_name = _binding_name(node.value)
-                if binding_name not in alias_names:
-                    continue
-                for target_name in (
-                    _assignment_targets(node.targets[0])
-                    if len(node.targets) == 1
-                    else [name for target in node.targets for name in _assignment_targets(target)]
-                ):
-                    if target_name and target_name not in alias_names:
-                        alias_names.add(target_name)
-                        changed = True
-            elif isinstance(node, ast.AnnAssign):
-                binding_name = _binding_name(node.value) if node.value is not None else None
-                if binding_name not in alias_names:
-                    continue
-                for target_name in _assignment_targets(node.target):
-                    if target_name and target_name not in alias_names:
-                        alias_names.add(target_name)
-                        changed = True
-
-    calls: list[dict[str, Any]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        alias_name = _binding_name(node.func)
-        if alias_name not in alias_names:
-            continue
-        calls.append({
-            "name": symbol,
-            "kind": "call",
-            "file": str(path),
-            "line": node.lineno,
-            "end_line": getattr(node, "end_lineno", node.lineno),
-            "text": lines[node.lineno - 1] if 0 < node.lineno <= len(lines) else "",
-            "alias": alias_name,
-        })
-
-    calls.sort(key=lambda item: (item["file"], item["line"], item.get("alias", ""), item["text"]))
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, int, int, str]] = set()
-    for call_entry in calls:
-        key = (
-            str(call_entry["file"]),
-            int(call_entry["line"]),
-            int(call_entry.get("end_line", call_entry["line"])),
-            str(call_entry.get("alias", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(call_entry)
-    return deduped
-
-
 # Task 326: `fn NAME(` / `function NAME(` is a DECLARATION, not a call site. The tree-sitter arm
 # of this same feature already refuses to count it -- `_is_definition_identifier` below excludes
 # `function_item`/`struct_item`/`enum_item`/`trait_item` -- but this regex fallback did not, so a
@@ -5203,109 +3464,6 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
 # `\b` anchors `fn` as a whole token so an identifier merely ENDING in those letters
 # (`spawn_fn collect(...)`) is not mistaken for a declaration; `\*?` admits `function* name(`.
 _DEFINITION_KEYWORD_BEFORE_SYMBOL = re.compile(r"\b(?:fn|function)\s*\*?\s*$")
-
-
-def _regex_references_and_calls(
-    path: Path, symbol: str
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
-        return [], []
-
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return [], []
-
-    symbol_pattern = re.compile(rf"\b{re.escape(symbol)}\b")
-    call_pattern = re.compile(rf"(?:\b|\.|::){re.escape(symbol)}\s*\(")
-
-    references: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
-
-    def _strip_line_string_and_comment_noise(line: str, *, supports_template_strings: bool) -> str:
-        cleaned: list[str] = []
-        in_single = False
-        in_double = False
-        in_template = False
-        escaped = False
-
-        for index, char in enumerate(line):
-            next_char = line[index + 1] if index + 1 < len(line) else ""
-            if in_single:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == "'":
-                    in_single = False
-                cleaned.append(" ")
-                continue
-            if in_double:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_double = False
-                cleaned.append(" ")
-                continue
-            if in_template:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == "`":
-                    in_template = False
-                cleaned.append(" ")
-                continue
-            if char == "/" and next_char == "/":
-                break
-            if char == "'":
-                in_single = True
-                cleaned.append(" ")
-                continue
-            if char == '"':
-                in_double = True
-                cleaned.append(" ")
-                continue
-            if supports_template_strings and char == "`":
-                in_template = True
-                cleaned.append(" ")
-                continue
-            cleaned.append(char)
-        return "".join(cleaned)
-
-    for line_number, line in enumerate(lines, start=1):
-        if symbol_pattern.search(line):
-            references.append({
-                "name": symbol,
-                "kind": "reference",
-                "file": str(path),
-                "line": line_number,
-                "text": line,
-            })
-        supports_template_strings = path.suffix in _JS_TS_SUFFIXES
-        sanitized_line = _strip_line_string_and_comment_noise(
-            line, supports_template_strings=supports_template_strings
-        )
-        # Task 326: keep the historical "at most one call row per line" shape (downstream dedupe
-        # keys on file+line), but require at least one occurrence on the line that is NOT a
-        # declaration before emitting it.
-        if any(
-            _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: call_match.start()]) is None
-            for call_match in call_pattern.finditer(sanitized_line)
-        ):
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "text": line,
-            })
-
-    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    return references, calls
 
 
 _JS_TS_TYPE_ANCESTOR_TYPES: set[str] = {
@@ -5383,350 +3541,6 @@ def _js_ts_classify_ref_kind(node: Any) -> str:
     return "value"
 
 
-def _js_ts_references_and_calls(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _JS_TS_SUFFIXES:
-        return [], []
-
-    try:
-        source = _self._read_source_text_cached(str(path))
-    except (OSError, UnicodeDecodeError):
-        return [], []
-
-    # PERF increment 1 / Section B (Fable-designed): binding resolution only needs the source
-    # TEXT (not a parse tree), so it now runs BEFORE the parse -- letting a symbol-absent file
-    # skip tree-sitter parsing entirely below (the refs loop that follows has no prefilter,
-    # unlike the caller-scan literal check, so this is the biggest single payoff in this file).
-    # TRAP (do not reorder): this pass must run first so a renamed re-export
-    # (`export {x as y} from "./mod"`) still triggers a parse even though the literal target
-    # symbol name never appears in THIS file's text -- alias_names ends up non-empty and the
-    # early-exit below correctly falls through to parsing. See test_js_ts_advanced_resolution.py
-    # ::test_aliased_re_export_chain_resolves_to_original_definition.
-    alias_resolution_by_name: dict[str, dict[str, Any]] = {}
-    for binding in _js_ts_named_import_bindings(source):
-        if str(binding.get("statement_kind", "import")) != "import":
-            continue
-        resolved_import = _js_ts_resolve_imported_symbol(
-            path,
-            str(binding.get("module", "")),
-            str(binding.get("imported", "")),
-            repo_root,
-        )
-        if resolved_import is not None:
-            if str(resolved_import.get("symbol")) != symbol:
-                continue
-            alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
-            continue
-        if str(binding.get("imported", "")) == symbol:
-            alias_resolution_by_name[str(binding.get("local", ""))] = {
-                "provenance": [],
-                "confidence": 0.95,
-            }
-    for binding in _js_ts_default_import_bindings(source):
-        resolved_import = _js_ts_resolve_imported_symbol(
-            path,
-            str(binding.get("module", "")),
-            "default",
-            repo_root,
-        )
-        if resolved_import is None or str(resolved_import.get("symbol")) != symbol:
-            continue
-        alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
-    alias_names = {name for name in alias_resolution_by_name if name}
-
-    if symbol not in source and not alias_names:
-        return [], []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return [], []
-    parsed_source, source_bytes, tree = parsed
-    # `lines` MUST come from the SAME read as `source_bytes`/`tree` (all three from the single
-    # `_parsed_source_and_tree` product), NOT from the earlier `source` text read above: the two are
-    # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
-    # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
-    # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
-    lines = parsed_source.splitlines()
-    references: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _line_text(node: Any) -> str:
-        line_index = node.start_point[0]
-        return lines[line_index] if 0 <= line_index < len(lines) else ""
-
-    def _is_definition_identifier(node: Any) -> bool:
-        parent = node.parent
-        if parent is None:
-            return False
-        if _node_has_ancestor_type(node, {"import_statement"}):
-            return True
-        if parent.type in {
-            "function_declaration",
-            "class_declaration",
-            "method_definition",
-            "generator_function_declaration",
-        }:
-            return True
-        return bool(parent.type == "import_specifier")
-
-    def _walk(node: Any) -> None:
-        node_type = node.type
-        node_text = _node_text(node) if node_type in {"identifier", "property_identifier"} else ""
-        matched_identifier = node_text == symbol or (
-            node_type == "identifier" and node_text in alias_names
-        )
-        if matched_identifier:
-            if not _is_definition_identifier(node):
-                alias_reference_resolution = (
-                    alias_resolution_by_name.get(node_text) if node_type == "identifier" else None
-                )
-                try:
-                    ref_kind = _self._js_ts_classify_ref_kind(node)
-                except Exception:
-                    # F20: a classifier bug must only default THIS row to "value", never drop
-                    # every reference in the file -- classify-only, so a failure here can never
-                    # be allowed to look like a fail-closed backend error.
-                    ref_kind = "value"
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "ref_kind": ref_kind,
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(
-                                alias_reference_resolution.get("provenance", [])
-                            ),
-                            "resolution_confidence": float(
-                                alias_reference_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_reference_resolution
-                        else {}
-                    ),
-                })
-        elif node_type == "call_expression":
-            function_node = node.child_by_field_name("function")
-            matched = False
-            alias_resolution: dict[str, Any] | None = None
-            if function_node is not None:
-                if function_node.type in {"identifier", "property_identifier"}:
-                    function_name = _node_text(function_node)
-                    matched = function_name == symbol or (
-                        function_node.type == "identifier" and function_name in alias_names
-                    )
-                    if function_node.type == "identifier":
-                        alias_resolution = alias_resolution_by_name.get(function_name)
-                elif function_node.type == "member_expression":
-                    property_node = function_node.child_by_field_name("property")
-                    matched = bool(
-                        property_node is not None and _node_text(property_node) == symbol
-                    )
-            if matched:
-                calls.append({
-                    "name": symbol,
-                    "kind": "call",
-                    "ref_kind": "call",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                            "resolution_confidence": float(
-                                alias_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_resolution
-                        else {}
-                    ),
-                })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    return references, calls
-
-
-def _js_ts_provider_alias_calls(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    include_assignment_wrappers: bool = False,
-) -> list[dict[str, Any]]:
-    if path.suffix not in _JS_TS_SUFFIXES:
-        return []
-
-    try:
-        source = _self._read_source_text_cached(str(path))
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    lines = source.splitlines()
-    alias_resolution_by_name: dict[str, dict[str, Any]] = {}
-    for binding in _js_ts_named_import_bindings(source):
-        if str(binding.get("statement_kind", "import")) != "import":
-            continue
-        resolved_import = _js_ts_resolve_imported_symbol(
-            path,
-            str(binding.get("module", "")),
-            str(binding.get("imported", "")),
-            repo_root,
-        )
-        if resolved_import is not None:
-            if str(resolved_import.get("symbol")) != symbol:
-                continue
-            alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
-            continue
-        if str(binding.get("imported", "")) == symbol:
-            alias_resolution_by_name[str(binding.get("local", ""))] = {
-                "provenance": [],
-                "confidence": 0.95,
-            }
-    for binding in _js_ts_default_import_bindings(source):
-        resolved_import = _js_ts_resolve_imported_symbol(
-            path,
-            str(binding.get("module", "")),
-            "default",
-            repo_root,
-        )
-        if resolved_import is None or str(resolved_import.get("symbol")) != symbol:
-            continue
-        alias_resolution_by_name[str(binding.get("local", ""))] = dict(resolved_import)
-    alias_names = {name for name in alias_resolution_by_name if name}
-
-    def _strip_js_ts_string_and_comment_noise(line: str) -> str:
-        cleaned: list[str] = []
-        in_single = False
-        in_double = False
-        in_template = False
-        escaped = False
-
-        for index, char in enumerate(line):
-            next_char = line[index + 1] if index + 1 < len(line) else ""
-            if in_single:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == "'":
-                    in_single = False
-                cleaned.append(" ")
-                continue
-            if in_double:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_double = False
-                cleaned.append(" ")
-                continue
-            if in_template:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == "`":
-                    in_template = False
-                cleaned.append(" ")
-                continue
-            if char == "/" and next_char == "/":
-                break
-            if char == "'":
-                in_single = True
-                cleaned.append(" ")
-                continue
-            if char == '"':
-                in_double = True
-                cleaned.append(" ")
-                continue
-            if char == "`":
-                in_template = True
-                cleaned.append(" ")
-                continue
-            cleaned.append(char)
-        return "".join(cleaned)
-
-    if include_assignment_wrappers:
-        assignment_pattern = re.compile(
-            r"\b(?:const|let|var)\s+(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_]*)\b"
-        )
-        changed = True
-        while changed:
-            changed = False
-            for line in lines:
-                match = assignment_pattern.search(line)
-                if match is None:
-                    continue
-                value_name = match.group("value")
-                local_name = match.group("local")
-                if value_name not in alias_names or local_name in alias_names:
-                    continue
-                alias_names.add(local_name)
-                alias_resolution_by_name[local_name] = dict(
-                    alias_resolution_by_name.get(value_name, {})
-                )
-                changed = True
-
-    calls: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        sanitized_line = _strip_js_ts_string_and_comment_noise(line)
-        for alias_name in sorted(alias_names):
-            alias_match = re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line)
-            if alias_match is None:
-                continue
-            # Task 326 (REOPENED): `\bNAME\s*\(` also matches `fn NAME(` / `function NAME(` -- a
-            # DECLARATION, not a call site. The first fix for this put the guard in
-            # `_regex_references_and_calls`, which sits LATER in the fallback chain and is never
-            # reached on a wheel install (no tree-sitter grammar -> the AST arm returns nothing ->
-            # THIS arm answers and stops the chain), so the defect shipped in v1.99.1 with green
-            # unit tests. Reuses the one shared `_DEFINITION_KEYWORD_BEFORE_SYMBOL` constant
-            # rather than a second regex, so the arms cannot drift apart again.
-            if _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: alias_match.start()]):
-                continue
-            alias_resolution = alias_resolution_by_name.get(alias_name, {})
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "end_line": line_number,
-                "text": line,
-                "alias": alias_name,
-                "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
-            })
-    calls.sort(
-        key=lambda item: (item["file"], item["line"], str(item.get("alias", "")), item["text"])
-    )
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, int, int, str]] = set()
-    for call_entry in calls:
-        key = (
-            str(call_entry["file"]),
-            int(call_entry["line"]),
-            int(call_entry.get("end_line", call_entry["line"])),
-            str(call_entry.get("alias", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(call_entry)
-    return deduped
-
-
 def _rust_classify_ref_kind(node: Any) -> str:
     """Classify an already-matched Rust ``identifier`` reference node (T1 additive).
 
@@ -5783,437 +3597,6 @@ def _rust_classify_ref_kind(node: Any) -> str:
     return "value"
 
 
-def _rust_references_and_calls(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _RUST_SUFFIXES:
-        return [], []
-
-    try:
-        source = _self._read_source_text_cached(str(path))
-    except (OSError, UnicodeDecodeError):
-        return [], []
-
-    # PERF increment 1 / Section B mirror (Fable-designed): same alias-aware early exit as
-    # _js_ts_references_and_calls above -- bindings only need the source TEXT, so they're
-    # resolved before the parse, and a symbol-absent file with no matching `use` binding skips
-    # tree-sitter parsing entirely.
-    bindings = _rust_use_bindings(source)
-    local_name_resolution_by_name: dict[str, dict[str, Any]] = {}
-    for binding in bindings:
-        resolved_import = _rust_resolve_use_binding(path, binding, symbol, repo_root)
-        if resolved_import is None:
-            continue
-        local_name = str(binding.get("local", "") or binding.get("imported", "") or symbol)
-        local_name_resolution_by_name[local_name] = dict(resolved_import)
-        if bool(binding.get("wildcard")):
-            local_name_resolution_by_name.setdefault(symbol, dict(resolved_import))
-    local_names = {name for name in local_name_resolution_by_name if name}
-
-    if symbol not in source and not local_names:
-        return [], []
-
-    parsed = _parsed_source_and_tree(str(path))
-    if parsed is None:
-        return [], []
-    parsed_source, source_bytes, tree = parsed
-    # `lines` MUST come from the SAME read as `source_bytes`/`tree` (all three from the single
-    # `_parsed_source_and_tree` product), NOT from the earlier `source` text read above: the two are
-    # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
-    # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
-    # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
-    lines = parsed_source.splitlines()
-    references: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _line_text(node: Any) -> str:
-        line_index = node.start_point[0]
-        return lines[line_index] if 0 <= line_index < len(lines) else ""
-
-    def _is_definition_identifier(node: Any) -> bool:
-        parent = node.parent
-        if parent is None:
-            return False
-        return bool(parent.type in {"function_item", "struct_item", "enum_item", "trait_item"})
-
-    def _walk(node: Any) -> None:
-        node_type = node.type
-        if node_type == "identifier":
-            node_text = _node_text(node)
-            alias_resolution = local_name_resolution_by_name.get(node_text)
-            if (
-                (node_text == symbol or node_text in local_names)
-                and not _is_definition_identifier(node)
-                and not _node_has_ancestor_type(node, {"use_declaration"})
-            ):
-                try:
-                    ref_kind = _self._rust_classify_ref_kind(node)
-                except Exception:
-                    # F20: a classifier bug must only default THIS row to "value", never drop
-                    # every reference in the file.
-                    ref_kind = "value"
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "ref_kind": ref_kind,
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                            "resolution_confidence": float(
-                                alias_resolution.get("confidence", 0.95)
-                            ),
-                        }
-                        if alias_resolution
-                        else {}
-                    ),
-                })
-        elif node_type == "call_expression":
-            function_node = node.child_by_field_name("function")
-            matched = False
-            call_resolution: dict[str, Any] | None = None
-            if function_node is not None:
-                if function_node.type == "identifier":
-                    function_name = _node_text(function_node)
-                    matched = function_name == symbol or function_name in local_names
-                    call_resolution = local_name_resolution_by_name.get(function_name)
-                elif function_node.type == "field_expression":
-                    field_node = function_node.child_by_field_name("field")
-                    matched = bool(field_node is not None and _node_text(field_node) == symbol)
-                elif function_node.type == "scoped_identifier":
-                    name_node = function_node.child_by_field_name("name")
-                    matched = bool(name_node is not None and _node_text(name_node) == symbol)
-            if matched:
-                references.append({
-                    "name": symbol,
-                    "kind": "reference",
-                    "ref_kind": "call",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(call_resolution.get("provenance", [])),
-                            "resolution_confidence": float(call_resolution.get("confidence", 0.95)),
-                        }
-                        if call_resolution
-                        else {}
-                    ),
-                })
-                calls.append({
-                    "name": symbol,
-                    "kind": "call",
-                    "ref_kind": "call",
-                    "file": str(path),
-                    "line": node.start_point[0] + 1,
-                    "text": _line_text(node),
-                    **(
-                        {
-                            "resolution_provenance": list(call_resolution.get("provenance", [])),
-                            "resolution_confidence": float(call_resolution.get("confidence", 0.95)),
-                        }
-                        if call_resolution
-                        else {}
-                    ),
-                })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    references.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    calls.sort(key=lambda item: (item["file"], item["line"], item["text"]))
-    return references, calls
-
-
-def _rust_provider_alias_calls(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    include_assignment_wrappers: bool = False,
-) -> list[dict[str, Any]]:
-    if path.suffix not in _RUST_SUFFIXES:
-        return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    lines = source.splitlines()
-    bindings = _rust_use_bindings(source)
-    alias_resolution_by_name: dict[str, dict[str, Any]] = {}
-    for binding in bindings:
-        resolved_import = _rust_resolve_use_binding(path, binding, symbol, repo_root)
-        if resolved_import is None:
-            continue
-        local_name = str(binding.get("local", "") or binding.get("imported", "") or symbol)
-        alias_resolution_by_name[local_name] = dict(resolved_import)
-        if bool(binding.get("wildcard")):
-            alias_resolution_by_name.setdefault(symbol, dict(resolved_import))
-    alias_names = {name for name in alias_resolution_by_name if name}
-
-    def _strip_rust_string_and_comment_noise(line: str) -> str:
-        cleaned: list[str] = []
-        in_single = False
-        in_double = False
-        escaped = False
-
-        for index, char in enumerate(line):
-            next_char = line[index + 1] if index + 1 < len(line) else ""
-            if in_single:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == "'":
-                    in_single = False
-                cleaned.append(" ")
-                continue
-            if in_double:
-                if escaped:
-                    escaped = False
-                elif char == "\\":
-                    escaped = True
-                elif char == '"':
-                    in_double = False
-                cleaned.append(" ")
-                continue
-            if char == "/" and next_char == "/":
-                break
-            if char == "'":
-                in_single = True
-                cleaned.append(" ")
-                continue
-            if char == '"':
-                in_double = True
-                cleaned.append(" ")
-                continue
-            cleaned.append(char)
-        return "".join(cleaned)
-
-    if include_assignment_wrappers:
-        assignment_pattern = re.compile(
-            r"\blet\s+(?:mut\s+)?(?P<local>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?P<value>[A-Za-z_][A-Za-z0-9_:]*)\b"
-        )
-        changed = True
-        while changed:
-            changed = False
-            for line in lines:
-                match = assignment_pattern.search(line)
-                if match is None:
-                    continue
-                value_name = match.group("value").split("::")[-1]
-                local_name = match.group("local")
-                if value_name not in alias_names or local_name in alias_names:
-                    continue
-                alias_names.add(local_name)
-                alias_resolution_by_name[local_name] = dict(
-                    alias_resolution_by_name.get(value_name, {})
-                )
-                changed = True
-
-    calls: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        sanitized_line = _strip_rust_string_and_comment_noise(line)
-        for alias_name in sorted(alias_names):
-            alias_match = re.search(rf"\b{re.escape(alias_name)}\s*\(", sanitized_line)
-            if alias_match is None:
-                continue
-            # Task 326 (REOPENED): `\bNAME\s*\(` also matches `fn NAME(` / `function NAME(` -- a
-            # DECLARATION, not a call site. The first fix for this put the guard in
-            # `_regex_references_and_calls`, which sits LATER in the fallback chain and is never
-            # reached on a wheel install (no tree-sitter grammar -> the AST arm returns nothing ->
-            # THIS arm answers and stops the chain), so the defect shipped in v1.99.1 with green
-            # unit tests. Reuses the one shared `_DEFINITION_KEYWORD_BEFORE_SYMBOL` constant
-            # rather than a second regex, so the arms cannot drift apart again.
-            if _DEFINITION_KEYWORD_BEFORE_SYMBOL.search(sanitized_line[: alias_match.start()]):
-                continue
-            alias_resolution = alias_resolution_by_name.get(alias_name, {})
-            calls.append({
-                "name": symbol,
-                "kind": "call",
-                "file": str(path),
-                "line": line_number,
-                "end_line": line_number,
-                "text": line,
-                "alias": alias_name,
-                "resolution_provenance": list(alias_resolution.get("provenance", [])),
-                "resolution_confidence": float(alias_resolution.get("confidence", 0.95)),
-            })
-    calls.sort(
-        key=lambda item: (item["file"], item["line"], str(item.get("alias", "")), item["text"])
-    )
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[str, int, int, str]] = set()
-    for call_entry in calls:
-        key = (
-            str(call_entry["file"]),
-            int(call_entry["line"]),
-            int(call_entry.get("end_line", call_entry["line"])),
-            str(call_entry.get("alias", "")),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(call_entry)
-    return deduped
-
-
-def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
-        return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-        tree = _cached_ast_parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return []
-
-    lines = source.splitlines()
-    sources: list[dict[str, Any]] = []
-
-    symbol_nodes = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name == symbol
-    ]
-    symbol_nodes.sort(
-        key=lambda current: (current.lineno, getattr(current, "end_lineno", current.lineno))
-    )
-    for node in symbol_nodes:
-        end_lineno = getattr(node, "end_lineno", node.lineno)
-        block = "\n".join(lines[node.lineno - 1 : end_lineno])
-        if block:
-            block = f"{block}\n"
-        kind = "class" if isinstance(node, ast.ClassDef) else "function"
-        sources.append({
-            "name": symbol,
-            "kind": kind,
-            "file": str(path),
-            "start_line": node.lineno,
-            "end_line": end_lineno,
-            "source": block,
-        })
-
-    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
-    return sources
-
-
-def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _JS_TS_SUFFIXES:
-        return []
-
-    if path.suffix in {".ts", ".tsx"}:
-        parser = _self._typescript_parser(tsx=path.suffix == ".tsx")
-    else:
-        parser = _self._javascript_parser()
-    if parser is None:
-        return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    sources: list[dict[str, Any]] = []
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    kind_by_node_type = {
-        "function_declaration": "function",
-        "class_declaration": "class",
-        "method_definition": "method",
-    }
-
-    def _walk(node: Any) -> None:
-        if node.type in kind_by_node_type:
-            name_node = _js_ts_symbol_name_node(node)
-            if name_node is not None and _node_text(name_node) == symbol:
-                block = _node_text(node)
-                if block and not block.endswith("\n"):
-                    block = f"{block}\n"
-                sources.append({
-                    "name": symbol,
-                    "kind": kind_by_node_type[node.type],
-                    "file": str(path),
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "source": block,
-                })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
-    return sources
-
-
-def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _RUST_SUFFIXES:
-        return []
-
-    parser = _self._rust_parser()
-    if parser is None:
-        return []
-
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    source_bytes = source.encode("utf-8")
-    tree = parser.parse(source_bytes)
-    sources: list[dict[str, Any]] = []
-    kind_map = {
-        "function_item": "function",
-        "struct_item": "struct",
-        "enum_item": "enum",
-        "trait_item": "trait",
-    }
-
-    def _node_text(node: Any) -> str:
-        return _tree_sitter_node_text(source_bytes, node)
-
-    def _walk(node: Any) -> None:
-        if node.type in kind_map:
-            name_node = node.child_by_field_name("name")
-            if name_node is None:
-                for child in node.children:
-                    if child.type == "identifier":
-                        name_node = child
-                        break
-            if name_node is not None and _node_text(name_node) == symbol:
-                block = _node_text(node)
-                if block and not block.endswith("\n"):
-                    block = f"{block}\n"
-                sources.append({
-                    "name": symbol,
-                    "kind": kind_map[node.type],
-                    "file": str(path),
-                    "start_line": node.start_point[0] + 1,
-                    "end_line": node.end_point[0] + 1,
-                    "source": block,
-                })
-        for child in node.children:
-            _walk(child)
-
-    _walk(tree.root_node)
-    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
-    return sources
-
-
 def _extract_braced_block(lines: list[str], start_index: int) -> tuple[int, str]:
     start_line = lines[start_index]
     start_line_num = start_index + 1
@@ -6231,92 +3614,6 @@ def _extract_braced_block(lines: list[str], start_index: int) -> tuple[int, str]
         if brace_balance <= 0:
             break
     return end_index + 1, "\n".join(block_lines) + "\n"
-
-
-def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
-        return []
-
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    if path.suffix in _JS_TS_SUFFIXES:
-        escaped_symbol = re.escape(symbol)
-        patterns = [
-            (
-                "class",
-                re.compile(rf"^\s*(?:export\s+)?class\s+({escaped_symbol})\b"),
-            ),
-            (
-                "function",
-                re.compile(rf"^\s*(?:export\s+)?(?:default\s+)?function\s+({escaped_symbol})\b"),
-            ),
-            (
-                "function",
-                re.compile(
-                    rf"^\s*(?:const|let|var)\s+({escaped_symbol})\s*=\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
-                ),
-            ),
-            (
-                "function",
-                re.compile(
-                    rf"^\s*(?:module\.)?exports\.({escaped_symbol})\s*=\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
-                ),
-            ),
-            (
-                "function",
-                re.compile(
-                    rf"^\s*({escaped_symbol})\s*:\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
-                ),
-            ),
-        ]
-    else:
-        patterns = [
-            (
-                "function",
-                re.compile(rf"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+({re.escape(symbol)})\b"),
-            ),
-            (
-                "struct",
-                re.compile(rf"^\s*(?:pub\s+)?struct\s+({re.escape(symbol)})\b"),
-            ),
-            (
-                "enum",
-                re.compile(rf"^\s*(?:pub\s+)?enum\s+({re.escape(symbol)})\b"),
-            ),
-            (
-                "trait",
-                re.compile(rf"^\s*(?:pub\s+)?trait\s+({re.escape(symbol)})\b"),
-            ),
-        ]
-
-    sources: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        matched_kind = None
-        for kind, pattern in patterns:
-            if pattern.match(line):
-                matched_kind = kind
-                break
-        if matched_kind is None:
-            continue
-
-        end_line, block = _extract_braced_block(lines, line_number - 1)
-        sources.append({
-            "name": symbol,
-            "kind": matched_kind,
-            "file": str(path),
-            "start_line": line_number,
-            "end_line": end_line,
-            "source": block,
-        })
-
-    sources.sort(key=lambda item: (item["file"], item["start_line"], item["kind"], item["name"]))
-    return sources
 
 
 # ---------------------------------------------------------------------------
@@ -6337,42 +3634,6 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-def _python_references_and_calls_for_registry(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    definition_dirs: frozenset[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # definition_dirs is part of the uniform registry adapter signature (Go F25); python
-    # ignores it. repo_root likewise -- the underlying extractor is path+symbol only.
-    return _self._python_references_and_calls(path, symbol)
-
-
-def _js_ts_references_and_calls_for_registry(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    definition_dirs: frozenset[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # definition_dirs is part of the uniform registry adapter signature (Go F25); JS/TS
-    # ignores it.
-    return _js_ts_references_and_calls(path, symbol, repo_root)
-
-
-def _rust_references_and_calls_for_registry(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    definition_dirs: frozenset[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # definition_dirs is part of the uniform registry adapter signature (Go F25); rust
-    # ignores it.
-    return _rust_references_and_calls(path, symbol, repo_root)
-
-
 def _go_references_and_calls_for_registry(
     path: Path,
     symbol: str,
@@ -6383,27 +3644,6 @@ def _go_references_and_calls_for_registry(
     # F25: forward definition_dirs so a package-qualified Go call only earns high-confidence
     # "go-import-resolution" when the resolved package actually owns this symbol.
     return lang_go.go_references_and_calls(path, symbol, repo_root, definition_dirs=definition_dirs)
-
-
-def _java_references_and_calls_for_registry(
-    path: Path,
-    symbol: str,
-    repo_root: Path | str | None = None,
-    *,
-    definition_dirs: frozenset[str] | None = None,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    # Task 11A / F7 wave 1: forward definition_dirs so a Java receiver whose type resolves
-    # through package/import into a selected definition's package directory earns the
-    # cross-file confirmed band. `_java_parser()` is called HERE (not duplicated inside
-    # lang_java.py) so grammar-presence has exactly one source of truth -- see lang_java.py's
-    # module docstring for why a second factory would be unsafe.
-    return lang_java.java_references_and_calls(
-        path,
-        symbol,
-        repo_root,
-        parser=_self._java_parser(),
-        definition_dirs=definition_dirs,
-    )
 
 
 def _csharp_references_and_calls_for_registry(
@@ -6512,21 +3752,6 @@ def _references_and_calls_for_path(
         )
     # Explicit documented fallback for references_and_calls is None / unregistered path.
     return _regex_references_and_calls(path, symbol)
-
-
-def _python_provider_alias_calls_for_registry(
-    path: Path, symbol: str, repo_root: Path | str | None = None
-) -> list[dict[str, Any]]:
-    return _python_provider_alias_calls(path, symbol)
-
-
-def _python_import_update_target_for_registry(
-    file_path: Path,
-    symbol: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-) -> dict[str, Any] | None:
-    return _python_import_update_target(file_path, symbol, definition_path)
 
 
 lang_registry.register_language(
@@ -6950,153 +4175,6 @@ def _imports_and_symbols_for_path(
         return current_imports, current_symbols
 
 
-# #74 moat: `tg imports`/`tg importers` -- the scoped file-dependency primitive. Companion to
-# `_imports_and_symbols_for_path` above, which collapses imports to a deduped, line-less
-# `list[str]` (fine for the reverse-import alias graph, useless for a command that must report
-# *where* each import statement lives). Mirrors that function's per-language extraction sources
-# exactly (same AST node types / same regexes as `_python_imports_and_symbols` and
-# `_regex_imports_and_symbols`) so raw recall stays identical -- this only adds the line number
-# `tg imports` needs and keeps one row per import STATEMENT (not one row per imported symbol),
-# which is the right unit for a file-dependency primitive.
-def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
-        return []
-    try:
-        file_size = path.stat().st_size
-    except OSError:
-        file_size = 0
-    if file_size > _max_parse_bytes():
-        return []
-    try:
-        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return []
-
-    entries: list[dict[str, Any]] = []
-    dynamic_entries: list[dict[str, Any]] = []
-    # Nested-scope recall fix: `ast.walk` (not `tree.body`) so a plain `import`/`from ... import`
-    # STATEMENT nested inside a function body, an `if`/`try` block, or an `if TYPE_CHECKING:`
-    # guard is collected too -- `tree.body` only ever visited module-top-level statements,
-    # silently missing anything scope-nested (a `tg imports`/`tg importers` recall gap;
-    # `result_incomplete` stayed False, so the omission was invisible).
-    #
-    # opt10 F4.2 speed fix: this single walk ALSO picks up `__import__`/`import_module`/
-    # `importlib.import_module` CALLS -- the #93 SUB-1 dynamic-import shape -- via
-    # `_python_dynamic_import_entry_for_call` (originally the extracted per-node half of a
-    # whole-tree helper, `_python_dynamic_import_entries`), instead of a SEPARATE second
-    # `ast.walk(tree)` over the same tree the way this used to call that function wholesale.
-    # `ast.Import`/`ast.ImportFrom` and `ast.Call` are disjoint node types, so folding both checks
-    # into one walk and accumulating into two separate lists (`entries` for static,
-    # `dynamic_entries` for dynamic) produces the IDENTICAL two per-kind orderings `ast.walk`
-    # would produce run separately -- `ast.walk` is a deterministic traversal of a fixed tree, so
-    # filtering it once for two disjoint predicates and concatenating the two result lists
-    # (`entries + dynamic_entries`, same order as the old
-    # `entries.extend(_python_dynamic_import_entries(tree))`) is exactly equivalent to filtering
-    # it twice. See test_python_imports_with_lines_merges_dynamic_walk_into_single_ast_walk_pass
-    # (walk-count + order-identity proof). `_python_dynamic_import_entries` itself -- the
-    # whole-tree helper this per-node check was extracted from -- kept its own separate `ast.walk`
-    # alive at the time (opt10 F4.2) purely for its OTHER remaining caller,
-    # `_python_imports_and_symbols`; opt10 lever-1 later migrated that caller to this same
-    # per-node helper too, leaving `_python_dynamic_import_entries` with zero callers, so it was
-    # removed as dead code.
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                entries.append({"module": alias.name, "line": int(node.lineno), "level": 0})
-        elif isinstance(node, ast.ImportFrom):
-            if node.module:
-                entries.append({
-                    "module": node.module,
-                    "line": int(node.lineno),
-                    "level": int(node.level or 0),
-                })
-            elif node.level:
-                # `from . import x` / `from .. import x` -- no dotted module text, only
-                # relative dots plus the imported names, which may themselves be
-                # submodules (e.g. `from . import utils` importing sibling `utils.py`).
-                for alias in node.names:
-                    entries.append({
-                        "module": alias.name,
-                        "line": int(node.lineno),
-                        "level": int(node.level),
-                    })
-        elif isinstance(node, ast.Call):
-            dynamic_entry = _python_dynamic_import_entry_for_call(node)
-            if dynamic_entry is not None:
-                dynamic_entries.append(dynamic_entry)
-    entries.extend(dynamic_entries)
-    return entries
-
-
-def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _JS_TS_SUFFIXES:
-        return []
-    try:
-        file_size = path.stat().st_size
-    except OSError:
-        file_size = 0
-    if file_size > _max_parse_bytes():
-        return []
-    try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    entries: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
-        export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
-        require_match = re.match(
-            r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)"
-            r'\s*=\s*require\(["\']([^"\']+)["\']\)',
-            line,
-        )
-        if import_match:
-            entries.append({"module": import_match.group(1), "line": line_number})
-        if export_from_match:
-            entries.append({"module": export_from_match.group(1), "line": line_number})
-        if require_match:
-            entries.append({"module": require_match.group(1), "line": line_number})
-        else:
-            # #93 SUB-1: `import("x")` call-form and a require(...) not shaped like the
-            # assignment-anchored regex above (bare, chained, or a sub-expression argument).
-            dynamic_hit = _js_ts_dynamic_import_hit(line)
-            if dynamic_hit is not None:
-                module, dynamic_unresolved = dynamic_hit
-                entries.append({
-                    "module": module,
-                    "line": line_number,
-                    "dynamic": True,
-                    "dynamic_unresolved": dynamic_unresolved,
-                })
-    return entries
-
-
-def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _RUST_SUFFIXES:
-        return []
-    try:
-        file_size = path.stat().st_size
-    except OSError:
-        file_size = 0
-    if file_size > _max_parse_bytes():
-        return []
-    try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
-    except (OSError, UnicodeDecodeError):
-        return []
-
-    entries: list[dict[str, Any]] = []
-    for line_number, line in enumerate(lines, start=1):
-        # Same single-line `use ... ;` regex as `_regex_imports_and_symbols` -- a brace-group
-        # `use` spanning multiple lines is a pre-existing extraction gap there too, not a new
-        # one introduced here (recall gaps must stay honest, not silently "fixed" here only).
-        use_match = re.match(r"^\s*use\s+([^;]+);", line)
-        if use_match:
-            entries.append({"module": use_match.group(1).strip(), "line": line_number})
-    return entries
-
-
 def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
     """Raw per-statement imports with 1-based line numbers for the 10 supported languages.
 
@@ -7136,526 +4214,6 @@ def _imports_with_lines_for_path(path: Path) -> list[dict[str, Any]]:
             return lang_c.c_imports_with_lines(path)
         return lang_cpp.cpp_imports_with_lines(path)
     return []
-
-
-def _python_module_parts(module_name: str) -> list[str]:
-    return [part for part in module_name.split(".") if part]
-
-
-def _python_relative_base_dir(importer_path: Path, level: int) -> Path:
-    # PEP 328: level=1 ("from . import x") resolves relative to the importer's OWN package
-    # dir (its parent); level=2 ("from .. import x") goes one dir further up, etc.
-    current = importer_path.parent
-    for _ in range(max(0, level - 1)):
-        current = current.parent
-    return current
-
-
-# #152 fix (CEO v1.69.3 dogfood, 2 HIGH): a Python file that path-hacks its own module
-# resolution via `sys.path.insert(...)`/`sys.path.append(...)` -- a common same-repo vendoring
-# idiom, e.g.:
-#
-#     import sys, os
-#     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "lib"))
-#     from ultrathink_routing import route   # lib/ultrathink_routing.py
-#
-# -- used to be invisible to `_python_candidate_roots` below (whose docstring said so outright:
-# "no `sys.path` to consult") and, transitively, to both its forward (`tg imports`) and reverse
-# (`tg importers`) consumers, which BOTH funnel through it via `_python_module_candidates` --
-# fixing that one chokepoint fixes both directions instead of duplicating the logic twice.
-#
-# Deliberately narrow: only a handful of common, STATICALLY-resolvable directory-argument idioms
-# are recognized --
-#   * a bare string literal:              sys.path.insert(0, "lib")
-#   * os.path.join(DIRNAME_EXPR, "SUB"[, "SUB2", ...])
-#   * DIRNAME_EXPR alone (os.path.dirname(__file__) / os.path.dirname(os.path.abspath(__file__)))
-#   * Path(__file__).parent / "SUB" (chained; optionally str(...)-wrapped)
-#   * os.path.join(HERE, "SUB") where HERE = os.path.dirname(__file__) earlier in the module
-# -- anything with a dynamic/computed component (a variable holding an unknown value, an
-# f-string, an environment lookup, any non-literal expression) is left alone: the module stays
-# `external`/`resolved=None`, honest, the same fail-closed posture as every other resolver in
-# this file. A resolved directory is also required to EXIST and stay INSIDE the scanned repo
-# root (`_path_is_relative_to`, the same containment guard used elsewhere in this module) -- a
-# `..`-escape or an absolute path outside the root is silently ignored, never followed.
-def _python_sys_path_dunder_file(node: ast.AST) -> bool:
-    """True for the bare `__file__` name expression."""
-    return isinstance(node, ast.Name) and node.id == "__file__"
-
-
-def _python_sys_path_os_path_call_args(node: ast.AST, attr: str) -> list[ast.expr] | None:
-    """If `node` is exactly `os.path.<attr>(...)` (the literal dotted chain -- an aliased
-    `import os.path as op` or `from os.path import dirname` is left alone), return its call
-    arguments; else None."""
-    if not isinstance(node, ast.Call):
-        return None
-    func = node.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and func.attr == attr
-        and isinstance(func.value, ast.Attribute)
-        and func.value.attr == "path"
-        and isinstance(func.value.value, ast.Name)
-        and func.value.value.id == "os"
-    ):
-        return None
-    return node.args
-
-
-def _python_sys_path_file_dirname_expr(node: ast.AST) -> bool:
-    """True for `os.path.dirname(__file__)` or `os.path.dirname(os.path.abspath(__file__))` --
-    both mean "this file's own directory"."""
-    args = _python_sys_path_os_path_call_args(node, "dirname")
-    if args is None or len(args) != 1:
-        return False
-    arg = args[0]
-    if _python_sys_path_dunder_file(arg):
-        return True
-    abspath_args = _python_sys_path_os_path_call_args(arg, "abspath")
-    return (
-        abspath_args is not None
-        and len(abspath_args) == 1
-        and _python_sys_path_dunder_file(abspath_args[0])
-    )
-
-
-def _python_sys_path_file_parent_expr(node: ast.AST) -> bool:
-    """True for `Path(__file__).parent` (bare `Path` or a dotted `pathlib.Path`) -- the pathlib
-    equivalent of `_python_sys_path_file_dirname_expr`."""
-    if not (isinstance(node, ast.Attribute) and node.attr == "parent"):
-        return False
-    call = node.value
-    if not (isinstance(call, ast.Call) and len(call.args) == 1):
-        return False
-    if not _python_sys_path_dunder_file(call.args[0]):
-        return False
-    func = call.func
-    if isinstance(func, ast.Name):
-        return func.id == "Path"
-    return isinstance(func, ast.Attribute) and func.attr == "Path"
-
-
-def _python_sys_path_file_dir_expr(node: ast.AST) -> bool:
-    """True for any expression meaning "this file's own directory" (os.path or pathlib style)."""
-    return _python_sys_path_file_dirname_expr(node) or _python_sys_path_file_parent_expr(node)
-
-
-def _python_sys_path_static_str(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    return None
-
-
-def _python_sys_path_join_suffix(node: ast.AST, here_names: frozenset[str]) -> str | None:
-    """`os.path.join(FILE_DIR_EXPR, "SUB"[, "SUB2", ...])` -> `"SUB/SUB2"` (a single "/"-joined
-    suffix to append to the file's own directory), or None if `node` isn't this shape or any
-    "SUB" component isn't a plain string literal. `here_names` lets a `HERE = os.path.dirname(
-    __file__)`-style module-level alias (see `_python_sys_path_here_aliases`) stand in for the
-    literal FILE_DIR_EXPR as the join's first argument."""
-    args = _python_sys_path_os_path_call_args(node, "join")
-    if not args:
-        return None
-    first, *rest = args
-    is_file_dir = _python_sys_path_file_dir_expr(first) or (
-        isinstance(first, ast.Name) and first.id in here_names
-    )
-    if not is_file_dir or not rest:
-        return None
-    parts: list[str] = []
-    for arg in rest:
-        literal = _python_sys_path_static_str(arg)
-        if literal is None:
-            return None
-        parts.append(literal)
-    return "/".join(parts)
-
-
-def _python_sys_path_truediv_suffix(node: ast.AST) -> str | None:
-    """`Path(__file__).parent / "SUB"` (chained divisions allowed, optionally `str(...)`-wrapped)
-    -> `"SUB"`, or None if `node` isn't this shape or any segment isn't a plain string literal."""
-    current: ast.AST = node
-    if (
-        isinstance(current, ast.Call)
-        and isinstance(current.func, ast.Name)
-        and current.func.id == "str"
-        and len(current.args) == 1
-    ):
-        current = current.args[0]
-    parts: list[str] = []
-    while isinstance(current, ast.BinOp) and isinstance(current.op, ast.Div):
-        literal = _python_sys_path_static_str(current.right)
-        if literal is None:
-            return None
-        parts.append(literal)
-        current = current.left
-    if not parts or not _python_sys_path_file_parent_expr(current):
-        return None
-    parts.reverse()
-    return "/".join(parts)
-
-
-def _python_sys_path_here_aliases(tree: ast.Module) -> frozenset[str]:
-    """Module-level `HERE = os.path.dirname(__file__)`-style aliases (the optional bullet #5 of
-    the #152 idiom list above) -- lets `os.path.join(HERE, "SUB")` resolve the same as spelling
-    the dirname expression out inline. Deliberately broad-recall (`ast.walk`, not just
-    `tree.body`), matching this module's established nested-scope extraction posture -- a name
-    later reassigned to something else is a rare, low-risk over-recognition: it only ever WIDENS
-    which directories get tried, it never resolves to a wrong FILE (the final candidate still
-    has to exist on disk, inside the repo root)."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
-            continue
-        target = node.targets[0]
-        if isinstance(target, ast.Name) and _python_sys_path_file_dir_expr(node.value):
-            names.add(target.id)
-    return frozenset(names)
-
-
-def _python_sys_path_insert_or_append_arg(node: ast.Call) -> ast.expr | None:
-    """`sys.path.insert(idx, ARG)` / `sys.path.append(ARG)` -> `ARG`, else None. Only the plain,
-    unaliased `sys.path` attribute chain is recognized (`import sys` then `sys.path....`) -- an
-    aliased `sys` import (`import sys as _sys`) is left alone, the same fail-closed posture as
-    every other idiom this fix does not try to statically resolve."""
-    func = node.func
-    if not (
-        isinstance(func, ast.Attribute)
-        and isinstance(func.value, ast.Attribute)
-        and func.value.attr == "path"
-        and isinstance(func.value.value, ast.Name)
-        and func.value.value.id == "sys"
-    ):
-        return None
-    if func.attr == "insert" and len(node.args) >= 2:
-        return node.args[1]
-    if func.attr == "append" and len(node.args) >= 1:
-        return node.args[0]
-    return None
-
-
-def _python_sys_path_arg_to_dir(
-    arg: ast.expr, filedir: Path, here_names: frozenset[str]
-) -> Path | None:
-    """Resolve one `sys.path.insert`/`.append` directory ARGUMENT expression to an absolute
-    `Path` relative to `filedir` (the importing file's own directory) -- or None if `arg` isn't
-    one of the recognized static idioms."""
-    if _python_sys_path_file_dir_expr(arg):
-        return filedir
-    join_suffix = _python_sys_path_join_suffix(arg, here_names)
-    if join_suffix is not None:
-        return filedir / join_suffix
-    truediv_suffix = _python_sys_path_truediv_suffix(arg)
-    if truediv_suffix is not None:
-        return filedir / truediv_suffix
-    literal = _python_sys_path_static_str(arg)
-    if literal is not None:
-        return filedir / literal
-    return None
-
-
-@_mtime_aware_cache(maxsize=1024)  # #152 fix: mtime+size in key; one AST walk per file, shared
-def _python_sys_path_hack_dirs(path_str: str) -> tuple[str, ...]:
-    """Statically-resolvable absolute directories this Python file adds to `sys.path` via
-    `sys.path.insert`/`sys.path.append` (see the idiom list in the block comment above). Returns
-    `()` for a file with no such calls, or where every call's directory argument is a
-    non-literal/dynamic expression.
-
-    Cached by (path, mtime, size) -- a pure function of the file's own source text -- so a file
-    with N raw import entries (`_python_candidate_roots` runs once PER entry) parses and walks
-    its own AST for this exactly once, not N times.
-
-    Deliberately returns raw, un-containment-checked strings: existence + "stays inside the
-    scanned repo root" is enforced by the caller (`_python_sys_path_hack_roots`), which has the
-    `repo_root` this function does not need in its cache key -- the same file's sys.path hacks
-    resolve to the same absolute dirs regardless of which root the caller is scanning from.
-    """
-    try:
-        file_size = Path(path_str).stat().st_size
-    except OSError:
-        file_size = 0
-    if file_size > _max_parse_bytes():
-        return ()
-    try:
-        source = _self._read_source_text_cached(path_str)
-    except (OSError, UnicodeDecodeError):
-        return ()
-    if "sys.path" not in source:
-        # Fast-reject the overwhelming common case (no sys.path manipulation at all) without
-        # paying for a full `ast.walk` -- both recognized calls (`sys.path.insert`/`.append`)
-        # always contain this literal substring, so this can never skip a real hit.
-        return ()
-    try:
-        tree = _cached_ast_parse(source)
-    except SyntaxError:
-        return ()
-
-    filedir = Path(path_str).parent
-    here_names = _python_sys_path_here_aliases(tree)
-    dirs: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        arg = _python_sys_path_insert_or_append_arg(node)
-        if arg is None:
-            continue
-        resolved_dir = _python_sys_path_arg_to_dir(arg, filedir, here_names)
-        if resolved_dir is not None:
-            dirs.append(str(resolved_dir))
-    return tuple(dict.fromkeys(dirs))
-
-
-def _python_sys_path_hack_roots(
-    importer_path: Path, repo_root: Path | str | None
-) -> tuple[Path, ...]:
-    """Existing, containment-checked sys.path-hacked directories for `importer_path` (raw
-    extraction: `_python_sys_path_hack_dirs`). Shared by `_python_candidate_roots` (folds these
-    into the general search-root list, tried FIRST) and `_python_module_candidates` (tags the
-    winning candidate's provenance as "sys-path-insert") so the existence/containment check
-    itself lives in exactly one place. Returns `()` when `repo_root` is unknown (`None`) -- no
-    root means no containment boundary to enforce, so this resolves nothing rather than guess.
-    """
-    normalized_root = _normalized_repo_root(repo_root)
-    if normalized_root is None:
-        return ()
-    validated: list[Path] = []
-    for hacked_dir in _python_sys_path_hack_dirs(str(importer_path)):
-        candidate_dir = Path(hacked_dir)
-        if candidate_dir.is_dir() and _self._path_is_relative_to(candidate_dir, normalized_root):
-            validated.append(candidate_dir)
-    return tuple(validated)
-
-
-def _python_candidate_roots(importer_path: Path, repo_root: Path | str | None) -> list[Path]:
-    """Plausible absolute-import search roots for a Python file.
-
-    Unlike JS/TS (tsconfig baseUrl/paths) or Rust (Cargo.toml workspace members), tensor-grep
-    has no primed "project context" for Python module resolution -- this is the net-new
-    resolution seam the #74 design flagged as the highest-risk part of `tg imports`. Tries, in
-    order: any directory the file itself adds via a statically-resolvable
-    `sys.path.insert`/`.append` call (#152 fix -- see `_python_sys_path_hack_roots`), the repo
-    root, a `src/` layout root, the importer's own directory, and each ancestor directory up to
-    the repo root (covers same-package absolute imports without a full `sys.path` simulation). A
-    bare specifier that is a local workspace package NOT reachable via one of these roots is
-    honestly misclassified as external -- see the module docstring risk note; recall gaps here
-    are disclosed via ``external``/``unresolved``, never silently hidden.
-    """
-    roots: list[Path] = []
-    seen: set[str] = set()
-
-    def _add(candidate: Path | None) -> None:
-        if candidate is None:
-            return
-        key = str(candidate)
-        if key not in seen:
-            seen.add(key)
-            roots.append(candidate)
-
-    for hacked_root in _python_sys_path_hack_roots(importer_path, repo_root):
-        _add(hacked_root)
-    normalized_root = _normalized_repo_root(repo_root)
-    _add(normalized_root)
-    if normalized_root is not None:
-        _add(normalized_root / "src")
-    current = importer_path.parent
-    _add(current)
-    if normalized_root is not None:
-        try:
-            current.relative_to(normalized_root)
-            within_root = True
-        except ValueError:
-            within_root = False
-        if within_root:
-            while current != normalized_root:
-                current = current.parent
-                _add(current)
-    # Walk up past every `__init__.py`-marked package directory: the first ancestor WITHOUT
-    # one is the natural Python "import root" for an absolute dotted import (e.g. `pkg.helpers`
-    # written inside `pkg/main.py` resolves relative to pkg's PARENT, not pkg itself). This
-    # covers the common case where no project-root marker file exists at all.
-    package_top = importer_path.parent
-    while (package_top / "__init__.py").exists():
-        parent = package_top.parent
-        if parent == package_top:
-            break
-        package_top = parent
-    _add(package_top)
-    return roots
-
-
-def _python_module_candidates(
-    importer_path: Path,
-    module_name: str,
-    repo_root: Path | str | None = None,
-    *,
-    level: int = 0,
-) -> dict[str, Any]:
-    parts = _python_module_parts(module_name)
-    if not parts:
-        return {"paths": [], "provenance": [], "confidence": 0.0, "path_provenance": {}}
-
-    # opt10 F4.3 speed fast-path: skip the multi-root candidate-path construction below (2
-    # `Path` builds per root, each pushed through the `_resolved_path_str` resolve-and-dedupe
-    # machinery -- ~10-12 `Path.resolve()` calls for a typical root count, PLUS the caller's own
-    # `.is_file()` probe of every returned candidate) for a bare top-level stdlib import
-    # (`import os` / `import sys` / `import json`) -- the dominant import shape, 59-100% of
-    # imports in sampled real files per the opt10 speed campaign.
-    #
-    # SHADOW-SAFETY (the whole correctness risk of this fast-path): `parts[0] in
-    # sys.stdlib_module_names` alone is NOT sufficient -- a repo can ship a same-named top-level
-    # module (e.g. a local `json.py` at its root) that MUST still resolve to that local file, the
-    # same way it would via the general path below (see
-    # test_build_file_imports_stdlib_shadowed_by_local_module_resolves_to_local_file). So this
-    # only returns the fast-path shape after confirming NEITHER shape the general path's
-    # level==0 branch would also probe (`<root>/<name>.py`, `<root>/<name>/__init__.py`) exists
-    # as a real file at ANY of `_python_candidate_roots`' roots -- the exact same roots (repo
-    # root, src/ layout, sys-path-hacked dirs, importer's own dir and ancestors, package-top)
-    # the general path already computes, just probed with a cheap `.is_file()`/`.is_dir()` stat
-    # instead of building+resolving+deduping the full candidate list. Any doubt (an `OSError`
-    # probing a candidate, or `parts[0]` existing locally at all) falls CLOSED to the unchanged
-    # general path below, never guesses.
-    #
-    # Narrowed to `len(parts) == 1` (a bare `import json`, not a dotted `import os.path`):
-    # a dotted stdlib access still needs `root/parts[0]` to be an existing local DIRECTORY for
-    # any local shadow to be possible at all, so the `is_dir()` probe below already catches that
-    # case too and correctly falls through -- but the deeper submodule candidates the general
-    # path would build (`root/parts[0]/parts[1]/...`) are not worth fast-pathing separately here,
-    # so leave every dotted access on the general path unconditionally.
-    #
-    # Returns EXACTLY the shape the general (non-relative) branch below always sets for
-    # `provenance`/`confidence` -- unconditionally, before any candidate is even probed for
-    # existence -- so `_resolve_raw_import_entry` / `_python_module_match_details` read the
-    # identical values off this dict as they would off the general path's result for a module
-    # that genuinely has zero real candidates (see the opt10 PR body's captured baseline: an
-    # empty `paths: []` here is observationally identical to the general path's non-empty-but-
-    # entirely-nonexistent candidate list -- both make `resolved`/`matched` come out the same on
-    # the calling side, since neither contains a real file).
-    if level == 0 and len(parts) == 1 and parts[0] in sys.stdlib_module_names:
-        name = parts[0]
-        shadowed = False
-        for root in _python_candidate_roots(importer_path, repo_root):
-            try:
-                if (root / f"{name}.py").is_file() or (root / name).is_dir():
-                    shadowed = True
-                    break
-            except OSError:
-                shadowed = True  # can't prove no local shadow -- fail closed to the slow path
-                break
-        if not shadowed:
-            return {
-                "paths": [],
-                "provenance": ["python-path-heuristic"],
-                "confidence": 0.7,
-                "path_provenance": {},
-            }
-
-    candidates: list[Path] = []
-    # #152 fix: per-candidate provenance override, keyed by the candidate's OWN resolved path
-    # string -- lets a candidate reached ONLY via a sys.path-hacked root report its specific
-    # "sys-path-insert" provenance instead of the generic "python-path-heuristic" every other
-    # absolute-import candidate gets, without changing `provenance`'s existing list-of-str shape.
-    path_provenance: dict[str, str] = {}
-    if level > 0:
-        base_dir = _python_relative_base_dir(importer_path, level)
-        target = base_dir.joinpath(*parts)
-        candidates.append(target.with_suffix(".py"))
-        candidates.append(target / "__init__.py")
-        provenance = ["relative"]
-        confidence = 1.0
-    else:
-        hacked_roots = {
-            str(current) for current in _python_sys_path_hack_roots(importer_path, repo_root)
-        }
-        for root in _python_candidate_roots(importer_path, repo_root):
-            module_file = root.joinpath(*parts).with_suffix(".py")
-            package_init = root.joinpath(*parts, "__init__.py")
-            candidates.append(module_file)
-            candidates.append(package_init)
-            if str(root) in hacked_roots:
-                for hacked_candidate in (module_file, package_init):
-                    try:
-                        path_provenance[_resolved_path_str(str(hacked_candidate))] = (
-                            "sys-path-insert"
-                        )
-                    except OSError:
-                        continue
-        provenance = ["python-path-heuristic"]
-        confidence = 0.7
-
-    deduped: list[Path] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        try:
-            key = _resolved_path_str(str(candidate))
-        except OSError:
-            continue
-        if key not in seen:
-            seen.add(key)
-            deduped.append(Path(key))
-    return {
-        "paths": deduped,
-        "provenance": provenance,
-        "confidence": confidence,
-        "path_provenance": path_provenance,
-    }
-
-
-def _python_module_match_details(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-    *,
-    level: int = 0,
-) -> dict[str, Any]:
-    """Resolve-then-compare Python reverse-import confirm.
-
-    Mirrors `_js_ts_module_match_details` / `_rust_module_match_details`: reuses the SAME
-    precise resolver the forward `tg imports` uses (`_python_module_candidates`) instead of a
-    bare path-SUFFIX match, so two files sharing a basename (`app/config.py` vs
-    `tools/config.py`) no longer produce a phantom reverse edge just because an importer's
-    `import config` textually ends with "config" (#74 review fix -- see
-    `_module_path_matches_definition`, which is exactly that suffix match and is what this
-    function replaces for the Python confirm step).
-
-    Deliberately has NO suffix-match fallback (unlike JS/TS's bare-specifier partial-resolution
-    or Rust's non-workspace-crate partial-resolution) -- that fallback IS the bug this closes,
-    so it must not be reintroduced here.
-    """
-    candidate_info = _python_module_candidates(importer_path, module_name, repo_root, level=level)
-    resolved_definition = _resolved_path_str(definition_path)
-    if any(str(candidate) == resolved_definition for candidate in candidate_info["paths"]):
-        provenance = list(candidate_info["provenance"])
-        tagged_provenance = candidate_info.get("path_provenance", {}).get(resolved_definition)
-        if tagged_provenance is not None:
-            provenance = [tagged_provenance]
-        return {
-            "matched": True,
-            "provenance": provenance,
-            "confidence": float(candidate_info["confidence"] or 1.0),
-        }
-    return {"matched": False, "provenance": [], "confidence": 0.0}
-
-
-def _python_module_matches_definition(
-    importer_path: Path,
-    module_name: str,
-    definition_path: str,
-    repo_root: Path | str | None = None,
-    *,
-    level: int = 0,
-) -> tuple[bool, list[str]]:
-    """Return `(matched, provenance)`.
-
-    Unlike the bool-only `_js_ts_module_matches_definition` / `_rust_module_matches_definition`
-    siblings, this also threads through `_python_module_match_details`'s `provenance` (notably
-    the "sys-path-insert" tag) -- #155 fix: that tag was computed but provably unreachable
-    (this was the only caller, and it discarded everything but the bool) before this change.
-    The sole caller, `_confirm_import_edges`, uses it to report the tag honestly on `tg
-    importers` reverse edges instead of silently collapsing it into a generic label.
-    """
-    details = _python_module_match_details(
-        importer_path, module_name, definition_path, repo_root, level=level
-    )
-    return bool(details["matched"]), list(details["provenance"])
 
 
 def _group_symbols_by_file(symbols: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -7999,73 +4557,6 @@ def build_repo_map_incremental(
             "sample": list(repo_walk_unreadable_hit.sample),
         }
     return payload
-
-
-def apply_repo_map_output_limits(
-    payload: dict[str, Any],
-    *,
-    max_files: int | None = None,
-) -> dict[str, Any]:
-    if max_files is None:
-        return payload
-
-    normalized_max_files = max(1, int(max_files))
-    limited = dict(payload)
-    original_files = [str(current) for current in payload.get("files", [])]
-    selected_files = original_files[:normalized_max_files]
-    selected_file_set = set(selected_files)
-    original_tests = [str(current) for current in payload.get("tests", [])]
-    selected_tests = original_tests[:normalized_max_files]
-    selected_test_set = set(selected_tests)
-
-    limited["files"] = selected_files
-    limited["tests"] = selected_tests
-    limited["symbols"] = [
-        dict(symbol)
-        for symbol in payload.get("symbols", [])
-        if str(symbol.get("file", "")) in selected_file_set
-    ]
-    limited["imports"] = [
-        dict(entry)
-        for entry in payload.get("imports", [])
-        if str(entry.get("file", "")) in selected_file_set
-    ]
-    for key in ("file_matches", "file_summaries", "sources"):
-        if key in payload:
-            limited[key] = [
-                dict(entry)
-                for entry in payload.get(key, [])
-                if str(entry.get("path", entry.get("file", ""))) in selected_file_set
-            ]
-    if "test_matches" in payload:
-        limited["test_matches"] = [
-            dict(entry)
-            for entry in payload.get("test_matches", [])
-            if str(entry.get("path", entry.get("file", ""))) in selected_test_set
-        ]
-    if "related_paths" in payload:
-        allowed_related_paths = selected_file_set | selected_test_set
-        limited["related_paths"] = [
-            str(path)
-            for path in payload.get("related_paths", [])
-            if str(path) in allowed_related_paths
-        ]
-    _output_capped = len(original_files) > normalized_max_files
-    limited["output_limit"] = {
-        "max_files": normalized_max_files,
-        "emitted_files": len(selected_files),
-        "original_files": len(original_files),
-        # output_limit operates on files already filtered by the repo-map walk,
-        # so these are always project files; possibly_truncated is accurate here.
-        "possibly_truncated": _output_capped,
-        "truncation_cause": "project-files" if _output_capped else None,
-        # Unlike the two scan_limit blocks, "truncated" and "capped" are the SAME condition here,
-        # so this gate is not the narrow one. The value is DERIVED from the cause rather than
-        # hardcoded True: output_limit only ever reports `project-files` today, but deriving it
-        # means a future cause cannot silently inherit "just raise the limit".
-        **({"budget_remediable": budget_remediable("project-files")} if _output_capped else {}),
-    }
-    return limited
 
 
 def build_repo_map_json(
@@ -9804,162 +6295,9 @@ def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
     return _estimate_tokens(json.dumps(payload, ensure_ascii=False))
 
 
-def _apply_context_token_budget(payload: dict[str, Any], max_tokens: int | None) -> dict[str, Any]:
-    """Bound the serialized context pack to ~``max_tokens`` so it stays prompt-injection-ready.
-
-    FILE-DRIVEN + coherent: reduces the ranked-file count via ``apply_repo_map_output_limits`` (which
-    keeps each retained file WITH its symbols/imports/matches consistently), so the bounded pack is a
-    smaller top-ranked slice, never a file list gutted of its symbols. Adapts to file size -- a repo
-    of huge files fits fewer, a repo of small files fits more. ``max_tokens`` of ``None`` / ``<= 0``
-    is a no-op (unbounded opt-out). Records ``token_budget`` honestly.
-    """
-    if max_tokens is None or max_tokens <= 0:
-        return payload
-    estimated = _estimate_payload_tokens(payload)
-    if estimated <= max_tokens:
-        capped = dict(payload)
-        capped["token_budget"] = {
-            "max_tokens": max_tokens,
-            "estimated_tokens": estimated,
-            "truncated": False,
-        }
-        return capped
-    file_count = len(payload.get("files", []))
-    capped = payload
-    while file_count > 1 and estimated > max_tokens:
-        # Proportional first guess, then strictly shrink so we always make progress.
-        guess = max(1, min(file_count - 1, file_count * max_tokens // max(estimated, 1)))
-        capped = apply_repo_map_output_limits(payload, max_files=guess)
-        estimated = _estimate_payload_tokens(capped)
-        file_count = guess
-    if capped is payload:  # over budget even before shrinking (single-file pack); take the top file
-        capped = apply_repo_map_output_limits(payload, max_files=1)
-        estimated = _estimate_payload_tokens(capped)
-    capped = dict(capped)
-    capped["token_budget"] = {
-        "max_tokens": max_tokens,
-        "estimated_tokens": estimated,
-        "truncated": True,
-    }
-    return capped
-
-
 # Secondary (supporting-context) fields trimmed BEFORE the primary answer array when a
 # defs/refs/callers/impact payload exceeds --max-tokens (design #96, answer-first shrink order).
 _SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths")
-
-
-def _apply_symbol_token_budget(
-    payload: dict[str, Any],
-    max_tokens: int | None,
-    *,
-    primary_field: str,
-    companion_fields: tuple[str, ...] = (),
-) -> dict[str, Any]:
-    """Bound a defs/refs/callers/impact payload to ~``max_tokens`` (design #96 item 4).
-
-    Modeled on ``_apply_context_token_budget``'s serialize-then-measure approach, but with an
-    ANSWER-FIRST shrink order: SECONDARY fields (``tests``, ``related_paths`` -- whichever are
-    present; each field's ``{field}_matches`` companion, e.g. impact's ``test_matches``, is
-    cleared alongside it so the real bloat source is not left untouched) are cleared FIRST since
-    they are supporting context, not the answer itself. Only if the payload is STILL over budget
-    after zeroing every secondary field is the PRIMARY answer array (``primary_field`` --
-    ``definitions``/``references``/``callers``/``files``) trimmed, and that is flagged distinctly
-    (``token_budget.primary_truncated``/``primary_omitted``) so an agent trusting "here are all N
-    callers" can tell N was cut for space, not because there were only N. ``companion_fields``
-    (e.g. impact's ``file_matches``, which shares ``files``'s exact order/length by construction)
-    are sliced to the same length as the trimmed primary array so the two never disagree.
-
-    ``max_tokens`` of None/<=0 is a no-op (unbounded opt-out), matching
-    ``_apply_context_token_budget``. This is an OUTPUT-cap, never a scan-truncation signal: it
-    must never set ``result_incomplete``/``partial``/``caller_scan_limit`` (design #96 contract
-    safety section) -- achieved simply by never touching those keys.
-    """
-    if max_tokens is None or max_tokens <= 0:
-        return payload
-    estimated = _estimate_payload_tokens(payload)
-    if estimated <= max_tokens:
-        capped = dict(payload)
-        capped["token_budget"] = {
-            "max_tokens": max_tokens,
-            "estimated_tokens": estimated,
-            "truncated": False,
-            "primary_truncated": False,
-        }
-        return capped
-
-    capped = dict(payload)
-    secondary_trimmed: list[str] = []
-    for field_name in _SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS:
-        if estimated <= max_tokens:
-            break
-        current_value = capped.get(field_name)
-        if isinstance(current_value, list) and current_value:
-            capped[field_name] = []
-            companion = f"{field_name}_matches"
-            if isinstance(capped.get(companion), list):
-                capped[companion] = []
-            secondary_trimmed.append(field_name)
-            estimated = _estimate_payload_tokens(capped)
-
-    primary_truncated = False
-    primary_omitted = 0
-    if estimated > max_tokens:
-        primary_list = list(capped.get(primary_field) or [])
-        original_primary_count = len(primary_list)
-        count = original_primary_count
-        # Floor at 1, never 0 (mirrors _apply_context_token_budget's file-shrink floor): trimming
-        # the primary answer array all the way to an EMPTY list is indistinguishable from a
-        # genuine "not found" (the exact "confident false zero" this codebase's own
-        # _scan_truncation_warning docstring calls "the single most dangerous output for a
-        # refactor-safety tool") -- _emit_symbol_command_result reads an empty primary field as
-        # not_found and exits 1, which would silently relabel a budget trim as an absence.
-        while count > 1 and estimated > max_tokens:
-            # Proportional first guess, then strictly shrink so we always make progress (mirrors
-            # _apply_context_token_budget's file-shrink loop).
-            guess = max(1, min(count - 1, count * max_tokens // max(estimated, 1)))
-            capped[primary_field] = primary_list[:guess]
-            estimated = _estimate_payload_tokens(capped)
-            count = guess
-        # count/original_primary_count already <=1 (0 or 1 entries): nothing left to trim without
-        # zeroing the answer out, so best-effort stop here even if still over budget -- keeping a
-        # truthful non-empty answer outranks strictly honoring the token cap.
-        new_primary_len = len(capped.get(primary_field) or [])
-        primary_omitted = max(0, original_primary_count - new_primary_len)
-        primary_truncated = primary_omitted > 0
-        if primary_truncated:
-            surviving_primary = capped.get(primary_field) or []
-            # Filter by PATH MEMBERSHIP (not index/length slicing): a companion like impact's
-            # `file_matches` is not guaranteed to stay index-aligned with `files` once the CLI
-            # layer has post-processed the primary field (e.g. impact's own caller-merge step
-            # appends extra file paths to `files` with no matching `file_matches` entry) -- a
-            # length-slice would silently keep the WRONG entries in that case.
-            if surviving_primary and all(isinstance(item, str) for item in surviving_primary):
-                surviving_set = set(surviving_primary)
-                for companion in companion_fields:
-                    companion_value = capped.get(companion)
-                    if isinstance(companion_value, list):
-                        capped[companion] = [
-                            entry
-                            for entry in companion_value
-                            if not (isinstance(entry, dict) and "path" in entry)
-                            or str(entry["path"]) in surviving_set
-                        ]
-            else:
-                for companion in companion_fields:
-                    companion_value = capped.get(companion)
-                    if isinstance(companion_value, list):
-                        capped[companion] = companion_value[:new_primary_len]
-
-    capped["token_budget"] = {
-        "max_tokens": max_tokens,
-        "estimated_tokens": estimated,
-        "truncated": True,
-        "secondary_fields_trimmed": secondary_trimmed,
-        "primary_truncated": primary_truncated,
-        "primary_omitted": primary_omitted,
-    }
-    return capped
 
 
 def build_context_pack(
@@ -10038,89 +6376,6 @@ def build_context_pack_json(
         ),
         indent=2,
     )
-
-
-def _render_context_parts(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    parts: list[dict[str, Any]] = [{"kind": "query", "text": f"Query: {payload['query']}"}]
-    file_matches_by_path = {str(match["path"]): match for match in payload.get("file_matches", [])}
-    test_matches_by_path = {str(match["path"]): match for match in payload.get("test_matches", [])}
-    symbol_scores_by_key = {
-        (str(symbol["file"]), str(symbol["name"])): int(symbol.get("score", 0))
-        for symbol in payload.get("symbols", [])
-    }
-    tests = [str(current) for current in payload.get("tests", [])]
-    if tests:
-        test_lines = ["Tests:", *[f"- {current}" for current in tests[:3]]]
-        parts.append({
-            "kind": "tests",
-            "text": "\n".join(test_lines),
-            "paths": tests[:3],
-            "provenance": {
-                "matches": [
-                    {
-                        "path": current,
-                        "score": int(test_matches_by_path.get(current, {}).get("score", 0)),
-                        "graph_score": test_matches_by_path.get(current, {}).get("graph_score"),
-                        "reasons": list(test_matches_by_path.get(current, {}).get("reasons", [])),
-                    }
-                    for current in tests[:3]
-                ]
-            },
-        })
-
-    sources_by_file: dict[str, list[dict[str, Any]]] = {}
-    for source in payload.get("sources", []):
-        current = str(source["file"])
-        current_sources = sources_by_file.setdefault(current, [])
-        current_sources.append(source)
-
-    max_files = int(payload.get("max_files", 3))
-    summaries = list(payload.get("file_summaries", []))[:max_files]
-    summarized_paths = {str(summary["path"]) for summary in summaries}
-    for current in [str(path) for path in payload.get("files", [])[:max_files]]:
-        if current in summarized_paths or current not in sources_by_file:
-            continue
-        summaries.append({"path": current, "symbols": []})
-        summarized_paths.add(current)
-
-    for summary in summaries:
-        current_path = str(summary["path"])
-        summary_lines = [f"File: {current_path}", "Summary:"]
-        for symbol in summary.get("symbols", [])[: int(payload.get("max_symbols_per_file", 6))]:
-            summary_lines.append(f"- {symbol['kind']} {symbol['name']} @ line {symbol['line']}")
-        file_match = file_matches_by_path.get(current_path, {})
-        parts.append({
-            "kind": "summary",
-            "path": current_path,
-            "text": "\n".join(summary_lines),
-            "provenance": {
-                "path": current_path,
-                "score": int(file_match.get("score", 0)),
-                "graph_score": file_match.get("graph_score"),
-                "reasons": list(file_match.get("reasons", [])),
-            },
-        })
-        for source in sources_by_file.get(current_path, [])[:2]:
-            file_match = file_matches_by_path.get(current_path, {})
-            symbol_name = str(source["name"])
-            parts.append({
-                "kind": "source",
-                "path": current_path,
-                "symbol": symbol_name,
-                "provenance": {
-                    "path": current_path,
-                    "symbol": symbol_name,
-                    "score": int(file_match.get("score", 0)),
-                    "graph_score": file_match.get("graph_score"),
-                    "reasons": list(file_match.get("reasons", [])),
-                    "symbol_score": symbol_scores_by_key.get((current_path, symbol_name), 0),
-                },
-                "text": (
-                    "Source:\n```text\n"
-                    f"{str(source.get('rendered_source', source['source'])).rstrip()}\n```"
-                ),
-            })
-    return parts
 
 
 def _estimate_tokens_for_len(length: int) -> int:
@@ -10288,183 +6543,6 @@ def _truncate_source_text_to_budget(
         selected_indexes = [1]
 
     return "".join(selected_lines).rstrip("\n"), selected_indexes, True
-
-
-def _apply_source_output_budget(
-    sources: list[dict[str, Any]],
-    *,
-    max_tokens: int | None,
-    max_render_chars: int | None,
-    _profiling_collector: _ProfileCollector | None = None,
-) -> tuple[list[dict[str, Any]], dict[str, Any] | None, list[dict[str, Any]]]:
-    normalized_max_tokens = max_tokens if max_tokens is not None and max_tokens > 0 else None
-    normalized_max_chars = (
-        max_render_chars if max_render_chars is not None and max_render_chars > 0 else None
-    )
-    if normalized_max_tokens is None and normalized_max_chars is None:
-        return sources, None, []
-
-    budgeted_sources: list[dict[str, Any]] = []
-    omitted_sections: list[dict[str, Any]] = []
-    remaining_tokens = normalized_max_tokens
-    remaining_chars = normalized_max_chars
-    original_token_total = 0
-    emitted_token_total = 0
-    original_char_total = 0
-    emitted_char_total = 0
-    truncated_sources = 0
-    omitted_sources = 0
-    omitted_line_count = 0
-
-    for source in sources:
-        rendered_source = str(source.get("rendered_source", source.get("source", "")))
-        original_tokens = _estimate_tokens(
-            rendered_source,
-            _profiling_collector=_profiling_collector,
-        )
-        original_token_total += original_tokens
-        original_char_total += len(rendered_source)
-        original_line_count = len(rendered_source.splitlines())
-        if (remaining_tokens is not None and remaining_tokens <= 0) or (
-            remaining_chars is not None and remaining_chars <= 0
-        ):
-            omitted_sources += 1
-            omitted_line_count += original_line_count
-            omitted_sections.append({
-                "kind": "source_payload",
-                "file": str(source.get("file", "")),
-                "symbol": source.get("name"),
-                "score": 0,
-                "reason": "source_budget_exhausted",
-                "omitted_line_count": original_line_count,
-                "token_estimate": original_tokens,
-            })
-            continue
-
-        truncated_source, selected_lines, truncated = _truncate_source_text_to_budget(
-            rendered_source,
-            max_tokens=remaining_tokens,
-            max_chars=remaining_chars,
-            _profiling_collector=_profiling_collector,
-        )
-        emitted_tokens = _estimate_tokens(
-            truncated_source,
-            _profiling_collector=_profiling_collector,
-        )
-        emitted_token_total += emitted_tokens
-        emitted_char_total += len(truncated_source)
-        if remaining_tokens is not None:
-            remaining_tokens = max(0, remaining_tokens - emitted_tokens)
-        if remaining_chars is not None:
-            remaining_chars = max(0, remaining_chars - len(truncated_source))
-
-        budgeted = dict(source)
-        budgeted["rendered_source"] = truncated_source
-        if "source" in budgeted:
-            budgeted["source"] = truncated_source
-        if truncated:
-            truncated_sources += 1
-            omitted_lines = max(0, original_line_count - len(selected_lines))
-            omitted_line_count += omitted_lines
-            budgeted["line_map"] = _line_map_for_budgeted_lines(
-                _list_of_dicts(source.get("line_map")),
-                selected_lines,
-            )
-            diagnostics = dict(budgeted.get("render_diagnostics", {}))
-            diagnostics["budget_removed_line_count"] = omitted_lines
-            diagnostics["rendered_line_count"] = len(selected_lines)
-            budgeted["render_diagnostics"] = diagnostics
-            omitted_sections.append({
-                "kind": "source_payload",
-                "file": str(source.get("file", "")),
-                "symbol": source.get("name"),
-                "score": 0,
-                "reason": "source_budget",
-                "omitted_line_count": omitted_lines,
-                "token_estimate": original_tokens,
-                "emitted_token_estimate": emitted_tokens,
-            })
-        budgeted["source_budget"] = {
-            "max_tokens": normalized_max_tokens,
-            "max_render_chars": normalized_max_chars,
-            "original_token_estimate": original_tokens,
-            "emitted_token_estimate": emitted_tokens,
-            "original_char_count": len(rendered_source),
-            "emitted_char_count": len(truncated_source),
-            "truncated": truncated,
-        }
-        budgeted_sources.append(budgeted)
-
-    summary = {
-        "max_tokens": normalized_max_tokens,
-        "max_render_chars": normalized_max_chars,
-        "original_token_estimate": original_token_total,
-        "emitted_token_estimate": emitted_token_total,
-        "original_char_count": original_char_total,
-        "emitted_char_count": emitted_char_total,
-        "truncated_sources": truncated_sources,
-        "omitted_sources": omitted_sources,
-        "omitted_line_count": omitted_line_count,
-        "possibly_truncated": bool(truncated_sources or omitted_sources),
-    }
-    return budgeted_sources, summary, omitted_sections
-
-
-def _render_part_score(part: dict[str, Any]) -> int:
-    provenance = part.get("provenance", {})
-    if not isinstance(provenance, dict):
-        return 0
-    if "score" in provenance:
-        return int(provenance.get("score", 0))
-    matches = provenance.get("matches", [])
-    if not isinstance(matches, list):
-        return 0
-    return max(
-        (int(match.get("score", 0)) for match in matches if isinstance(match, dict)),
-        default=0,
-    )
-
-
-def _render_part_path(part: dict[str, Any]) -> str | None:
-    current_path = part.get("path")
-    if current_path:
-        return str(current_path)
-    paths = part.get("paths", [])
-    if isinstance(paths, list) and paths:
-        return str(paths[0])
-    return None
-
-
-def _render_part_sort_key(
-    part: dict[str, Any],
-    *,
-    primary_file: str | None,
-    original_index: int,
-) -> tuple[int, int, int, str, str, int]:
-    kind = str(part.get("kind", ""))
-    path = _render_part_path(part) or ""
-    is_primary = primary_file is not None and path == primary_file
-    kind_priority = (
-        {
-            "source": 0,
-            "summary": 1,
-            "tests": 2,
-        }
-        if is_primary
-        else {
-            "summary": 0,
-            "source": 1,
-            "tests": 2,
-        }
-    ).get(kind, 3)
-    return (
-        0 if is_primary else 1,
-        -_render_part_score(part),
-        kind_priority,
-        path,
-        str(part.get("symbol", "")),
-        original_index,
-    )
 
 
 def _prepare_render_part(
@@ -10670,72 +6748,6 @@ def _is_comment_line(path: Path, line: str) -> bool:
     return False
 
 
-def _python_ast_omitted_relative_lines(
-    block: str, profile: str = "compact", strip_docstrings: bool = True
-) -> tuple[set[int], set[int]]:
-    try:
-        tree = ast.parse(block)
-    except SyntaxError:
-        return set(), set()
-
-    docstring_lines: set[int] = set()
-    boilerplate_lines: set[int] = set()
-
-    def _walk_and_strip(nodes: list[ast.stmt], parent: ast.AST | None = None) -> None:
-        if not nodes:
-            return
-
-        # Check if the first node in this body is a docstring
-        first = nodes[0]
-        first_value = getattr(first, "value", None)
-        is_docstring = (
-            isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-            and isinstance(first, ast.Expr)
-            and isinstance(first_value, ast.Constant)
-            and isinstance(first_value.value, str)
-        )
-
-        if is_docstring and (profile == "compact" or strip_docstrings):
-            end_lineno = getattr(first, "end_lineno", first.lineno)
-            docstring_lines.update(range(first.lineno, end_lineno + 1))
-
-        if profile in {"compact", "llm"}:
-            # Strip 'pass' if it's the only node or only node after docstring
-            if len(nodes) == 1 or (len(nodes) == 2 and is_docstring):
-                last = nodes[-1]
-                if isinstance(last, ast.Pass):
-                    end_lineno = getattr(last, "end_lineno", last.lineno)
-                    boilerplate_lines.update(range(last.lineno, end_lineno + 1))
-
-        # Recurse into all nodes to find nested functions/classes
-        for node in nodes:
-            node_body = getattr(node, "body", None)
-            if node_body and isinstance(node_body, list):
-                _walk_and_strip(node_body, parent=node)
-
-    _walk_and_strip(tree.body)
-    return docstring_lines, boilerplate_lines
-
-
-def _js_ast_omitted_relative_lines(block: str) -> set[int]:
-    jsdoc_lines: set[int] = set()
-    in_jsdoc = False
-
-    for line_number, line in enumerate(block.splitlines(), start=1):
-        stripped = line.strip()
-        if not in_jsdoc:
-            if not stripped.startswith("/**"):
-                continue
-            in_jsdoc = True
-
-        if in_jsdoc:
-            jsdoc_lines.add(line_number)
-            if "*/" in stripped:
-                in_jsdoc = False
-
-    return jsdoc_lines
-
-
 def _ts_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
     jsdoc_lines = _js_ast_omitted_relative_lines(block)
     type_import_lines: set[int] = set()
@@ -10753,160 +6765,6 @@ def _ts_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
             in_type_import = False
 
     return jsdoc_lines, type_import_lines
-
-
-def _rust_ast_omitted_relative_lines(block: str) -> tuple[set[int], set[int]]:
-    doc_comment_lines: set[int] = set()
-    attribute_lines: set[int] = set()
-    in_attribute = False
-    attribute_bracket_balance = 0
-
-    for line_number, line in enumerate(block.splitlines(), start=1):
-        stripped = line.strip()
-        if stripped.startswith("///") or stripped.startswith("//!"):
-            doc_comment_lines.add(line_number)
-
-        if not in_attribute and re.match(r"^#\[\s*(derive|cfg|allow)\b", stripped):
-            in_attribute = True
-            attribute_bracket_balance = 0
-
-        if in_attribute:
-            attribute_lines.add(line_number)
-            attribute_bracket_balance += line.count("[") - line.count("]")
-            if attribute_bracket_balance <= 0:
-                in_attribute = False
-
-    return doc_comment_lines, attribute_lines
-
-
-def _render_source_block(
-    source: dict[str, Any],
-    *,
-    render_profile: str,
-    optimize_context: bool,
-    _profiling_collector: _ProfileCollector | None = None,
-) -> dict[str, Any]:
-    with _profiling_phase(_profiling_collector, "source_rendering"):
-        block = str(source.get("source", ""))
-        path = Path(str(source["file"]))
-        normalized_profile = _normalize_render_profile(render_profile, optimize_context)
-        diagnostics = {
-            "original_line_count": 0,
-            "rendered_line_count": 0,
-            "removed_line_count": 0,
-            "removed_comment_lines": 0,
-            "removed_blank_lines": 0,
-            "removed_docstring_lines": 0,
-            "removed_boilerplate_lines": 0,
-            "js_jsdoc_removed": 0,
-            "ts_type_imports_removed": 0,
-            "rust_doc_comments_removed": 0,
-            "rust_attributes_removed": 0,
-        }
-        line_map: list[dict[str, int]] = []
-
-        original_lines = block.splitlines()
-        diagnostics["original_line_count"] = len(original_lines)
-        if normalized_profile == "full":
-            rendered_source = block
-            if original_lines:
-                line_map.append({
-                    "rendered_start_line": 1,
-                    "rendered_end_line": len(original_lines),
-                    "original_start_line": int(source["start_line"]),
-                    "original_end_line": int(source["end_line"]),
-                })
-            diagnostics["rendered_line_count"] = len(original_lines)
-        else:
-            kept_lines: list[str] = []
-            current_segment: dict[str, int] | None = None
-            rendered_line_number = 1
-            original_start = int(source["start_line"])
-            omitted_docstring_lines: set[int] = set()
-            omitted_boilerplate_lines: set[int] = set()
-            omitted_jsdoc_lines: set[int] = set()
-            omitted_ts_type_import_lines: set[int] = set()
-            omitted_rust_doc_comment_lines: set[int] = set()
-            omitted_rust_attribute_lines: set[int] = set()
-            if path.suffix == ".py":
-                omitted_docstring_lines, omitted_boilerplate_lines = (
-                    _python_ast_omitted_relative_lines(
-                        block, normalized_profile, strip_docstrings=optimize_context
-                    )
-                )
-            elif path.suffix in _TS_SUFFIXES:
-                omitted_jsdoc_lines, omitted_ts_type_import_lines = _ts_ast_omitted_relative_lines(
-                    block
-                )
-            elif path.suffix in _JS_TS_SUFFIXES:
-                omitted_jsdoc_lines = _js_ast_omitted_relative_lines(block)
-            elif path.suffix in _RUST_SUFFIXES:
-                omitted_rust_doc_comment_lines, omitted_rust_attribute_lines = (
-                    _rust_ast_omitted_relative_lines(block)
-                )
-            for index, line in enumerate(original_lines):
-                original_line_number = original_start + index
-                relative_line_number = index + 1
-                if not line.strip():
-                    diagnostics["removed_blank_lines"] += 1
-                    continue
-                if relative_line_number in omitted_jsdoc_lines:
-                    diagnostics["removed_comment_lines"] += 1
-                    diagnostics["js_jsdoc_removed"] += 1
-                    continue
-                if relative_line_number in omitted_ts_type_import_lines:
-                    diagnostics["ts_type_imports_removed"] += 1
-                    continue
-                if relative_line_number in omitted_rust_doc_comment_lines:
-                    diagnostics["removed_comment_lines"] += 1
-                    diagnostics["rust_doc_comments_removed"] += 1
-                    continue
-                if relative_line_number in omitted_rust_attribute_lines:
-                    diagnostics["removed_boilerplate_lines"] += 1
-                    diagnostics["rust_attributes_removed"] += 1
-                    continue
-                if _is_comment_line(path, line):
-                    diagnostics["removed_comment_lines"] += 1
-                    continue
-                if relative_line_number in omitted_docstring_lines:
-                    diagnostics["removed_docstring_lines"] += 1
-                    continue
-                if relative_line_number in omitted_boilerplate_lines:
-                    diagnostics["removed_boilerplate_lines"] += 1
-                    continue
-
-                kept_lines.append(line)
-                if (
-                    current_segment is None
-                    or original_line_number != current_segment["original_end_line"] + 1
-                ):
-                    current_segment = {
-                        "rendered_start_line": rendered_line_number,
-                        "rendered_end_line": rendered_line_number,
-                        "original_start_line": original_line_number,
-                        "original_end_line": original_line_number,
-                    }
-                    line_map.append(current_segment)
-                else:
-                    current_segment["rendered_end_line"] = rendered_line_number
-                    current_segment["original_end_line"] = original_line_number
-                rendered_line_number += 1
-
-            rendered_source = "\n".join(kept_lines)
-            if kept_lines and block.endswith("\n"):
-                rendered_source += "\n"
-            diagnostics["rendered_line_count"] = len(kept_lines)
-            diagnostics["removed_line_count"] = (
-                diagnostics["original_line_count"] - diagnostics["rendered_line_count"]
-            )
-
-    rendered = dict(source)
-    rendered["render_profile"] = normalized_profile
-    rendered["optimize_context"] = optimize_context
-    rendered["rendered_source"] = rendered_source
-    rendered["line_map"] = line_map
-    rendered["render_diagnostics"] = diagnostics
-    return rendered
 
 
 def _confidence_from_score(score: int) -> float:
@@ -11027,16 +6885,6 @@ def _infer_js_package_manager(root: Path, package_json: dict[str, Any]) -> str:
     if (root / "bun.lockb").is_file():
         return "bun"
     return "npm"
-
-
-def _javascript_repo_fallback_command(package_manager: str) -> str:
-    if package_manager == "pnpm":
-        return "pnpm test"
-    if package_manager == "yarn":
-        return "yarn test"
-    if package_manager == "bun":
-        return "bun test"
-    return "npm test"
 
 
 def _package_test_script_command(root: Path, package_json: dict[str, Any]) -> str | None:
@@ -11243,18 +7091,6 @@ def _candidate_terms(value: str | None) -> list[str]:
     return _query_terms(normalized.replace("_", " "))
 
 
-def _python_decorator_qualname(node: ast.AST) -> str | None:
-    current = node
-    if isinstance(current, ast.Call):
-        current = current.func
-    if isinstance(current, ast.Name):
-        return current.id
-    if isinstance(current, ast.Attribute):
-        parent = _python_decorator_qualname(current.value)
-        return f"{parent}.{current.attr}" if parent else current.attr
-    return None
-
-
 def _best_test_function_candidate(
     candidates: list[str],
     *,
@@ -11292,128 +7128,6 @@ def _best_test_function_candidate(
     if best_score <= 0:
         return None
     return best_name
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
-    path = Path(test_path)
-    try:
-        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return ()
-
-    candidates: list[str] = []
-    for node in tree.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
-            "test"
-        ):
-            candidates.append(node.name)
-        elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            for member in node.body:
-                if isinstance(
-                    member, (ast.FunctionDef, ast.AsyncFunctionDef)
-                ) and member.name.startswith("test"):
-                    candidates.append(member.name)
-    return tuple(dict.fromkeys(candidates))
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _python_parametrized_test_function_candidates(test_path: str) -> tuple[str, ...]:
-    path = Path(test_path)
-    try:
-        tree = _cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
-        return ()
-
-    candidates: list[str] = []
-
-    def visit_body(nodes: list[ast.stmt]) -> None:
-        for node in nodes:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
-                "test"
-            ):
-                decorator_names = {
-                    name
-                    for decorator in node.decorator_list
-                    if (name := _python_decorator_qualname(decorator))
-                }
-                if {
-                    "pytest.mark.parametrize",
-                    "mark.parametrize",
-                } & decorator_names:
-                    candidates.append(node.name)
-            elif isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-                visit_body(list(node.body))
-
-    visit_body(list(tree.body))
-    return tuple(dict.fromkeys(candidates))
-
-
-def _rust_test_attribute_kind(line: str) -> str | None:
-    stripped = line.strip()
-    if not stripped.startswith("#"):
-        return None
-    after_hash = stripped[1:].lstrip()
-    if not after_hash.startswith("[") or not after_hash.endswith("]"):
-        return None
-    inner = after_hash[1:-1].strip()
-    attribute_name = inner.split("(", 1)[0].strip()
-    if attribute_name in {"test", "tokio::test"}:
-        return attribute_name
-    return None
-
-
-def _rust_test_function_candidates_from_source(
-    source: str,
-    *,
-    tokio_only: bool,
-) -> tuple[str, ...]:
-    candidates: list[str] = []
-    pending_test_attribute = False
-    for line in source.splitlines():
-        attribute_kind = _rust_test_attribute_kind(line)
-        if not pending_test_attribute:
-            if attribute_kind == "tokio::test" or (not tokio_only and attribute_kind == "test"):
-                pending_test_attribute = True
-            continue
-
-        stripped = line.strip()
-        if not stripped:
-            continue
-        if attribute_kind is not None:
-            pending_test_attribute = attribute_kind == "tokio::test" or (
-                not tokio_only and attribute_kind == "test"
-            )
-            continue
-        if stripped.startswith("#") or stripped.startswith("//"):
-            continue
-
-        match = _RUST_TEST_FN_PATTERN.match(line)
-        if match:
-            candidates.append(match.group(1))
-        pending_test_attribute = False
-
-    return tuple(dict.fromkeys(candidates))
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _rust_test_function_candidates(test_path: str) -> tuple[str, ...]:
-    path = Path(test_path)
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ()
-    return _rust_test_function_candidates_from_source(source, tokio_only=False)
-
-
-@_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
-def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
-    path = Path(test_path)
-    try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return ()
-    return _rust_test_function_candidates_from_source(source, tokio_only=True)
 
 
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
@@ -11513,40 +7227,6 @@ def _framework_test_pattern_bonus(
     )
 
 
-def _javascript_runner_file_command(runner: str, relative_path: str) -> str:
-    if runner == "vitest":
-        return f"npx vitest run {relative_path}"
-    if runner == "mocha":
-        return f"npx mocha {relative_path}"
-    return f"npx jest {relative_path}"
-
-
-def _javascript_runner_specific_command(runner: str, relative_path: str, test_filter: str) -> str:
-    quoted_filter = _shell_safe_arg(test_filter)
-    if runner == "vitest":
-        return f"npx vitest run {relative_path} -t {quoted_filter}"
-    if runner == "mocha":
-        return f"npx mocha {relative_path} --grep {quoted_filter}"
-    return f"npx jest {relative_path} --testNamePattern {quoted_filter}"
-
-
-def _javascript_runner_fallback_command(runner: str) -> str:
-    if runner == "vitest":
-        return "npx vitest run"
-    if runner == "mocha":
-        return "npx mocha"
-    return "npx jest"
-
-
-def _javascript_node_test_file_command(relative_path: str) -> str:
-    return f"node --test {relative_path}"
-
-
-def _javascript_test_script_uses_node_test(test_script: str | None) -> bool:
-    normalized = (test_script or "").strip().lower()
-    return bool(normalized) and "node" in normalized and "--test" in normalized
-
-
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _javascript_test_file_uses_node_test(test_path: str) -> bool:
     path = Path(test_path)
@@ -11561,39 +7241,6 @@ def _javascript_test_file_uses_node_test(test_path: str) -> bool:
         )
         or re.search(r"""\bnode:test\b""", source)
     )
-
-
-def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
-    try:
-        relative = test_path.resolve().relative_to(repo_root)
-    except ValueError:
-        return None
-    if relative.suffix != ".rs" or "tests" not in relative.parts:
-        return None
-    parts = list(relative.parts)
-    tests_index = parts.index("tests")
-    target_parts = parts[tests_index + 1 :]
-    if not target_parts:
-        return None
-    if len(target_parts) == 1:
-        target = Path(target_parts[0]).stem
-    else:
-        target = Path(target_parts[0]).stem
-    if not target:
-        return None
-    return f"cargo test --test {target}"
-
-
-def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:
-    try:
-        relative = test_path.resolve().relative_to(repo_root)
-    except ValueError:
-        return False
-    if relative.suffix != ".rs" or "tests" not in relative.parts:
-        return False
-    parts = list(relative.parts)
-    tests_index = parts.index("tests")
-    return len(parts[tests_index + 1 :]) > 1
 
 
 def _nearest_cargo_manifest_for_path(path: str | Path, repo_root: Path) -> Path | None:
@@ -16359,46 +12006,6 @@ def _definition_confidence_score(definition: dict[str, Any], symbol: str) -> flo
     return round(max(0.0, min(1.0, score)), 3)
 
 
-def _apply_symbol_field_output_limit(
-    payload: dict[str, Any],
-    *,
-    field_name: str,
-    max_count: int | None,
-) -> dict[str, Any]:
-    """Cap ``payload[field_name]`` (a flat list) to ``max_count`` entries, stamping ``output_limit``.
-
-    Generalizes ``_apply_blast_radius_output_limits``'s tests-cap + ``output_limit`` stamping
-    (design #96 item 2) to any flat-list field -- giving defs/refs/callers/impact a DEDICATED
-    ``--max-tests`` instead of blast-radius's conflated ``--max-files``, and leaving the helper
-    ``field_name``-generic so a follow-up can reuse it for ``import_graph_consumers``.
-
-    Deliberately field-NAME-scoped output_limit keys (``{field_name}_truncated``, e.g.
-    ``tests_truncated`` -- never blast-radius's own ``callers_truncated``/``files_truncated``
-    names, which ``main._scan_truncation_warning`` DOES recognize as a SCAN truncation). An
-    output cap here is a COMPLETE analysis capped for display and must stay exit-0 (design #96
-    contract-safety section; see ``main._scan_incomplete``'s docstring for the scan-vs-output-cap
-    split this deliberately avoids colliding with).
-
-    ``max_count=None`` is a no-op: the field and ``output_limit`` are left untouched, so an
-    uncapped library/MCP caller sees byte-identical output to before this cap existed (mirrors
-    ``_apply_context_token_budget``'s ``None``-is-unbounded contract).
-    """
-    if max_count is None:
-        return payload
-    normalized_max = max(0, int(max_count))
-    original = list(payload.get(field_name) or [])
-    capped_list = original[:normalized_max]
-    payload[field_name] = capped_list
-    output_limit = dict(payload.get("output_limit") or {})
-    output_limit[f"max_{field_name}"] = normalized_max
-    output_limit[f"{field_name}_truncated"] = len(capped_list) < len(original)
-    output_limit[f"total_{field_name}"] = len(original)
-    output_limit[f"returned_{field_name}"] = len(capped_list)
-    output_limit[f"omitted_{field_name}"] = max(0, len(original) - len(capped_list))
-    payload["output_limit"] = output_limit
-    return payload
-
-
 def build_symbol_defs(
     symbol: str,
     path: str | Path = ".",
@@ -18797,132 +14404,6 @@ def build_symbol_blast_radius(
     )
     _copy_partial_signal(result, repo_map)  # deadline signal from the (possibly retried) scan
     return result
-
-
-def _apply_blast_radius_output_limits(
-    payload: dict[str, Any],
-    *,
-    max_callers: int | None = None,
-    max_files: int | None = None,
-) -> dict[str, Any]:
-    normalized_max_callers = max(1, int(max_callers)) if max_callers is not None else None
-    normalized_max_files = max(1, int(max_files)) if max_files is not None else None
-    if normalized_max_callers is None and normalized_max_files is None:
-        return payload
-
-    limited = dict(payload)
-    original_callers = _list_of_dicts(payload.get("callers"))
-    original_files = _list_of_strings(payload.get("files"))
-    original_import_consumers = _list_of_dicts(payload.get("import_graph_consumers"))
-
-    if normalized_max_callers is not None:
-        limited["callers"] = original_callers[:normalized_max_callers]
-        limited["caller_tree"] = _list_of_dicts(payload.get("caller_tree"))[:normalized_max_callers]
-
-    if normalized_max_files is not None:
-        selected_files = original_files[:normalized_max_files]
-        selected_file_set = set(selected_files)
-        limited["files"] = selected_files
-        limited["affected_files"] = list(selected_files)
-        limited["file_matches"] = [
-            current
-            for current in _list_of_dicts(payload.get("file_matches"))
-            if str(current.get("path")) in selected_file_set
-        ][:normalized_max_files]
-        limited["file_summaries"] = [
-            {
-                **current,
-                "symbols": [
-                    compact_symbol
-                    for compact_symbol in (
-                        _compact_symbol_record(symbol)
-                        for symbol in _list_of_dicts(current.get("symbols"))
-                    )
-                    if compact_symbol is not None
-                ][:_BLAST_RADIUS_LIMITED_SYMBOLS_PER_FILE],
-            }
-            for current in _list_of_dicts(payload.get("file_summaries"))
-            if str(current.get("path")) in selected_file_set
-        ][:normalized_max_files]
-        limited["tests"] = _list_of_strings(payload.get("tests"))[:normalized_max_files]
-        selected_test_set = set(limited["tests"])
-        limited["test_matches"] = [
-            current
-            for current in _list_of_dicts(payload.get("test_matches"))
-            if str(current.get("path")) in selected_test_set
-        ][:normalized_max_files]
-        limited["related_paths"] = _list_of_strings(payload.get("related_paths"))[
-            :normalized_max_files
-        ]
-        limited["symbols"] = [
-            current
-            for current in _list_of_dicts(payload.get("symbols"))
-            if str(current.get("file")) in selected_file_set
-        ]
-        limited["imports"] = [
-            current
-            for current in _list_of_dicts(payload.get("imports"))
-            if str(current.get("file")) in selected_file_set
-        ]
-        limited["import_graph_consumers"] = [
-            current
-            for current in original_import_consumers
-            if str(current.get("file")) in selected_file_set
-        ]
-        limited["import_graph_consumer_files"] = sorted(
-            dict.fromkeys(str(current["file"]) for current in limited["import_graph_consumers"])
-        )
-        limited["import_graph_consumer_count"] = len(limited["import_graph_consumers"])
-        limited_caller_tree: list[dict[str, Any]] = []
-        for current in _list_of_dicts(limited.get("caller_tree", payload.get("caller_tree"))):
-            depth_files = [
-                path for path in _list_of_strings(current.get("files")) if path in selected_file_set
-            ][:normalized_max_files]
-            if not depth_files:
-                continue
-            compact_level = dict(current)
-            compact_level["files"] = depth_files
-            limited_caller_tree.append(compact_level)
-        limited["caller_tree"] = limited_caller_tree
-        rendered_lines = [f"Blast radius for {payload.get('symbol', '')}:"]
-        for current in limited_caller_tree:
-            rendered_lines.append(f"Depth {current.get('depth')}:")
-            rendered_lines.extend(f"- {path}" for path in _list_of_strings(current.get("files")))
-        limited["rendered_caller_tree"] = "\n".join(rendered_lines)
-    elif "files" in limited:
-        limited["affected_files"] = _list_of_strings(limited.get("files"))
-
-    returned_import_consumers = _list_of_dicts(
-        limited.get("import_graph_consumers", original_import_consumers)
-    )
-    limited["output_limit"] = {
-        "max_callers": normalized_max_callers,
-        "max_files": normalized_max_files,
-        "callers_truncated": (
-            normalized_max_callers is not None and len(original_callers) > normalized_max_callers
-        ),
-        "files_truncated": (
-            normalized_max_files is not None and len(original_files) > normalized_max_files
-        ),
-        "import_consumers_truncated": (
-            normalized_max_files is not None
-            and len(returned_import_consumers) < len(original_import_consumers)
-        ),
-        "total_callers": len(original_callers),
-        "returned_callers": len(_list_of_dicts(limited.get("callers"))),
-        "omitted_callers": max(
-            0, len(original_callers) - len(_list_of_dicts(limited.get("callers")))
-        ),
-        "total_files": len(original_files),
-        "returned_files": len(_list_of_strings(limited.get("files"))),
-        "omitted_files": max(0, len(original_files) - len(_list_of_strings(limited.get("files")))),
-        "total_import_consumers": len(original_import_consumers),
-        "returned_import_consumers": len(returned_import_consumers),
-        "omitted_import_consumers": max(
-            0, len(original_import_consumers) - len(returned_import_consumers)
-        ),
-    }
-    return limited
 
 
 def build_symbol_blast_radius_from_map(
