@@ -23,7 +23,7 @@
     "rust_core/tests/test_schema_compat.rs": 4412,
     "src/tensor_grep/cli/bootstrap.py": 1696,
     "src/tensor_grep/cli/main.py": 17983,
-    "src/tensor_grep/cli/mcp_server.py": 8028,
+    "src/tensor_grep/cli/mcp_server.py": 5326,
     "src/tensor_grep/cli/repo_map.py": 19762,
     "src/tensor_grep/cli/session_daemon.py": 2139,
     "src/tensor_grep/cli/session_store.py": 1828,
