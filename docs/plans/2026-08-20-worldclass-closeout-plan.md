@@ -1,8 +1,10 @@
 # Plan: the world-class closeout campaign
 
-**Date:** 2026-08-20. **Revision:** r3. Council round 1 returned REVISE from three seats
-(dispositioned in appendix A); round 2 returned REVISE from two live seats with narrow, textual
-findings (dispositioned in appendix B). **Status:** DRAFT — awaiting re-audit. Not a build licence.
+**Date:** 2026-08-20. **Revision:** r4. Council round 1 returned REVISE from three seats
+(appendix A); round 2 returned REVISE from two seats on narrow textual findings (appendix B); round 3
+returned **APPROVE from codex** plus three convergent scheduling defects from cursor/kimi/deepseek
+(appendix C). The architecture is settled — r4 touches scheduling and counts only.
+**Status:** DRAFT — awaiting re-audit. Not a build licence.
 **Base:** `origin/main` at `7dfff2f` (`refactor: split mcp_server.py into
 mcp_rewrite_tools/mcp_audit_tools/mcp_symbol_tools (#1051)`). Public product `v1.111.0`.
 **Branch this plan lives on:** `docs/worldclass-closeout-plan`.
@@ -106,12 +108,12 @@ mean three different things.
 | `W2-b` | `mcp` floor bump to the maintained head | REQUIRED | W2 |
 | `W2-c` | scheduled deferral-expiry evidence | **REQUIRED** (was OPTIONAL in r1; council made it mandatory and replaced its mechanism) | W2 |
 | `W3-a` | beyond-Route-A costing | REQUIRED, **DESIGN-ONLY** | W3 |
-| `W4-a` | `python_sidecar.rs` test extraction | REQUIRED | W4 |
+| `W4-a` | `python_sidecar.rs` test extraction (its allowlist RETIREMENT is executed by `W4-f`) | REQUIRED | W4 |
 | `W4-b` | `backend_ast.rs` + `backend_ast_workflow.rs` extraction | REQUIRED | W4 |
 | `W4-c` | `backend_cpu.rs` marker manifest, then decide | REQUIRED (the manifest; the extraction is conditional on it) | W4 |
 | `W4-d` | the three Python test giants | REQUIRED | W4 |
 | `W4-e` | `test_schema_compat.rs` + `test_routing.rs` | REQUIRED | W4 |
-| `W4-f` | allowlist integration: the `main.rs` stale-pin re-pin (W4.6) plus every pin W5-a/W5-b/W4-b/W4-c/W4-e moves | REQUIRED (was "W3-b" in r1; renumbered into the wave that owns the file) | W4 |
+| `W4-f` | allowlist integration: **`W4-a`'s entry retirement**, the `main.rs` stale-pin re-pin (W4.6), and every pin `W5-a`/`W5-b`/`W4-b`/`W4-c`/`W4-e` moves | REQUIRED (was "W3-b" in r1; renumbered into the wave that owns the file) | W4 |
 | `W5-a` | `gpu_native.rs` test extraction | REQUIRED | W5 |
 | `W5-b` | `main.rs` test extraction | REQUIRED | W5 |
 | `W5-c` | `main.rs` architecture pass | **DEFERRED — flag only.** Deliverable is the flag and a filed row; **no implementation is authorised** | none |
@@ -147,10 +149,30 @@ below; the diagram is a picture of it and must be re-read against it on every re
 
 **Total merge order** (one PR at a time; `[REL]` marks a publishing merge that needs its own window):
 
-1. `W1-d`  2. `W1-a`  3. `W1-b`  4. `W1-c`  5. `W6-a`  6. `W6-b`  7. `W4-a`  8. `W4-d`(**witness commit first**, then ×3 split PRs — see W4.4)
-9. `W5-a` 10. `W4-f`(pin) 11. `W5-b` 12. `W4-f`(pin, **including the `main.rs` stale-pin re-pin**)
-13. `W4-b` 14. `W4-f`(pin) 15. `W4-c` 16. `W4-f`(pin) 17. `W4-e` 18. `W4-f`(pin)
-19. `W2-a` 20. `W2-c` 21. **`W2-b` `[REL]`** 22. `W3-a` 23. closeout manifest.
+1. `W1-d`  2. `W1-a`  3. `W1-b`  4. `W1-c`  5. `W6-a`  6. `W6-b`  7. `W4-a`
+8. **`W4-f`(RETIRE `python_sidecar.rs`)** — see note (a)
+9. `W4-d`(**witness commit first**, then ×3 split PRs — see W4.4)
+10. `W5-a` 11. **`W4-f`(pin: `gpu_native.rs`, **and the `main.rs` stale-pin re-pin** — see note (b))**
+12. `W5-b` 13. `W4-f`(pin: `main.rs`, **re-derived from the post-extraction measurement**)
+14. `W4-b` 15. `W4-f`(pin) 16. `W4-c` 17. `W4-f`(pin) 18. `W4-e` 19. `W4-f`(pin)
+20. `W2-a` 21. `W2-c` 22. **`W2-b` `[REL]`** 23. `W3-a` 24. closeout manifest.
+
+**(a) Step 8 exists because `W4-a` has no legal way to retire its own entry.** `W4-a` takes
+`python_sidecar.rs` under its limit; the collision map forbids slice-local allowlist edits; so without
+a `W4-f` step between `W4-a` and the next Rust merge, the campaign had exactly two possible outcomes
+and both were failures — the ratchet REDs with RETIRE-THE-ENTRY on `W4-a`'s merge, or the slice
+violates file ownership to avoid that. r2 shipped that gap: `W4-f`'s scope omitted `W4-a` entirely and
+no pin step sat between steps 7 and 9. Fixed in both places.
+
+**(b) The `main.rs` stale-pin re-pin moved from after `W5-b` to BEFORE it, and this is the
+dangerous one.** r2 attached it to the `W4-f` that follows `W5-b` (then step 12) while W4.6's
+acceptance asserted `pin == 15126` — but after `W5-b` the file measures about **10,637**. Applied
+literally, that sets a **15126** pin on a 10,637-line file: about **4,489 lines of regrowth the ratchet
+could never see**, in the very slice whose entire purpose is closing a *one-line* free-regrowth gap.
+The re-pin now happens at step 11, where 15126 is the true measurement, and step 13's `W4-f`
+**re-derives from the measured post-extraction count** rather than carrying any literal forward.
+**No `W4-f` step ever copies a number from this document** — every one of them reads
+`python scripts/file_size_budget.py --report` on the merged tree and writes what it says.
 
 **Every Rust merge is followed by a `W4-f` pin step — all five, without exception.** r2 listed pin
 steps after W5-a, W5-b and W4-b but omitted them after W4-c and W4-e, while W4.2 scopes W4-f to
@@ -219,9 +241,29 @@ lands as one merged PR before the next begins:
 | order | slice | source files owned | handlers | not-provably-disclosing | effort |
 |---:|---|---|---:|---:|---|
 | 1 | **W1-d** | `cli/repo_map_lang_js.py`, `cli/repo_map_lang_rust.py`, **plus all eight zero-handler modules**, **plus** `scripts/handler_census.py`, the disposition ledger and its gate | 2 | 2 | **M** |
-| 2 | **W1-a** | `cli/mcp_server.py`, `cli/mcp_symbol_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_rewrite_tools.py` | 57 | 25 | **L** |
-| 3 | **W1-b** | `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`, `cli/ast_scan.py` | 23 | 21 | **M** |
+| 2 | **W1-a** | `cli/mcp_server.py`, `cli/mcp_symbol_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_rewrite_tools.py` | 57 | 24 | **L** |
+| 3 | **W1-b** | `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`, `cli/ast_scan.py` | 23 | 16 | **M** |
 | 4 | **W1-c** | `cli/main.py` | 46 | 12 | **L** |
+
+> **The two columns above have ONE home, and it is not this table.** Both are derived by
+> `scripts/handler_census.py` (committed by `W1-d`); the table is a rendering of its output and any
+> disagreement is resolved in the census's favour, never by editing the table. Re-derive with:
+>
+>     python scripts/handler_census.py --include-excluded --by-slice
+>
+> Expected, and reproduced on `7dfff2f` while writing this revision:
+> **handlers 57 / 23 / 46 / 2 = 128**, **not-provably-disclosing 24 / 16 / 12 / 2 = 54**, matching
+> W1.1's footer exactly.
+>
+> **r2's row said 25 and 21, summing to 60 against a footer of 54** — a six-handler drift between two
+> statements of the same quantity, and the *third* count-drift in three review rounds (after the
+> backend_cpu five-vs-six and the ambition 22-vs-23). The corrected split is 24 for `W1-a`
+> (`mcp_server.py` 16 + `mcp_audit_tools.py` 5 + `mcp_rewrite_tools.py` 3 + `mcp_symbol_tools.py`
+> **0** — the symbol-tools module has ten broad handlers and every one of them already discloses) and
+> 16 for `W1-b` (`doctor_report.py` 9 + `native_frontdoor.py` 4 + `windows_launcher.py` 2 +
+> `ast_scan.py` 1). **The generalisable rule this campaign keeps re-learning: a number that appears in
+> two places is a number that will disagree with itself.** Where a figure must be repeated for
+> readability, the repetition names its source and the source is a command.
 
 **W1-d goes first and is bigger than r1 said**, for three reasons the council named:
 (a) the **eight zero-handler modules had no owner** in r1 while W1.4 expected zero exclusions at the
@@ -461,7 +503,8 @@ actually regenerated rather than left stale.
   **published wheel** in the closeout manifest (section 4.8).
 - **lock consistency.** The repo's existing lock-parity check green on the regenerated lock.
 
-*Release class:* `fix:` — this one publishes, and is the campaign's only publishing merge (order step 20).
+*Release class:* `fix:` — this one publishes, and is the campaign's only publishing merge; it is the
+last code change in the total merge order in section 2, deliberately after the whole Rust lane.
 
 ### W2.5 — W2-c: scheduled deferral-expiry evidence (effort M, **REQUIRED**)
 
@@ -632,12 +675,12 @@ visibility change. Python test files split freely, with one caveat below. Worst 
 
 | slice | scope | effort |
 |---|---|---|
-| **W4-a** | `python_sidecar.rs` — extract `tests_h3` (`:1490-1519`); **removes an allowlist entry entirely** | **S** |
+| **W4-a** | `python_sidecar.rs` — extract `tests_h3` (`:1490-1519`). The extraction takes the file under its limit, so its allowlist entry must be **RETIRED, not lowered** — and that retirement is executed by `W4-f`, not by this slice | **S** |
 | **W4-b** | `backend_ast.rs` plus `backend_ast_workflow.rs` — extract both, integrator lowers both pins | **M** |
 | **W4-c** | `backend_cpu.rs` — **derive a marker manifest FIRST** (see below), then decide | **M** |
 | **W4-d** | the three Python test giants — one file per PR, three PRs | **L** |
 | **W4-e** | `rust_core/tests/test_schema_compat.rs` (4,412) plus `test_routing.rs` (2,995) | **M** |
-| **W4-f** | allowlist integration: the `main.rs` stale-pin re-pin (W4.6) plus every pin W5-a/W5-b/W4-b/W4-c/W4-e moves | **S** |
+| **W4-f** | allowlist integration — the campaign's ONLY writer to `scripts/file_size_allowlist.json`: **`W4-a`'s entry retirement**, the `main.rs` stale-pin re-pin (W4.6), and every pin `W5-a`/`W5-b`/`W4-b`/`W4-c`/`W4-e` moves. **Retirement and lowering are both W4-f's job**: the budget ratchet is fail-closed in both directions, so an entry left in place after its file clears the limit REDs with RETIRE-THE-ENTRY exactly as a stale high pin does | **S** |
 
 **W4-c's manifest is the deliverable before any extraction.** Commit
 `docs/audits/2026-08-20-backend-cpu-test-markers.json`: for every `#[cfg(test)]` in the file, its line,
@@ -750,11 +793,21 @@ enters a JSON file that a ratchet then enforces.
     python scripts/file_size_budget.py --report
     python -c "import json,sys; a=json.load(open('scripts/file_size_allowlist.json'))['grandfathered']['rust_core/src/main.rs']; print('pin', a); sys.exit(0 if a==15126 else 1)"
 
-Expected **after the W4-f re-pin and before W5-b**: `0 regressions`, and the pin prints `15126`
-(exit 0). Run today, before the re-pin, the second command exits **1** printing `pin 15127` — that is
-the RED arm, and it is the proof the assertion can fail. After W5-b the same
-assertion is re-derived against the post-extraction measurement, not against this literal — the
-literal is correct only for the pre-extraction file, and W4-f owns keeping it true.
+**The literal `15126` is valid in exactly one window: merge-order step 11, and only there.**
+Expected at step 11 (after the re-pin, before `W5-b` at step 12): `0 regressions`, and the pin prints
+`15126` (exit 0). Run today, before the re-pin, the second command exits **1** printing `pin 15127` —
+that is the RED arm, and it is the proof the assertion can fail.
+
+**After `W5-b` this command is WRONG and must not be run as written.** `W5-b` takes the file to about
+10,637 lines, so from step 13 onward the assertion becomes:
+
+    python -c "import json,subprocess,sys; a=json.load(open('scripts/file_size_allowlist.json'))['grandfathered']['rust_core/src/main.rs']; n=sum(1 for _ in open('rust_core/src/main.rs',encoding='utf-8')); print('pin',a,'measured',n); sys.exit(0 if a==n else 1)"
+
+— pin equals the **measured** count, with no literal anywhere. That form is the one the closeout
+manifest runs, and it is the form every later `W4-f` step uses. r2's version carried the literal past
+the point where it was true, which would have pinned 15126 onto a 10,637-line file and hidden ~4,489
+lines of regrowth from the ratchet. A literal in an allowlist assertion has a shelf life; a measurement
+does not.
 
 ---
 
@@ -791,7 +844,7 @@ Extract `#[cfg(test)] mod tests` (`gpu_native.rs:4443-4911`) to
 follow it (`cuda_library_search_paths` at `:4913`, `push_cuda_bin_candidates`; locate with
 `grep -n 'fn cuda_library_search_paths' rust_core/src/gpu_native.rs`).
 **One file, one change, one round-trip. No allowlist edit** — the pin drop 4,952 → ~4,484 is made by
-W4-f at order step 10.
+the `W4-f` step immediately following this one in the total merge order (section 2).
 
 `[CI]` acceptance: `cuda-feature-check` green on both its steps, with the run ID, head SHA, complete job
 population, and the **sorted test-name set** from `cargo test --features cuda --lib` before and after,
@@ -816,8 +869,9 @@ sibling tests — it moves with the block, so it does not block this move, but i
 attempt to split those tests across multiple files.
 
 `[CI]` acceptance: `test-rust-core` green; run ID, head SHA, job population, sorted test-name set equal
-before and after. **No allowlist edit**; W4-f moves the `main.rs` pin down to the post-extraction
-measurement (about 10,637) at order step 12.
+before and after. **No allowlist edit**; the `W4-f` step immediately following this one moves the
+`main.rs` pin down to the **measured** post-extraction count (about 10,637 — read from
+`file_size_budget.py`, never copied from this document; see W4.6).
 *State plainly:* this does not clear the limit and is not claimed to.
 
 **W5-c — `main.rs` architecture pass: DEFERRED, FLAG ONLY.**
@@ -1041,7 +1095,7 @@ All three returned REVISE. Every finding is taken except the two marked NOT TAKE
 | "accept the pins" decision rule (codex 8) | **TAKEN** — predeclared per-module thresholds (≤150 edits / ≤3 CI rounds pursue; >300 edits / >6 rounds accept; escalate between), dated and reopenable, never a blanket. |
 | require a counter-argument (deepseek 4) | **TAKEN** — the costing doc must state the strongest argument against its recommendation. |
 | W4 Python acceptance covers one of three, AST gate not executable (codex 10) | **TAKEN** — per-family pre/post node-ID manifests with set equality and an executable duplicate detector. |
-| W4 end-state contradiction (codex 11, deepseek 1C) | **TAKEN** — W4.5 states floor 29 and ambition 22 with a per-slice clears-or-not table; the manifest records the actual and every residual. |
+| W4 end-state contradiction (codex 11, deepseek 1C) | **TAKEN** — W4.5 states floor 29 and ambition 22 with a per-slice clears-or-not table; the manifest records the actual and every residual. *(Historical: round 2 found the 22 was itself wrong arithmetic; the operative figure is **23**, see W4.5. This row is left as written because it records what round 1 was told, not what is true now.)* |
 | Rust acceptance not identity-preserving (codex 12) | **TAKEN** — exact CI command, run ID, head SHA, complete job population, sorted test-NAME-SET equality; `cargo check --features cuda` at ci.yml:723-725 and `cargo test --features cuda --lib` at ci.yml:761-763 distinguished, with the runner's dlopen behaviour cited from ci.yml:759-760 as the proof the execution arm really runs. |
 | item count unstable (codex 13) | **TAKEN** — section 1.5 canonical registry with dispositions; the bare "19" is gone. |
 | no campaign-level receipt (codex 16) | **TAKEN** — section 4.8 closeout manifest, including the published-artifact MCP smoke. |
@@ -1071,4 +1125,33 @@ and textual, so r3 is surgical — no restructuring. All six taken.
 | the merge order omits `W4-f` re-pin steps after W4-c and W4-e, though W4.2 scopes W4-f to "every pin W4-c/W4-e moves" — the allowlist would drift and the ratchet fail on the next run | **TAKEN** — pin steps inserted after all five Rust merges (order is now 23 steps). Added the rule that a `W4-f` step which finds nothing to change is recorded as a **no-op**, not skipped: a skipped step and an empty step are not the same evidence. |
 | W4.5 ambition arithmetic: per-slice maxima sum to 7 removals from 30, so ambition is 23, not 22 | **TAKEN** — corrected to 23 with the addition shown inline (1+0+1+3+2+0 = 7). The section exists to stop loose arithmetic, so it does not get to contain any. |
 | define the ledger fingerprint precisely (line-shift stability is claimed while the schema carries `lineno`); normalize the `main.rs` pin spelling (three spellings in three places) | **TAKEN, both** — the fingerprint is now split into **IDENTITY** = `(module, enclosing_symbol, handler_index_within_symbol)`, over which uniqueness and completeness are computed, and **ADVISORY** = `lineno`, which is never part of identity but is still range-checked against the enclosing symbol's span; a rename or handler reorder changes identity and forces re-derivation. The pin gets one home, **W4.6**, which states `15127` pinned / `15126` measured once with its own acceptance command; every other mention now refers to W4.6 instead of restating digits. |
+
+---
+
+## Appendix C — disposition of council round 3
+
+Codex returned **APPROVE**. Cursor, kimi and deepseek each returned REVISE, converging on three
+anchored defects — all of them in the *scheduling* of the machinery round 2 added, none in the
+architecture. All three seats confirmed the round-2 fixes are present in the operative text, so r4 is
+confined to those three plus the count-drift they exposed.
+
+| finding | seats | disposition |
+|---|---|---|
+| `W4-a`'s allowlist **retirement** has no legal writer and no schedule slot: W4.2 told the slice to remove the `python_sidecar.rs` entry, the collision map forbids slice-local allowlist edits, `W4-f`'s scope omitted `W4-a`, and no `W4-f` sat between `W4-a` and `W5-a`. Either the ratchet REDs with RETIRE-THE-ENTRY on merge, or the slice violates ownership | cursor + kimi | **TAKEN** — `W4-a` added to `W4-f`'s scope in both the registry and the slice table, with the explicit statement that **retirement and lowering are equally `W4-f`'s job** (the ratchet is fail-closed both ways); a `W4-f`(RETIRE) step inserted as merge-order **step 8**, immediately after `W4-a` and before anything else touches the allowlist. |
+| **The dangerous one.** W4.6's stale-pin re-pin was attached to the `W4-f` *after* `W5-b`, while its acceptance asserted `pin == 15126` — but `W5-b` takes `main.rs` to ~10,637 lines. Applied literally that pins 15126 onto a 10,637-line file: ~4,489 lines of regrowth invisible to the ratchet, in the slice whose whole purpose is closing a **one-line** version of that same gap | kimi + deepseek | **TAKEN** — the re-pin moves to **step 11**, before `W5-b`, where 15126 is the true measurement. Step 13's `W4-f` **re-derives from the measured post-extraction count**. W4.6 now states the literal's validity window explicitly ("valid in exactly one window: step 11, and only there") and ships a second, literal-free assertion — `pin == measured line count` — for every step from 13 onward, which is also the form the closeout manifest runs. New standing rule: **no `W4-f` step ever copies a number from this document**; each one reads `file_size_budget.py` on the merged tree. |
+| W1.1's census footer says not-provably-disclosing = **54**; W1.2's per-slice column summed 2+25+21+12 = **60** | cursor + deepseek | **TAKEN** — re-derived from the census, not reconciled by hand. True split: `W1-a` **24**, `W1-b` **16**, `W1-c` 12, `W1-d` 2 = 54. `W1-a`'s 24 is `mcp_server.py` 16 + `mcp_audit_tools.py` 5 + `mcp_rewrite_tools.py` 3 + `mcp_symbol_tools.py` **0** (all ten of that module's broad handlers already disclose); `W1-b`'s 16 is 9 + 4 + 2 + 1. Per the seats' request the number now has **one home** — `scripts/handler_census.py --include-excluded --by-slice` — with the table declared a rendering of it and any disagreement resolved in the census's favour. |
+
+**The meta-finding r4 records rather than hides.** This was the **third** count-drift in three rounds
+(backend_cpu five-vs-six, ambition 22-vs-23, now 54-vs-60), and fixing the merge order exposed a
+**fourth** class the seats did not have to catch: three sections referenced merge-order steps by
+numeral, and inserting one step silently invalidated all three. Those references are now **named**
+("the `W4-f` step immediately following this one") rather than numbered. The pattern across all four is
+identical and is worth more than any individual fix: **a quantity restated in a second location is a
+quantity that will disagree with itself.** Every figure this plan repeats now names the command that
+produces it, and the repetitions that could not be made self-deriving were converted to references.
+
+Cursor also flagged that appendix A still carries the historical "ambition 22" prose. It is correctly
+labelled historical and is left in place — a dated receipt is not edited to match today — but it now
+carries an inline note pointing at the operative 23, because a reader mining appendix A for a number
+should not have to reconstruct which round superseded it. No other operative section references 22.
 
