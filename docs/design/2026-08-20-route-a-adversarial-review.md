@@ -92,3 +92,56 @@ this repo's rule for load-bearing changes is an independent adversarial seat. Th
 reproducible — the table above is a count anyone can re-derive — but the judgement that "deferred
 ⇒ safe" has not been independently challenged. Treat §5's clearance as covering the MECHANICAL
 question only.
+
+---
+
+## 6. CORRECTION (2026-08-20): the review missed a hazard, found by doing the conversion
+
+§2 checked **evaluation context** and concluded the rewrite was mechanically safe. That
+conclusion holds. It was also incomplete, and the gap only appeared when step 2 actually ran.
+
+**An imported symbol converted to `_self.NAME` becomes invisible to static analysis.** Ruff then
+reports its import as `F401 imported but unused`, and `ruff check --fix` **deletes the import**.
+The module attribute disappears, `_self.NAME` raises `AttributeError`, and the failure surfaces
+nowhere near the lint that caused it.
+
+Measured on `mcp_server.py`:
+
+    before conversion            4 failed / 485 passed   (pre-existing, local env)
+    after conversion + ruff --fix   123 failed / 366 passed
+
+with three import lines silently removed:
+
+    -from tensor_grep.cli.orient_capsule import build_orient_capsule_json
+    -from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
+    -from tensor_grep.core.pipeline import ConfigurationError, Pipeline
+
+**The split of patched symbols by ORIGIN is the thing §2 should have measured:**
+
+| module | patched symbols called bare | defined here | **imported** |
+|---|---:|---:|---:|
+| `mcp_server.py` | 65 | 50 | **15** |
+
+Only the imported 15 are exposed. They still MUST be converted — a test patching
+`mcp_server.resolve_native_tg_binary` welds every bare caller to this module regardless of where
+the name came from — so the fix is to protect the import, not to skip the symbol:
+
+```python
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary  # noqa: F401  (reached via _self, Route A)
+```
+
+**Placement is per-NAME, not per-statement.** Ruff reports F401 at the line of the individual
+name inside a multi-line `from x import (...)`, so a noqa on the closing paren suppresses
+nothing and is itself flagged `RUF100 unused noqa`. The first attempt did exactly that and left
+all 15 F401s live while adding 2 RUF100s.
+
+### Why the review missed it
+
+It reasoned about the *language* (when is an expression evaluated?) and not about the
+*toolchain* (what does the linter this repo runs do to code it cannot see through?). Both are
+part of "mechanically safe". A review that models Python but not the gates around it clears a
+change that CI will still break — and here the breakage was an autofix, i.e. something a
+maintainer would apply without reading.
+
+**Carry this into `main.py` and `repo_map.py`.** Re-derive the imported subset per module before
+converting; do not assume the ratio from `mcp_server`.

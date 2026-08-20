@@ -189,13 +189,45 @@ def test_reports_every_failure_not_just_the_first() -> None:
 # --------------------------------------------------------------------------------------
 
 
-def test_pins_file_is_valid_and_covers_the_targets() -> None:
-    pins = ratchet.load_pins()
-    assert pins, "the pins file must not be empty -- an empty pin set can never fail"
+@pytest.mark.slow
+def test_every_target_is_either_pinned_or_converted() -> None:
+    """A target may be absent from the pins ONLY because it reached zero.
+
+    The first version of this test asserted every target carries a pin. That was written when
+    no module had been converted, and it went red the moment one was -- correctly describing
+    the old world, not the invariant. Retiring a converted module is REQUIRED by the ratchet's
+    third rule, so "pinned" cannot be the universal condition.
+
+    The invariant that survives conversion: a target is pinned, or it measures zero. That still
+    fails if an offender is quietly deleted from the pins file, which is the thing worth
+    guarding -- an unpinned module with a non-zero count is how the gate would be silently
+    switched off for that module.
+    """
     from cost_split_floor_routes import TARGETS
 
+    pins = ratchet.load_pins()
+    counts = ratchet.measure()
+    assert counts, "measured nothing -- an empty count set can never fail"
+
     for rel, _dotted in TARGETS:
-        assert rel in pins, f"{rel} is a Route A target but carries no pin"
+        if rel in pins:
+            continue
+        assert counts.get(rel, 0) == 0, (
+            f"{rel} is a Route A target with {counts.get(rel)} bare calls and NO pin -- "
+            f"either it was dropped from the pins file, or the conversion regressed"
+        )
+
+
+def test_pins_file_is_not_empty() -> None:
+    """An empty pin set can never fail, so emptiness is only legitimate at full conversion."""
+    from cost_split_floor_routes import TARGETS
+
+    pins = ratchet.load_pins()
+    if not pins:
+        counts = ratchet.measure()
+        assert all(counts.get(rel, 0) == 0 for rel, _ in TARGETS), (
+            "the pins file is empty but targets still have bare calls -- the gate is off"
+        )
 
 
 def test_pins_are_positive_integers() -> None:
