@@ -143,5 +143,28 @@ part of "mechanically safe". A review that models Python but not the gates aroun
 change that CI will still break — and here the breakage was an autofix, i.e. something a
 maintainer would apply without reading.
 
-**Carry this into `main.py` and `repo_map.py`.** Re-derive the imported subset per module before
-converting; do not assume the ratio from `mcp_server`.
+### Two MORE toolchain effects, found the same way
+
+`# noqa: F401` was not the answer either. The full set, in the order CI found them:
+
+| effect | why | fix |
+|---|---|---|
+| `F401`, import deleted by `--fix` | `_self.NAME` is not a static use | superseded, see below |
+| `no-any-return` ×12 (mypy) | `sys.modules[...]` is `ModuleType`, whose `__getattr__` returns `Any`, so every converted call returns Any | `if TYPE_CHECKING: from pkg import mod as _self` — never executed, but the checker then resolves real signatures |
+| `attr-defined` ×18 (mypy) | this repo sets `implicit_reexport = false`, so a plain `from x import y` binds y PRIVATELY and `_self.y` is rejected | `from x import y as y` (PEP 484 explicit re-export) |
+
+**The `as y` form subsumes the noqa.** Ruff counts an explicit re-export as a use, so all 15
+`# noqa: F401` directives became `RUF100 unused noqa` and were removed. One change satisfies both
+linters; the noqa was a worse fix for half the problem.
+
+**Cost, recorded rather than hidden.** Ruff's isort splits each `X as X` into its own three-line
+block, so `mcp_server.py` grew 7,963 → 8,028 and its file-size pin was raised. Route A is an
+ENABLING step: the file is slated to fall below 1,500 once the split it unlocks happens, so a
+temporary +65 to remove a 5,852-line floor is the right trade — but it is a bump, and bumps get
+written down. A repo-wide `lint.isort.combine-as-imports` would remove most of the churn and was
+deliberately NOT done here, because it reformats imports across the whole tree.
+
+**Carry all of this into `main.py` and `repo_map.py`.** Re-derive the imported subset per module
+before converting; do not assume the ratio from `mcp_server`. And run the FILE-SIZE gate as well
+as the bare-call one — the conversion grows the file, and the first attempt here was pushed
+having run only the new gate.

@@ -13,7 +13,7 @@ from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as package_version
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import anyio
 from mcp import types
@@ -32,63 +32,96 @@ from tensor_grep.cli.incompleteness import disclosed_incomplete
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
-    _build_doctor_payload,  # noqa: F401  (reached via _self, Route A)
     _build_rulesets_payload,
     _execute_find,
     _format_unbounded_large_root_scan_error,
     _format_unbounded_vendored_root_scan_error,
     _load_inline_rule_specs,
-    _run_ast_scan_payload,  # noqa: F401  (reached via _self, Route A)
     _search_with_cpu_fallback,
     _set_semantic_rank_fallback_reason,
     _should_refuse_unbounded_large_root_scan,
     _should_refuse_unbounded_vendored_root_scan,
 )
+from tensor_grep.cli.main import (
+    _build_doctor_payload as _build_doctor_payload,
+)
+from tensor_grep.cli.main import (
+    _run_ast_scan_payload as _run_ast_scan_payload,
+)
 from tensor_grep.cli.orient_capsule import (
-    build_orient_capsule_json,  # noqa: F401  (reached via _self, Route A)
+    build_orient_capsule_json as build_orient_capsule_json,
 )
 from tensor_grep.cli.repo_map import (
     _apply_context_token_budget,
     _deadline_monotonic_from_seconds,
     build_context_pack,
-    build_context_render,  # noqa: F401  (reached via _self, Route A)
-    build_file_importers,  # noqa: F401  (reached via _self, Route A)
     build_file_imports,
-    build_repo_map,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_blast_radius,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_blast_radius_render,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_callers,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_defs,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_impact,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_refs,  # noqa: F401  (reached via _self, Route A)
-    build_symbol_source,  # noqa: F401  (reached via _self, Route A)
+)
+from tensor_grep.cli.repo_map import (
+    build_context_render as build_context_render,
+)
+from tensor_grep.cli.repo_map import (
+    build_file_importers as build_file_importers,
+)
+from tensor_grep.cli.repo_map import (
+    build_repo_map as build_repo_map,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_blast_radius as build_symbol_blast_radius,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_blast_radius_render as build_symbol_blast_radius_render,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_callers as build_symbol_callers,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_defs as build_symbol_defs,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_impact as build_symbol_impact,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_refs as build_symbol_refs,
+)
+from tensor_grep.cli.repo_map import (
+    build_symbol_source as build_symbol_source,
 )
 from tensor_grep.cli.rule_packs import resolve_rule_pack
 from tensor_grep.cli.runtime_paths import (
-    resolve_native_tg_binary,  # noqa: F401  (reached via _self, Route A)
+    resolve_native_tg_binary as resolve_native_tg_binary,
 )
 from tensor_grep.cli.scan_guardrails import BroadScanRefusedError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import collect_device_inventory
-from tensor_grep.core.pipeline import (  # noqa: F401  (reached via _self, Route A)
+from tensor_grep.core.pipeline import (
     ConfigurationError,
-    Pipeline,
+)
+from tensor_grep.core.pipeline import (
+    Pipeline as Pipeline,
 )
 from tensor_grep.core.result import SearchResult, merge_runtime_routing
 from tensor_grep.io.directory_scanner import DirectoryScanner
 
-# Route A (docs/design/2026-08-19-split-floor-escape.md): the module object, for late
-# attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
-# globals, which welds the calling function to this file -- move it and the test still
-# passes while production runs the unpatched original. `_self.NAME(...)` is resolved at
-# call time against the module object, so a patch is seen wherever the function lives.
+# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# attribute reads. A BARE call to a monkeypatched name resolves through THIS module's globals,
+# welding the calling function to this file -- move it and the test still passes while
+# production runs the unpatched original. `_self.NAME(...)` resolves at CALL time against the
+# module object, so the patch is seen wherever the function ends up living.
 #
-# `sys.modules[__name__]` rather than importing this module by name: the module is
-# mid-import when this line runs, so a self-import would be circular. This is the same
-# object, already registered.
+# The two-branch form is load-bearing, not style. At runtime `sys.modules[__name__]` is the
+# only option: the module is mid-import when this line executes, so importing itself by name
+# would be circular. But that expression is typed `ModuleType`, whose `__getattr__` returns
+# `Any` -- so under a single-branch form every converted call returns Any and mypy raises
+# `no-any-return` at each caller declared to return something concrete (measured: 12 errors on
+# this file alone). The TYPE_CHECKING branch is never executed; it exists so the type checker
+# resolves `_self` to this module and keeps every real signature.
 #
 # scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
-_self = sys.modules[__name__]
+if TYPE_CHECKING:
+    from tensor_grep.cli import mcp_server as _self
+else:
+    _self = sys.modules[__name__]
 
 
 def _mcp_server_version() -> str:
