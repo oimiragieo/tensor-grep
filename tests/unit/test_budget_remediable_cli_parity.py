@@ -97,7 +97,14 @@ def test_repo_map_emits_the_flag_at_all_three_cause_sites() -> None:
 
     source = repo_map_mod.__file__
     assert source is not None
-    text = open(source, encoding="utf-8").read()
+    # repo_map.py was split into repo_map_*.py siblings; census the FAMILY, or a count
+    # pinned to one path quietly stops covering the emitter that moved. The length check
+    # is the control: a glob that finds only the base file is a scan that did not run.
+    from pathlib import Path as _Path
+
+    _paths = sorted(_Path(source).parent.glob("repo_map*.py"))
+    assert len(_paths) > 1, f"census lost its subject: {[p.name for p in _paths]}"
+    text = "\n".join(p.read_text(encoding="utf-8") for p in _paths)
 
     # Two scan_limit blocks + one output_limit block. The COUNT is the assertion: this file has a
     # documented history of a fix landing on one arm and not its twin.
@@ -118,7 +125,14 @@ def test_repo_map_scan_limit_gates_on_capped_not_on_possibly_truncated() -> None
 
     source = repo_map_mod.__file__
     assert source is not None
-    text = open(source, encoding="utf-8").read()
+    # repo_map.py was split into repo_map_*.py siblings; census the FAMILY, or a count
+    # pinned to one path quietly stops covering the emitter that moved. The length check
+    # is the control: a glob that finds only the base file is a scan that did not run.
+    from pathlib import Path as _Path
+
+    _paths = sorted(_Path(source).parent.glob("repo_map*.py"))
+    assert len(_paths) > 1, f"census lost its subject: {[p.name for p in _paths]}"
+    text = "\n".join(p.read_text(encoding="utf-8") for p in _paths)
 
     # PREMISE: the narrow definition still exists. If `_truncated` is ever widened to mean "capped
     # at all", this distinction dissolves and the reasoning must be re-derived, not inherited.
