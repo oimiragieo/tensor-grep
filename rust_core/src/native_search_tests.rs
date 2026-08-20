@@ -491,8 +491,7 @@ fn collect_walked_files_counts_an_unreadable_dir_and_reports_zero_on_a_clean_tre
     // temp directory into the runner.
     fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
 
-    let walked =
-        walked.expect("an unreadable subdirectory must degrade the walk, not abort it");
+    let walked = walked.expect("an unreadable subdirectory must degrade the walk, not abort it");
     assert!(
         walked.walk_errors >= 1,
         "an unreadable subdirectory must be COUNTED so the `--json` envelope can mark the \
@@ -750,13 +749,9 @@ fn search_file_chunk_parallel_flags_binary_content_like_the_serial_path() {
 
     let chunk_parallel_result = search_file_chunk_parallel(&config, &matcher, &path).unwrap();
     let mut serial_searcher = build_searcher(&config, true);
-    let serial_result = search_file_collect_matches_with_searcher(
-        &config,
-        &matcher,
-        &path,
-        &mut serial_searcher,
-    )
-    .unwrap();
+    let serial_result =
+        search_file_collect_matches_with_searcher(&config, &matcher, &path, &mut serial_searcher)
+            .unwrap();
 
     assert!(
         chunk_parallel_result.binary_detected,
@@ -813,13 +808,9 @@ fn search_file_chunk_parallel_matches_text_content_unchanged() {
 
     let chunk_parallel_result = search_file_chunk_parallel(&config, &matcher, &path).unwrap();
     let mut serial_searcher = build_searcher(&config, true);
-    let serial_result = search_file_collect_matches_with_searcher(
-        &config,
-        &matcher,
-        &path,
-        &mut serial_searcher,
-    )
-    .unwrap();
+    let serial_result =
+        search_file_collect_matches_with_searcher(&config, &matcher, &path, &mut serial_searcher)
+            .unwrap();
 
     assert!(
         !chunk_parallel_result.binary_detected,
