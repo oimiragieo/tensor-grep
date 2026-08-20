@@ -420,7 +420,19 @@ def test_harness_api_examples_exist_and_have_unified_envelope() -> None:
                     assert step["detection"] in {"detected", "heuristic", "generic"}
                 assert isinstance(payload["candidate_edit_targets"]["spans"], list)
                 assert payload["candidate_edit_targets"]["spans"]
-                assert 0.0 <= payload["edit_plan_seed"]["rollback_risk"] <= 1.0
+                # H6 audit: rollback_risk is always round(min(1.0, max(0.0, risk)), 3)
+                # (repo_map.py:13489-13512) -- a 0.0 <= x <= 1.0 bound check can never
+                # fail; the clamp is proven load-bearing by
+                # test_edit_plan_seed.py::test_rollback_risk_clamp_is_load_bearing_*.
+                # These are static, committed docs/examples/*.json fixtures (not live
+                # regenerated per test run), so pin the exact per-file values.
+                assert (
+                    payload["edit_plan_seed"]["rollback_risk"]
+                    == {
+                        "edit_plan.json": 0.0,
+                        "blast_radius_plan.json": 0.3,
+                    }[file_name]
+                )
             if file_name == "edit_plan.json":
                 # Parity fix (v1.71.1 dogfood): edit-plan's top-level `validation_plan` must
                 # exist, be non-empty, and correspond exactly to `edit_plan_seed.validation_plan`
