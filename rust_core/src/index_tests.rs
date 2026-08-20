@@ -604,9 +604,7 @@ fn test_m17_f1_fingerprint_detects_change_beyond_4096_bytes() {
         "the beyond-4096 change must be reported via the tree fingerprint: reason={reason}"
     );
     assert!(
-        !reason.contains("modified")
-            && !reason.contains("deleted")
-            && !reason.contains("new file"),
+        !reason.contains("modified") && !reason.contains("deleted") && !reason.contains("new file"),
         "size/mtime/name checks were all preserved by construction: reason={reason}"
     );
 }
