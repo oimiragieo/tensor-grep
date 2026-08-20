@@ -66,6 +66,26 @@ def test_the_security_floor_is_not_lost_while_capping() -> None:
     )
 
 
+def test_the_floor_tracks_the_maintained_v1x_head() -> None:
+    """MAINTENANCE POLICY (W2-b, docs/design/2026-08-20-mcp-2-0-exposure-decision.md): the `<2`
+    cap means tg's floor is the only thing keeping a resolver from installing an old release off
+    the v1.x branch that still receives security patches, so the floor should track the
+    maintained head rather than lag behind it. Latest v1.x as of 2026-08-20 is 1.29.0.
+
+    This is a maintenance-policy floor bump, not a response to an advisory against 1.27.2 -- none
+    was found or is cited. If an advisory is later cited against a version below this floor, it
+    upgrades the justification; it is not the justification today.
+    """
+    requirement = _mcp_requirement()
+
+    floors = [spec.version for spec in requirement.specifier if spec.operator == ">="]
+    assert floors, f"the declared mcp requirement ({requirement}) has no floor (>=) specifier"
+    assert Version(min(floors, key=Version)) >= Version("1.29.0"), (
+        f"the declared mcp requirement ({requirement}) has a floor below 1.29.0, the latest "
+        "maintained v1.x release; bump it to mcp>=1.29.0,<2"
+    )
+
+
 def test_the_currently_locked_version_still_satisfies_the_declared_range() -> None:
     """PREMISE: the cap must not exclude what the lock pins.
 

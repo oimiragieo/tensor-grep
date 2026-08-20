@@ -566,9 +566,14 @@ dependencies = [
     # 0.25, still block 0.26 until the tests migrate off isolated_filesystem().
     "typer>=0.12,<0.26",
     "rich>=13.0",
-    # >=1.27.2: CVE-2026-52870 fix (mcp 1.26.0 advisory); floor bumped, not just relocked, so a
-    # fresh resolve without --upgrade-package can never silently settle back below the patched
-    # version.
+    # >=1.29.0: maintenance-policy floor bump (W2-b,
+    # docs/design/2026-08-20-mcp-2-0-exposure-decision.md). >=1.27.2 was the CVE-2026-52870 fix
+    # (mcp 1.26.0 advisory); no advisory is cited against 1.27.2 itself -- the `<2` cap below means
+    # this floor is the ONLY thing keeping a resolver from installing an old release off the v1.x
+    # branch that still receives security patches, so the floor tracks the maintained head
+    # (latest v1.x per PyPI as of 2026-08-20 is 1.29.0, uploaded 2026-07-28) rather than lag
+    # behind it. If an advisory is later cited against a version below this floor, it upgrades the
+    # justification; it is not the justification today.
     #
     # <2: mcp 2.0.0 REMOVED `mcp.server.fastmcp`, which `cli/mcp_server.py:20` imports at module
     # scope. Because `tg run --rewrite` lazily imports `mcp_server` (ast_workflows.py:64 ->
@@ -583,7 +588,7 @@ dependencies = [
     # API is a real change that deserves its own PR and its own tests. Lifting this cap REQUIRES
     # porting `cli/mcp_server.py` off `mcp.server.fastmcp` first -- see the guard in
     # tests/unit/test_mcp_dependency_is_upper_bounded.py, which fails if the bound is dropped.
-    "mcp>=1.27.2,<2",
+    "mcp>=1.29.0,<2",
     "pathspec>=1.0.4",
     "pyyaml>=6.0",
     # opentelemetry-api only: the 6 `trace.get_tracer` call sites (cudf_backend.py,
