@@ -1,6 +1,537 @@
 # CHANGELOG
 
 
+## v1.111.0 (2026-08-20)
+
+### Continuous Integration
+
+- Bound the ripgrep install so a stalled apt cannot hang the job for hours
+  ([#1035](https://github.com/oimiragieo/tensor-grep/pull/1035),
+  [`4cf9b63`](https://github.com/oimiragieo/tensor-grep/commit/4cf9b63df3f11313c402c164669bcb6210c1ccc3))
+
+`native-build-smoke (ubuntu-latest)` hung twice on 2026-08-19 -- 2h21m, then 29m after a rerun --
+  both times on the step "Ensure ripgrep is available". The macOS and windows legs of the SAME run
+  finished in 10-12 minutes each, which is what identifies the step rather than the runner: a
+  degraded box would move its siblings too, and they never moved.
+
+The step had no timeout, so an apt stall runs to the 6h job limit. From outside that is
+  indistinguishable from a slow build -- it emits nothing, and the PR is simply blocked. Two PRs
+  (#1025, #1033) were sitting behind it.
+
+Three changes, smallest first:
+
+- `timeout-minutes: 6` turns an indefinite hang into a fast, legible red. - three attempts around
+  `apt-get update && install`, which absorbs the transient mirror failure that is the usual cause. -
+  an explicit POSTCONDITION check. A bash `for` loop exits 0 on its last iteration whether or not
+  the body succeeded, so an exhausted retry would have reported success and handed the job to the
+  rg-parity suites with no `rg` -- where, per the comment already above this step, they resolve
+  nothing and SILENTLY SKIP. That is the failure this step exists to prevent, so the retry must not
+  be able to reintroduce it.
+
+Verified: the workflow still parses (26 jobs), the timeout lands on the intended job, and the 49
+  workflow-pinning tests pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Adversarial review of the Route A rewrite -- mechanically cleared
+  ([#1038](https://github.com/oimiragieo/tensor-grep/pull/1038),
+  [`f12a233`](https://github.com/oimiragieo/tensor-grep/commit/f12a23334b8dd954098a921afa6ca7d14e845142))
+
+docs/design/2026-08-19-split-floor-escape.md §5 requires an adversarial review before any call site
+  changes, because the failure mode it guards against is invisible to a passing test suite. This is
+  that review for the MECHANICAL question. It does not clear runtime cost, and it says so.
+
+THE FALSIFIABLE CLAIM: "all 393 sites are mechanically convertible."
+
+`_self = sys.modules[__name__]` is safe inside a function body because the attribute is read when
+  the function RUNS. It is NOT automatically safe where an expression is evaluated at IMPORT time --
+  module level, class body, decorator, default argument -- because the module object is still being
+  populated there, so `_self.NAME` can raise AttributeError where bare `NAME` resolved. The design's
+  cost table counts all sites equally and never draws this distinction.
+
+RESULT: an AST census of every site by evaluation context finds
+
+mcp_server.py 125 func-body, 0 import-time main.py 102 func-body, 0 import-time repo_map.py 162
+  func-body + 4 lambda-body, 0 import-time
+
+The hazard is not mitigated, it is ABSENT. Stronger than the design assumed.
+
+Preconditions also verified: `_self` is unused in all three modules (no collision) and `import sys`
+  is already present in all three (no new import).
+
+THE FIRST VERSION OF THIS CENSUS WAS WRONG, PERMISSIVELY. It reported the four
+  `parser_for_path=lambda path: _rust_parser()` entries as MODULE-LEVEL import-time hazards, because
+  the parent walk treated ast.Lambda as transparent and fell through to module scope. A lambda's
+  BODY is deferred; only its defaults run at def time. Caught by opening repo_map.py:6550 and
+  reading it, not by re-running the probe -- the same shape as the costing-script defect this design
+  was already corrected for once. The corrected classifier distinguishes LAMBDA-BODY from
+  DEFAULT-ARG rather than collapsing them, and the receipt is in the doc so the next reader does not
+  re-derive the false positive.
+
+NOT CLEARED, stated in the doc: runtime cost (`_self.X` is a dict lookup per call and
+  `_read_source_text_cached` is hot), the inference that zero bare calls means splittable, and the
+  behavioural equivalence of the SPLIT that follows the rewrite. Also flagged: this is a single
+  static reviewer, not an independent seat, so the clearance covers the mechanical question only.
+
+Verified: the grep the doc hands over resolves, ruff --preview clean, 48 doc-governance/drift tests
+  pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Ceo update, lesson retention, and correct the split-floor costing numbers
+  ([#1031](https://github.com/oimiragieo/tensor-grep/pull/1031),
+  [`79cb220`](https://github.com/oimiragieo/tensor-grep/commit/79cb220960fb65f91be09ec066d74b8a249a80d3))
+
+* docs: 2026-08-19 CEO update + retain the audit's instrument lessons
+
+RETENTION, in the three places that get read:
+
+AGENTS.md -- a new dated instrument law, "The Instrument Fails More Than The Subject: 12 vs 5 In One
+  Audit". The headline is the RATIO: an enterprise audit of an already-hardened codebase (8 security
+  vectors probed, 8 already fixed) produced ~5 real defects and TWELVE instrument failures, five of
+  which were the auditor's own probes. In a repo this mature, budget verification on the assumption
+  that the measurement is wrong before the code is. All twelve were caught by a control; none by
+  re-reading code.
+
+tensor-grep-validation-and-qa -- three unnumbered bullets appended to Part 0's "rules that fall out"
+  (deliberately NOT new Forms; the Forms table is mirrored in AGENTS.md and adding one there is a
+  separate two-file edit): * a check-run list with UNEXPANDED MATRIX PLACEHOLDERS is a skipped job
+  that looks exactly like a pass -- require expanded lane names, not `failures == 0` * a CI job's
+  NAME is not its failure (Formatting & Linting failed on mypy) * a split has a HARD FLOOR set by
+  test-patch topology, and mypy strict adds a split-only facade-re-export failure class
+
+docs/audits/2026-08-19-ceo-update.md -- the plain-language update: what worked, the FULL remaining
+  backlog enumerated file-by-file (31 oversized files, doc gaps, verification debt, repo hygiene),
+  four items that need RESEARCH rather than execution, and seven lessons.
+
+THE HEADLINE FINDING IS THE CI HOLES, NOT THE FILE SIZES
+
+`ci.yml`'s cost-smart `changes` filter is a hand-written path list, and it watched a narrower set
+  than the jobs behind it depend on -- three times, each producing a green PR that had tested
+  nothing relevant. scripts/ skipped every test lane (a 3,500-line refactor merged having run zero
+  tests); docs/ skipped the governance suites; docs/ skipped the FORMATTER. The third was
+  self-inflicted: this audit's own remediation shipped a doc through the hole the previous fix had
+  just documented.
+
+None of the three came from reading ci.yml. All three came from noticing unexpanded matrix
+  placeholders in a status list.
+
+RESEARCH ITEMS SURFACED, because they gate everything after wave 3
+
+How to split a file whose tests hook into it (dependency injection vs ~150-290 coordinated test-site
+  edits -- neither costed); whether the test-hook metric is even the right one given the tool was
+  blind to a whole category twice; whether the limit is 1,500 or 1,000 (the brief and the audit
+  template disagreed -- at 1,000, eleven MORE files violate); and whether the four oversized Rust
+  files are splittable at all when this box cannot compile Rust and every change is a CI round-trip.
+
+Also corrected the project memory index: its "NEVER HAND-COUNT THE LANGUAGE TIER SPLIT" entry was
+  itself carrying a hand-counted number (5+5; the truth is 10+0, verified against the published
+  v1.110.18 wheel). An index entry telling you not to hand-count, hand-counted.
+
+Formatter control run on all three edited files before committing -- the #1023 lesson applied rather
+  than merely written down. 72 doc/skill governance tests pass; file-size gate green.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* feat(audit): measure the split floor -- 3 of the 4 giants CANNOT be split to the limit
+
+Converts the campaign's top open research question into a number, and the answer changes the plan.
+
+`scripts/measure_split_floor.py` computes the LOWER BOUND of what must stay in a module because
+  tests patch into it. Python resolves bare names through the DEFINING module's globals, so any
+  function referencing a patched name by bare identifier is welded to wherever the test's setattr
+  lands, plus everything that bare-calls it transitively.
+
+cli/repo_map.py 19708 total 11025 LOCKED -> cannot reach 1500 cli/main.py 17605 total 9453 LOCKED ->
+  cannot reach 1500 cli/mcp_server.py 7876 total 5554 LOCKED -> cannot reach 1500
+  cli/agent_capsule.py 3652 total 1190 LOCKED -> VIABLE
+
+Three of the four biggest Python files cannot reach the limit by splitting AT ALL. Not "difficult"
+  -- the residue is already 4-7x the limit before anything moves.
+
+WHY THIS MATTERS MORE THAN THE NUMBER
+
+Wave 3 learned this the expensive way: an agent was dispatched to split
+  run_gpu_native_benchmarks.py, did careful work, and could only get partway because 1752 lines were
+  locked. That was discovered AFTER the wave. This tool answers it BEFORE one is scoped, which is
+  the difference between a partial result and a wasted dispatch.
+
+CROSS-CHECKED, not asserted: the patched-symbol counts this tool derives (48 / 66 / 9) match the
+  independent monkeypatch binding auditor exactly. Two tools, different code paths, same answer.
+
+HONEST ABOUT WHAT IT IS: a LOWER bound. It does not model class methods, closures, or `global`
+  rebinding, and it is blind to spec_from_file_location-loaded modules (the same gap #1030 announces
+  rather than hides). A number OVER the limit is decisive; a number under it is encouraging, not a
+  guarantee. The docstring says so.
+
+REPLAN, recorded in the CEO update: - agent_capsule.py -> splittable, next wave - test files -> no
+  facade problem at all (tests are the ones DOING the patching); largest available win - main.py /
+  repo_map.py / mcp_server.py -> dependency injection or coordinated edits across 48-66 patch
+  symbols each. A DESIGN PROJECT, not a cleanup task; scope and review it separately before anyone
+  starts.
+
+Formatter control run on the doc; governance tests pass; ruff clean.
+
+* fix: the split-floor tool forgot to count the PATCHED functions themselves
+
+I built this tool today, briefed a wave on it, and it was wrong.
+
+`monkeypatch.setattr(mod, "f", ...)` rebinds an attribute on `mod`, so `f` must be defined in `mod`.
+  The tool locked only the functions that REFERENCE `f` -- never `f` itself. All nine of
+  agent_capsule.py's patched symbols are top-level functions in it, and none was counted.
+
+reported floor 1,190 -> "split is viable" real floor 1,527 -> above the limit
+
+Corrected numbers (all four move UP, so every "cannot split" verdict strengthens):
+
+repo_map.py 11,025 -> 11,731 main.py 9,453 -> 10,172 mcp_server.py 5,554 -> 5,852 agent_capsule
+  1,190 -> 1,527 (was briefed as VIABLE; it was not)
+
+CROSS-VALIDATED, which is the only reason to trust it now: the corrected tool returns 10 functions /
+  1,527 lines for agent_capsule -- matching what the wave-4 agent derived INDEPENDENTLY. Agreement
+  with a separately-derived answer is the evidence, not a clean run.
+
+WHY THIS WAS A CORRECTION AND NOT A WASTED WAVE
+
+The tool's docstring already said "this is a LOWER bound; a number over the limit is decisive, a
+  number under it is encouraging, not a guarantee." That one sentence preserved the useful half of a
+  wrong output: undercounting only pushes the three giants further over, so those verdicts held, and
+  the single verdict the bug could corrupt -- "viable" -- was already labelled non-binding. Wave 4
+  shipped anyway, via the escape hatch on one function, not because the brief was right.
+
+The transferable rule, now in AGENTS.md as a dated law: when you build a measuring tool, state WHICH
+  WAY IT ERRS inside the tool -- not "approximate", the direction, and which conclusion that
+  direction makes unsafe. The dangerous direction is the PERMISSIVE one: a too-low obstacle reads as
+  permission to act.
+
+Also banked there: a function can be locked TRANSITIVELY without being patched itself, and that is
+  the escape hatch -- build_agent_capsule_from_map (834 lines) was locked only by three bare calls,
+  and rewriting those three freed the whole function. Route A works at function granularity, so a
+  file can be rescued by converting a handful of call sites rather than all 337.
+
+Both docs corrected in place with the receipt kept visible rather than the numbers silently swapped
+  -- the design doc carries a CORRECTED block, the CEO update an italic note, because a reader who
+  saw the first numbers needs to know they moved and why.
+
+Formatter control run on all three docs; 68 governance tests pass; ruff clean; gate green.
+
+* docs: settle the 1500-vs-1000 tier, and correct another rotted number
+
+NOT AN OPEN DECISION. The brief said <=1500; the gate enforces 1500. The audit template's 1000 was a
+  documentation inconsistency, not a competing instruction. Recorded so it stops resurfacing as a
+  question.
+
+CORRECTED, and the error is the report's own lesson committed inside the report: this document said
+  the stricter tier would catch "11 more files". Re-derived on current main: it is SEVENTEEN. The 11
+  was measured before waves 2-4 and rotted between writing and use -- exactly the
+  hand-carried-number failure listed a few sections above it.
+
+THE STRUCTURAL POINT WORTH KEEPING
+
+Three of the 17 are files THIS CAMPAIGN created:
+
+scripts/_release_assets_checks/ci_workflow.py 1221 (wave 2) benchmarks/gpu_native_bench_gates.py
+  1148 (wave 3) benchmarks/gpu_bench_support.py 1060 (wave 3)
+
+A split targets the limit it is given, so its output lands JUST UNDER that limit. Every wave run at
+  1500 manufactures files in the 1000-1500 band. If the limit ever tightens, this campaign's output
+  becomes the next campaign's backlog -- so tightening is cheapest BEFORE the remaining waves, not
+  after.
+
+That is a scheduling fact, not a decision pending on anyone, and it is the only reason the tier is
+  worth revisiting.
+
+Formatter control run; governance tests pass.
+
+* docs: retain the merge-wave lessons -- a gate bounds ONE failure mode
+
+Six receipts from landing five PRs in one evening, all of the same shape: a check working exactly as
+  designed, whose silence was read as covering a family it never asserted anything about.
+
+The sharpest is the skill-drift gate. It fails a citation pointing PAST the end of a file, so after
+  wave 4 shrank agent_capsule.py 3,652 -> 926 it correctly failed six and then looked complete. A
+  seventh at :294 stayed GREEN -- inside 926 lines, and no longer describing the symbol it named.
+  Only a grep for every citation into the split file found it.
+
+Also recorded, because each cost real time today:
+
+- a bash retry loop exits 0 on exhaustion, so a retry added to fix a CI hang would have reintroduced
+  the silent-skip it was guarding (assert the postcondition, not the loop's status) - two PRs both
+  green, conflicting on adjacent allowlist lines, invisible to either PR's CI because each ran
+  against its own base - a ratchet re-pinned in the same commit reports clean -- legitimate
+  sometimes, always the weakest outcome, so record the residual - sibling legs in the SAME run are
+  what separate a hung step from a degraded runner (3 finished in 10-12 min while ubuntu sat 2h21m)
+  - `gh run view --log-failed` is EMPTY while the run is in progress even when the job has already
+  failed, and `${{ matrix.os }}` in a check name means the job never instantiated
+
+Lands in AGENTS.md as a dated law (42 dated laws now, re-derived not counted), plus the two skills
+  that route to it: validation-and-qa gets the gate-scope note (deliberately NOT an eleventh Form --
+  the Form count is a pinned two-file contract and these are a different failure class),
+  debugging-playbook gets the hung-CI-job procedure.
+
+Verified: 52 doc-governance/drift/index tests pass, and `ruff format --preview` is clean --
+  baselined against the committed versions first, which were already formatted, so the reformat was
+  mine and not pre-existing drift.
+
+* fix: the split-floor costing script measured a hardcoded checkout, not its own tree
+
+`scripts/cost_split_floor_routes.py` resolved its repo root by asking git about a literal absolute
+  path:
+
+cwd=r"C:\dev\projects\tensor-grep"
+
+so every invocation measured that one checkout no matter where it ran -- and that checkout currently
+  sits on an unrelated branch with dozens of uncommitted files. It would also simply not run on any
+  other machine or in CI.
+
+Its sibling `scripts/measure_split_floor.py` already resolved the root from `__file__`. The two
+  disagreed, and the wrong one produced every number in
+  docs/design/2026-08-19-split-floor-escape.md.
+
+Re-measured against real main:
+
+Route A Route B main.py 102 (was 102) 376 (was 378) repo_map.py 166 (was 166) 296 (was 295)
+  mcp_server 125 (was 69) 115 (was 105) TOTAL 393 (was 337) 787 (was 778)
+
+THE RECOMMENDATION SURVIVES: Route A still wins ~2x, still 3 files against 75.
+
+THE SEQUENCING RATIONALE DOES NOT. The doc said "convert mcp_server.py first: fewest edits (69)". At
+  125 it has the SECOND fewest -- main.py does, at 102. So the stated reason was false.
+
+mcp_server.py still goes first, for reasons the corrected numbers strengthen rather than weaken, and
+  §5 now says so: it has 8 dependent test files against 19 and 55, and 54 of its 125 sites are a
+  single symbol (`_inject_mcp_contract_fields`), i.e. 43% of the work is one uniform pattern. A raw
+  edit count was the wrong thing to sequence on.
+
+Also corrected: "files touched" for Route B was a per-module SUM (79, then 82). Seven test files
+  patch more than one of the three modules, so the honest blast radius is the union -- 75.
+
+Four further occurrences of the stale totals elsewhere in the doc were swept (337 x2, 778, and the
+  pin triple "102/166/69"), per the standing rule that fixing a number means grepping the WHOLE
+  document for it -- this repo has shipped a corrected figure alongside its own refuted twin before.
+
+Verified: script lints clean, reproduces the table from its own worktree, and 52
+  doc-governance/drift/index tests pass.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Mark split-floor step 1 shipped, and keep the UNREVIEWED half visible
+  ([#1037](https://github.com/oimiragieo/tensor-grep/pull/1037),
+  [`95d72ee`](https://github.com/oimiragieo/tensor-grep/commit/95d72ee3971e2588ec9f9b088107f1a1d601268a))
+
+The doc still instructed the reader to build the bare-call ratchet, which shipped as #1036 an hour
+  earlier. A design doc that tells you to build something already built is how a later reader either
+  re-does it or assumes the whole plan is unstarted.
+
+§4 now carries the receipt rather than the instruction -- the three-arm perturbation proof (125 ->
+  126 -> 125, exit 0/1/0, byte-identical revert), and the note that the exit codes were re-measured
+  without a pipe after a first reading took `tail`'s status and printed a false exit=0.
+
+The status line is SCOPED rather than flipped. "Proposal, unreviewed" -> "step 1 shipped; the
+  CONVERSION is still a proposal and still unreviewed". Marking the whole doc as progressed would
+  have quietly retired the adversarial-review gate in §5, which is the thing standing between us and
+  393 call-site edits whose failure mode is invisible to a passing test suite. One step landing is
+  not the plan being approved.
+
+Also records what a zero on the new ratchet will NOT mean: no bare call left is not the same as
+  splittable, because the AST query does not model class methods, closures, `global` rebinding, or
+  spec_from_file_location.
+
+Verified: ruff --preview clean, 48 doc-governance/drift tests pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- The PR title is NOT the release semantic on a single-commit PR
+  ([#1039](https://github.com/oimiragieo/tensor-grep/pull/1039),
+  [`edaefa0`](https://github.com/oimiragieo/tensor-grep/commit/edaefa05738b1915759b1aee538d764ec3cf10a8))
+
+CLAUDE.md stated flatly: "The repo squash-merges, so the PR TITLE *is* the release semantic." That
+  is true only when the PR has MORE THAN ONE commit. GitHub's squash defaults to the single commit's
+  own subject when there is exactly one, and retitling the PR then changes nothing.
+
+Measured today, against an explicit prediction:
+
+PR #1036 title : ci: bare-call ratchet - step 1 of the split-floor escape merged commit : feat:
+  bare-call ratchet -- step 1 of the split-floor escape (#1036)
+
+I titled it `ci:` deliberately, to avoid publishing a version for a dev-only CI gate, and told the
+  CEO "no release". It merged as `feat:` -- one commit, whose message said feat -- so a MINOR bump
+  publishes for tooling that ships nothing to users. Harmless functionally; the prediction was still
+  wrong, and the rule in this file is what made it wrong.
+
+The correction names the right oracle: semantic-release parses THE COMMIT ON MAIN, never the PR
+  title. So the check is
+
+git log --format='%s' <last-tag>..origin/main | grep -E '^(fix|feat|perf)'
+
+run AFTER merging, rather than reading the PR and believing it. And the remedy on a single-commit PR
+  is to fix the COMMIT subject or add a second commit -- retitling alone is a no-op.
+
+Swept the rest of the corpus for the same claim; it appears only here.
+
+This is the third distinct release-class trap recorded in this paragraph, after `refactor:` not
+  publishing and a CWE-88 fix scoped as `chore:`. They share one shape: the artifact that decides
+  the release is never the one being read.
+
+Verified: ruff --preview clean, 52 doc-governance/drift/index tests pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Bare-call ratchet -- step 1 of the split-floor escape
+  ([#1036](https://github.com/oimiragieo/tensor-grep/pull/1036),
+  [`f2afc60`](https://github.com/oimiragieo/tensor-grep/commit/f2afc6091b2da9a85b517f4cfe08a59cc607b6e6))
+
+docs/design/2026-08-19-split-floor-escape.md §5 sequences the Route A work as "ship the ratchet
+  FIRST, with counts pinned at today's values, then convert one module". This is that step. No
+  behaviour changes; nothing is converted yet.
+
+WHAT IT GUARDS
+
+The three biggest modules cannot reach the line limit by moving code. Python resolves a bare name
+  through the DEFINING module's globals, so a function that calls a monkeypatched name as a bare
+  identifier is welded to the module the tests patch. Move it and THE TEST STILL PASSES WHILE
+  PRODUCTION RUNS THE UNPATCHED ORIGINAL -- a silent false green, the class of defect this repo has
+  paid for most often.
+
+Route A converts those call sites to `_self.NAME(...)`. Without a gate, a half-finished conversion
+  is indistinguishable from a finished one, and a cleaned module can silently regress. So the gate
+  has to exist before the work, not after.
+
+FAIL-CLOSED IN BOTH DIRECTIONS, like scripts/file_size_budget.py
+
+above pin -> FAIL (new bare call) below pin -> FAIL (bank the progress by lowering the pin) at 0,
+  pinned -> FAIL (retire the entry) pin, no module -> FAIL (stale)
+
+The below-pin arm is the unusual one and it is deliberate: a pin above the real count accepts a
+  RANGE, and a range is exactly where a later regression hides.
+
+PERTURBATION-PROVED, NOT ASSUMED
+
+Injected one bare call into mcp_server.py:
+
+ARM 1 clean 125 == pin exit 0 ARM 2 +1 bare call 126 > pin exit 1, names the file and the fix ARM 3
+  reverted 125 == pin exit 0, file byte-identical (sha 1ff472cb)
+
+Exit codes were re-measured WITHOUT a pipe after the first attempt read `tail`'s status instead of
+  python's and printed a false "exit=0" -- the same trap that once let a commit land on red in this
+  workspace.
+
+17 unit tests, weighted toward the measurement rather than the policy: a policy test over a dict
+  passes just as happily when the AST query underneath is blind. So there are arms proving the query
+  counts `NAME()`, does NOT count `_self.NAME()`, MOVES between those two forms on one file, ignores
+  unpatched names, and is not fooled by the symbol appearing in a docstring (a grep would fail that
+  one -- after a fix lands, the docstring explaining it contains the symbol).
+
+WHAT ZERO WILL NOT MEAN
+
+Zero bare calls does not mean a module is splittable. This AST query does not model class methods,
+  closures, `global` rebinding, or `spec_from_file_location` loading. The docstring says so, and
+  says to re-run measure_split_floor.py rather than infer the floor from this number.
+
+Verified: ruff clean, 63 tests pass (this file plus the CI-path-filter and file-size suites),
+  workflow parses at 26 jobs with #1035's ripgrep timeout intact.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Split agent_capsule (wave 4, 3652 → 926, allowlist 33 → 32)
+  ([#1033](https://github.com/oimiragieo/tensor-grep/pull/1033),
+  [`d487937`](https://github.com/oimiragieo/tensor-grep/commit/d48793789707f383621d1591038ec64a8d6ef668))
+
+* refactor: split agent_capsule (wave 4, 3652 -> 926, allowlist 33 -> 32)
+
+agent_capsule.py 3652 -> 926 COMPLIANT, allowlist entry REMOVED + 9 new modules, largest 979
+  (agent_capsule_builder.py)
+
+MY OWN SPLIT-FLOOR TOOL UNDERCOUNTED, AND IT UNDERCOUNTED IN THE DANGEROUS DIRECTION
+
+I built `measure_split_floor.py` earlier today and briefed this wave on its output: 5 locked
+  functions / 1,190 lines -> "split is viable". The agent re-derived and found the real locked set
+  is 10 functions / 1,527 lines. With ~270 lines of imports and overhead, that is ~1,800 -- so by my
+  own criterion the file was NOT viable, and the tool told me it was.
+
+The tool's docstring already said it is a LOWER BOUND and that "a number under the limit is
+  encouraging, not a guarantee". That hedge is the only reason this is a correction rather than a
+  wasted wave. A tool that is honest about its direction of error stays useful when it is wrong.
+
+Direction check on the rest: undercounting makes main.py / repo_map.py / mcp_server.py MORE locked,
+  not less, so #1032's "cannot be split" conclusion for those three strengthens. Only the "viable"
+  verdict is unsafe. A follow-up corrects the tool and the design doc.
+
+FIFTH CONSECUTIVE WAVE WHERE THE BRIEF WAS WRONG AND THE AGENT CAUGHT IT. That is now the expected
+  outcome, not a surprise, which is why every brief says so explicitly.
+
+HOW COMPLIANCE WAS REACHED ANYWAY
+
+The largest locked function (`build_agent_capsule_from_map`, 834 lines) is not itself one of the 9
+  patched symbols -- it is locked only because it bare-calls three that are. Moving it and rewriting
+  exactly those 3 calls to qualified `agent_capsule.<name>(...)` lookups restores late binding, so a
+  test patching the facade still wins. That is the escape hatch the brief sanctions, applied to one
+  function rather than 337. The other 9 locked functions stayed verbatim.
+
+PROOFS
+
+- AST equality: 67/68 functions byte-identical (0 missing / 0 extra / 0 mismatched). The 68th
+  verified identical MODULO exactly the 3 documented Name->Attribute rewrites, by a custom
+  NodeTransformer. All 21 constants identical. The agent's first pass flagged a false mismatch from
+  a Windows subprocess decoding bug and chased it to ground rather than accepting it. - mypy: 101
+  source files, no issues. It caught 5 real missing re-exports the agent's own cross-reference
+  detector missed, because those symbols are referenced only from OTHER modules -- the split-only
+  `implicit_reexport` class from wave 1, found again. - Re-export survival re-verified by `hasattr`
+  sweep AFTER `ruff --fix` (the wave-3 trap where the import organiser silently dropped six names):
+  all present. - 1,941 tests passed / 0 failed across the agent's four batches; I independently
+  re-ran 106 (agent-capsule hardcases, best-effort-primary, edit-plan-seed, file-size budget). -
+  ruff check clean repo-wide; gate green at 32 grandfathered.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: re-anchor skill citations after the agent_capsule split
+
+The wave-4 split took agent_capsule.py 3,652 -> 926 lines, dangling six skill citations past the end
+  of the file and silently redirecting a seventh.
+
+Per AGENTS.md "Cite the SYMBOL, not the line", none of these is re-stamped with a new line number --
+  each now names the symbol and hands over the grep that locates it, so the next split cannot break
+  them again.
+
+agent_capsule.py:1941 (x2) -> _CAPSULE_INLINE_CALLER_ANNOTATION_ENV, which MOVED to
+  agent_capsule_constants.py (the citation was wrong in file AND line) agent_capsule.py:1522 (x4) ->
+  _agent_gpu_tg_command agent_capsule.py:294 -> _primary_target_is_unrequested_marker_helper, now in
+  agent_capsule_targets.py
+
+The last one is the interesting failure. The drift gate only fails a citation that points PAST the
+  end of a file, so :294 stayed green at 926 lines while pointing at unrelated code inside a
+  different function -- exactly the "anchors drift 14-500 lines while resolving perfectly" trap
+  CLAUDE.md warns about. It was found by grepping every agent_capsule citation in the tree, not by
+  the gate. Six of seven were caught by CI; the seventh would have shipped.
+
+Third occurrence of dangling-citation-after-split this campaign (waves 2, 3, 4), so the sweep moves
+  into the wave brief as a pre-split step rather than a post-CI repair.
+
+* docs(skill): make the citation sweep a PRE-split step, not a post-CI repair
+
+Waves 2, 3 and 4 each shipped, each went red, and each red had the same single cause: shrinking a
+  file dangled skill citations. Three times is a process gap, so the sweep moves ahead of the split
+  in the campaign skill.
+
+It also records the half CI cannot see. The drift gate fails a citation that points PAST the end of
+  a file; it says nothing about one that still resolves and now points at unrelated code. Wave 4
+  produced exactly that -- `:294` into a 926-line file stayed green while landing inside a different
+  function. CI caught six of seven; the seventh was found by grepping every citation into the split
+  file, which is why that grep is now the step.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.110.19 (2026-08-19)
 
 ### Bug Fixes
