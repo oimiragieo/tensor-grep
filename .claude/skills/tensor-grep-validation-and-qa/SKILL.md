@@ -908,8 +908,9 @@ symptom.
 
 `scripts/agent_readiness.py` is a fast (3-5 minute) CI-blocking dogfood gate for agent-critical
 surfaces — separate from, and complementary to, the full local-validation gate (`AGENTS.md:684`).
-`tg dogfood` (`src/tensor_grep/cli/main.py:14167` as of v1.96.0 — this line drifts every release, find
-it with `grep -n "^def dogfood" src/tensor_grep/cli/main.py` rather than trusting the number, `dogfood()`)
+`tg dogfood` (`dogfood()` in `src/tensor_grep/cli/main.py`, deliberately with NO line number — the one
+that used to sit here drifted past the end of the file when main.py was split on 2026-08-20; find it
+with `grep -n "^def dogfood" src/tensor_grep/cli/main.py`)
 wraps the same check plan with a one-page verdict and an optional `--timeout-s` (default `170.0`) around
 the nested readiness process.
 
