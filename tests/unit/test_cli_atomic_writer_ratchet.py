@@ -32,7 +32,9 @@ closed (see ``_UNRESOLVED`` handling below and ``test_population_has_zero_unreso
 
 SCOPE: the production source set scanned by the population/inventory tests is DISCOVERED, not
 enumerated -- ``_discover_scanned_production_files()`` walks every ``*.py`` module directly under
-``src/tensor_grep/cli/`` (41 as of this task; ``test_scanned_population_floor`` guards against a
+``src/tensor_grep/cli/`` (60 as of 2026-08-20 -- re-derive with `len(_SCANNED_PRODUCTION_FILES)` rather than trusting this
+number, which read "41" until the cli/main.py split touched this file and was already stale by 19;
+``test_scanned_population_floor`` guards against a
 truncated/empty walk silently reading as "no violations"). This module's first cut (the original
 form of task #859's class fix) scoped the scan to a hardcoded 3-file tuple -- ``main.py``,
 ``_index_lock.py``, ``codemap.py`` -- named directly by the backlog-closeout plan, plus the module
@@ -42,7 +44,7 @@ stale by definition"). Walking the directory closes that gap. The detector ENGIN
 general (callers can point it at any file), and the individually-red controls below exercise it
 against small synthetic sources, independent of this production scope. Subdirectories of
 ``src/tensor_grep/cli/`` (e.g. ``formatters/``) are NOT walked -- a non-recursive glob, matching
-what "41 modules" has always meant in this task's own measurements; recursing into subpackages is
+what the module count has always meant in this task's own measurements; recursing into subpackages is
 a deliberate, undone follow-up, not a silent gap (nothing under ``formatters/`` writes files as of
 this task, confirmed by manual review, not by this detector).
 
@@ -110,7 +112,7 @@ def _discover_scanned_production_files() -> tuple[str, ...]:
 _SCANNED_PRODUCTION_FILES = _discover_scanned_production_files()
 
 # A truncated/empty walk must never silently read as "no violations" (AGENTS.md's "a zero means
-# two things" law) -- 41 modules exist as of this task; 30 is a real floor with headroom for
+# two things" law) -- 60 modules exist as of 2026-08-20; 30 is a real floor with headroom for
 # ordinary churn while still catching a walk that resolved the wrong directory, hit a glob typo,
 # or ran against an empty/partial checkout.
 _MINIMUM_SCANNED_MODULE_COUNT = 30
@@ -694,7 +696,7 @@ def scan_file(path: Path, module: str) -> list[Candidate]:
 # (module, outer_function, operation) identity so a pure line-number drift from an unrelated
 # edit fails loudly rather than silently reclassifying a moved line as a fresh violation.
 _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
-    ("main.py", "_download_native_frontdoor_asset", "os.open"): (
+    ("native_frontdoor.py", "_download_native_frontdoor_asset", "os.open"): (
         "TOCTOU fix (H2 deferral closed): claims `destination` exclusively via "
         "O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW BEFORE the streamed download starts, then writes "
         "through that SAME held fd (os.fdopen) for the whole transfer -- urllib.request.urlretrieve "
@@ -721,17 +723,17 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "Writes the pid+ownership-token into the just-opened, already-confined lock fd from "
         "the same acquisition (same function as the os.open entry directly above)."
     ),
-    ("main.py", "_write_windows_exe_bridge_marker", "Path.write_text"): (
+    ("windows_launcher.py", "_write_windows_exe_bridge_marker", "Path.write_text"): (
         "Fixed-content (`_WINDOWS_EXE_BRIDGE_MARKER_CONTENT`), no externally-sourced bytes; "
         "part of the native PATH-bridge maintenance family (see _refresh_windows_tensor_grep_"
         "com_bridges below), not a user-facing artifact publish."
     ),
-    ("main.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"): (
+    ("doctor_report.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"): (
         "`probe_file` is created from a `TemporaryDirectory()` opened in THIS SAME function "
         "(`with TemporaryDirectory(...) as temp_dir: probe_file = Path(temp_dir) / 'probe.log'`) "
         "-- a self-contained temp artifact, never published outside the function's own scope."
     ),
-    ("main.py", "_refresh_windows_tensor_grep_com_bridges", "shutil.copy2"): (
+    ("windows_launcher.py", "_refresh_windows_tensor_grep_com_bridges", "shutil.copy2"): (
         "Relocates the ALREADY-INSTALLED, already-verified `native_path` binary between two "
         "PATH bridge locations during `tg doctor` -- a native-runtime swap of trusted on-disk "
         "bytes, not a publish of new externally-sourced content (the plan's Task 3 Step 2 "
@@ -739,19 +741,19 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "launcher/native-runtime/directory swaps... Do not force runtime swaps through "
         "atomic_write_bytes')."
     ),
-    ("main.py", "_remove_windows_stale_tensor_grep_python_launchers", "os.replace"): (
+    ("windows_launcher.py", "_remove_windows_stale_tensor_grep_python_launchers", "os.replace"): (
         "Moves an orphaned launcher aside to a uniquely-named `.bak` path (backup-only, no new "
         "content written) during `tg doctor` cleanup -- a native-runtime swap, same exemption "
         "as the bridge refresh above."
     ),
-    ("main.py", "_repair_windows_python_subprocess_launcher", "os.replace"): (
+    ("windows_launcher.py", "_repair_windows_python_subprocess_launcher", "os.replace"): (
         "Backup-aside (`candidate_path` -> `backup_path`) before repair, and rollback restore "
         "(`backup_path` -> `candidate_path`) on failure -- both relocate already-on-disk bytes, "
         "no new externally-sourced content; same native-runtime-swap exemption. Two call sites "
         "share this one function-level fingerprint entry per the exact-fingerprint rule below "
         "being keyed on (module, outer_function, operation), not a raw line number."
     ),
-    ("main.py", "_repair_windows_python_subprocess_launcher", "shutil.copy2"): (
+    ("windows_launcher.py", "_repair_windows_python_subprocess_launcher", "shutil.copy2"): (
         "Copies the ALREADY-VERIFIED `native_tg_binary` into `candidate_path` to repair a "
         "foreign launcher -- again relocating trusted on-disk bytes, not publishing new "
         "externally-sourced content."
@@ -1408,27 +1410,25 @@ def test_generated_source_c_sites_are_surfaced() -> None:
     Recursing this detector into generated-source payloads is left as an explicit follow-up, not
     silently declared clean.
     """
-    source = _read(_CLI_SRC / "main.py")
-    sites = _real_subprocess_dash_c_sites(source, "main.py")
-    assert sites == [
-        ("main.py", "_schedule_windows_native_frontdoor_refresh"),
+    # SCOPE WIDENED 2026-08-20 (the cli/main.py split): this used to scan ONLY main.py and then
+    # assert every other module had ZERO sites. Two of the three roots below then moved into
+    # main.py's extracted siblings, which would have made the "everyone else has zero" half red
+    # and -- worse, had the pin been relaxed instead -- could have let a site LEAVE main.py and
+    # leave the population entirely. The pin is now over the whole discovered walk, keyed by
+    # (module, function), so relocating a root is visible but not a loophole.
+    sites: list[tuple[str, str]] = []
+    for fname in _SCANNED_PRODUCTION_FILES:
+        sites.extend(_real_subprocess_dash_c_sites(_read(_CLI_SRC / fname), fname))
+    assert sorted(sites) == [
         ("main.py", "_schedule_windows_self_upgrade"),
-        ("main.py", "_verify_target_python_tensor_grep_version"),
+        ("native_frontdoor.py", "_verify_target_python_tensor_grep_version"),
+        ("windows_launcher.py", "_schedule_windows_native_frontdoor_refresh"),
     ], (
-        f"the set of real subprocess '-c' execution roots in main.py changed: {sites}. If this "
-        "is a genuine new site, add it here AND assess whether its payload writes files (update "
-        "the module docstring's Known-gaps section and, ideally, extend the detector to "
+        f"the set of real subprocess '-c' execution roots under cli/ changed: {sorted(sites)}. "
+        "If this is a genuine new site, add it here AND assess whether its payload writes files "
+        "(update the module docstring's Known-gaps section and, ideally, extend the detector to "
         "recurse into it rather than just re-pinning this list)."
     )
-
-    # Widened alongside the population census (task #859 class ratchet): every OTHER discovered
-    # module, not just the original 3-file scope, must have zero surfaced '-c' sites -- verified
-    # against the full walk so a new module can never quietly grow one unnoticed.
-    for fname in _SCANNED_PRODUCTION_FILES:
-        if fname == "main.py":
-            continue
-        other_sites = _real_subprocess_dash_c_sites(_read(_CLI_SRC / fname), fname)
-        assert other_sites == [], f"unexpected new '-c' execution root(s) in {fname}: {other_sites}"
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1452,7 +1452,7 @@ def test_scanned_population_floor() -> None:
     walk silently resolving zero/few files (wrong directory, glob typo, partial checkout) and
     that truncation reading as a clean "no violations" -- exactly the false-green shape AGENTS.md
     warns about: an empty scan and a genuinely clean codebase are indistinguishable without this
-    floor. 41 modules exist as of this task; asserting only a FLOOR (not an exact count) means
+    floor. 60 modules exist as of 2026-08-20; asserting only a FLOOR (not an exact count) means
     ordinary future module additions don't require touching this line."""
     assert len(_SCANNED_PRODUCTION_FILES) >= _MINIMUM_SCANNED_MODULE_COUNT, (
         f"the discovered population walk found only {len(_SCANNED_PRODUCTION_FILES)} module(s) "
@@ -1477,7 +1477,7 @@ def test_population_has_zero_unresolved() -> None:
 # scope (main.py/_index_lock.py/codemap.py) to the full `_CLI_SRC` walk.
 _EXPECTED_HELPER_BACKED = {
     (
-        "main.py",
+        "ast_scan.py",
         "_write_json_refuse_symlink",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
@@ -1540,12 +1540,12 @@ _EXPECTED_HELPER_BACKED = {
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     (
-        "main.py",
+        "native_frontdoor.py",
         "_write_native_frontdoor_metadata",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     (
-        "main.py",
+        "native_frontdoor.py",
         "_install_release_native_frontdoor",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
@@ -1555,17 +1555,17 @@ _EXPECTED_HELPER_BACKED = {
 # `_SANCTIONED_SITES` above for the per-entry rationale.
 _EXPECTED_SANCTIONED = {
     # O_EXCL exclusivity claim guarding urlretrieve's symlink-following 'wb'; writes zero bytes.
-    ("main.py", "_download_native_frontdoor_asset", "os.open"),
+    ("native_frontdoor.py", "_download_native_frontdoor_asset", "os.open"),
     ("_index_lock.py", "replace_with_retry", "os.replace"),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"),
     ("_index_lock.py", "index_lock", "os.open"),
     ("_index_lock.py", "index_lock", "os.write"),
-    ("main.py", "_write_windows_exe_bridge_marker", "Path.write_text"),
-    ("main.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"),
-    ("main.py", "_refresh_windows_tensor_grep_com_bridges", "shutil.copy2"),
-    ("main.py", "_remove_windows_stale_tensor_grep_python_launchers", "os.replace"),
-    ("main.py", "_repair_windows_python_subprocess_launcher", "os.replace"),
-    ("main.py", "_repair_windows_python_subprocess_launcher", "shutil.copy2"),
+    ("windows_launcher.py", "_write_windows_exe_bridge_marker", "Path.write_text"),
+    ("doctor_report.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"),
+    ("windows_launcher.py", "_refresh_windows_tensor_grep_com_bridges", "shutil.copy2"),
+    ("windows_launcher.py", "_remove_windows_stale_tensor_grep_python_launchers", "os.replace"),
+    ("windows_launcher.py", "_repair_windows_python_subprocess_launcher", "os.replace"),
+    ("windows_launcher.py", "_repair_windows_python_subprocess_launcher", "shutil.copy2"),
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---
     ("agent_capsule.py", "_agent_gpu_evidence", "Path.write_text"),
     ("audit_manifest.py", "verify_review_bundle", "Path.write_text"),
