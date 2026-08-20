@@ -1,6 +1,979 @@
 # CHANGELOG
 
 
+## v1.111.1 (2026-08-20)
+
+### Bug Fixes
+
+- Bump mcp dependency floor to 1.29.0 (W2-b maintenance policy)
+  ([#1061](https://github.com/oimiragieo/tensor-grep/pull/1061),
+  [`88ecd58`](https://github.com/oimiragieo/tensor-grep/commit/88ecd585d702e988ca3ba96b66872f1b2268cbf8))
+
+Tracks the maintained mcp v1.x head per the W2-a decision record
+  (docs/design/2026-08-20-mcp-2-0-exposure-decision.md, decision: PIN_AND_DEFER). The `<2` cap means
+  tg's floor is the only thing keeping a resolver from installing an old release off the v1.x branch
+  that still receives security patches, so the floor should track the maintained head rather than
+  lag behind it. No advisory is cited against 1.27.2 itself -- this is a maintenance-policy bump,
+  not a CVE response; if an advisory is later cited against a version below 1.29.0 it upgrades the
+  justification.
+
+- pyproject.toml: mcp>=1.27.2,<2 -> mcp>=1.29.0,<2 (upper bound unchanged) - uv.lock: mcp 1.28.1 ->
+  1.29.0 (scoped `uv lock --upgrade-package mcp`, then hand-verified against a bare `uv lock`
+  re-derivation to confirm the delta touches only the mcp package block + its manifest specifier
+  line -- a full relock on this box re-derives unrelated platform markers for
+  cuda-pathfinder/numpy/nvidia-* due to uv-version/platform drift from the lock's origin machine,
+  which would have polluted this diff) - tests/unit/test_mcp_dependency_is_upper_bounded.py: new
+  floor assertion
+
+RED (pre-change, floor 1.27.2): FAILED test_the_floor_tracks_the_maintained_v1x_head AssertionError:
+  the declared mcp requirement (mcp<2,>=1.27.2) has a floor below 1.29.0 ... assert
+  <Version('1.27.2')> >= <Version('1.29.0')> 1 failed, 2 passed in 3.52s
+
+GREEN (post-change): 4 passed in 0.62s
+
+Additional acceptance run beyond the plan's [LOCAL] pytest command: - pyproject.toml contains
+  "mcp>=1.29.0,<2": pass - uv.lock mcp entry == 1.29.0: pass - `uv lock --check`: lock is consistent
+  with pyproject.toml - ruff check + ruff format --check on the touched files: clean - lowest-direct
+  resolution (`uv pip install --resolution lowest-direct`, fresh py3.11 venv): resolves mcp==1.29.0;
+  `import mcp.server.fastmcp` succeeds (building the local tensor-grep extension itself was skipped
+  in that scratch venv -- missing maturin, and a local Rust build is out of scope for this shared
+  desktop; the dependency resolution/import is the part this check exists to prove) - in-process MCP
+  smoke (mcp.shared.memory connected client/server, not just an import): initialize handshake
+  completes, serverInfo.version == "1.7.0" (_TG_MCP_SERVER_CONTRACT_VERSION), tools/list returns 58
+  tools
+
+Release class: fix (publishes a patch release) -- merge this alone in a clean release window, no
+  other release-bearing merge in flight; verify the published wheel after (mcp resolves to
+  >=1.29.0,<2 on a fresh install).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Add junior-rebuildable feature guide, design-doc convention, and rebuild checklist
+  ([#1045](https://github.com/oimiragieo/tensor-grep/pull/1045),
+  [`c3056e8`](https://github.com/oimiragieo/tensor-grep/commit/c3056e8ce0e4f15dd3709844ea69c78a60a76a0c))
+
+Closes the four documentation gaps named in the enterprise-readiness audit: no step-by-step rebuild
+  guide for any feature, no design-doc convention, no rebuild verification checklist, and no
+  cache/schema migration documentation.
+
+- docs/rebuild-guides/tg-checkpoint.md: a worked, fully-cited rebuild guide for `tg checkpoint`
+  (create/list/undo) covering the problem it solves, data flow, every contributing file, the on-disk
+  format (captured by actually running the real binary against a scratch directory), eight traps a
+  naive reimplementation gets wrong (each tied to a real guard and a real test), and what is
+  explicitly out of scope. - docs/design/README.md: the design-doc convention, derived from the five
+  existing docs/design/*.md files (status line, what it decides, measured evidence, what it does not
+  decide, and how in-place corrections are recorded -- 2026-08-19-split-floor-escape.md's two
+  corrections are the worked example). - docs/rebuild-guides/verification-checklist.md: the general
+  "how do I prove a rebuild is correct" checklist -- run the feature's own tests first (and confirm
+  they were once RED), dogfood the real shipped binary, round-trip a stateful feature against a
+  scratch directory, walk claimed traps against the real guarding code, run this repo's governance
+  gates, and report verification in three explicit tiers instead of one undifferentiated claim. -
+  docs/rebuild-guides/cache-and-schema-versioning.md: what cache/schema versioning actually exists
+  in this codebase. There is no migration framework; one real schema-gated cache invalidation exists
+  (project_data_v6.json, cross-checked Rust/Python, backed by a passing test), and every other
+  version field found by sweeping the codebase is stamped for a downstream consumer without being
+  enforced on read.
+
+Every structural claim in these four docs was verified against origin/main 7ee3a27e by opening the
+  cited file and confirming the symbol at the cited line; the checkpoint on-disk JSON shown was
+  captured by running `tg checkpoint create/undo --json` against a real scratch directory, not
+  described from memory.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Cost the three levers beyond Route A (W3-a, design-only)
+  ([#1058](https://github.com/oimiragieo/tensor-grep/pull/1058),
+  [`0ea4b4a`](https://github.com/oimiragieo/tensor-grep/commit/0ea4b4a52f5f7d9cfa7d3140b5a58c57e1a4b330))
+
+W3-a of docs/plans/2026-08-20-worldclass-closeout-plan.md. Ships one design doc and one schema
+  checker; no production code.
+
+- docs/design/2026-08-20-beyond-route-a.md: 9 rows (3 modules x 3 options), 11 fields each, every
+  number carrying the command that produced it. The document carries its own four AST probes so no
+  number is behind an uncommitted script. - scripts/check_costing_doc.py: the schema checker plan
+  W3.2 specifies, replacing r1's `test -f` plus one-token grep.
+
+Recommendation under the predeclared rule: ESCALATE all three modules. Two escalate on the security
+  proviso, not on cost; repo_map.py lands in the middle band twice over.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Mcp 2.0 pin-and-defer decision record with six reopen triggers (W2-a)
+  ([#1057](https://github.com/oimiragieo/tensor-grep/pull/1057),
+  [`8ab9188`](https://github.com/oimiragieo/tensor-grep/commit/8ab91884dc2f0f29a6d1f47056d2249085c9f739))
+
+Re-verifies the closeout plan's W2 research at authoring time (MCP spec 2026-07-28 changelog + PyPI
+  `mcp` package metadata, both re-fetched 2026-08-20) rather than trusting the plan's cached
+  receipt, and records the PIN_AND_DEFER decision as a structured YAML front-block with six DISTINCT
+  reopen triggers (T1-T6: upstream maintenance end, named client incompatibility, Task 2C unblock,
+  Python support loss, unpatchable transitive dep, time-bounded revalidation) instead of a
+  repeated-heading count.
+
+- docs/design/2026-08-20-mcp-2-0-exposure-decision.md: the decision record. -
+  tests/unit/test_mcp_2_0_decision_record.py: parses id:/type: pairs (not a heading count) and
+  proves the checker rejects the r1 "three copies of the same heading" loophole via three
+  parametrized perturbation arms. - .claude/skills/tensor-grep-release-drift-check/SKILL.md: wires
+  trigger T1 into the post-release sweep as a mechanical PyPI re-derivation emitting
+  MAINTAINED/STALE/EXPIRED/CANNOT_MEASURE, never a bare zero; stays a maintenance command per that
+  skill's own no-hard-pytest rule.
+
+Both ratchets (file_size_budget.py, bare_call_ratchet.py) exit 0; docs governance and
+  skill-drift/index-sync suites pass unchanged.
+
+- Research/competitive frontier receipts 2026-08-20
+  ([#1050](https://github.com/oimiragieo/tensor-grep/pull/1050),
+  [`255af57`](https://github.com/oimiragieo/tensor-grep/commit/255af57cb46b8b5e7f274b4a959cb100ca2781e3))
+
+Exa REST + arXiv Atom API + GitHub REST sweep over the 2026-08-12..20 delta window. 11 NEW findings,
+  each with a URL, a date, and a MEASURED-vs-MARKETING label; honest nulls stated per row.
+
+Headline: the MCP specification revision 2026-07-28 removed protocol-level sessions and the
+  initialize handshake, added a mandatory server/discover RPC, and now requires ttlMs/cacheScope on
+  list results. tg's exposure is recorded from the tree, not inferred: pyproject.toml pins
+  mcp>=1.27.2,<2 because mcp 2.0.0 deleted mcp.server.fastmcp, which cli/mcp_server.py imports at
+  module scope.
+
+Also new: Agent Plugins 1.0 GA (skills + MCP server as one vendor-neutral package), Mandato
+  (arXiv:2608.14074, protocol-level signed mandates - closest prior art yet to the receipt moat),
+  three agentic-retrieval benchmarks that score abstention and edit-ripple, CodeNib's
+  incremental-serving numbers, and "Better Call Grep", which challenges the marginal value of tg
+  find's dense half.
+
+Intelligence only, no plan. Dispositions are PROPOSED; docs/TASK_BOARD.md is deliberately untouched
+  (A71).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Retain the tri-split fan-out lessons + reconcile the board post-campaign
+  ([#1054](https://github.com/oimiragieo/tensor-grep/pull/1054),
+  [`cacdb7a`](https://github.com/oimiragieo/tensor-grep/commit/cacdb7a8c17bb3444e041998d3b33dc79fcf5654))
+
+New dated law in AGENTS.md (43 now, re-derived): "An Environment DIFFERENCE Can Be The Only
+  Instrument That Sees A Defect" -- the bare-call patch bypass that was STRUCTURALLY invisible
+  locally (no native binary means the embedded branch is taken whether or not the patch delivers;
+  local green was NO evidence, not weak evidence). Plus the campaign's compressed receipts:
+  union-merge before queueing (caught 2 cross-branch defects), per-head monitor keying, the
+  dead-agent uncommitted-WIP divergence, briefs-prevent-repeats-not-new-members, and
+  relocation-vs-census exclusion discipline.
+
+The backlog-campaign skill gains the multi-writer fan-out section (shared-pin ownership, the
+  four-shape patch sweep every split brief must require, family globs for source censuses,
+  hypothesis-not-fact agent reports).
+
+TASK_BOARD reconciled from derived state: 0 open PRs, #1040-#1053 merged, giants at 13,523 / 15,243
+  / 5,341, tri-split union green on main.
+
+Verified: board-freshness + drift + index + docs-governance suites pass, ruff --preview clean on all
+  three files.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Rust split-file tractability assessment (main.rs, gpu_native.rs, native_search.rs, index.rs)
+  ([#1044](https://github.com/oimiragieo/tensor-grep/pull/1044),
+  [`03f8360`](https://github.com/oimiragieo/tensor-grep/commit/03f8360ab1c745714984df98931a1dc430a9b546))
+
+Re-derives the oversized-Rust-file table and gives a per-file TRACTABLE / BLOCKED /
+  NEEDS-CI-EXPERIMENT verdict with file:line evidence, contrasting Rust's compiler-checked
+  visibility model against the Python split-floor's silent monkeypatch hazard. index.rs is closest
+  to clearing the limit via test-module extraction + one codec split; main.rs needs test-extraction
+  plus a larger architecture pass; gpu_native.rs is feature-gated and needs its own CI experiment.
+  No Rust code was built or changed.
+
+- Second rebuild guide, tg ledger (W6-a)
+  ([#1059](https://github.com/oimiragieo/tensor-grep/pull/1059),
+  [`5c5e9b0`](https://github.com/oimiragieo/tensor-grep/commit/5c5e9b09f466a1fa81ff64349a317ab1dc0e7de5))
+
+Adds docs/rebuild-guides/tg-ledger.md following the tg-checkpoint.md template shape (problem
+  statement, data flow, file-by-file contribution, on-disk format, traps, out-of-scope), for tg
+  ledger's two slices: advisory claims (claim/release/list) and content-addressed reusable findings
+  (record/find).
+
+Deep-dives the PATH-scope footgun (#706): claim/list/release from different subtrees of the same
+  repo used to resolve to different physical .tensor-grep/ledger/ directories, making a claim filed
+  from one subtree invisible to a list call from another. _ledger_physical_root's .git-boundary
+  canonicalization fixes this for both slices (Slice 2 needed a second, later fix after the same
+  symptom was reported twice in external dogfoods). All demonstrations were run live against the
+  real `tg` binary in a throwaway scratch repo, not read from source alone.
+
+Adds the tg-ledger.md entry to docs/rebuild-guides/README.md, matching house style (no restated
+  guide count).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- World-class closeout plan — council-approved r4 (7/7 APPROVE)
+  ([#1055](https://github.com/oimiragieo/tensor-grep/pull/1055),
+  [`0b9d33f`](https://github.com/oimiragieo/tensor-grep/commit/0b9d33f9b147367a1002b816e38d2eacc208020f))
+
+* docs: world-class closeout campaign plan (derived, pre-council draft)
+
+Six waves, 19 items, every row derived from a command with the receipt inline.
+
+Four premise corrections found while deriving, all recorded in section 0: 30 oversized files not 33;
+  the handler IOU is 128 excluded handlers (54 not provably disclosing), not 160; the Rust #[path]
+  test-extraction experiment already ran green (#1048/#1049), so the mechanism is measured for
+  library crates and unproven only for the binary crate root and --features cuda; and Route A is
+  complete on all three giants, which are STILL floor-bound (measure_split_floor.py: SPLIT CANNOT
+  REACH THE LIMIT) -- so wave 3 cannot be "split them more" and becomes a design-only costing of
+  three real levers, one of which is accepting the pins.
+
+Exa changed the MCP item: the upstream Python SDK README itself says to keep the <2 upper bound
+  until migrated and that v1.x still receives security patches, which turns "plan a 2.0 migration"
+  into PIN AND DEFER plus a floor bump to the patched head (1.27.2 -> 1.29.0), with three named
+  reopen triggers.
+
+Gates: test_public_docs_governance + test_skill_library_drift pass; ruff format --preview applied.
+  Not a build licence -- goes to the thinktank next and will be revised in place.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* docs: worldclass closeout plan r2 -- council round 1 revisions
+
+All three substantive seats returned REVISE. Every finding is dispositioned in a new appendix A; two
+  are recorded as NOT TAKEN with reasons.
+
+Structural changes: - Canonical item registry (1.5): IDs + dispositions, so cutting or delegating an
+  item cannot silently redefine "campaign complete". The unstable "19" count is gone. - W1 slices
+  strictly serialized on the shared gate file; the ceiling rule is "currently merged ceiling +
+  delta, re-derived at rebase", not "137 + delta" (only correct for the first merger). The eight
+  zero-handler modules now have an owner (W1-d). - W1 gains a committed disposition ledger keyed by
+  handler fingerprint, a completeness/uniqueness/locatability/vocabulary gate with four perturbation
+  arms, and RED-3 behavioural fail-closed tests for every network-facing handler classified
+  INTENTIONAL-BOUNDARY -- r1's acceptance was satisfiable by classifying all 54 as boundaries and
+  bumping the ceiling. - A3 adversarial security gate named for W1-a, W1-b, W5-a, explicitly a
+  separate seat from the codex audit. - W4 is the sole allowlist integrator for the whole campaign
+  including W5's pins; r1's W3-b becomes W4-f; a total merge order is published. - W2-c is REQUIRED
+  and its inert SDK-constant tripwire is replaced by a recurring PyPI re-derivation in the
+  release-drift sweep with labelled verdicts incl. CANNOT_MEASURE. Six trigger classes, not three.
+  W2-b is reframed as maintenance policy (no advisory is cited, and r2 says so) with
+  lock-regeneration, lowest-bound-resolution and an MCP initialize/tool-list smoke added. - W3-a
+  gets a schema checker and a decision rule predeclared before any number is seen, plus a required
+  counter-argument. - W4 Python acceptance covers all three families with pre/post node-ID set
+  equality and an executable duplicate detector; Rust acceptance requires run ID, head SHA, job
+  population and test-NAME-SET equality. - Portability: every command tagged [LOCAL]/[CI]; POSIX
+  test/tail/grep-exit idioms replaced with python -c. - Closeout manifest (4.8) re-runs every
+  acceptance command at the final SHA.
+
+Two derived corrections beyond the council's list, both instrument failures: the five-vs-six
+  backend_cpu marker contradiction is fixed AND W4-c no longer takes a count from prose at all -- it
+  derives a committed manifest, because the same file counts 15 / 13 / 6 depending on whether you
+  match a substring (two hits are prose ABOUT the attribute), a stripped line, or column 0, and only
+  the column-0 count is the extraction population. And the cuda execution arm is now cited from
+  ci.yml:744-747, which states a 156-lib-test baseline.
+
+Gates: test_public_docs_governance + test_skill_library_drift pass (48); ruff format --preview
+  applied; three of the new acceptance one-liners smoke-run on this tree with their stated exit
+  codes.
+
+* docs: worldclass closeout plan r3 -- council round 2 surgical fixes
+
+Two live seats (cursor, deepseek), both REVISE, findings narrow and textual. Cursor confirmed every
+  round-1 fix is present in the operative text and deepseek confirmed the wave-deliverable phrasing
+  is unambiguous, so this is surgical -- no restructuring. All six taken; dispositions in a new
+  appendix B.
+
+- §2 diagram wrote the W1 order as a -> d -> b -> c while W1.2, the merge order and appendix A said
+  W1-d -> W1-a -> W1-b -> W1-c. Corrected, and recorded as a RECURRENCE: this is the second round
+  running that a diagram contradicted its own body. The order now has exactly one home (the total
+  merge order); the diagram is a picture of it. - W1.4 completeness is now explicitly CUMULATIVE --
+  every handler in the modules removed from _EXCLUDED_MODULES so far has exactly one record, AND no
+  record exists for a still-excluded module. Full-population completeness was unsatisfiable at every
+  intermediate merge, and an implementer facing an unsatisfiable assertion invents an unstated
+  scope. Per-merge expectations derived: W1-d 2, W1-a 59, W1-b 82, W1-c 128.
+
+- W4.4's node-ID equality was a SPLIT ORACLE: the pre-split baseline sat in an uncommitted
+  .tg-pre-*.txt the splitter could regenerate. It becomes an independent witness -- committed to
+  tests/manifests/ in a separate earlier no-source-change commit, sha256 in that commit body, split
+  PR branched from it and forbidden to touch it, hashes re-derived at the final SHA. - The merge
+  order omitted W4-f pin steps after W4-c and W4-e; all five Rust merges are now followed by one (23
+  steps). A W4-f step with nothing to change is recorded as a NO-OP, not skipped -- a skipped step
+  and an empty step are not the same evidence. - W4.5 ambition corrected 22 -> 23, with the addition
+  shown (1+0+1+3+2+0 = 7). - The ledger fingerprint is split into IDENTITY (module,
+  enclosing_symbol, handler_index_within_symbol) and ADVISORY (lineno, range-checked, never part of
+  identity), so the line-shift-stability claim now matches the schema. The main.rs pin gets one
+  home, new W4.6, stating 15127 pinned / 15126 measured once; three spellings in three places are
+  gone. W4.6 also carries its RED arm, smoke-run today: the assertion exits 1 printing `pin 15127`.
+
+Gates: test_public_docs_governance + test_skill_library_drift pass (48); ruff format --preview
+  applied.
+
+* docs: worldclass closeout plan r4 -- council round 3 scheduling fixes
+
+Codex APPROVEd; cursor/kimi/deepseek converged on three anchored defects, all in the scheduling of
+  the machinery round 2 added, none in the architecture. Dispositions in a new appendix C. Nothing
+  else touched.
+
+1. W4-a's allowlist RETIREMENT had no legal writer and no schedule slot: W4.2 told the slice to
+  remove the python_sidecar.rs entry, the collision map forbids slice-local allowlist edits, W4-f's
+  scope omitted W4-a, and no W4-f sat between W4-a and W5-a -- so the ratchet would RED with
+  RETIRE-THE-ENTRY on merge, or the slice would violate ownership. W4-a added to W4-f's scope in
+  registry and slice table, with retirement stated as equally W4-f's job (the ratchet is fail-closed
+  both ways), and a W4-f(RETIRE) inserted as merge-order step 8.
+
+2. The dangerous one. W4.6's stale-pin re-pin was attached to the W4-f AFTER W5-b while its
+  acceptance asserted pin == 15126 -- but W5-b takes main.rs to ~10,637 lines. Applied literally
+  that pins 15126 onto a 10,637-line file: ~4,489 lines of regrowth invisible to the ratchet, in the
+  slice whose whole purpose is closing a ONE-line version of that gap. The re-pin moves to step 11
+  (before W5-b, where 15126 is true); step 13 re-derives from the measured count; W4.6 states the
+  literal's validity window and ships a literal-free `pin == measured` assertion for every later
+  step. New standing rule: no W4-f step ever copies a number from this document.
+
+3. W1.1's footer said 54 not-provably-disclosing; W1.2's column summed 60. Re-derived rather than
+  reconciled: W1-a 24, W1-b 16, W1-c 12, W1-d 2 = 54. (W1-a's 24 = mcp_server 16 + mcp_audit_tools 5
+  + mcp_rewrite_tools 3 + mcp_symbol_tools 0 -- all ten of that module's handlers already disclose.)
+  The number now has ONE home, `handler_census.py --include-excluded --by-slice`, with the table
+  declared a rendering of it.
+
+Also caught while renumbering: three sections referenced merge-order steps by NUMERAL, and inserting
+  one step silently invalidated all three. Converted to named references. That is the fourth
+  instance of one quantity restated in two places disagreeing with itself in four rounds; appendix C
+  records the pattern rather than just the fixes. Appendix A's historical "ambition 22" left as
+  written per cursor, with an inline pointer to the operative 23; no other operative section
+  references 22.
+
+Gates: test_public_docs_governance + test_skill_library_drift pass (48); ruff format --preview
+  applied; W1.2 columns re-summed to 128/54 by script.
+
+---------
+
+Co-authored-by: Claude <noreply@anthropic.com>
+
+### Refactoring
+
+- Extract index.rs inline test module to index_tests.rs
+  ([#1048](https://github.com/oimiragieo/tensor-grep/pull/1048),
+  [`0f2d09f`](https://github.com/oimiragieo/tensor-grep/commit/0f2d09faa0c2c7cecd9b16acb633c033678fb1d4))
+
+* refactor: extract index.rs inline test module to index_tests.rs
+
+Moves the #[cfg(test)] mod tests block (lines 1755-3092, verified by brace-matching script, not a
+  compiler) out of rust_core/src/index.rs into a sibling file, wired as a #[path]-declared child
+  module so it keeps access to index's private items via `use super::*;`. This is the lowest-risk
+  experiment identified by docs/design/2026-08-20-rust-split-tractability.md for settling whether
+  this codebase's module-to-file split pattern preserves super-visibility.
+
+index.rs: 3092 -> 1756 lines (still over the 1500 core limit, allowlist pin lowered to match).
+  index_tests.rs: 1336 lines, new file, classified "core" (rust_core/src/*) by file_size_budget.py's
+  path-prefix rule, under both the 1500 core and 2000 test limits either way.
+
+Rust compile is UNVERIFIED LOCALLY -- this box forbids local cargo builds. CI (test-rust-core) is
+  the oracle; see PR body for what was checked by reading and what a CI failure here would mean.
+
+* refactor: apply rustfmt's exact join at index_tests.rs:604 (dedent made the 3-line boolean fit one
+  line; diff taken verbatim from CI's cargo fmt --check output)
+
+- Extract native_search.rs test module to a sibling file
+  ([#1049](https://github.com/oimiragieo/tensor-grep/pull/1049),
+  [`961829f`](https://github.com/oimiragieo/tensor-grep/commit/961829f89db69c20acbbbc593cd12df7064672d0))
+
+* refactor: extract native_search.rs test module to a sibling file
+
+Mirrors PR #1048's index.rs split: the inline #[cfg(test)] mod tests block (879 lines) moves to
+  rust_core/src/native_search_tests.rs via #[path], dedented one level, use super::*; kept.
+  native_search.rs drops from 3563 to 2686 lines (877 lines removed + 3-line #[path] stub = 880,
+  plus the new 877-line file = 3563 total, byte-identical reconstruction verified against
+  origin/main). Allowlist pin for native_search.rs lowered to 2686.
+
+Compile is UNVERIFIED locally (no cargo on this shared box); CI is the oracle.
+
+* refactor: apply rustfmt's three joins in native_search_tests.rs (CI's exact diffs; dedent made
+  each fit fewer lines)
+
+- Route A on main.py -- 102 bare calls converted, ratchet 102 -> 0
+  ([#1042](https://github.com/oimiragieo/tensor-grep/pull/1042),
+  [`978cf98`](https://github.com/oimiragieo/tensor-grep/commit/978cf988d7f9afa0c060fc2a696035199cb43dd0))
+
+Step 3 of docs/design/2026-08-19-split-floor-escape.md. Second of the three giants; mcp_server
+  landed in #1040.
+
+RE-DERIVED RATHER THAN ASSUMED, and it mattered. The review says not to carry mcp_server's ratio
+  across, and main.py differs on every axis:
+
+mcp_server main.py patched, called bare 65 43 defined in module 50 35 IMPORTED 15 7
+
+Two shapes mcp_server did not have, both checked before converting:
+
+* `app` (typer.Typer at main.py:163) is a module-level ASSIGNMENT, so it is neither a def nor an
+  import. `_self.app` is still a module attribute, and no import is involved, so nothing extra is
+  needed -- but it had to be classified, not assumed. * grep said `_self` already appeared 4 times.
+  It does not: those are `_looks_like_windows_self_update_lock` and `_schedule_windows_self_upgrade`
+  -- "_self" as a SUBSTRING. An AST walk finds zero ast.Name nodes named `_self`. The converter now
+  refuses to run on a real collision and checks it as a Name, not a substring.
+
+All 102 sites are in function bodies (evaluation-context census), so the import-time hazard is
+  absent here as it was for mcp_server.
+
+ALL THREE TOOLCHAIN LESSONS FROM #1040 APPLIED UP FRONT, so this conversion did not repeat that PR's
+  three red rounds:
+
+1. two-branch binding (TYPE_CHECKING self-import + runtime sys.modules) 2. explicit `from x import y
+  as y` re-export for all 7 imported symbols 3. BOTH ratchets run, not just the new one
+
+Result: ruff reported only I001 (import sorting). No F401, no no-any-return, no attr-defined. mypy
+  clean first try.
+
+FILE SIZE: 17,948 -> 17,983, pin raised. Same trade as mcp_server -- Route A is an enabling step
+  that grows the file to remove a 10,172-line floor.
+
+EVIDENCE bare-call ratchet main.py 102 -> 0, entry retired, exit 0 file-size ratchet exit 0 after
+  the pin bump ratchet unit tests 18 passed test_cli_modes 547 passed on BOTH origin/main and this
+  tree -- identical front-door suites 210 passed, 4 skipped, 1 failed mypy + ruff clean
+
+The one front-door failure (test_version_fast_path_does_not_import_json_via_runtime_paths) is
+  PRE-EXISTING: it fails identically on clean origin/main, and main's CI is green, so it is local
+  environment divergence rather than a regression here. Recorded rather than passed over.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Route A on mcp_server — 125 bare calls converted, ratchet 125 → 0
+  ([#1040](https://github.com/oimiragieo/tensor-grep/pull/1040),
+  [`eb86569`](https://github.com/oimiragieo/tensor-grep/commit/eb86569bbaece1553d3ee13f07849fa1eb27e6ac))
+
+* refactor: Route A on mcp_server -- 125 bare calls converted, ratchet 125 -> 0
+
+Step 2 of docs/design/2026-08-19-split-floor-escape.md, mechanically cleared by the review in #1038.
+  This does not split the file; it removes the thing that makes splitting impossible.
+
+Every bare call to a monkeypatched name becomes a late attribute read against the module object, so
+  the function is no longer welded to this file:
+
+NAME(...) -> _self.NAME(...) _self = sys.modules[__name__]
+
+WHAT THE REVIEW MISSED, AND ONLY DOING IT FOUND
+
+The review checked EVALUATION CONTEXT and cleared the rewrite. That holds. It did not consider the
+  TOOLCHAIN, and the first conversion attempt took the suite from 4 pre-existing failures to 123.
+
+Cause: `_self.NAME` is invisible to static analysis, so an IMPORTED name whose only uses were
+  converted looks unused. Ruff reports F401 and `--fix` DELETES the import; the module attribute
+  then does not exist and `_self.NAME` raises AttributeError, nowhere near the lint that caused it.
+  Three import lines went silently (build_orient_capsule_json, resolve_native_tg_binary, Pipeline).
+
+Of the 65 patched symbols called bare here, 50 are defined in the module and 15 are imported. The
+  imported ones still MUST be converted -- a test patching `mcp_server.resolve_native_tg_binary`
+  welds every bare caller regardless of where the name came from -- so their imports carry `# noqa:
+  F401`, placed PER NAME. Ruff reports F401 at the individual name's line inside a multi-line `from
+  x import (...)`, so a noqa on the closing paren suppresses nothing and is itself flagged RUF100;
+  the first attempt did that and left all 15 live.
+
+§6 of the review records this, including that the review reasoned about the LANGUAGE and not about
+  the gates around it.
+
+EVIDENCE
+
+ratchet mcp_server 125 -> 0, entry retired, exit 0 test_mcp_server 4 failed / 485 passed -- FAILURE
+  SET IDENTICAL to origin/main mcp suites 75 passed (caps, context cap, contract fixes, ratchet
+  tests) imports 68 bound names before and after lint; none lost ruff check + format --preview clean
+
+The 4 failures are pre-existing on origin/main (verified by running them there) and are all
+  native-binary-missing/embedded-fallback cases -- local env divergence; CI builds the binary and is
+  green. Compared as SETS, not counts: a matching count can hide different failures.
+
+Also fixes a test invariant this conversion falsified. `test_pins_file_...` asserted every Route A
+  target carries a pin -- true when nothing was converted, false the moment one was, since the
+  ratchet REQUIRES retiring a module at zero. Replaced with the invariant that survives: a target is
+  pinned or it measures zero, which still fails if an offender is quietly dropped from the pins
+  file.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: Route A needs TYPE_CHECKING + explicit re-export, not noqa
+
+CI found two more toolchain effects of the rewrite that neither the review nor the F401 fix
+  anticipated. Both are mypy, and neither is suppressible.
+
+1. no-any-return x12. `sys.modules[__name__]` is typed ModuleType, whose __getattr__ returns Any --
+  so EVERY converted call returns Any, and each caller declared to return something concrete fails.
+  Fixed with a two-branch binding: under TYPE_CHECKING, import this module by name (never executed,
+  so not circular) so the checker resolves real signatures; at runtime, the sys.modules form, which
+  is the only thing that works mid-import.
+
+2. attr-defined x18. This repo sets mypy implicit_reexport = false, so a plain `from x import y`
+  binds y PRIVATELY and `_self.y` is rejected outright. Fixed with the PEP 484 explicit re-export
+  form, `from x import y as y`.
+
+THE `as y` FORM SUBSUMES THE NOQA. Ruff counts an explicit re-export as a use, so all 15 `# noqa:
+  F401` directives became RUF100 unused-noqa and are removed. One change satisfies both linters; the
+  noqa was a worse fix for half the problem, and it is gone rather than left as decoration.
+
+ALSO: I RAN THE NEW GATE AND NOT THE OLD ONE. The conversion grows the file, and
+  tests/unit/test_file_size_budget.py went red in CI on a ratchet that has existed all along.
+  Locally I had run scripts/bare_call_ratchet.py and never re-ran scripts/file_size_budget.py.
+  mcp_server.py 7,963 -> 8,028; pin raised, recorded in the review as a cost rather than buried.
+  Route A is an ENABLING step -- the file is slated below 1,500 once the split it unlocks happens,
+  so +65 to remove a 5,852-line floor is the right trade, but it is still a bump.
+
+A repo-wide lint.isort.combine-as-imports would remove most of the added lines (ruff splits each `X
+  as X` into its own three-line block) and was deliberately NOT done here: it reformats imports
+  across the entire tree.
+
+Verified: mypy clean, ruff check + format --preview clean, both ratchets exit 0, 69 imported names
+  before and after (none lost), and test_mcp_server is 4 failed / 485 passed with a failure set
+  IDENTICAL to origin/main.
+
+* docs: reconcile TASK_BOARD against reality and stamp it post-v1.111.0
+
+The board-freshness gate went red on this PR and would have gone red on EVERY PR: the stamp read
+  v1.110.14 while we now ship v1.111.0 -- 6 releases behind a tolerance of 5. The v1.111.0 release
+  earlier tonight tipped it over.
+
+The gate's own message says "Do not just bump the stamp -- reconcile the board against reality
+  first, THEN bump it", so every changed claim is DERIVED:
+
+gh pr list -> open PRs are #1040 and #966, not "#966 only" git log -> 45 commits since v1.110.14
+  PyPI + uvx -> 1.111.0 installs and answers on both arms
+
+Reconciled: the open-PR claims in three places, the #966 row (CLOSED as a stale PR at CEO request,
+  branch retained on origin, Task 2A still BLOCKED and NOT green), and a campaign summary on the
+  reconcile line.
+
+THE GATE ALSO CAUGHT MY FIRST ATTEMPT, correctly and for the right reason. I stamped v1.111.0 on a
+  branch cut BEFORE the release commit, so pyproject still read 1.110.19 and CHANGELOG had no
+  v1.111.0 entry. It refused with "UnknownRelease: ... This is a COULD-NOT-MEASURE, not a staleness
+  verdict -- fix the version rather than reading it as fresh." Exactly the distinction this repo
+  keeps paying to learn: a gate that cannot measure must not report clean. Fixed by merging
+  origin/main so the branch actually carries the release.
+
+Also ran `ruff format --preview` repo-wide -- the same scope CI checks (`ruff format --check
+  --preview .`), so no scope mismatch. 15 files touched, only 2 with real content changes; the rest
+  were line-ending normalizations.
+
+Verified: 11 board-freshness tests pass, ruff check + format clean repo-wide, file-size and
+  bare-call ratchets both exit 0, mypy clean on the converted module.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Route A on repo_map -- 166 converted; all three split floors removed
+  ([#1043](https://github.com/oimiragieo/tensor-grep/pull/1043),
+  [`7ee3a27`](https://github.com/oimiragieo/tensor-grep/commit/7ee3a27e13d5451fbd8ceb97a27867547908e997))
+
+Step 4, the last of the three giants. The bare-call ratchet now reads
+
+bare-call ratchet OK: 3 modules, 0 bare calls, 0 regressions
+
+and scripts/bare_call_pins.json is EMPTY. Route A is complete.
+
+repo_map was the simplest of the three, and re-deriving showed why rather than assuming it:
+
+mcp_server main.py repo_map patched, called bare 65 43 54 defined in module 50 35 54 IMPORTED 15 7 0
+
+Zero imported symbols means no PEP 484 re-export work at all -- the entire `as y` / F401 /
+  attr-defined class simply does not arise here. The only extra step was adding TYPE_CHECKING to the
+  typing import, which this module did not already have (main.py and mcp_server.py both did).
+
+THE RATCHET STILL BITES WITH AN EMPTY PIN SET, which is the thing worth checking before declaring
+  the campaign done. A module at zero is UNPINNED, and an unpinned module with a non-zero count is
+  an UNPINNED OFFENDER -- so a reintroduced bare call still fails:
+
+injected `build_repo_map()` into repo_map.py -> exit 1, "UNPINNED OFFENDER"
+
+An empty pins file is therefore full protection, not an absent gate.
+
+I ALSO DESTROYED THIS CONVERSION ONCE AND HAD TO REDO IT. The perturbation above was reverted with
+  `git checkout -- <file>` while the conversion itself was still UNSTAGED, so the checkout took
+  both. Deterministic to rebuild, but the rule is: commit before running a mutation whose revert is
+  `git checkout --`. The revert is scoped to the index, not to your intent.
+
+FILE SIZE: 19,733 -> 19,762, pin raised -- the same enabling-step trade as the other two, here
+  removing an 11,731-line floor.
+
+EVIDENCE bare-call ratchet 166 -> 0; all three at 0; empty pins; exit 0 file-size ratchet exit 0
+  after the pin bump ratchet unit tests 18 passed repo_map suites 99 passed on BOTH origin/main and
+  this tree test_cli_modes 547 passed on BOTH -- identical mypy + ruff clean
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Split cli/main.py into five sibling modules (17,983 -> 13,523 lines)
+  ([#1052](https://github.com/oimiragieo/tensor-grep/pull/1052),
+  [`ae395cd`](https://github.com/oimiragieo/tensor-grep/commit/ae395cdbaffa13a80984287c896ca2cd2cb2120c))
+
+* refactor: split cli/main.py into five sibling modules (17,983 -> 13,523)
+
+Carries PR #1042's `_self` late binding into the extracted siblings via a new cli/_main_binding.py,
+  so a monkeypatch on `main` still reaches the moved code.
+
+Moved: the tg scan --ruleset pipeline (ast_scan), the _doctor_* probe family (doctor_report) and its
+  payload/renderer (doctor_payload), and the managed native front door (native_frontdoor) with its
+  Windows launcher repair (windows_launcher). The commands themselves stay in main.py.
+
+Three cases the bare-call ratchet cannot see were handled by hand: the patched `subprocess` module
+  reached as an attribute call, the patched constant _MAX_NATIVE_ASSET_DOWNLOAD_BYTES read as a
+  plain name, and one function-local `import subprocess` that shadows the global and must stay bare.
+
+* docs: re-cite the eight main.py skill anchors by SYMBOL, not by line number
+
+* test: follow the atomic-writer ratchet's pins to the split modules
+
+The pins are keyed (module, function, operation); the split moved 11 of those functions to new
+  files, reddening 6 tests in this ratchet -- of which CI's `-x` showed only the first.
+
+Only the MODULE column changed. Control: the (function, operation) projection of all four pinned
+  sets is byte-identical before and after (25/20/25/1 entries each, unchanged), so nothing was
+  added, dropped, or reclassified.
+
+The `python -c` execution-root pin is also WIDENED rather than re-pinned. It used to read only
+  main.py and assert every other module had zero sites; two of its three roots moved out, and a
+  naive re-pin of main.py's now-shorter list would have let those roots leave the population
+  entirely. It now pins the whole discovered walk by (module, function). Perturbation-proved: a new
+  `-c` root injected into ast_scan.py turns it red; revert is byte-identical green.
+
+Also corrects this file's module count from "41 as of this task" to 60 -- already stale by 19 before
+  this PR touched it -- and says to re-derive it.
+
+* test: split the silent-loss census pin across the relocated files
+
+CONSERVATION, measured: main.py 6 + doctor_report.py 5 + windows_launcher.py 4 = 15, the pre-split
+  pin exactly, and the other three extracted modules contribute 0. Nine handlers moved
+  byte-identical into two siblings; this census is keyed by FILE, so a pure relocation reads as "new
+  files newly swallow". Not a fix and not a regression, and the audited families it already accepted
+  (FALLBACK-ASSIGN, OUTPUT-BUCKET) are unchanged.
+
+Teeth re-verified rather than assumed: a genuinely new silent-loss loop injected into ast_scan.py
+  still turns the ratchet red naming that file; revert is byte-identical green.
+
+Also fixes a defect in my own new test: _build_doctor_payload calls
+  _latest_pypi_tensor_grep_version, a live HTTPS call to pypi.org with a 15s timeout, and the test
+  invoked it twice. Now stubbed in BOTH arms (18.3s -> 2.8s), with an added assertion that the stub
+  actually took effect -- the stub is itself reached through _self, so it only holds if the
+  mechanism under test works.
+
+- Split mcp_server.py into mcp_rewrite_tools/mcp_audit_tools/mcp_symbol_tools
+  ([#1051](https://github.com/oimiragieo/tensor-grep/pull/1051),
+  [`7dfff2f`](https://github.com/oimiragieo/tensor-grep/commit/7dfff2fb3cac63e81e78a6f7097b839062e75e49))
+
+* refactor: split mcp_server.py into mcp_rewrite_tools/mcp_audit_tools/mcp_symbol_tools
+
+Pure code move (docs/design/2026-08-19-split-floor-escape.md, Route A) -- no wire-surface change.
+  mcp_server.py 8028 -> 5326 lines (2702 moved). All three new modules stay under the 1500-line
+  core-module limit with no new file_size_allowlist.json entries needed.
+
+New modules (each keeps `_self` bound to the mcp_server module object, not itself, so every
+  `monkeypatch.setattr(mcp_server, "NAME", ...)` and `patch("tensor_grep.cli.mcp_server.NAME")` test
+  keeps resolving against mcp_server's namespace regardless of where the function now lives): -
+  mcp_rewrite_tools.py (1116 lines): the native AST rewrite/index-search plan-digest ENGINE -- pure
+  helpers, no MCP tool decorators. - mcp_audit_tools.py (1070 lines): the
+  rewrite/ruleset-scan/audit-manifest/review-bundle/ checkpoint MCP tool family (tg_rulesets,
+  tg_ruleset_scan, tg_index_search, tg_rewrite_plan/apply/diff,
+  tg_audit_manifest_verify/history/diff, tg_review_bundle_create/verify,
+  tg_checkpoint_create/list/undo). - mcp_symbol_tools.py (809 lines): pure symbol-graph navigation
+  (tg_symbol_defs/source/impact/refs/callers, tg_file_imports/importers,
+  tg_symbol_blast_radius/plan/render).
+
+All moved tool functions and the two private helpers referenced from code that stayed in
+  mcp_server.py (_embedded_rewrite_available, _resolve_native_tg_binary_for_mcp) are re-exported
+  from mcp_server.py via `X as X` imports, so every `_self.tg_X(...)` meta-tool composition call and
+  every existing test-suite patch target is unaffected.
+
+scripts/bare_call_ratchet.py exits 0 (0 bare calls, 0 regressions across all 3 locked modules).
+  scripts/file_size_budget.py exits 0 with the mcp_server.py pin lowered to its real count (8028 ->
+  5326), the ONE line changed in file_size_allowlist.json. ruff check and ruff format --preview
+  clean on all four touched files. mypy --strict clean on all four plus ast_workflows.py (which
+  imports execute_rewrite_apply_json/execute_rewrite_plan_json from mcp_server -- also re-exported).
+
+tests/unit/test_mcp_server.py: 489 passed, 0 failed (this environment's native-tg-binary state
+  differs from the documented 485/4 baseline -- no regression either way).
+  tests/unit/test_mcp_caps.py + test_mcp_context_default_cap.py: all pass.
+  tests/unit/test_mcp_contract_fixes.py: 2 pre-existing native-binary-dependent diff tests fail in
+  this sandboxed Windows venv (WinError 2 / a diff subprocess resolving to cmd.exe), consistent with
+  the native-binary-absent failure class already documented for this suite; the touched code is a
+  byte-identical move, not a logic change.
+
+Contract-version decision: pure internal refactor, wire surface unchanged --
+  _TG_MCP_SERVER_CONTRACT_VERSION stays at 1.7.0 (not bumped).
+
+* fix: route _run_rewrite_subprocess via _self -- the diff path missed the class fix
+
+CI caught test_m11_zero_match_diff_returns_valid_payload executing the literal 'fake_binary': the
+  test patches mcp_server._run_rewrite_subprocess, but _execute_rewrite_diff_command moved to
+  mcp_rewrite_tools and called it BARE, so the patch never intercepted and the real subprocess ran.
+
+Same class the split already fixed for apply/plan (routing via _self); the diff path was missed. All
+  three call sites now route _self._run_rewrite_subprocess.
+
+The two "environment" failures reported locally were this same class, not env: after this fix
+  test_mcp_contract_fixes is 32/32 locally.
+
+Swept all three new modules with an AST census against the full set of symbols tests patch on
+  mcp_server: zero bare calls remain.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: exclude the three relocated mcp_* modules from the handler census
+
+Merging main brought #1046's broad-handler ceiling (137). This branch relocated mcp_server.py
+  handlers into mcp_rewrite_tools/mcp_audit_tools/mcp_symbol_tools, and mcp_server.py is excluded
+  from the census -- so the byte-identical relocations were newly counted, exactly the "raise the
+  pin on the strength of a git mv" the pin's own comment forbids. Extended the exclusion set with
+  the reason inline, same pattern the main.py split used for its five children. Census back at 137;
+  both ratchets exit 0.
+
+Found by a three-way UNION merge check before queueing, not by this branch's own CI -- its base
+  predates #1046, so its checks could never have seen it.
+
+* fix: re-export 15 more moved names and route their patched calls via _self
+
+The dead agent's split left names tests reference on mcp_server without re-exports. -x masked the
+  blast radius: CI showed 1 failing test; the file had 23. An exhaustive census (every
+  mcp_server.<name> attribute access, dotted string, and setattr/patch.object arg across tests/,
+  intersected with what main actually bound) found 14 regressed names, all in mcp_rewrite_tools:
+
+12 pure re-exports (_audit_*_error, _classify_native_rewrite_failure, _execute_rewrite_json_command,
+  _index_search_error, _native_unavailable_error, _normalize_rewrite_json_payload,
+  _review_bundle_error, _rewrite_envelope, _rewrite_error, _ruleset_scan_error,
+  _compute_plan_digest) 2 ALSO monkeypatched by tests (_validate_rewrite_inputs,
+  _produce_rewrite_plan_json) -- their 6 bare call sites in the children now route via _self,
+  verified with `tg refs` (4 non-def sites, all converted; the dogfood tool found them faster than
+  the hand census did).
+
+mcp_server grew 5326 -> 5341 from the re-export lines; pin banked.
+
+Local: test_mcp_plan_bound_apply 34/34 (was 23 failed), the 4-suite mcp set 546 passed, both
+  ratchets exit 0, ruff + mypy clean.
+
+* fix: route _resolve_native_tg_binary_for_mcp via _self at all four call sites
+
+CI (which HAS the native binary) failed test_apply_with_matching_digest_proceeds: the test patches
+  mcp_server._resolve_native_tg_binary_for_mcp to (None, None) to force the embedded path, but the
+  children called it BARE -- so CI resolved the real binary and took the native path, and the
+  embedded mock was never called. Invisible locally: this worktree has no native binary, so the
+  embedded branch is taken either way. The environment difference is what exposed the bypass.
+
+Sweep upgraded to cover ALL patch shapes (patch.object second-arg, setattr, dotted patch strings --
+  78 names total): zero bare uses remain in any child.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Split repo_map.py -- 4,519 lines into 7 cohesive sibling modules
+  ([#1053](https://github.com/oimiragieo/tensor-grep/pull/1053),
+  [`834ba4c`](https://github.com/oimiragieo/tensor-grep/commit/834ba4cbf97a99c5db045aa8d37d0727122dcf1e))
+
+* refactor: split repo_map.py -- 4,519 lines into 7 cohesive sibling modules
+
+19,762 -> 15,243. Per-dialect resolution (python/js/rust/java), the regex fallback tier, the
+  output-budget/render pass, and the shared path-cache primitives each move to their own module
+  under src/tensor_grep/cli/.
+
+Moved functions reach repo_map through `_self`, which points at repo_map rather than at the new
+  module, so monkeypatch on repo_map is still seen. Every symbol the suite patches stays in
+  repo_map. All 119 moved functions are AST-identical to origin/main modulo the `_self.`
+  substitution (proved with a positive control).
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: exclude the seven relocated repo_map_* modules from the handler census
+
+Same class as the sibling splits: #1046's ceiling (137) counts handlers this branch relocated out of
+  the excluded repo_map.py into its seven children -- byte-identical moves, not new handlers.
+  Extended the exclusion set with the reason inline, per the pattern the main.py split established.
+  Census back at 137; both ratchets exit 0. Found by the pre-queue union check, not this branch's
+  own CI.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: census the repo_map FAMILY in two source-scanning tests (orphaned WIP)
+
+The split agent died on its session limit with these two fixes verified but UNCOMMITTED -- local
+  green, CI red on the same head, the classic uncommitted-WIP divergence. Shipping its round-3 work:
+
+Both tests scanned repo_map.py by single path; the split moved emitters into repo_map_*.py siblings,
+  so each count silently dropped. Both now glob the family, with the agent's own control --
+  `len(paths) > 1` -- so a glob that finds only the base file reads as "scan did not run", not
+  "clean".
+
+Verified: both files 27 passed, docs-governance members 48 passed, ruff clean, file-size gate exit
+  0.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Testing
+
+- Census + classify every broad except handler in src/tensor_grep (silent-failure audit)
+  ([#1046](https://github.com/oimiragieo/tensor-grep/pull/1046),
+  [`2a660a8`](https://github.com/oimiragieo/tensor-grep/commit/2a660a8ca026738525880a5966ef8875fb8ae068))
+
+Read all 137 `except Exception:`/bare `except:` handlers under src/tensor_grep/ (excluding
+  cli/main.py, cli/repo_map.py, cli/mcp_server.py, owned by concurrent audits) in their enclosing
+  functions and classified each: 0 SILENT-SWALLOW, 59 LOGGED-DEGRADE, 78 INTENTIONAL-BOUNDARY. No
+  behavior changed -- adds tests/unit/test_silent_failure_hardening.py, a ratchet pinning the
+  population at 137 plus a positive-control test proving the detector can tell a silent handler from
+  a disclosed one, so a future unreviewed broad handler cannot slip in for free.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Fix 12 provably vacuous range-bound assertions, leave 20 legitimate ones alone
+  ([#1047](https://github.com/oimiragieo/tensor-grep/pull/1047),
+  [`6aa8a27`](https://github.com/oimiragieo/tensor-grep/commit/6aa8a27812a2e23d231e277e201c37ba62f7a691))
+
+* test: fix 12 provably vacuous range-bound assertions, leave 20 legitimate ones alone (H6 audit)
+
+An AST census of tests/**/*.py found 33 remaining assert-with-numeric-literal-bounds candidates
+  (after PR #1041 fixed recall_at_k's tautology). Classified each by tracing its producer into
+  src/tensor_grep/cli/repo_map.py:
+
+- 12 were provably vacuous: rollback_risk, validation-plan step confidence, blast_radius_score,
+  edit_plan_seed/navigation_pack confidence, and defs[].score are all produced by explicit
+  round(min(1.0, max(0.0, x)), 3) clamps, so 0.0 <= x <= 1.0 could never fail. Fixed with exact
+  pinned values (deterministic fixtures, verified 3x) where the assertion has a single call site, or
+  isinstance(x, float) where a shared helper is called with genuinely different fixtures across many
+  call sites (a single pin would be wrong for at least one caller). Added 3 new adversarial unit
+  tests in test_edit_plan_seed.py that prove the clamps themselves are load-bearing with
+  out-of-normal-range inputs -- the property the removed range checks pretended to cover.
+
+- 20 were legitimate and left untouched: strict `0.0 < x <= 1.0` confidence checks (can fail if
+  confidence is exactly 0), deadline/call-count bounds in test_repo_map_deadline.py /
+  test_session_daemon_default_deadline.py / test_codemap.py (behavioral cutoff properties, not
+  arithmetic guarantees), and test_profiling_harness.py's real wall-clock percentage-sum tolerance.
+
+My own AST census found 32 candidates, not 33 -- noted as an open discrepancy rather than forced to
+  match.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: bank the test-file growth this PR's new adversarial tests caused
+
+The file-size ratchet went red on this PR:
+
+tests/unit/test_cli_modes.py 17183 -> 17204 tests/unit/test_mcp_server.py 9710 -> 9729
+
+Both are allowlisted, and the gate fails on ANY growth above a pin. The growth is the 3 new
+  adversarial tests that prove the clamp functions are load-bearing -- the actual coverage the
+  vacuous range assertions only pretended to provide. So the pins move up; the tests are the point.
+
+This was a gap in the task brief, not in the work. The brief for this audit listed ruff and the
+  affected suites as the gates but never named scripts/file_size_budget.py, while the briefs for the
+  concurrent split agents did require both ratchets. Same omission that took a PR red earlier
+  tonight: running the NEW gate and not the OLD one.
+
+Verified after the bump: file-size gate exit 0, bare-call ratchet exit 0, and the budget +
+  silent-failure suites pass.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Pin the BM25 metrics, replacing two assertions that cannot fail
+  ([#1041](https://github.com/oimiragieo/tensor-grep/pull/1041),
+  [`1484ff9`](https://github.com/oimiragieo/tensor-grep/commit/1484ff9322588fc9b5c15036f87a76f6acd1a3e8))
+
+* test: pin the BM25 metrics, replacing two assertions that cannot fail
+
+`test_run_eval_returns_metrics_in_range` asserted only:
+
+assert 0.0 <= metrics.recall_at_k <= 1.0 assert 0.0 <= metrics.mrr_at_k <= 1.0
+
+Both are mathematically guaranteed by src/tensor_grep/core/retrieval_scoring.py:
+
+* recall_at_k returns len(set(ranked[:k]) & relevant) / len(relevant). The numerator is an
+  INTERSECTION with `relevant`, so it can never exceed the denominator, and the empty-relevant
+  branch returns exactly 1.0. * mean_reciprocal_rank_at_k returns 1.0/index with index >= 1, else
+  0.0.
+
+So the test held for every possible input, including a total retrieval collapse to 0.0. Its whole
+  body was two tautologies -- a test named "returns metrics in range" that could not distinguish a
+  working ranker from a broken one.
+
+Worse, the measured values sit at the TOP of the asserted range (1.0), which is the worst place for
+  a range check to live: every direction a regression can move stays inside it.
+
+`build_default_corpus` is deterministic -- verified identical across repeated runs -- so the honest
+  check is the exact value. Now pinned: 10 queries, recall@10 == 1.0, mrr@10 == 1.0, precision@10 ==
+  0.1, each with the reason in its message. The corpus-size assertion fails first if the fixture
+  changes, so the pins cannot silently describe a different corpus.
+
+CONTROL, three arms: ARM 1 as written 3 passed ARM 2 recall numerator forced to 0 2 failed (this
+  test + the existing gate test) ARM 3 reverted 3 passed, file byte-identical (50562f7b775b)
+
+The first attempt at ARM 2 used `sed` and silently injected NOTHING -- the pattern contains `&`,
+  which sed expands to the whole match. The test passed and would have read as a valid control.
+  Caught only because the script printed the injection count (0). The mutation now re-reads the file
+  and asserts the marker is present before the arm is trusted.
+
+Found by an AST census of assertions whose bounds are numeric literals (34 candidates repo-wide).
+  This fixes the one that is provably vacuous; the rest are being classified individually rather
+  than swept, because the same pattern carries opposite meanings and a blanket edit deletes real
+  coverage.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: precision@10 needs approx -- an exact float pin failed for the wrong reason
+
+CI caught a defect in my own test. It pinned
+
+assert metrics.precision_at_k == 0.1
+
+and py3.11 produced 0.09999999999999999 on all three platforms while py3.12 produced exactly 0.1.
+  precision@10 is a mean of 1/10 terms and 0.1 is not exactly representable in binary floating
+  point, so the `==` was failing on the interpreter's summation order rather than on retrieval
+  quality -- a red arm for the wrong reason, which is its own kind of useless check.
+
+Now `pytest.approx(0.1, rel=1e-9)`, and the comment says why that is not a loosening: any real
+  regression moves precision by a whole 1/10 step, about nine orders of magnitude larger than the
+  tolerance.
+
+recall and mrr stay EXACT. Both are 1.0, which IS exactly representable, and both held on every
+  interpreter in CI. The comment says not to relax them to match precision -- the reason for the
+  approx is representability, not flakiness, and it applies to exactly one of the three.
+
+Control re-run after the change, so the loosening is not taken on trust: injecting the recall
+  regression still fails this test plus the existing gate test; reverting restores 3 passed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- W1-d handler census script + disposition ledger gate for 10 previously-excluded modules
+  ([#1056](https://github.com/oimiragieo/tensor-grep/pull/1056),
+  [`c35b842`](https://github.com/oimiragieo/tensor-grep/commit/c35b842617a818c3b594ba278d6e6adb8409dbf7))
+
+Commits scripts/handler_census.py (the reproducible census instrument backing
+  docs/plans/2026-08-20-worldclass-closeout-plan.md W1.1/W1.2) plus the disposition ledger and its
+  gate (tests/unit/test_handler_dispositions.py, docs/audits/2026-08-20-handler-dispositions.json),
+  then audits W1-d's own handler population: cli/repo_map_lang_js.py and cli/repo_map_lang_rust.py
+  (2 broad handlers, both INTENTIONAL-BOUNDARY) plus the eight zero-handler modules named in the
+  plan's slice table. All ten are removed from _EXCLUDED_MODULES in
+  tests/unit/test_silent_failure_hardening.py; ceiling raised 137 -> 139 (137 + the 2 real handlers
+  audited this slice).
+
+RED-1 observed before the exclusion-set edit landed with the ceiling held at 137: population grew to
+  139, naming exactly this slice's two real handlers. GREEN after raising the ceiling to 139 in the
+  same commit.
+
+All four disposition-ledger perturbation arms (omission, duplicate, stale-location,
+  invalid-category) were run on-disk against the committed ledger and observed RED individually,
+  then reverted to a byte-identical file (git diff empty after each).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- W2-c tested MCP-1.x maintenance re-derivation probe (T1/T6)
+  ([#1060](https://github.com/oimiragieo/tensor-grep/pull/1060),
+  [`5e15d4d`](https://github.com/oimiragieo/tensor-grep/commit/5e15d4dbc8311c8b47c3a9f23073e2890a2b08dc))
+
+Builds the REQUIRED W2-c probe from docs/plans/2026-08-20-worldclass-closeout-plan.md Section W2.5:
+  scripts/mcp_maintenance_probe.py::classify_mcp_maintenance is a pure function that classifies the
+  MCP SDK 1.x maintenance status against tg's pyproject.toml floor and the decision record's
+  revalidate_by date, into four labelled verdicts -- MAINTAINED / STALE / EXPIRED / CANNOT_MEASURE
+  -- never a bare zero. The network fetch (fetch_pypi_mcp_json) is a thin, untested wrapper; only
+  the classification logic is exercised by pytest, against 18 offline fixture cases in
+  tests/unit/test_release_drift_mcp_maintenance_probe.py, including the three plan-required
+  perturbation arms (revalidate_by in the past -> EXPIRED; no payload -> CANNOT_MEASURE, never
+  MAINTAINED; revert -> the real verdict, MAINTAINED).
+
+Also folds W2-a's ad-hoc inline `python -c` T1 re-derivation snippet in
+  .claude/skills/tensor-grep-release-drift-check/SKILL.md Part 1 step 4 into a pointer at the new
+  tested module, since the plan calls for wiring T1 into that sweep as "a recurring re-derivation,
+  not an inert assertion" and a hand-written inline snippet with no test coverage does not meet that
+  bar.
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.111.0 (2026-08-20)
 
 ### Continuous Integration
