@@ -1,0 +1,22 @@
+[
+  {
+    "module": "cli/repo_map_lang_js.py",
+    "lineno": 810,
+    "enclosing_symbol": "_walk",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: sets ref_kind = \"value\" (a safe default), guarded by the inline comment 'F20: a classifier bug must only default THIS row to \"value\", never drop every reference in the file -- classify-only, so a failure here can never be allowed to look like a fail-closed backend error'",
+    "reason": "This is a best-effort classify-only fallback, not a backend contract boundary: a failure classifying one reference's kind must not abort collection of every other reference in the file, and the AST detector cannot see the comment (no keyword/log/reraise), which is why it is not-provably-disclosing rather than undisclosed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/repo_map_lang_rust.py",
+    "lineno": 730,
+    "enclosing_symbol": "_walk",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: sets ref_kind = \"value\" (a safe default), guarded by the inline comment 'F20: a classifier bug must only default THIS row to \"value\", never drop every reference in the file.'",
+    "reason": "Byte-identical fallback pattern to repo_map_lang_js.py's _walk handler, same F20 rationale: a reference-kind classifier failure must degrade one row, not abort the whole-file reference walk. Not-provably-disclosing because the AST detector cannot see the comment.",
+    "hardened_in": null
+  }
+]
