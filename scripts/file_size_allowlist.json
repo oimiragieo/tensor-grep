@@ -12,7 +12,7 @@
     "rust_core/src/backend_ast_workflow.rs": 2109,
     "rust_core/src/backend_cpu.rs": 1817,
     "rust_core/src/gpu_native.rs": 4952,
-    "rust_core/src/index.rs": 3092,
+    "rust_core/src/index.rs": 1756,
     "rust_core/src/main.rs": 15127,
     "rust_core/src/native_search.rs": 3563,
     "rust_core/src/python_sidecar.rs": 1519,
