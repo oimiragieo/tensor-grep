@@ -507,7 +507,7 @@ def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[s
 
 def _execute_rewrite_json_command(command: list[str]) -> str:
     try:
-        completed = _run_rewrite_subprocess(command)
+        completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
         return _rewrite_error(str(exc), code="unavailable", retryable=True)
     except OSError as exc:
@@ -1026,7 +1026,7 @@ def execute_rewrite_apply_json(
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
     try:
-        completed = _run_rewrite_subprocess(command)
+        completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
         return _rewrite_error(str(exc), code="unavailable", retryable=True)
     except OSError as exc:
@@ -1065,7 +1065,7 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
 
 def _execute_index_search_command(command: list[str], *, pattern: str, path: str) -> str:
     try:
-        completed = _run_rewrite_subprocess(command)
+        completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
         return _index_search_error(str(exc), code="unavailable", pattern=pattern, path=path)
     except OSError as exc:
