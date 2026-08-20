@@ -324,7 +324,7 @@ honest `resolution_gaps` entries.
    `#include` is textual not semantic, tree-sitter has no preprocessor, and there is no
    compiler-enforced module system to lean on (no `go.mod` analogue) — true `#include` -> file
    resolution beyond definition-dirs evidence stays deferred (see the `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES`
-   comment at `repo_map.py:17548-17553` and `docs/BACKLOG.md`). A `compile_commands.json` ingest is
+   comment in `repo_map.py` -- grep the symbol, the file has been split -- and `docs/BACKLOG.md`). A `compile_commands.json` ingest is
    still the obvious lever and has not been attempted.
 3. **Header/definition duality.** A C/C++ function appears twice (prototype + body). Per-file
    extraction handles this by name-dedup (plus `_c_definition_site_positions` in-file
