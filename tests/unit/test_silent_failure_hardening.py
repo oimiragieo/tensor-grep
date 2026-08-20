@@ -35,6 +35,17 @@ this repo's memory warns about -- see MEMORY.md "the instrument fails more than 
 No behavior changed in this PR; this is the census plus the ratchet so the NEXT broad handler
 added to the tree is not free to regress the population size silently.
 
+W1-d (docs/plans/2026-08-20-worldclass-closeout-plan.md) removed ten modules from
+``_EXCLUDED_MODULES``: ``cli/repo_map_lang_js.py`` and ``cli/repo_map_lang_rust.py`` (2 broad
+handlers between them, both classified INTENTIONAL-BOUNDARY -- see
+``docs/audits/2026-08-20-handler-dispositions.json``), plus eight modules with ZERO broad
+handlers each (``cli/_main_binding.py``, ``cli/doctor_payload.py``, ``cli/repo_map.py``,
+``cli/repo_map_cache.py``, ``cli/repo_map_lang_java.py``, ``cli/repo_map_lang_python.py``,
+``cli/repo_map_output_budget.py``, ``cli/repo_map_regex_fallback.py`` -- confirmed by
+``scripts/handler_census.py --include-excluded`` printing 0 for each, a labelled zero with the
+parse-succeeded control beside it, not an unreachable scan). Ceiling raised 137 -> 139
+(137 + the 2 real handlers; the eight zero-handler modules contribute nothing to the delta).
+
 HOW THE CEILING MOVES. Auditing a currently-uncounted handler and hardening it (narrowing the
 exception type, re-raising as BackendExecutionError, or attaching a visible reason) removes it
 from ``_iter_broad_handlers``'s count -- lower ``TOTAL_BROAD_HANDLERS_CEILING`` in the same PR.
@@ -61,7 +72,6 @@ PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 # They should be classified when `cli/main.py` itself is, and this whole block retired together.
 _EXCLUDED_MODULES = frozenset({
     "cli/main.py",
-    "cli/repo_map.py",
     "cli/mcp_server.py",
     # extracted from cli/mcp_server.py by the same split campaign; their broad handlers are
     # byte-identical relocations of handlers that were already outside this census because
@@ -71,21 +81,8 @@ _EXCLUDED_MODULES = frozenset({
     "cli/mcp_rewrite_tools.py",
     "cli/mcp_audit_tools.py",
     "cli/mcp_symbol_tools.py",
-    # extracted from cli/repo_map.py by the same split campaign; byte-identical relocations of
-    # handlers already outside this census because repo_map.py is excluded. Moving a file does
-    # not audit it -- counting them would raise the ceiling on the strength of a git mv, which
-    # the comment above the pin forbids. Classified when repo_map.py itself is; retire together.
-    "cli/repo_map_cache.py",
-    "cli/repo_map_lang_java.py",
-    "cli/repo_map_lang_js.py",
-    "cli/repo_map_lang_python.py",
-    "cli/repo_map_lang_rust.py",
-    "cli/repo_map_output_budget.py",
-    "cli/repo_map_regex_fallback.py",
     # extracted from cli/main.py, unaudited for the same reason it is
-    "cli/_main_binding.py",
     "cli/ast_scan.py",
-    "cli/doctor_payload.py",
     "cli/doctor_report.py",
     "cli/native_frontdoor.py",
     "cli/windows_launcher.py",
@@ -97,7 +94,7 @@ _EXCLUDED_MODULES = frozenset({
 # pass -- classify the new site first (see AGENTS.md's verification-oracle family, Form 1: "what
 # would this check show if the thing were broken?" -- for THIS check, an unreviewed new broad
 # handler is exactly the broken thing it exists to catch).
-TOTAL_BROAD_HANDLERS_CEILING = 137
+TOTAL_BROAD_HANDLERS_CEILING = 139
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
