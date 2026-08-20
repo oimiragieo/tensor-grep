@@ -10,6 +10,11 @@ versioning behavior was undocumented. This directory and `docs/design/README.md`
   data flow, every file's contribution, the on-disk format (verified by actually running it), the
   eight traps a naive reimplementation gets wrong (each tied to a real guard and a real test), and
   what is explicitly out of scope. **Future rebuild guides should follow this one's shape.**
+- **`tg-ledger.md`** — the second worked guide. Covers `tg ledger`'s two slices (advisory claims,
+  content-addressed reusable findings) end to end: the CLI/store split, the on-disk claim and
+  finding index formats (verified live), the repo-scoping ("PATH-scope footgun") fix and its
+  rollup-list semantics demonstrated against a real two-subtree scenario, the traversal and
+  blob-tamper fail-closed guards, and the non-git literal-path fallback.
 - **`verification-checklist.md`** — the general "how do I prove a rebuild is correct" checklist:
   run the feature's own tests first (and confirm they were once RED, not just currently green),
   dogfood the real shipped binary rather than an internal function call, round-trip a stateful
