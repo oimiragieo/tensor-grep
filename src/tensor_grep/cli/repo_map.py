@@ -17,7 +17,7 @@ from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from functools import lru_cache, wraps
 from pathlib import Path
-from typing import Any, Literal, NamedTuple, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeVar, cast
 from urllib.parse import unquote, urlparse
 
 from tensor_grep.cli import (
@@ -32,6 +32,24 @@ from tensor_grep.cli import (
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
+
+# Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
+# attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
+# globals, welding the caller to this file -- move it and the test still passes while
+# production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
+#
+# The two branches are load-bearing. At runtime only `sys.modules[__name__]` works (the
+# module is mid-import, so importing itself by name would be circular), but that is typed
+# `ModuleType`, whose `__getattr__` returns `Any` -- under a single-branch form every
+# converted call returns Any and mypy raises `no-any-return` at each concrete-returning
+# caller. The TYPE_CHECKING branch never executes; it exists so the checker resolves
+# `_self` to this module and keeps every real signature.
+#
+# scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
+if TYPE_CHECKING:
+    from tensor_grep.cli import repo_map as _self
+else:
+    _self = sys.modules[__name__]
 
 _CacheR = TypeVar("_CacheR")
 
@@ -121,7 +139,7 @@ def _mtime_aware_cache(
 
         @wraps(fn)
         def wrapper(path_str: str, /, *args: Any, **kwargs: Any) -> _CacheR:
-            mtime_key = _mtime_key(path_str)
+            mtime_key = _self._mtime_key(path_str)
             cache_key = (path_str, mtime_key, args, tuple(sorted(kwargs.items())))
             with lock:
                 if cache_key in cache:
@@ -1411,7 +1429,7 @@ def _precomputed_validation_files_for_root(
             # in one run. Do not restore that reasoning without re-running it.
             resolved = current.absolute()
             resolve_error = exc
-        if not _path_is_relative_to(resolved, normalized_root):
+        if not _self._path_is_relative_to(resolved, normalized_root):
             if resolve_error is not None and unreadable_hit is not None:
                 # Task #291. THIS is the only branch where the resolve failure actually costs a
                 # file. `absolute()` skipped symlink resolution, so a link crossing the root
@@ -1446,7 +1464,7 @@ def _repo_map_validation_file_paths(
             return None
         if map_root.is_file():
             map_root = map_root.parent
-        if map_root != resolved_validation_root and not _path_is_relative_to(
+        if map_root != resolved_validation_root and not _self._path_is_relative_to(
             resolved_validation_root,
             map_root,
         ):
@@ -1562,13 +1580,13 @@ def _parser_for_source_suffix(suffix: str) -> Any | None:
     caller-side suffix pre-check, e.g. `path.suffix not in _JS_TS_SUFFIXES`, is expected to have
     already gated the call, matching the pre-fix per-site behavior)."""
     if suffix in _TS_SUFFIXES:
-        return _typescript_parser(tsx=suffix == ".tsx")
+        return _self._typescript_parser(tsx=suffix == ".tsx")
     if suffix in _JS_TS_SUFFIXES:
-        return _javascript_parser()
+        return _self._javascript_parser()
     if suffix in _RUST_SUFFIXES:
-        return _rust_parser()
+        return _self._rust_parser()
     if suffix in _JAVA_SUFFIXES:
-        return _java_parser()
+        return _self._java_parser()
     return None
 
 
@@ -1577,7 +1595,7 @@ def _parse_source_uncached(path_str: str) -> tuple[str, bytes, Any] | None:
     if parser is None:
         return None
     try:
-        source = _read_source_text_cached(path_str)
+        source = _self._read_source_text_cached(path_str)
     except (OSError, UnicodeDecodeError):
         return None
     source_bytes = source.encode("utf-8")
@@ -1598,13 +1616,13 @@ def _parsed_source_and_tree(path_str: str) -> tuple[str, bytes, Any] | None:
     except OSError:
         size = -1
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
-        return _parse_source_uncached(path_str)
+        return _self._parse_source_uncached(path_str)
     return _parsed_source_and_tree_bounded(path_str)
 
 
 @_mtime_aware_cache(maxsize=_PARSE_PRODUCT_CACHE_MAXSIZE)
 def _parsed_source_and_tree_bounded(path_str: str) -> tuple[str, bytes, Any] | None:
-    return _parse_source_uncached(path_str)
+    return _self._parse_source_uncached(path_str)
 
 
 def _file_may_contain_literal_symbol(path: Path, symbol: str) -> bool:
@@ -1677,7 +1695,7 @@ def _js_ts_has_import_bindings(path_str: str) -> bool:
     -- an unreadable file must never be silently excluded from the caller/import-graph scan.
     """
     try:
-        source = _read_source_text_cached(path_str)
+        source = _self._read_source_text_cached(path_str)
     except (OSError, UnicodeDecodeError):
         return True
     if any(
@@ -1704,7 +1722,9 @@ def _literal_symbol_seed_files(
     existing = {str(_safe_resolve(path)) for path in existing_files}
     seed_files: list[Path] = []
     scanned = 0
-    for current in _iter_repo_files(normalized_root, max_files=_SYMBOL_LITERAL_SEED_SCAN_LIMIT):
+    for current in _self._iter_repo_files(
+        normalized_root, max_files=_SYMBOL_LITERAL_SEED_SCAN_LIMIT
+    ):
         if scanned >= _SYMBOL_LITERAL_SEED_SCAN_LIMIT:
             break
         scanned += 1
@@ -1836,7 +1856,7 @@ def _order_caller_scan_candidates(
         return [*source_files, *test_files]
 
     def _is_literal_hit(path: Path) -> bool:
-        return _literal_symbol_candidate(path) and _file_may_contain_literal_symbol(
+        return _literal_symbol_candidate(path) and _self._file_may_contain_literal_symbol(
             path, normalized_symbol
         )
 
@@ -2569,7 +2589,7 @@ def _prime_js_ts_repo_context(root: Path) -> dict[str, Any]:
     key = str(normalized_root)
     context = {
         "root": key,
-        "tsconfig": _parse_js_ts_tsconfig(normalized_root),
+        "tsconfig": _self._parse_js_ts_tsconfig(normalized_root),
         "re_export_cache": {},
     }
     return _remember_repo_context(_JS_TS_REPO_CONTEXTS, key, context)
@@ -3159,7 +3179,7 @@ def _prime_rust_repo_context(root: Path) -> dict[str, Any]:
     key = str(normalized_root)
     context = {
         "root": key,
-        "workspace": _parse_rust_workspace_members(normalized_root),
+        "workspace": _self._parse_rust_workspace_members(normalized_root),
         "mod_tree_cache": {},
     }
     return _remember_repo_context(_RUST_REPO_CONTEXTS, key, context)
@@ -3812,7 +3832,7 @@ def _file_imports_symbol_from_definition(
 ) -> bool:
     file_path = Path(path_str)
     try:
-        source = _read_source_text_cached(path_str)
+        source = _self._read_source_text_cached(path_str)
     except (OSError, UnicodeDecodeError):
         return False
     spec = lang_registry.spec_for_path(file_path)
@@ -3936,7 +3956,7 @@ def _js_ts_import_update_target(
     repo_root: Path | str | None = None,
 ) -> dict[str, Any] | None:
     try:
-        source = _read_source_text_cached(str(file_path))
+        source = _self._read_source_text_cached(str(file_path))
     except (OSError, UnicodeDecodeError):
         return None
 
@@ -4136,7 +4156,7 @@ def _build_import_graph_consumers_from_map(
             if not _file_may_import_symbol_definition(current, definition_files):
                 continue
             for definition_file in definition_files:
-                target = _import_update_target(current, symbol, definition_file, repo_root)
+                target = _self._import_update_target(current, symbol, definition_file, repo_root)
                 if target is None:
                     continue
                 line = int(target.get("start_line", 0) or 0)
@@ -4200,7 +4220,7 @@ def _preferred_definition_files(
         if current_path in scores:
             continue
         for definition_file in definition_files:
-            if _file_imports_symbol_from_definition(
+            if _self._file_imports_symbol_from_definition(
                 current,
                 symbol,
                 definition_file,
@@ -4265,14 +4285,14 @@ def _relevant_tests_for_symbol(
         # high-fan-in symbol could still blow the whole-repo BFS/reverse-index cost this PR exists
         # to bound. Thread the two kwargs already in scope, same per-item-inside-the-expensive-
         # loop shape as every other call site this PR fixed.
-        reverse_importers = _reverse_importers(
+        reverse_importers = _self._reverse_importers(
             all_files,
             imports_by_file,
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
-        file_distances = _reverse_import_distances(
+        file_distances = _self._reverse_import_distances(
             source_files,
             all_files,
             imports_by_file,
@@ -4280,7 +4300,7 @@ def _relevant_tests_for_symbol(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
-        graph_scores = _personalized_reverse_import_pagerank(
+        graph_scores = _self._personalized_reverse_import_pagerank(
             source_files,
             all_files,
             reverse_importers,
@@ -4294,7 +4314,7 @@ def _relevant_tests_for_symbol(
         for current, depth in file_distances.items():
             file_scores[current] = max(file_scores.get(current, 0), max(1, 5 - int(depth)))
 
-        test_matches = _context_tests(
+        test_matches = _self._context_tests(
             source_files,
             tests,
             _query_terms(symbol),
@@ -4328,7 +4348,7 @@ def _relevant_tests_for_symbol(
                 break
             path = Path(current)
             if any(
-                _file_imports_symbol_from_definition(
+                _self._file_imports_symbol_from_definition(
                     path,
                     candidate_symbol,
                     definition_file,
@@ -4362,7 +4382,7 @@ def _relevant_tests_for_symbol(
             continue
         path = Path(current)
         if any(
-            _file_imports_symbol_from_definition(
+            _self._file_imports_symbol_from_definition(
                 path,
                 candidate_symbol,
                 definition_file,
@@ -4420,7 +4440,7 @@ def _discover_validation_tests_for_primary_file(
     source_stem = source_path.stem.lower()
     source_related_stem = _related_test_stem(source_stem)
     scored_tests: list[tuple[int, str]] = []
-    candidate_files = _precomputed_validation_files_for_root(
+    candidate_files = _self._precomputed_validation_files_for_root(
         validation_root,
         precomputed_file_paths,
         deadline_monotonic=deadline_monotonic,
@@ -4435,7 +4455,7 @@ def _discover_validation_tests_for_primary_file(
         # (the main `build_repo_map` scan uses them) -- this was simply not wired here. Profiled
         # contributing multiple seconds to `tg agent`'s post-deadline tail (via `_build_edit_
         # plan_seed`'s validation-plan machinery) on a 6,000-file synthetic repo.
-        candidate_files = _iter_repo_files(
+        candidate_files = _self._iter_repo_files(
             validation_root,
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
             deadline_monotonic=deadline_monotonic,
@@ -4463,8 +4483,9 @@ def _discover_validation_tests_for_primary_file(
         resolved = current.resolve()
         if resolved == source_path:
             continue
-        if current.suffix.lower() in _JS_TS_SUFFIXES and not _javascript_test_file_uses_node_test(
-            str(resolved)
+        if (
+            current.suffix.lower() in _JS_TS_SUFFIXES
+            and not _self._javascript_test_file_uses_node_test(str(resolved))
         ):
             continue
         # F84 Fix B: discovery used to be JS/TS-only -- every non-JS/TS candidate (including a
@@ -4476,7 +4497,7 @@ def _discover_validation_tests_for_primary_file(
         if current.suffix.lower() not in _JS_TS_SUFFIXES and current.suffix.lower() != ".py":
             continue
         current_path = str(resolved)
-        score = _score_file_path(current_path, terms)
+        score = _self._score_file_path(current_path, terms)
         test_related_stem = _related_test_stem(current.stem)
         if test_related_stem == source_related_stem:
             score += 8
@@ -4544,7 +4565,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
         return [], []
 
     try:
-        lines = _read_source_text_cached(str(path)).splitlines()
+        lines = _self._read_source_text_cached(str(path)).splitlines()
     except (OSError, UnicodeDecodeError):
         return [], []
 
@@ -5371,7 +5392,7 @@ def _js_ts_references_and_calls(
         return [], []
 
     try:
-        source = _read_source_text_cached(str(path))
+        source = _self._read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return [], []
 
@@ -5466,7 +5487,7 @@ def _js_ts_references_and_calls(
                     alias_resolution_by_name.get(node_text) if node_type == "identifier" else None
                 )
                 try:
-                    ref_kind = _js_ts_classify_ref_kind(node)
+                    ref_kind = _self._js_ts_classify_ref_kind(node)
                 except Exception:
                     # F20: a classifier bug must only default THIS row to "value", never drop
                     # every reference in the file -- classify-only, so a failure here can never
@@ -5548,7 +5569,7 @@ def _js_ts_provider_alias_calls(
         return []
 
     try:
-        source = _read_source_text_cached(str(path))
+        source = _self._read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -5771,7 +5792,7 @@ def _rust_references_and_calls(
         return [], []
 
     try:
-        source = _read_source_text_cached(str(path))
+        source = _self._read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return [], []
 
@@ -5831,7 +5852,7 @@ def _rust_references_and_calls(
                 and not _node_has_ancestor_type(node, {"use_declaration"})
             ):
                 try:
-                    ref_kind = _rust_classify_ref_kind(node)
+                    ref_kind = _self._rust_classify_ref_kind(node)
                 except Exception:
                     # F20: a classifier bug must only default THIS row to "value", never drop
                     # every reference in the file.
@@ -6092,9 +6113,9 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
         return []
 
     if path.suffix in {".ts", ".tsx"}:
-        parser = _typescript_parser(tsx=path.suffix == ".tsx")
+        parser = _self._typescript_parser(tsx=path.suffix == ".tsx")
     else:
-        parser = _javascript_parser()
+        parser = _self._javascript_parser()
     if parser is None:
         return []
 
@@ -6143,7 +6164,7 @@ def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     if path.suffix not in _RUST_SUFFIXES:
         return []
 
-    parser = _rust_parser()
+    parser = _self._rust_parser()
     if parser is None:
         return []
 
@@ -6325,7 +6346,7 @@ def _python_references_and_calls_for_registry(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     # definition_dirs is part of the uniform registry adapter signature (Go F25); python
     # ignores it. repo_root likewise -- the underlying extractor is path+symbol only.
-    return _python_references_and_calls(path, symbol)
+    return _self._python_references_and_calls(path, symbol)
 
 
 def _js_ts_references_and_calls_for_registry(
@@ -6380,7 +6401,7 @@ def _java_references_and_calls_for_registry(
         path,
         symbol,
         repo_root,
-        parser=_java_parser(),
+        parser=_self._java_parser(),
         definition_dirs=definition_dirs,
     )
 
@@ -6547,7 +6568,7 @@ lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="javascript",
         suffixes=frozenset({".js", ".jsx", ".mjs", ".cjs"}),
-        parser_for_path=lambda path: _javascript_parser(),
+        parser_for_path=lambda path: _self._javascript_parser(),
         **_JS_TS_REGISTRY_SHARED_KWARGS,
     )
 )
@@ -6556,7 +6577,7 @@ lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="typescript",
         suffixes=frozenset({".ts", ".tsx"}),
-        parser_for_path=lambda path: _typescript_parser(tsx=path.suffix == ".tsx"),
+        parser_for_path=lambda path: _self._typescript_parser(tsx=path.suffix == ".tsx"),
         **_JS_TS_REGISTRY_SHARED_KWARGS,
     )
 )
@@ -6566,7 +6587,7 @@ lang_registry.register_language(
         language_id="rust",
         suffixes=frozenset({".rs"}),
         grammar_modules=("tree_sitter", "tree_sitter_rust"),
-        parser_for_path=lambda path: _rust_parser(),
+        parser_for_path=lambda path: _self._rust_parser(),
         provenance_when_parsed="tree-sitter",
         provenance_when_missing="regex-heuristic",
         import_markers=(b"use ",),
@@ -6630,7 +6651,7 @@ lang_registry.register_language(
         language_id="java",
         suffixes=frozenset({".java"}),
         grammar_modules=("tree_sitter", "tree_sitter_java"),
-        parser_for_path=lambda path: _java_parser(),
+        parser_for_path=lambda path: _self._java_parser(),
         provenance_when_parsed="tree-sitter",
         provenance_when_missing="grammar-missing",
         import_markers=(b"import ",),
@@ -7017,7 +7038,7 @@ def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _max_parse_bytes():
         return []
     try:
-        lines = _read_source_text_cached(str(path)).splitlines()
+        lines = _self._read_source_text_cached(str(path)).splitlines()
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -7061,7 +7082,7 @@ def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _max_parse_bytes():
         return []
     try:
-        lines = _read_source_text_cached(str(path)).splitlines()
+        lines = _self._read_source_text_cached(str(path)).splitlines()
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -7354,7 +7375,7 @@ def _python_sys_path_hack_dirs(path_str: str) -> tuple[str, ...]:
     if file_size > _max_parse_bytes():
         return ()
     try:
-        source = _read_source_text_cached(path_str)
+        source = _self._read_source_text_cached(path_str)
     except (OSError, UnicodeDecodeError):
         return ()
     if "sys.path" not in source:
@@ -7398,7 +7419,7 @@ def _python_sys_path_hack_roots(
     validated: list[Path] = []
     for hacked_dir in _python_sys_path_hack_dirs(str(importer_path)):
         candidate_dir = Path(hacked_dir)
-        if candidate_dir.is_dir() and _path_is_relative_to(candidate_dir, normalized_root):
+        if candidate_dir.is_dir() and _self._path_is_relative_to(candidate_dir, normalized_root):
             validated.append(candidate_dir)
     return tuple(validated)
 
@@ -7695,7 +7716,7 @@ def build_repo_map(
         # `deadline_hit` above to make an unreadable subtree visible instead of invisible.
         repo_walk_unreadable_hit = _UnreadablePathFlag()
         if _profiling_collector is None:
-            all_files = _iter_repo_files(
+            all_files = _self._iter_repo_files(
                 root,
                 max_files=normalized_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
@@ -7703,7 +7724,7 @@ def build_repo_map(
                 unreadable_hit=repo_walk_unreadable_hit,
             )
         else:
-            all_files = _iter_repo_files(
+            all_files = _self._iter_repo_files(
                 root,
                 max_files=normalized_max_repo_files,
                 deadline_monotonic=deadline_monotonic,
@@ -7746,9 +7767,9 @@ def build_repo_map(
                 deadline_hit = True
                 break
             if _profiling_collector is None:
-                current_imports, current_symbols = _imports_and_symbols_for_path(current)
+                current_imports, current_symbols = _self._imports_and_symbols_for_path(current)
             else:
-                current_imports, current_symbols = _imports_and_symbols_for_path(
+                current_imports, current_symbols = _self._imports_and_symbols_for_path(
                     current,
                     _profiling_collector=_profiling_collector,
                 )
@@ -7869,7 +7890,7 @@ def build_repo_map_incremental(
     repo_walk_unreadable_hit = _UnreadablePathFlag()
     all_files = [
         current
-        for current in _iter_repo_files(
+        for current in _self._iter_repo_files(
             root,
             max_files=normalized_max_repo_files,
             unreadable_hit=repo_walk_unreadable_hit,
@@ -7904,7 +7925,7 @@ def build_repo_map_incremental(
         path_obj = current_files_by_path.get(current_path)
         if path_obj is None:
             continue
-        current_imports, current_symbols = _imports_and_symbols_for_path(path_obj)
+        current_imports, current_symbols = _self._imports_and_symbols_for_path(path_obj)
         parsed_imports_by_file[current_path] = current_imports
         parsed_symbols_by_file[current_path] = current_symbols
         files_parsed += 1
@@ -8053,7 +8074,7 @@ def build_repo_map_json(
     max_files: int | None = None,
     max_repo_files: int | None = None,
 ) -> str:
-    payload = build_repo_map(path, max_repo_files=max_repo_files)
+    payload = _self.build_repo_map(path, max_repo_files=max_repo_files)
     return json.dumps(apply_repo_map_output_limits(payload, max_files=max_files), indent=2)
 
 
@@ -8269,7 +8290,7 @@ def _thin_cli_dispatcher_call_targets(
     if not _is_cli_command_module_path(file_path):
         return None
     try:
-        source = _read_source_text_cached(file_path)
+        source = _self._read_source_text_cached(file_path)
         tree = _cached_ast_parse(source)
     except (OSError, SyntaxError, UnicodeDecodeError, ValueError, RecursionError):
         return None
@@ -8461,7 +8482,7 @@ def _score_symbol(
     score = (
         _score_text_terms(symbol_name, terms) * 3
         + _score_text_terms(str(symbol["kind"]), terms)
-        + _score_file_path(str(symbol["file"]), terms)
+        + _self._score_file_path(str(symbol["file"]), terms)
     )
     if _symbol_name_terms_cover_query(symbol_name, terms):
         score += 2
@@ -8481,7 +8502,8 @@ def _score_symbol(
 def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
     imports_joined = " ".join(str(item) for item in entry["imports"])
     return (
-        _score_file_path(str(entry["file"]), terms) + _score_text_terms(imports_joined, terms) * 2
+        _self._score_file_path(str(entry["file"]), terms)
+        + _score_text_terms(imports_joined, terms) * 2
     )
 
 
@@ -9350,7 +9372,7 @@ def _context_tests(
             break
         if _test_scan_counts is not None:
             _test_scan_counts.scanned += 1
-        score = _score_file_path(current, terms)
+        score = _self._score_file_path(current, terms)
         reasons: list[str] = []
         if score > 0:
             reasons.append("path")
@@ -9434,7 +9456,8 @@ def _build_context_pack_from_map(
             for entry in payload["imports"]
         }
         file_scores = {
-            str(current): _score_file_path(str(current), terms) for current in payload["files"]
+            str(current): _self._score_file_path(str(current), terms)
+            for current in payload["files"]
         }
         file_reasons: dict[str, list[str]] = {}
         for current, score in file_scores.items():
@@ -9456,7 +9479,7 @@ def _build_context_pack_from_map(
                 if deadline_hit is not None:
                     deadline_hit.hit = True
                 break
-            score = _score_symbol(
+            score = _self._score_symbol(
                 symbol, symbol_terms, non_test_definition_names=non_test_definition_names
             )
             if score <= 0:
@@ -9535,7 +9558,7 @@ def _build_context_pack_from_map(
             source_candidates = [str(current) for current in payload["files"]]
         source_candidates = source_candidates[:_SOURCE_FALLBACK_SCAN_LIMIT]
         for current_path in source_candidates:
-            source_score = _score_file_source_terms(current_path, terms)
+            source_score = _self._score_file_source_terms(current_path, terms)
             if source_score <= 0:
                 continue
             file_scores[current_path] = file_scores.get(current_path, 0) + source_score * 8
@@ -9552,7 +9575,7 @@ def _build_context_pack_from_map(
                 dependency_seed_files.append(current)
         if not dependency_seed_files:
             dependency_seed_files = [
-                path for path in payload["files"] if _score_file_path(str(path), terms) > 0
+                path for path in payload["files"] if _self._score_file_path(str(path), terms) > 0
             ]
 
         all_files = [str(current) for current in payload["files"]]
@@ -9566,7 +9589,7 @@ def _build_context_pack_from_map(
         # `deadline_hit` flag this function already threads into pagerank keeps `context_pack_
         # assembly` in the caller's `assembly_stages_skipped` list honestly attributed to "some
         # stage in this pack build," not a new, over-precise label this signal alone can't support.
-        file_distances = _reverse_import_distances(
+        file_distances = _self._reverse_import_distances(
             dependency_seed_files,
             all_files,
             imports_by_file,
@@ -9574,7 +9597,7 @@ def _build_context_pack_from_map(
             deadline_hit=deadline_hit,
             _profiling_collector=_profiling_collector,
         )
-        reverse_importers = _reverse_importers(
+        reverse_importers = _self._reverse_importers(
             all_files,
             imports_by_file,
             deadline_monotonic=deadline_monotonic,
@@ -9622,7 +9645,7 @@ def _build_context_pack_from_map(
         # dogfood finding 1: deadline_monotonic/deadline_hit were already in scope in this
         # function (threaded into the symbol-scoring loop above) but never forwarded to pagerank
         # -- this 12-iteration whole-repo-file loop ran fully unbounded even past --deadline.
-        graph_scores = _personalized_reverse_import_pagerank(
+        graph_scores = _self._personalized_reverse_import_pagerank(
             graph_seed_files,
             all_files,
             reverse_importers,
@@ -9719,7 +9742,7 @@ def _build_context_pack_from_map(
             if _test_source_limit is not None
             else ranked_files
         )
-        test_matches = _context_tests(
+        test_matches = _self._context_tests(
             test_source_files,
             payload["tests"],
             terms,
@@ -9960,14 +9983,14 @@ def build_context_pack(
     # build_symbol_impact's moat P0-6 step-3 pattern) and shared across both the repo-map build AND
     # the symbol-scoring loop below, so a slow ranking pass on a huge repo cannot itself blow past
     # the requested budget after the walk/parse phase already finished inside it.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    payload = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    payload = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    context_payload = build_context_pack_from_map(
+    context_payload = _self.build_context_pack_from_map(
         payload,
         query,
         deadline_monotonic=deadline_monotonic,
@@ -10005,7 +10028,7 @@ def build_context_pack_json(
     deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
-        build_context_pack(
+        _self.build_context_pack(
             query,
             path,
             max_files=max_files,
@@ -10179,7 +10202,7 @@ def _truncate_source_text_to_budget(
     max_chars: int | None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> tuple[str, list[int], bool]:
-    if _source_text_within_budget(
+    if _self._source_text_within_budget(
         text,
         max_tokens=max_tokens,
         max_chars=max_chars,
@@ -11096,7 +11119,7 @@ def _detect_validation_runners_from_root(
             False, False, False, "generic", False, (), (), None, None, None
         )
 
-    all_files = _precomputed_validation_files_for_root(
+    all_files = _self._precomputed_validation_files_for_root(
         root,
         precomputed_file_paths,
         deadline_monotonic=deadline_monotonic,
@@ -11106,7 +11129,7 @@ def _detect_validation_runners_from_root(
         # #222 residual fix -- same gap and shape as `_discover_validation_tests_for_primary_
         # file`'s identical fallback above: thread the deadline this function already accepts
         # into the un-deadlined walk it falls back to.
-        all_files = _iter_repo_files(
+        all_files = _self._iter_repo_files(
             root,
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
             deadline_monotonic=deadline_monotonic,
@@ -11437,7 +11460,7 @@ def _framework_test_function_candidates(test_path: str) -> tuple[str, ...]:
     if suffix == ".py":
         return _python_parametrized_test_function_candidates(test_path)
     if suffix in _JS_TS_SUFFIXES:
-        return _javascript_test_function_candidates(test_path)
+        return _self._javascript_test_function_candidates(test_path)
     if suffix in _RUST_SUFFIXES:
         return _rust_test_function_candidates(test_path)
     return ()
@@ -11474,7 +11497,7 @@ def _framework_test_pattern_bonus(
     # substring of a term that would have scored is still checked), so this short-circuit never
     # produces a different answer than the un-short-circuited computation below.
     try:
-        file_text = _read_source_text_cached(test_path).lower()
+        file_text = _self._read_source_text_cached(test_path).lower()
     except (OSError, UnicodeDecodeError):
         file_text = None  # can't prove absence -- fall through and let the real path handle it
     if file_text is not None:
@@ -11692,7 +11715,7 @@ def _has_python_validation_fallback_evidence(
         )
     ):
         return True
-    candidate_files = _precomputed_validation_files_for_root(
+    candidate_files = _self._precomputed_validation_files_for_root(
         root,
         precomputed_file_paths,
         deadline_monotonic=deadline_monotonic,
@@ -11700,7 +11723,7 @@ def _has_python_validation_fallback_evidence(
     )
     if candidate_files is None:
         # #222 residual fix -- same gap and shape as the two identical fallbacks above.
-        candidate_files = _iter_repo_files(
+        candidate_files = _self._iter_repo_files(
             root,
             max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
             deadline_monotonic=deadline_monotonic,
@@ -11918,7 +11941,7 @@ def _raw_validation_plan_for_tests(
         explicit_root = explicit_root.parent
     resolved_tests = [Path(current).expanduser().resolve() for current in tests]
     tests_under_explicit_root = bool(resolved_tests) and all(
-        _path_is_relative_to(current, explicit_root) for current in resolved_tests
+        _self._path_is_relative_to(current, explicit_root) for current in resolved_tests
     )
     root = explicit_root if tests_under_explicit_root else _validation_repo_root(explicit_root)
     if tests:
@@ -11929,7 +11952,7 @@ def _raw_validation_plan_for_tests(
             deadline_hit=deadline_hit,
         )
     else:
-        local_files = _precomputed_validation_files_for_root(
+        local_files = _self._precomputed_validation_files_for_root(
             explicit_root,
             precomputed_file_paths,
             deadline_monotonic=deadline_monotonic,
@@ -11939,7 +11962,7 @@ def _raw_validation_plan_for_tests(
             # #222 residual fix -- same gap and shape as `_detect_validation_runners_from_root`'s
             # identical fallback (the "has tests" branch above): thread the deadline this
             # function already accepts into the un-deadlined walk it falls back to.
-            local_files = _iter_repo_files(
+            local_files = _self._iter_repo_files(
                 explicit_root,
                 max_files=_VALIDATION_RUNNER_SCAN_LIMIT,
                 deadline_monotonic=deadline_monotonic,
@@ -12049,7 +12072,9 @@ def _raw_validation_plan_for_tests(
 
         if suffix in _TS_SUFFIXES:
             test_candidates = (
-                list(_javascript_test_function_candidates(absolute_path)) if is_primary_test else []
+                list(_self._javascript_test_function_candidates(absolute_path))
+                if is_primary_test
+                else []
             )
             test_filter = _best_test_function_candidate(
                 test_candidates,
@@ -12079,7 +12104,9 @@ def _raw_validation_plan_for_tests(
 
         if suffix in _JS_TS_SUFFIXES:
             test_candidates = (
-                list(_javascript_test_function_candidates(absolute_path)) if is_primary_test else []
+                list(_self._javascript_test_function_candidates(absolute_path))
+                if is_primary_test
+                else []
             )
             test_filter = _best_test_function_candidate(
                 test_candidates,
@@ -12090,7 +12117,7 @@ def _raw_validation_plan_for_tests(
             primary_file_uses_node_test = (
                 is_primary_test
                 and not script_uses_node_test
-                and _javascript_test_file_uses_node_test(absolute_path)
+                and _self._javascript_test_file_uses_node_test(absolute_path)
             )
             if script_uses_node_test or primary_file_uses_node_test:
                 add_step(
@@ -13129,19 +13156,19 @@ def _suggested_edits_from_related_spans(
         processed_spans.append(current)
 
     if primary_symbol is None:
-        return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
+        return _self._capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
     primary_name = str(primary_symbol.get("name", ""))
     definition_path = str(primary_symbol.get("file", ""))
     if not primary_name or not definition_path:
-        return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
+        return _self._capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
     import_updates_by_key: dict[tuple[str, int, int], dict[str, Any]] = {}
     for current in processed_spans:
         current_file = str(current.get("file", ""))
         if not current_file:
             continue
-        import_target = _import_update_target(
+        import_target = _self._import_update_target(
             Path(current_file),
             primary_name,
             definition_path,
@@ -13169,7 +13196,7 @@ def _suggested_edits_from_related_spans(
             import_updates_by_key[key] = import_entry
 
     suggestions.extend(import_updates_by_key.values())
-    return _capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
+    return _self._capped_suggested_edits(_deduplicate_suggested_edits(suggestions), max_edits)
 
 
 def _preferred_edit_anchor_symbol(
@@ -13332,7 +13359,7 @@ def _with_lsp_primary_symbol_evidence(
     if not symbol_name:
         return primary_symbol
     try:
-        defs_payload = build_symbol_defs_from_map(
+        defs_payload = _self.build_symbol_defs_from_map(
             repo_map,
             symbol_name,
             semantic_provider=normalized_provider,
@@ -13723,7 +13750,7 @@ def _build_edit_plan_seed(
                 edit_symbol_name,
                 max_files=max_files,
             )
-            radius_payload = build_symbol_blast_radius_from_map(
+            radius_payload = _self.build_symbol_blast_radius_from_map(
                 radius_repo_map,
                 edit_symbol_name,
                 max_depth=max_depth,
@@ -13961,7 +13988,7 @@ def _attach_edit_plan_metadata(
                         edit_symbol_name,
                         max_files=max_files,
                     )
-                    resolved_blast_radius_payload = build_symbol_blast_radius_from_map(
+                    resolved_blast_radius_payload = _self.build_symbol_blast_radius_from_map(
                         radius_repo_map,
                         edit_symbol_name,
                         max_depth=max_depth,
@@ -14247,8 +14274,8 @@ def build_context_edit_plan(
     # (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3 pattern) and shared across
     # the repo-map build AND edit-plan's own symbol-scoring pass in `_from_map` below.
     if deadline_monotonic is None:
-        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+        deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
@@ -14282,7 +14309,7 @@ def build_context_edit_plan_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    payload = build_context_pack_from_map(
+    payload = _self.build_context_pack_from_map(
         repo_map,
         query,
         _test_source_limit=max_files,
@@ -14331,7 +14358,7 @@ def build_context_edit_plan_from_map(
     payload["max_sources"] = normalized_max_sources
     payload["max_tokens"] = normalized_max_tokens
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
-    payload = _attach_edit_plan_metadata(
+    payload = _self._attach_edit_plan_metadata(
         repo_map,
         payload,
         query=query,
@@ -14400,7 +14427,7 @@ def build_context_edit_plan_json(
     deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
-        build_context_edit_plan(
+        _self.build_context_edit_plan(
             query,
             path,
             max_files=max_files,
@@ -14449,8 +14476,8 @@ def build_context_render(
     # `tg context-render`/`tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6
     # step-3 pattern) and shared across the repo-map build AND the render's own symbol-scoring pass.
     if deadline_monotonic is None:
-        deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+        deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
@@ -14463,7 +14490,7 @@ def build_context_render(
         from tensor_grep.cli.orient_capsule import _apply_ignore_globs
 
         repo_map = _apply_ignore_globs(repo_map, ignore)
-    render = build_context_render_from_map(
+    render = _self.build_context_render_from_map(
         repo_map,
         query,
         max_files=max_files,
@@ -15015,7 +15042,7 @@ def _ensure_primary_source_in_sources(
         return sources
 
     primary_source: dict[str, Any] | None = None
-    primary_source_payload = build_symbol_source_from_map(
+    primary_source_payload = _self.build_symbol_source_from_map(
         repo_map,
         primary_symbol_name,
         _profiling_collector=_profiling_collector,
@@ -15223,7 +15250,7 @@ def build_context_render_from_map(
     # call only ever surfaced as the generic `payload["partial"]`, with nothing naming WHICH
     # assembly stage actually consumed the budget.
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    context_payload = build_context_pack_from_map(
+    context_payload = _self.build_context_pack_from_map(
         repo_map,
         query,
         deadline_monotonic=deadline_monotonic,
@@ -15254,7 +15281,7 @@ def build_context_render_from_map(
         if symbol_key in seen_symbols:
             continue
         seen_symbols.add(symbol_key)
-        symbol_sources = build_symbol_source_from_map(
+        symbol_sources = _self.build_symbol_source_from_map(
             repo_map,
             str(symbol["name"]),
             _profiling_collector=collector,
@@ -15339,7 +15366,7 @@ def build_context_render_from_map(
     payload["render_profile"] = normalized_profile
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     if include_edit_plan_seed:
-        payload = _attach_edit_plan_metadata(
+        payload = _self._attach_edit_plan_metadata(
             repo_map,
             payload,
             query=query,
@@ -15394,7 +15421,7 @@ def build_context_render_from_map(
         truncated,
         token_estimate,
         omitted_sections,
-    ) = _render_context_string_and_sections(
+    ) = _self._render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
         _profiling_collector=collector,
@@ -15453,7 +15480,7 @@ def build_context_render_json(
     profile: bool = False,
     deadline_seconds: float | None = None,
 ) -> str:
-    payload = build_context_render(
+    payload = _self.build_context_render(
         query,
         path,
         max_files=max_files,
@@ -15866,7 +15893,7 @@ def _external_workspace_symbols(
 ) -> list[dict[str, Any]]:
     matches: list[dict[str, Any]] = []
     deadline_monotonic = _lsp_operation_deadline()
-    current_repo_map = repo_map or build_repo_map(repo_root)
+    current_repo_map = repo_map or _self.build_repo_map(repo_root)
     languages = _provider_languages_for_symbol(current_repo_map, symbol)
     for language in sorted(languages):
         if _remaining_lsp_budget_seconds(deadline_monotonic) <= 0:
@@ -16053,7 +16080,7 @@ def _external_definitions(
     *,
     repo_map: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    workspace_matches = _external_workspace_symbols(repo_root, symbol, repo_map=repo_map)
+    workspace_matches = _self._external_workspace_symbols(repo_root, symbol, repo_map=repo_map)
     if workspace_matches or not native_definitions:
         return workspace_matches
 
@@ -16386,8 +16413,8 @@ def build_symbol_defs(
     # build_repo_map already accepts deadline_monotonic, so this is the same thin thread-through
     # those wrappers use -- `_copy_partial_signal` below guarantees the signal reaches the top-level
     # output even though `build_symbol_defs_from_map`'s `dict(repo_map)` copy already carries it.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    payload = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    payload = _self.build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
     # audit C1/C2: this call used to be BARE, dropping the deadline entirely --
@@ -16396,7 +16423,7 @@ def build_symbol_defs(
     # defs --deadline N` request ran that stage-1 scan fully unbounded (dogfood: `--deadline 40`
     # -> 113.5s, exit 0, partial:null). main.py's daemon gate skips the warm fast path whenever
     # --deadline is set, so THIS cold wrapper is the only path an explicit-deadline caller exercises.
-    result = build_symbol_defs_from_map(
+    result = _self.build_symbol_defs_from_map(
         payload,
         symbol,
         semantic_provider=semantic_provider,
@@ -16460,7 +16487,7 @@ def build_symbol_defs_from_map(
     external_definitions: list[dict[str, Any]] = []
     fallback_used = False
     if normalized_provider != "native":
-        external_definitions = _external_definitions(
+        external_definitions = _self._external_definitions(
             _repo_map_root_dir(repo_map),
             symbol,
             native_definitions,
@@ -16499,7 +16526,7 @@ def build_symbol_defs_from_map(
     # on a repo with many tests ran this loop fully unbounded even when a caller supplied a
     # deadline. Mirrors build_context_pack_from_map's own_deadline_hit pattern (repo_map.py:13744).
     defs_related_tests_deadline_hit = _DeadlineBreakFlag()
-    payload["tests"] = _relevant_tests_for_symbol(
+    payload["tests"] = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
@@ -16617,7 +16644,7 @@ def build_symbol_defs_json(
     deadline_seconds: float | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_defs(
+        _self.build_symbol_defs(
             symbol,
             path,
             semantic_provider=semantic_provider,
@@ -16640,8 +16667,8 @@ def build_symbol_source(
     # CEO v1.72.1 dogfood M1: `--deadline` used to be undefined on `tg source` (Click "No such
     # option" exit-2) even though its true sibling build_symbol_defs already had it -- same thin,
     # additive thread-through build_repo_map already accepts (mirrors #581's build_symbol_defs).
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
@@ -16651,7 +16678,7 @@ def build_symbol_source(
     # dropped here even though build_symbol_source already computed it (dogfood: `tg source
     # --deadline` overran by 47.0s). build_symbol_source_from_map gains deadline_monotonic below
     # (site 6); this cold wrapper is site 7.
-    result = build_symbol_source_from_map(
+    result = _self.build_symbol_source_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -16677,7 +16704,7 @@ def build_symbol_source_from_map(
     # pass it (mirrors the documented _iter_repo_files convention, repo_map.py:993-998).
     # `_copy_partial_signal(payload, defs_payload)` below already folds defs_payload's partial
     # signal into this function's own fresh envelope, so threading the deadline is the whole fix.
-    defs_payload = build_symbol_defs_from_map(
+    defs_payload = _self.build_symbol_defs_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
@@ -16751,7 +16778,7 @@ def build_symbol_source_json(
     max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_source(
+        _self.build_symbol_source(
             symbol,
             path,
             semantic_provider=semantic_provider,
@@ -16773,14 +16800,14 @@ def build_symbol_impact(
 ) -> dict[str, Any]:
     # moat P0-6 step 3: convert the relative --deadline once to an ABSOLUTE monotonic timestamp so
     # the underlying repo scan can bound itself and return partial results.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    payload = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    payload = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    result = build_symbol_impact_from_map(
+    result = _self.build_symbol_impact_from_map(
         payload,
         symbol,
         semantic_provider=semantic_provider,
@@ -16809,7 +16836,7 @@ def build_symbol_impact_from_map(
     # --deadline 1` -> 85.4s). `_copy_partial_signal(payload, defs_payload)` below already folds
     # defs_payload's partial signal into this function's own return, so threading the deadline
     # here is the whole fix at this site.
-    defs_payload = build_symbol_defs_from_map(
+    defs_payload = _self.build_symbol_defs_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
@@ -16844,7 +16871,7 @@ def build_symbol_impact_from_map(
     # scans just below (the #52 fix (loop C) comment).
     context_pack_deadline_hit = _DeadlineBreakFlag()
     context_pack_test_scan_counts = _TestScanCounts()
-    context_payload = build_context_pack_from_map(
+    context_payload = _self.build_context_pack_from_map(
         repo_map,
         symbol,
         # opt10 #3: `_test_source_limit` is DELIBERATELY NOT APPLIED HERE, unlike refs/callers.
@@ -16901,7 +16928,7 @@ def build_symbol_impact_from_map(
             impacted_files.append(current)
 
     related_tests_deadline_hit = _DeadlineBreakFlag()
-    related_tests = _relevant_tests_for_symbol(
+    related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
@@ -17134,7 +17161,7 @@ def _string_literal_references(path: Path, symbol: str) -> list[dict[str, Any]]:
     if not symbol:
         return []
     try:
-        source = _read_source_text_cached(str(path))
+        source = _self._read_source_text_cached(str(path))
     except (OSError, UnicodeDecodeError):
         return []
 
@@ -17173,8 +17200,8 @@ def build_symbol_refs(
     deadline_seconds: float | None = None,
     max_tests: int | None = None,
 ) -> dict[str, Any]:
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path, max_repo_files=max_repo_files, deadline_monotonic=deadline_monotonic
     )
     result = build_symbol_refs_from_map(
@@ -17203,7 +17230,7 @@ def build_symbol_refs_from_map(
     # for the rest of this function, so threading the deadline is the whole fix at this site --
     # defs_payload's own partial/deadline_limit (if set) survive untouched through every mutation
     # below since nothing resets those keys before the final return.
-    payload = build_symbol_defs_from_map(
+    payload = _self.build_symbol_defs_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     if payload.get("no_match"):
@@ -17220,7 +17247,7 @@ def build_symbol_refs_from_map(
     # overrun the 60s budget. Fold its early-break into the refs partial signal below.
     context_pack_deadline_hit = _DeadlineBreakFlag()
     context_pack_test_scan_counts = _TestScanCounts()
-    context_payload = build_context_pack_from_map(
+    context_payload = _self.build_context_pack_from_map(
         repo_map,
         symbol,
         # opt10 #3: refs reads context_payload["test_matches"]/["file_matches"] directly into
@@ -17348,7 +17375,7 @@ def build_symbol_refs_from_map(
     if normalized_provider != "native":
         external_refs = [
             dict(current)
-            for current in _external_references(
+            for current in _self._external_references(
                 repo_root, symbol, [dict(current) for current in payload["definitions"]]
             )
             if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
@@ -17401,7 +17428,7 @@ def build_symbol_refs_from_map(
         if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             refs_scan_deadline_hit = True
             break
-        string_refs.extend(_string_literal_references(current, symbol))
+        string_refs.extend(_self._string_literal_references(current, symbol))
     string_refs.sort(
         key=lambda item: (str(item["file"]), int(item["line"]), str(item.get("text", "")))
     )
@@ -18003,7 +18030,7 @@ def build_file_importers_from_map(
     # confirm-edges loop already sets, so `tg importers --deadline` reports one honest signal
     # regardless of which stage actually consumed the budget.
     reverse_importers_deadline_hit = _DeadlineBreakFlag()
-    reverse_map = _reverse_importers(
+    reverse_map = _self._reverse_importers(
         all_files,
         imports_by_file,
         include_directory_index_aliases=True,
@@ -18116,9 +18143,9 @@ def build_file_importers(
     no-op for every caller that already passes an absolute FILE (both MCP tools always do, via
     ``_confine_read_path``) -- only the previously-buggy cwd-relative case changes.
     """
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
     resolved_file_path = Path(file_path).expanduser().resolve()
-    repo_map = build_repo_map(
+    repo_map = _self.build_repo_map(
         root,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
@@ -18143,14 +18170,14 @@ def build_symbol_callers(
     max_tests: int | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    result = build_symbol_callers_from_map(
+    result = _self.build_symbol_callers_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -18177,7 +18204,7 @@ def build_symbol_callers_from_map(
     # --deadline` overran by 20.2s). `_copy_partial_signal(payload, defs_payload)` below already
     # folds defs_payload's partial signal into this function's own return, so threading the
     # deadline here is the whole fix at this site.
-    defs_payload = build_symbol_defs_from_map(
+    defs_payload = _self.build_symbol_defs_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     if defs_payload.get("no_match"):
@@ -18227,14 +18254,14 @@ def build_symbol_callers_from_map(
     python_files: set[str] = set()
 
     def _should_scan_for_symbol_callers(current: Path) -> bool:
-        if _file_may_contain_literal_symbol(current, symbol):
+        if _self._file_may_contain_literal_symbol(current, symbol):
             return True
         if lang_registry.spec_for_path(current) is None:
             return False
         if not _file_may_import_symbol_definition(current, definition_files):
             return False
         return any(
-            _file_imports_symbol_from_definition(
+            _self._file_imports_symbol_from_definition(
                 str(current),
                 symbol,
                 definition_file,
@@ -18306,7 +18333,7 @@ def build_symbol_callers_from_map(
     if normalized_provider != "native":
         external_refs = [
             dict(current)
-            for current in _external_references(
+            for current in _self._external_references(
                 repo_root, symbol, [dict(current) for current in defs_payload["definitions"]]
             )
             if str(Path(str(current.get("file", ""))).expanduser().resolve()) in bounded_file_set
@@ -18512,7 +18539,7 @@ def build_symbol_callers_from_map(
     # -- previously unbounded even though it feeds the same 4-way partial fold-in just below.
     context_pack_deadline_hit = _DeadlineBreakFlag()
     context_pack_test_scan_counts = _TestScanCounts()
-    context_payload = build_context_pack_from_map(
+    context_payload = _self.build_context_pack_from_map(
         repo_map,
         symbol,
         # opt10 #3: callers never sets payload["test_matches"] from context_payload at all (only
@@ -18532,7 +18559,7 @@ def build_symbol_callers_from_map(
     # on a high-fan-out symbol: _preferred_definition_files falls back to the FULL unfiltered
     # definition_files when all import-scores are 0, flooding this loop unbounded).
     related_tests_deadline_hit = _DeadlineBreakFlag()
-    related_tests = _relevant_tests_for_symbol(
+    related_tests = _self._relevant_tests_for_symbol(
         repo_map,
         symbol,
         definition_files,
@@ -18664,7 +18691,7 @@ def build_symbol_callers_json(
     max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_callers(
+        _self.build_symbol_callers(
             symbol,
             path,
             semantic_provider=semantic_provider,
@@ -18723,14 +18750,14 @@ def build_symbol_blast_radius(
     # moat P0-6 step 3: ONE absolute deadline shared across BOTH the initial scan and the
     # literal-seed retry below -- a per-call re-derivation would double the wall-clock for exactly
     # the already-truncated huge repos that need a deadline most.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
         _profiling_collector=_profiling_collector,
     )
-    payload = build_symbol_blast_radius_from_map(
+    payload = _self.build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
@@ -18745,14 +18772,14 @@ def build_symbol_blast_radius(
             existing_files=_repo_map_file_universe(repo_map),
         )
         if seed_files:
-            repo_map = build_repo_map(
+            repo_map = _self.build_repo_map(
                 path,
                 max_repo_files=max_repo_files,
                 extra_files=seed_files,
                 deadline_monotonic=deadline_monotonic,
                 _profiling_collector=_profiling_collector,
             )
-            payload = build_symbol_blast_radius_from_map(
+            payload = _self.build_symbol_blast_radius_from_map(
                 repo_map,
                 symbol,
                 max_depth=max_depth,
@@ -18914,7 +18941,7 @@ def build_symbol_blast_radius_from_map(
     # below, which already threaded deadline_monotonic through their own now-fixed sibling defs
     # calls) -- fixing only the sub-calls would leave THIS call blocking before either of them
     # ever runs. Folded into this function's own partial stamp below (defs_payload.get("partial")).
-    defs_payload = build_symbol_defs_from_map(
+    defs_payload = _self.build_symbol_defs_from_map(
         repo_map, symbol, semantic_provider=semantic_provider, deadline_monotonic=deadline_monotonic
     )
     default_agreement, default_status = _default_provider_metadata(
@@ -18955,7 +18982,7 @@ def build_symbol_blast_radius_from_map(
         if "scan_limit" in repo_map:
             payload["scan_limit"] = dict(repo_map["scan_limit"])
         return _attach_profiling(payload, _profiling_collector)
-    callers_payload = build_symbol_callers_from_map(
+    callers_payload = _self.build_symbol_callers_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -18966,7 +18993,7 @@ def build_symbol_blast_radius_from_map(
     # unbounded (build_symbol_impact_from_map had no deadline param at all), so blast-radius
     # inherited an unbounded internal preferred-definition/related-tests scan via this call even
     # though every other seam in this function is deadline-aware.
-    impact_payload = build_symbol_impact_from_map(
+    impact_payload = _self.build_symbol_impact_from_map(
         repo_map,
         symbol,
         semantic_provider=semantic_provider,
@@ -19033,7 +19060,7 @@ def build_symbol_blast_radius_from_map(
     # `preferred_definition_deadline_hit_blast`, which names a DIFFERENT stage) folded into the
     # SAME partial/deadline_limit union below.
     reverse_import_graph_deadline_hit_blast = _DeadlineBreakFlag()
-    reverse_importers = _reverse_importers(
+    reverse_importers = _self._reverse_importers(
         all_files,
         imports_by_file,
         deadline_monotonic=deadline_monotonic,
@@ -19041,7 +19068,7 @@ def build_symbol_blast_radius_from_map(
         _profiling_collector=_profiling_collector,
     )
     definition_files = [str(current["file"]) for current in definitions]
-    dependency_distances = _reverse_import_distances(
+    dependency_distances = _self._reverse_import_distances(
         definition_files,
         all_files,
         imports_by_file,
@@ -19049,7 +19076,7 @@ def build_symbol_blast_radius_from_map(
         deadline_hit=reverse_import_graph_deadline_hit_blast,
         _profiling_collector=_profiling_collector,
     )
-    reverse_graph_scores = _personalized_reverse_import_pagerank(
+    reverse_graph_scores = _self._personalized_reverse_import_pagerank(
         definition_files,
         all_files,
         reverse_importers,
@@ -19374,7 +19401,7 @@ def build_symbol_blast_radius_json(
     max_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_blast_radius(
+        _self.build_symbol_blast_radius(
             symbol,
             path,
             max_depth=max_depth,
@@ -19405,8 +19432,8 @@ def build_symbol_blast_radius_plan(
     # build_symbol_blast_radius above), threaded into BOTH the initial repo_map build and the
     # _from_map call below so the caller-scan pass inside build_symbol_blast_radius_from_map also
     # honors the same shared absolute budget, not just the file walk/parse.
-    deadline_monotonic = _deadline_monotonic_from_seconds(deadline_seconds)
-    repo_map = build_repo_map(
+    deadline_monotonic = _self._deadline_monotonic_from_seconds(deadline_seconds)
+    repo_map = _self.build_repo_map(
         path,
         max_repo_files=max_repo_files,
         deadline_monotonic=deadline_monotonic,
@@ -19437,7 +19464,7 @@ def build_symbol_blast_radius_plan_from_map(
     deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
-    payload = build_symbol_blast_radius_from_map(
+    payload = _self.build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
@@ -19458,7 +19485,7 @@ def build_symbol_blast_radius_plan_from_map(
     ]
     payload["max_files"] = normalized_max_files
     payload["max_symbols"] = normalized_max_symbols
-    payload = _attach_edit_plan_metadata(
+    payload = _self._attach_edit_plan_metadata(
         repo_map,
         payload,
         query=symbol,
@@ -19495,7 +19522,7 @@ def build_symbol_blast_radius_plan_json(
     max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_blast_radius_plan(
+        _self.build_symbol_blast_radius_plan(
             symbol,
             path,
             max_depth=max_depth,
@@ -19525,7 +19552,9 @@ def build_symbol_blast_radius_render(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    repo_map = build_repo_map(path, max_repo_files=max_repo_files, _profiling_collector=collector)
+    repo_map = _self.build_repo_map(
+        path, max_repo_files=max_repo_files, _profiling_collector=collector
+    )
     return build_symbol_blast_radius_render_from_map(
         repo_map,
         symbol,
@@ -19559,7 +19588,7 @@ def build_symbol_blast_radius_render_from_map(
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
-    radius_payload = build_symbol_blast_radius_from_map(
+    radius_payload = _self.build_symbol_blast_radius_from_map(
         repo_map,
         symbol,
         max_depth=max_depth,
@@ -19604,7 +19633,7 @@ def build_symbol_blast_radius_render_from_map(
         examined_candidates += 1
         if examined_candidates > max_source_candidates:
             break
-        symbol_sources = build_symbol_source_from_map(
+        symbol_sources = _self.build_symbol_source_from_map(
             repo_map,
             str(current_symbol["name"]),
             _profiling_collector=collector,
@@ -19649,7 +19678,7 @@ def build_symbol_blast_radius_render_from_map(
         truncated,
         token_estimate,
         omitted_sections,
-    ) = _render_context_string_and_sections(
+    ) = _self._render_context_string_and_sections(
         payload,
         max_render_chars=max_render_chars,
         _profiling_collector=collector,
@@ -19659,7 +19688,7 @@ def build_symbol_blast_radius_render_from_map(
     payload["truncated"] = truncated
     payload["token_estimate"] = token_estimate
     payload["omitted_sections"] = omitted_sections
-    payload = _attach_edit_plan_metadata(
+    payload = _self._attach_edit_plan_metadata(
         repo_map,
         payload,
         query=symbol,

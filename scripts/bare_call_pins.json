@@ -8,9 +8,8 @@
     "Measured against main at 79cb220 on 2026-08-19.",
     "mcp_server.py RETIRED 2026-08-20: Route A conversion complete, 125 -> 0. Its absence here",
     "is the record that the module is converted; the ratchet fails if a bare call reappears in",
-    "it, because an unpinned module with a non-zero count is an UNPINNED OFFENDER."
+    "it, because an unpinned module with a non-zero count is an UNPINNED OFFENDER.",
+    "repo_map.py RETIRED 2026-08-20: Route A complete, 166 -> 0. All three split-floor targets converted."
   ],
-  "bare_calls": {
-    "src/tensor_grep/cli/repo_map.py": 166
-  }
+  "bare_calls": {}
 }
