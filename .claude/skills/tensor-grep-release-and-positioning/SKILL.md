@@ -290,6 +290,20 @@ doesn't depend on a human remembering a separate dispatch.
 
 ### 1.7 Post-publish: dogfood the real artifact, not a mock
 
+**Verify PER-ARTIFACT, never by version presence (2026-08-21 receipt).** A size-capped
+upload can land PARTIALLY: v1.111.1 got 2 of 4 artifacts up (macosx_arm64 + manylinux)
+before PyPI's project-size cap 400'd the win_amd64 wheel and the sdist — so "latest" existed
+for Mac/Linux while Windows pip silently resolved to the previous version. A version-level
+check reads healthy; only comparing `releases[v]`'s filename set against the expected four
+(macosx_arm64, manylinux, win_amd64 wheels + sdist) sees the skew:
+
+```bash
+curl -s https://pypi.org/pypi/tensor-grep/json | \
+  python -c "import sys,json; d=json.load(sys.stdin); v=d['info']['version']; \
+fs=[f['filename'] for f in d['releases'][v]]; print(v, len(fs), fs)"
+# Expect 4 files. 2 or 3 = a partial publish — worse than a failed one, because it half-exists.
+```
+
 Never declare a release "done" from PyPI visibility alone if the installer/update path changed
 (`docs/RELEASE_CHECKLIST.md:99-108`). Confirm with API evidence:
 
