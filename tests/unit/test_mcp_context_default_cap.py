@@ -16,7 +16,7 @@ def test_tg_session_open_default_mirrors_repo_scan_limit():
     # #98: tg_session_open's signature hardcoded `max_repo_files: int | None = 512` while
     # every sibling MCP scan tool (tg_repo_map, tg_agent_capsule, etc.) defaults to the
     # shared _DEFAULT_MCP_REPO_SCAN_LIMIT (2000) -- see audit #114's analogous fix for
-    # tg_repo_map in test_mcp_server.py::test_tg_repo_map_defaults_to_shared_mcp_repo_scan_limit.
+    # tg_repo_map in test_mcp_server_context_session.py::test_tg_repo_map_defaults_to_shared_mcp_repo_scan_limit.
     # Pin the signature default so it cannot drift back to a hardcoded literal.
     import inspect
 

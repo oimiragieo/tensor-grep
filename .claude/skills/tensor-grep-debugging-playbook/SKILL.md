@@ -657,7 +657,7 @@ gh run view <run-id> --log-failed                          # read pip-audit's/ca
 `mcp>=1.2.0` -> `mcp>=1.27.2`), not just a bare `uv lock`/`cargo update` relock -- a floor-only relock
 lets a future bare resolve (no `--upgrade-package`) silently settle back below the patched version.
 Regenerate the lockfile, then re-run the FULL dependent test surface UNMODIFIED (for the `mcp` case:
-`tests/unit/test_mcp_server.py`, `tests/unit/test_mcp_tg_find.py`,
+`tests/unit/test_mcp_server_*.py`, `tests/unit/test_mcp_tg_find.py`,
 `tests/integration/test_mcp_stdio_protocol.py`, `tests/unit/test_harness_api_docs.py`) — a passing
 dependency bump with zero code changes is the expected GOOD outcome, not a reason to skip
 verification; if the bump needs a code change too, that is itself a signal to read the changelog

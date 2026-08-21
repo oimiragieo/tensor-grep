@@ -241,7 +241,7 @@ def test_harness_api_doc_lists_every_registered_mcp_tool_name() -> None:
     tg_ast_search, tg_classify_logs, tg_devices, tg_file_imports, tg_file_importers,
     tg_session_file_importers) went undocumented for multiple releases before this test
     existed. Derive the tool name list from the LIVE MCP tool registry instead (the same
-    source test_mcp_server.py's hard capabilities gate uses) and assert every single one has
+    source test_mcp_server_meta_dispatch.py's hard capabilities gate uses) and assert every single one has
     a `` `name(...)` `` bullet entry in the doc's "Current tool set" list, so a newly
     added/renamed tool that isn't documented fails CI immediately instead of silently
     drifting again.

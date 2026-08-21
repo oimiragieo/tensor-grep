@@ -67,7 +67,7 @@ to daemon-routed session `context-render` and `edit-plan` requests.
 ## Local Gates
 
 ```powershell
-uv run pytest tests/unit/test_mcp_server.py tests/unit/test_session_cli.py tests/unit/test_cli_modes.py -q
+uv run pytest tests/unit/test_mcp_server_*.py tests/unit/test_session_cli.py tests/unit/test_cli_modes.py -q
 C:/Users/oimir/.cargo/bin/cargo.exe test --manifest-path rust_core/Cargo.toml --test test_public_native_cli_parity
 uv run ruff format --check --preview .
 uv run ruff check .

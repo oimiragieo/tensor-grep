@@ -662,7 +662,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
 17. **A self-gate's declared test SUBSET is not the full CI matrix — state what ran, not just that
     "tests passed" (#733/#734, 2026-07-24).** The build agent's own pre-merge gate on #733 ran a
     real, substantial suite (`test_harness_api_docs.py`, `test_session_cli.py`,
-    `test_mcp_server.py`, the full `lang_registry`/`test_lang_*.py` sweep) but never named
+    `test_mcp_server_*.py`, the full `lang_registry`/`test_lang_*.py` sweep) but never named
     `tests/unit/test_file_deps.py` — the exact file whose invariant #733 broke, deterministically,
     on every platform. This is an instance of Part 1 point 9 ("never trust a self-report") applied
     to test **scope**, not just test **result**: a subagent that reports "N tests passed" without

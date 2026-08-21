@@ -274,7 +274,7 @@ def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
     `_MCP_TOOL_CAPABILITIES` (built further below) must both be bound to the SAME flag read so
     they can never disagree within one running server process -- see the flag-OFF invariant
     test's subprocess-isolation rationale (`test_mcp_legacy_tools_flag_off_deregisters_
-    legacy_tools_subprocess` in test_mcp_server.py) for why a same-process `importlib.reload`
+    legacy_tools_subprocess` in test_mcp_server_meta_dispatch.py) for why a same-process `importlib.reload`
     is not an equivalent way to exercise the other flag state.
     """
     if _legacy_tools_enabled():

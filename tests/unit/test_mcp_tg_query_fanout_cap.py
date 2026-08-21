@@ -13,7 +13,7 @@ Covers, RED-then-GREEN against `tensor_grep/cli/mcp_server.py::tg_query`:
   3. a normal multi-root call with an ample deadline still dispatches every root and returns
      the pre-existing response shape unchanged (no `omitted_roots`/`partial` noise).
 
-Sibling file: test_mcp_server.py (see test_tg_query_workspace_roots_dispatches_once_per_root /
+Sibling file: test_mcp_server_meta_dispatch.py (see test_tg_query_workspace_roots_dispatches_once_per_root /
 test_tg_query_workspace_roots_one_bad_element_fails_whole_call for the pre-existing
 confinement-only coverage this file must not regress).
 """

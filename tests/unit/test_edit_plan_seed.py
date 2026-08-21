@@ -1093,7 +1093,7 @@ def test_validation_test_discovery_clean_tree_is_the_control_arm(tmp_path: Path)
 # H6 audit (range-assert vacuity sweep): dedicated adversarial proof that the
 # confidence/rollback-risk clamp helpers are LOAD-BEARING, not decorative. The many
 # `0.0 <= x <= 1.0` bound checks scattered across the integration-style tests above (and in
-# test_cli_modes.py / test_mcp_server.py's `_assert_enriched_edit_plan_seed` /
+# test_cli_modes.py / test_mcp_server_shared.py's `_assert_enriched_edit_plan_seed` /
 # `_assert_navigation_pack` helpers) can never fail on real fixture data because every
 # producer already clamps its output -- so this is where the [0, 1] CONTRACT itself is
 # actually proven, with adversarial (out-of-normal-range) inputs that would violate the
