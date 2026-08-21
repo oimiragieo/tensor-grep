@@ -17,11 +17,24 @@ with the injected ``RuntimeError`` propagating out of the tool. The mechanical r
 per-case output are recorded in the PR body. That is the arm that makes this file's green mean
 something -- a test that has only ever been seen to pass proves nothing.
 
-POSITIVE CONTROL ON THE INSTRUMENT. ``test_control_injection_actually_reaches_the_tool`` proves
-the injection lever is live: with NO injection the same tool returns a payload with no ``error``
-key, so an ``error`` key in the injected arm is caused by the injection and not by the fixture's
-own environment (an unconfigured path, a missing binary, a refused root). Without this control
-every case below could pass just as happily against a tool that always errors.
+THE ORACLE, AND WHY "DID IT ERROR?" IS NOT ONE (A3 round 1, finding 2). Every case runs BOTH
+arms and the discriminator is the injected MARKER, never the presence of an error:
+
+  ARM A (no injection)  the marker must appear in NEITHER the wire answer NOR stderr.
+  ARM B (injected)      the answer must disclose an error, AND the marker must appear in the
+                        wire answer OR stderr.
+
+The measurement that forced this: **15 of the 50 tools return a natural ``error`` on this
+fixture** (a session id that does not exist, a manifest that is not there), so the earlier
+"assert the payload has an error" oracle was satisfied IDENTICALLY with and without the
+injection -- a check that passes in both arms, which is not verification. A further **18 of the
+50 sanitize the wire message down to an exception class name** (``_sanitized_tool_error``), so
+requiring the marker on the wire alone would have been unsatisfiable for them; ``_log_tool_
+exception`` writes the full traceback to stderr, so both channels are searched and finding the
+marker in neither is a failure.
+
+``test_control_injection_actually_reaches_the_tool`` additionally pins the simplest case
+end-to-end, so a future refactor that made the injection a no-op everywhere still fails loudly.
 """
 
 from __future__ import annotations
@@ -65,7 +78,7 @@ def mcp_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def _assert_fail_closed(raw: object, *, case: str) -> None:
+def _discloses_error(raw: object, *, case: str) -> None:
     """The tool answered, and its answer DISCLOSES a failure.
 
     Two disclosure shapes exist on this surface and both are accepted explicitly: a JSON
@@ -380,9 +393,9 @@ def test_mcp_tool_boundary_is_fail_closed(
     case: tuple[str, Any, str, dict[str, Any]],
     mcp_root: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     name, tool, target, kwargs = case
-    monkeypatch.setattr(target, _boom, raising=True)
     call_kwargs = dict(kwargs)
     # Only pass `path` to tools that HAVE one. Passing it blindly raised TypeError on five
     # tools, which is a CRASH, not a red arm (AGENTS.md: "a test that ERRORS is not a red arm")
@@ -390,8 +403,36 @@ def test_mcp_tool_boundary_is_fail_closed(
     # fail-closed failure this case exists to detect.
     if "path" in inspect.signature(tool).parameters:
         call_kwargs["path"] = str(mcp_root)
+
+    # ---- ARM A: NO INJECTION (the per-case control A3 round 1 required) -------------------
+    # Measured, not assumed: 15 of these 50 tools return a natural `error` on this fixture
+    # (a session id that does not exist, a manifest that is not there). For those the old
+    # "did it error?" oracle was satisfied identically with and without the injection -- a
+    # check that passes in both arms. The discriminator is therefore the MARKER, never the
+    # mere presence of an error.
+    natural = tool(**call_kwargs)
+    natural_err = capsys.readouterr().err
+    assert _MARKER not in natural + natural_err, (
+        f"{name}: the injection marker appears WITHOUT the injection -- the control arm is "
+        "contaminated and this case proves nothing"
+    )
+
+    # ---- ARM B: INJECTED --------------------------------------------------------------
+    monkeypatch.setattr(target, _boom, raising=True)
     raw = tool(**call_kwargs)
-    _assert_fail_closed(raw, case=name)
+    injected_err = capsys.readouterr().err
+
+    _discloses_error(raw, case=name)
+    # ...and the disclosure must be CAUSED BY the injection. 18 of the 50 tools sanitize the
+    # wire message down to an exception class (`_sanitized_tool_error`), so the marker is
+    # legitimately absent there -- but `_log_tool_exception` writes the full traceback to
+    # stderr, so the marker is observable on one channel or the other for every case. Both are
+    # searched, and finding it in neither is a failure.
+    assert _MARKER in raw + injected_err, (
+        f"{name}: an error came back, but nothing ties it to the injected failure -- it may be "
+        f"the SAME natural error the control arm produced. wire={raw[:300]!r} "
+        f"stderr={injected_err[:300]!r}"
+    )
 
 
 def test_control_injection_actually_reaches_the_tool(
@@ -417,6 +458,69 @@ def test_control_injection_actually_reaches_the_tool(
 # ---------------------------------------------------------------------------
 # Handlers on the same surface that are not MCP tool entry points.
 # ---------------------------------------------------------------------------
+
+
+def test_stdin_reader_surfaces_a_malformed_frame_and_stays_usable() -> None:
+    """``cli/mcp_server.py::stdin_reader`` handler 0 -- the TRANSPORT boundary.
+
+    A3 round 1 (finding 3) rejected exempting this as "plumbing": it parses UNTRUSTED frames
+    straight off the wire, so W1.3's behavioural requirement applies to it like any other
+    network-facing boundary. Two properties, and the second is the one that matters:
+
+      1. a malformed JSON frame is SURFACED as an object the session layer can turn into a
+         JSON-RPC parse error -- not dropped, not logged-and-forgotten;
+      2. the reader REMAINS USABLE afterwards -- the very next well-formed frame is still
+         delivered. This is the reason the handler is INTENTIONAL-BOUNDARY rather than a
+         defect: raising instead would take the whole stdio transport down with one bad frame
+         from any client, which is a denial of service, not fail-closed.
+
+    RED arm: with the broad handler neutralized the malformed frame propagates out of the task
+    group and the second (valid) frame is never delivered -- both assertions below fail.
+    """
+
+    import io
+
+    import anyio
+
+    valid = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    stdin_bytes = b'{"jsonrpc": "2.0", "id": ' + b"\n" + valid.encode("utf-8") + b"\n"
+
+    received: list[Any] = []
+
+    async def _drive() -> None:
+        stdin = anyio.wrap_file(io.BytesIO(stdin_bytes))
+        stdout = anyio.wrap_file(io.StringIO())
+        async with mcp_server._stdio_server_accepting_content_length(
+            stdin=stdin, stdout=stdout
+        ) as (read_stream, write_stream):
+            for _ in range(2):
+                received.append(await read_stream.receive())
+            # Both halves must be closed or the context manager's task group waits forever on
+            # `stdout_writer`, which never sees EOF. Learned the hard way: the first draft of
+            # this test hung for ten minutes on a shared box (anti-hang-test-protocol).
+            await write_stream.aclose()
+            await read_stream.aclose()
+
+    async def _bounded() -> None:
+        # A hard wall-clock bound so a regression that BLOCKS the reader fails as a test
+        # failure rather than hanging CI. The budget bounds a hang; it does not measure speed.
+        with anyio.fail_after(20):
+            await _drive()
+
+    anyio.run(_bounded)
+
+    assert received, "the reader delivered NOTHING -- the malformed frame killed the transport"
+    assert isinstance(received[0], Exception), (
+        "the malformed frame was swallowed rather than surfaced to the session layer; "
+        f"got {received[0]!r}"
+    )
+    assert len(received) == 2, (
+        "the reader did not survive one bad frame -- the next VALID frame never arrived, "
+        f"which is the DoS this boundary exists to prevent. received={received!r}"
+    )
+    assert not isinstance(received[1], Exception), (
+        f"the following valid frame was also reported as an error: {received[1]!r}"
+    )
 
 
 def _stub_rust_core(monkeypatch: pytest.MonkeyPatch, *, with_symbols: bool) -> None:

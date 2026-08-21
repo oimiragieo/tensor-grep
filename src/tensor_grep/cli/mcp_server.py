@@ -1066,8 +1066,9 @@ def _record_generated_audit_manifest(payload: object) -> None:
         from tensor_grep.cli.audit_manifest import record_audit_manifest
 
         record_audit_manifest(manifest_path)
-    except Exception as exc:  # W1-a: was a bare `return`; stderr, not the wire payload
-        print(f"[tg-mcp] audit-history append failed for {manifest_path}: {exc}", file=sys.stderr)
+    except Exception as exc:  # W1-a: was a bare `return` = fail-open on the audit trail
+        _log_tool_exception("record_audit_manifest", exc)  # raw reason, server-side only
+        audit_manifest.update(recorded=False, record_error=type(exc).__name__)
         return
 
 
@@ -3741,8 +3742,7 @@ def tg_session_open(
     except Exception as exc:
         return _session_exception_payload(path=path, message=str(exc), detail={})
 
-    # M13: tracked_file_count counts source + test files (related_paths); file_count does not.
-    degraded: dict[str, object]
+    degraded: dict[str, object]  # M13: tracked_file_count counts source + TEST files
     try:
         session_payload = get_session(result.session_id, path)
         repo_map = session_payload.get("repo_map") or {}

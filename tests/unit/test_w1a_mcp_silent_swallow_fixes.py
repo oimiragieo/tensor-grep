@@ -9,22 +9,28 @@ DISTINGUISH from the healthy one.
 Both tests below were observed RED on the pre-fix bytes (``git stash`` is forbidden here, so the
 red arm was taken with ``git checkout origin/main -- <file>``; the receipts are in the PR body):
 
-  * ``test_audit_manifest_record_failure_is_disclosed`` -- pre-fix, stderr was EMPTY and the
-    assertion failed naming it. The handler was literally ``except Exception: return``.
+  * ``test_audit_manifest_record_failure_is_observable_by_the_mcp_CLIENT`` -- pre-fix, the
+    rewrite response carried an ``audit_manifest`` with no ``recorded`` key at all, so the
+    assertion failed on ``None is False``. The handler was literally ``except Exception: return``.
   * ``test_session_open_tracked_file_count_degradation_is_disclosed`` -- pre-fix, the payload
     had no ``tracked_file_count_error`` key and ``tracked_file_count`` silently equalled
     ``file_count``, indistinguishable from a correctly computed count.
 
-NEITHER FIX CHANGES THE SUCCESS PATH, and each discloses on the channel its AUDIENCE reads:
-#1 to stderr, because the client's rewrite genuinely succeeded and only the operator's audit
-history is affected; #2 into the payload, because the degraded value is IN what the client
-received. Both are failure-branch only, and both healthy paths are asserted unchanged below --
-"I only touched the error path" is a claim about behaviour and gets a test like any other.
+NEITHER FIX CHANGES THE SUCCESS PATH. Both disclose to the CALLER on the wire (W1.3), on the
+failure branch only, and both healthy paths are asserted unchanged below -- "I only touched the
+error path" is a claim about behaviour and gets a test like any other. #1 additionally keeps the
+RAW reason server-side and puts only the exception CLASS on the wire, matching what
+``_sanitized_tool_error`` already does for every other error on this surface.
+
+A3 ROUND 1 REJECTED an earlier #1 that wrote stderr only and asserted the wire payload
+unchanged: that arrangement asserts the fail-open rather than the fix. Recorded here because the
+rejected version looked more conservative than the correct one, which is what made it tempting.
 """
 
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -47,44 +53,83 @@ def _boom(*_args: object, **_kwargs: object) -> Any:
 # ---------------------------------------------------------------------------
 
 
-def test_audit_manifest_record_failure_is_disclosed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_audit_manifest_record_failure_is_observable_by_the_mcp_CLIENT(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Disclosure goes to STDERR, not the payload, and that channel choice is deliberate.
+    """The CALLER -- an MCP client on the wire -- must see it, not just the operator.
 
-    The client's rewrite genuinely succeeded, so the JSON-RPC result must not gain an
-    unversioned key on a network-facing contract; the party who needs to know is the OPERATOR,
-    whose audit history is now incomplete. stdio MCP reserves stdout for JSON-RPC framing, so
-    stderr is the only correct channel. (Contrast SILENT-SWALLOW #2 below, where the degraded
-    value is IN the client's payload and therefore must be disclosed there.)
+    A3 round 1 rejected an earlier version of this fix that wrote stderr only and asserted the
+    wire payload UNCHANGED: that asserts the fail-open rather than the fix, because
+    ``audit_manifest.path`` sitting in a success-shaped rewrite response ASSERTS an audit record
+    that does not exist. W1.3 requires the caller observe the failure, so the disclosure is now
+    on the wire (`recorded: false` + `record_error`), with the raw reason kept server-side.
 
-    A first draft of this fix stamped the payload instead and turned two previously-green tests
-    in test_mcp_server.py red -- those tests mock the native binary, so the audit-history append
-    was ALREADY failing under them and the bare `return` was hiding it. That is the swallow this
-    record documents, observed live rather than argued.
+    Driven through the PUBLIC tool ``tg_rewrite_apply``, not the private helper -- a test that
+    calls `_record_generated_audit_manifest` directly cannot show what the client receives, and
+    "the client cannot tell" is the entire finding.
     """
 
+    (tmp_path / "sample.py").write_text("def f(a): return a\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    native_payload = {
+        "applied": True,
+        "audit_manifest": {"path": str(tmp_path / "audit.json"), "file_count": 1},
+    }
+    monkeypatch.setattr(
+        "tensor_grep.cli.mcp_server.resolve_native_tg_binary", lambda *a, **k: Path("tg.exe")
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.mcp_rewrite_tools.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=["tg.exe"], returncode=0, stdout=json.dumps(native_payload), stderr=""
+        ),
+    )
     monkeypatch.setattr("tensor_grep.cli.audit_manifest.record_audit_manifest", _boom)
 
+    parsed = json.loads(
+        mcp_server.tg_rewrite_apply(
+            pattern="def $F($A): return $A",
+            replacement="def $F($A): return $A",
+            lang="python",
+            path=str(tmp_path),
+            audit_manifest="audit.json",
+        )
+    )
+
+    manifest = parsed.get("audit_manifest", {})
+    assert manifest.get("recorded") is False, (
+        "the rewrite response advertises an audit_manifest the audit history never recorded, "
+        f"and says nothing about it -- this is the fail-open. payload={parsed!r}"
+    )
+    assert manifest.get("record_error"), f"no reason on the wire: {manifest!r}"
+    # Sanitized on the wire (class name only), raw server-side -- same split the rest of this
+    # module uses for tool errors. Both halves asserted so neither can quietly disappear.
+    assert "W1A_RED2_INJECTED" not in json.dumps(parsed), (
+        "raw exception text crossed the MCP wire; it must be sanitized"
+    )
+    assert "W1A_RED2_INJECTED" in capsys.readouterr().err, (
+        "the raw reason is not in the server-side log either -- it was lost entirely"
+    )
+
+
+def test_audit_manifest_helper_marks_failure_on_the_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unit-level companion to the tool-level arm above, pinning the exact keys."""
+
+    monkeypatch.setattr("tensor_grep.cli.audit_manifest.record_audit_manifest", _boom)
     payload: dict[str, Any] = {"audit_manifest": {"path": "manifest.json"}}
     mcp_server._record_generated_audit_manifest(payload)
 
-    err = capsys.readouterr().err
-    assert "audit-history append failed" in err, (
-        "audit-history append failed and NOTHING said so -- the operator cannot distinguish a "
-        f"recorded rewrite from one the audit trail silently lost. stderr was {err!r}"
-    )
-    assert "W1A_RED2_INJECTED" in err, f"disclosure does not carry the reason: {err!r}"
-    assert "manifest.json" in err, f"disclosure does not name the manifest: {err!r}"
-    assert payload == {"audit_manifest": {"path": "manifest.json"}}, (
-        f"the wire payload must be untouched on this path: {payload!r}"
-    )
+    assert payload["audit_manifest"]["recorded"] is False
+    assert payload["audit_manifest"]["record_error"] == "RuntimeError"
 
 
 def test_audit_manifest_success_payload_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The success path must stay silent AND leave the payload untouched. Control for the fix
-    above: if stderr spoke on the healthy path too, the disclosure would be noise rather than a
-    signal, and the arm above would pass for the wrong reason."""
+    """Control for the two arms above: on the healthy path NEITHER key appears, so their
+    presence there is caused by the failure and not stamped unconditionally."""
 
     calls: list[str] = []
     monkeypatch.setattr(
