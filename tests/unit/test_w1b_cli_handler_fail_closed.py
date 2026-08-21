@@ -270,6 +270,119 @@ def test_restart_after_upgrade_no_probe_error_stays_clean(monkeypatch: pytest.Mo
 
 
 # ---------------------------------------------------------------------------
+# RED-2c: `_restart_session_daemon_after_upgrade` -- third path, codex round 2 (2026-08-20).
+# Round 1's fix covered the success path and the RAISING restart-failure path; it left the
+# NON-RAISING restart-failure path (start_fn returns a result dict WITHOUT raising, and that
+# result reports `running` is not True) still dropping `status_probe_error`.
+# ---------------------------------------------------------------------------
+
+
+def _af6457a_restart_session_daemon_after_upgrade(
+    snapshot: dict[str, Any] | None,
+    *,
+    status_fn: Any,
+    start_fn: Any,
+) -> str | None:
+    """Frozen body of `_restart_session_daemon_after_upgrade` at branch head af6457a (round-1
+    fix applied: success path and raising-failure path both disclose `status_probe_error`).
+    A literal copy, not a live import, for the same reason the other frozen copies above are --
+    this must keep failing even after the real function changes again. Reproduces the codex
+    round-2 finding: the non-raising restart-failure return (`started.get("running")` is not
+    True, with no exception raised) still omits `status_probe_error`.
+    """
+    if not snapshot:
+        return None
+    root = str(snapshot.get("root") or "").strip()
+    if not root:
+        return None
+    status_probe_error: str | None = None
+    try:
+        current = status_fn(root)
+    except Exception as exc:
+        current = {"running": False, "status_error": str(exc)}
+        status_probe_error = str(exc)
+    if current.get("running") is True:
+        return None
+    try:
+        started = start_fn(root)
+    except Exception as exc:
+        suffix = (
+            f" (pre-restart status probe also failed: {status_probe_error})"
+            if status_probe_error
+            else ""
+        )
+        return (
+            f"WARNING: session daemon was running before upgrade but restart failed for "
+            f"{root}: {exc}{suffix}"
+        )
+    if started.get("running") is True:
+        if status_probe_error:
+            return (
+                f"Session daemon restarted after upgrade for {root} (note: the pre-restart "
+                f"status check failed and could not confirm whether a restart was actually "
+                f"needed: {status_probe_error})."
+            )
+        return f"Session daemon restarted after upgrade for {root}."
+    return f"WARNING: session daemon was running before upgrade but did not restart for {root}."
+
+
+def test_restart_after_upgrade_af6457a_silently_dropped_probe_error_on_nonraising_failure() -> None:
+    """RED, pre-this-fix arm: the probe raises, and the restart call returns a failure result
+    WITHOUT raising (`started == {"running": False}`) -- the af6457a body's final return omits
+    `status_probe_error` entirely, so the WARNING reads as an ordinary restart failure with no
+    trace that the pre-restart status could not be determined either."""
+
+    def _boom_status(_root: str) -> dict[str, Any]:
+        raise RuntimeError("probe boom: daemon status file unreadable")
+
+    def _failed_start(_root: str) -> dict[str, Any]:
+        return {"running": False}
+
+    message = _af6457a_restart_session_daemon_after_upgrade(
+        {"root": "C:/some/root"}, status_fn=_boom_status, start_fn=_failed_start
+    )
+    assert message == (
+        "WARNING: session daemon was running before upgrade but did not restart for C:/some/root."
+    ), (
+        f"pre-this-fix fixture must reproduce the silent drop on the non-raising failure path. "
+        f"Got {message!r}"
+    )
+    assert "boom" not in (message or "") and "unreadable" not in (message or ""), (
+        "pre-this-fix fixture must carry no disclosure of the probe error on this path -- that "
+        "absence is the defect"
+    )
+
+
+def test_restart_after_upgrade_discloses_probe_error_on_nonraising_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GREEN, post-fix arm: the real, current function discloses the probe failure even when
+    the restart call returns a non-raising failure result -- the exact case the pre-this-fix
+    arm above proves was silently dropped."""
+
+    def _boom_status(_root: str) -> dict[str, Any]:
+        raise RuntimeError("probe boom: daemon status file unreadable")
+
+    def _failed_start_session_daemon(_root: str) -> dict[str, Any]:
+        return {"running": False}
+
+    monkeypatch.setattr(main, "_doctor_session_daemon_status", _boom_status)
+    monkeypatch.setattr(
+        "tensor_grep.cli.session_daemon.start_session_daemon", _failed_start_session_daemon
+    )
+
+    message = doctor_report._restart_session_daemon_after_upgrade({"root": "C:/some/root"})
+    assert message is not None
+    assert "did not restart" in message, (
+        f"a non-raising restart failure must still be reported as a WARNING: {message!r}"
+    )
+    assert "boom" in message or "unreadable" in message, (
+        f"the pre-restart probe failure must be disclosed on the non-raising failure path too. "
+        f"Got {message!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # RED-3-equivalent: behavioural proof for the two security-adjacent claims W1.5 names.
 # ---------------------------------------------------------------------------
 

@@ -605,9 +605,9 @@
     "enclosing_symbol": "_restart_session_daemon_after_upgrade",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
-    "evidence": "except Exception as exc: current = {'running': False, 'status_error': str(exc)} -- the exception text is embedded in the local `current` dict. A3 round-1 HIGH (2026-08-20, codex REVISE on PR #1068): this row was originally miscategorized LOGGED-DEGRADE on the PRE-fix bytes, where `current` was a local variable never propagated to the function's own RETURN value -- if the subsequent restart attempt succeeded, `status_error` was discarded and the caller received a clean success message with no trace the pre-restart probe had failed (genuinely SILENT-SWALLOW on that path). HARDENED in this PR: `status_probe_error` is now captured outside the `current` dict and threaded into BOTH downstream return messages (restart-failed and restart-succeeded), so the probe failure is disclosed on every reachable exit, not just the restart-failed branch.",
-    "reason": "LOGGED-DEGRADE, correctly, as of this PR's fix: the exception text is now disclosed on the returned message regardless of whether the subsequent restart succeeds or fails. RED/GREEN receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_restart_after_upgrade_discloses_probe_error_even_on_successful_restart.",
-    "hardened_in": "W1-b (this PR, #1068 A3 round-1 HIGH)"
+    "evidence": "except Exception as exc: current = {'running': False, 'status_error': str(exc)} -- the exception text is embedded in the local `current` dict. A3 round-1 HIGH (2026-08-20, codex REVISE on PR #1068): this row was originally miscategorized LOGGED-DEGRADE on the PRE-round-1-fix bytes, where `current` was a local variable never propagated to the function's own RETURN value -- if the subsequent restart attempt succeeded, `status_error` was discarded and the caller received a clean success message with no trace the pre-restart probe had failed (genuinely SILENT-SWALLOW on that path). Round-1 hardened the success path and the RAISING restart-failure path only, threading `status_probe_error` into those two returns. A3 round-2 codex REVISE (2026-08-20) found a THIRD exit still dropping it: the NON-RAISING restart-failure path, where `start_fn`/`start_session_daemon` returns a result dict (`{'running': False}`) without raising -- the function's final `return` statement built a WARNING with no `status_probe_error` suffix, so on that path the row was, honestly, SILENT-SWALLOW between round 1 and round 2, not LOGGED-DEGRADE as this file claimed. Round-2 fix threads `status_probe_error` into that third return too, so all three reachable exits now disclose it.",
+    "reason": "LOGGED-DEGRADE, correctly, as of the round-2 fix: the exception text is now disclosed on the returned message on all three reachable exits (restart succeeded, restart raised, restart returned a non-raising failure result). Between round 1 and round 2 the truthful category for this row was SILENT-SWALLOW (the non-raising-failure exit dropped it), which is why codex's round-2 count read 14 INTENTIONAL-BOUNDARY / 8 LOGGED-DEGRADE / 2 SILENT-SWALLOW rather than this file's stamped 14/9/1 -- that gap is now closed by the round-2 fix, restoring 14/9/1 as the truthful split. RED/GREEN receipts: tests/unit/test_w1b_cli_handler_fail_closed.py::test_restart_after_upgrade_discloses_probe_error_even_on_successful_restart (success path) and ::test_restart_after_upgrade_discloses_probe_error_on_nonraising_failure (the round-2 non-raising-failure path).",
+    "hardened_in": "W1-b (this PR, #1068 A3 round-1 HIGH + round-2 REVISE)"
   },
   {
     "module": "cli/doctor_report.py",
@@ -621,7 +621,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 362,
+    "lineno": 370,
     "enclosing_symbol": "_doctor_ast_grep_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -631,7 +631,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 390,
+    "lineno": 398,
     "enclosing_symbol": "_doctor_rust_core_extension_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -641,7 +641,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 407,
+    "lineno": 415,
     "enclosing_symbol": "_doctor_rust_binary_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -651,7 +651,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 706,
+    "lineno": 714,
     "enclosing_symbol": "_doctor_tg_candidate_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -661,7 +661,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1024,
+    "lineno": 1032,
     "enclosing_symbol": "_doctor_gpu_tier_installed",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -671,7 +671,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1040,
+    "lineno": 1048,
     "enclosing_symbol": "_doctor_gpu_tier_usable",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -681,7 +681,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1061,
+    "lineno": 1069,
     "enclosing_symbol": "_doctor_gpu_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1296,
+    "lineno": 1304,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -701,7 +701,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1333,
+    "lineno": 1341,
     "enclosing_symbol": "_doctor_resident_worker_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

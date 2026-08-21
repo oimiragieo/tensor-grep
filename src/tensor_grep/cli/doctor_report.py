@@ -121,7 +121,15 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
                 f"needed: {status_probe_error})."
             )
         return f"Session daemon restarted after upgrade for {root}."
-    return f"WARNING: session daemon was running before upgrade but did not restart for {root}."
+    suffix = (
+        f" (pre-restart status probe also failed: {status_probe_error})"
+        if status_probe_error
+        else ""
+    )
+    return (
+        f"WARNING: session daemon was running before upgrade but did not restart for "
+        f"{root}{suffix}."
+    )
 
 
 def _doctor_lsp_languages() -> list[str]:
