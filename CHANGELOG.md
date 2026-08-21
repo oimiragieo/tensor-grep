@@ -1,6 +1,334 @@
 # CHANGELOG
 
 
+## v1.111.2 (2026-08-21)
+
+### Bug Fixes
+
+- W1-a MCP-surface handler audit -- 57 handlers dispositioned, 2 SILENT-SWALLOW hardened
+  ([#1065](https://github.com/oimiragieo/tensor-grep/pull/1065),
+  [`8b661e5`](https://github.com/oimiragieo/tensor-grep/commit/8b661e571d47631132ae2266521d511e18645d0c))
+
+* fix: W1-a MCP-surface handler audit -- 57 handlers dispositioned, 2 SILENT-SWALLOW hardened
+
+Audits every broad `except Exception:` handler in the four network-reachable MCP tool modules
+  (cli/mcp_server.py 35, cli/mcp_symbol_tools.py 10, cli/mcp_audit_tools.py 8,
+  cli/mcp_rewrite_tools.py 4 = 57) and retires their four `_EXCLUDED_MODULES` entries.
+
+Dispositions (docs/audits/2026-08-20-handler-dispositions.json, 2 -> 59 records): 55
+  INTENTIONAL-BOUNDARY, 2 SILENT-SWALLOW (both hardened here).
+
+SILENT-SWALLOW #1 -- _record_generated_audit_manifest: `except Exception: return` on the WRITE side
+  of the audit trail tg_audit_history reads back. A failed append was byte-indistinguishable from a
+  successful one. Now stamps recorded=False / record_error on the payload the client already
+  receives.
+
+SILENT-SWALLOW #2 -- tg_session_open handler 1: the fallback substituted file_count for
+  tracked_file_count, the one quantity M13's field exists to differ from, with no disclosure. Now
+  adds tracked_file_count_error on the failure branch only.
+
+Both fixes are DISCLOSURE, not raises: continuing is correct at both sites. Success payloads are
+  unchanged, asserted by control tests.
+
+RED receipts: RED-1 exclusions lifted, ceiling unmoved -> 196 > 139, naming the four modules. RED-2
+  both fixes observed RED on origin/main bytes; both control arms pass in both arms. RED-3 50/50
+  parametrized fail-closed cases observed RED with their own guard neutralized. Ledger perturbation:
+  all four arms fail the intended assertion; revert byte-identical.
+
+Ceiling 139 -> 196 (base 139 on origin/main + 35 + 10 + 8 + 4). Disclosure-hardening does not narrow
+  the exception type, so neither fix reduces the population.
+
+Identity scheme: no same-named sibling defs hold broad handlers in this population, so the flat
+  (module, enclosing_symbol, handler_index_within_symbol) key stays unambiguous. That precondition
+  is now a checked invariant, not an assumption.
+
+Line-neutral in cli/mcp_server.py (9 added / 9 removed) so no W4-owned allowlist pin moves.
+
+* fix: W1-a A3 round-1 remediation -- wire-observable audit failure, discriminating RED-3 oracle,
+  stdin_reader arm
+
+A3 finding 1 (HIGH) -- audit-manifest persistence still failed open. The interim fix wrote stderr
+  only and its test asserted the wire payload UNCHANGED, which pins the fail-open rather than the
+  fix: `audit_manifest.path` in a success-shaped rewrite response asserts an audit record that does
+  not exist. Now `recorded=false` + a sanitized `record_error` cross the wire, with the raw reason
+  kept server-side via `_log_tool_exception` -- the same sanitized-wire / raw-log split
+  `_sanitized_tool_error` uses. The regression test now drives the PUBLIC `tg_rewrite_apply` instead
+  of the private helper, because "the client cannot tell" is the finding.
+
+Consequence, and it is a receipt for the finding: two previously-green tests in test_mcp_server.py
+  mock the native binary, so no manifest is ever written and `record_audit_manifest` raises
+  FileNotFoundError. Both were green over a silently-broken audit trail. They now assert the
+  disclosure. Their edit is line-neutral (4/4) because that file is allowlisted at 9729 and the
+  allowlist is W4-owned.
+
+A3 finding 2 (HIGH) -- the RED-3 oracle could not discriminate. Measured: 15 of the 50 tools return
+  a NATURAL error on the fixture, so "did it error?" was satisfied identically in both arms. Every
+  case now runs both arms and keys on the injected marker: ARM A (no injection) must contain the
+  marker in neither the wire answer nor stderr; ARM B must disclose an error AND carry the marker on
+  one of those channels. 18 tools sanitize the wire message to an exception class, so the wire alone
+  was unsatisfiable for them -- `_log_tool_exception` puts the full traceback on stderr, which is
+  why both channels are searched.
+
+A3 finding 3 (MEDIUM) -- stdin_reader is no longer exempt. It parses untrusted frames, so it gets a
+  behavioural test: a malformed frame followed by a valid one, asserting the bad frame arrives as an
+  Exception AND the next valid frame is still delivered (raising would take the whole stdio
+  transport down for every client). Bounded by `anyio.fail_after(20)`; the first draft hung on a
+  shared box.
+
+Receipts: RED-3 50/50 still RED under guard neutralization with the strict oracle; stdin_reader RED
+  with its handler narrowed (pydantic json_invalid escapes the task group, neither frame arrives);
+  both SILENT-SWALLOW arms RED on origin/main bytes, controls green in both arms. test_mcp_server.py
+  failure set identical to origin/main (same 4 native-binary env divergences). Both ratchets green,
+  ruff + mypy clean, cli/mcp_server.py still line-neutral (9/9).
+
+* fix: W1-a make the tg_ast_search RED-3 case reach its guarded body on an ast-grep-less runner
+
+CI (all four test-python legs, one test) caught what this desktop could not: on a runner without
+  ast-grep, `Pipeline(ast=True)` raises ConfigurationError and `tg_ast_search` returns a clean
+  `code: "unavailable"` envelope from a branch ABOVE the broad handler. The guarded body was never
+  entered, so the case measured the short-circuit rather than the boundary.
+
+The strict marker-based oracle from the A3 remediation is what surfaced it -- the previous "assert
+  the payload has an error" oracle called that same response a PASS. The oracle caught its own
+  table's weakest row, which is the behaviour it was rewritten for.
+
+Fix: a per-case setup hook installs an `_AstPipelineStub` before the injection, so the guarded
+
+body runs in both environments. Two traps on the way, both worth the comments they now carry: *
+  `tg_ast_search` builds the pipeline as `_self.Pipeline(...)` -- a `cli.mcp_server` ATTRIBUTE -- so
+  patching `core.pipeline.Pipeline` was a silent no-op (the four-shape monkeypatch trap). * a second
+  guard checks `type(backend).__name__ in {"AstBackend", "AstGrepWrapperBackend"}`, so the stub's
+  CLASS NAME is load-bearing; borrowing test_cli_modes' fake was not enough.
+
+Reproduced LOCALLY before fixing, via a throwaway autouse plugin forcing both AST backends to report
+  unavailable -- the CI condition on this box. Receipts, all four arms: ast-grep ABSENT (CI-sim),
+  with fix -> 55 passed ast-grep PRESENT (local), with fix -> 55 passed ast-grep ABSENT, guard
+  neutralized -> tg_ast_search RED (still discriminating) ast-grep ABSENT, before the fix ->
+  tg_ast_search RED (the CI failure, reproduced) The plugin is not committed; it was a diagnostic,
+  not a fixture.
+
+### Build System
+
+- Strip debug symbols from release rust_core (20MB->smaller wheel, PYPI-SIZE-CAP)
+  ([#1067](https://github.com/oimiragieo/tensor-grep/pull/1067),
+  [`5423b4b`](https://github.com/oimiragieo/tensor-grep/commit/5423b4b3d74880309763b9e67cad5ec56553da48))
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Closeout campaign progress handoff (jr-analyst grade)
+  ([#1064](https://github.com/oimiragieo/tensor-grep/pull/1064),
+  [`0da6ee1`](https://github.com/oimiragieo/tensor-grep/commit/0da6ee1891f927548ec494251ea8ec11588d2f7e))
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Pypi-size-cap P0 finding - release pipeline blocked at 10.73GB/713 releases
+  ([#1066](https://github.com/oimiragieo/tensor-grep/pull/1066),
+  [`23a2572`](https://github.com/oimiragieo/tensor-grep/commit/23a257256f83456ecc3a4ad55e1b86ea4b7924a0))
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Pypi-size-cap update - v1.111.1 partially published (no Windows wheel/sdist)
+  ([#1073](https://github.com/oimiragieo/tensor-grep/pull/1073),
+  [`af2fecb`](https://github.com/oimiragieo/tensor-grep/commit/af2fecbef2244a7417058988372d23994ec843d0))
+
+* docs: PYPI-SIZE-CAP update - v1.111.1 partially published (no Windows wheel/sdist)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* docs: per-artifact publish verification law in the release skill (partial-publish receipt)
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Retain 2026-08-20 execution-wave monitor/notification lessons in campaign skill
+  ([#1062](https://github.com/oimiragieo/tensor-grep/pull/1062),
+  [`90a779c`](https://github.com/oimiragieo/tensor-grep/commit/90a779c941dcec804dccdbea59fea5764b896b23))
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Stacked-pr-ci-blindspot finding + PyPI size-cap decision packet and corrections
+  ([#1074](https://github.com/oimiragieo/tensor-grep/pull/1074),
+  [`aa66251`](https://github.com/oimiragieo/tensor-grep/commit/aa662519df570c20b54a868e186c4f2122578b4b))
+
+Two P0/P1 findings from the 2026-08-21 closeout pass, plus the measured artifacts behind them.
+
+STACKED-PR-CI-BLINDSPOT (P1, new): a PR whose base is a feature branch never triggers ci.yml,
+  because the workflow filters pull_request on branches: [main] and that filter matches the BASE
+  ref. PRs #1068 and #1070 each had exactly one check run for their entire life (Dependabot
+  Automation / skipped). Control: sibling PR #1065, same test/ branch prefix but base main, showed
+  SUCCESS=39 -- so it is the base ref, not the branch name, and not a runner outage. gh renders the
+  absent gate as "skipping" and reports MERGEABLE, so two PRs carrying SILENT-SWALLOW error-handling
+  hardening sat merge-ready with no CI evidence at all. Both retargeted to main and re-fired on
+  2026-08-21.
+
+PYPI-SIZE-CAP corrections: adds a decision-ready retention packet (713 releases / 2,847 files /
+  10.734 GB, independently re-measured and agreeing with the existing entry) with three costed
+  policies. Corrects two claims and refutes one: THREE releases are incomplete rather than one;
+  v1.111.1 is missing the sdist as well as the Windows wheel; and stripping debug symbols in #1067
+  did NOT shrink artifacts -- the last-50 average (18.67 MB) equals the last-20 average and the
+  largest release in project history is v1.111.0 at 19.1 MB, published the day before the incident.
+  That change therefore buys no headroom and must not be counted as partial remediation.
+
+Also records the merge-queue sequencing consequence: while the cap is unresolved, merging any
+  fix:/feat: PR manufactures another platform-skewed partial release, so release class is currently
+  part of merge eligibility.
+
+Nothing was deleted on PyPI; the remediation stays CEO-gated.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Extract python_sidecar.rs H3 test module to sibling file (W4-a)
+  ([#1063](https://github.com/oimiragieo/tensor-grep/pull/1063),
+  [`d2ad86f`](https://github.com/oimiragieo/tensor-grep/commit/d2ad86fa83bd74a3e8fe2d4606f01506052fdce6))
+
+* refactor: extract python_sidecar.rs H3 test module to sibling file (W4-a)
+
+Mirrors the #[path] extraction shape already proven on index.rs/index_tests.rs and
+  native_search.rs/native_search_tests.rs (#1048/#1049). Moves the `tests_h3` cfg(test) module (2
+  test fns, the H3 BatBadBut-shim audit tests) verbatim into
+  rust_core/src/python_sidecar_tests_h3.rs and replaces it with `#[path =
+  "python_sidecar_tests_h3.rs"] mod tests_h3;`.
+
+python_sidecar.rs: 1519 -> 1492 lines (under the 1500 core-file budget). The larger `mod tests`
+  block (24 fns, :1082-1489) was left in place since extracting tests_h3 alone already clears the
+  budget.
+
+Note: scripts/file_size_allowlist.json still pins this file at 1519 (its retire-exception path); the
+  ratchet now reports the file compliant but the allowlist entry itself is out of date. Per plan
+  ownership (W4-f owns every allowlist pin/retirement), that edit is intentionally left for the W4-f
+  integrator to land after this merges.
+
+* refactor: W4-f retire python_sidecar.rs allowlist entry (file now under budget)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- Split test_benchmark_scripts.py into 7 sibling modules (W4-d)
+  ([#1071](https://github.com/oimiragieo/tensor-grep/pull/1071),
+  [`ed4852e`](https://github.com/oimiragieo/tensor-grep/commit/ed4852e79aae2e15556b1666e3102f667801e2cc))
+
+* refactor: split test_benchmark_scripts.py into 7 sibling modules (W4-d)
+
+tests/unit/test_benchmark_scripts.py (10,689 lines / 271 collected nodes) exceeded the 2,000-line
+  test-file budget. Split verbatim by top-level test-function boundaries into
+  test_benchmark_scripts_part1..7.py (611-1,967 lines each), each carrying a duplicated copy of the
+  shared header (imports + BENCHMARK_JSON_SCRIPTS + the 4 helper functions used across the family)
+  -- importlib import-mode (pyproject.toml --import-mode=importlib) does not add a test file's own
+  directory to sys.path, so a bare sibling-module import was unreachable; duplication was the safe
+  fix.
+
+Identity gate (plan W4.4, adapted to the test_benchmark_scripts* family):
+
+pre 271 post 271 unique 271 dupes 0
+
+exit 0 -- the post-split node-name SET equals the pre-split witness manifest
+  (tests/manifests/pre_split_bench.txt, sha256
+  e1b920aac6767db6b75d510638c220be5405e5e73c9b1b54c56d8d0ace4d206c) with zero duplicates. All 271
+  tests pass. ruff check + ruff format clean.
+
+Manifest files are UNTOUCHED by this PR (verified via git diff --stat).
+
+scripts/file_size_allowlist.json is UNTOUCHED per the W4-d brief. `python
+  scripts/file_size_budget.py --report` now reports one expected finding for the W4-f integrator to
+  retire:
+
+STALE EXCEPTION: tests/unit/test_benchmark_scripts.py is allowlisted at 10689 lines but is no longer
+  a tracked in-scope file. Remove the entry.
+
+No other regressions (violations: 29, unchanged from pre-split minus this stale entry).
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+* refactor: W4-f retire test_benchmark_scripts.py allowlist entry (file split, no longer tracked)
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* refactor: repoint docs-and-writing skill cites to test_benchmark_scripts_part6 (W4-d split)
+
+* refactor: ruff --preview format the bench split parts + repoint gpu-correctness importer (W4-d)
+
+---------
+
+- Split test_cli_modes.py into 9 sibling modules (W4-d)
+  ([#1072](https://github.com/oimiragieo/tensor-grep/pull/1072),
+  [`61a125c`](https://github.com/oimiragieo/tensor-grep/commit/61a125c0e08e90f9690f804288d4f6481598249f))
+
+* refactor: split test_cli_modes.py into 9 sibling modules (W4-d)
+
+tests/unit/test_cli_modes.py (17204 lines / 545 collected test items after parametrize expansion,
+  547 nodes counting the shared-module import target) exceeded the 2000-line test budget. Split into
+  9 cohesive sibling modules (search_guards, doctor, blast_radius, agent_capsule, navigation,
+  upgrade, cli_json, ast_backend, ast_misc; each <=1920 lines) plus a test_cli_modes_shared.py
+  carrying every fixture, fake backend/pipeline class, and module-level constant the siblings import
+  via `from tests.unit.test_cli_modes_shared import *`. Tests moved verbatim (byte-identical bodies,
+  AST-derived chunk boundaries).
+
+Mechanical fixup required by the split (not a test-behavior change): three fakes in the shared
+  module (`_FakeScanner.walk`, `_FakePipeline.__init__`) read/wrote module-level globals
+  (`_FAKE_WALK`, `_FAKE_BACKEND`, `_LAST_PIPELINE_CONFIG`) that test bodies rebind via `global NAME;
+  NAME = ...`. Splitting turned each sibling's `global` statement into a rebind of that sibling's
+  OWN module dict, orphaning the shared fakes' copy -- 39 tests failed on first full-suite run.
+  Added `_test_globals()`, which walks the call stack to the nearest `tests.unit.test_cli_modes*`
+  frame so the fakes read/write through the same namespace the test's `global` statement targets.
+  All 547 tests pass after the fix.
+
+Verified: - Identity gate (plan W4.4, run verbatim): pre 547 post 547 unique 547 dupes 0. The
+  verbatim command as written in the plan exits 1 because it compares manifest lines still carrying
+  their trailing `\n` (`for l in open(...)`) against `str.splitlines()` output (no trailing `\n`) --
+  a pre-existing artifact in the plan's own snippet, not a real defect. The same comparison with
+  both sides `.strip()`-ed shows `sets_equal: True`, 0 dupes, exit 0. - Full suite of all 9 siblings
+  + shared module: 547 passed (bounded local run, `-o addopts=` to drop the repo's `-x`). -
+  `scripts/file_size_budget.py --report`: no new violations; the only failure is the expected STALE
+  EXCEPTION for the now-deleted `tests/unit/test_cli_modes.py` allowlist entry -- retirement is
+  W4-f's job (this campaign's sole allowlist writer), not this slice's. This PR does not touch
+  scripts/file_size_allowlist.json. - ruff check / ruff format --check: clean on all 10 new files. -
+  tests/manifests/pre_split_cli_modes.txt (the W4-d witness, committed on origin/main at f507e0a) is
+  untouched by this diff. - Citation sweep (`test_cli_modes.py:NNN` across .claude/skills/,
+  AGENTS.md, CLAUDE.md, docs/): only hits are in dated historical audit docs
+  (docs/audits/2026-08-01-*, docs/plans/2026-08-01-*), not live guidance -- no update needed.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* refactor: W4-f retire test_cli_modes.py allowlist entry (file split, no longer tracked)
+
+* refactor: repoint 4 external importers of test_cli_modes to the shared split module (W4-d)
+
+* refactor: ruff --preview format the cli_modes split parts (W4-d)
+
+* refactor: repoint agent-readiness harness + gpu-diagnose docstrings to the cli_modes split parts
+  (W4-d)
+
+* refactor: update readiness-script pin test for the repointed harness argv (W4-d)
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+### Testing
+
+- W4-d pre-split witness manifests (independent baseline, commit before any split)
+  ([#1069](https://github.com/oimiragieo/tensor-grep/pull/1069),
+  [`f507e0a`](https://github.com/oimiragieo/tensor-grep/commit/f507e0ae6187461f0e4c01f9501877ae47d54621))
+
+Per plan W4.4: these three collect-only manifests are the independent witness for the W4-d
+  test-giant splits. The split PRs branch FROM this commit and may not modify these files; the
+  closeout manifest re-derives each sha256 at the final SHA against the values below.
+
+sha256: e1b920aac6767db6b75d510638c220be5405e5e73c9b1b54c56d8d0ace4d206c pre_split_bench.txt
+  8a58d3d2ec6d64ee57093cf46c2b037f33f098eaffb38f1a7873c6e6b395ea99 pre_split_cli_modes.txt
+  924fde37e4763fb6a30a4cfe65adaa75930fff2ec4e7a6278ab7328a7cd474fc pre_split_mcp.txt
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+
 ## v1.111.1 (2026-08-20)
 
 ### Bug Fixes
