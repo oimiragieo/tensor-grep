@@ -4,7 +4,7 @@
 
 Background: PR #868 added a Python-side rule (``gpu_request_unhonoured``,
 ``src/tensor_grep/cli/formatters/json_fmt.py``) that forces ``tg search --gpu-device-ids ...``
-to exit 2 when the request could not be honoured. ``tests/unit/test_cli_modes.py``'s
+to exit 2 when the request could not be honoured. ``tests/unit/test_cli_modes_shared.py``'s
 ``test_cli_search_warns_when_gpu_device_id_out_of_local_inventory`` mocks ``Pipeline``/
 ``DirectoryScanner`` (via ``_patch_cli_dependencies``) to force the *Python* code path and
 asserts exit 2 -- but that assertion is only trustworthy if ``search_command`` actually reaches
@@ -91,7 +91,7 @@ class _FakeBackend:
 
 
 class _FakePipeline:
-    """Byte-for-byte the same shape as ``tests/unit/test_cli_modes.py::_FakePipeline`` -- a
+    """Byte-for-byte the same shape as ``tests/unit/test_cli_modes_shared.py::_FakePipeline`` -- a
     Pipeline stand-in that never touches CuDF/Torch/real hardware detection, so a GPU-incapable
     CI runner cannot short-circuit the thing this probe is trying to observe."""
 
