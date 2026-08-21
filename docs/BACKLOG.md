@@ -47,6 +47,58 @@
 
 
 
+## Recent campaign notes (2026-08-21) - FIND-JSON-CONTRACT-VIOLATION (P1, product defect, found by dogfood)
+
+- **`tg find --json` violates the search-output contract it reuses, on two REQUIRED fields.**
+  `tg find --json` returns the same envelope as `tg search --json` (same `version`,
+  `routing_backend`, `routing_reason`, `total_matches`, `matches`, ... plus `schema_version` and
+  `rank_fallback_reason`), but it emits **`routing_backend: null` and `routing_reason: null`**.
+  Both are listed in `required` in `tests/schemas/tg_output.schema.json` and typed
+  `{"type": "string", "minLength": 1}`. A contract-aware consumer either throws or mis-branches.
+- **Reproduction (measured 2026-08-21 against installed `tg 1.110.16`):**
+
+      mkdir probe && cd probe && printf 'def authenticate_user(name):\n    return name\n' > auth.py
+      tg find "how does user authentication work" . --json > find.json
+      tg search "authenticate" . --json > search.json
+
+  Measured values, with `tg search` as the CONTROL proving the fields can be populated:
+
+  | command | `routing_backend` | `routing_reason` |
+  |---|---|---|
+  | `tg search --json` | `"NativeCpuBackend"` | `"json_output"` |
+  | `tg find --json`   | `null`              | `null`           |
+
+  Validating the real `find` payload against the schema fails with
+  `ValidationError: None is not of type 'string'` on `properties.routing_reason`.
+- **Note the argument order while reproducing:** it is `tg find QUERY [PATH]`, NOT
+  `tg find [PATH] QUERY`. Passing the path first makes the query be read as a path and exits 1
+  with `Path not found: .../how does user authentication work`.
+- **Why nobody caught it:** `tests/schemas/tg_output.schema.json` describes the primary search
+  contract, but until 2026-08-21 **no test validated anything against it**. Its only references in
+  the whole tree were `tests/unit/test_file_size_budget.py` (which merely counts its lines as a
+  "contract" category) and `docs/code-map/tests_schemas.md` (which lists the path). A schema no
+  test loads cannot fail, so it cannot be evidence. `tests/unit/test_search_json_schema_contract.py`
+  now validates against it with bidirectional controls, and that is what surfaced this defect.
+- **The schema also omitted the completeness triple** (`result_incomplete`, `incomplete_reason`,
+  `incomplete_reason_class`) that `docs/CONTRACTS.md` makes load-bearing for agent retry
+  decisions. They fell through `additionalProperties: true`, so a mistyped emitter validated fine
+  on the ONE field an agent must branch on to avoid reading a truncated scan as complete. Now
+  declared with types. Deliberately NOT enum-constrained: CONTRACTS.md records the vocabulary as
+  "the set wired so far", so pinning an enum would make the schema REJECT a valid payload the
+  first time a new cause is wired -- a worse failure than the gap.
+- **Proposed fix (NOT yet applied - needs its own `fix:` PR, and `fix:` currently cannot publish
+  while PYPI-SIZE-CAP is open):** populate `routing_backend`/`routing_reason` on the find route
+  with real values describing the hybrid path actually taken (and the BM25-only fallback when the
+  dense leg is absent), rather than `null`. Whoever takes this must decide deliberately between
+  (a) populating the fields and (b) declaring that `find` is a DIFFERENT contract that merely
+  resembles the search envelope - and if (b), give it its own schema and stop reusing the
+  envelope's field names. Do not "fix" it by relaxing the schema's `required`/`minLength`: that
+  would weaken the contract for `tg search`, which is correct today, to accommodate a caller that
+  is not.
+- **A regression arm was deliberately NOT added as a skip/xfail.** Adding one would have turned a
+  real failure into a green-looking suite, which is the exact hazard recorded above under the
+  split-baseline law. The defect is tracked here instead until it is fixed for real.
+
 ## Recent campaign notes (2026-08-21) - STACKED-PR-CI-BLINDSPOT (P1, fix available, no CEO gate)
 
 - **Finding (2026-08-21): a pull request whose BASE is a feature branch gets ZERO CI, and the
