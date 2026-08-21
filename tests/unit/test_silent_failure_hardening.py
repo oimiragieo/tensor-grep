@@ -80,11 +80,13 @@ _EXCLUDED_MODULES = frozenset({
     # 2 SILENT-SWALLOW, both hardened, RED arms in
     # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
     # ceiling bump to absorb a `git mv`.
-    # extracted from cli/main.py, unaudited for the same reason it is
-    "cli/ast_scan.py",
-    "cli/doctor_report.py",
-    "cli/native_frontdoor.py",
-    "cli/windows_launcher.py",
+    # W1-b (2026-08-20) RETIRED the four remaining split-floor exclusions --
+    # `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`,
+    # `cli/ast_scan.py`. All 23 of their broad handlers were read in their enclosing functions
+    # and dispositioned in `docs/audits/2026-08-20-handler-dispositions.json` (22
+    # INTENTIONAL-BOUNDARY/LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
+    # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
+    # ceiling bump to absorb a `git mv`.
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
@@ -106,7 +108,18 @@ _EXCLUDED_MODULES = frozenset({
 # The two hardened SILENT-SWALLOW sites are still `except Exception`, so hardening them by
 # DISCLOSURE (rather than by narrowing the type) does not reduce the count -- the docstring
 # above lists three hardening moves and only the first removes a handler from this population.
-TOTAL_BROAD_HANDLERS_CEILING = 196
+#
+# W1-b ceiling arithmetic (this PR; base is W1-a's own committed ceiling, this branch's parent
+# commit -- re-derived via `python scripts/handler_census.py --include-excluded --by-slice`
+# immediately before this commit, not arithmetic-forwarded):
+#     base (this branch's parent, W1-a)                          196
+#   + cli/doctor_report.py + native_frontdoor.py + windows_launcher.py + ast_scan.py  23
+#   ------------------------------------------------------------
+#                                                               219
+# The one hardened SILENT-SWALLOW site (_doctor_ast_cache_status) is still `except Exception`,
+# hardened by disclosure + fail-safe default rather than type-narrowing, so it does not reduce
+# this count either.
+TOTAL_BROAD_HANDLERS_CEILING = 219
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

@@ -1264,8 +1264,17 @@ def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]
                             break
                     if stale:
                         break
-        except Exception:
-            pass
+        except Exception as exc:
+            # W1-b (2026-08-20) SILENT-SWALLOW hardening: this used to be `except Exception:
+            # pass`, which left `stale` at whatever it was set to before the exception (False
+            # on the common path -- a corrupt/unreadable cache file or manifest read at the
+            # `Path(config_path).resolve()`/`json.load` calls above reported a clean, silent
+            # "not stale", indistinguishable from a genuinely fresh cache. Fail SAFE instead:
+            # an unreadable staleness check means "assume stale" (worst case is an unnecessary
+            # rebuild, never a stale cache reported as fresh), and disclose why on the payload
+            # `tg doctor --json` readers already inspect.
+            stale = True
+            status["stale_check_error"] = str(exc)
         status["stale"] = stale
     if not status["exists"]:
         # Round-5 UX: a cold cache silently costs ~20-30s on the first query over a large tree.
