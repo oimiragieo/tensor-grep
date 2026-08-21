@@ -49,6 +49,16 @@
 
 ## Recent campaign notes (2026-08-20) - PYPI-SIZE-CAP: release pipeline hard-blocked (P0, CEO-GATED remediation)
 
+- **UPDATE 2026-08-21 - v1.111.1 is PARTIALLY published and that is worse than absent.**
+  A publish retry got 2 of 4 artifacts up (macosx_arm64 + manylinux wheels) before the size
+  cap 400'd the rest: **no win_amd64 wheel and no sdist exist for 1.111.1**. Windows pip
+  resolves to 1.110.x while Mac/Linux resolve to 1.111.1 - a platform-skewed "latest".
+  Verified via the PyPI JSON API (releases['1.111.1'] lists exactly 2 files). Law: verify a
+  release PER-ARTIFACT (expected filename set), never by the version appearing at all.
+  After the deletion run frees space, re-run the publish for the MISSING artifacts and
+  re-verify the full 4-file set before any dogfood claim. Old releases still present
+  (713 releases / 10.73 GB re-measured 2026-08-21); the deletion run remains the gate.
+
 - **Finding (2026-08-20, run 32426087438):** `publish-pypi` failed with HTTP 400
   `Project size too large. Limit for project 'tensor-grep'` on the v1.111.1 publish (W2-b,
   PR #1061). Measured from the PyPI JSON API at time of failure: **713 releases, 10.73 GB
