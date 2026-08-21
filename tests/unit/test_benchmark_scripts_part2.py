@@ -206,96 +206,94 @@ def test_run_native_cpu_benchmarks_should_report_threshold_statuses(monkeypatch,
         lambda *_args, **_kwargs: {"path": tmp_path / "many_files", "file_count": 1200},
     )
 
-    benchmark_rows = iter(
-        [
-            {
-                "name": "cold_standard_corpus",
-                "target": str(tmp_path / "bench_data"),
-                "pattern": "ERROR",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.04,
-                "rg_samples_s": [1.0, 0.98, 1.04],
-                "tg_samples_s": [1.04, 1.01, 1.06],
-                "ratio_vs_rg": 1.04,
-                "threshold_ratio": 1.05,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.12,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [1.12, 1.14, 1.11],
-                "ratio_vs_rg": 1.12,
-                "threshold_ratio": 1.15,
-                "require_tg_faster": False,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb_count",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 0.92,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [0.92, 0.94, 0.91],
-                "ratio_vs_rg": 0.92,
-                "threshold_ratio": 1.0,
-                "require_tg_faster": True,
-                "status": "PASS",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb_fixed_multi_pattern_no_match",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "absent 001 | absent 002",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.9,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [1.9, 1.92, 1.88],
-                "ratio_vs_rg": 1.9,
-                "threshold_ratio": None,
-                "threshold_pass": None,
-                "gated": False,
-                "require_tg_faster": False,
-                "status": "DIAGNOSTIC",
-                "counts_match": True,
-            },
-            {
-                "name": "large_file_200mb_fixed_multi_pattern_count",
-                "target": str(tmp_path / "large_fixture.log"),
-                "pattern": "ERROR native cpu benchmark sentinel | absent 001",
-                "rg_time_s": 1.0,
-                "tg_time_s": 2.1,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [2.1, 2.12, 2.08],
-                "ratio_vs_rg": 2.1,
-                "threshold_ratio": None,
-                "threshold_pass": None,
-                "gated": False,
-                "require_tg_faster": False,
-                "status": "DIAGNOSTIC",
-                "counts_match": True,
-            },
-            {
-                "name": "many_file_directory",
-                "target": str(tmp_path / "many_files"),
-                "pattern": "ERROR native cpu benchmark sentinel",
-                "rg_time_s": 1.0,
-                "tg_time_s": 1.03,
-                "rg_samples_s": [1.0, 1.01, 0.99],
-                "tg_samples_s": [1.03, 1.02, 1.04],
-                "ratio_vs_rg": 1.03,
-                "threshold_ratio": 1.05,
-                "status": "PASS",
-                "counts_match": True,
-            },
-        ]
-    )
+    benchmark_rows = iter([
+        {
+            "name": "cold_standard_corpus",
+            "target": str(tmp_path / "bench_data"),
+            "pattern": "ERROR",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.04,
+            "rg_samples_s": [1.0, 0.98, 1.04],
+            "tg_samples_s": [1.04, 1.01, 1.06],
+            "ratio_vs_rg": 1.04,
+            "threshold_ratio": 1.05,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.12,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.12, 1.14, 1.11],
+            "ratio_vs_rg": 1.12,
+            "threshold_ratio": 1.15,
+            "require_tg_faster": False,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb_count",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 0.92,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [0.92, 0.94, 0.91],
+            "ratio_vs_rg": 0.92,
+            "threshold_ratio": 1.0,
+            "require_tg_faster": True,
+            "status": "PASS",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb_fixed_multi_pattern_no_match",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "absent 001 | absent 002",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.9,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.9, 1.92, 1.88],
+            "ratio_vs_rg": 1.9,
+            "threshold_ratio": None,
+            "threshold_pass": None,
+            "gated": False,
+            "require_tg_faster": False,
+            "status": "DIAGNOSTIC",
+            "counts_match": True,
+        },
+        {
+            "name": "large_file_200mb_fixed_multi_pattern_count",
+            "target": str(tmp_path / "large_fixture.log"),
+            "pattern": "ERROR native cpu benchmark sentinel | absent 001",
+            "rg_time_s": 1.0,
+            "tg_time_s": 2.1,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [2.1, 2.12, 2.08],
+            "ratio_vs_rg": 2.1,
+            "threshold_ratio": None,
+            "threshold_pass": None,
+            "gated": False,
+            "require_tg_faster": False,
+            "status": "DIAGNOSTIC",
+            "counts_match": True,
+        },
+        {
+            "name": "many_file_directory",
+            "target": str(tmp_path / "many_files"),
+            "pattern": "ERROR native cpu benchmark sentinel",
+            "rg_time_s": 1.0,
+            "tg_time_s": 1.03,
+            "rg_samples_s": [1.0, 1.01, 0.99],
+            "tg_samples_s": [1.03, 1.02, 1.04],
+            "ratio_vs_rg": 1.03,
+            "threshold_ratio": 1.05,
+            "status": "PASS",
+            "counts_match": True,
+        },
+    ])
     monkeypatch.setattr(
         module, "run_native_cpu_benchmark_case", lambda **_kwargs: next(benchmark_rows)
     )
@@ -647,17 +645,15 @@ def test_run_harness_loop_iteration_should_require_zero_remaining_matches(monkey
     corpus_dir = tmp_path / "corpus"
     corpus_dir.mkdir()
 
-    responses = iter(
-        [
-            (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
-            (
-                0.22,
-                {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
-            ),
-            (0.33, {"plan": {"total_edits": 3}, "verification": None}),
-            (0.14, {"total_matches": 0, "matches": []}),
-        ]
-    )
+    responses = iter([
+        (0.11, {"total_matches": 3, "matches": [{"file": "a.py", "line": 1, "text": "match"}]}),
+        (
+            0.22,
+            {"total_edits": 3, "edits": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}]},
+        ),
+        (0.33, {"plan": {"total_edits": 3}, "verification": None}),
+        (0.14, {"total_matches": 0, "matches": []}),
+    ])
     commands: list[list[str]] = []
 
     def _fake_run_json_command(command):
@@ -972,40 +968,38 @@ def test_run_index_scaling_benchmark_should_fail_when_10k_build_exceeds_threshol
         },
     )
 
-    rows = iter(
-        [
-            {
-                "name": "index_scale_1000_files",
-                "file_count": 1000,
-                "build_time_s": 1.0,
-                "index_size_bytes": 1024,
-                "query_median_s": 0.01,
-                "query_correct": True,
-                "build_within_threshold": True,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-            {
-                "name": "index_scale_5000_files",
-                "file_count": 5000,
-                "build_time_s": 5.0,
-                "index_size_bytes": 4096,
-                "query_median_s": 0.03,
-                "query_correct": True,
-                "build_within_threshold": True,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-            {
-                "name": "index_scale_10000_files",
-                "file_count": 10000,
-                "build_time_s": 61.0,
-                "index_size_bytes": 8192,
-                "query_median_s": 0.05,
-                "query_correct": True,
-                "build_within_threshold": False,
-                "queries": [{"pattern": "ERROR timeout"}] * 3,
-            },
-        ]
-    )
+    rows = iter([
+        {
+            "name": "index_scale_1000_files",
+            "file_count": 1000,
+            "build_time_s": 1.0,
+            "index_size_bytes": 1024,
+            "query_median_s": 0.01,
+            "query_correct": True,
+            "build_within_threshold": True,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+        {
+            "name": "index_scale_5000_files",
+            "file_count": 5000,
+            "build_time_s": 5.0,
+            "index_size_bytes": 4096,
+            "query_median_s": 0.03,
+            "query_correct": True,
+            "build_within_threshold": True,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+        {
+            "name": "index_scale_10000_files",
+            "file_count": 10000,
+            "build_time_s": 61.0,
+            "index_size_bytes": 8192,
+            "query_median_s": 0.05,
+            "query_correct": True,
+            "build_within_threshold": False,
+            "queries": [{"pattern": "ERROR timeout"}] * 3,
+        },
+    ])
     monkeypatch.setattr(module, "benchmark_scale", lambda **_kwargs: next(rows))
 
     result = module.run_index_scaling_benchmark(
@@ -1329,43 +1323,41 @@ def test_analyze_bakeoff_misses_should_bucket_false_positive_paths(monkeypatch, 
     output_path = tmp_path / "bakeoff_analysis.json"
     markdown_path = tmp_path / "bakeoff_analysis.md"
     input_path.write_text(
-        json.dumps(
-            {
-                "artifact": "bench_bakeoff",
-                "summary": {
-                    "scenario_count": 2,
-                    "mean_file_hit_rate": 0.75,
-                    "mean_file_precision": 0.5,
+        json.dumps({
+            "artifact": "bench_bakeoff",
+            "summary": {
+                "scenario_count": 2,
+                "mean_file_hit_rate": 0.75,
+                "mean_file_precision": 0.5,
+            },
+            "rows": [
+                {
+                    "name": "click:blast-radius:open_file",
+                    "query_or_symbol": "open_file",
+                    "expected_primary_file": "src/click/utils.py",
+                    "actual_primary_file": "src/click/utils.py",
+                    "false_positive_files": [
+                        "repo/examples/demo.py",
+                        "repo/src/click/__init__.py",
+                        "repo/src/click/_compat.py",
+                    ],
+                    "file_hit_rate": 0.5,
+                    "file_precision": 0.25,
                 },
-                "rows": [
-                    {
-                        "name": "click:blast-radius:open_file",
-                        "query_or_symbol": "open_file",
-                        "expected_primary_file": "src/click/utils.py",
-                        "actual_primary_file": "src/click/utils.py",
-                        "false_positive_files": [
-                            "repo/examples/demo.py",
-                            "repo/src/click/__init__.py",
-                            "repo/src/click/_compat.py",
-                        ],
-                        "file_hit_rate": 0.5,
-                        "file_precision": 0.25,
-                    },
-                    {
-                        "name": "click:blast-radius:UsageError",
-                        "query_or_symbol": "UsageError",
-                        "expected_primary_file": "src/click/exceptions.py",
-                        "actual_primary_file": "src/click/exceptions.py",
-                        "false_positive_files": [
-                            "repo/src/click/formatting.py",
-                            "repo/src/click/shell_completion.py",
-                        ],
-                        "file_hit_rate": 1.0,
-                        "file_precision": 0.75,
-                    },
-                ],
-            }
-        ),
+                {
+                    "name": "click:blast-radius:UsageError",
+                    "query_or_symbol": "UsageError",
+                    "expected_primary_file": "src/click/exceptions.py",
+                    "actual_primary_file": "src/click/exceptions.py",
+                    "false_positive_files": [
+                        "repo/src/click/formatting.py",
+                        "repo/src/click/shell_completion.py",
+                    ],
+                    "file_hit_rate": 1.0,
+                    "file_precision": 0.75,
+                },
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -1417,15 +1409,13 @@ def test_run_ast_benchmarks_should_target_native_tg_binary(monkeypatch, tmp_path
     tg_binary.write_text("binary", encoding="utf-8")
     monkeypatch.setattr(module, "resolve_tg_binary", lambda *_args, **_kwargs: tg_binary)
 
-    cmd = module.build_tg_ast_benchmark_cmd(
-        [
-            "run",
-            "--lang",
-            "python",
-            "pattern",
-            "bench_ast_data",
-        ]
-    )
+    cmd = module.build_tg_ast_benchmark_cmd([
+        "run",
+        "--lang",
+        "python",
+        "pattern",
+        "bench_ast_data",
+    ])
 
     assert cmd[0] == str(tg_binary)
     assert cmd[1:] == ["run", "--lang", "python", "pattern", "bench_ast_data"]

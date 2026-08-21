@@ -405,66 +405,64 @@ def test_build_attempt_ledger_should_normalize_payload_shape(tmp_path):
     )
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
-    payload = module.build_attempt_ledger_payload(
-        {
-            "task_id": "tg-task-1",
-            "root": str(repo_root),
-            "attempts": [
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(repo_root),
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "parent_attempt_id": None,
+                "kind": "rewrite_apply_verify",
+                "status": "validation_failed",
+                "retryable": True,
+                "retry_stage": "validation",
+                "retry_reason": "lint-failed",
+                "checkpoint_id": "chk-1",
+                "audit_manifest_path": "artifacts/audit/attempt-1.json",
+                "validation_success": False,
+                "score_artifact": None,
+                "inputs": ["artifacts/plans/plan-1.json"],
+                "outputs": ["artifacts/diffs/attempt-1.diff"],
+            },
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "kind": "rewrite_apply_verify",
+                "status": "accepted",
+                "retryable": False,
+                "retry_stage": "none",
+                "retry_reason": "accepted",
+                "checkpoint_id": "chk-2",
+                "audit_manifest_path": "artifacts/audit/attempt-2.json",
+                "validation_success": True,
+                "score_artifact": "artifacts/scores/attempt-2.json",
+                "inputs": ["artifacts/diffs/attempt-2.diff"],
+                "outputs": ["artifacts/scores/attempt-2.json"],
+            },
+        ],
+        "final_outcome": {
+            "status": "accepted",
+            "accepted_attempt_id": "attempt-2",
+            "score_artifact": "artifacts/scores/attempt-2.json",
+            "summary": "accepted after one retry",
+        },
+        "replay": {
+            "preserve_attempt_ids": True,
+            "partial_retry_ledger": [
                 {
                     "attempt_id": "attempt-1",
-                    "parent_attempt_id": None,
-                    "kind": "rewrite_apply_verify",
-                    "status": "validation_failed",
-                    "retryable": True,
-                    "retry_stage": "validation",
-                    "retry_reason": "lint-failed",
-                    "checkpoint_id": "chk-1",
-                    "audit_manifest_path": "artifacts/audit/attempt-1.json",
-                    "validation_success": False,
-                    "score_artifact": None,
-                    "inputs": ["artifacts/plans/plan-1.json"],
-                    "outputs": ["artifacts/diffs/attempt-1.diff"],
-                },
-                {
-                    "attempt_id": "attempt-2",
-                    "parent_attempt_id": "attempt-1",
-                    "kind": "rewrite_apply_verify",
-                    "status": "accepted",
-                    "retryable": False,
-                    "retry_stage": "none",
-                    "retry_reason": "accepted",
-                    "checkpoint_id": "chk-2",
-                    "audit_manifest_path": "artifacts/audit/attempt-2.json",
-                    "validation_success": True,
-                    "score_artifact": "artifacts/scores/attempt-2.json",
-                    "inputs": ["artifacts/diffs/attempt-2.diff"],
-                    "outputs": ["artifacts/scores/attempt-2.json"],
-                },
+                    "resumed_from": "validation",
+                    "resumed_as": "attempt-2",
+                    "reason": "lint-failed",
+                }
             ],
-            "final_outcome": {
-                "status": "accepted",
-                "accepted_attempt_id": "attempt-2",
-                "score_artifact": "artifacts/scores/attempt-2.json",
-                "summary": "accepted after one retry",
-            },
-            "replay": {
-                "preserve_attempt_ids": True,
-                "partial_retry_ledger": [
-                    {
-                        "attempt_id": "attempt-1",
-                        "resumed_from": "validation",
-                        "resumed_as": "attempt-2",
-                        "reason": "lint-failed",
-                    }
-                ],
-                "audit_chain": [
-                    "artifacts/audit/attempt-1.json",
-                    "artifacts/audit/attempt-2.json",
-                ],
-                "next_action": "score accepted attempt",
-            },
-        }
-    )
+            "audit_chain": [
+                "artifacts/audit/attempt-1.json",
+                "artifacts/audit/attempt-2.json",
+            ],
+            "next_action": "score accepted attempt",
+        },
+    })
 
     assert payload["artifact"] == "agent_attempt_ledger"
     assert payload["suite"] == "agent_loop"
@@ -546,26 +544,24 @@ def test_run_compat_checks_routing_metadata_probe_should_disable_ignores(monkeyp
         captured["cwd"] = cwd
         return module.CommandResult(
             0,
-            json.dumps(
-                {
-                    "version": 1,
-                    "routing_backend": "NativeCpuBackend",
-                    "routing_reason": "json_output",
-                    "sidecar_used": False,
-                    "requested_gpu_device_ids": [],
-                    "routing_gpu_device_ids": [],
-                    "query": "ERROR",
-                    "path": str(bench_data_dir),
-                    "total_matches": 1,
-                    "matches": [
-                        {
-                            "file": str(bench_data_dir / "app.log"),
-                            "line": 1,
-                            "text": "ERROR timeout",
-                        }
-                    ],
-                }
-            ),
+            json.dumps({
+                "version": 1,
+                "routing_backend": "NativeCpuBackend",
+                "routing_reason": "json_output",
+                "sidecar_used": False,
+                "requested_gpu_device_ids": [],
+                "routing_gpu_device_ids": [],
+                "query": "ERROR",
+                "path": str(bench_data_dir),
+                "total_matches": 1,
+                "matches": [
+                    {
+                        "file": str(bench_data_dir / "app.log"),
+                        "line": 1,
+                        "text": "ERROR timeout",
+                    }
+                ],
+            }),
             "",
         )
 
@@ -758,41 +754,39 @@ def test_build_attempt_ledger_cli_should_write_output_file(tmp_path):
     input_path = tmp_path / "attempt_ledger_input.json"
     output_path = tmp_path / "attempt_ledger_output.json"
     input_path.write_text(
-        json.dumps(
-            {
-                "task_id": "tg-task-2",
-                "root": str(repo_root),
-                "attempts": [
-                    {
-                        "attempt_id": "attempt-a",
-                        "parent_attempt_id": None,
-                        "kind": "rewrite_apply_verify",
-                        "status": "accepted",
-                        "retryable": False,
-                        "retry_stage": "none",
-                        "retry_reason": "accepted",
-                        "checkpoint_id": "chk-a",
-                        "audit_manifest_path": "artifacts/audit/attempt-a.json",
-                        "validation_success": True,
-                        "score_artifact": "artifacts/scores/attempt-a.json",
-                        "inputs": [],
-                        "outputs": ["artifacts/scores/attempt-a.json"],
-                    }
-                ],
-                "final_outcome": {
+        json.dumps({
+            "task_id": "tg-task-2",
+            "root": str(repo_root),
+            "attempts": [
+                {
+                    "attempt_id": "attempt-a",
+                    "parent_attempt_id": None,
+                    "kind": "rewrite_apply_verify",
                     "status": "accepted",
-                    "accepted_attempt_id": "attempt-a",
+                    "retryable": False,
+                    "retry_stage": "none",
+                    "retry_reason": "accepted",
+                    "checkpoint_id": "chk-a",
+                    "audit_manifest_path": "artifacts/audit/attempt-a.json",
+                    "validation_success": True,
                     "score_artifact": "artifacts/scores/attempt-a.json",
-                    "summary": "accepted",
-                },
-                "replay": {
-                    "preserve_attempt_ids": True,
-                    "partial_retry_ledger": [],
-                    "audit_chain": ["artifacts/audit/attempt-a.json"],
-                    "next_action": "none",
-                },
-            }
-        ),
+                    "inputs": [],
+                    "outputs": ["artifacts/scores/attempt-a.json"],
+                }
+            ],
+            "final_outcome": {
+                "status": "accepted",
+                "accepted_attempt_id": "attempt-a",
+                "score_artifact": "artifacts/scores/attempt-a.json",
+                "summary": "accepted",
+            },
+            "replay": {
+                "preserve_attempt_ids": True,
+                "partial_retry_ledger": [],
+                "audit_chain": ["artifacts/audit/attempt-a.json"],
+                "next_action": "none",
+            },
+        }),
         encoding="utf-8",
     )
 
@@ -1394,18 +1388,16 @@ def test_run_benchmarks_should_record_three_samples_and_median(monkeypatch, tmp_
     )
     monkeypatch.setattr(module, "compare_results", lambda *_args, **_kwargs: True)
 
-    timing_samples = iter(
-        [
-            9.9,
-            8.8,
-            0.40,
-            0.20,
-            0.30,
-            0.80,
-            0.60,
-            0.70,
-        ]
-    )
+    timing_samples = iter([
+        9.9,
+        8.8,
+        0.40,
+        0.20,
+        0.30,
+        0.80,
+        0.60,
+        0.70,
+    ])
     timing_calls: list[list[str]] = []
     capture_calls: list[list[str]] = []
 

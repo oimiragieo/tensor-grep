@@ -528,46 +528,44 @@ def test_run_claude_skill_ab_matrix_should_summarize_trace_rows():
         "run_claude_skill_ab_matrix_summary_script", "benchmarks/run_claude_skill_ab_matrix.py"
     )
 
-    summary = module.summarize_trace_rows(
-        [
-            {
-                "system": "claude-baseline",
-                "asked_meta_question": False,
-                "response_shape": "analysis_then_patch",
-                "first_tg_seconds": None,
-                "first_patch_seconds": 10.0,
-                "first_file_change_seconds": 0.2,
-                "post_edit_deliberation_seconds": 9.8,
-                "tg_invocation_count": 0,
-                "tg_seconds_total": 0.0,
-                "changed_file_count": 1,
-            },
-            {
-                "system": "claude-enhanced",
-                "asked_meta_question": True,
-                "response_shape": "meta_question",
-                "first_tg_seconds": 1.5,
-                "first_patch_seconds": None,
-                "first_file_change_seconds": None,
-                "post_edit_deliberation_seconds": None,
-                "tg_invocation_count": 2,
-                "tg_seconds_total": 0.75,
-                "changed_file_count": 0,
-            },
-            {
-                "system": "claude-enhanced",
-                "asked_meta_question": False,
-                "response_shape": "analysis_then_patch",
-                "first_tg_seconds": 1.0,
-                "first_patch_seconds": 20.0,
-                "first_file_change_seconds": 0.1,
-                "post_edit_deliberation_seconds": 19.9,
-                "tg_invocation_count": 1,
-                "tg_seconds_total": 0.25,
-                "changed_file_count": 1,
-            },
-        ]
-    )
+    summary = module.summarize_trace_rows([
+        {
+            "system": "claude-baseline",
+            "asked_meta_question": False,
+            "response_shape": "analysis_then_patch",
+            "first_tg_seconds": None,
+            "first_patch_seconds": 10.0,
+            "first_file_change_seconds": 0.2,
+            "post_edit_deliberation_seconds": 9.8,
+            "tg_invocation_count": 0,
+            "tg_seconds_total": 0.0,
+            "changed_file_count": 1,
+        },
+        {
+            "system": "claude-enhanced",
+            "asked_meta_question": True,
+            "response_shape": "meta_question",
+            "first_tg_seconds": 1.5,
+            "first_patch_seconds": None,
+            "first_file_change_seconds": None,
+            "post_edit_deliberation_seconds": None,
+            "tg_invocation_count": 2,
+            "tg_seconds_total": 0.75,
+            "changed_file_count": 0,
+        },
+        {
+            "system": "claude-enhanced",
+            "asked_meta_question": False,
+            "response_shape": "analysis_then_patch",
+            "first_tg_seconds": 1.0,
+            "first_patch_seconds": 20.0,
+            "first_file_change_seconds": 0.1,
+            "post_edit_deliberation_seconds": 19.9,
+            "tg_invocation_count": 1,
+            "tg_seconds_total": 0.25,
+            "changed_file_count": 1,
+        },
+    ])
 
     assert summary["claude-baseline"]["record_count"] == 1
     assert summary["claude-baseline"]["response_shape_counts"] == {"analysis_then_patch": 1}
@@ -769,41 +767,39 @@ def test_run_claude_skill_ab_matrix_should_support_partial_and_resume(monkeypatc
     )
 
     partial = module.build_partial_payload([])
-    partial["experiments"].append(
-        {
-            "name": "output-standard__task-standard__effort-default",
-            "enhanced_output_contract": "standard",
-            "enhanced_task_contract": "standard",
-            "enhanced_effort": "",
-            "prediction_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "model_patch": "diff --git a/x b/x",
-                }
-            ],
-            "trace_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "response_shape": "analysis_then_patch",
-                }
-            ],
-            "bakeoff_rows": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "patch_applied": True,
-                    "validation_passed": True,
-                }
-            ],
-            "prediction_record_count": 1,
-            "trace_record_count": 1,
-            "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
-            "bakeoff_summary": {"scenario_count": 1},
-            "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
-        }
-    )
+    partial["experiments"].append({
+        "name": "output-standard__task-standard__effort-default",
+        "enhanced_output_contract": "standard",
+        "enhanced_task_contract": "standard",
+        "enhanced_effort": "",
+        "prediction_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+            }
+        ],
+        "trace_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "response_shape": "analysis_then_patch",
+            }
+        ],
+        "bakeoff_rows": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "patch_applied": True,
+                "validation_passed": True,
+            }
+        ],
+        "prediction_record_count": 1,
+        "trace_record_count": 1,
+        "trace_summary": {"claude-enhanced": {"meta_question_rate": 1.0}},
+        "bakeoff_summary": {"scenario_count": 1},
+        "system_score_summary": {"claude-enhanced": {"mean_patch_applied_rate": 1.0}},
+    })
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -932,48 +928,46 @@ def test_run_claude_skill_ab_matrix_should_resume_incomplete_experiment_instance
     )
 
     partial = module.build_partial_payload([])
-    partial["experiments"].append(
-        {
-            "name": "output-standard__task-standard__effort-default",
-            "enhanced_output_contract": "standard",
-            "enhanced_task_contract": "standard",
-            "enhanced_effort": "",
-            "prediction_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-baseline",
-                    "model_patch": "",
-                    "wall_clock_seconds": 10.0,
-                },
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-enhanced",
-                    "model_patch": "diff --git a/x b/x",
-                    "wall_clock_seconds": 20.0,
-                },
-            ],
-            "trace_records": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-baseline",
-                    "response_shape": "analysis_only",
-                }
-            ],
-            "bakeoff_rows": [
-                {
-                    "instance_id": "demo-1",
-                    "system": "claude-baseline",
-                    "patch_applied": False,
-                    "validation_passed": False,
-                }
-            ],
-            "prediction_record_count": 2,
-            "trace_record_count": 1,
-            "trace_summary": {"claude-baseline": {"record_count": 1}},
-            "bakeoff_summary": {"scenario_count": 1},
-            "system_score_summary": {"claude-baseline": {"record_count": 1}},
-        }
-    )
+    partial["experiments"].append({
+        "name": "output-standard__task-standard__effort-default",
+        "enhanced_output_contract": "standard",
+        "enhanced_task_contract": "standard",
+        "enhanced_effort": "",
+        "prediction_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "model_patch": "",
+                "wall_clock_seconds": 10.0,
+            },
+            {
+                "instance_id": "demo-1",
+                "system": "claude-enhanced",
+                "model_patch": "diff --git a/x b/x",
+                "wall_clock_seconds": 20.0,
+            },
+        ],
+        "trace_records": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "response_shape": "analysis_only",
+            }
+        ],
+        "bakeoff_rows": [
+            {
+                "instance_id": "demo-1",
+                "system": "claude-baseline",
+                "patch_applied": False,
+                "validation_passed": False,
+            }
+        ],
+        "prediction_record_count": 2,
+        "trace_record_count": 1,
+        "trace_summary": {"claude-baseline": {"record_count": 1}},
+        "bakeoff_summary": {"scenario_count": 1},
+        "system_score_summary": {"claude-baseline": {"record_count": 1}},
+    })
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -1069,25 +1063,21 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
     scenarios_path = tmp_path / "scenarios.json"
     output_path = tmp_path / "matrix.json"
     driver_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {"instance_id": "demo-1"},
-                    {"instance_id": "demo-2"},
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {"instance_id": "demo-1"},
+                {"instance_id": "demo-2"},
+            ]
+        }),
         encoding="utf-8",
     )
     scenarios_path.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {"instance_id": "demo-1"},
-                    {"instance_id": "demo-2"},
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {"instance_id": "demo-1"},
+                {"instance_id": "demo-2"},
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -1141,51 +1131,47 @@ def test_run_claude_skill_ab_matrix_should_checkpoint_per_record_and_resume(monk
 
     def _fake_write_json(path, payload):
         if Path(path) == output_path:
-            writes.append(
-                (
-                    int(payload["experiment_count"]),
-                    len(payload["experiments"][0]["prediction_records"]),
-                )
-            )
+            writes.append((
+                int(payload["experiment_count"]),
+                len(payload["experiments"][0]["prediction_records"]),
+            ))
 
     monkeypatch.setattr(module, "write_json", _fake_write_json)
 
-    partial = module.build_partial_payload(
-        [
-            {
-                "name": "output-standard__task-standard",
-                "enhanced_output_contract": "standard",
-                "enhanced_task_contract": "standard",
-                "prediction_records": [
-                    {
-                        "instance_id": "demo-1",
-                        "system": "claude-enhanced",
-                        "model_patch": "diff --git a/x b/x",
-                    }
-                ],
-                "trace_records": [
-                    {
-                        "instance_id": "demo-1",
-                        "system": "claude-enhanced",
-                        "response_shape": "analysis_then_patch",
-                    }
-                ],
-                "bakeoff_rows": [
-                    {
-                        "instance_id": "demo-1",
-                        "system": "claude-enhanced",
-                        "patch_applied": True,
-                        "validation_passed": True,
-                    }
-                ],
-                "prediction_record_count": 1,
-                "trace_record_count": 1,
-                "trace_summary": {"claude-enhanced": {"record_count": 1}},
-                "bakeoff_summary": {"scenario_count": 1},
-                "system_score_summary": {"claude-enhanced": {"record_count": 1}},
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "name": "output-standard__task-standard",
+            "enhanced_output_contract": "standard",
+            "enhanced_task_contract": "standard",
+            "prediction_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "model_patch": "diff --git a/x b/x",
+                }
+            ],
+            "trace_records": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "response_shape": "analysis_then_patch",
+                }
+            ],
+            "bakeoff_rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "claude-enhanced",
+                    "patch_applied": True,
+                    "validation_passed": True,
+                }
+            ],
+            "prediction_record_count": 1,
+            "trace_record_count": 1,
+            "trace_summary": {"claude-enhanced": {"record_count": 1}},
+            "bakeoff_summary": {"scenario_count": 1},
+            "system_score_summary": {"claude-enhanced": {"record_count": 1}},
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_matrix_payload(
@@ -1216,49 +1202,47 @@ def test_render_claude_skill_ab_matrix_should_render_markdown(tmp_path):
     )
     payload_path = tmp_path / "matrix.json"
     payload_path.write_text(
-        json.dumps(
-            {
-                "artifact": "claude_skill_ab_matrix",
-                "experiments": [
-                    {
-                        "name": "output-standard__task-standard",
-                        "enhanced_output_contract": "standard",
-                        "enhanced_task_contract": "standard",
-                        "system_score_summary": {
-                            "claude-enhanced": {
-                                "mean_patch_applied_rate": 0.0,
-                                "mean_validation_pass_rate": 0.0,
-                            }
-                        },
-                        "trace_summary": {
-                            "claude-enhanced": {
-                                "meta_question_rate": 1.0,
-                                "mean_post_edit_deliberation_seconds": None,
-                                "mean_first_tg_seconds": None,
-                            }
-                        },
+        json.dumps({
+            "artifact": "claude_skill_ab_matrix",
+            "experiments": [
+                {
+                    "name": "output-standard__task-standard",
+                    "enhanced_output_contract": "standard",
+                    "enhanced_task_contract": "standard",
+                    "system_score_summary": {
+                        "claude-enhanced": {
+                            "mean_patch_applied_rate": 0.0,
+                            "mean_validation_pass_rate": 0.0,
+                        }
                     },
-                    {
-                        "name": "output-terse__task-standard",
-                        "enhanced_output_contract": "terse",
-                        "enhanced_task_contract": "standard",
-                        "system_score_summary": {
-                            "claude-enhanced": {
-                                "mean_patch_applied_rate": 1.0,
-                                "mean_validation_pass_rate": 1.0,
-                            }
-                        },
-                        "trace_summary": {
-                            "claude-enhanced": {
-                                "meta_question_rate": 0.0,
-                                "mean_post_edit_deliberation_seconds": 41.545078,
-                                "mean_first_tg_seconds": None,
-                            }
-                        },
+                    "trace_summary": {
+                        "claude-enhanced": {
+                            "meta_question_rate": 1.0,
+                            "mean_post_edit_deliberation_seconds": None,
+                            "mean_first_tg_seconds": None,
+                        }
                     },
-                ],
-            }
-        ),
+                },
+                {
+                    "name": "output-terse__task-standard",
+                    "enhanced_output_contract": "terse",
+                    "enhanced_task_contract": "standard",
+                    "system_score_summary": {
+                        "claude-enhanced": {
+                            "mean_patch_applied_rate": 1.0,
+                            "mean_validation_pass_rate": 1.0,
+                        }
+                    },
+                    "trace_summary": {
+                        "claude-enhanced": {
+                            "meta_question_rate": 0.0,
+                            "mean_post_edit_deliberation_seconds": 41.545078,
+                            "mean_first_tg_seconds": None,
+                        }
+                    },
+                },
+            ],
+        }),
         encoding="utf-8",
     )
 
@@ -1277,26 +1261,24 @@ def test_render_provider_navigation_scorecard_should_render_ranked_markdown(tmp_
     )
     payload_path = tmp_path / "provider.json"
     payload_path.write_text(
-        json.dumps(
-            {
-                "artifact": "bench_provider_navigation",
-                "providers": ["native", "hybrid"],
-                "by_provider": {
-                    "native": {
-                        "scenario_count": 2,
-                        "mean_caller_hit_rate": 0.0,
-                        "mean_caller_precision": 0.0,
-                        "mean_test_hit_rate": 1.0,
-                    },
-                    "hybrid": {
-                        "scenario_count": 2,
-                        "mean_caller_hit_rate": 1.0,
-                        "mean_caller_precision": 1.0,
-                        "mean_test_hit_rate": 1.0,
-                    },
+        json.dumps({
+            "artifact": "bench_provider_navigation",
+            "providers": ["native", "hybrid"],
+            "by_provider": {
+                "native": {
+                    "scenario_count": 2,
+                    "mean_caller_hit_rate": 0.0,
+                    "mean_caller_precision": 0.0,
+                    "mean_test_hit_rate": 1.0,
                 },
-            }
-        ),
+                "hybrid": {
+                    "scenario_count": 2,
+                    "mean_caller_hit_rate": 1.0,
+                    "mean_caller_precision": 1.0,
+                    "mean_test_hit_rate": 1.0,
+                },
+            },
+        }),
         encoding="utf-8",
     )
 
@@ -1314,12 +1296,10 @@ def test_run_claude_skill_ab_should_load_tg_trace_records(tmp_path):
     )
     log_path = tmp_path / "tg_trace.jsonl"
     log_path.write_text(
-        "\n".join(
-            [
-                '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
-                '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
-            ]
-        )
+        "\n".join([
+            '{"argv":["tg","defs","Demo"],"exit_code":0,"duration_seconds":0.5}',
+            '{"argv":["tg","refs","Demo"],"exit_code":0,"duration_seconds":1.25}',
+        ])
         + "\n",
         encoding="utf-8",
     )
@@ -1479,57 +1459,45 @@ def test_run_codex_competitor_eval_should_retry_without_schema_when_first_result
         command = list(args[0])
         calls.append(command)
         if "--output-schema" in command:
-            stdout = "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {
-                                "type": "agent_message",
-                                "text": json.dumps(
-                                    {
-                                        "actual_primary_file": None,
-                                        "actual_primary_span": None,
-                                        "actual_dependent_files": [],
-                                        "actual_suggested_edit_files": [],
-                                        "actual_test_files": [],
-                                        "actual_validation_commands": [],
-                                        "context_token_count": 0,
-                                        "notes": "Awaiting code-edit task to plan against.",
-                                    }
-                                ),
-                            },
-                        }
-                    ),
-                ]
-            )
+            stdout = "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps({
+                            "actual_primary_file": None,
+                            "actual_primary_span": None,
+                            "actual_dependent_files": [],
+                            "actual_suggested_edit_files": [],
+                            "actual_test_files": [],
+                            "actual_validation_commands": [],
+                            "context_token_count": 0,
+                            "notes": "Awaiting code-edit task to plan against.",
+                        }),
+                    },
+                }),
+            ])
         else:
-            stdout = "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {
-                                "type": "agent_message",
-                                "text": json.dumps(
-                                    {
-                                        "actual_primary_file": "a.py",
-                                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                        "actual_dependent_files": [],
-                                        "actual_suggested_edit_files": [],
-                                        "actual_test_files": [],
-                                        "actual_validation_commands": ["pytest -q"],
-                                        "context_token_count": 123,
-                                        "notes": "ok",
-                                    }
-                                ),
-                            },
-                        }
-                    ),
-                ]
-            )
+            stdout = "\n".join([
+                json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                json.dumps({
+                    "type": "item.completed",
+                    "item": {
+                        "type": "agent_message",
+                        "text": json.dumps({
+                            "actual_primary_file": "a.py",
+                            "actual_primary_span": {"start_line": 1, "end_line": 2},
+                            "actual_dependent_files": [],
+                            "actual_suggested_edit_files": [],
+                            "actual_test_files": [],
+                            "actual_validation_commands": ["pytest -q"],
+                            "context_token_count": 123,
+                            "notes": "ok",
+                        }),
+                    },
+                }),
+            ])
         return type("Proc", (), {"stdout": stdout})()
 
     monkeypatch.setattr(module.subprocess, "run", fake_run)
@@ -1546,12 +1514,10 @@ def test_run_codex_competitor_eval_should_normalize_string_primary_span():
         "run_codex_competitor_eval_span_script", "benchmarks/run_codex_competitor_eval.py"
     )
 
-    record = module._normalize_primary_span(
-        {
-            "actual_primary_file": None,
-            "actual_primary_span": "src/pkg/mod.py:10-14",
-        }
-    )
+    record = module._normalize_primary_span({
+        "actual_primary_file": None,
+        "actual_primary_span": "src/pkg/mod.py:10-14",
+    })
 
     assert record["actual_primary_file"] == "src/pkg/mod.py"
     assert record["actual_primary_span"] == {"start_line": 10, "end_line": 14}
@@ -1563,27 +1529,25 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -1596,18 +1560,16 @@ def test_run_copilot_competitor_eval_should_build_records_from_scenarios(tmp_pat
             (),
             {
                 "stdout": "● "
-                + json.dumps(
-                    {
-                        "actual_primary_file": "a.py",
-                        "actual_primary_span": {"start_line": 1, "end_line": 2},
-                        "actual_dependent_files": [],
-                        "actual_suggested_edit_files": [],
-                        "actual_test_files": [],
-                        "actual_validation_commands": ["pytest -q"],
-                        "context_token_count": 123,
-                        "notes": "ok",
-                    }
-                )
+                + json.dumps({
+                    "actual_primary_file": "a.py",
+                    "actual_primary_span": {"start_line": 1, "end_line": 2},
+                    "actual_dependent_files": [],
+                    "actual_suggested_edit_files": [],
+                    "actual_test_files": [],
+                    "actual_validation_commands": ["pytest -q"],
+                    "context_token_count": 123,
+                    "notes": "ok",
+                })
             },
         )(),
     )
@@ -1636,17 +1598,15 @@ def test_run_copilot_competitor_eval_should_parse_wrapped_final_json():
     module = _load_script_module(
         "run_copilot_competitor_eval_wrapped_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join(
-        [
-            "● Planning the answer first.",
-            "",
-            '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
-            '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
-            '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
-            '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
-            "",
-        ]
-    )
+    stdout = "\n".join([
+        "● Planning the answer first.",
+        "",
+        '● {"actual_primary_file":"a.py","actual_primary_span":{"start_li',
+        '  ne":1,"end_line":2},"actual_dependent_files":[],"actual_suggested_',
+        '  edit_files":[],"actual_test_files":[],"actual_validation_commands":[',
+        '  "pytest -q"],"context_token_count":123,"notes":"ok"}',
+        "",
+    ])
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -1657,15 +1617,13 @@ def test_run_copilot_competitor_eval_should_parse_fenced_json_from_mixed_output(
     module = _load_script_module(
         "run_copilot_competitor_eval_fenced_script", "benchmarks/run_copilot_competitor_eval.py"
     )
-    stdout = "\n".join(
-        [
-            "Analyzing repository...",
-            "I found the likely target below.",
-            "```json",
-            '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
-            "```",
-        ]
-    )
+    stdout = "\n".join([
+        "Analyzing repository...",
+        "I found the likely target below.",
+        "```json",
+        '{"actual_primary_file":"b.py","actual_primary_span":{"start_line":10,"end_line":12},"actual_dependent_files":[],"actual_suggested_edit_files":[],"actual_test_files":[],"actual_validation_commands":["pytest -q"],"context_token_count":321,"notes":"ok"}',
+        "```",
+    ])
 
     extracted = module._extract_text_from_copilot_output(stdout)
 
@@ -1678,27 +1636,25 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -1710,24 +1666,20 @@ def test_run_gemini_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps(
-                    {
-                        "session_id": "demo",
-                        "response": json.dumps(
-                            {
-                                "actual_primary_file": "a.py",
-                                "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                "actual_dependent_files": [],
-                                "actual_suggested_edit_files": [],
-                                "actual_test_files": [],
-                                "actual_validation_commands": ["pytest -q"],
-                                "context_token_count": 123,
-                                "notes": "ok",
-                            }
-                        ),
-                        "stats": {},
-                    }
-                )
+                "stdout": json.dumps({
+                    "session_id": "demo",
+                    "response": json.dumps({
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    }),
+                    "stats": {},
+                })
             },
         )(),
     )
@@ -1752,135 +1704,121 @@ def test_build_external_agent_patch_driver_comparison_should_build_payload(tmp_p
     claude_output_path = tmp_path / "claude_output.json"
     codex_output_path = tmp_path / "codex_output.json"
     gemini_path.write_text(
-        json.dumps(
-            {
-                "artifact": "gemini_patch_driver_validation_summary",
-                "instance_id": "gemini-1",
-                "output_file": str(gemini_output_path),
-                "actual_primary_file": "glob.ts",
-                "follow_up_reads": ["glob.ts#L1-L10", "grep.ts#L1-L20"],
-                "validation_commands": ["uv run pytest -q"],
-                "ledger_next_action": "run patch system",
-            }
-        ),
+        json.dumps({
+            "artifact": "gemini_patch_driver_validation_summary",
+            "instance_id": "gemini-1",
+            "output_file": str(gemini_output_path),
+            "actual_primary_file": "glob.ts",
+            "follow_up_reads": ["glob.ts#L1-L10", "grep.ts#L1-L20"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
         encoding="utf-8",
     )
     claude_path.write_text(
-        json.dumps(
-            {
-                "artifact": "claude_patch_driver_validation_summary",
-                "instance_id": "claude-1",
-                "output_file": str(claude_output_path),
-                "actual_primary_file": "FileWriteToolDiff.tsx",
-                "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
-                "validation_commands": ["uv run pytest -q"],
-                "ledger_next_action": "run patch system",
-            }
-        ),
+        json.dumps({
+            "artifact": "claude_patch_driver_validation_summary",
+            "instance_id": "claude-1",
+            "output_file": str(claude_output_path),
+            "actual_primary_file": "FileWriteToolDiff.tsx",
+            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
         encoding="utf-8",
     )
     codex_path.write_text(
-        json.dumps(
-            {
-                "artifact": "codex_patch_driver_validation_summary",
-                "instance_id": "codex-1",
-                "output_file": str(codex_output_path),
-                "actual_primary_file": "fuzzy_file_search.rs",
-                "follow_up_reads": ["fuzzy_file_search.rs#L1-L10"],
-                "validation_commands": ["cargo test"],
-                "ledger_next_action": "run patch system",
-            }
-        ),
+        json.dumps({
+            "artifact": "codex_patch_driver_validation_summary",
+            "instance_id": "codex-1",
+            "output_file": str(codex_output_path),
+            "actual_primary_file": "fuzzy_file_search.rs",
+            "follow_up_reads": ["fuzzy_file_search.rs#L1-L10"],
+            "validation_commands": ["cargo test"],
+            "ledger_next_action": "run patch system",
+        }),
         encoding="utf-8",
     )
     gemini_output_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {
-                        "instance_id": "gemini-1",
-                        "navigation_pack": {
-                            "parallel_read_groups": [
-                                {
-                                    "phase": 0,
-                                    "label": "primary",
-                                    "can_parallelize": False,
-                                    "mentions": ["glob.ts#L1-L10"],
-                                    "files": ["glob.ts"],
-                                    "roles": ["primary"],
-                                },
-                                {
-                                    "phase": 1,
-                                    "label": "related",
-                                    "can_parallelize": True,
-                                    "mentions": ["grep.ts#L1-L20"],
-                                    "files": ["grep.ts"],
-                                    "roles": ["related"],
-                                },
-                            ]
-                        },
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "gemini-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["glob.ts#L1-L10"],
+                                "files": ["glob.ts"],
+                                "roles": ["primary"],
+                            },
+                            {
+                                "phase": 1,
+                                "label": "related",
+                                "can_parallelize": True,
+                                "mentions": ["grep.ts#L1-L20"],
+                                "files": ["grep.ts"],
+                                "roles": ["related"],
+                            },
+                        ]
+                    },
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     claude_output_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {
-                        "instance_id": "claude-1",
-                        "navigation_pack": {
-                            "parallel_read_groups": [
-                                {
-                                    "phase": 0,
-                                    "label": "primary",
-                                    "can_parallelize": False,
-                                    "mentions": ["FileWriteToolDiff.tsx#L1-L10"],
-                                    "files": ["FileWriteToolDiff.tsx"],
-                                    "roles": ["primary"],
-                                }
-                            ]
-                        },
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "claude-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["FileWriteToolDiff.tsx#L1-L10"],
+                                "files": ["FileWriteToolDiff.tsx"],
+                                "roles": ["primary"],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     codex_output_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {
-                        "instance_id": "codex-1",
-                        "navigation_pack": {
-                            "parallel_read_groups": [
-                                {
-                                    "phase": 0,
-                                    "label": "primary",
-                                    "can_parallelize": False,
-                                    "mentions": ["fuzzy_file_search.rs#L1-L10"],
-                                    "files": ["fuzzy_file_search.rs"],
-                                    "roles": ["primary"],
-                                }
-                            ]
-                        },
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {
+                    "instance_id": "codex-1",
+                    "navigation_pack": {
+                        "parallel_read_groups": [
+                            {
+                                "phase": 0,
+                                "label": "primary",
+                                "can_parallelize": False,
+                                "mentions": ["fuzzy_file_search.rs#L1-L10"],
+                                "files": ["fuzzy_file_search.rs"],
+                                "roles": ["primary"],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
-    payload = module.build_payload(
-        [
-            ("gemini", gemini_path),
-            ("claude", claude_path),
-            ("codex", codex_path),
-        ]
-    )
+    payload = module.build_payload([
+        ("gemini", gemini_path),
+        ("claude", claude_path),
+        ("codex", codex_path),
+    ])
 
     assert payload["artifact"] == "external_agent_patch_driver_comparison"
     assert payload["common_contract"]["ledger_artifact"] == "agent_attempt_ledger"
@@ -1903,64 +1841,54 @@ def test_build_external_agent_patch_driver_comparison_cli_should_write_output(tm
     gemini_output_path = tmp_path / "gemini_output.json"
     claude_output_path = tmp_path / "claude_output.json"
     gemini_path.write_text(
-        json.dumps(
-            {
-                "artifact": "gemini_patch_driver_validation_summary",
-                "instance_id": "gemini-1",
-                "output_file": str(gemini_output_path),
-                "actual_primary_file": "glob.ts",
-                "follow_up_reads": ["glob.ts#L1-L10"],
-                "validation_commands": ["uv run pytest -q"],
-                "ledger_next_action": "run patch system",
-            }
-        ),
+        json.dumps({
+            "artifact": "gemini_patch_driver_validation_summary",
+            "instance_id": "gemini-1",
+            "output_file": str(gemini_output_path),
+            "actual_primary_file": "glob.ts",
+            "follow_up_reads": ["glob.ts#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
         encoding="utf-8",
     )
     claude_path.write_text(
-        json.dumps(
-            {
-                "artifact": "claude_patch_driver_validation_summary",
-                "instance_id": "claude-1",
-                "output_file": str(claude_output_path),
-                "actual_primary_file": "FileWriteToolDiff.tsx",
-                "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
-                "validation_commands": ["uv run pytest -q"],
-                "ledger_next_action": "run patch system",
-            }
-        ),
+        json.dumps({
+            "artifact": "claude_patch_driver_validation_summary",
+            "instance_id": "claude-1",
+            "output_file": str(claude_output_path),
+            "actual_primary_file": "FileWriteToolDiff.tsx",
+            "follow_up_reads": ["FileWriteToolDiff.tsx#L1-L10"],
+            "validation_commands": ["uv run pytest -q"],
+            "ledger_next_action": "run patch system",
+        }),
         encoding="utf-8",
     )
     gemini_output_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {"instance_id": "gemini-1", "navigation_pack": {"parallel_read_groups": []}}
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {"instance_id": "gemini-1", "navigation_pack": {"parallel_read_groups": []}}
+            ]
+        }),
         encoding="utf-8",
     )
     claude_output_path.write_text(
-        json.dumps(
-            {
-                "records": [
-                    {"instance_id": "claude-1", "navigation_pack": {"parallel_read_groups": []}}
-                ]
-            }
-        ),
+        json.dumps({
+            "records": [
+                {"instance_id": "claude-1", "navigation_pack": {"parallel_read_groups": []}}
+            ]
+        }),
         encoding="utf-8",
     )
 
-    exit_code = module.main(
-        [
-            "--summary",
-            f"gemini={gemini_path}",
-            "--summary",
-            f"claude={claude_path}",
-            "--output",
-            str(output_path),
-        ]
-    )
+    exit_code = module.main([
+        "--summary",
+        f"gemini={gemini_path}",
+        "--summary",
+        f"claude={claude_path}",
+        "--output",
+        str(output_path),
+    ])
 
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert exit_code == 0

@@ -819,22 +819,18 @@ def test_run_hot_query_benchmarks_should_run_stringzilla_probe_in_subprocess(mon
         captured.setdefault("calls", []).append((cmd, env))
         pattern = cmd[-1]
         if pattern == "ERROR timeout":
-            return json.dumps(
-                {
-                    "available": True,
-                    "seconds": 0.4,
-                    "routing_reason": "stringzilla_fixed_strings_index",
-                    "matches": 2000,
-                }
-            )
-        return json.dumps(
-            {
+            return json.dumps({
                 "available": True,
-                "seconds": 0.01,
-                "routing_reason": "stringzilla_fixed_strings_index_cache",
+                "seconds": 0.4,
+                "routing_reason": "stringzilla_fixed_strings_index",
                 "matches": 2000,
-            }
-        )
+            })
+        return json.dumps({
+            "available": True,
+            "seconds": 0.01,
+            "routing_reason": "stringzilla_fixed_strings_index_cache",
+            "matches": 2000,
+        })
 
     monkeypatch.setattr(module.subprocess, "check_output", _fake_check_output)
 
@@ -873,23 +869,19 @@ def test_check_regression_should_refuse_cross_environment_comparison_by_default(
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.2}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.2}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -915,23 +907,19 @@ def test_check_regression_should_allow_cross_environment_comparison_with_overrid
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "linux", "machine": "x86_64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "linux", "machine": "x86_64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -966,12 +954,10 @@ def test_check_regression_should_report_rg_comparator_drift(monkeypatch, tmp_pat
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps(
-            {
-                **payload,
-                "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 1.2}],
-            }
-        ),
+        json.dumps({
+            **payload,
+            "rows": [{"name": "x", "tg_time_s": 1.0, "rg_time_s": 1.2}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1000,23 +986,19 @@ def test_check_regression_should_use_five_percent_default_threshold(monkeypatch,
     baseline_path = tmp_path / "baseline.json"
     current_path = tmp_path / "current.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.06}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.06}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1046,12 +1028,10 @@ def test_check_regression_should_compare_hot_query_benchmarks(monkeypatch, tmp_p
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps(
-            {
-                **payload,
-                "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
-            }
-        ),
+        json.dumps({
+            **payload,
+            "rows": [{"name": "repeated_fixed_string", "first_s": 1.02, "second_s": 0.43}],
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -1110,24 +1090,20 @@ def test_check_regression_should_resolve_auto_baseline_for_windows_platform(monk
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -1169,12 +1145,10 @@ def test_check_regression_should_allow_same_environment_explicit_baseline_for_ca
     }
     baseline_path.write_text(json.dumps(payload), encoding="utf-8")
     current_path.write_text(
-        json.dumps(
-            {
-                **payload,
-                "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
-            }
-        ),
+        json.dumps({
+            **payload,
+            "rows": [{"name": "x", "tg_time_s": 1.03, "rg_time_s": 0.81}],
+        }),
         encoding="utf-8",
     )
 
@@ -1202,26 +1176,22 @@ def test_check_regression_should_resolve_auto_milestone_baseline(monkeypatch, tm
     milestones_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = milestones_dir / "baseline_m1.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "milestone": "m1",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "milestone": "m1",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "milestone": "m2",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.04}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "milestone": "m2",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.04}],
+        }),
         encoding="utf-8",
     )
 
@@ -1253,13 +1223,11 @@ def test_check_regression_should_fail_when_auto_baseline_platform_is_unavailable
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
 
@@ -1290,24 +1258,20 @@ def test_summarize_benchmarks_should_resolve_auto_baseline_for_windows_platform(
     baselines_dir.mkdir(parents=True, exist_ok=True)
     baseline_path = baselines_dir / "run_benchmarks.windows.json"
     baseline_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.0}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.0}],
+        }),
         encoding="utf-8",
     )
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "windows", "machine": "amd64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "windows", "machine": "amd64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -1342,13 +1306,11 @@ def test_summarize_benchmarks_should_fail_when_auto_baseline_platform_is_unavail
     (tmp_path / "benchmarks" / "baselines").mkdir(parents=True, exist_ok=True)
     current_path = tmp_path / "current.json"
     current_path.write_text(
-        json.dumps(
-            {
-                "suite": "run_benchmarks",
-                "environment": {"platform": "darwin", "machine": "arm64"},
-                "rows": [{"name": "x", "tg_time_s": 1.05}],
-            }
-        ),
+        json.dumps({
+            "suite": "run_benchmarks",
+            "environment": {"platform": "darwin", "machine": "arm64"},
+            "rows": [{"name": "x", "tg_time_s": 1.05}],
+        }),
         encoding="utf-8",
     )
     output_path = tmp_path / "summary.md"
@@ -1414,27 +1376,25 @@ def test_run_external_eval_should_aggregate_manifest_packs(tmp_path):
     module = _load_script_module("run_external_eval_script", "benchmarks/run_external_eval.py")
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     manifest = {
@@ -1500,27 +1460,25 @@ def test_normalize_competitor_eval_should_score_manual_records(tmp_path):
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": ["b.py"],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": ["tests/test_a.py"],
-                        "expected_validation_commands_contain": ["pytest tests/test_a.py"],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": ["b.py"],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": ["tests/test_a.py"],
+                    "expected_validation_commands_contain": ["pytest tests/test_a.py"],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     payload = {
@@ -1558,27 +1516,25 @@ def test_normalize_competitor_eval_should_normalize_windows_style_paths(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "src/pkg/mod.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": ["tests/test_mod.py"],
-                        "expected_suggested_edit_files": ["tests/test_mod.py"],
-                        "expected_test_files": ["tests/test_mod.py"],
-                        "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "src/pkg/mod.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": ["tests/test_mod.py"],
+                    "expected_suggested_edit_files": ["tests/test_mod.py"],
+                    "expected_test_files": ["tests/test_mod.py"],
+                    "expected_validation_commands_contain": ["pytest tests/test_mod.py -q"],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
     payload = {
@@ -1644,38 +1600,36 @@ def test_render_patch_scorecard_should_emit_summary_and_failures():
     module = _load_script_module(
         "render_patch_scorecard_script", "benchmarks/render_patch_scorecard.py"
     )
-    markdown = module.render_patch_scorecard(
-        [
-            {
-                "rows": [
-                    {
-                        "instance_id": "demo-1",
-                        "system": "copilot",
-                        "patch_applied": 1.0,
-                        "validation_passed": 1.0,
-                        "primary_file_hit": 1.0,
-                        "primary_span_hit": 1.0,
-                        "changed_file_recall": 1.0,
-                        "predicted_test_hit_rate": 1.0,
-                        "predicted_validation_cmd_hit_rate": 1.0,
-                        "apply_error": "",
-                    },
-                    {
-                        "instance_id": "demo-2",
-                        "system": "gemini-cli",
-                        "patch_applied": 0.0,
-                        "validation_passed": 0.0,
-                        "primary_file_hit": 0.0,
-                        "primary_span_hit": 0.0,
-                        "changed_file_recall": 0.0,
-                        "predicted_test_hit_rate": 1.0,
-                        "predicted_validation_cmd_hit_rate": 1.0,
-                        "apply_error": "timeout after 10s",
-                    },
-                ]
-            }
-        ]
-    )
+    markdown = module.render_patch_scorecard([
+        {
+            "rows": [
+                {
+                    "instance_id": "demo-1",
+                    "system": "copilot",
+                    "patch_applied": 1.0,
+                    "validation_passed": 1.0,
+                    "primary_file_hit": 1.0,
+                    "primary_span_hit": 1.0,
+                    "changed_file_recall": 1.0,
+                    "predicted_test_hit_rate": 1.0,
+                    "predicted_validation_cmd_hit_rate": 1.0,
+                    "apply_error": "",
+                },
+                {
+                    "instance_id": "demo-2",
+                    "system": "gemini-cli",
+                    "patch_applied": 0.0,
+                    "validation_passed": 0.0,
+                    "primary_file_hit": 0.0,
+                    "primary_span_hit": 0.0,
+                    "changed_file_recall": 0.0,
+                    "predicted_test_hit_rate": 1.0,
+                    "predicted_validation_cmd_hit_rate": 1.0,
+                    "apply_error": "timeout after 10s",
+                },
+            ]
+        }
+    ])
 
     assert markdown.startswith("# Patch Evaluation Scorecard")
     assert "`copilot`" in markdown

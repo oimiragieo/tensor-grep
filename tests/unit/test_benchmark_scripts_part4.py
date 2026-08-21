@@ -647,27 +647,25 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -679,22 +677,18 @@ def test_run_claude_competitor_eval_should_build_records_from_scenarios(tmp_path
             "Proc",
             (),
             {
-                "stdout": json.dumps(
-                    {
-                        "result": json.dumps(
-                            {
-                                "actual_primary_file": "a.py",
-                                "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                "actual_dependent_files": [],
-                                "actual_suggested_edit_files": [],
-                                "actual_test_files": [],
-                                "actual_validation_commands": ["pytest -q"],
-                                "context_token_count": 123,
-                                "notes": "ok",
-                            }
-                        )
-                    }
-                )
+                "stdout": json.dumps({
+                    "result": json.dumps({
+                        "actual_primary_file": "a.py",
+                        "actual_primary_span": {"start_line": 1, "end_line": 2},
+                        "actual_dependent_files": [],
+                        "actual_suggested_edit_files": [],
+                        "actual_test_files": [],
+                        "actual_validation_commands": ["pytest -q"],
+                        "context_token_count": 123,
+                        "notes": "ok",
+                    })
+                })
             },
         )(),
     )
@@ -715,27 +709,25 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
     )
     scenario_pack = tmp_path / "scenarios.json"
     scenario_pack.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "id": "demo",
-                        "language": "python",
-                        "category": "demo",
-                        "description": "demo",
-                        "repo_fixture": str(tmp_path),
-                        "query_or_symbol": "symbol",
-                        "mode": "blast-radius",
-                        "expected_primary_file": "a.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 2},
-                        "expected_dependent_files": [],
-                        "expected_suggested_edit_files": [],
-                        "expected_test_files": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "id": "demo",
+                    "language": "python",
+                    "category": "demo",
+                    "description": "demo",
+                    "repo_fixture": str(tmp_path),
+                    "query_or_symbol": "symbol",
+                    "mode": "blast-radius",
+                    "expected_primary_file": "a.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 2},
+                    "expected_dependent_files": [],
+                    "expected_suggested_edit_files": [],
+                    "expected_test_files": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -747,31 +739,25 @@ def test_run_codex_competitor_eval_should_build_records_from_scenarios(tmp_path,
             "Proc",
             (),
             {
-                "stdout": "\n".join(
-                    [
-                        json.dumps({"type": "thread.started", "thread_id": "demo"}),
-                        json.dumps(
-                            {
-                                "type": "item.completed",
-                                "item": {
-                                    "type": "agent_message",
-                                    "text": json.dumps(
-                                        {
-                                            "actual_primary_file": "a.py",
-                                            "actual_primary_span": {"start_line": 1, "end_line": 2},
-                                            "actual_dependent_files": [],
-                                            "actual_suggested_edit_files": [],
-                                            "actual_test_files": [],
-                                            "actual_validation_commands": ["pytest -q"],
-                                            "context_token_count": 123,
-                                            "notes": "ok",
-                                        }
-                                    ),
-                                },
-                            }
-                        ),
-                    ]
-                )
+                "stdout": "\n".join([
+                    json.dumps({"type": "thread.started", "thread_id": "demo"}),
+                    json.dumps({
+                        "type": "item.completed",
+                        "item": {
+                            "type": "agent_message",
+                            "text": json.dumps({
+                                "actual_primary_file": "a.py",
+                                "actual_primary_span": {"start_line": 1, "end_line": 2},
+                                "actual_dependent_files": [],
+                                "actual_suggested_edit_files": [],
+                                "actual_test_files": [],
+                                "actual_validation_commands": ["pytest -q"],
+                                "context_token_count": 123,
+                                "notes": "ok",
+                            }),
+                        },
+                    }),
+                ])
             },
         )(),
     )
@@ -972,18 +958,16 @@ def test_run_patch_bakeoff_should_score_applied_patch_and_validation(tmp_path):
         "    assert create_invoice(2) == 4\n",
         encoding="utf-8",
     )
-    patch_text = "\n".join(
-        [
-            "diff --git a/src/payments.py b/src/payments.py",
-            "--- a/src/payments.py",
-            "+++ b/src/payments.py",
-            "@@ -1,2 +1,2 @@",
-            " def create_invoice(total):",
-            "-    return total + 1",
-            "+    return total + 2",
-            "",
-        ]
-    )
+    patch_text = "\n".join([
+        "diff --git a/src/payments.py b/src/payments.py",
+        "--- a/src/payments.py",
+        "+++ b/src/payments.py",
+        "@@ -1,2 +1,2 @@",
+        " def create_invoice(total):",
+        "-    return total + 1",
+        "+    return total + 2",
+        "",
+    ])
     scenario = {
         "instance_id": "demo-1",
         "repo_fixture": str(repo_root),
@@ -1041,17 +1025,15 @@ def test_run_patch_bakeoff_should_normalize_truncated_patch_before_apply(tmp_pat
     prediction = {
         "instance_id": "demo-truncated",
         "system": "demo",
-        "model_patch": "\n".join(
-            [
-                "diff --git a/src/demo.py b/src/demo.py",
-                "--- a/src/demo.py",
-                "+++ b/src/demo.py",
-                "@@ -1,2 +1,2 @@",
-                " def value():",
-                "-    return 'old'",
-                "+    return 'new'",
-            ]
-        ),
+        "model_patch": "\n".join([
+            "diff --git a/src/demo.py b/src/demo.py",
+            "--- a/src/demo.py",
+            "+++ b/src/demo.py",
+            "@@ -1,2 +1,2 @@",
+            " def value():",
+            "-    return 'old'",
+            "+    return 'new'",
+        ]),
         "actual_test_files": [],
         "actual_validation_commands": [],
     }
@@ -1288,29 +1270,27 @@ def test_build_attempt_ledger_should_infer_final_outcome_and_retry_chain(tmp_pat
     module = _load_script_module(
         "build_attempt_ledger_script", "benchmarks/build_attempt_ledger.py"
     )
-    payload = module.build_attempt_ledger_payload(
-        {
-            "task_id": "tg-task-1",
-            "root": str(tmp_path),
-            "attempts": [
-                {
-                    "attempt_id": "attempt-1",
-                    "status": "validation_failed",
-                    "retry_stage": "validation",
-                    "retry_reason": "lint-failed",
-                    "audit_manifest_path": "artifacts/audit/attempt-1.json",
-                },
-                {
-                    "attempt_id": "attempt-2",
-                    "parent_attempt_id": "attempt-1",
-                    "status": "accepted",
-                    "validation_success": True,
-                    "score_artifact": "artifacts/scores/attempt-2.json",
-                    "audit_manifest_path": "artifacts/audit/attempt-2.json",
-                },
-            ],
-        }
-    )
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(tmp_path),
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "status": "validation_failed",
+                "retry_stage": "validation",
+                "retry_reason": "lint-failed",
+                "audit_manifest_path": "artifacts/audit/attempt-1.json",
+            },
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "status": "accepted",
+                "validation_success": True,
+                "score_artifact": "artifacts/scores/attempt-2.json",
+                "audit_manifest_path": "artifacts/audit/attempt-2.json",
+            },
+        ],
+    })
 
     assert payload["artifact"] == "agent_attempt_ledger"
     assert payload["suite"] == "agent_loop"
@@ -1335,35 +1315,33 @@ def test_build_attempt_ledger_should_infer_multi_session_and_multi_task_replay(t
     module = _load_script_module(
         "build_attempt_ledger_multitask_script", "benchmarks/build_attempt_ledger.py"
     )
-    payload = module.build_attempt_ledger_payload(
-        {
-            "task_id": "tg-task-1",
-            "root": str(tmp_path),
-            "tasks": [
-                {"task_id": "tg-task-1", "status": "accepted", "accepted_attempt_id": "attempt-2"},
-                {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
-            ],
-            "attempts": [
-                {
-                    "attempt_id": "attempt-1",
-                    "status": "validation_failed",
-                    "session_id": "session-a",
-                },
-                {
-                    "attempt_id": "attempt-2",
-                    "parent_attempt_id": "attempt-1",
-                    "status": "accepted",
-                    "session_id": "session-a",
-                },
-                {
-                    "attempt_id": "attempt-3",
-                    "parent_attempt_id": "attempt-2",
-                    "status": "accepted",
-                    "session_id": "session-b",
-                },
-            ],
-        }
-    )
+    payload = module.build_attempt_ledger_payload({
+        "task_id": "tg-task-1",
+        "root": str(tmp_path),
+        "tasks": [
+            {"task_id": "tg-task-1", "status": "accepted", "accepted_attempt_id": "attempt-2"},
+            {"task_id": "tg-task-2", "status": "accepted", "accepted_attempt_id": "attempt-3"},
+        ],
+        "attempts": [
+            {
+                "attempt_id": "attempt-1",
+                "status": "validation_failed",
+                "session_id": "session-a",
+            },
+            {
+                "attempt_id": "attempt-2",
+                "parent_attempt_id": "attempt-1",
+                "status": "accepted",
+                "session_id": "session-a",
+            },
+            {
+                "attempt_id": "attempt-3",
+                "parent_attempt_id": "attempt-2",
+                "status": "accepted",
+                "session_id": "session-b",
+            },
+        ],
+    })
 
     assert payload["replay"]["multi_session"] is True
     assert payload["replay"]["handoff"]["from_session_id"] == "session-a"
@@ -1658,19 +1636,17 @@ def test_patch_runner_common_should_normalize_truncated_model_patch():
     module = _load_script_module(
         "patch_runner_common_normalize_script", "benchmarks/patch_runner_common.py"
     )
-    patch_text = "\n".join(
-        [
-            "diff --git a/src/demo.py b/src/demo.py",
-            "index 1111111..2222222 100644",
-            "--- a/src/demo.py",
-            "+++ b/src/demo.py",
-            "@@ -1,3 +1,3 @@",
-            " line1",
-            "-old",
-            "+new",
-            " line3",
-        ]
-    )
+    patch_text = "\n".join([
+        "diff --git a/src/demo.py b/src/demo.py",
+        "index 1111111..2222222 100644",
+        "--- a/src/demo.py",
+        "+++ b/src/demo.py",
+        "@@ -1,3 +1,3 @@",
+        " line1",
+        "-old",
+        "+new",
+        " line3",
+    ])
 
     normalized = module.normalize_model_patch_text(patch_text)
 
@@ -1695,18 +1671,16 @@ def test_run_gemini_patch_predictions_should_build_patch_records(monkeypatch, tm
     monkeypatch.setattr(
         module,
         "_run_gemini_command",
-        lambda *args, **kwargs: json.dumps(
-            {
-                "response": "```diff\n"
-                "diff --git a/demo.py b/demo.py\n"
-                "--- a/demo.py\n"
-                "+++ b/demo.py\n"
-                "@@ -1 +1 @@\n"
-                "-old\n"
-                "+new\n"
-                "```"
-            }
-        ),
+        lambda *args, **kwargs: json.dumps({
+            "response": "```diff\n"
+            "diff --git a/demo.py b/demo.py\n"
+            "--- a/demo.py\n"
+            "+++ b/demo.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+            "```"
+        }),
     )
 
     payload = module.build_payload(driver_payload, model="gemini-2.5-flash")

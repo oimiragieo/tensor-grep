@@ -186,38 +186,36 @@ def test_build_external_agent_patch_driver_scorecard_should_score_compactness_an
     )
     comparison_path = tmp_path / "comparison.json"
     comparison_path.write_text(
-        json.dumps(
-            {
-                "artifact": "external_agent_patch_driver_comparison",
-                "systems": [
-                    {
-                        "system": "gemini",
-                        "primary_file": "glob.ts",
-                        "follow_up_count": 5,
-                        "parallel_read_group_count": 3,
-                        "estimated_saved_read_steps": 2,
-                        "validation_commands": ["uv run pytest -q"],
-                    },
-                    {
-                        "system": "codex",
-                        "primary_file": "fuzzy_file_search.rs",
-                        "follow_up_count": 5,
-                        "parallel_read_group_count": 3,
-                        "estimated_saved_read_steps": 2,
-                        "validation_commands": ["cargo test"],
-                    },
-                    {
-                        "system": "wide",
-                        "primary_file": "reader.py",
-                        "follow_up_count": 9,
-                        "parallel_read_group_count": 4,
-                        "estimated_saved_read_steps": 5,
-                        "validation_commands": ["pytest -q"],
-                    },
-                ],
-                "common_contract": {"next_action": "run patch system"},
-            }
-        ),
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [
+                {
+                    "system": "gemini",
+                    "primary_file": "glob.ts",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["uv run pytest -q"],
+                },
+                {
+                    "system": "codex",
+                    "primary_file": "fuzzy_file_search.rs",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["cargo test"],
+                },
+                {
+                    "system": "wide",
+                    "primary_file": "reader.py",
+                    "follow_up_count": 9,
+                    "parallel_read_group_count": 4,
+                    "estimated_saved_read_steps": 5,
+                    "validation_commands": ["pytest -q"],
+                },
+            ],
+            "common_contract": {"next_action": "run patch system"},
+        }),
         encoding="utf-8",
     )
 
@@ -241,22 +239,20 @@ def test_build_external_agent_patch_driver_scorecard_cli_should_write_output(tmp
     comparison_path = tmp_path / "comparison.json"
     output_path = tmp_path / "scorecard.json"
     comparison_path.write_text(
-        json.dumps(
-            {
-                "artifact": "external_agent_patch_driver_comparison",
-                "systems": [
-                    {
-                        "system": "codex",
-                        "primary_file": "fuzzy_file_search.rs",
-                        "follow_up_count": 5,
-                        "parallel_read_group_count": 3,
-                        "estimated_saved_read_steps": 2,
-                        "validation_commands": ["cargo test"],
-                    }
-                ],
-                "common_contract": {"next_action": "run patch system"},
-            }
-        ),
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [
+                {
+                    "system": "codex",
+                    "primary_file": "fuzzy_file_search.rs",
+                    "follow_up_count": 5,
+                    "parallel_read_group_count": 3,
+                    "estimated_saved_read_steps": 2,
+                    "validation_commands": ["cargo test"],
+                }
+            ],
+            "common_contract": {"next_action": "run patch system"},
+        }),
         encoding="utf-8",
     )
 
@@ -280,13 +276,11 @@ def test_run_cold_path_attribution_should_write_output(monkeypatch, tmp_path):
     monkeypatch.setattr(
         module,
         "generate_test_data",
-        lambda directory, num_files, lines_per_file: generated.append(
-            (
-                directory,
-                num_files,
-                lines_per_file,
-            )
-        ),
+        lambda directory, num_files, lines_per_file: generated.append((
+            directory,
+            num_files,
+            lines_per_file,
+        )),
     )
     monkeypatch.setattr(
         module,
@@ -468,14 +462,12 @@ def test_run_cold_path_attribution_should_warn_for_non_native_launcher(monkeypat
     monkeypatch.setattr(module, "run_cmd_capture", lambda *args, **kwargs: (0, ""))
 
     output_path = tmp_path / "cold-path.json"
-    exit_code = module.main(
-        [
-            "--output",
-            str(output_path),
-            "--launcher-mode",
-            "python_module_launcher",
-        ]
-    )
+    exit_code = module.main([
+        "--output",
+        str(output_path),
+        "--launcher-mode",
+        "python_module_launcher",
+    ])
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
     assert exit_code == 0

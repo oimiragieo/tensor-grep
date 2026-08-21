@@ -186,13 +186,11 @@ def test_run_gemini_patch_predictions_should_prepare_isolated_home_without_mcp(t
     source_home = tmp_path / "source-home"
     source_home.mkdir()
     (source_home / "settings.json").write_text(
-        json.dumps(
-            {
-                "mcpServers": {"Exa": {"command": "exa-mcp"}},
-                "security": {"auth": {"selectedType": "oauth-personal"}},
-                "general": {"preferredEditor": "vscode"},
-            }
-        ),
+        json.dumps({
+            "mcpServers": {"Exa": {"command": "exa-mcp"}},
+            "security": {"auth": {"selectedType": "oauth-personal"}},
+            "general": {"preferredEditor": "vscode"},
+        }),
         encoding="utf-8",
     )
     (source_home / "oauth_creds.json").write_text("{}", encoding="utf-8")
@@ -372,22 +370,20 @@ def test_run_gemini_skill_ab_should_score_records_when_scenarios_are_provided(
     }
     scenarios_path = tmp_path / "scenarios.json"
     scenarios_path.write_text(
-        json.dumps(
-            {
-                "scenarios": [
-                    {
-                        "instance_id": "demo-1",
-                        "repo_fixture": str(repo_root),
-                        "expected_primary_file": "demo.py",
-                        "expected_primary_span": {"start_line": 1, "end_line": 1},
-                        "expected_changed_files": ["demo.py"],
-                        "expected_test_files": [],
-                        "validation_commands": [],
-                        "expected_validation_commands_contain": [],
-                    }
-                ]
-            }
-        ),
+        json.dumps({
+            "scenarios": [
+                {
+                    "instance_id": "demo-1",
+                    "repo_fixture": str(repo_root),
+                    "expected_primary_file": "demo.py",
+                    "expected_primary_span": {"start_line": 1, "end_line": 1},
+                    "expected_changed_files": ["demo.py"],
+                    "expected_test_files": [],
+                    "validation_commands": [],
+                    "expected_validation_commands_contain": [],
+                }
+            ]
+        }),
         encoding="utf-8",
     )
 
@@ -463,26 +459,24 @@ def test_run_gemini_skill_ab_should_support_partial_resume(monkeypatch, tmp_path
         ]
 
     monkeypatch.setattr(module, "run_ab_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "gemini-baseline",
-                "model_patch": "",
-                "wall_clock_seconds": 1.0,
-                "notes": "",
-                "use_skill": False,
-            },
-            {
-                "instance_id": "demo-1",
-                "system": "gemini-enhanced",
-                "model_patch": "",
-                "wall_clock_seconds": 2.0,
-                "notes": "",
-                "use_skill": True,
-            },
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-baseline",
+            "model_patch": "",
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+            "use_skill": False,
+        },
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-enhanced",
+            "model_patch": "",
+            "wall_clock_seconds": 2.0,
+            "notes": "",
+            "use_skill": True,
+        },
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -544,18 +538,16 @@ def test_run_gemini_skill_ab_should_resume_incomplete_instance_ids(monkeypatch, 
         ]
 
     monkeypatch.setattr(module, "run_ab_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "gemini-enhanced",
-                "model_patch": "",
-                "wall_clock_seconds": 2.0,
-                "notes": "",
-                "use_skill": True,
-            },
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-enhanced",
+            "model_patch": "",
+            "wall_clock_seconds": 2.0,
+            "notes": "",
+            "use_skill": True,
+        },
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -729,19 +721,17 @@ def test_run_gemini_patch_predictions_should_support_partial_resume(monkeypatch,
         }
 
     monkeypatch.setattr(module, "run_gemini_patch_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "gemini-cli",
-                "model_patch": "diff --git a/demo-1 b/demo-1",
-                "actual_test_files": [],
-                "actual_validation_commands": [],
-                "wall_clock_seconds": 1.0,
-                "notes": "",
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "gemini-cli",
+            "model_patch": "diff --git a/demo-1 b/demo-1",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
@@ -1053,19 +1043,17 @@ def test_run_copilot_patch_predictions_should_support_partial_resume(monkeypatch
         }
 
     monkeypatch.setattr(module, "run_copilot_patch_record", _fake_run)
-    partial = module.build_partial_payload(
-        [
-            {
-                "instance_id": "demo-1",
-                "system": "copilot",
-                "model_patch": "diff --git a/demo-1 b/demo-1",
-                "actual_test_files": [],
-                "actual_validation_commands": [],
-                "wall_clock_seconds": 1.0,
-                "notes": "",
-            }
-        ]
-    )
+    partial = module.build_partial_payload([
+        {
+            "instance_id": "demo-1",
+            "system": "copilot",
+            "model_patch": "diff --git a/demo-1 b/demo-1",
+            "actual_test_files": [],
+            "actual_validation_commands": [],
+            "wall_clock_seconds": 1.0,
+            "notes": "",
+        }
+    ])
     output_path.write_text(json.dumps(partial), encoding="utf-8")
 
     payload = module.build_payload(
