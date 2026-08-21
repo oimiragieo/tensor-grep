@@ -15,7 +15,6 @@
     "rust_core/src/index.rs": 1756,
     "rust_core/src/main.rs": 15127,
     "rust_core/src/native_search.rs": 2686,
-    "rust_core/src/python_sidecar.rs": 1519,
     "rust_core/tests/test_ast_rewrite.rs": 2509,
     "rust_core/tests/test_index.rs": 2356,
     "rust_core/tests/test_public_native_cli_parity.rs": 2318,
