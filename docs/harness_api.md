@@ -82,6 +82,42 @@ Each `matches[]` object has:
 | `line` | `integer` | 1-based line number. |
 | `text` | `string` | Full matching line text. |
 
+## Find JSON
+
+Emitted by `tg find` when `--json` is set. `tg find` is EXPERIMENTAL: whole-repo hybrid semantic
+search (BM25 + local CPU dense-embedding relevance, RRF-fused), ranked `file:line` results. Unlike
+`tg search --rank`/`--semantic`, which re-rank an EXISTING regex match set, `tg find` walks and
+ranks the WHOLE repo with no pattern pre-filter.
+
+**Argument order is `tg find QUERY [PATH]`, not `PATH QUERY`.** Passing the path first makes the
+query be read as a path and exits `1` with `Path not found: .../<your query text>`. This is the
+reverse of the `[PATH] [SYMBOL]` shape the symbol commands use, and it is the most common way to
+mis-call this command.
+
+`tg find --json` reuses the **Search JSON envelope above** — same `version`, `routing_backend`,
+`routing_reason`, `total_matches`, `total_files`, `matched_file_paths`, `match_counts_by_file`,
+`matches`, and the GPU-routing fields — and adds two of its own:
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `schema_version` | `integer` | Find-envelope schema version, distinct from the envelope's own `version`. |
+| `rank_fallback_reason` | `string \| null` | `null` when the dense leg ran. A NON-NULL string means the dense leg was unavailable and the result is BM25-only — the documented visible-never-silent fallback. Example value: `"semantic ranking unavailable: model2vec not installed -- run \`tg install-dense\` (or pip install 'tensor-grep[semantic]') (No module named 'model2vec')"`. A BM25-only `tg find` is still a fully supported mode, so this field is an explanation, not an error. |
+
+Each `matches[]` object carries `file`, `line`, `line_number`, and `text` (both `line` and
+`line_number` are present on this route).
+
+> **KNOWN CONTRACT VIOLATION — do not model your parser on the current behaviour.**
+> As of 2026-08-21 (measured against installed `tg 1.110.16`), `tg find --json` emits
+> **`routing_backend: null` and `routing_reason: null`**. Both fields are `required` in
+> `tests/schemas/tg_output.schema.json` and typed `{"type": "string", "minLength": 1}`, so a
+> schema-validating consumer REJECTS a real `tg find` payload with
+> `None is not of type 'string'`. `tg search --json` on the same tree emits
+> `"NativeCpuBackend"` / `"json_output"`, which is the control proving the fields can be
+> populated. Tracked in `docs/BACKLOG.md` as FIND-JSON-CONTRACT-VIOLATION (P1). A consumer
+> written today must tolerate `null` on those two fields for `find` specifically; that tolerance
+> should be removed once the defect is fixed. Do NOT "fix" it by relaxing the schema — that would
+> weaken the contract for `tg search`, which is correct.
+
 ## AST Run JSON
 
 Emitted by native AST search when `tg.exe run --json` is set without `--rewrite`.
