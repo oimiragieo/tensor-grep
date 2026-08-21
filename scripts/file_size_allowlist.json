@@ -30,7 +30,6 @@
     "tests/unit/test_apply_policy.py": 2375,
     "tests/unit/test_benchmark_scripts.py": 10689,
     "tests/unit/test_cli_bootstrap.py": 2987,
-    "tests/unit/test_cli_modes.py": 17204,
     "tests/unit/test_file_deps.py": 2901,
     "tests/unit/test_gpu_benchmark_scale_contracts.py": 2244,
     "tests/unit/test_mcp_server.py": 9729,
