@@ -831,27 +831,27 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 574,
+    "lineno": 576,
     "enclosing_symbol": "_read_project_version_fallback",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception: pass, falling through to return \"0.0.0\". Only reachable when importlib.metadata.version (the primary path in _cli_package_version) has already failed and this function is being asked to parse pyproject.toml directly as a last-resort fallback for --version/tg doctor display text.",
-    "reason": "Display-only fallback for the human-readable version string: every failure mode here (missing pyproject.toml, unexpected TOML shape, IO error) degrades to a placeholder version string, never to a wrong search result or a masked backend error -- there is no correctness or security property riding on this value. Not SILENT-SWALLOW because there is nothing for a caller to act on: the function's own contract is best-effort version string or a safe placeholder, which it honors on every path.",
-    "hardened_in": null
+    "evidence": "except Exception: pass, falling through to `return _VERSION_UNAVAILABLE_SENTINEL` (\"0.0.0-unavailable\"). A3 MEDIUM (2026-08-20, PR #1070, codex REVISE round 1): PRE-FIX this returned the bare literal \"0.0.0\", indistinguishable from a legitimately-discovered version, which fed `_cli_package_version()` -> `scan()`'s `--sarif` branch (main.py) -> `scan_payload_to_sarif`'s `driver.version`/`driver.semanticVersion` (sarif.py) with no other disclosure -- a double metadata failure (importlib.metadata AND pyproject.toml both failing) produced normal-looking SARIF security-scan provenance with zero observable degradation. FIXED: the fallback now returns the sentinel `_VERSION_UNAVAILABLE_SENTINEL`, and `scan()` threads `version_unavailable=(tool_version == _VERSION_UNAVAILABLE_SENTINEL)` into `scan_payload_to_sarif`, which stamps `run.properties.tensorGrepVersionUnavailable = True`. RED-2: tests/unit/test_w1c_sarif_version_disclosure.py::test_double_version_lookup_failure_is_disclosed_in_sarif_provenance drives the real `tg scan --sarif` CLI surface (CliRunner + app, not the private helper) with both natural failure sources replaced by unique injected exception types, and is RED on the pre-fix bytes with the exact pinned reason (`'0.0.0' == '0.0.0-unavailable'`). No-injection control: test_normal_version_lookup_discloses_no_degradation asserts the marker is ABSENT on an unpatched run.",
+    "reason": "Still INTENTIONAL-BOUNDARY, not SILENT-SWALLOW: falling back to a placeholder version string on a lookup failure remains the correct behaviour for this best-effort display value -- what was wrong was that the placeholder was UNDISCLOSED to a downstream consumer (SARIF provenance) that treats it as trusted metadata. The fix makes the degradation observable at the boundary that actually consumes it (the SARIF run's properties), rather than changing the fallback's own behaviour, which is why the category is unchanged and only the evidence/fix changed.",
+    "hardened_in": "#1070"
   },
   {
     "module": "cli/main.py",
-    "lineno": 584,
+    "lineno": 586,
     "enclosing_symbol": "_cli_package_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception: return _self._read_project_version_fallback() -- the primary importlib.metadata.version('tensor-grep') lookup (e.g. package not installed via metadata, editable-install edge cases) falls through to the pyproject.toml-parsing fallback immediately above.",
-    "reason": "Same display-only rationale as _read_project_version_fallback: this is the outer half of a two-tier best-effort version lookup, and its failure mode is 'try the next fallback', not a swallowed correctness-bearing error. Both tiers terminate at a safe placeholder string.",
-    "hardened_in": null
+    "evidence": "except Exception: return _self._read_project_version_fallback() -- the primary importlib.metadata.version('tensor-grep') lookup (e.g. package not installed via metadata, editable-install edge cases) falls through to the pyproject.toml-parsing fallback immediately above, which now returns the observable `_VERSION_UNAVAILABLE_SENTINEL` on its own failure (see that row's evidence for the SARIF-disclosure fix, A3 MEDIUM PR #1070).",
+    "reason": "Still INTENTIONAL-BOUNDARY: this is the outer half of the same two-tier best-effort version lookup as `_read_project_version_fallback`, and its failure mode is unchanged ('try the next fallback'). The disclosure fix lives in the fallback tier and at the `scan()` SARIF call site, not here -- this handler's own behaviour (delegate to the next tier) was never the defect.",
+    "hardened_in": "#1070"
   },
   {
     "module": "cli/main.py",
-    "lineno": 1964,
+    "lineno": 1965,
     "enclosing_symbol": "_pcre2_fallback_backend_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -861,7 +861,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2724,
+    "lineno": 2723,
     "enclosing_symbol": "_resolve_token",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -871,7 +871,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2850,
+    "lineno": 2849,
     "enclosing_symbol": "_warn_unavailable_gpu_device_ids",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5439,
+    "lineno": 5438,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5486,
+    "lineno": 5485,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5555,
+    "lineno": 5554,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5605,
+    "lineno": 5604,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5647,
+    "lineno": 5646,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -931,7 +931,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 7425,
+    "lineno": 7424,
     "enclosing_symbol": "_maybe_swap_reversed_session_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -951,7 +951,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 3713,
+    "lineno": 3712,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -961,7 +961,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 3995,
+    "lineno": 3994,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -971,7 +971,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4174,
+    "lineno": 4173,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4237,
+    "lineno": 4236,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -991,7 +991,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8773,
+    "lineno": 8772,
     "enclosing_symbol": "session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1001,7 +1001,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8804,
+    "lineno": 8803,
     "enclosing_symbol": "session_daemon_start",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1011,7 +1011,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8829,
+    "lineno": 8828,
     "enclosing_symbol": "session_daemon_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1021,7 +1021,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8857,
+    "lineno": 8856,
     "enclosing_symbol": "session_daemon_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1031,7 +1031,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8879,
+    "lineno": 8878,
     "enclosing_symbol": "session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1041,7 +1041,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8928,
+    "lineno": 8927,
     "enclosing_symbol": "session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1051,7 +1051,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8961,
+    "lineno": 8960,
     "enclosing_symbol": "session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9050,
+    "lineno": 9049,
     "enclosing_symbol": "session_context_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1071,7 +1071,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9191,
+    "lineno": 9190,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9293,
+    "lineno": 9292,
     "enclosing_symbol": "session_edit_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1091,7 +1091,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9368,
+    "lineno": 9367,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9417,
+    "lineno": 9416,
     "enclosing_symbol": "session_importers_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1111,7 +1111,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9524,
+    "lineno": 9523,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9613,
+    "lineno": 9612,
     "enclosing_symbol": "session_blast_radius_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9652,
+    "lineno": 9651,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1141,7 +1141,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9667,
+    "lineno": 9666,
     "enclosing_symbol": "checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1151,7 +1151,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9798,
+    "lineno": 9797,
     "enclosing_symbol": "checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1161,7 +1161,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9876,
+    "lineno": 9875,
     "enclosing_symbol": "checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

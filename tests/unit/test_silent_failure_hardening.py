@@ -4,12 +4,14 @@ under ``src/tensor_grep/`` (H6-followup audit, 2026-08-20).
 WHY THIS EXISTS AND HOW IT DIFFERS FROM ``test_silent_loss_census_ratchet.py``. That file
 ratchets one *subclass* of this defect: an accumulating filesystem-walk loop whose broad
 handler drops an entry silently. This file ratchets the *superset*: every broad exception
-handler anywhere in the package (excluding the three modules another concurrent audit owns:
-``cli/main.py``, ``cli/repo_map.py``, ``cli/mcp_server.py``), whether or not it sits inside an
-accumulating loop.
+handler anywhere in the package. ``_EXCLUDED_MODULES`` below started as a live carve-out for
+modules a concurrent audit owned; the W1 campaign (docs/plans/2026-08-20-worldclass-closeout-
+plan.md) retired every entry in four serialized slices and the set is now EMPTY -- kept as an
+append point rather than deleted, per that plan's note in the block below.
 
-THE AUDIT (full classification table in the PR body). All 137 broad handlers in scope were
-read in their enclosing function, not just grepped, and classified into exactly one of:
+THE AUDIT (full classification table in ``docs/audits/2026-08-20-handler-dispositions.json``,
+not restated here). Every broad handler in scope was read in its enclosing function, not just
+grepped, and classified into exactly one of:
 
   SILENT-SWALLOW    catches, does not disclose the reason, does not re-raise, and returns a
                      normal-looking value the caller cannot distinguish from "nothing to report".
@@ -92,10 +94,17 @@ _EXCLUDED_MODULES = frozenset({
     # audit time, all 12 classified INTENTIONAL-BOUNDARY -- 5 are the daemon-fast-path
     # `_maybe_*_via_running_daemon` helpers whose fail-open `None` return always falls
     # through to an independently-correct cold path; the remaining 7 are best-effort
-    # display/advisory/heuristic-confirmation fallbacks. Zero SILENT-SWALLOW found; no
-    # RED-2 receipts needed for this slice). This retirement is an AUDIT, not a ceiling
-    # bump to absorb a `git mv` -- `_EXCLUDED_MODULES` is now empty and every broad handler
-    # under `src/tensor_grep` is in-census.
+    # display/advisory/heuristic-confirmation fallbacks). Zero handlers needed to CHANGE
+    # category, but the version-lookup pair (`_read_project_version_fallback` /
+    # `_cli_package_version`) needed DISCLOSURE hardening: A3 round-1 (codex REVISE,
+    # 2026-08-20) found their placeholder fallback fed `tg scan --sarif`'s tool provenance
+    # indistinguishably from a real version, so a double metadata failure produced
+    # normal-looking SARIF output with zero disclosed degradation. Fixed by a
+    # `_VERSION_UNAVAILABLE_SENTINEL` plus a `run.properties.tensorGrepVersionUnavailable`
+    # SARIF flag, RED-2'd against the real `tg scan --sarif` surface in
+    # `tests/unit/test_w1c_sarif_version_disclosure.py`. This retirement is an AUDIT, not
+    # a ceiling bump to absorb a `git mv` -- `_EXCLUDED_MODULES` is now empty and every
+    # broad handler under `src/tensor_grep` is in-census.
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
@@ -204,7 +213,8 @@ def _iter_broad_handlers() -> list[tuple[str, int, bool]]:
 
 def test_broad_exception_handler_population_does_not_regress() -> None:
     """Ratchet: the count of `except Exception:`/bare `except:` handlers under
-    src/tensor_grep/ (excluding the 3 modules a concurrent audit owns) must never exceed the
+    src/tensor_grep/ (excluding whatever `_EXCLUDED_MODULES` above currently names -- empty
+    as of W1's close, see that constant, not a number restated here) must never exceed the
     pinned ceiling. Every handler currently in the population was read in context and
     classified LOGGED-DEGRADE or INTENTIONAL-BOUNDARY (see module docstring) -- a NEW broad
     handler has not had that review, so this test forces it to happen before merge."""
