@@ -282,14 +282,12 @@ def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_probe_path_when_
     monkeypatch.setattr("tensor_grep.cli.main.is_cross_domain_native_binary", lambda _binary: False)
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "path_not_found",
-                "detail": "search path does not exist: <doctor-gpu-probe-file>",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "path_not_found",
+            "detail": "search path does not exist: <doctor-gpu-probe-file>",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -312,14 +310,12 @@ def test_doctor_gpu_runtime_probe_maps_path_not_found_to_failed_path_bridging_wh
     )
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "path_not_found",
-                "detail": "search path does not exist: <doctor-gpu-probe-file>",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "path_not_found",
+            "detail": "search path does not exist: <doctor-gpu-probe-file>",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -338,14 +334,12 @@ def test_doctor_gpu_runtime_probe_maps_empty_pattern_to_failed_input(
     native_tg.write_text("native", encoding="utf-8")
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "empty_pattern",
-                "detail": "PATTERN must not be empty.",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "empty_pattern",
+            "detail": "PATTERN must not be empty.",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -363,14 +357,12 @@ def test_doctor_gpu_runtime_probe_maps_invalid_regex_to_failed_input(
     native_tg.write_text("native", encoding="utf-8")
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "invalid_regex",
-                "detail": "invalid regex pattern: unterminated group",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "invalid_regex",
+            "detail": "invalid regex pattern: unterminated group",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -388,14 +380,12 @@ def test_doctor_gpu_runtime_probe_maps_gpu_fatal_to_failed_gpu_unavailable(
     native_tg.write_text("native", encoding="utf-8")
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "gpu_fatal",
-                "detail": "CUDA initialization failed: driver too old",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "gpu_fatal",
+            "detail": "CUDA initialization failed: driver too old",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -413,14 +403,12 @@ def test_doctor_gpu_runtime_probe_maps_gpu_invalid_device_id_to_failed_input(
     native_tg.write_text("native", encoding="utf-8")
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "gpu_invalid_device_id",
-                "detail": "invalid CUDA device id 99; available CUDA devices: (none)",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "gpu_invalid_device_id",
+            "detail": "invalid CUDA device id 99; available CUDA devices: (none)",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -438,14 +426,12 @@ def test_doctor_gpu_runtime_probe_maps_unrecognized_error_kind_to_failed_other(
     native_tg.write_text("native", encoding="utf-8")
 
     def _fake_run(command, **_kwargs):
-        stdout = json.dumps(
-            {
-                "version": 1,
-                "ok": False,
-                "error": "some_future_error_kind",
-                "detail": "an error the doctor has never seen before",
-            }
-        )
+        stdout = json.dumps({
+            "version": 1,
+            "ok": False,
+            "error": "some_future_error_kind",
+            "detail": "an error the doctor has never seen before",
+        })
         return subprocess.CompletedProcess(command, 2, stdout, "")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
@@ -1531,15 +1517,13 @@ def test_doctor_json_includes_native_frontdoor_flavor_fields_when_metadata_prese
     native_tg.write_text("native", encoding="utf-8")
     metadata_path = native_tg.with_name("tg-native-metadata.json")
     metadata_path.write_text(
-        json.dumps(
-            {
-                "artifact": "tensor_grep_native_frontdoor_metadata",
-                "asset_flavor": "cpu",
-                "requested_asset_flavor": "nvidia",
-                "asset_name": "tg-windows-amd64-cpu.exe",
-                "version": "9.9.9",
-            }
-        ),
+        json.dumps({
+            "artifact": "tensor_grep_native_frontdoor_metadata",
+            "asset_flavor": "cpu",
+            "requested_asset_flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "version": "9.9.9",
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")
@@ -1617,15 +1601,13 @@ def test_doctor_text_reports_native_frontdoor_flavor_mismatch(monkeypatch, tmp_p
     native_tg.write_text("native", encoding="utf-8")
     metadata_path = native_tg.with_name("tg-native-metadata.json")
     metadata_path.write_text(
-        json.dumps(
-            {
-                "artifact": "tensor_grep_native_frontdoor_metadata",
-                "asset_flavor": "cpu",
-                "requested_asset_flavor": "nvidia",
-                "asset_name": "tg-windows-amd64-cpu.exe",
-                "version": "9.9.9",
-            }
-        ),
+        json.dumps({
+            "artifact": "tensor_grep_native_frontdoor_metadata",
+            "asset_flavor": "cpu",
+            "requested_asset_flavor": "nvidia",
+            "asset_name": "tg-windows-amd64-cpu.exe",
+            "version": "9.9.9",
+        }),
         encoding="utf-8",
     )
     monkeypatch.setattr("tensor_grep.cli.main._doctor_installed_version", lambda: "9.9.9")

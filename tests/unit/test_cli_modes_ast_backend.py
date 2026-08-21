@@ -561,14 +561,12 @@ def test_scan_supports_inline_rules_text(monkeypatch, tmp_path: Path) -> None:
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join(
-        [
-            "id: no-print",
-            "language: python",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
     runner = CliRunner()
 
     result = runner.invoke(
@@ -621,14 +619,12 @@ def test_scan_supports_single_rule_file_and_positional_path(monkeypatch, tmp_pat
 
     rule_file = tmp_path / "no_print.yml"
     rule_file.write_text(
-        "\n".join(
-            [
-                "id: no-print",
-                "language: python",
-                "rule:",
-                "  pattern: print($A)",
-            ]
-        ),
+        "\n".join([
+            "id: no-print",
+            "language: python",
+            "rule:",
+            "  pattern: print($A)",
+        ]),
         encoding="utf-8",
     )
     source_root = tmp_path / "src"
@@ -729,15 +725,13 @@ def test_scan_project_filter_respects_positional_scan_paths(monkeypatch, tmp_pat
         "ruleDirs:\n  - rules\nlanguage: python\n", encoding="utf-8"
     )
     (rules_dir / "no-pass.yml").write_text(
-        "\n".join(
-            [
-                "id: no-pass",
-                "language: python",
-                "message: avoid pass",
-                "rule:",
-                "  pattern: pass",
-            ]
-        ),
+        "\n".join([
+            "id: no-pass",
+            "language: python",
+            "message: avoid pass",
+            "rule:",
+            "  pattern: pass",
+        ]),
         encoding="utf-8",
     )
     (src_dir / "sample.py").write_text("def f():\n    pass\n", encoding="utf-8")
@@ -804,16 +798,14 @@ def test_scan_inline_rules_json_preserves_rule_metadata(monkeypatch, tmp_path: P
     )
 
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
-    inline_rules = "\n".join(
-        [
-            "id: no-print",
-            "language: python",
-            "severity: warning",
-            "message: Avoid print in library code.",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: no-print",
+        "language: python",
+        "severity: warning",
+        "message: Avoid print in library code.",
+        "rule:",
+        "  pattern: print($A)",
+    ])
     runner = CliRunner()
 
     result = runner.invoke(
@@ -869,14 +861,12 @@ def test_scan_inline_rules_normalizes_ast_grep_language_names(
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
 
-    inline_rules = "\n".join(
-        [
-            "id: normalized-language",
-            f"language: {ast_grep_language}",
-            "rule:",
-            "  pattern: ERROR",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: normalized-language",
+        f"language: {ast_grep_language}",
+        "rule:",
+        "  pattern: ERROR",
+    ])
 
     result = CliRunner().invoke(
         app,
@@ -890,14 +880,12 @@ def test_scan_inline_rules_normalizes_ast_grep_language_names(
 
 
 def test_scan_inline_rules_rejects_unsupported_language(tmp_path: Path) -> None:
-    inline_rules = "\n".join(
-        [
-            "id: unsupported-language",
-            "language: Dart",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: unsupported-language",
+        "language: Dart",
+        "rule:",
+        "  pattern: print($A)",
+    ])
 
     result = CliRunner().invoke(
         app,
@@ -945,14 +933,12 @@ def test_scan_wrapper_runtime_errors_do_not_show_traceback(monkeypatch, tmp_path
         "tensor_grep.cli.ast_workflows._select_ast_backend_for_pattern",
         lambda *_args, **_kwargs: AstGrepWrapperBackend(),
     )
-    inline_rules = "\n".join(
-        [
-            "id: wrapper-error",
-            "language: Python",
-            "rule:",
-            "  pattern: print($A)",
-        ]
-    )
+    inline_rules = "\n".join([
+        "id: wrapper-error",
+        "language: Python",
+        "rule:",
+        "  pattern: print($A)",
+    ])
 
     result = CliRunner().invoke(
         app,
@@ -1600,14 +1586,12 @@ def test_run_should_emit_rewrite_plan_without_apply(monkeypatch):
         lang: str,
         path: str,
     ) -> tuple[str, int]:
-        seen.update(
-            {
-                "pattern": pattern,
-                "replacement": replacement,
-                "lang": lang,
-                "path": path,
-            }
-        )
+        seen.update({
+            "pattern": pattern,
+            "replacement": replacement,
+            "lang": lang,
+            "path": path,
+        })
         return '{"total_edits": 1, "edits": []}', 0
 
     monkeypatch.setattr(ast_workflows, "execute_rewrite_plan_json", _fake_execute_rewrite_plan_json)

@@ -105,14 +105,12 @@ def test_navigation_pack_prefetches_same_directory_related_and_test_reads_into_p
     assert len(groups) == 1
     assert groups[0]["label"] == "primary"
     assert sorted(groups[0]["roles"]) == ["primary", "related", "related", "test"]
-    assert sorted(groups[0]["files"]) == sorted(
-        [
-            str(module_path.resolve()),
-            str(sibling_a.resolve()),
-            str(sibling_b.resolve()),
-            str(test_path.resolve()),
-        ]
-    )
+    assert sorted(groups[0]["files"]) == sorted([
+        str(module_path.resolve()),
+        str(sibling_a.resolve()),
+        str(sibling_b.resolve()),
+        str(test_path.resolve()),
+    ])
 
 
 def test_files_with_matches_lists_unique_matched_files(monkeypatch):
@@ -923,22 +921,20 @@ def test_upgrade_uses_uv_when_available(monkeypatch):
 
 def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypatch):
     calls: list[list[str]] = []
-    daemon_statuses = iter(
-        [
-            {
-                "running": True,
-                "root": r"C:\dev\projects\tensor-grep",
-                "host": "127.0.0.1",
-                "port": 43123,
-                "pid": 9001,
-            },
-            {
-                "running": False,
-                "root": r"C:\dev\projects\tensor-grep",
-                "stale_metadata": True,
-            },
-        ]
-    )
+    daemon_statuses = iter([
+        {
+            "running": True,
+            "root": r"C:\dev\projects\tensor-grep",
+            "host": "127.0.0.1",
+            "port": 43123,
+            "pid": 9001,
+        },
+        {
+            "running": False,
+            "root": r"C:\dev\projects\tensor-grep",
+            "stale_metadata": True,
+        },
+    ])
     restarted: list[str] = []
 
     def _fake_run(cmd, capture_output=True, text=True, check=True):
@@ -1095,15 +1091,13 @@ def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeyp
         def read(self) -> bytes:
             return self.body.encode("utf-8")
 
-    stale_json = json.dumps(
-        {
-            "info": {"version": "0.33.0"},
-            "releases": {
-                "0.32.0": [{"yanked": False}],
-                "0.33.0": [{"yanked": False}],
-            },
-        }
-    )
+    stale_json = json.dumps({
+        "info": {"version": "0.33.0"},
+        "releases": {
+            "0.32.0": [{"yanked": False}],
+            "0.33.0": [{"yanked": False}],
+        },
+    })
     stale_simple = """
     <a href="tensor_grep-0.33.0-py3-none-any.whl">tensor_grep-0.33.0-py3-none-any.whl</a>
     """

@@ -505,12 +505,10 @@ def _write_mixed_invoice_fixture(tmp_path: Path, *, package_json: bool = False) 
     )
     if package_json:
         (project / "package.json").write_text(
-            json.dumps(
-                {
-                    "name": "mixed-invoice",
-                    "devDependencies": {"vitest": "^1.0.0"},
-                }
-            ),
+            json.dumps({
+                "name": "mixed-invoice",
+                "devDependencies": {"vitest": "^1.0.0"},
+            }),
             encoding="utf-8",
         )
     return {

@@ -1588,16 +1588,14 @@ def test_symbol_source_json_omits_unrelated_symbol_inventory(tmp_path):
 
     module_path = src_dir / "worker.cjs"
     module_path.write_text(
-        "\n".join(
-            [
-                "function safeParseJSON(raw) {",
-                "  return JSON.parse(raw);",
-                "}",
-                "",
-                *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
-                "",
-            ]
-        ),
+        "\n".join([
+            "function safeParseJSON(raw) {",
+            "  return JSON.parse(raw);",
+            "}",
+            "",
+            *[f"function unrelatedSymbol{i}() {{ return {i}; }}" for i in range(50)],
+            "",
+        ]),
         encoding="utf-8",
     )
 
