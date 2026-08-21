@@ -588,5 +588,245 @@
     "evidence": "Guards `from tensor_grep.cli.checkpoint_store import create_checkpoint; create_checkpoint(path)` and returns (_rewrite_error(f'Failed to create checkpoint: {exc}', code='checkpoint'), 1) -- an explicit refusal with a non-zero exit code, taken BEFORE any edit is written.",
     "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: this is fail-closed in the strongest sense -- a checkpoint that cannot be created ABORTS the apply rather than proceeding with an un-undoable edit. Degrading here would be the actual defect. Not in the RED-3 table because it is an internal helper, not a registered tool; its refusal path is exercised through tg_rewrite in tests/unit/test_mcp_plan_bound_apply.py.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 73,
+    "enclosing_symbol": "_upgrade_running_session_daemon_snapshot",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- a failed pre-upgrade daemon-status probe yields no snapshot, so the caller in main.py's upgrade flow simply skips the restart-after-upgrade step rather than forcing a restart against unknown state.",
+    "reason": "Best-effort upgrade-continuity helper, not a report-rendering path: a None snapshot means 'do not attempt a restart', which is the safe default when the daemon's prior state cannot be determined -- it never claims the daemon WAS running when the probe failed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 92,
+    "enclosing_symbol": "_restart_session_daemon_after_upgrade",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: current = {'running': False, 'status_error': str(exc)} -- the exception text is embedded in the local `current` dict. A3 round-1 HIGH (2026-08-20, codex REVISE on PR #1068): this row was originally miscategorized LOGGED-DEGRADE on the PRE-round-1-fix bytes, where `current` was a local variable never propagated to the function's own RETURN value -- if the subsequent restart attempt succeeded, `status_error` was discarded and the caller received a clean success message with no trace the pre-restart probe had failed (genuinely SILENT-SWALLOW on that path). Round-1 hardened the success path and the RAISING restart-failure path only, threading `status_probe_error` into those two returns. A3 round-2 codex REVISE (2026-08-20) found a THIRD exit still dropping it: the NON-RAISING restart-failure path, where `start_fn`/`start_session_daemon` returns a result dict (`{'running': False}`) without raising -- the function's final `return` statement built a WARNING with no `status_probe_error` suffix, so on that path the row was, honestly, SILENT-SWALLOW between round 1 and round 2, not LOGGED-DEGRADE as this file claimed. Round-2 fix threads `status_probe_error` into that third return too, so all three reachable exits now disclose it.",
+    "reason": "LOGGED-DEGRADE, correctly, as of the round-2 fix: the exception text is now disclosed on the returned message on all three reachable exits (restart succeeded, restart raised, restart returned a non-raising failure result). Between round 1 and round 2 the truthful category for this row was SILENT-SWALLOW (the non-raising-failure exit dropped it), which is why codex's round-2 count read 14 INTENTIONAL-BOUNDARY / 8 LOGGED-DEGRADE / 2 SILENT-SWALLOW rather than this file's stamped 14/9/1 -- that gap is now closed by the round-2 fix, restoring 14/9/1 as the truthful split. RED/GREEN receipts: tests/unit/test_w1b_cli_handler_fail_closed.py::test_restart_after_upgrade_discloses_probe_error_even_on_successful_restart (success path) and ::test_restart_after_upgrade_discloses_probe_error_on_nonraising_failure (the round-2 non-raising-failure path).",
+    "hardened_in": "W1-b (this PR, #1068 A3 round-1 HIGH + round-2 REVISE)"
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 106,
+    "enclosing_symbol": "_restart_session_daemon_after_upgrade",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: return f'WARNING: session daemon was running before upgrade but restart failed for {root}: {exc}' -- the exception text is embedded in the returned warning string that main.py prints to the operator.",
+    "reason": "The failure is surfaced verbatim in the user-visible upgrade warning, not swallowed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 370,
+    "enclosing_symbol": "_doctor_ast_grep_status",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: status[\"error\"] = str(exc) -- embedded directly in the returned doctor-status dict.",
+    "reason": "The ast-grep probe's failure is a first-class field in the payload `tg doctor --json` readers inspect.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 398,
+    "enclosing_symbol": "_doctor_rust_core_extension_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False -- an import failure of the optional rust_backend extension is treated identically to HAVE_RUST being False.",
+    "reason": "This is an availability probe whose contract IS 'return False if the capability cannot be confirmed'; an import error and a genuinely-absent extension are the same observable fact to every caller.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 415,
+    "enclosing_symbol": "_doctor_rust_binary_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- a subprocess.run failure (missing binary, timeout, OS error) on `tg --version` yields None, the same value returned when native_tg_binary is falsy or the process exits non-zero.",
+    "reason": "The module docstring documents this function's function-local subprocess import as a deliberate exception to the _self.subprocess pattern; None is this probe's documented 'version unknown' value across every failure mode (missing binary, non-zero exit, or a raised exception), consistent with the sibling _doctor_tg_candidate_version below.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 712,
+    "enclosing_symbol": "_doctor_tg_candidate_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- identical shape to _doctor_rust_binary_version: a subprocess.run failure on a candidate binary's --version probe yields None.",
+    "reason": "Same 'version unknown on any probe failure' contract as _doctor_rust_binary_version; a None candidate version is handled explicitly by every caller (_doctor_tg_launcher_kind and the launcher-shadowing scan) as 'could not determine', never as a false success.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 1028,
+    "enclosing_symbol": "_doctor_gpu_tier_installed",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False -- docstring states verbatim 'Returns False if cuDF is not installed or if the spec lookup itself raises.'",
+    "reason": "Explicitly documented fail-to-False contract for a hardware/feature probe -- the same INTENTIONAL-BOUNDARY shape as backend .is_available()/has_gpu() probes elsewhere in the codebase.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 1044,
+    "enclosing_symbol": "_doctor_gpu_tier_usable",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False -- docstring states verbatim 'Returns False on any exception so a missing CUDA driver or GPU is reported cleanly.'",
+    "reason": "Explicitly documented fail-to-False contract for a live-GPU-allocation probe.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 1063,
+    "enclosing_symbol": "_doctor_gpu_status",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as e: status[\"error\"] = str(e) -- a narrower `except ImportError` sibling sets a static string; this broad arm embeds the live exception text in the same status[\"error\"] field.",
+    "reason": "The GPU-detection failure is a first-class field in the returned status dict, read by tg doctor and the tier-installed/usable fields computed immediately after.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 1296,
+    "enclosing_symbol": "_doctor_ast_cache_status",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "PRE-FIX: `except Exception: pass` left `stale` at whatever it was set to before the exception (False on the common path), so a corrupt/unreadable AST cache manifest (malformed JSON, a missing referenced file whose stat() raises, etc.) reported a clean, silent 'stale: False' with no error field -- indistinguishable from a genuinely fresh cache.",
+    "reason": "Hardened in this PR: the except now sets stale=True (fail-safe -- an unreadable staleness check is treated as needing a rebuild, never as fresh) and adds a `stale_check_error` field carrying str(exc). RED-2 receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_ast_cache_status_prefix_silently_hid_corruption (pre-fix arm, reproduced against the real pre-fix bytes via a scoped git stash) and ::test_ast_cache_status_current_discloses_and_fails_safe (post-fix arm).",
+    "hardened_in": "W1-b (this PR)"
+  },
+  {
+    "module": "cli/doctor_report.py",
+    "lineno": 1333,
+    "enclosing_symbol": "_doctor_resident_worker_status",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: status[\"responding\"] = False -- a socket connect failure (refused, timeout, unreachable) sets the field the dict was already initialized with (\"responding\": False).",
+    "reason": "A failed TCP probe to the resident worker's port IS the observation 'not responding'; the except body writes the exact field name the initializer already carries, so no information is lost by not stringifying the low-level socket error.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 180,
+    "enclosing_symbol": "_candidate_versions_from_pip_index",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return [] -- a `pip index versions` subprocess failure yields an empty candidate list, one of several sources aggregated by the caller.",
+    "reason": "One leg of a documented multi-source best-effort probe (_latest_pypi_tensor_grep_version's docstring: 'avoids trusting one stale PyPI cache surface'); an empty list from this source simply means the final _highest_tensor_grep_version() picks from the other two sources.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 210,
+    "enclosing_symbol": "_latest_pypi_tensor_grep_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass -- the PyPI JSON-API leg of the three-source aggregation; a network/parse failure leaves `candidates` unextended by this source and execution falls through to the next `try`.",
+    "reason": "Explicitly documented in the enclosing function's own docstring as a best-effort multi-source probe; failure of one source is expected and handled by the remaining two plus the pip-index fallback.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 218,
+    "enclosing_symbol": "_latest_pypi_tensor_grep_version",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass -- the PyPI simple-index leg of the same three-source aggregation as the record above.",
+    "reason": "Same documented best-effort-aggregation boundary as the JSON-API leg immediately above.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 441,
+    "enclosing_symbol": "_fetch_native_frontdoor_checksums",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- a network/decode failure fetching CHECKSUMS.txt yields None. VERIFIED BEHAVIOURALLY (not just by reading): the sole caller, _install_release_native_frontdoor, does `if checksums_text is None: raise RuntimeError(\"...refusing to install an unverified native binary\")` BEFORE any download or install proceeds -- see tests/unit/test_w1b_cli_handler_fail_closed.py::test_fetch_checksums_failure_causes_install_to_refuse_not_silently_succeed.",
+    "reason": "This sits on the checksum-gated asset install path W1.5 flags as SILENT-SWALLOW-by-default; it is argued OUT of that default because the None it returns is not silently trusted downstream -- the caller fails closed and refuses to install an unverified binary, proven by a driving test rather than a reading.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 577,
+    "enclosing_symbol": "_install_release_native_frontdoor",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: download_errors.append(f'{candidate.flavor} asset unavailable: {exc}') -- per-candidate download failures are recorded in download_errors, which the function raises via RuntimeError('\\n'.join(...)) if every candidate is exhausted (see the tail of the loop, not itself a broad handler).",
+    "reason": "Each candidate's download failure is recorded with its flavor and exception text; the loop tries the next candidate rather than aborting on the first failure, and if none succeed the accumulated errors are surfaced in the raised RuntimeError.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/windows_launcher.py",
+    "lineno": 180,
+    "enclosing_symbol": "_windows_python_scripts_tensor_grep_package_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- a `pip show` subprocess failure yields None. The sole caller treats package_version is None as 'this launcher is unowned by the pip package' and routes it into unowned_launchers (disclosed to the operator as a distinct category from stale_launchers), never silently drops it.",
+    "reason": "A failed pip-show probe is treated as 'cannot confirm this launcher is pip-owned', which is the conservative/safe classification (unowned, not silently removable) rather than a false claim of ownership.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/windows_launcher.py",
+    "lineno": 329,
+    "enclosing_symbol": "_remove_windows_stale_tensor_grep_python_launchers",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: failed.append(f'- {launcher.path} ({reason}): {exc}') -- the failed list is joined into the function's returned report text under a 'Failed to remove...' section.",
+    "reason": "Each removal failure records the launcher path, the reason it was targeted, and the exception text; the report text surfaces this to the operator running `tg doctor --fix`/the repair command.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/windows_launcher.py",
+    "lineno": 349,
+    "enclosing_symbol": "_remove_windows_stale_tensor_grep_python_launchers",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: failed.append(f'- {unowned_launcher.path} ({reason}): {exc}') -- same failed-list/report-text disclosure as the record above, for the orphan-backup branch.",
+    "reason": "Same disclosure mechanism as handler 0 in this symbol: the backup failure is recorded with path, reason, and exception text in the operator-facing report.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/windows_launcher.py",
+    "lineno": 662,
+    "enclosing_symbol": "_repair_windows_python_subprocess_launcher",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: candidate_path.unlink(missing_ok=True); os.replace(backup_path, candidate_path); raise -- a re-raising handler: it restores the pre-repair backup before propagating the original exception to the OUTER handler at line 666.",
+    "reason": "This is a cleanup-then-reraise boundary (restore the backup on a failed in-place copy/verify), not a swallow -- the exception is never lost, only caught by the enclosing handler which discloses it (see the next record).",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/windows_launcher.py",
+    "lineno": 666,
+    "enclosing_symbol": "_repair_windows_python_subprocess_launcher",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: payload.update({\"status\": \"failed\", \"message\": f'Python subprocess launcher repair failed: {exc}'}) -- the exception raised (and re-raised) by the inner handler above is caught here and embedded in the returned payload's message field.",
+    "reason": "This is the outer boundary that catches the inner handler's re-raised exception and turns it into an explicit failed-status payload with the exception text -- the disclosure endpoint for the re-raise chain above.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/ast_scan.py",
+    "lineno": 819,
+    "enclosing_symbol": "_run_ast_scan_payload",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: for rule, rule_cfg in wrapper_rules: other_resolved.append((rule, rule_cfg, wrapper_backend)); wrapper_rules = [] -- a failure of the project-wide wrapper fast path (search_project) routes every rule that fast path was going to handle into other_resolved, the general per-rule resolution path, and clears wrapper_rules so they are not double-processed. VERIFIED via AST inspection of the handler body (tests/unit/test_w1b_cli_handler_fail_closed.py::test_run_ast_scan_payload_wrapper_failure_falls_back_not_drops), because driving the full scan pipeline needs a live ast-grep/tree-sitter engine this box may not have.",
+    "reason": "A performance fast-path failing falls back to the correctness-preserving general path rather than silently dropping the affected rules from the scan -- the rules are still processed, just without the project-wide batching optimization.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 555,
+    "enclosing_symbol": "_install_release_native_frontdoor",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: raise RuntimeError(f'release-native front-door asset install refused: fetching CHECKSUMS.txt for v{version} raised {exc}; refusing to install an unverified native binary') from exc -- newly added in W1-b (2026-08-20, A3 round-1 MEDIUM remediation) so that a checksum-fetch dependency override (test injection, or a future refactor of `_fetch_native_frontdoor_checksums`) that raises instead of returning None still results in a disclosed refusal rather than an unwrapped exception escaping the install path.",
+    "reason": "The exception text is embedded verbatim in the raised RuntimeError via `from exc` chaining, and the install is refused (no binary written) exactly as the pre-existing checksums_text-is-None branch immediately below it already does. RED/GREEN receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_fetch_checksums_failure_causes_install_to_refuse_not_silently_succeed (injected arm asserts the marker propagates into the raised message; control arm proves the natural None-return path is unaffected).",
+    "hardened_in": "W1-b (this PR, #1068 A3 round-1 MEDIUM)"
   }
 ]

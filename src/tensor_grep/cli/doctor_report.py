@@ -86,10 +86,17 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
     root = str(snapshot.get("root") or "").strip()
     if not root:
         return None
+    status_probe_error: str | None = None
     try:
         current = _self._doctor_session_daemon_status(root)
     except Exception as exc:
+        # A73 hardening (2026-08-20, codex REVISE on PR #1068): `current` is a purely local
+        # variable, so a probe failure here used to be silently swallowed the moment the
+        # restart below happened to succeed -- the returned message read as a clean success
+        # with no trace that the pre-restart status could not be determined. Disclose it on
+        # the returned payload instead of discarding it.
         current = {"running": False, "status_error": str(exc)}
+        status_probe_error = str(exc)
     if current.get("running") is True:
         return None
     try:
@@ -97,10 +104,32 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
 
         started = start_session_daemon(root)
     except Exception as exc:
-        return f"WARNING: session daemon was running before upgrade but restart failed for {root}: {exc}"
+        suffix = (
+            f" (pre-restart status probe also failed: {status_probe_error})"
+            if status_probe_error
+            else ""
+        )
+        return (
+            f"WARNING: session daemon was running before upgrade but restart failed for "
+            f"{root}: {exc}{suffix}"
+        )
     if started.get("running") is True:
+        if status_probe_error:
+            return (
+                f"Session daemon restarted after upgrade for {root} (note: the pre-restart "
+                f"status check failed and could not confirm whether a restart was actually "
+                f"needed: {status_probe_error})."
+            )
         return f"Session daemon restarted after upgrade for {root}."
-    return f"WARNING: session daemon was running before upgrade but did not restart for {root}."
+    suffix = (
+        f" (pre-restart status probe also failed: {status_probe_error})"
+        if status_probe_error
+        else ""
+    )
+    return (
+        f"WARNING: session daemon was running before upgrade but did not restart for "
+        f"{root}{suffix}."
+    )
 
 
 def _doctor_lsp_languages() -> list[str]:
@@ -1264,8 +1293,17 @@ def _doctor_ast_cache_status(root_path: str, config_path: str) -> dict[str, Any]
                             break
                     if stale:
                         break
-        except Exception:
-            pass
+        except Exception as exc:
+            # W1-b (2026-08-20) SILENT-SWALLOW hardening: this used to be `except Exception:
+            # pass`, which left `stale` at whatever it was set to before the exception (False
+            # on the common path -- a corrupt/unreadable cache file or manifest read at the
+            # `Path(config_path).resolve()`/`json.load` calls above reported a clean, silent
+            # "not stale", indistinguishable from a genuinely fresh cache. Fail SAFE instead:
+            # an unreadable staleness check means "assume stale" (worst case is an unnecessary
+            # rebuild, never a stale cache reported as fresh), and disclose why on the payload
+            # `tg doctor --json` readers already inspect.
+            stale = True
+            status["stale_check_error"] = str(exc)
         status["stale"] = stale
     if not status["exists"]:
         # Round-5 UX: a cold cache silently costs ~20-30s on the first query over a large tree.

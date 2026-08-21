@@ -80,11 +80,16 @@ _EXCLUDED_MODULES = frozenset({
     # 2 SILENT-SWALLOW, both hardened, RED arms in
     # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
     # ceiling bump to absorb a `git mv`.
-    # extracted from cli/main.py, unaudited for the same reason it is
-    "cli/ast_scan.py",
-    "cli/doctor_report.py",
-    "cli/native_frontdoor.py",
-    "cli/windows_launcher.py",
+    # W1-b (2026-08-20) RETIRED the four remaining split-floor exclusions --
+    # `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`,
+    # `cli/ast_scan.py`. All 24 of their broad handlers (23 originally audited + 1 new
+    # `except Exception` added by this PR's own A3 round-1 MEDIUM hardening of
+    # `_install_release_native_frontdoor`'s checksum-fetch call, itself dispositioned
+    # LOGGED-DEGRADE) were read in their enclosing functions and dispositioned in
+    # `docs/audits/2026-08-20-handler-dispositions.json` (14 INTENTIONAL-BOUNDARY, 9
+    # LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
+    # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
+    # ceiling bump to absorb a `git mv`.
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
@@ -106,7 +111,29 @@ _EXCLUDED_MODULES = frozenset({
 # The two hardened SILENT-SWALLOW sites are still `except Exception`, so hardening them by
 # DISCLOSURE (rather than by narrowing the type) does not reduce the count -- the docstring
 # above lists three hardening moves and only the first removes a handler from this population.
-TOTAL_BROAD_HANDLERS_CEILING = 196
+#
+# W1-b ceiling arithmetic (this PR; base is W1-a's own committed ceiling, this branch's parent
+# commit -- re-derived via `python scripts/handler_census.py --include-excluded --by-slice`
+# immediately before this commit, not arithmetic-forwarded):
+#     base (this branch's parent, W1-a)                          196
+#   + cli/doctor_report.py + native_frontdoor.py + windows_launcher.py + ast_scan.py  23
+#   ------------------------------------------------------------
+#                                                               219
+# The one hardened SILENT-SWALLOW site (_doctor_ast_cache_status) is still `except Exception`,
+# hardened by disclosure + fail-safe default rather than type-narrowing, so it does not reduce
+# this count either.
+#
+# A3 round-1 correction (2026-08-20, codex REVISE on #1068): fixing the HIGH finding on
+# `_restart_session_daemon_after_upgrade` reused the existing `except Exception as exc:` sites
+# (no new handler), but fixing the MEDIUM finding on `_install_release_native_frontdoor` added
+# ONE new broad handler -- wrapping the checksum-fetch call so an injected/future-raising
+# `_fetch_native_frontdoor_checksums` still produces a disclosed refusal instead of an unwrapped
+# exception. Re-derived via `python scripts/handler_census.py --include-excluded --by-slice`
+# immediately before this commit: W1-b handlers=24 (was 23), dispositioned 14/9/1 in
+# `docs/audits/2026-08-20-handler-dispositions.json` (INTENTIONAL-BOUNDARY/LOGGED-DEGRADE/
+# SILENT-SWALLOW). Ceiling raised by exactly that one handler:
+#     219 + 1 (native_frontdoor.py checksum-fetch except, LOGGED-DEGRADE)              220
+TOTAL_BROAD_HANDLERS_CEILING = 220
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
