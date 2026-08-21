@@ -1,6 +1,6 @@
 import subprocess
 
-from tests.unit.test_benchmark_scripts import _load_script_module
+from tests.unit.test_benchmark_scripts_part1 import _load_script_module
 
 
 def test_run_gpu_benchmarks_should_treat_no_match_correctness_as_success(monkeypatch, tmp_path):
