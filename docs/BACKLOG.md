@@ -47,6 +47,28 @@
 
 
 
+## Recent campaign notes (2026-08-20) - PYPI-SIZE-CAP: release pipeline hard-blocked (P0, CEO-GATED remediation)
+
+- **Finding (2026-08-20, run 32426087438):** `publish-pypi` failed with HTTP 400
+  `Project size too large. Limit for project 'tensor-grep'` on the v1.111.1 publish (W2-b,
+  PR #1061). Measured from the PyPI JSON API at time of failure: **713 releases, 10.73 GB
+  total, ~15 MB per release** (4 native-asset wheels each) against PyPI's 10 GB project cap.
+- **State it leaves:** v1.111.1 is TAGGED with GitHub release assets published
+  (`Semantic Release` + `publish-github-release-assets` both green), but **no PyPI wheel**
+  - the committed-not-shipped class. Every future `fix:`/`feat:` publish 400s until space
+  is freed. The closeout campaign's remaining `[REL]` windows are blocked on this.
+- **Remediation options (both CEO-GATED):**
+  1. **Delete old release files on PyPI** (keep recent versions + pinned milestones).
+     Frees space immediately; IRREVERSIBLE and user-facing (anyone pinning a deleted
+     version breaks). Needs an explicit keep-list decision.
+  2. **File a PyPI project-size limit increase request** (pypi/support GitHub issue,
+     standard process; public, takes days-weeks). Non-destructive; slower.
+  - Mitigation regardless: reduce per-release footprint (4 wheels x ~15 MB every patch
+    release is the growth driver; 713 releases is the accumulation driver).
+- **Verification command:** `curl -s https://pypi.org/pypi/tensor-grep/json` and sum
+  `releases[*][*].size`; re-run the failed publish only after space is freed (a rerun
+  before that 400s again - do not panic-rerun).
+
 ## Recent campaign notes (2026-08-14) - W5-W8 closeout: demand dispositions, CEO packets, board final sweep
 
 - **Scope:** the W5-W8 tail of `docs/plans/2026-08-13-backlog-completion-plan.md` (council-approved
