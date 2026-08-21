@@ -461,6 +461,16 @@ The multi-writer discipline when several agents split/move code concurrently. Fu
   (moving a file does not audit it), and source-scanning tests must census the FAMILY
   (`glob("repo_map*.py")` with a `len(paths) > 1` scan-ran control), or the count silently
   stops covering the emitter that moved.
+- **A monitor's output tail shows what HAPPENED, not what it WATCHES.** A quiet tail on a
+  dynamic monitor reads identically to a stale baked list; read the stored command (TaskStop
+  echoes it) before replacing a monitor you suspect. Receipt: 2026-08-20, a healthy
+  gh-pr-list-every-pass monitor was stopped on the strength of its own quiet tail.
+- **A stop-notification proves the agent has NO live background children.** When a subagent
+  stops saying it is waiting on its own background work, the notification itself refutes the
+  story -- SendMessage-nudge it to run the verification foreground and finish the slice.
+- **When slice B builds the tested form of something slice A stubbed on a shared surface,
+  B's brief must name the reconciliation duty** (replace A's ad-hoc wiring, keep stable IDs
+  so cross-references resolve). Receipt: W2-a's untested inline snippet vs W2-c's module.
 - **Monitors: key on `PR:head-sha`** (first-terminal-state keying goes silent after a re-push)
   and print an explicit exit line so stream-end is not mistaken for a hang.
 - **A dead agent's worktree**: diff it against its branch before reasoning about its CI — both
