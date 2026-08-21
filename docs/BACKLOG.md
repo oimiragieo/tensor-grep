@@ -47,6 +47,64 @@
 
 
 
+## Recent campaign notes (2026-08-21) - SCAN-SILENT-CLEAN-ON-MISSING-PATH (P0-class honesty defect on a SECURITY surface)
+
+- **`tg scan --ruleset` reports a CLEAN result, exit 0, for a path that does not exist.** Its exit
+  code and its payload are byte-comparable between "scanned a real tree and found nothing" and
+  "never read a single file". On a security-rule surface this is the false-zero law embodied in the
+  shipped product: a CI gate running `tg scan --ruleset secrets-basic <path>` against a mistyped,
+  moved, or wrongly-translated path reports the repository CLEAN and exits 0.
+- **`tg search` on the SAME input is correct**, which is both the control proving the probe
+  discriminates and the proof that a fix has a working sibling to copy:
+
+  | command | missing path | real path containing one finding |
+  |---|---|---|
+  | `tg scan --ruleset subprocess-safe` | **exit 0**, `matched_rules: 0`, `total_matches: 0` | exit 0, `matched_rules: 1`, `total_matches: 1` |
+  | `tg search` | exit **2**, `{"error":"path_not_found","ok":false}` | exit 0, matches |
+
+- **Reproduction (measured 2026-08-21, installed `tg 1.110.16`; exit codes read UNPIPED, because a
+  trailing `| head` reports the pipeline's status and not tg's):**
+
+      tg scan "C:\definitely\does\not\exist\anywhere" --ruleset subprocess-safe --json >/dev/null 2>&1; echo $?   # 0
+      tg search "X"  "C:\definitely\does\not\exist\anywhere" --json               >/dev/null 2>&1; echo $?   # 2
+
+- **This is NOT a WSL-specific defect, and that reframes #90.** It was found while premise-checking
+  the WSL rows, but it reproduces on a plain nonexistent WINDOWS path with no WSL involved. #90 is
+  filed as "WSL raw-path scan matched_rules=0 while translated-path control total_matches=6" and is
+  BLOCKED behind the Task 2A/2B typed-path program. The WSL symptom is a *consequence*: a
+  `/mnt/c/...` argument is silently rewritten to `C:\mnt\c\...` (verified: `C:\mnt` does not exist)
+  and then scanned as if it were real. **The underlying missing-path validation gap is independent
+  of typed paths and is fixable today** without waiting on that program -- `tg search`'s existing
+  `path_not_found` check is the model.
+- **Measured WSL arm, for the record** (fixture: 6 files with a marker + 1 file with a
+  `subprocess.call(..., shell=True)` finding):
+
+  | arm | path tg actually used | `matched_rules` | exit |
+  |---|---|---|---|
+  | control, native Windows path | the real directory | 1 | 0 |
+  | WSL raw `/mnt/c/...` | `C:\mnt\c\...` (does not exist) | 0 | 0 |
+
+  The `total_matches=6` control quoted in #90's row reproduces exactly on `tg search` with the
+  native path, so the historical receipt is sound; what has changed is the diagnosis.
+- **Instrument note, so the next person does not lose an hour to it:** running this repro from Git
+  Bash WITHOUT `MSYS_NO_PATHCONV=1` mangles `/mnt/c/...` into
+  `C:/Program Files/Git/mnt/c/...` before tg ever sees it, producing a real-looking
+  `path_not_found` that is the SHELL's doing, not the product's. Every arm above was run with
+  `MSYS_NO_PATHCONV=1`.
+- **#89 also still reproduces** (`tg search` with a raw `/mnt/c/...` path -> exit 2,
+  `path_not_found`), so that row's premise is intact. Arguably that is CORRECT behaviour for a
+  Windows binary given `/mnt/c/...` is not a Windows path; whether the Windows front door should
+  TRANSLATE WSL paths is the actual open design question, and it belongs to the typed-path program.
+  The row should say so rather than describing it as a bug.
+- **Proposed fix (needs its own `fix:` PR; `fix:` cannot publish while PYPI-SIZE-CAP is open):**
+  validate the scan root before scanning and fail closed with the same `path_not_found` shape and
+  exit code `tg search` already uses. Required RED arm, bidirectional: a nonexistent path must exit
+  non-zero BEFORE the fix is written (it currently exits 0), and a real path with a known finding
+  must still exit 0 with `matched_rules: 1` after -- otherwise the guard is indistinguishable from
+  breaking scan entirely. Sweep the sibling scan-family surfaces (`tg scan` with a config file,
+  `tg run`, and the MCP `tg_ruleset_scan` handler) rather than fixing only the one route measured
+  here: the census, not the instance.
+
 ## Recent campaign notes (2026-08-21) - FIND-JSON-CONTRACT-VIOLATION (P1, product defect, found by dogfood)
 
 - **`tg find --json` violates the search-output contract it reuses, on two REQUIRED fields.**
