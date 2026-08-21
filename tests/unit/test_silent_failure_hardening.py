@@ -70,29 +70,27 @@ PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 # counting them now would raise the ceiling 137 -> 160 on the strength of a `git mv`, which is
 # exactly the "raise the pin to make unreviewed handlers pass" this file's own comment forbids.
 # They should be classified when `cli/main.py` itself is, and this whole block retired together.
-_EXCLUDED_MODULES = frozenset(
-    {
-        "cli/main.py",
-        # W1-a (2026-08-20) RETIRED the four `cli/mcp_*` exclusions -- `cli/mcp_server.py`,
-        # `cli/mcp_rewrite_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_symbol_tools.py`. All 57
-        # of their broad handlers were read in their enclosing functions and dispositioned in
-        # `docs/audits/2026-08-20-handler-dispositions.json` (55 INTENTIONAL-BOUNDARY, each with a
-        # behavioural fail-closed arm in `tests/unit/test_w1a_mcp_handler_fail_closed.py`;
-        # 2 SILENT-SWALLOW, both hardened, RED arms in
-        # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
-        # ceiling bump to absorb a `git mv`.
-        # W1-b (2026-08-20) RETIRED the four remaining split-floor exclusions --
-        # `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`,
-        # `cli/ast_scan.py`. All 24 of their broad handlers (23 originally audited + 1 new
-        # `except Exception` added by this PR's own A3 round-1 MEDIUM hardening of
-        # `_install_release_native_frontdoor`'s checksum-fetch call, itself dispositioned
-        # LOGGED-DEGRADE) were read in their enclosing functions and dispositioned in
-        # `docs/audits/2026-08-20-handler-dispositions.json` (14 INTENTIONAL-BOUNDARY, 9
-        # LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
-        # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
-        # ceiling bump to absorb a `git mv`.
-    }
-)
+_EXCLUDED_MODULES = frozenset({
+    "cli/main.py",
+    # W1-a (2026-08-20) RETIRED the four `cli/mcp_*` exclusions -- `cli/mcp_server.py`,
+    # `cli/mcp_rewrite_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_symbol_tools.py`. All 57
+    # of their broad handlers were read in their enclosing functions and dispositioned in
+    # `docs/audits/2026-08-20-handler-dispositions.json` (55 INTENTIONAL-BOUNDARY, each with a
+    # behavioural fail-closed arm in `tests/unit/test_w1a_mcp_handler_fail_closed.py`;
+    # 2 SILENT-SWALLOW, both hardened, RED arms in
+    # `tests/unit/test_w1a_mcp_silent_swallow_fixes.py`). This retirement is an AUDIT, not a
+    # ceiling bump to absorb a `git mv`.
+    # W1-b (2026-08-20) RETIRED the four remaining split-floor exclusions --
+    # `cli/doctor_report.py`, `cli/native_frontdoor.py`, `cli/windows_launcher.py`,
+    # `cli/ast_scan.py`. All 24 of their broad handlers (23 originally audited + 1 new
+    # `except Exception` added by this PR's own A3 round-1 MEDIUM hardening of
+    # `_install_release_native_frontdoor`'s checksum-fetch call, itself dispositioned
+    # LOGGED-DEGRADE) were read in their enclosing functions and dispositioned in
+    # `docs/audits/2026-08-20-handler-dispositions.json` (14 INTENTIONAL-BOUNDARY, 9
+    # LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
+    # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
+    # ceiling bump to absorb a `git mv`.
+})
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
 # handler counted here was read in context and classified LOGGED-DEGRADE or INTENTIONAL-BOUNDARY.
