@@ -49,7 +49,8 @@ Three independent conditions in the pass/fail rules are each independently suffi
    in-repo ratchet. Note the correction recorded under F-1: measurement shows the limit is
    currently UNREACHABLE for the three largest files, so the honest reading is not "deferred
    work" but an accepted structural exception that has never been stated as one.
-2. **A Critical and three High findings are unresolved** (§7).
+2. **Two Critical and three High findings are unresolved** (§7) — including F-0, an advertised security capability that does not run on a stock install of the published
+   artifact.
 3. **Documentation is not sufficient to rebuild the feature from scratch** for 2 of the 3
    load-bearing features assessed (§9).
 
@@ -76,8 +77,13 @@ in the verification layer than in the product:
 - Two pull requests carrying error-handling hardening sat merge-ready with **zero CI runs**, because
   a PR whose base is a feature branch never triggers `ci.yml` (which filters on the *base* ref), and
   `gh` renders that absence as `skipping`. **Both went red the moment real CI ran.**
-- `tg scan --ruleset` returns **exit 0 with `matched_rules: 0` for a path that does not exist** — a
-  clean bill of health from a security scanner that read nothing.
+- `tg scan --ruleset` returned **exit 0 with `matched_rules: 0` for a path that does not exist** —
+  a clean bill of health from a security scanner that read nothing (fixed during this audit).
+- And the same command does not run **at all** on a stock install of the published wheel, while
+  `tg rulesets` advertises six security rulesets with rule counts. Every earlier check of that
+  feature had been run on a maintainer's machine, which has a native binary that serves it —
+  the measurement was taken from the wrong population until it was repeated in a clean
+  container against the published artifact.
 
 Strengths worth stating plainly, because an audit that only lists defects misrepresents the
 codebase: the contract documentation in `docs/CONTRACTS.md` is unusually rigorous (it documents its
@@ -103,7 +109,7 @@ depending on their platform.
 | Implementation quality | **PASS (with findings)** | Medium | 137 broad handlers audited and dispositioned; 3 SILENT-SWALLOW found and hardened | Continue the census discipline |
 | Unit tests | **PARTIAL** | High | ~7,000 tests, strong perturbation/control discipline; but a primary contract schema had no validating test until this audit | Validate every declared contract |
 | Mocks & fixtures | **PASS** | Low | Fixtures are per-scenario, no oversized shared fixture found; no secrets or production data | None |
-| Security | **PASS (with 1 High)** | High | Prior audits found 8/8 hardening targets already correct; but `tg scan` cannot distinguish clean from unread | Fix SCAN-SILENT-CLEAN-ON-MISSING-PATH |
+| Security | **FAIL** | Critical | `tg scan --ruleset` does not run at all on a stock `pip install` of v1.111.1 (F-0), and separately could not distinguish clean from unread (F-5, fixed) | Make the advertised rulesets reachable, or disclose their unavailability |
 | Operations / release | **FAIL** | Critical | PyPI at 10.734 GB vs a 10 GB cap; v1.111.1 published 2 of 4 artifacts | Execute an approved retention policy |
 | CI gating integrity | **FAIL** | High | Stacked PRs receive no CI and render as `skipping` | Enforce `baseRefName == main` before merge |
 | Documentation | **FAIL** | High | 2 of 3 features fail the junior-rebuild test; 2 self-contradictions | Write the named missing sections |
@@ -167,6 +173,62 @@ specification. The matrix is therefore keyed to contract sections.
 ---
 
 ## 7. Detailed Findings
+
+### F-0 — the advertised built-in security rulesets do not run on a stock install
+**Severity: Critical** · `tg scan --ruleset` / `tg rulesets` · reproduced on the **published**
+v1.111.1 wheel, not a dev tree
+
+**Evidence.** Clean `python:3.12-slim` container, `pip install tensor-grep==1.111.1`, nothing else:
+
+| command | result |
+|---|---|
+| `tg rulesets` | lists 6 rulesets — `auth-safe`, `crypto-safe`, `deserialization-safe`, `secrets-basic` (21 rules), `subprocess-safe` (33 rules), `tls-safe` — with **no availability caveat** |
+| `tg scan /probe --ruleset subprocess-safe --json` | **exit 1**: `Explicit AST search requires AST dependencies: ast-grep wrapper backend is required for this pattern but is not available` |
+| same command, path that does not exist | identical error and exit code — the failure is **unconditional**, not input-dependent |
+
+The probe directory contained a real `subprocess.call(..., shell=True)` finding, so this is not an
+empty-input artifact.
+
+**Cause.** Nothing installs the backend these rules need. `ast_grep_py` appears in **no dependency
+and no extra** in `pyproject.toml` — the `ast` extra ships **tree-sitter**, which the error message
+itself states cannot serve ast-grep code patterns. And the wheel bundles no native binary:
+`tg doctor --json` in that container reports `native_tg_binary_exists: false`,
+`native_tg_binary_kind: "missing"`, and `tg` on `PATH` is the Python console script.
+
+**Why every prior check missed it, which is the transferable part.** A developer machine with a
+separately-installed native `tg` binary serves these rules and returns `matched_rules: 1`. The
+capability is present for whoever built the native artifact and absent for whoever ran
+`pip install`. **Any verification of this feature executed on a maintainer's machine measures the
+wrong population** — and this audit's own earlier probes did exactly that, reporting the ruleset
+scan as working, until the same commands were run against the published wheel in a clean container.
+
+**It also explains an apparently unrelated CI failure.** `test-python (ubuntu-latest)` on PR #1070
+fails with this exact message: the Linux lanes have no ast-grep, so any scan reaching a code
+pattern errors there while passing on Windows. That test tracked the environment, not the
+behaviour under test (AGENTS.md A85).
+
+**The house standard already exists one command over.** With its optional backend absent, `tg find`
+degrades VISIBLY, still returns results (BM25-only), and names the fix:
+``semantic ranking unavailable: model2vec not installed -- run `tg install-dense` (or pip install
+'tensor-grep[semantic]')``. `tg scan --ruleset` hard-fails with no remediation string, and there is
+no `install-ast` counterpart to `install-dense`.
+
+**Risk.** A user following the documented install path gets a security scanner that cannot scan,
+announced by a listing that says it can. A CI pipeline wiring `tg scan --ruleset secrets-basic` as
+a gate fails closed here (exit 1) rather than falsely passing — which is the one mercy — but the
+feature is simply unavailable, and the error tells the user nothing about how to obtain it.
+
+**Remediation (choose deliberately; all `fix:`-class):**
+1. Make the built-in rulesets serviceable without ast-grep; or
+2. add the backend to an extra plus an `install-ast` one-shot mirroring `install-dense`, and give
+   the error a remediation string naming it; and
+3. have `tg rulesets` disclose availability on the CURRENT install rather than advertising rule
+   counts that cannot run — an advertised 33 rules that always errors is worse than an honest
+   "unavailable here".
+
+**Acceptance:** the test must run in a **clean container off the published artifact**, not on a
+machine with a native binary present, or it will pass while the defect ships. That constraint is
+the finding restated as a gate.
 
 ### F-1 — `repo_map.py` is unreviewable at 15,243 lines and houses the auto-edit safety gate
 **Severity: Critical** · `src/tensor_grep/cli/repo_map.py` · edit-plan confidence gate
