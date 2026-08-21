@@ -6,7 +6,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
-from tests.unit.test_cli_modes import (
+from tests.unit.test_cli_modes_shared import (
     _canonical_manifest_bytes,
     _FakeAstPipeline,
     _FakeAstScanner,
