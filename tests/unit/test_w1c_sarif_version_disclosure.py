@@ -35,6 +35,7 @@ DISCRIMINATING-ORACLE DISCIPLINE (the shape both W1-a and W1-b were sent back fo
 
 from __future__ import annotations
 
+import importlib.metadata
 import json
 from pathlib import Path
 from typing import Any
@@ -70,8 +71,22 @@ def test_double_version_lookup_failure_is_disclosed_in_sarif_provenance(
 ) -> None:
     inline_rules, root = _write_regex_rule_and_target(tmp_path)
 
-    def _raise_metadata(*_args: Any, **_kwargs: Any) -> str:
-        raise _InjectedMetadataFailure("simulated importlib.metadata failure")
+    pristine_metadata_version = importlib.metadata.version
+
+    def _raise_metadata(distribution_name: str, *args: Any, **kwargs: Any) -> str:
+        # Scoped to the distribution under test ON PURPOSE. `_cli_package_version()` only ever
+        # looks up "tensor-grep", so raising for EVERY package is wider than this scenario needs
+        # -- and where the optional `ast_grep_py` extra is installed, the AST backend's own
+        # availability probe calls this same function, receives the injected failure, and the
+        # scan aborts with "Explicit AST search requires AST dependencies" before any SARIF is
+        # emitted. That made the test's outcome depend on WHICH OPTIONAL DEPENDENCY happened to
+        # be installed rather than on the behaviour under test: it passed on a box without the
+        # extra and failed on CI lanes that have it. Delegating every other lookup to the real
+        # implementation keeps this arm env-independent while preserving the double-failure
+        # precondition (both natural sources of the tensor-grep version are down).
+        if distribution_name == "tensor-grep":
+            raise _InjectedMetadataFailure("simulated importlib.metadata failure")
+        return pristine_metadata_version(distribution_name, *args, **kwargs)
 
     pristine_read_text = Path.read_text
 
