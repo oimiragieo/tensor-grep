@@ -123,6 +123,52 @@ _AUD = "tensor_grep.cli.audit_manifest"
 _CKPT = "tensor_grep.cli.checkpoint_store"
 _SYM = "tensor_grep.cli.mcp_symbol_tools"
 
+# Cases whose guarded body is unreachable in a bare environment need setup BEFORE the injection,
+# or the tool short-circuits and the case silently measures the short-circuit instead of the
+# handler. Keyed by case id; each entry is applied with the same monkeypatch as the injection.
+#
+# `tg_ast_search` is the one that needed it, and CI is what found it: on a runner without
+# ast-grep, `Pipeline(ast=True)` raises ConfigurationError and the tool returns a clean
+# `code: "unavailable"` envelope from a branch ABOVE the broad handler. The old oracle called
+# that a pass (an error came back!); the marker-based oracle correctly called it
+# non-discriminating. Locally ast-grep IS present, so this case only ever failed on CI -- the
+# environment difference was invisible on this desktop.
+_CASE_SETUP: dict[str, str] = {
+    "tg_ast_search": "ast-pipeline",
+}
+
+
+class AstBackend:
+    """A stand-in whose CLASS NAME is load-bearing.
+
+    `tg_ast_search` gates on `type(backend).__name__ in {"AstBackend", "AstGrepWrapperBackend"}`
+    and returns `code: "unavailable"` otherwise -- a second short-circuit above the broad
+    handler, which is why borrowing `test_cli_modes._FakeAstPipeline` was not enough.
+    """
+
+    def search(self, *_args: object, **_kwargs: object) -> Any:  # pragma: no cover - never reached
+        raise AssertionError("the injected failure should fire before any search")
+
+
+class _AstPipelineStub:
+    def __init__(self, *_args: object, **_kwargs: object) -> None:
+        self.selected_backend_name = "AstBackend"
+        self.selected_backend_reason = "w1a-test-stub"
+
+    def get_backend(self) -> AstBackend:
+        return AstBackend()
+
+
+def _apply_case_setup(case_id: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    if _CASE_SETUP.get(case_id) != "ast-pipeline":
+        return
+    # `tg_ast_search` constructs the pipeline as `_self.Pipeline(...)`, i.e. the ATTRIBUTE on
+    # `cli.mcp_server`, so patching `core.pipeline.Pipeline` is a silent no-op here -- the
+    # four-shape monkeypatch trap again. Both names are patched: the module attribute is the one
+    # that bites, the source module keeps any other importer consistent.
+    monkeypatch.setattr(f"{_SRV}.Pipeline", _AstPipelineStub)
+    monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _AstPipelineStub)
+
 
 def _cases() -> list[tuple[str, Any, str, dict[str, Any]]]:
     return [
@@ -410,6 +456,7 @@ def test_mcp_tool_boundary_is_fail_closed(
     # "did it error?" oracle was satisfied identically with and without the injection -- a
     # check that passes in both arms. The discriminator is therefore the MARKER, never the
     # mere presence of an error.
+    _apply_case_setup(name, monkeypatch)
     natural = tool(**call_kwargs)
     natural_err = capsys.readouterr().err
     assert _MARKER not in natural + natural_err, (
