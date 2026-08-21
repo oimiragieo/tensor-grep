@@ -32,7 +32,6 @@
     "tests/unit/test_file_deps.py": 2901,
     "tests/unit/test_gpu_benchmark_scale_contracts.py": 2244,
     "tests/unit/test_mcp_server.py": 9729,
-    "tests/unit/test_release_assets_validation.py": 5258,
     "tests/unit/test_semantic_provider_navigation.py": 2251,
     "tests/unit/test_session_cli.py": 3337
   }

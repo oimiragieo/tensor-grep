@@ -51,9 +51,10 @@ jobs:
             # release), check_repo_hygiene.py (its own CI job) and file_size_budget.py
             # (the size ratchet). A PR touching only scripts/ therefore skipped
             # test-python, test-rust-core and Formatting & Linting and reported green
-            # having tested nothing -- while tests/unit/test_release_assets_validation.py
-            # (5,258 lines) exists purely to test one of those files. The suite ran when
-            # the TESTS changed but not when their SUBJECT did. Measured on PR #1021: a
+            # having tested nothing -- while tests/unit/test_release_assets_validation_*.py
+            # (themed siblings; formerly one 5,258-line file) exist purely to test one of
+            # those files. The suite ran when the TESTS changed but not when their SUBJECT
+            # did. Measured on PR #1021: a
             # 3,500-line refactor of validate_release_assets.py, fully green, every test
             # lane `conclusion: skipped`. Pinned by tests/unit/test_ci_code_path_filter.py.
             CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)

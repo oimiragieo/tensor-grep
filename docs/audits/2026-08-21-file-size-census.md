@@ -250,6 +250,9 @@ still touches the same file the version constant lives in, so re-verify the cons
 survives the split.
 
 ### 8. tests/unit/test_release_assets_validation.py — 5258 lines (test, limit 2000) — no open PR
+
+
+> **SUPERSEDED (W4-g split):** this file was split into themed siblings `tests/unit/test_release_assets_validation_*.py` (plus `_shared` + a no-`test_*` shim). The 5258-line monolith no longer exists; each sibling is under the 2000-line test limit.
 148 top-level defs, clearly organized by concern already (visible in the head): version-parity
 (`uv.lock`/`Cargo.lock` vs `pyproject.toml`), README/docs content-pinning
 (`test_should_require_readme_canonical_doc_links_and_release_markers`,

@@ -633,3 +633,6 @@ but so is one confirming nothing. The refutations are individually cited and eac
 guard found; they are offered as evidence of prior hardening, not as proof of absence. The residual
 risk is concentrated in the two populations explicitly **not** exhaustively classified (the 117
 `except Exception:` sites and ~30 `subprocess.run` call sites), which warrant a dedicated pass.
+
+> **SUPERSEDED (W4-g):** `tests/unit/test_release_assets_validation.py` (5,258 lines) was split into themed `test_release_assets_validation_*.py` siblings under the 2000-line test limit; the shim retains the historical path with no `test_*`.
+

@@ -1,7 +1,7 @@
 """Shared constants for the validate_release_assets check modules.
 
 Pure data -- never monkeypatched by tests (verified via AST scan of
-tests/unit/test_release_assets_validation.py: only ``_read`` and the four
+tests/unit/test_release_assets_validation_*.py: only ``_read`` and the four
 ``_version_from_*`` primitives are ever reassigned on the loaded module).
 Safe to import by value into every sibling module and into the
 ``validate_release_assets.py`` facade.

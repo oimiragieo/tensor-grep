@@ -234,7 +234,7 @@ Run if implementation touches release/docs validators or native packaging:
 
 ```powershell
 uv run python scripts/validate_release_assets.py
-uv run pytest tests/unit/test_release_assets_validation.py -q
+uv run pytest tests/unit/test_release_assets_validation_*.py -q
 ```
 
 ### Benchmarks
