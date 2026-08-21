@@ -31,6 +31,51 @@ DISCRIMINATING-ORACLE DISCIPLINE (the shape both W1-a and W1-b were sent back fo
   (``importlib.metadata.version`` AND the ``pyproject.toml`` read), so a natural failure of
   either one alone cannot masquerade as this scenario -- both must be down, matching the
   production double-failure precondition the fix addresses.
+
+CI-ONLY FAILURE, ROOT-CAUSED (2026-08-21): this file previously failed on GitHub Actions
+(ubuntu-latest, py3.11/py3.12) with "Explicit AST search requires AST dependencies: the
+ast-grep wrapper backend is required for pattern 'SENTINEL_TOKEN' ...", while passing on a
+Windows dev box even though that box also lacks the ``ast_grep_py`` PACKAGE. The mechanism has
+nothing to do with the version-lookup injections above (a prior fix attempt that scoped the
+``importlib.metadata.version`` patch to "tensor-grep" did not address it, because the failure
+is not caused by that patch at all):
+
+- ``_load_inline_rule_specs()`` (``cli/ast_scan.py``) does NOT copy the YAML ``engine`` key
+  into the parsed rule spec dict -- confirmed by calling it directly: the returned dict has no
+  ``"engine"`` entry for ANY inline rule, ``engine: regex`` included. So the
+  ``if rule.get("engine") == "regex": continue`` fast path in the per-rule loop
+  (``cli/ast_scan.py`` ~:792) never fires for ``--inline-rules`` input -- every inline rule is
+  routed through AST backend selection (``_select_ast_backend_for_rule`` /
+  ``_select_ast_backend_for_pattern``, ``cli/ast_workflows.py``), regardless of the declared
+  ``engine:``.
+- Backend selection there prefers ``AstGrepWrapperBackend`` whenever it reports itself
+  available, and ``AstGrepWrapperBackend.is_available()`` (``backends/ast_wrapper_backend.py``
+  ~:95-124) probes for an ``ast-grep``/``sg`` CLI BINARY on ``PATH`` -- a completely different
+  signal from the ``ast_grep_py`` Python package (or ``importlib.metadata.version``). The
+  Windows dev box happens to have that binary on PATH (confirmed: ``tg scan --json`` on this
+  box reports ``"backends": ["AstGrepWrapperBackend"]`` even with ``ast_grep_py`` unimportable);
+  a fresh GitHub Actions ``ubuntu-latest`` runner does not. Without the wrapper, selection falls
+  through to the native ``AstBackend``, which raises the observed
+  ``BackendExecutionError`` for a bare-identifier pattern that fails BOTH its node-type-index
+  lookup (no real tree-sitter node is literally named ``SENTINEL_TOKEN``) and tree-sitter query
+  compilation (``backends/ast_backend.py`` ~:775-826).
+- DISCRIMINATING VARIABLE: presence of an ``ast-grep``/``sg`` binary on ``PATH`` (not the
+  ``ast_grep_py`` package, not anything this test injects). This is exactly the kind of
+  environment leak A85 (``AGENTS.md``) forbids testing against implicitly.
+
+Per this repo's rule (never env-detect; force the optional-engine seam explicitly; never
+skip/xfail): this file no longer depends on the ``engine: regex`` YAML tag actually being
+honored (it structurally cannot be, for ``--inline-rules``, without touching ``src/``) or on
+which AST backend a given box happens to route to. The rule pattern below (``identifier``) is a
+real tree-sitter node-type name, which the native ``AstBackend`` serves via its node-type-index
+fast path with NO ast-grep dependency (so it cannot hit the ``BackendExecutionError`` above
+regardless of routing), and which ``AstGrepWrapperBackend`` -- when present, as on this box --
+also serves without error as an ordinary (non-matching-or-matching) ast-grep code pattern.
+``AstGrepWrapperBackend.is_available`` is additionally monkeypatched to a fixed value in both
+tests so the exercised backend, and therefore this file's outcome, no longer depends on
+whatever happens to be on the runner's ``PATH``. Verified directly (both arms, in-process):
+exit 0 / valid SARIF with the wrapper forced unavailable (the CI shape) and with it left as
+this box's real (available) state.
 """
 
 from __future__ import annotations
@@ -42,6 +87,7 @@ from typing import Any
 
 from typer.testing import CliRunner
 
+from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
 from tensor_grep.cli.main import app
 
 
@@ -53,11 +99,22 @@ class _InjectedPyprojectReadFailure(Exception):
     """Unique marker: `Path.read_text` cannot raise this class naturally."""
 
 
-def _write_regex_rule_and_target(tmp_path: Path) -> tuple[str, Path]:
+def _write_regex_rule_and_target(tmp_path: Path, monkeypatch: Any) -> tuple[str, Path]:
+    # A85: force the optional ast-grep-wrapper seam explicitly rather than env-detecting it.
+    # `AstGrepWrapperBackend.is_available()` probes for an `ast-grep`/`sg` CLI binary on PATH --
+    # a signal this test has no reason to depend on and that differs between this dev box (has
+    # the binary) and CI (does not). Pin it to a fixed, known state instead.
+    monkeypatch.setattr(AstGrepWrapperBackend, "is_available", lambda self: False)
+    # "engine: regex" is declared for documentation/intent, but `_load_inline_rule_specs()`
+    # does not propagate the `engine` key for `--inline-rules` input (see module docstring), so
+    # this rule is always routed through AST backend selection regardless of that tag. `identifier`
+    # is a real tree-sitter node-type name: the native AstBackend serves it via its node-type-index
+    # fast path with no ast-grep dependency, so this scan cannot hit the
+    # "Explicit AST search requires AST dependencies" failure this file used to expose.
     inline_rules = "\n".join([
         "id: w1c-sentinel",
         "engine: regex",
-        "pattern: SENTINEL_TOKEN",
+        "pattern: identifier",
         "language: python",
         "severity: high",
         "message: sentinel finding",
@@ -69,7 +126,7 @@ def _write_regex_rule_and_target(tmp_path: Path) -> tuple[str, Path]:
 def test_double_version_lookup_failure_is_disclosed_in_sarif_provenance(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
-    inline_rules, root = _write_regex_rule_and_target(tmp_path)
+    inline_rules, root = _write_regex_rule_and_target(tmp_path, monkeypatch)
 
     pristine_metadata_version = importlib.metadata.version
 
@@ -125,7 +182,7 @@ def test_normal_version_lookup_discloses_no_degradation(tmp_path: Path, monkeypa
     """NO-INJECTION CONTROL: with nothing patched, the real command must report a real version
     and must NOT stamp the degradation marker -- proving the treatment test's assertions are not
     trivially true (e.g. the property key being stamped unconditionally by a bug)."""
-    inline_rules, root = _write_regex_rule_and_target(tmp_path)
+    inline_rules, root = _write_regex_rule_and_target(tmp_path, monkeypatch)
 
     result = CliRunner().invoke(
         app, ["scan", "--inline-rules", inline_rules, "--path", str(root), "--sarif"]
