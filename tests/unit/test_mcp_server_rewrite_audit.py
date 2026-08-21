@@ -14,6 +14,27 @@ from tests.unit.test_mcp_server_shared import (
 )
 
 
+def _project_onto(actual: dict, expected: dict) -> dict:
+    """Project ``actual`` onto ``expected``'s key set, recursing into nested dicts.
+
+    The envelope is documented as ADDITIVE: new fields may appear and must not break a consumer.
+    The call sites here already projected the TOP level for exactly that reason ("tolerate the
+    added mcp_contract_version envelope key") but compared nested dicts strictly, so an additive
+    key inside ``audit_manifest`` still broke them -- which is what the W1-a hardening's
+    ``recorded`` / ``record_error`` disclosure does when recording legitimately fails (these tests
+    mock ``subprocess.run``, so the manifest file is never written).
+
+    This tolerates ONLY keys the test never asserted. A wrong value, a wrong nested value, or a
+    MISSING expected key still raises, so the assertions keep their discriminating power.
+    """
+    return {
+        key: _project_onto(actual[key], expected[key])
+        if isinstance(expected[key], dict) and isinstance(actual.get(key), dict)
+        else actual[key]
+        for key in expected
+    }
+
+
 def test_tg_checkpoint_mcp_tools_wrap_checkpoint_store(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
@@ -90,7 +111,7 @@ def test_tg_rewrite_plan_returns_native_plan_json_shape():
     # audit A1/A4: tg_rewrite_plan now also stamps plan_digest, match_count, and
     # mcp_contract_version onto the plan output. The original native plan fields
     # must still be present and unchanged.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert isinstance(parsed["plan_digest"], str) and parsed["plan_digest"]
     assert parsed["match_count"] == payload["total_edits"]
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
@@ -369,7 +390,7 @@ def test_tg_rewrite_apply_supports_optional_verify_flag():
     parsed = json.loads(out)
     # audit A4: every tool envelope now carries mcp_contract_version; the native
     # apply fields are otherwise unchanged.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv.
@@ -451,7 +472,7 @@ def test_tg_rewrite_apply_supports_optional_validation_commands(monkeypatch):
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv.
@@ -709,7 +730,7 @@ def test_tg_rewrite_apply_supports_optional_checkpoint_flag():
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version and applied_edits envelope keys.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # M12: applied_edits count is stamped at the top level
     assert "applied_edits" in parsed
@@ -787,7 +808,7 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkey
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
@@ -859,7 +880,7 @@ def test_tg_rewrite_apply_records_generated_audit_manifest_in_history_index(tmp_
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     index_payload = json.loads((audit_dir / "index.json").read_text(encoding="utf-8"))
     assert index_payload["version"] == 1
@@ -931,7 +952,7 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
@@ -1275,7 +1296,7 @@ def test_tg_index_search_returns_native_index_search_json_shape():
 
     parsed = json.loads(out)
     # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert _project_onto(parsed, payload) == payload
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv.
