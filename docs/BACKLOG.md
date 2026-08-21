@@ -47,6 +47,116 @@
 
 
 
+## Recent campaign notes (2026-08-21) - SCAN-SILENT-CLEAN-ON-MISSING-PATH (P0-class honesty defect on a SECURITY surface)
+
+- **`tg scan --ruleset` reports a CLEAN result, exit 0, for a path that does not exist.** Its exit
+  code and its payload are byte-comparable between "scanned a real tree and found nothing" and
+  "never read a single file". On a security-rule surface this is the false-zero law embodied in the
+  shipped product: a CI gate running `tg scan --ruleset secrets-basic <path>` against a mistyped,
+  moved, or wrongly-translated path reports the repository CLEAN and exits 0.
+- **`tg search` on the SAME input is correct**, which is both the control proving the probe
+  discriminates and the proof that a fix has a working sibling to copy:
+
+  | command | missing path | real path containing one finding |
+  |---|---|---|
+  | `tg scan --ruleset subprocess-safe` | **exit 0**, `matched_rules: 0`, `total_matches: 0` | exit 0, `matched_rules: 1`, `total_matches: 1` |
+  | `tg search` | exit **2**, `{"error":"path_not_found","ok":false}` | exit 0, matches |
+
+- **Reproduction (measured 2026-08-21, installed `tg 1.110.16`; exit codes read UNPIPED, because a
+  trailing `| head` reports the pipeline's status and not tg's):**
+
+      tg scan "C:\definitely\does\not\exist\anywhere" --ruleset subprocess-safe --json >/dev/null 2>&1; echo $?   # 0
+      tg search "X"  "C:\definitely\does\not\exist\anywhere" --json               >/dev/null 2>&1; echo $?   # 2
+
+- **This is NOT a WSL-specific defect, and that reframes #90.** It was found while premise-checking
+  the WSL rows, but it reproduces on a plain nonexistent WINDOWS path with no WSL involved. #90 is
+  filed as "WSL raw-path scan matched_rules=0 while translated-path control total_matches=6" and is
+  BLOCKED behind the Task 2A/2B typed-path program. The WSL symptom is a *consequence*: a
+  `/mnt/c/...` argument is silently rewritten to `C:\mnt\c\...` (verified: `C:\mnt` does not exist)
+  and then scanned as if it were real. **The underlying missing-path validation gap is independent
+  of typed paths and is fixable today** without waiting on that program -- `tg search`'s existing
+  `path_not_found` check is the model.
+- **Measured WSL arm, for the record** (fixture: 6 files with a marker + 1 file with a
+  `subprocess.call(..., shell=True)` finding):
+
+  | arm | path tg actually used | `matched_rules` | exit |
+  |---|---|---|---|
+  | control, native Windows path | the real directory | 1 | 0 |
+  | WSL raw `/mnt/c/...` | `C:\mnt\c\...` (does not exist) | 0 | 0 |
+
+  The `total_matches=6` control quoted in #90's row reproduces exactly on `tg search` with the
+  native path, so the historical receipt is sound; what has changed is the diagnosis.
+- **Instrument note, so the next person does not lose an hour to it:** running this repro from Git
+  Bash WITHOUT `MSYS_NO_PATHCONV=1` mangles `/mnt/c/...` into
+  `C:/Program Files/Git/mnt/c/...` before tg ever sees it, producing a real-looking
+  `path_not_found` that is the SHELL's doing, not the product's. Every arm above was run with
+  `MSYS_NO_PATHCONV=1`.
+- **#89 also still reproduces** (`tg search` with a raw `/mnt/c/...` path -> exit 2,
+  `path_not_found`), so that row's premise is intact. Arguably that is CORRECT behaviour for a
+  Windows binary given `/mnt/c/...` is not a Windows path; whether the Windows front door should
+  TRANSLATE WSL paths is the actual open design question, and it belongs to the typed-path program.
+  The row should say so rather than describing it as a bug.
+- **Proposed fix (needs its own `fix:` PR; `fix:` cannot publish while PYPI-SIZE-CAP is open):**
+  validate the scan root before scanning and fail closed with the same `path_not_found` shape and
+  exit code `tg search` already uses. Required RED arm, bidirectional: a nonexistent path must exit
+  non-zero BEFORE the fix is written (it currently exits 0), and a real path with a known finding
+  must still exit 0 with `matched_rules: 1` after -- otherwise the guard is indistinguishable from
+  breaking scan entirely. Sweep the sibling scan-family surfaces (`tg scan` with a config file,
+  `tg run`, and the MCP `tg_ruleset_scan` handler) rather than fixing only the one route measured
+  here: the census, not the instance.
+
+## Recent campaign notes (2026-08-21) - FIND-JSON-CONTRACT-VIOLATION (P1, product defect, found by dogfood)
+
+- **`tg find --json` violates the search-output contract it reuses, on two REQUIRED fields.**
+  `tg find --json` returns the same envelope as `tg search --json` (same `version`,
+  `routing_backend`, `routing_reason`, `total_matches`, `matches`, ... plus `schema_version` and
+  `rank_fallback_reason`), but it emits **`routing_backend: null` and `routing_reason: null`**.
+  Both are listed in `required` in `tests/schemas/tg_output.schema.json` and typed
+  `{"type": "string", "minLength": 1}`. A contract-aware consumer either throws or mis-branches.
+- **Reproduction (measured 2026-08-21 against installed `tg 1.110.16`):**
+
+      mkdir probe && cd probe && printf 'def authenticate_user(name):\n    return name\n' > auth.py
+      tg find "how does user authentication work" . --json > find.json
+      tg search "authenticate" . --json > search.json
+
+  Measured values, with `tg search` as the CONTROL proving the fields can be populated:
+
+  | command | `routing_backend` | `routing_reason` |
+  |---|---|---|
+  | `tg search --json` | `"NativeCpuBackend"` | `"json_output"` |
+  | `tg find --json`   | `null`              | `null`           |
+
+  Validating the real `find` payload against the schema fails with
+  `ValidationError: None is not of type 'string'` on `properties.routing_reason`.
+- **Note the argument order while reproducing:** it is `tg find QUERY [PATH]`, NOT
+  `tg find [PATH] QUERY`. Passing the path first makes the query be read as a path and exits 1
+  with `Path not found: .../how does user authentication work`.
+- **Why nobody caught it:** `tests/schemas/tg_output.schema.json` describes the primary search
+  contract, but until 2026-08-21 **no test validated anything against it**. Its only references in
+  the whole tree were `tests/unit/test_file_size_budget.py` (which merely counts its lines as a
+  "contract" category) and `docs/code-map/tests_schemas.md` (which lists the path). A schema no
+  test loads cannot fail, so it cannot be evidence. `tests/unit/test_search_json_schema_contract.py`
+  now validates against it with bidirectional controls, and that is what surfaced this defect.
+- **The schema also omitted the completeness triple** (`result_incomplete`, `incomplete_reason`,
+  `incomplete_reason_class`) that `docs/CONTRACTS.md` makes load-bearing for agent retry
+  decisions. They fell through `additionalProperties: true`, so a mistyped emitter validated fine
+  on the ONE field an agent must branch on to avoid reading a truncated scan as complete. Now
+  declared with types. Deliberately NOT enum-constrained: CONTRACTS.md records the vocabulary as
+  "the set wired so far", so pinning an enum would make the schema REJECT a valid payload the
+  first time a new cause is wired -- a worse failure than the gap.
+- **Proposed fix (NOT yet applied - needs its own `fix:` PR, and `fix:` currently cannot publish
+  while PYPI-SIZE-CAP is open):** populate `routing_backend`/`routing_reason` on the find route
+  with real values describing the hybrid path actually taken (and the BM25-only fallback when the
+  dense leg is absent), rather than `null`. Whoever takes this must decide deliberately between
+  (a) populating the fields and (b) declaring that `find` is a DIFFERENT contract that merely
+  resembles the search envelope - and if (b), give it its own schema and stop reusing the
+  envelope's field names. Do not "fix" it by relaxing the schema's `required`/`minLength`: that
+  would weaken the contract for `tg search`, which is correct today, to accommodate a caller that
+  is not.
+- **A regression arm was deliberately NOT added as a skip/xfail.** Adding one would have turned a
+  real failure into a green-looking suite, which is the exact hazard recorded above under the
+  split-baseline law. The defect is tracked here instead until it is fixed for real.
+
 ## Recent campaign notes (2026-08-21) - STACKED-PR-CI-BLINDSPOT (P1, fix available, no CEO gate)
 
 - **Finding (2026-08-21): a pull request whose BASE is a feature branch gets ZERO CI, and the

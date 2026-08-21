@@ -18,6 +18,75 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
+## Campaign note (2026-08-21)
+
+Public product `v1.111.1` — but read the next paragraph before treating that as shipped.
+
+**Release pipeline is BROKEN and the failure is platform-skewed.** PyPI project `tensor-grep`
+is at **10.734 GB against PyPI's 10 GB per-project cap** (713 releases / 2,847 files,
+re-measured 2026-08-21 and agreeing with the 2026-08-20 measurement). `v1.111.1` published
+**2 of its 4 artifacts** before the cap 400'd the rest: the macOS-arm64 and manylinux wheels
+exist; the **win_amd64 wheel and the sdist do not**. So `pip install tensor-grep` gives
+v1.111.1 on Mac/Linux and falls back to **v1.111.0** on Windows and for source installs.
+Two further releases are also incomplete (`1.13.44` missing its sdist; `0.1.0` predates the
+native-wheel shape). **Law: verify a release PER-ARTIFACT against the expected filename set,
+never by the version merely appearing.** The standalone native binaries DO exist as GitHub
+release assets for v1.111.1, so a Windows user has a working non-pip path meanwhile.
+
+Remediation is CEO-GATED and irreversible (PyPI has **no delete API** — Warehouse issue
+#12934 is open, deletion is web-UI only, and hCaptcha broke the community automation tool).
+Decision packet with three costed retention policies:
+`docs/audits/2026-08-21-pypi-size-cap-decision-packet.md`. **Policy A authorized 2026-08-21**
+(keep last 5 minor lines + every `X.Y.0`; deletes 548, frees 8.20 GB, ~439 releases of
+headroom). Execution is blocked on an authenticated PyPI browser session — an agent must not
+enter credentials.
+
+Do NOT count PR #1067 (`5423b4b`, strip debug symbols) as partial remediation: measured, it
+did **not** shrink artifacts. Last-50 average is 18.67 MB, equal to the last-20 average, and
+the largest release in project history is v1.111.0 at 19.1 MB, published the day before the
+incident.
+
+**Merge-eligibility consequence, in force until the cap clears:** a `fix:`/`feat:` merge tags a
+version and then fails its PyPI upload, leaving another committed-not-shipped version.
+`refactor:`/`test:`/`docs:`/`chore:` publish nothing and batch freely. Derive the class from the
+COMMIT that will land — on a single-commit PR GitHub squashes using the commit subject, not the
+PR title.
+
+### New law — STACKED-PR-CI-BLINDSPOT (2026-08-21)
+
+**A PR whose base is a feature branch gets ZERO CI, and the absence renders as "skipping".**
+`ci.yml` filters `pull_request: branches: [ "main" ]`, and that filter matches the **base** ref.
+Measured: #1068 and #1070 each had exactly one check across their whole life
+(`Dependabot Automation` / `skipped`) while `gh` reported them `MERGEABLE`. Control: #1065, same
+`test/` branch prefix but base `main`, had `SUCCESS=39` — so it is the base ref, not the branch
+name, and not a runner outage. **Both went RED the moment real CI ran.** They had been sitting
+merge-ready, carrying error-handling hardening, with no evidence at all.
+
+- Before merging anything, assert `baseRefName == "main"`:
+  `gh pr list --state open --json number,baseRefName`.
+- A "skipping"-only rollup is an ABSENT gate, not a pass.
+- `gh pr edit --base main` alone does NOT restore CI (it fires `edited`, not a default trigger
+  type). Close/reopen does.
+- After a squash-merge of the parent, a stacked child conflicts: rebase it with
+  `git rebase --onto origin/main <parent-tip>` to drop the commits the squash absorbed.
+
+### Second law — a split must reproduce its baseline pass/skip counts
+
+A drafted split of `test_mcp_server.py` reported "484 passed, 5 skipped" and looked green. The
+pre-split baseline is **489 passed, 0 skipped**: it had invented three
+`pytest.skip("embedded native rewrite unavailable in this environment")` guards, permanently
+disabling three tests that pass in CI. The three were then confirmed to fail in the worktree even
+in isolation, because **a bare git worktree has no compiled native extension** — an environment
+artifact, not a defect. Capture the baseline passed AND skipped counts before any split, and never
+silence a post-split failure with an environment probe.
+
+### Third note — a Windows `ruff format --preview` sweep is mostly a lie
+
+On a Windows checkout `ruff format --preview .` reports 14–18 files needing reformatting even on
+clean `main`. That is `[tool.ruff.format] line-ending = "lf"` meeting a CRLF working tree; those
+files are clean on Linux CI. Format only the files your branch actually owns, and diff before
+committing — a repo-wide sweep here produces a large spurious diff.
+
 ## Campaign note (2026-08-15)
 
 CEO update: `docs/audits/2026-08-15-ceo-backlog-update.md`. Public product `v1.110.16`

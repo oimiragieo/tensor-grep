@@ -45,7 +45,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["device_id", "chunk_mb"],
+        "required": [
+          "device_id",
+          "chunk_mb"
+        ],
         "properties": {
           "device_id": {
             "type": "integer"
@@ -97,18 +100,37 @@
       "items": {
         "$ref": "#/$defs/match"
       }
+    },
+    "result_incomplete": {
+      "type": "boolean",
+      "description": "True when the SCAN was cut short and data was actually dropped. Omitted entirely (not false) on a complete result, so a complete payload stays byte-identical. See docs/CONTRACTS.md: this is the field an agent branches on before trusting a zero or small match count, and it is NOT the same signal as partial/partial_reason."
+    },
+    "incomplete_reason": {
+      "type": "string",
+      "description": "Free-text, human-readable explanation accompanying result_incomplete. Omitted when complete. Machines should branch on incomplete_reason_class instead of string-sniffing this field."
+    },
+    "incomplete_reason_class": {
+      "type": "string",
+      "description": "Machine-branchable cause accompanying result_incomplete (docs/CONTRACTS.md). Values wired so far: unreadable_path, scan_limit, deadline, timeout, workspace_root_refused. Deliberately NOT constrained by an enum here: CONTRACTS.md records this as the set wired so far, so pinning an enum would make the schema REJECT a valid payload the first time a new cause is added. An ABSENT class means 'cause not classifiable', never 'scan complete' -- completeness is carried by result_incomplete alone."
     }
   },
   "$defs": {
     "match": {
       "type": "object",
-      "required": ["file", "text"],
+      "required": [
+        "file",
+        "text"
+      ],
       "anyOf": [
         {
-          "required": ["line"]
+          "required": [
+            "line"
+          ]
         },
         {
-          "required": ["line_number"]
+          "required": [
+            "line_number"
+          ]
         }
       ],
       "properties": {
