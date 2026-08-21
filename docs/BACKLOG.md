@@ -47,6 +47,59 @@
 
 
 
+## Recent campaign notes (2026-08-21) - RULESET-UNREACHABLE-ON-STOCK-INSTALL (P0, customer-facing, reproduced on the PUBLISHED wheel)
+
+- **`tg scan --ruleset <builtin>` does not work on a stock `pip install tensor-grep`, while
+  `tg rulesets` advertises six security rulesets with rule counts and no availability caveat.**
+  This is the "capability the artifact claims and no install path reaches" class that `tg find`'s
+  own `--help` already names as a dishonesty equal to a stamped-but-unpublished version -- except
+  here it is on the SECURITY surface and it is the advertised feature, not a held one.
+- **Reproduced on the PUBLISHED artifact, not a dev tree.** Clean `python:3.12-slim` container,
+  `pip install tensor-grep==1.111.1`, nothing else:
+
+      tg rulesets            -> lists auth-safe, crypto-safe, deserialization-safe,
+                                secrets-basic (21 rules), subprocess-safe (33 rules), tls-safe
+      tg scan /probe --ruleset subprocess-safe --json   -> exit 1
+        Error: Explicit AST search requires AST dependencies: ast-grep wrapper backend is
+        required for this pattern but is not available
+
+  The probe directory contained a real `subprocess.call(..., shell=True)` finding, so this is not
+  an empty-input artifact. The SAME command against a path that does not exist returns the SAME
+  error and exit code -- the failure is unconditional, not input-dependent.
+- **Why: nothing installs the backend it needs.** `ast_grep_py` appears in NO dependency and NO
+  extra in `pyproject.toml` (the `ast` extra ships **tree-sitter**, which the error message itself
+  says cannot serve ast-grep code patterns). And the wheel bundles no native binary --
+  `tg doctor --json` in that container reports `native_tg_binary_exists: false`,
+  `native_tg_binary_kind: "missing"`, and `tg` on `PATH` is the Python console script.
+- **Why it looked fine from a dev box:** a developer machine with a separately-installed native
+  `tg` binary serves these rules and returns `matched_rules: 1`. The capability is present for
+  whoever built the native artifact and absent for whoever ran `pip install`. **Any check of this
+  feature that runs on a maintainer's machine is measuring the wrong population.**
+- **The sibling shows the house standard, and scan misses it.** With its optional backend absent,
+  `tg find` degrades VISIBLY, still returns results (BM25-only), and names the fix:
+  ``semantic ranking unavailable: model2vec not installed -- run `tg install-dense` (or pip
+  install 'tensor-grep[semantic]')``. `tg scan --ruleset` hard-fails with no remediation string,
+  and there is no `install-ast` counterpart to `install-dense`.
+- **This also explains a CI failure that looked unrelated.** `test-python (ubuntu-latest)` on
+  PR #1070 fails `test_w1c_sarif_version_disclosure` with this exact message. The Linux lanes have
+  no ast-grep, so any scan reaching a code pattern errors there while passing on a Windows dev box
+  -- an environment-tracking test, not a behaviour-tracking one (AGENTS.md A85).
+- **Remediation options, all `fix:`-class (cannot publish while PYPI-SIZE-CAP is open):**
+  1. Make the built-in rulesets work without ast-grep, or
+  2. add the backend to an extra plus an `install-ast` one-shot mirroring `install-dense`, and give
+     the error a remediation string naming it, and
+  3. have `tg rulesets` disclose availability on the CURRENT install rather than listing rules that
+     cannot run -- an advertised count of 33 rules that always errors is worse than an honest
+     "unavailable here".
+  Whichever is chosen, the acceptance test must run in a **clean container off the published
+  artifact**, not on a machine that has a native binary lying around, or it will pass while the
+  defect ships.
+- **Ordering note for the SCAN-SILENT-CLEAN fix (PR #1080):** on an install WITHOUT ast-grep the
+  AST-dependency check fires BEFORE the new missing-path guard, so the guard is not reached on that
+  path. That does not make the guard wrong -- with ast-grep present it is exactly what fails the
+  scan closed -- but a fix for THIS row should re-check the ordering so a missing path is reported
+  as a missing path rather than as a dependency error.
+
 ## Recent campaign notes (2026-08-21) - SCAN-SILENT-CLEAN-ON-MISSING-PATH (P0-class honesty defect on a SECURITY surface)
 
 - **`tg scan --ruleset` reports a CLEAN result, exit 0, for a path that does not exist.** Its exit
