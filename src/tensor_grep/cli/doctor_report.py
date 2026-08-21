@@ -86,10 +86,17 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
     root = str(snapshot.get("root") or "").strip()
     if not root:
         return None
+    status_probe_error: str | None = None
     try:
         current = _self._doctor_session_daemon_status(root)
     except Exception as exc:
+        # A73 hardening (2026-08-20, codex REVISE on PR #1068): `current` is a purely local
+        # variable, so a probe failure here used to be silently swallowed the moment the
+        # restart below happened to succeed -- the returned message read as a clean success
+        # with no trace that the pre-restart status could not be determined. Disclose it on
+        # the returned payload instead of discarding it.
         current = {"running": False, "status_error": str(exc)}
+        status_probe_error = str(exc)
     if current.get("running") is True:
         return None
     try:
@@ -97,8 +104,22 @@ def _restart_session_daemon_after_upgrade(snapshot: dict[str, Any] | None) -> st
 
         started = start_session_daemon(root)
     except Exception as exc:
-        return f"WARNING: session daemon was running before upgrade but restart failed for {root}: {exc}"
+        suffix = (
+            f" (pre-restart status probe also failed: {status_probe_error})"
+            if status_probe_error
+            else ""
+        )
+        return (
+            f"WARNING: session daemon was running before upgrade but restart failed for "
+            f"{root}: {exc}{suffix}"
+        )
     if started.get("running") is True:
+        if status_probe_error:
+            return (
+                f"Session daemon restarted after upgrade for {root} (note: the pre-restart "
+                f"status check failed and could not confirm whether a restart was actually "
+                f"needed: {status_probe_error})."
+            )
         return f"Session daemon restarted after upgrade for {root}."
     return f"WARNING: session daemon was running before upgrade but did not restart for {root}."
 
@@ -458,12 +479,14 @@ def _doctor_skipped_native_tg_binaries(
         version_matches = _self._native_tg_version_matches(expected_version, version)
         if version_matches:
             continue
-        skipped.append({
-            "path": str(resolved),
-            "kind": _doctor_native_tg_binary_kind(resolved),
-            "version": version,
-            "version_status": "stale" if version is not None else "unknown",
-        })
+        skipped.append(
+            {
+                "path": str(resolved),
+                "kind": _doctor_native_tg_binary_kind(resolved),
+                "version": version,
+                "version_status": "stale" if version is not None else "unknown",
+            }
+        )
     return skipped
 
 
@@ -818,10 +841,12 @@ def _doctor_path_tg_candidates(path_value: str | None = None) -> list[dict[str, 
             if key in seen:
                 continue
             seen.add(key)
-            candidates.append({
-                "path": str(resolved),
-                "version": _self._doctor_tg_candidate_version(resolved),
-            })
+            candidates.append(
+                {
+                    "path": str(resolved),
+                    "version": _self._doctor_tg_candidate_version(resolved),
+                }
+            )
     return candidates
 
 
@@ -1025,10 +1050,12 @@ def _doctor_gpu_status() -> dict[str, Any]:
         status["available"] = detector.has_gpu()
         status["device_count"] = detector.get_device_count()
         for device in detector.list_devices():
-            status["devices"].append({
-                "id": device.device_id,
-                "vram_total_mb": device.vram_capacity_mb,
-            })
+            status["devices"].append(
+                {
+                    "id": device.device_id,
+                    "vram_total_mb": device.vram_capacity_mb,
+                }
+            )
     except ImportError:
         status["error"] = "PyTorch/cuDF not installed"
     except Exception as e:
@@ -1217,12 +1244,14 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
 
     routing_backend = str(payload.get("routing_backend") or "")
     sidecar_used = bool(payload.get("sidecar_used", False))
-    base.update({
-        "routing_backend": routing_backend or None,
-        "routing_reason": payload.get("routing_reason"),
-        "sidecar_used": sidecar_used,
-        "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
-    })
+    base.update(
+        {
+            "routing_backend": routing_backend or None,
+            "routing_reason": payload.get("routing_reason"),
+            "sidecar_used": sidecar_used,
+            "routing_gpu_device_ids": payload.get("routing_gpu_device_ids") or [],
+        }
+    )
     if routing_backend == "NativeGpuBackend" and not sidecar_used:
         base["status"] = "supported"
         return base

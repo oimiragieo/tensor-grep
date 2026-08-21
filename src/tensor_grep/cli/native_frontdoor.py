@@ -550,7 +550,17 @@ def _install_release_native_frontdoor(
     # CHECKSUMS.txt BEFORE installing/executing it, matching the fail-closed posture
     # of the installers (scripts/install.sh, install.ps1, npm/install.js). Without
     # the manifest nothing can be verified, so refuse rather than trust the download.
-    checksums_text = _self._fetch_native_frontdoor_checksums(version)
+    try:
+        checksums_text = _self._fetch_native_frontdoor_checksums(version)
+    except Exception as exc:
+        # W1-b MEDIUM hardening (2026-08-20): the real `_fetch_native_frontdoor_checksums`
+        # never raises (it catches internally and returns None), but a caller-supplied
+        # override (test injection, a future refactor) might. Refuse and disclose the
+        # underlying cause rather than letting it escape unwrapped or fall through silently.
+        raise RuntimeError(
+            "release-native front-door asset install refused: fetching CHECKSUMS.txt for "
+            f"v{version} raised {exc}; refusing to install an unverified native binary"
+        ) from exc
     if checksums_text is None:
         raise RuntimeError(
             "release-native front-door asset install refused: could not fetch "

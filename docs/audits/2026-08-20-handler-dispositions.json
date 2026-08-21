@@ -601,17 +601,17 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 91,
+    "lineno": 92,
     "enclosing_symbol": "_restart_session_daemon_after_upgrade",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
-    "evidence": "except Exception as exc: current = {\"running\": False, \"status_error\": str(exc)} -- the exception text is embedded in the returned status dict under status_error.",
-    "reason": "Discloses via an explicit status_error field rather than silently defaulting to running=False with no trace of why.",
-    "hardened_in": null
+    "evidence": "except Exception as exc: current = {'running': False, 'status_error': str(exc)} -- the exception text is embedded in the local `current` dict. A3 round-1 HIGH (2026-08-20, codex REVISE on PR #1068): this row was originally miscategorized LOGGED-DEGRADE on the PRE-fix bytes, where `current` was a local variable never propagated to the function's own RETURN value -- if the subsequent restart attempt succeeded, `status_error` was discarded and the caller received a clean success message with no trace the pre-restart probe had failed (genuinely SILENT-SWALLOW on that path). HARDENED in this PR: `status_probe_error` is now captured outside the `current` dict and threaded into BOTH downstream return messages (restart-failed and restart-succeeded), so the probe failure is disclosed on every reachable exit, not just the restart-failed branch.",
+    "reason": "LOGGED-DEGRADE, correctly, as of this PR's fix: the exception text is now disclosed on the returned message regardless of whether the subsequent restart succeeds or fails. RED/GREEN receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_restart_after_upgrade_discloses_probe_error_even_on_successful_restart.",
+    "hardened_in": "W1-b (this PR, #1068 A3 round-1 HIGH)"
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 99,
+    "lineno": 106,
     "enclosing_symbol": "_restart_session_daemon_after_upgrade",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -621,7 +621,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 341,
+    "lineno": 362,
     "enclosing_symbol": "_doctor_ast_grep_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -631,7 +631,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 369,
+    "lineno": 390,
     "enclosing_symbol": "_doctor_rust_core_extension_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -641,7 +641,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 386,
+    "lineno": 407,
     "enclosing_symbol": "_doctor_rust_binary_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -651,7 +651,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 683,
+    "lineno": 706,
     "enclosing_symbol": "_doctor_tg_candidate_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -661,7 +661,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 999,
+    "lineno": 1024,
     "enclosing_symbol": "_doctor_gpu_tier_installed",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -671,7 +671,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1015,
+    "lineno": 1040,
     "enclosing_symbol": "_doctor_gpu_tier_usable",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -681,7 +681,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1034,
+    "lineno": 1061,
     "enclosing_symbol": "_doctor_gpu_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1267,
+    "lineno": 1296,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -701,7 +701,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1304,
+    "lineno": 1333,
     "enclosing_symbol": "_doctor_resident_worker_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -751,9 +751,9 @@
   },
   {
     "module": "cli/native_frontdoor.py",
-    "lineno": 567,
+    "lineno": 577,
     "enclosing_symbol": "_install_release_native_frontdoor",
-    "handler_index_within_symbol": 0,
+    "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
     "evidence": "except Exception as exc: download_errors.append(f'{candidate.flavor} asset unavailable: {exc}') -- per-candidate download failures are recorded in download_errors, which the function raises via RuntimeError('\\n'.join(...)) if every candidate is exhausted (see the tail of the loop, not itself a broad handler).",
     "reason": "Each candidate's download failure is recorded with its flavor and exception text; the loop tries the next candidate rather than aborting on the first failure, and if none succeed the accumulated errors are surfaced in the raised RuntimeError.",
@@ -818,5 +818,15 @@
     "evidence": "except Exception: for rule, rule_cfg in wrapper_rules: other_resolved.append((rule, rule_cfg, wrapper_backend)); wrapper_rules = [] -- a failure of the project-wide wrapper fast path (search_project) routes every rule that fast path was going to handle into other_resolved, the general per-rule resolution path, and clears wrapper_rules so they are not double-processed. VERIFIED via AST inspection of the handler body (tests/unit/test_w1b_cli_handler_fail_closed.py::test_run_ast_scan_payload_wrapper_failure_falls_back_not_drops), because driving the full scan pipeline needs a live ast-grep/tree-sitter engine this box may not have.",
     "reason": "A performance fast-path failing falls back to the correctness-preserving general path rather than silently dropping the affected rules from the scan -- the rules are still processed, just without the project-wide batching optimization.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/native_frontdoor.py",
+    "lineno": 555,
+    "enclosing_symbol": "_install_release_native_frontdoor",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc: raise RuntimeError(f'release-native front-door asset install refused: fetching CHECKSUMS.txt for v{version} raised {exc}; refusing to install an unverified native binary') from exc -- newly added in W1-b (2026-08-20, A3 round-1 MEDIUM remediation) so that a checksum-fetch dependency override (test injection, or a future refactor of `_fetch_native_frontdoor_checksums`) that raises instead of returning None still results in a disclosed refusal rather than an unwrapped exception escaping the install path.",
+    "reason": "The exception text is embedded verbatim in the raised RuntimeError via `from exc` chaining, and the install is refused (no binary written) exactly as the pre-existing checksums_text-is-None branch immediately below it already does. RED/GREEN receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_fetch_checksums_failure_causes_install_to_refuse_not_silently_succeed (injected arm asserts the marker propagates into the raised message; control arm proves the natural None-return path is unaffected).",
+    "hardened_in": "W1-b (this PR, #1068 A3 round-1 MEDIUM)"
   }
 ]
