@@ -466,3 +466,6 @@ tempfile = "3.26.0"
 
 [profile.release]
 lto = true
+# Strip debug symbols from the shipped extension: rust_core.pyd was 20MB unstripped, the
+# dominant term in PyPI project size (PYPI-SIZE-CAP P0, docs/BACKLOG.md 2026-08-20).
+strip = "symbols"
