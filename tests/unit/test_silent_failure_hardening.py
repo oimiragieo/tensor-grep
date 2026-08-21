@@ -61,17 +61,13 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PY_SRC = REPO_ROOT / "src" / "tensor_grep"
 
-# The three modules a concurrent audit owns; this census must not collide with edits there.
-#
-# EXTENDED 2026-08-20 by the `cli/main.py` split (PR for
-# docs/design/2026-08-19-split-floor-escape.md): the five modules below are `cli/main.py`,
-# relocated. Their 23 broad handlers are byte-identical to handlers that were already outside
-# this census yesterday because `cli/main.py` is excluded -- moving a file does not audit it, so
-# counting them now would raise the ceiling 137 -> 160 on the strength of a `git mv`, which is
-# exactly the "raise the pin to make unreviewed handlers pass" this file's own comment forbids.
-# They should be classified when `cli/main.py` itself is, and this whole block retired together.
+# W1 excluded-handler audit (docs/plans/2026-08-20-worldclass-closeout-plan.md, W1). All
+# modules this census once excluded have now been read and dispositioned in
+# `docs/audits/2026-08-20-handler-dispositions.json`; this set is retained EMPTY (rather than
+# deleted) so a future split/relocation cannot silently reopen an audited module without a
+# reviewer noticing the pattern. Adding a module back here requires the same disposition-ledger
+# treatment the four waves below used, not a bare re-exclusion.
 _EXCLUDED_MODULES = frozenset({
-    "cli/main.py",
     # W1-a (2026-08-20) RETIRED the four `cli/mcp_*` exclusions -- `cli/mcp_server.py`,
     # `cli/mcp_rewrite_tools.py`, `cli/mcp_audit_tools.py`, `cli/mcp_symbol_tools.py`. All 57
     # of their broad handlers were read in their enclosing functions and dispositioned in
@@ -90,6 +86,16 @@ _EXCLUDED_MODULES = frozenset({
     # LOGGED-DEGRADE, 1 SILENT-SWALLOW hardened with a RED-2 receipt in
     # `tests/unit/test_w1b_cli_handler_fail_closed.py`). This retirement is an AUDIT, not a
     # ceiling bump to absorb a `git mv`.
+    # W1-c (2026-08-20) RETIRED the final exclusion -- `cli/main.py`. All 46 of its broad
+    # handlers were read in their enclosing functions and dispositioned in
+    # `docs/audits/2026-08-20-handler-dispositions.json` (12 not-provably-disclosing at
+    # audit time, all 12 classified INTENTIONAL-BOUNDARY -- 5 are the daemon-fast-path
+    # `_maybe_*_via_running_daemon` helpers whose fail-open `None` return always falls
+    # through to an independently-correct cold path; the remaining 7 are best-effort
+    # display/advisory/heuristic-confirmation fallbacks. Zero SILENT-SWALLOW found; no
+    # RED-2 receipts needed for this slice). This retirement is an AUDIT, not a ceiling
+    # bump to absorb a `git mv` -- `_EXCLUDED_MODULES` is now empty and every broad handler
+    # under `src/tensor_grep` is in-census.
 })
 
 # Pinned 2026-08-20 by the H6-followup silent-failure audit. See the module docstring: every
@@ -133,7 +139,7 @@ _EXCLUDED_MODULES = frozenset({
 # `docs/audits/2026-08-20-handler-dispositions.json` (INTENTIONAL-BOUNDARY/LOGGED-DEGRADE/
 # SILENT-SWALLOW). Ceiling raised by exactly that one handler:
 #     219 + 1 (native_frontdoor.py checksum-fetch except, LOGGED-DEGRADE)              220
-TOTAL_BROAD_HANDLERS_CEILING = 220
+TOTAL_BROAD_HANDLERS_CEILING = 266
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
