@@ -10241,6 +10241,26 @@ def scan(
         sys.exit(1)
     effective_scan_paths = scan_paths or [path]
 
+    # FAIL CLOSED on a scan root that does not exist.
+    #
+    # Without this, `tg scan --ruleset <name> <missing path>` returned exit 0 with
+    # `matched_rules: 0` -- byte-comparable, on BOTH the exit code and the payload, to a real scan
+    # of a real tree that genuinely found nothing. On a security-rule surface that means a CI gate
+    # pointed at a mistyped, moved, or wrongly-translated path reports the repository CLEAN. That
+    # is the false-zero failure: "measured nothing" and "did not measure" must never render the
+    # same, least of all on a scanner.
+    #
+    # `tg search` already fails closed on exactly this input with the same `path_not_found`
+    # taxonomy and exit code (see `_exit_search_error` above), so this deliberately reuses that
+    # shape rather than inventing a second vocabulary for the same condition -- two spellings of
+    # one error is how CLI and MCP consumers end up branching differently on the same filesystem.
+    missing_scan_paths = [
+        candidate for candidate in effective_scan_paths if not Path(candidate).expanduser().exists()
+    ]
+    if missing_scan_paths:
+        detail = "scan path does not exist: " + ", ".join(missing_scan_paths)
+        _exit_search_error(detail=detail, error="path_not_found", json_mode=bool(json_output))
+
     candidate_files: list[str] | None = None
     project_scan_fast_path = False
     if ruleset:
