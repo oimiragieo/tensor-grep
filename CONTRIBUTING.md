@@ -73,7 +73,7 @@ docker build --build-arg TG_VERSION=<version> -f scripts/dogfood/Dockerfile -t t
 The harness at `scripts/dogfood/` installs the real PyPI wheel and runs every public `tg` command through the installed `tg` binary. This catches routing bugs that are invisible to `CliRunner`-based unit tests because the bootstrap front door (which forwards plain searches to ripgrep before the Typer app) is bypassed by `CliRunner`. A flag that works in unit tests can still crash with `rg: unrecognized flag` for real users if it is missing from the bootstrap or native front-door allowlists.
 
 Important surfaces include:
-- `tests/unit/test_release_assets_validation.py`
+- `tests/unit/test_release_assets_validation_*.py`
 - `tests/unit/test_public_docs_governance.py`
 - `tests/unit/test_enterprise_docs_governance.py`
 - `docs/CI_PIPELINE.md`

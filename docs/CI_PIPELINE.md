@@ -1,6 +1,6 @@
 # CI Pipeline
 
-`tensor-grep` treats CI as part of the product contract, not a best-effort test runner. If you change workflow behavior, release behavior, package-manager behavior, or supply-chain automation, update the validator-backed tests in `scripts/validate_release_assets.py` and `tests/unit/test_release_assets_validation.py`.
+`tensor-grep` treats CI as part of the product contract, not a best-effort test runner. If you change workflow behavior, release behavior, package-manager behavior, or supply-chain automation, update the validator-backed tests in `scripts/validate_release_assets.py` and `tests/unit/test_release_assets_validation_*.py`.
 
 Release/package parity validation now includes the editable `tensor-grep` version recorded in `uv.lock`, not just `pyproject.toml`, `rust_core/Cargo.toml`, and `npm/package.json`.
 The semantic-release build command must refresh that lock entry with `uv lock --upgrade-package tensor-grep` and stage `uv.lock` before building artifacts.
@@ -160,7 +160,7 @@ If you touch `.github/workflows/*.yml`, `.github/dependabot.yml`, or release/pac
 
 1. update the workflow/config
 2. update `scripts/validate_release_assets.py`
-3. update `tests/unit/test_release_assets_validation.py`
+3. update `tests/unit/test_release_assets_validation_*.py`
 4. run:
 
 ```bash

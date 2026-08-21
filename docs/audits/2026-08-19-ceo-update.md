@@ -275,3 +275,6 @@ because it was told to verify rather than trust. That instruction was worth more
 
 **We are not done.** The size standard is not met and will not be for several more sessions. The
 accurate statement is *"31 recorded, ceiling locked, decreasing"* — never *"compliant."*
+
+> **SUPERSEDED (W4-g):** `tests/unit/test_release_assets_validation.py` (5,258 lines) was split into themed `test_release_assets_validation_*.py` siblings under the 2000-line test limit; the shim retains the historical path with no `test_*`.
+

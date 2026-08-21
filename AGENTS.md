@@ -2349,7 +2349,7 @@ For focused changes, run the relevant narrow suite first, then the full suite if
 ```powershell
 uv run pytest tests/unit/test_cpu_backend.py -q
 uv run pytest tests/unit/test_cli_bootstrap.py -q
-uv run pytest tests/unit/test_release_assets_validation.py -q
+uv run pytest tests/unit/test_release_assets_validation_*.py -q
 ```
 
 For fast pre-push dogfood on agent-critical surfaces, run the agent-readiness dogfood gate:
@@ -2665,7 +2665,7 @@ Read `docs/CI_PIPELINE.md` before editing CI, release, Dependabot, or audit auto
 
 Important test surface:
 
-- `tests/unit/test_release_assets_validation.py`
+- `tests/unit/test_release_assets_validation_*.py`
 - workflow/package-manager/release validator suites
 
 ## Routing / Architecture Guidance

@@ -14,9 +14,10 @@ That is not a cost optimisation, it is a hole. `scripts/` contains:
   * `file_size_budget.py`        -- the file-size ratchet, itself a CI gate
   * `stamp_release_assets.py`    -- release stamping
 
-and `tests/unit/test_release_assets_validation.py` (5,258 lines) exists purely to
-test the first of those. Under the old filter that suite ran when the TESTS
-changed but not when their SUBJECT did -- an inverted gate.
+and `tests/unit/test_release_assets_validation_*.py` (themed siblings split from the
+former 5,258-line monolith) exist purely to test the first of those. Under the old
+filter that suite ran when the TESTS changed but not when their SUBJECT did -- an
+inverted gate.
 
 Measured 2026-08-19 on PR #1021: a 3,500-line refactor of
 `validate_release_assets.py` produced a fully green PR in which `test-python`,

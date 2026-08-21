@@ -126,7 +126,7 @@ Recently accepted:
     * `.github/workflows/ci.yml`
     * `.github/workflows/release.yml`
     * `scripts/validate_release_assets.py`
-    * `tests/unit/test_release_assets_validation.py`
+    * `tests/unit/test_release_assets_validation_*.py`
 * benchmark-doc contract hardening:
   * `scripts/validate_release_assets.py` now validates `docs/benchmarks.md` directly
   * validator-backed reason:
@@ -135,7 +135,7 @@ Recently accepted:
   * acceptance surface:
     * `docs/benchmarks.md`
     * `scripts/validate_release_assets.py`
-    * `tests/unit/test_release_assets_validation.py`
+    * `tests/unit/test_release_assets_validation_*.py`
 
 ## TDD Execution Policy
 

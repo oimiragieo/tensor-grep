@@ -770,7 +770,7 @@ Gotchas that each cost a real CI cycle when missed:
   ```powershell
   uv run pytest tests/unit/test_cli_bootstrap.py -q
   uv run pytest tests/unit/test_cpu_backend.py -q
-  uv run pytest tests/unit/test_release_assets_validation.py -q
+  uv run pytest tests/unit/test_release_assets_validation_*.py -q
   ```
 - **Decode the structured CI failure before theorizing.** When a CI check goes red, open its
   structured JSON output (`gh run view <id> --json jobs`, then `--log-failed` on the named job)
@@ -859,8 +859,8 @@ of drifting unnoticed:
   Run it directly: `uv run python scripts/validate_release_assets.py` — exit 0 and
   `"Release/package assets validation passed."` on success, exit 1 with one `ERROR:` line per failure
   otherwise.
-- `tests/unit/test_release_assets_validation.py` (≈4950 lines — one of the largest test files in the
-  repo as of 2026-07-02, behind `test_cli_modes.py` and `test_benchmark_scripts.py`) exercises
+- `tests/unit/test_release_assets_validation_*.py` (themed siblings split from the former monolith;
+  still one of the largest release-governance suites) exercises
   `validate_release_assets.py` module functions directly via
   `importlib.util` rather than shelling out, including
   `test_should_validate_release_and_package_assets_consistency` which just calls `validate_all()` and
@@ -1046,9 +1046,9 @@ excluded from the plain `pytest tests` collection).
   `test_*_docs.py` file (Part 3.2) — do not just edit the doc; the assertion is the enforcement.
   Route through `tensor-grep-docs-and-writing` for which doc owns which contract.
 - **Release/workflow/package-manager change**: add or extend a case in
-  `tests/unit/test_release_assets_validation.py` calling the relevant `validate_release_assets.py`
-  function directly (via `importlib.util`, see the existing pattern at
-  `test_release_assets_validation.py:14-25`) — do not only shell out to the script.
+  `tests/unit/test_release_assets_validation_*.py` calling the relevant `validate_release_assets.py`
+  function directly (via `importlib.util`, see the existing pattern in
+  `test_release_assets_validation_docs_and_version_locks.py`) — do not only shell out to the script.
 
 ### Step 3 — verify the new test actually enforces something
 
@@ -1167,7 +1167,7 @@ Re-verify before relying on them:
 | Agent-readiness check names | `grep -n 'name="' scripts/agent_readiness.py` |
 | Agent-readiness CI jobs | `grep -n "agent-readiness:\|windows-agent-readiness:" -A40 .github/workflows/ci.yml` |
 | `validate_release_assets.py` entry points | `grep -n "^def validate_all\|^def main" scripts/validate_release_assets.py` |
-| Release-asset validator test size | `wc -l tests/unit/test_release_assets_validation.py` |
+| Release-asset validator test size | `wc -l tests/unit/test_release_assets_validation_*.py` |
 | Benchmark regression thresholds | `grep -n "max-regression-pct\|min-baseline-time-s" -A3 benchmarks/check_regression.py`; `grep -n "max_regression_pct\|min_baseline_time_s" src/tensor_grep/perf_guard.py` |
 | mypy strict-mode config | `grep -n "\[tool.mypy\]" -A6 pyproject.toml` |
 | `--no-sync` rationale | `grep -n "no-sync" -B2 -A2 .github/workflows/ci.yml` |
