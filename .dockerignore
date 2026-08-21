@@ -1,0 +1,77 @@
+# Docker build-context exclusions.
+#
+# Docker does NOT read .gitignore, so anything excluded there is still sent as build context
+# unless it is repeated here. Two concrete problems this file solves, both measured:
+#
+#  1. A build FAILS outright on unreadable transient directories. `docker build -f
+#     scripts/dogfood/Dockerfile.source .` died with
+#     `error from sender: open .pytest_tmp_review_<hex>: Access is denied` -- a gitignored pytest
+#     temp directory left by a concurrent test run. The context sender walks the whole tree and
+#     has no idea the directory is disposable.
+#  2. Without these entries the context includes `target/` (Rust build artifacts, easily
+#     gigabytes), `.venv/`, and the full `.git/` history, which is uploaded to the daemon on every
+#     build.
+#
+# Keep this in sync with .gitignore for the transient/build-output entries. It deliberately does
+# NOT exclude src/, rust_core/, tests/, or scripts/ -- Dockerfile.source builds the working tree
+# and needs all of them.
+
+# Version control
+.git
+.gitignore
+
+# Python transients.
+#
+# NOTE THE `**/` PREFIXES. Docker ignore patterns are anchored at the context ROOT unless they
+# start with `**/`, so a bare `.venv/` excludes only the top-level one. A nested `rust_core/.venv/`
+# survived that and broke the build with `invalid file request rust_core/.venv/bin/python` -- a
+# venv symlink pointing outside the context. Anchor-by-default is the trap here; every transient
+# pattern below is therefore `**/`-prefixed.
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/.pytest_cache/
+**/.pytest_tmp_*/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.hypothesis/
+**/*.egg-info/
+build/
+dist/
+
+# Transient scratch/repro directories left by test and agent sessions. These are the ones that
+# actually BREAK the build rather than merely bloat it: the context sender cannot open some of
+# them ("Access is denied") and aborts the whole build. Measured offenders at the repo root
+# included `.pytest_tmp_review_<hex>/` and `.tmp_council_20260803_f2/`; the glob covers the family
+# rather than naming instances, because naming instances is how this recurs.
+**/.tmp/
+**/.tmp*/
+
+# Rust build output (the single largest context contributor)
+**/target/
+
+# Node
+**/node_modules/
+
+# Local tool + agent state
+.orchestrator/
+.tensor-grep/
+_tg_refs/
+.claude/settings.local.json
+.factory/
+.gemini/
+
+# Benchmark corpora and generated data (large, never needed to build the binary)
+bench_data/
+bench_ast_data/
+gpu_bench_data/
+benchmarks/bench_data/
+benchmarks/bench_ast_data/
+benchmarks/gpu_bench_data/
+benchmarks/external_repos/
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp

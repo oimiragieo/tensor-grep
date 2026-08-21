@@ -1,0 +1,48 @@
+# Pre-release dogfood: build the WORKING-TREE (beta) tensor-grep from source inside a clean
+# container and run the full-feature battery against the resulting real `tg` binary.
+#
+# Why this exists alongside `Dockerfile`:
+#   Dockerfile        -> installs the PUBLISHED wheel from PyPI (the customer path, post-release).
+#   Dockerfile.source -> builds the CURRENT SOURCE (the beta path, pre-release).
+# The published-wheel harness cannot exercise unreleased code, and installing the beta onto a
+# developer machine would clobber whatever stable `tg` that machine relies on. Building in a
+# container keeps the host's installed `tg` untouched.
+#
+# Usage (run from the repo root so the build context contains the source):
+#   docker build -f scripts/dogfood/Dockerfile.source -t tg-dogfood-src .
+#   docker run --rm tg-dogfood-src
+# Exit 0 = the working tree builds, installs, and every feature works against the real binary.
+#
+# NOTE: this compiles rust_core, so the first build is slow (release profile + LTO). Layer caching
+# keeps rebuilds cheap as long as Cargo.toml/Cargo.lock are unchanged.
+
+ARG PYTHON_VERSION=3.12
+FROM python:${PYTHON_VERSION}-slim
+
+# ripgrep backs tg's plain-text passthrough; the real search path needs it present.
+# build-essential + curl are needed to build the PyO3 extension.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ripgrep build-essential curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pin the toolchain to the repo's rust-toolchain if present; otherwise stable.
+ENV CARGO_HOME=/usr/local/cargo
+ENV RUSTUP_HOME=/usr/local/rustup
+ENV PATH=/usr/local/cargo/bin:$PATH
+RUN curl --proto '=https' --tlsv1.2 -sSf --retry 3 https://sh.rustup.rs \
+      | sh -s -- -y --profile minimal --default-toolchain stable
+
+WORKDIR /src
+COPY . /src
+
+# Build + install the working tree exactly as a wheel install would land it.
+RUN pip install --no-cache-dir maturin \
+    && pip install --no-cache-dir .
+
+# Install sanity: fail the BUILD early if `tg` is not on PATH or the extension did not load.
+RUN tg --version
+
+# Report which source this binary came from, so a stale-layer build cannot masquerade as fresh.
+RUN python -c "import tensor_grep, sys; print('tensor_grep from:', tensor_grep.__file__); sys.stdout.flush()"
+
+ENTRYPOINT ["python", "/src/scripts/dogfood/dogfood_features.py"]
