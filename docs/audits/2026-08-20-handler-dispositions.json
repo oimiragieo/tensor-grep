@@ -18,5 +18,575 @@
     "evidence": "except Exception: sets ref_kind = \"value\" (a safe default), guarded by the inline comment 'F20: a classifier bug must only default THIS row to \"value\", never drop every reference in the file.'",
     "reason": "Byte-identical fallback pattern to repo_map_lang_js.py's _walk handler, same F20 rationale: a reference-kind classifier failure must degrade one row, not abort the whole-file reference walk. Not-provably-disclosing because the AST detector cannot see the comment.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1069,
+    "enclosing_symbol": "_record_generated_audit_manifest",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "PRE-FIX the body was exactly `except Exception: return` -- no log, no re-raise, no field on the payload, and the function returns None on both paths, so a caller (_execute_rewrite_json / _execute_embedded_rewrite_json in cli/mcp_rewrite_tools.py, which call it fire-and-forget and discard the result) could not distinguish a recorded rewrite from one silently missing from the audit history that tg_audit_history later reads back. HARDENED so the CALLER observes it: the rewrite response's audit_manifest now carries recorded=false plus a sanitized record_error (exception class), with the raw reason kept server-side via _log_tool_exception -- the same sanitized-wire / raw-log split _sanitized_tool_error uses everywhere else on this surface. A3 ROUND 1 REJECTED an interim version that wrote stderr ONLY and asserted the wire payload unchanged, correctly noting that asserts the fail-open rather than the fix. RED arm: tests/unit/test_w1a_mcp_silent_swallow_fixes.py::test_audit_manifest_record_failure_is_observable_by_the_mcp_CLIENT drives the PUBLIC tg_rewrite_apply tool and fails on the pre-fix bytes with `None is False` (no `recorded` key at all).",
+    "reason": "SILENT-SWALLOW and not INTENTIONAL-BOUNDARY: continuing IS correct here (the edit itself succeeded and must not be reported as failed), but a best-effort boundary is only intentional if the caller can SEE the degradation -- this one was invisible on an audit-integrity path reachable from any MCP client, so the fix is disclosure to the caller rather than a raise (raising would fail a rewrite that genuinely succeeded).",
+    "hardened_in": "#1065"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1531,
+    "enclosing_symbol": "tg_repo_map",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_repo_map] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1605,
+    "enclosing_symbol": "tg_orient",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_orient] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1682,
+    "enclosing_symbol": "tg_doctor",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_doctor] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1737,
+    "enclosing_symbol": "tg_context_pack",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_context_pack] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1823,
+    "enclosing_symbol": "tg_edit_plan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_edit_plan] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1913,
+    "enclosing_symbol": "tg_context_render",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_context_render] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2012,
+    "enclosing_symbol": "tg_agent_capsule",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_agent_capsule_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_agent_capsule] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2100,
+    "enclosing_symbol": "tg_session_edit_plan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_edit_plan] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2202,
+    "enclosing_symbol": "tg_session_context_render",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_context_render] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2283,
+    "enclosing_symbol": "tg_session_blast_radius",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_blast_radius] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2388,
+    "enclosing_symbol": "tg_session_file_importers",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_file_importers] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2502,
+    "enclosing_symbol": "tg_session_blast_radius_render",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_blast_radius_render] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2609,
+    "enclosing_symbol": "tg_session_blast_radius_plan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_error_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_blast_radius_plan] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2729,
+    "enclosing_symbol": "tg_find",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_find] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3207,
+    "enclosing_symbol": "tg_search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_sanitized_tool_error_text` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_search] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3541,
+    "enclosing_symbol": "tg_ast_search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_sanitized_tool_error_text` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_ast_search] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3674,
+    "enclosing_symbol": "tg_classify_logs",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_sanitized_tool_error_text` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_classify_logs] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3742,
+    "enclosing_symbol": "tg_session_open",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_exception_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_open] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3751,
+    "enclosing_symbol": "tg_session_open",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "PRE-FIX the body was `tracked_file_count = result.file_count` with no disclosure. The M13 comment three lines above states that tracked_file_count exists BECAUSE it counts source + test files while file_count counts only non-test sources, so the fallback returns a value wrong in the exact dimension the field was added to express, in a payload otherwise byte-identical to the healthy one. HARDENED with a tracked_file_count_error key present ONLY on the failure branch (the control test asserts its ABSENCE on the healthy path, so its presence is the degradation flag). RED arm: tests/unit/test_w1a_mcp_silent_swallow_fixes.py::test_session_open_tracked_file_count_degradation_is_disclosed fails on the pre-fix bytes, its assertion printing the full pre-fix key set with neither new key present.",
+    "reason": "SILENT-SWALLOW and not LOGGED-DEGRADE: the handler DID degrade correctly (the session is genuinely open and returning it is right) but recorded the reason nowhere at all -- no log, no field, no error -- which is precisely the caller-cannot-distinguish-it-from-healthy shape that separates the two categories.",
+    "hardened_in": "#1065"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3786,
+    "enclosing_symbol": "tg_session_list",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_exception_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_list] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3824,
+    "enclosing_symbol": "tg_session_show",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_exception_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_show] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3860,
+    "enclosing_symbol": "tg_session_refresh",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_exception_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_refresh] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3936,
+    "enclosing_symbol": "tg_session_context",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_session_exception_payload` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session_context] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4069,
+    "enclosing_symbol": "tg_navigate",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_navigate] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4174,
+    "enclosing_symbol": "tg_impact",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_impact] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4465,
+    "enclosing_symbol": "tg_query",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_query] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4582,
+    "enclosing_symbol": "tg_context",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_context] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4647,
+    "enclosing_symbol": "tg_explore",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_explore] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4855,
+    "enclosing_symbol": "tg_session",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_session] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4929,
+    "enclosing_symbol": "tg_scan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_scan] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5028,
+    "enclosing_symbol": "tg_audit",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_audit] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5073,
+    "enclosing_symbol": "tg_checkpoint",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_checkpoint] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5162,
+    "enclosing_symbol": "tg_rewrite",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_rewrite] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5303,
+    "enclosing_symbol": "stdin_reader",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Body is `await read_stream_writer.send(exc); continue` -- the JSON-decode exception for ONE malformed stdio frame is forwarded down the read stream as a value (the stream is typed `SessionMessage | Exception` at its creation site) and the reader loop continues. The MCP SDK's session layer is the consumer that turns it into a JSON-RPC parse error. BEHAVIOURAL PROOF (A3 round 1, finding 3): tests/unit/test_w1a_mcp_handler_fail_closed.py::test_stdin_reader_surfaces_a_malformed_frame_and_stays_usable feeds a malformed frame followed by a valid one through the real _stdio_server_accepting_content_length and asserts BOTH that the bad frame arrives as an Exception object AND that the next valid frame is still delivered. Observed RED with this handler narrowed to ZeroDivisionError: the pydantic json_invalid error escapes the task group as an ExceptionGroup and neither frame arrives.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: the exception object itself crosses the boundary, so nothing is lost; and not LOGGED-DEGRADE because it is not a log but a typed hand-off. Killing the reader on one unparseable frame would take down the whole stdio transport for every client, which is a denial of service rather than fail-closed. A3 ROUND 1 REJECTED exempting this as 'transport plumbing': it parses UNTRUSTED frames, so W1.3's behavioural requirement applies. It now has one -- see the evidence field.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 114,
+    "enclosing_symbol": "tg_symbol_blast_radius_plan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_inject_mcp_contract_fields` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_blast_radius_plan] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 183,
+    "enclosing_symbol": "tg_symbol_defs",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_defs] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 251,
+    "enclosing_symbol": "tg_symbol_source",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_source] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 322,
+    "enclosing_symbol": "tg_symbol_impact",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_impact] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 398,
+    "enclosing_symbol": "tg_symbol_refs",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_refs] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 474,
+    "enclosing_symbol": "tg_symbol_callers",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_callers] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 534,
+    "enclosing_symbol": "tg_file_imports",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_file_imports] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 621,
+    "enclosing_symbol": "tg_file_importers",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_file_importers] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 698,
+    "enclosing_symbol": "tg_symbol_blast_radius",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_blast_radius] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 795,
+    "enclosing_symbol": "tg_symbol_blast_radius_render",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_symbol_blast_radius_render] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 642,
+    "enclosing_symbol": "tg_audit_manifest_verify",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_audit_manifest_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_audit_manifest_verify] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 674,
+    "enclosing_symbol": "tg_audit_history",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_audit_history_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_audit_history] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 724,
+    "enclosing_symbol": "tg_audit_diff",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_audit_diff_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_audit_diff] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 821,
+    "enclosing_symbol": "tg_review_bundle_create",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_review_bundle_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_review_bundle_create] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 877,
+    "enclosing_symbol": "tg_review_bundle_verify",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `_review_bundle_error` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_review_bundle_verify] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 914,
+    "enclosing_symbol": "tg_checkpoint_create",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_checkpoint_create] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 963,
+    "enclosing_symbol": "tg_checkpoint_list",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_checkpoint_list] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1015,
+    "enclosing_symbol": "tg_checkpoint_undo",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "MCP tool seam: the handler terminates the call by returning a client-visible structured error built via `dumps` carrying str(exc); no partial or empty success can be returned from this path. Proved behaviourally, not by AST shape: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_mcp_tool_boundary_is_fail_closed[tg_checkpoint_undo] forces the tool's own success-path callee to raise and asserts an `error` object comes back; the same case was observed RED with this handler's guard neutralized (45/45 RED, driver output in the PR body).",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the handler does not degrade and continue -- it ENDS the tool call with an explicit error envelope, which is the fail-closed contract for a network-reachable surface. Not SILENT-SWALLOW because the reason reaches the caller; the census could not prove that from AST shape alone because the disclosure is a helper CALL rather than a log statement or a literal 'error' key at this site.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 244,
+    "enclosing_symbol": "_embedded_rewrite_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Capability probe: the whole body is `from tensor_grep.rust_core import ast_rewrite_apply_json, ast_rewrite_plan_json` and the handler returns False. Its contract IS 'False on any failure'. Behavioural proof that the CONSUMER of the same import failure still discloses: tests/unit/test_w1a_mcp_handler_fail_closed.py::test_embedded_rewrite_availability_probe_degrades_and_its_consumer_discloses asserts both halves (probe returns False AND _execute_embedded_rewrite_json returns code='unavailable' with a non-empty message).",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: a boolean probe cannot carry a reason by construction, and a probe that raised would make an optional native accelerator a hard dependency. The swallow is only safe because the consuming path discloses, which is why that half is asserted in the same test rather than argued in prose.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 560,
+    "enclosing_symbol": "_execute_embedded_rewrite_json",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Returns _rewrite_error(f'Embedded native rewrite support unavailable: {exc}', code='unavailable', retryable=True) -- the import failure's own text reaches the client. Proved by test_embedded_rewrite_availability_probe_degrades_and_its_consumer_discloses.",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: the call TERMINATES with an explicit, retryable-flagged error rather than degrading to a partial rewrite result; no empty-but-successful payload can reach the client.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 578,
+    "enclosing_symbol": "_execute_embedded_rewrite_json",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Body calls _classify_native_rewrite_failure(str(exc), returncode=1) and returns _rewrite_error(str(exc), code=code, retryable=retryable) -- the engine's message is forwarded AND classified so a malformed pattern (not retryable) is distinguishable from an IO/internal fault (retryable). Proved by test_embedded_rewrite_engine_failure_is_classified_not_swallowed, which asserts the injected marker appears in error.message.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: this is the seam between an embedded native engine and a JSON tool contract, and it is the ONLY place the engine's raw exception can be turned into the retryable flag clients branch on.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 984,
+    "enclosing_symbol": "execute_rewrite_apply_json",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "Guards `from tensor_grep.cli.checkpoint_store import create_checkpoint; create_checkpoint(path)` and returns (_rewrite_error(f'Failed to create checkpoint: {exc}', code='checkpoint'), 1) -- an explicit refusal with a non-zero exit code, taken BEFORE any edit is written.",
+    "reason": "INTENTIONAL-BOUNDARY and not LOGGED-DEGRADE: this is fail-closed in the strongest sense -- a checkpoint that cannot be created ABORTS the apply rather than proceeding with an un-undoable edit. Degrading here would be the actual defect. Not in the RED-3 table because it is an internal helper, not a registered tool; its refusal path is exercised through tg_rewrite in tests/unit/test_mcp_plan_bound_apply.py.",
+    "hardened_in": null
   }
 ]

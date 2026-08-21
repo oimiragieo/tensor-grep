@@ -3127,8 +3127,8 @@ def test_tg_rewrite_apply_supports_optional_audit_manifest_flag(tmp_path, monkey
         )
 
     parsed = json.loads(out)
-    # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert (am := parsed["audit_manifest"]).pop("recorded") is False, "W1-a: append failed"
+    assert am.pop("record_error") and {k: parsed[k] for k in payload} == payload  # audit A4
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
@@ -3271,8 +3271,8 @@ def test_tg_rewrite_apply_supports_optional_audit_signing_key_flag(tmp_path, mon
         )
 
     parsed = json.loads(out)
-    # audit A4: tolerate the added mcp_contract_version envelope key.
-    assert {key: parsed[key] for key in payload} == payload
+    assert (am := parsed["audit_manifest"]).pop("recorded") is False, "W1-a: append failed"
+    assert am.pop("record_error") and {k: parsed[k] for k in payload} == payload  # audit A4
     assert parsed["mcp_contract_version"] == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     # round-8 (audit #95): path="src" is now confined+resolved to an absolute cwd-relative
     # path before it reaches the native argv (mirrors resolved_manifest's own confinement).
