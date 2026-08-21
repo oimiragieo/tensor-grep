@@ -24,7 +24,7 @@ from typer.testing import CliRunner
 from tensor_grep.cli import ast_workflows
 from tensor_grep.cli.main import _load_inline_rule_specs, app
 from tensor_grep.core.result import MatchLine, SearchResult
-from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
 
 def test_extract_rule_member_patterns_supported_shapes() -> None:

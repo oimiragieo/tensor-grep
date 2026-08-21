@@ -6,7 +6,7 @@ from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
 from tensor_grep.cli.rule_packs import list_rule_packs, resolve_rule_pack
-from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
 
 def _patch_fake_ast(monkeypatch: pytest.MonkeyPatch) -> None:

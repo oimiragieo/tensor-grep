@@ -1656,7 +1656,7 @@ def test_tg_rulesets_returns_builtin_ruleset_metadata():
 
 def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -1699,7 +1699,7 @@ def test_tg_ruleset_scan_returns_structured_findings(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_supports_inline_rules(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -1728,7 +1728,7 @@ def test_tg_ruleset_scan_supports_inline_rules(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_inline_rules_preserves_severity_and_message(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -1827,7 +1827,7 @@ def test_tg_ruleset_scan_inline_rules_honors_explicit_language_override(monkeypa
     a different path entirely) -- exercise it directly so a regression there (e.g. a missing
     normalize_ast_language import) is actually caught."""
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2116,7 +2116,7 @@ def test_tg_ruleset_scan_inline_rules_confines_path(tmp_path, monkeypatch):
 def test_tg_ruleset_scan_refuses_direct_temp_root_before_walking(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _ExplodingAstScanner
+    from tests.unit.test_cli_modes_shared import _ExplodingAstScanner
 
     temp_root = tmp_path / "Temp"
     temp_root.mkdir()
@@ -2135,7 +2135,7 @@ def test_tg_ruleset_scan_refuses_direct_temp_root_before_walking(monkeypatch, tm
 
 def test_tg_ruleset_scan_can_emit_evidence_snippets(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2162,7 +2162,7 @@ def test_tg_ruleset_scan_can_emit_evidence_snippets(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_can_compare_and_write_baseline(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2213,7 +2213,7 @@ def test_tg_ruleset_scan_can_compare_and_write_baseline(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_can_apply_suppressions(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2253,7 +2253,7 @@ def test_tg_ruleset_scan_can_apply_suppressions(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_can_write_suppressions(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -2280,7 +2280,7 @@ def test_tg_ruleset_scan_can_write_suppressions(monkeypatch, tmp_path):
 
 def test_tg_ruleset_scan_write_suppressions_requires_justification(monkeypatch, tmp_path):
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -7672,7 +7672,7 @@ def test_ruleset_scan_write_baseline_refuses_symlink_swap_end_to_end(tmp_path, m
     Part-B is_symlink()/O_NOFOLLOW both refuse it), and the symlink's outside target is
     left unchanged (not written through)."""
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
@@ -7704,7 +7704,7 @@ def test_ruleset_scan_write_baseline_overwrites_on_rerun(monkeypatch, tmp_path):
     """A repeated write to the SAME write_baseline path must succeed and overwrite
     (guards O_CREAT|O_TRUNC|O_NOFOLLOW, not O_EXCL, which would fail the second run)."""
     from tensor_grep.cli import mcp_server
-    from tests.unit.test_cli_modes import _FakeAstPipeline, _FakeAstScanner
+    from tests.unit.test_cli_modes_shared import _FakeAstPipeline, _FakeAstScanner
 
     monkeypatch.setattr("tensor_grep.core.pipeline.Pipeline", _FakeAstPipeline)
     monkeypatch.setattr("tensor_grep.io.directory_scanner.DirectoryScanner", _FakeAstScanner)
