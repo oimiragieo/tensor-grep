@@ -44,9 +44,11 @@ passed:**
 
 Three independent conditions in the pass/fail rules are each independently sufficient:
 
-1. **Mandatory file-size limits are exceeded** — 30 violations, including one file at **30× its
-   limit**. They are grandfathered by an in-repo ratchet, but a documented exception that has never
-   been retired is not an approved exception; it is deferred work with a green light on it.
+1. **Mandatory file-size limits are exceeded** — 30 violations, the worst being `repo_map.py` at
+   15,243 lines against the 1,500-line core limit (**10.2×**). They are grandfathered by an
+   in-repo ratchet. Note the correction recorded under F-1: measurement shows the limit is
+   currently UNREACHABLE for the three largest files, so the honest reading is not "deferred
+   work" but an accepted structural exception that has never been stated as one.
 2. **A Critical and three High findings are unresolved** (§7).
 3. **Documentation is not sufficient to rebuild the feature from scratch** for 2 of the 3
    load-bearing features assessed (§9).
@@ -94,9 +96,9 @@ depending on their platform.
 
 | Control area | Status | Severity | Evidence | Required action |
 |---|---|---|---|---|
-| File sizing | **FAIL** | Critical | 30 violations / 856 files scanned; worst is `repo_map.py` at 15,243 vs a 1,500 limit | Execute the split program; retire allowlist entries as each lands |
+| File sizing | **FAIL** | Critical | 30 violations / 856 files scanned; worst is `repo_map.py` at 15,243 vs a 1,500 limit (10.2×) | Extract the measurably-unlocked slices; LOWER allowlist entries rather than promising removal (see F-1 correction) |
 | Specification alignment | **PARTIAL** | Medium | No single spec doc exists; `docs/CONTRACTS.md` serves as the de-facto contract spec and is strong | Designate CONTRACTS.md formally, or write the missing spec |
-| Design alignment | **PARTIAL** | Medium | Design packets exist per-feature (`docs/design/`), but not for the largest modules | Design packet required before the `repo_map.py` split |
+| Design alignment | **PARTIAL** | Medium | Design packets exist per-feature (`docs/design/`); one was produced for `repo_map.py` during this audit and overturned the proposed remediation | Land the `repo_map.py` packet in `docs/design/`; require one for `main.py`/`main.rs` too |
 | Data contracts | **FAIL** | High | 23 surfaces; 16 contract-defining files over 500 lines; no `.schema.json` for MCP/ledger/checkpoint/evidence | Add machine-readable schemas for the wire surfaces |
 | Implementation quality | **PASS (with findings)** | Medium | 137 broad handlers audited and dispositioned; 3 SILENT-SWALLOW found and hardened | Continue the census discipline |
 | Unit tests | **PARTIAL** | High | ~7,000 tests, strong perturbation/control discipline; but a primary contract schema had no validating test until this audit | Validate every declared contract |
@@ -169,13 +171,58 @@ specification. The matrix is therefore keyed to contract sections.
 ### F-1 — `repo_map.py` is unreviewable at 15,243 lines and houses the auto-edit safety gate
 **Severity: Critical** · `src/tensor_grep/cli/repo_map.py` · edit-plan confidence gate
 (`_edit_plan_confidence_and_ask`, referenced `docs/CONTRACTS.md:140`)
+
 **Evidence:** 15,243 physical lines against a 1,500 limit — 10.2×, the largest file in the tree.
+
 **Risk:** the logic deciding whether an agent may auto-edit without asking the user lives inside a
 file no reviewer can hold in working memory. A regression in the ask-gate is a *silent* escalation
 of autonomy on a customer's codebase.
-**Remediation:** measure the dependency graph first, then split by pipeline stage, isolating the
-confidence gate into its own module. **Acceptance:** every resulting file < 1,500 lines; the gate in
-a dedicated module with its own tests; all existing imports and monkeypatch targets still resolve.
+
+> **CORRECTION (2026-08-21, same day): the obvious remediation is measurably IMPOSSIBLE, and this
+> finding's original "split until every file is under 1,500" recommendation was wrong.**
+>
+> The repo already ships the instrument that settles this — `scripts/measure_split_floor.py`. Run
+> against the current tree it reports, for all three giants:
+>
+> | file | total lines | symbols tests patch | functions LOCKED | lines locked to facade | limit |
+> |---|---|---|---|---|---|
+> | `src/tensor_grep/cli/main.py` | 13,523 | 49 | 62 | **7,416** | 1,500 |
+> | `src/tensor_grep/cli/repo_map.py` | 15,243 | 66 | 106 | **6,715** | 1,500 |
+> | `src/tensor_grep/cli/mcp_server.py` | 5,341 | 66 | 28 | **2,506** | 1,500 |
+>
+> Each prints `-> SPLIT CANNOT REACH THE LIMIT`. A function that a test monkeypatches by attribute
+> on the facade cannot move: moving it silently breaks the patch target WITHOUT an import error,
+> which is worse than a build break because the test keeps passing while patching nothing. The
+> locked set is then closed transitively over bare-name references and bare calls.
+>
+> **So the binding constraint is the TEST STRATEGY, not the code organisation.** No amount of
+> splitting reaches 1,500 while ~6,700 lines are pinned to the facade by 66 patch targets. The
+> honest options are (a) reduce monkeypatch coupling — inject seams instead of patching module
+> attributes — which is a test-architecture programme, not a refactor; or (b) consciously accept a
+> higher limit for facades and say so, rather than carrying an allowlist entry that reads as
+> temporary but can never be retired.
+>
+> Note the instrument's own stated direction of error: it is a LOWER bound, and it is
+> function-only, so a patched module-level CONSTANT (e.g. `_EXTERNAL_LSP_PROVIDER_MANAGER`, 14
+> patch sites) is invisible to it. The real floor is therefore at least this high, never lower —
+> the permissive direction is the dangerous one, and here the tool errs conservatively.
+
+**Remediation (revised).** Do the achievable, safety-relevant slice now and treat the rest as a
+separate programme:
+
+1. **Extract the confidence gate.** The edit-plan confidence/scoring functions (~356 lines, 12
+   functions) are measurably NOT in the locked set and can move today into
+   `repo_map_confidence.py`. This directly addresses the risk above — the ask-gate becomes
+   independently reviewable and testable — without pretending the whole file is splittable.
+2. **Lower the allowlist entry** as each slice lands, rather than removing it. The entry is going
+   to exist for the foreseeable future; a ratchet that only ever decreases is honest, whereas
+   "grandfathered pending split" implies a completion that the measurement says will not come.
+3. **File the monkeypatch-coupling reduction as its own item**, with the floor measurement as its
+   acceptance metric (drive `lines LOCKED to facade` down, and re-run the tool to prove it).
+
+**Acceptance:** `repo_map_confidence.py` exists, under 500 lines, with its own tests; every
+existing import and monkeypatch target still resolves (113 files import `repo_map` by name —
+measured); `measure_split_floor.py` re-run shows the locked-line count unchanged or lower.
 
 ### F-2 — `main.py` at 13,523 lines directly produces the CLI JSON and exit-code contract
 **Severity: High** · `src/tensor_grep/cli/main.py`
@@ -302,8 +349,11 @@ no Find section — the doc asserted a pointer to content that did not exist.
    gate and a main-based PR must PASS it.
 
 **Near-term**
-4. **F-1 `repo_map.py`.** Measure the dependency graph, produce a design packet, isolate the
-   confidence gate, then split. Depends on nothing; unblocks F-9's symbol-graph gap.
+4. **F-1 `repo_map.py`.** Design packet DONE and it changed the plan: `measure_split_floor.py`
+   proves a full split cannot reach 1,500 (6,715 lines are pinned to the facade by 66
+   monkeypatch targets). Extract the confidence gate (~356 lines, measurably unlocked), lower
+   the allowlist entry rather than removing it, and file monkeypatch-coupling reduction as a
+   separate programme with the floor measurement as its acceptance metric.
 5. **F-4 find envelope.** Populate the routing fields or split the contract.
 6. **F-3 machine-readable schemas** for the four unschema'd wire surfaces.
 7. **Documentation:** write the sections named in §9.
