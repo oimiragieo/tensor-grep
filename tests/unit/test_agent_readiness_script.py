@@ -127,7 +127,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "run",
         "--no-sync",
         "pytest",
-        "tests/unit/test_cli_modes.py",
+        "tests/unit/test_cli_modes_search_guards.py",
     ]
     assert "tests/unit/test_cli_bootstrap.py" in broad_scan_check.command
     assert (
@@ -174,12 +174,13 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
 
     capsule_check = next(check for check in checks if check.name == "agent-capsule")
     assert capsule_check.timeout_s <= 120
-    assert capsule_check.command[:6] == [
+    assert capsule_check.command[:7] == [
         "uv",
         "run",
         "--no-sync",
         "pytest",
-        "tests/unit/test_cli_modes.py",
+        "tests/unit/test_cli_modes_agent_capsule.py",
+        "tests/unit/test_cli_modes_navigation.py",
         "tests/unit/test_mcp_server.py",
     ]
     assert "agent_capsule" in capsule_check.command
@@ -188,12 +189,13 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         check for check in checks if check.name == "agent-capsule-mixed-language"
     )
     assert mixed_capsule_check.timeout_s <= 120
-    assert mixed_capsule_check.command[:5] == [
+    assert mixed_capsule_check.command[:6] == [
         "uv",
         "run",
         "--no-sync",
         "pytest",
-        "tests/unit/test_cli_modes.py",
+        "tests/unit/test_cli_modes_agent_capsule.py",
+        "tests/unit/test_cli_modes_navigation.py",
     ]
     mixed_capsule_command = " ".join(mixed_capsule_check.command)
     assert "agent_capsule" in mixed_capsule_command
