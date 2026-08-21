@@ -47,6 +47,70 @@
 
 
 
+## Recent campaign notes (2026-08-21) - STACKED-PR-CI-BLINDSPOT (P1, fix available, no CEO gate)
+
+- **Finding (2026-08-21): a pull request whose BASE is a feature branch gets ZERO CI, and the
+  absence renders as "skipping".** `.github/workflows/ci.yml` filters
+  `pull_request: branches: [ "main" ]` - that filter matches the **base** ref, so a stacked PR
+  (base = another feature branch) never triggers `ci.yml` at all. Measured: PRs #1068 (base
+  `test/w1a-mcp-handler-audit`) and #1070 (base `test/w1b-cli-handler-audit`) had **exactly one**
+  check run each across their entire life - `Dependabot Automation`, conclusion `skipped`. A
+  control separates this from "CI ran and passed": sibling PR #1065, same `test/` branch prefix but
+  base `main`, showed `SUCCESS=39`. So it is the BASE ref, not the branch name, and not a runner
+  outage.
+- **Why it is dangerous rather than merely missing:** `gh pr checks` prints the row as `skipping`
+  and `mergeStateStatus` reports `MERGEABLE`. Both read as benign. Two PRs carrying
+  SILENT-SWALLOW error-handling hardening sat merge-ready with no test, lint, security, or
+  cross-platform evidence whatsoever. This is the false-green class the instrument laws exist for:
+  the check did not fail, it never existed, and absence is displayed in the same column as success.
+- **Also measured: retargeting alone does not restore the signal.** `gh pr edit --base main` changes
+  the base but fires `pull_request` action `edited`, which is not in the default trigger type set,
+  so still no run. A close/reopen (action `reopened`, which IS in the default set) is what actually
+  fires CI. Applied to #1068 and #1070 on 2026-08-21; both then produced real matrix runs.
+- **Standing rule:** before merging any PR, assert `baseRefName == "main"`. A "skipping"-only check
+  rollup is NOT a pass - it is an absent gate. Enumerate with
+  `gh pr list --state open --json number,baseRefName`.
+- **Proposed durable fix (buildable, not gated):** fail any PR whose base is not `main`. Needs a
+  bidirectional control before it is trusted - a stacked PR must FAIL it and a main-based PR must
+  PASS it - and note the bootstrap problem that a workflow which does not run on stacked PRs also
+  cannot police them, so this likely belongs in a branch-protection ruleset or a merge-time check
+  rather than in `ci.yml` itself.
+
+## Recent campaign notes (2026-08-21) - PYPI-SIZE-CAP corrections (supersedes claims below)
+
+- **Decision packet is ready:** `docs/audits/2026-08-21-pypi-size-cap-decision-packet.md`. Measured
+  independently of the earlier entry and AGREEING with it: **713 releases, 2,847 files,
+  10,733,755,391 bytes = 10.734 GB**. Three retention policies costed with real numbers; the
+  recommended default (Policy A: keep the last 5 minor lines + every `X.Y.0` milestone) deletes 548
+  releases, frees **8.20 GB**, and leaves roughly 439 releases of headroom. Deletion remains
+  IRREVERSIBLE and CEO-GATED; nothing has been deleted.
+- **CORRECTION - THREE releases are incomplete, not one.** Besides v1.111.1, `1.13.44` is missing
+  its sdist (pre-existing, 2026-06-25, unrelated to the cap) and `0.1.0` predates the native-wheel
+  shape. The per-artifact verification law below must therefore be applied as a sweep over all
+  releases, not only the newest.
+- **CORRECTION - v1.111.1 is missing the sdist too, not only the Windows wheel.** The entry below
+  states "no win_amd64 wheel and no sdist", but its surrounding prose then reasons only about
+  Windows. Source installs are equally affected: anyone with no compatible wheel falls back to
+  v1.111.0.
+- **REFUTED - stripping debug symbols did not shrink the artifacts.** PR #1067 (`5423b4b`) added
+  symbol stripping on the stated expectation of a "20MB->smaller wheel". Measured against the live
+  index: the last-50-release average is **18.67 MB**, identical to the last-20 average, and the
+  single largest release in project history is **v1.111.0 at 19.1 MB**, published 2026-08-20 - the
+  day BEFORE the incident. Whatever that change did, it bought no measurable headroom, so it must
+  not be counted as partial remediation, and the cap decision cannot be deferred on the theory that
+  releases are trending smaller.
+- **UNVERIFIED, flagged deliberately:** the claim that `yank` does not free project space is
+  consistent with well-known PyPI behavior, but it could not be confirmed against PyPI's own docs as
+  a primary source. Treat as unconfirmed until checked.
+
+- **Sequencing consequence for the merge queue (new):** while the cap is unresolved, merging any
+  `fix:`/`feat:` PR bumps the version, tags, publishes GitHub release assets, and then fails or
+  partially completes the PyPI upload - manufacturing another platform-skewed "latest". Release
+  class is therefore part of merge eligibility right now: `refactor:`/`test:`/`docs:`/`chore:`
+  PRs are safe to merge (they publish nothing under the angular default parser), and `fix:`/`feat:`
+  PRs must be held until the cap is cleared. Verify the class from the COMMIT that will land, not
+  the PR title, whenever a PR has exactly one commit.
+
 ## Recent campaign notes (2026-08-20) - PYPI-SIZE-CAP: release pipeline hard-blocked (P0, CEO-GATED remediation)
 
 - **UPDATE 2026-08-21 - v1.111.1 is PARTIALLY published and that is worse than absent.**
