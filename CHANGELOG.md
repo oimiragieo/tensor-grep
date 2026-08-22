@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.111.7 (2026-08-22)
+
+### Bug Fixes
+
+- Reconcile the TASK_BOARD stamp to v1.111.6 (main is RED)
+  ([#1094](https://github.com/oimiragieo/tensor-grep/pull/1094),
+  [`ed46823`](https://github.com/oimiragieo/tensor-grep/commit/ed4682332b4c43c01de48125040b9adae6f6b481))
+
+MAIN IS RED and this is the cause:
+
+test_task_board_reconcile_stamp_is_not_many_releases_stale docs/TASK_BOARD.md's reconcile stamp is
+  v1.111.0 while pyproject ships v1.111.6 -- 6 releases behind (tolerance 5).
+
+NOT caused by the commit it fired on. #1092 was docs-only; the gate is a TIME BOMB that arms itself
+  with every release. Four releases shipped 2026-08-21/22 (v1.111.3 -> v1.111.6) and the fifth
+  crossed the tolerance, so the next commit to touch main was going to fail regardless of its
+  content. Worth knowing for next time: after a multi-release day, reconcile the board BEFORE the
+  next merge.
+
+The stamp is an honest one, not a version bump. Both arms were dogfooded against the PUBLISHED
+  wheel, not a local build: uvx --refresh-package tensor-grep --from tensor-grep==1.111.6 tg
+  --version -> tensor-grep 1.111.6 tg defs src missing_scan_paths --json -> 1 symbol, resolved to
+  cli/scan_guardrails.py tg refs src ZzzNotARealSymbolXyz --json -> no_match=true, not_found=true,
+  files=[] (The first `tg defs` attempt returned no JSON because I omitted the SYMBOL argument -- my
+  invocation was wrong, not the product.)
+
+The stamp text reconciles what actually shipped this session, and explicitly records that the CEO
+  gates #48/#72/#77/#131/#169 + RULESETS remain CEO_GATED: council recommendations and Exa grounding
+  only, no status flips.
+
+Verified: test_task_board_freshness.py + test_public_docs_governance.py pass.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Record the CEO-gate council verdicts, grounded against external sources
+  ([#1092](https://github.com/oimiragieo/tensor-grep/pull/1092),
+  [`8077480`](https://github.com/oimiragieo/tensor-grep/commit/80774806aba37cf3e68a179d07830049303c0fc0))
+
+Runs the six open gates (#48, #72, #77, #131, #169, RULESETS) through a 7-seat cross-provider
+  council, then grounds the two load-bearing items against outside research. Every row stays
+  CEO_GATED -- these are recommendations, not decisions.
+
+COUNCIL: 5 substantive seats (claude/fable-5, droid_kimi, droid_deepseek,
+
+droid_glm, cursor). 2 non-votes: agy and codex both hit sandbox/hook read failures and reported
+  CANNOT_READ_REQUIRED_FILE WITHOUT fabricating verdicts -- the correct behaviour, and why a
+  read-failure seat is discarded rather than counted. Quorum met.
+
+Unanimous: #72 withdraw the public 7.5x (no seat defended keeping it), #77 advisory only, #131 ship
+  experimental with no speed claim, #169 rent-when-triggered not now. 4/5 on #48 (accept the hybrid)
+  and RULESETS (add a [scan] extra).
+
+VERIFIED ONE SEAT'S CLAIM INSTEAD OF TAKING IT. droid_kimi argued #169 needs $0 because local NVIDIA
+  hardware exists. nvidia-smi confirms RTX 4070 + RTX 5070. That narrows #169 from "fund a GPU
+  environment" to "does a PUBLIC claim need a clean-room runner" -- a much smaller question.
+
+MINORITY PRESERVED (a 2-vs-3 minority is right ~25% of the time). droid_deepseek dissented twice:
+  pin #48's cold-start floor in a public ADR rather than "retiring" the rewrite; and the RULESETS
+  status quo is the LEAST acceptable option because the shipped disclosure was an honesty PATCH, not
+  a product DECISION.
+
+EXTERNAL GROUNDING (Exa) -- added because a 5-seat consensus is not evidence. The council ran
+  without external research first, which is the documented correlated-hallucination risk. Both
+  grounded items changed materially:
+
+#72: the literature is STRICTER than the council and supplies the protocol the council lacked --
+  Codeflash's 5% real-machine / 10% GitHub-Actions noise floor and minimum-not-mean argument;
+  SIGPLAN's dozens-of-repetitions, geomean-for-ratios and benchmark-survivorship warning; fak's
+  never-mix-regimes and tombstone-don't-delete rules; Doppler's interleaved paired sampling, >=20
+  pairs and explicit parity stopping rule; NIST TN 1830 on CIs vs bare averages. Most importantly it
+  supplies an explanation nobody in the council proposed: 7.5x and 6.4x may be different REGIMES
+  against different baselines, in which case neither supersedes the other and both are unpublishable
+  regardless of a re-run.
+
+RULESETS: pypa/packaging.python.org#1605 confirms the shipped remediation message IS the accepted
+  pattern. PEP 771 (Default Extras) is a third option the council never raised, and its motivation
+  is literally this failure mode -- but it is a PROPOSAL, flagged as a watch item rather than an
+  available mechanism.
+
+Verified: test_public_docs_governance.py 43 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.6 (2026-08-22)
 
 ### Bug Fixes
