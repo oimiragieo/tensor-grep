@@ -828,5 +828,465 @@
     "evidence": "except Exception as exc: raise RuntimeError(f'release-native front-door asset install refused: fetching CHECKSUMS.txt for v{version} raised {exc}; refusing to install an unverified native binary') from exc -- newly added in W1-b (2026-08-20, A3 round-1 MEDIUM remediation) so that a checksum-fetch dependency override (test injection, or a future refactor of `_fetch_native_frontdoor_checksums`) that raises instead of returning None still results in a disclosed refusal rather than an unwrapped exception escaping the install path.",
     "reason": "The exception text is embedded verbatim in the raised RuntimeError via `from exc` chaining, and the install is refused (no binary written) exactly as the pre-existing checksums_text-is-None branch immediately below it already does. RED/GREEN receipt: tests/unit/test_w1b_cli_handler_fail_closed.py::test_fetch_checksums_failure_causes_install_to_refuse_not_silently_succeed (injected arm asserts the marker propagates into the raised message; control arm proves the natural None-return path is unaffected).",
     "hardened_in": "W1-b (this PR, #1068 A3 round-1 MEDIUM)"
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 576,
+    "enclosing_symbol": "_read_project_version_fallback",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass, falling through to `return _VERSION_UNAVAILABLE_SENTINEL` (\"0.0.0-unavailable\"). A3 MEDIUM (2026-08-20, PR #1070, codex REVISE round 1): PRE-FIX this returned the bare literal \"0.0.0\", indistinguishable from a legitimately-discovered version, which fed `_cli_package_version()` -> `scan()`'s `--sarif` branch (main.py) -> `scan_payload_to_sarif`'s `driver.version`/`driver.semanticVersion` (sarif.py) with no other disclosure -- a double metadata failure (importlib.metadata AND pyproject.toml both failing) produced normal-looking SARIF security-scan provenance with zero observable degradation. FIXED: the fallback now returns the sentinel `_VERSION_UNAVAILABLE_SENTINEL`, and `scan()` threads `version_unavailable=(tool_version == _VERSION_UNAVAILABLE_SENTINEL)` into `scan_payload_to_sarif`, which stamps `run.properties.tensorGrepVersionUnavailable = True`. RED-2: tests/unit/test_w1c_sarif_version_disclosure.py::test_double_version_lookup_failure_is_disclosed_in_sarif_provenance drives the real `tg scan --sarif` CLI surface (CliRunner + app, not the private helper) with both natural failure sources replaced by unique injected exception types, and is RED on the pre-fix bytes with the exact pinned reason (`'0.0.0' == '0.0.0-unavailable'`). No-injection control: test_normal_version_lookup_discloses_no_degradation asserts the marker is ABSENT on an unpatched run.",
+    "reason": "Still INTENTIONAL-BOUNDARY, not SILENT-SWALLOW: falling back to a placeholder version string on a lookup failure remains the correct behaviour for this best-effort display value -- what was wrong was that the placeholder was UNDISCLOSED to a downstream consumer (SARIF provenance) that treats it as trusted metadata. The fix makes the degradation observable at the boundary that actually consumes it (the SARIF run's properties), rather than changing the fallback's own behaviour, which is why the category is unchanged and only the evidence/fix changed.",
+    "hardened_in": "#1070"
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 586,
+    "enclosing_symbol": "_cli_package_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return _self._read_project_version_fallback() -- the primary importlib.metadata.version('tensor-grep') lookup (e.g. package not installed via metadata, editable-install edge cases) falls through to the pyproject.toml-parsing fallback immediately above, which now returns the observable `_VERSION_UNAVAILABLE_SENTINEL` on its own failure (see that row's evidence for the SARIF-disclosure fix, A3 MEDIUM PR #1070).",
+    "reason": "Still INTENTIONAL-BOUNDARY: this is the outer half of the same two-tier best-effort version lookup as `_read_project_version_fallback`, and its failure mode is unchanged ('try the next fallback'). The disclosure fix lives in the fallback tier and at the `scan()` SARIF call site, not here -- this handler's own behaviour (delegate to the next tier) was never the defect.",
+    "hardened_in": "#1070"
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 1965,
+    "enclosing_symbol": "_pcre2_fallback_backend_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False -- guards an optional import of RipgrepBackend plus a .supports_pcre2() probe used only to decide whether to transparently retry an inline-flag regex under PCRE2 (audit M14b).",
+    "reason": "Fails CLOSED to 'PCRE2 not available', which suppresses the fallback and lets the caller's existing ConfigurationError path handle the rejection normally -- the conservative direction. A probe failure here can never cause a query to silently run under the wrong engine; it can only skip an optional convenience retry.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 2723,
+    "enclosing_symbol": "_resolve_token",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return '' inside _expand_ripgrep_replacement's _resolve_token helper, guarding match.group(int(token)) / match.group(token) against an out-of-range numeric group or an unknown named group in a --replace template (e.g. $5 when the pattern has 2 groups, or ${bogus}).",
+    "reason": "Mirrors the regex-engine convention this feature deliberately replicates: an unmatched or invalid capture-group reference expands to the empty string rather than aborting the whole substitution -- one bad token degrades one substitution site in the replacement text, not the entire --replace output or the search itself. This is per-token graceful degradation on a display-formatting path, the same class as the F20 reference-kind classifier fallback the W1-d _walk handlers were dispositioned INTENTIONAL-BOUNDARY for.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 2849,
+    "enclosing_symbol": "_warn_unavailable_gpu_device_ids",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return, guarding DeviceDetector().enumerate_device_ids(). The function's own docstring states the rationale directly: 'This is deliberately advisory only ... an empty inventory means cannot verify, not every id is invalid, so this stays silent rather than warn on every single invocation'.",
+    "reason": "Self-documented INTENTIONAL-BOUNDARY: a CPU-only build or a probe failure produces an empty inventory, which this function already treats as cannot-verify via the 'if not available_ids: return' guard two lines below the handler -- the except Exception merely reaches that same safe no-warning outcome by a second route. The authoritative rejection lives in the native Rust classifier; this Python-side check is explicitly best-effort.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 5438,
+    "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- the function's own docstring names this 'Fail-open Tier-1 default fast path ... mirrors the existing _maybe_context_render_via_running_daemon / _maybe_edit_plan_via_running_daemon fail-open shape'. Every call site (e.g. :7570, :7799, :7811, :7952, :8059, :8466) treats a None return as 'daemon path unavailable, run the existing cold path', and the cold path is the same code that ran before task #108 introduced the warm-daemon fast path.",
+    "reason": "A daemon-probe failure of any kind (timeout, malformed response, transport error) degrades to the pre-existing, independently-correct cold path -- the caller's result is never wrong, only potentially slower. This is an optimization seam, not a correctness or security boundary: the AST detector cannot see the disclosure because it is 'return a sentinel the caller already branches on', not a log call or a literal error key.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 5485,
+    "enclosing_symbol": "_maybe_orient_via_running_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- byte-identical fail-open shape to _maybe_symbol_command_via_running_daemon, docstring states it mirrors _maybe_symbol_command_via_running_daemon's probe/autostart-on-miss shape. Sole call site at :5061 falls through to the unchanged cold build_orient_capsule path whenever this returns None.",
+    "reason": "Same daemon-fast-path rationale as _maybe_symbol_command_via_running_daemon: a probe failure degrades to the independently-correct cold path, never to a wrong or empty result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 5554,
+    "enclosing_symbol": "_maybe_agent_via_running_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- byte-identical fail-open shape to _maybe_symbol_command_via_running_daemon. Sole call site at :6018 falls through to the cold tg agent path whenever this returns None.",
+    "reason": "Same daemon-fast-path rationale as _maybe_symbol_command_via_running_daemon: a probe failure degrades to the independently-correct cold path, never to a wrong or empty result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 5604,
+    "enclosing_symbol": "_maybe_context_render_via_running_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- byte-identical fail-open shape to _maybe_symbol_command_via_running_daemon. Sole call site at :5755 falls through to the cold context-render path whenever this returns None.",
+    "reason": "Same daemon-fast-path rationale as _maybe_symbol_command_via_running_daemon: a probe failure degrades to the independently-correct cold path, never to a wrong or empty result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 5646,
+    "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return None -- byte-identical fail-open shape to _maybe_symbol_command_via_running_daemon. Sole call site at :6239 falls through to the cold edit-plan path whenever this returns None.",
+    "reason": "Same daemon-fast-path rationale as _maybe_symbol_command_via_running_daemon: a probe failure degrades to the independently-correct cold path, never to a wrong or empty result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 7424,
+    "enclosing_symbol": "_maybe_swap_reversed_session_path",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return session_id, path -- guards get_session(path, session_id), used only to confirm a heuristic guess that the user transposed <PATH> <SESSION_ID> argument order. A probe failure (session store error, missing session file, corrupt session metadata) means the guess cannot be confirmed, so the function returns the ORIGINAL unswapped arguments.",
+    "reason": "A failed confirmation of an auto-correct heuristic must fall back to the user's literal input, not to a guess -- returning the unswapped tuple is the fail-safe direction, and the caller then proceeds with normal (unswapped) argument handling, which will itself surface a clear session-not-found error if the guess was in fact needed. Swallowing this exception into a silent SWAP would have been the dangerous direction; swallowing it into a no-op is the safe one.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 11780,
+    "enclosing_symbol": "_run_install_dense",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: steps['fetch_model'] = {'status': 'failed', 'dir': ..., 'detail': str(exc)}; return {'ok': False, ..., 'message': f'tg install-dense failed: dense model fetch failed ({exc})'}. The inline comment states the rationale: fetch_dense_model documents BackendExecutionError for every download/checksum/deadline failure, but this command boundary catches broadly so a lower-level unwrapped OSError also exits cleanly with a message instead of a raw traceback.",
+    "reason": "Discloses str(exc) into both the structured steps payload and the top-level message, and sets ok: False -- the caller (the install-dense CLI command) prints message and exits non-zero. Not-provably-disclosing only because the census's _body_records_reason detector looks for a literal local variable named like reason/error/detail or a bare re-raise, and this handler instead writes into a dict key one level down (steps['fetch_model']['detail']) plus a returned message string -- a shape the AST heuristic cannot see, not a shape that hides the failure from the user.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 3712,
+    "enclosing_symbol": "search_command",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: if _is_invalid_regex_error(exc): ... retry under PCRE2 with a stderr note, else _exit_invalid_regex(exc, json_mode=json) (prints and exits non-zero); any non-regex exception is implicitly re-raised because the if/else covers only the invalid-regex branch and falls through un-suppressed.",
+    "reason": "INTENTIONAL-BOUNDARY: a regex-validation failure either triggers a disclosed, announced PCRE2 retry or exits with the regex error message via _exit_invalid_regex; any other exception is not caught by this handler's logic and propagates. Command-boundary fail-closed behaviour.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 3994,
+    "enclosing_symbol": "search_command",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: same invalid-regex-or-reraise shape as the :3713 handler, guarding validation of file-sourced patterns (--file/-f). _exit_invalid_regex prints and exits non-zero on the regex-invalid branch; every other exception is re-raised via the bare `raise` in the else branch.",
+    "reason": "INTENTIONAL-BOUNDARY: identical fail-closed shape to the :3713 handler -- an unhandled condition is re-raised rather than swallowed, and the handled condition always disclosed via _exit_invalid_regex.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 4173,
+    "enclosing_symbol": "search_command",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: if _is_invalid_regex_error(exc): _exit_invalid_regex(exc, json_mode=json) (prints and exits non-zero); raise (unconditional re-raise for every other exception) -- guards the primary rg_backend.search() call.",
+    "reason": "INTENTIONAL-BOUNDARY: every path either exits with a disclosed regex error or re-raises the original exception unmodified; nothing is swallowed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 4236,
+    "enclosing_symbol": "search_command",
+    "handler_index_within_symbol": 3,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: if _is_invalid_regex_error(exc): _exit_invalid_regex(exc, json_mode=json); raise -- guards the CPU-fallback retry path (audit B2/I1) after a native backend failure.",
+    "reason": "INTENTIONAL-BOUNDARY: same disclosed-exit-or-reraise shape as the other three search_command handlers in this function; nothing is swallowed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8772,
+    "enclosing_symbol": "session_open",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8803,
+    "enclosing_symbol": "session_daemon_start",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8828,
+    "enclosing_symbol": "session_daemon_status",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8856,
+    "enclosing_symbol": "session_daemon_stop",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8878,
+    "enclosing_symbol": "session_list",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8927,
+    "enclosing_symbol": "session_show",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 8960,
+    "enclosing_symbol": "session_refresh",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9049,
+    "enclosing_symbol": "session_context_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9190,
+    "enclosing_symbol": "session_context_render_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9292,
+    "enclosing_symbol": "session_edit_plan_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9367,
+    "enclosing_symbol": "session_blast_radius_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9416,
+    "enclosing_symbol": "session_importers_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9523,
+    "enclosing_symbol": "session_blast_radius_render_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9612,
+    "enclosing_symbol": "session_blast_radius_plan_cmd",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9651,
+    "enclosing_symbol": "session_serve",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9666,
+    "enclosing_symbol": "checkpoint_create",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9797,
+    "enclosing_symbol": "checkpoint_list",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 9875,
+    "enclosing_symbol": "checkpoint_undo",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 11919,
+    "enclosing_symbol": "audit_verify",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 11971,
+    "enclosing_symbol": "audit_history",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12033,
+    "enclosing_symbol": "audit_diff",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12171,
+    "enclosing_symbol": "review_bundle_create",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12334,
+    "enclosing_symbol": "review_bundle_verify",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12512,
+    "enclosing_symbol": "evidence_emit",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12639,
+    "enclosing_symbol": "evidence_verify",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except typer.Exit: raise / except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(code=1) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12869,
+    "enclosing_symbol": "ledger_claim",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-claim'); raise typer.Exit(code=2) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 12964,
+    "enclosing_symbol": "ledger_release",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-release'); raise typer.Exit(code=2) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 13050,
+    "enclosing_symbol": "ledger_list",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-list'); raise typer.Exit(code=2) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 13149,
+    "enclosing_symbol": "ledger_record",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-record'); raise typer.Exit(code=2) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 13240,
+    "enclosing_symbol": "ledger_find",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-find'); raise typer.Exit(code=2) from exc",
+    "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
   }
 ]

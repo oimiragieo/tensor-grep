@@ -245,7 +245,11 @@ def _invocation(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def scan_payload_to_sarif(
-    payload: dict[str, Any], *, tool_version: str, base_path: str | None = None
+    payload: dict[str, Any],
+    *,
+    tool_version: str,
+    base_path: str | None = None,
+    version_unavailable: bool = False,
 ) -> dict[str, Any]:
     """Render a ``tg scan --json`` payload as a SARIF v2.1.0 log.
 
@@ -253,6 +257,12 @@ def scan_payload_to_sarif(
     document rather than on a fragment, and what keeps the output byte-stable for a given payload
     (a SARIF file that differs run-to-run defeats the baseline/suppression workflow it exists to
     feed).
+
+    ``version_unavailable`` (A3 MEDIUM, PR #1070): the caller's version lookup can silently
+    degrade to a placeholder on a double metadata failure (``importlib.metadata`` AND
+    ``pyproject.toml`` both unreadable/unparsable). That degradation must be OBSERVABLE in the
+    provenance a security-scan consumer trusts, not just embedded unlabeled in ``tool_version``
+    -- so when set, ``run.properties.tensorGrepVersionUnavailable`` is stamped ``True``.
     """
     findings = payload.get("findings") or []
 
@@ -334,9 +344,14 @@ def scan_payload_to_sarif(
         "results": results,
     }
 
+    run_properties: dict[str, Any] = {}
     ruleset = payload.get("ruleset")
     if isinstance(ruleset, str) and ruleset:
-        run["properties"] = {"tensorGrepRuleset": ruleset}
+        run_properties["tensorGrepRuleset"] = ruleset
+    if version_unavailable:
+        run_properties["tensorGrepVersionUnavailable"] = True
+    if run_properties:
+        run["properties"] = run_properties
 
     return {
         "$schema": SARIF_SCHEMA_URI,

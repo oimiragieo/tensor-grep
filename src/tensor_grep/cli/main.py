@@ -100,14 +100,12 @@ from tensor_grep.sidecar import DEFAULT_CLASSIFY_MAX_LINES
 # attribute reads. A BARE call to a monkeypatched name resolves through THIS module's
 # globals, welding the caller to this file -- move it and the test still passes while
 # production runs the unpatched original. `_self.NAME(...)` resolves at CALL time.
-#
 # The two branches are load-bearing. At runtime only `sys.modules[__name__]` works (the
 # module is mid-import, so importing itself by name would be circular), but that is typed
 # `ModuleType`, whose `__getattr__` returns `Any` -- under a single-branch form every
 # converted call returns Any and mypy raises `no-any-return` at each concrete-returning
 # caller. The TYPE_CHECKING branch never executes; it exists so the checker resolves
 # `_self` to this module and keeps every real signature.
-#
 # scripts/bare_call_ratchet.py pins the remaining bare-call count and fails if it grows.
 if TYPE_CHECKING:
     from tensor_grep.cli import main as _self
@@ -564,6 +562,10 @@ ledger_app = typer.Typer(
 session_app.add_typer(session_daemon_app, name="daemon")
 
 
+# A3 (PR #1070): distinguishable from a real version so SARIF can disclose degradation.
+_VERSION_UNAVAILABLE_SENTINEL = "0.0.0-unavailable"
+
+
 def _read_project_version_fallback() -> str:
     try:
         pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
@@ -573,7 +575,7 @@ def _read_project_version_fallback() -> str:
                 return stripped.split('"', 2)[1]
     except Exception:
         pass
-    return "0.0.0"
+    return _VERSION_UNAVAILABLE_SENTINEL
 
 
 def _cli_package_version() -> str:
@@ -1293,7 +1295,6 @@ def _friendly_dense_unavailable_message(exc: BaseException) -> str:
 # where BM25 is the stronger leg and boosting dense regresses it. `TG_FIND_DENSE_WEIGHT` is the
 # knob (see `core/reranker.py`'s `rank_chunks(dense_weight=...)`); `_find_dense_weight` below is
 # the guard that keeps the boost scoped to the query shape the sweep actually validated.
-#
 # #191 (THE FLIP): the env-unset default is no longer the inert 1.0 no-op. With the classifier
 # hardened (whitespace gate, below) and the flip-prep NITs closed (nan/inf clamp, 3-token
 # identifier re-sweep), env-unset now applies the SAME adaptive rule a valid explicit override
@@ -2199,7 +2200,6 @@ def _should_refuse_unbounded_workspace_root_scan(
 # `node_modules`/`external_repos`/etc. is not itself marked that way (item #154 raised the
 # marked-root threshold from a flat skip to >= 8 marked children, but a bare vendored dir still
 # never counts as one). That single huge vendored repo always slips past that guard.
-#
 # Deliberately EXCLUDES tg's own index/reference dirs (`.tensor-grep`, `_tg_refs`,
 # `.tg_semantic_index`): those are already (a) skipped by repo_map's walk (Fix A), (b)
 # normally `.gitignore`d so DirectoryScanner's default walk never descends into them, and
@@ -2207,7 +2207,6 @@ def _should_refuse_unbounded_workspace_root_scan(
 # was verified (real dogfood run) to make this guard refuse EVERY unscoped default-path
 # search from tensor-grep's own repo root -- a `.tensor-grep/` cache dir is a completely
 # normal thing for any tg-managed repo to have, not a "genuinely pathological root".
-#
 # Review finding H1 (2026-07-05): also EXCLUDES any dir already walker-skipped by
 # `DirectoryScanner`'s `_GENERATED_DIR_NAMES` (currently just `node_modules` of the four
 # above) -- the native walker already hard-skips it, and `rg` respects `.gitignore` (where
@@ -10389,7 +10388,6 @@ def scan(
         # defect family this whole surface exists to close. `sarif.py` maps `partial` /
         # `unreadable_paths` onto `invocations[].executionSuccessful`, so an incomplete scan is
         # visible to a CI gate that never reads our exit code.
-        #
         # The exit code is deliberately NOT changed here. `tg scan` returns 0 on a disclosed
         # partial today (#299), and flipping that is a contract change with its own consumers --
         # exactly the six-consumer surprise that #276 slice C0 had to clear first. SARIF carries
@@ -10398,12 +10396,14 @@ def scan(
 
         # `base_path` is what makes the output usable by the consumer that matters: the payload
         # carries absolute paths, and GitHub code scanning resolves URIs against the repo root.
+        tool_version = _cli_package_version()
         typer.echo(
             json.dumps(
                 scan_payload_to_sarif(
                     payload,
-                    tool_version=_cli_package_version(),
+                    tool_version=tool_version,
                     base_path=str(project_cfg.get("root_dir") or ""),
+                    version_unavailable=tool_version == _VERSION_UNAVAILABLE_SENTINEL,
                 ),
                 indent=2,
             )
