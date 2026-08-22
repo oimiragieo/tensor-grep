@@ -1,6 +1,269 @@
 # CHANGELOG
 
 
+## v1.112.0 (2026-08-22)
+
+### Documentation
+
+- Fix three skill inaccuracies found by a workflow audit, add the audit workflow
+  ([#1096](https://github.com/oimiragieo/tensor-grep/pull/1096),
+  [`f3c99a2`](https://github.com/oimiragieo/tensor-grep/commit/f3c99a28fbec831bc18d79e891a432ec4ab57f5f))
+
+A dynamic workflow (8 agents, 5 skill clusters + 2 Exa research seats, 0 errors) audited the in-repo
+  skills against live code. Three findings survived verification; I re-verified each MYSELF before
+  editing, because an agent finding is a hypothesis.
+
+1. RELEASE CHECKLIST TAUGHT THE EXACT CHECK THAT FAILED US (highest blast radius).
+  tensor-grep-release-and-positioning's checklist said "PyPI JSON API shows the version" -- a
+  version-PRESENCE check. That is the shape that reported success while v1.111.1 published 2 of 4
+  artifacts and v1.111.2 published ZERO. Part 1.7 of the SAME file was rewritten on 2026-08-21 to
+  require a per-artifact filename check; the checklist 150 lines away still taught the old one. A
+  doc contradicting itself is this repo's documented failure mode. Independently confirmed the
+  second half of the finding: scripts/ validate_release_version_parity.py::_fetch_pypi_latest
+  returns a scalar version STRING, so "the parity script passed" does not close that box either.
+
+2. tg find's ROUTING FIELDS WERE UNDOCUMENTED. grep for routing_backend in
+  tensor-grep-find-and-route returned 0, while main.py:1663-1664 sets both routing_backend and
+  routing_reason, and tg_output.schema.json types them REQUIRED minLength:1. Added them, plus the
+  distinction a consumer actually needs: routing_reason says WHAT RAN, rank_fallback_reason says WHY
+  the dense leg is absent. Reading only one cannot distinguish "hybrid ran" from "BM25 ran because
+  model2vec is missing".
+
+3. A CITATION POINTED AT AN UNRELATED IMPORT. The skill cited agent_capsule.py:34 for
+  DEFAULT_AGENT_CLI_DEADLINE_SECONDS; line 34 is an import, and the constant lives in
+  agent_capsule_constants.py:17 after a split. Fixed by citing the SYMBOL with no line number, per
+  this repo's own "cite the symbol, not the line" law -- re-stamping a new line number is the
+  failure mode, not the fix.
+
+Two clusters came back CLEAN with a positive artifact rather than a bare "no findings" (the prompt
+  required naming the strongest claim actually verified, so a clean verdict is checkable rather than
+  indistinguishable from not looking).
+
+Also adds .claude/workflows/tg-session-capture.js -- the audit workflow itself, so the next session
+  can re-run it instead of hand-auditing 36 skills. It encodes the house rules verbatim per agent, a
+  verified facts ledger, waves of <=5 as a HARD CAP in the script (not just in prose), explicit
+  per-stage model tiers, and audits/research running CONCURRENTLY because the research prompts never
+  interpolate an audit result.
+
+Verified: test_skill_library_drift.py + test_skill_index_sync.py + test_public_docs_governance.py --
+  52 passed; ruff format --preview clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Fold externally-grounded benchmark statistics into the proof toolkit
+  ([#1097](https://github.com/oimiragieo/tensor-grep/pull/1097),
+  [`e7dcec0`](https://github.com/oimiragieo/tensor-grep/commit/e7dcec0dbbd6d3e474428d64d1f59d02acb03905))
+
+An Exa research seat recommended FOLD_INTO_EXISTING here rather than a new skill, and it was right
+  -- this is the file that already owns benchmark method; a thin sibling skill would have diluted
+  the library. Recording that because my own instinct was to create a new skill.
+
+WHY NOW: a 5-seat council voted 5/5 to WITHDRAW the public 7.5x claim. Two internal numbers (7.5x,
+  later 6.4x) conflict and no committed harness produces either. A grep of this 534-line file found
+  exactly ONE incidental noise-floor mention and ZERO coverage of summary-statistic choice,
+  geometric mean, paired sampling, confidence intervals, or tombstoning.
+
+WHAT LANDS, all externally sourced so a reader can check rather than trust this file:
+
+- Ratios MUST use the GEOMETRIC mean. Fleming & Wallace (CACM 1986, doi:10.1145/5666.5673) proves
+  the arithmetic mean of normalized numbers is mathematically meaningless -- its ranking changes
+  with the choice of baseline. - min vs median vs mean, chosen from the DISTRIBUTION and NAMED in
+  the report. CLI timings are right-skewed with additive noise, which is the argument for min
+  (Codeflash; kevmod's variance analysis for when it does and does not hold). - Paired INTERLEAVED
+  sampling, >=20 pairs, paired 95% CI, and an explicit parity stopping rule (interval crossing zero
+  + <0.5% median difference = stop tuning, do not publish the point estimate as a win) -- Doppler's
+  protocol, directly analogous to a tg-vs-rg comparison. - CIs are mandatory: Hoefler & Belli is the
+  methodology reference; NIST TN 1830 states the consequence -- comparing bare averages "often leads
+  to incorrect conclusions". - Noise floors with real numbers: 5% on a real machine, 10% on GitHub
+  Actions. Our benchmark lane RUNS on Actions, so a sub-10% effect measured there is not a result. -
+  NEVER MIX REGIMES -- and this is the insight no council seat reached: 7.5x and 6.4x may be
+  different regimes against different baselines, in which case neither supersedes the other and BOTH
+  are unpublishable regardless of a re-run. The first question is not "which number is right" but
+  "what baseline did each use". - Benchmark survivorship (SIGPLAN): silently excluding the cases
+  your tool loses on is the most damaging silent choice available. Report losses beside wins. -
+  Tombstone a superseded public number, never delete it.
+
+Plus 8 pre-flight checklist boxes, and the honest disposition for a number that misses any of them:
+  "shape interesting, not publishable" -- said outright rather than shipped with a hedge.
+
+Verified: test_skill_library_drift.py + test_skill_index_sync.py -- 9 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain the release-queue, run-state and merge-window laws (A133-A142)
+  ([#1095](https://github.com/oimiragieo/tensor-grep/pull/1095),
+  [`3295d71`](https://github.com/oimiragieo/tensor-grep/commit/3295d71f8fdeabef4e679bc0ec9f52e62eef4d37))
+
+* docs: retain the release-queue and instrument laws (A133-A138)
+
+Six laws from the second half of the 2026-08-21 session, each a receipt:
+
+A133 -- a QUEUED run is NOT protected by cancel-in-progress; that flag governs RUNNING runs only, so
+  on a runner-scarce repo every merge cancelled the previous release run before it started (6909018,
+  2d02a22, 0eebab5 -- three consecutive main runs cancelled while queued). This was a SECOND,
+  independent cause of tagged-but-not-published, initially misattributed entirely to PYPI-SIZE-CAP.
+  Protocol change: batch every green PR into one burst, then STOP pushing, then wait for `completed`
+  -- not merely for a run to exist.
+
+A134 -- re-pushing to "re-trigger CI" STARVES it on PR refs, same queue effect. A135 -- a
+  green-detector that COUNTS checks cannot tell a matrix run from CodeQL; my own monitor called two
+  zero-CI PRs TERMINAL GREEN. Assert by NAME. A136 -- a blocked UI action is not a blocked
+  CAPABILITY: PyPI delete is a plain form POST, and 426 releases went in ~25 min instead of a
+  152-item click list. A137 -- one change can trip several independent ratchets; relocation may
+  re-pin if the total is proven unchanged, growth must be hardened and never re-pinned. A138 -- a
+  replacement assertion must be PROBE-VERIFIED to discriminate; the first candidate here was vacuous
+  and was thrown away.
+
+Folded into the two skills that govern the behaviour rather than left as a wall of laws:
+  tensor-grep-change-control gains the batch-merge protocol, the assert-by-name check, and the
+  relocation-vs-growth rule; tensor-grep-validation-and-qa gains the probe-verify-then-perturb
+  procedure with its wrong turn recorded.
+
+Verified: skill index + drift + public-docs governance 52 passed; ruff format --preview --check
+  clean on AGENTS.md.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: retain the run-state diagnosis laws (A139-A141)
+
+Three laws from misdiagnosing my own release run:
+
+A139 -- `gh run list --limit 1` returns the NEWEST run and STRUCTURALLY HIDES the one actually
+  executing. I reported a release as "pending, 0 jobs, possibly stuck" while run 32544510005 had
+  been in_progress since 01:48 with 31 jobs and 27 succeeded. Watch a run BY ID once you know which
+  one matters. This is the same windowed-query trap already recorded for `gh run list --commit` +
+  `--limit`, and it recurred INSIDE a monitor written by the session that had just documented it --
+  knowing a law does not prevent it, only the structural habit does.
+
+A140 -- `pending` and `queued` are different states. `queued` = waiting for a runner. `pending` with
+  0 JOBS = held by the concurrency group, i.e. an earlier run is still active, which with
+  cancel-in-progress:false on main is CORRECT behaviour rather than a fault. The one useful command
+  is listing every non-completed run repo-wide to find what holds the group. Corollary: two main
+  merges can produce TWO releases, one per run -- check what each carries before claiming what
+  shipped.
+
+A141 -- an unrecognised pytest argument reported SUCCESS through a wrapper. `pytest tests/unit -q
+  --timeout=300` died at argument parsing (no pytest-timeout installed) and the wrapper printed
+  `[exited with code 0]`. The suite never ran. This is the false-green that looks most like a real
+  one, because there is no failure text to notice -- confirm a test COUNT, never the exit status
+  alone.
+
+Folded into tensor-grep-debugging-playbook, which is where someone actually stands when a run looks
+  stuck: a three-state table (queued / pending+0-jobs / no-run) with the discriminating command for
+  each, plus the dies-before-collection false green.
+
+* docs: A142 corrects A133 -- stop merging the moment a run is IN PROGRESS
+
+A133 said a QUEUED/PENDING run is unprotected, so batching merges is free. True of pending runs,
+  FALSE of a running one. Merging while Semantic Release is pushing its chore(release) commit makes
+  that push fail:
+
+! [rejected] main -> main (fetch first) ##[error] Failed to push branch (main) to remote
+
+Measured: run 32544510005 finished 31 success / 1 failure, the single failure being Semantic
+  Release, killed by my #1083 merge landing mid-push. Every test passed and nothing shipped -- which
+  is otherwise a baffling outcome.
+
+I wrote A133 an hour before doing this, and read 'batching is free' as covering a case it explicitly
+  does not. The operative rule is now stated as a state check before EVERY merge: queued/pending ->
+  safe to batch; in_progress -> do not merge.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain the six product/CI laws from the 2026-08-22 session (A143-A148)
+  ([#1099](https://github.com/oimiragieo/tensor-grep/pull/1099),
+  [`362c972`](https://github.com/oimiragieo/tensor-grep/commit/362c972c6ee3a1586a9312d06ed77ad79b4c9dea))
+
+Six findings from this session that were not yet law. Each is a receipt -- a check that returned a
+  believable answer and was wrong -- not a maxim.
+
+A143 A GATE THAT CAN ONLY BE SATISFIED BY A FALSE STATEMENT IS A DEFECT. The docs-governance test
+  pinned the literal sentence "the latest complete public distribution is also <tag>". While
+  v1.111.2 was TAGGED WITH ZERO PYPI FILES that sentence was FALSE, so a green gate REQUIRED
+  asserting an untruth in a public doc. Assert the SHAPE of a definite statement, never one of its
+  possible values.
+
+A144 A DOC-STALENESS GATE WITH A TOLERANCE IS A TIME BOMB. It fired on a docs-only PR ("stamp is
+  v1.111.0 while pyproject ships v1.111.6 -- 6 releases behind, tolerance 5"). Four releases shipped
+  that day; the fifth crossed the line, so the NEXT commit to touch main was going to fail whatever
+  it contained. Ask "how many releases since the stamp", not "what did this PR break".
+
+A145 A RATCHET'S OFFENDER SET CAN BE DEFINED BY THE TESTS, NOT THE SOURCE. Adding one monkeypatch
+  turned three pre-existing, untouched bare calls in cli/main.py into UNPINNED OFFENDERs. Both of my
+  misdiagnoses are recorded with what refutes them: the pins file was byte-identical (diff before
+  theorising), and the call sites were pre-existing but the PATCH was new (compare the patch set,
+  not the call sites).
+
+A146 AN AMBIENT ENV VAR CAN TURN A FAIL-CLOSED TEST GREEN. test_missing_python_
+  reports_actionable_error clears PATH but not TG_SIDECAR_PYTHON, so a global export handed it an
+  interpreter and it exited 0 where it must exit 2. A false RED wastes an hour; a false GREEN on a
+  fail-closed test retires the guard silently.
+
+A147 A PATH FILTER MUST WATCH WHAT A LANE READS, NOT ONLY WHAT IT IS. docs/audits holds TEST INPUT,
+  so a ledger-only PR skipped every test-python lane INCLUDING the test that reads that ledger -- 3
+  checks, 19 skipped, green, while a sibling PR showed 12. Same hole ci.yml already documents for
+  scripts/, roles reversed. Wrong in both directions now, which argues for deriving the filter from
+  what each lane READS.
+
+A148 VERIFY A CUSTOMER-FACING CLAIM ON A CLEAN INSTALL. I "corrected" a true backlog finding because
+  it passed on this dev box -- which has ast-grep on PATH. A clean python:3.12-slim container
+  reproduces it exactly. I walked into this the day after writing the note about it, so the rule is
+  not "remember it": any claim about install-time behaviour is checked in a fresh container off the
+  PUBLISHED artifact, or it is not checked.
+
+The splice script asserts A142 exists before appending (a gap means a bad merge) and re-verifies all
+  six IDs after, refusing a partial write.
+
+Verified: test_public_docs_governance.py + test_skill_library_drift.py + test_skill_index_sync.py --
+  52 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Add tensor-grep-local-ci-parity-harness skill, register it in both indexes
+  ([#1098](https://github.com/oimiragieo/tensor-grep/pull/1098),
+  [`b8f8dfc`](https://github.com/oimiragieo/tensor-grep/commit/b8f8dfcbfca82c695bf6c9d70896aeac603e4a01))
+
+New skill for the harness landing in #1093. An Exa research seat recommended NEW_SKILL here (and
+  FOLD for the other candidate, which shipped separately) -- no existing skill covered running a
+  banned CI lane locally.
+
+WHAT THE RESEARCH CHANGED, and why the skill is not just "use act". The seat surfaced nektos/act,
+  which runs .github/workflows/*.yml VERBATIM instead of reimplementing CI -- structurally better
+  than a hand-rolled harness, and a real finding I did not have. But reading act's OWN primary
+  sources shows it RELOCATES the fidelity problem rather than removing it: - act's default images
+  are "intentionally incomplete"; "many things can work improperly or not at all", and Docker
+  containers are not GitHub's VMs (no systemd) (nektosact.com/usage/runners.html). - the faithful
+  images (catthehacker/ubuntu:full-*) are ~20GB compressed / ~60GB extracted. - those images are
+  "barely maintained" -- nektos/act#2055 is an open request to move off them. So the skill gives a
+  DECISION TABLE (act for debugging the workflow FILE; this harness for debugging the CODE with a
+  warm cache and a bounded CPU footprint; neither for anything OS-specific) instead of a
+  recommendation it cannot support.
+
+Also carries: the twelve measured container-vs-runner divergences as a general checklist (each
+  phrased as trap/tell/fix), the CPU-cap discipline INCLUDING what a cgroup quota does NOT bound
+  (disk I/O, page cache, memory bandwidth, Docker Desktop's VM), the known local-only deadline
+  artifact with the explicit instruction never to widen a product deadline to make the harness pass,
+  and the anti-drift gate contract.
+
+The meta-lesson is stated outright: every one of the twelve produced a WRONG VERDICT, not an error
+  message. A local harness is an instrument and gets the same distrust as any other.
+
+REGISTRY (A95 -- a "do not fix" note is part of the contract it guards): updated the count 36 -> 37,
+  the note's OWN re-derivation echo 35 -> 36, the bucket list, and the AGENTS.md mirror. The two
+  bucket lines are byte-identical (test_skill_index_sync.py). The registration script refused a
+  partial edit on its first run -- my global count replace ran BEFORE the note match, mutating the
+  note it was about to match. Guard worked; ordering fixed.
+
+Verified: test_skill_index_sync.py + test_skill_library_drift.py + test_public_docs_governance.py --
+  52 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.7 (2026-08-22)
 
 ### Bug Fixes
