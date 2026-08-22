@@ -123,7 +123,12 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # and the launcher scan) and OUTPUT-BUCKET (the launcher cleanup's `failed.append(...)`) --
     # so the audit that accepted them still applies; moving a file does not re-open it.
     # Retire these two entries together with main.py's when that module is drained.
-    "main.py": 6,
+# RELOCATION 2026-08-21: `generated_scan_dir_names` moved main.py -> scan_guardrails.py
+# (paying for the missing-path guard under the file-size ratchet) and took its two
+# `except OSError` sites with it. Measured: main.py 6->4, scan_guardrails.py 5->7,
+# TOTAL 41 -> 41 unchanged. Re-pinned because the sites MOVED, not because any were added --
+# a growing total must be hardened or disposed, never re-pinned.
+    "main.py": 4,
     "doctor_report.py": 5,
     "windows_launcher.py": 4,
     # 10 -> 6 by #297: three real fixes (the undo commit phase destroying a file whose bytes it
@@ -158,7 +163,7 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # an OSError only means a huge scan is not refused, and the scan that follows discloses its
     # own incompleteness. main.py carries its own copies of the same family (#154/#158 siblings).
     # They stay pinned so a NEW one still trips the ratchet.
-    "scan_guardrails.py": 5,
+    "scan_guardrails.py": 7,
     # codemap.py drained to 0 by #296 (was 3): the tracked-file filter, the folder census and the
     # freshness digest now record into a post-walk accumulator that reaches `coverage.partial`.
     # Absent rather than pinned at 0 -- an entry at 0 and no entry are equivalent to both ratchet
