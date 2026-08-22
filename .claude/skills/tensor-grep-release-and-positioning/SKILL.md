@@ -398,7 +398,14 @@ Full runbook: `docs/RELEASE_CHECKLIST.md:153-170`. Summary:
 [ ] `Semantic Release` job green on the exact commit
 [ ] `git fetch origin main --tags && git pull --ff-only origin main`
 [ ] `publish-github-release-assets` green for the new tag
-[ ] `publish-pypi` green (if publish_pypi was true) AND PyPI JSON API shows the version
+[ ] `publish-pypi` green (if publish_pypi was true) AND PyPI shows **all 4 expected artifact
+    FILENAMES** for this version — 3 wheels (`macosx_11_0_arm64`, `manylinux_2_39_x86_64`,
+    `win_amd64`) + the sdist. Use 1.7's per-artifact snippet. **Version presence is NOT
+    sufficient** and this line used to say it was: `v1.111.1` published 2 of 4 artifacts and
+    `v1.111.2` published ZERO while the tag existed, so a `info.version` check reported success
+    for a release Windows users could not install. Note `scripts/validate_release_version_parity.py`
+    has the same blind spot by construction — `_fetch_pypi_latest` (line ~136) returns a scalar
+    version string, never a filename set — so "the parity script passed" does not close this box.
 [ ] `publish-success-gate` green
 [ ] `release-tag-smoke`'s OWN conclusion checked inside the release run (`gh run view <id> --json
     jobs` -> find the `release-tag-smoke` job -> read ITS `conclusion`) -- do not infer this from
