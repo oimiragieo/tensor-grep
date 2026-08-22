@@ -47,6 +47,55 @@
 
 
 
+## Recent campaign notes (2026-08-22) - RUST-INDEX-LOCK-WALLCLOCK-FLAKE (P2, blocks releases, fix NOT yet applied)
+
+- **Finding (2026-08-22): `index_lock::tests::heartbeat_keeps_a_slow_holder_alive_past_the_stale_threshold`
+  fails on `test-rust-core (windows-latest, stable)` on a loaded runner, and one such failure
+  SKIPS THE ENTIRE RELEASE CHAIN.** Measured on main run `32557799696` (head `e2621dca`):
+  `test result: FAILED. 188 passed; 1 failed`, panic at `rust_core/src/index_lock.rs:548`, message
+  `must not hang`. `Semantic Release`, both `build-pypi-*` jobs, `publish-pypi` and
+  `validate-pypi-artifacts` all reported `skipped`.
+- **The failing assertion is a wall-clock budget, and the CORRECTNESS assertion beside it PASSED:**
+
+  ```rust
+  let result = IndexLockGuard::acquire_with(&index_path, Duration::from_millis(500), stale_after, poll);
+  assert!(result.is_err(), "a live, heartbeating holder's lock must never be stolen");  // PASSED
+  assert!(started.elapsed() < Duration::from_secs(2), "must not hang");                 // FAILED
+  ```
+
+  So the property the test exists to prove -- a live heartbeating holder is not stolen from -- held.
+  What failed is a 2s wall-clock bound over a 500ms acquire timeout (4x margin) on a contended
+  Windows runner. This is the repo's own documented class: *a test holding a hard wall-clock budget
+  is a contention detector, not a correctness test* -- it snaps first when a shared runner loads,
+  while everything else merely slows and still passes.
+- **Not caused by the change under test.** PR #1086 (the head that failed) touched Python, docs and
+  tests only; it never went near `rust_core/`. A re-run of the same lane was dispatched.
+- **Why it is not merely cosmetic:** per the repo law *a correctly-diagnosed flake still holds its
+  AUTHORITY*. This one gates `Semantic Release`, so a loaded runner silently withholds a PUBLISH.
+  It also presents as *"1 red Rust test on your commit"*, not as *"the runner was busy"*, which
+  trains people to wave it through on the day it catches something real.
+- **Proposed fix (NOT applied -- needs a Rust reviewer and cannot be verified on this box, which is
+  a shared server where `cargo test` is forbidden):** separate the two properties. `acquire_with`
+  already takes an explicit 500ms timeout, so *bounded return* is proven by the call returning at
+  all plus `result.is_err()`; the elapsed assertion adds contention sensitivity for little
+  additional coverage. Either drop it, or move the wall-clock arm to a non-gating lane and keep the
+  deterministic arm (`is_err()` + a stubbed clock) in the gating one. **Do NOT "fix" it by widening
+  the budget** -- that was tried on a sibling lane on 2026-07-27, bought 4x the wasted wall-clock,
+  and was reverted the same day.
+- **Measured frequency (2026-08-22), so this is not left as an open question:** across the last 12
+  main `ci.yml` runs, the lane materialised on 5 and reported **4 success / 1 failure** -- real but
+  intermittent, roughly 1 in 5 of the runs that reach it. Two caveats on that number: `<absent>`
+  (7 of 12) means the job never existed on that run because it was cancelled early or `needs:`-gated,
+  which is NOT a pass and must not be counted as one; and the failing run's own record now reads
+  `<absent>` because the re-run REPLACED its job entry -- the remedy mutated the evidence, so re-run
+  before you census, or the sample loses exactly the row you care about.
+- **Recommendation given that rate:** the re-run is an adequate remedy for a single occurrence, so do
+  not churn Rust today. Re-measure after ~10 more main runs; if the rate holds at ~20% it gates
+  releases often enough to be worth the deterministic split above.
+- **Superseded open question:** how often does this lane fail? If it is a one-off, the
+  re-run is the whole remedy and the test change is not worth the churn. Count occurrences across
+  recent main runs before editing Rust.
+
 ## Recent campaign notes (2026-08-21) - LEDGER-FIXTURE-SKIPS-ITS-OWN-TEST (P1, FIXED, no CEO gate)
 
 - **Finding (2026-08-21): the CI `code` path filter did not watch `docs/audits`, so a PR editing
