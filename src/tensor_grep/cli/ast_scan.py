@@ -131,7 +131,10 @@ def _load_inline_rule_specs(
                         or "python"
                     ),
                 }
-                for metadata_key in ("severity", "message"):
+                # `engine` is carried VERBATIM: the per-rule router reads
+                # `rule.get("engine") == "regex"` to skip AST backend selection, and
+                # dropping it here silently routed every inline rule through AST.
+                for metadata_key in ("severity", "message", "engine"):
                     if item.get(metadata_key) is not None:
                         spec[metadata_key] = str(item[metadata_key])
                     elif payload.get(metadata_key) is not None:
@@ -151,7 +154,7 @@ def _load_inline_rule_specs(
                 str(payload.get("language") or default_language or "python")
             ),
         }
-        for metadata_key in ("severity", "message"):
+        for metadata_key in ("severity", "message", "engine"):
             if payload.get(metadata_key) is not None:
                 spec[metadata_key] = str(payload[metadata_key])
         if len(member_patterns) > 1:
