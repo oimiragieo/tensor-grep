@@ -148,7 +148,17 @@ _EXCLUDED_MODULES = frozenset({
 # `docs/audits/2026-08-20-handler-dispositions.json` (INTENTIONAL-BOUNDARY/LOGGED-DEGRADE/
 # SILENT-SWALLOW). Ceiling raised by exactly that one handler:
 #     219 + 1 (native_frontdoor.py checksum-fetch except, LOGGED-DEGRADE)              220
-TOTAL_BROAD_HANDLERS_CEILING = 266
+#
+# 2026-08-21: +1 for `ast_scan._ruleset_backend_available` (INTENTIONAL-BOUNDARY, record in
+# `docs/audits/2026-08-20-handler-dispositions.json`). It answers 'can the advertised built-in
+# rulesets actually RUN on this install?' by importing AstGrepWrapperBackend and calling
+# is_available(); both the import and the probe fail on a stock install, which is the ORDINARY
+# case it exists to detect. It fails CLOSED -- any error reports unavailable, so `tg rulesets`
+# warns rather than staying silent -- and it cannot swallow an incomplete RESULT because it
+# produces no result: it returns a boolean that only ever ADDS disclosure, never suppresses a
+# finding. Raised because the handler is classified, not to make an unreviewed one pass.
+#     266 + 1 (ast_scan.py ruleset-backend availability probe, INTENTIONAL-BOUNDARY)   267
+TOTAL_BROAD_HANDLERS_CEILING = 267
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
