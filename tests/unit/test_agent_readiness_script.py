@@ -157,6 +157,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
     assert warmup_check.validator is module.validate_repo_cli_warmup_version_output
 
     mcp_check = next(check for check in checks if check.name == "mcp-context-render-smoke")
+    assert "tests/unit/test_mcp_server_context_session.py" in mcp_check.command
     assert "test_tg_context_render_mcp_preserves_invoice_tax_body_and_primary_target" in (
         mcp_check.command
     )
@@ -181,7 +182,7 @@ def test_agent_readiness_plan_should_cover_agent_critical_surfaces() -> None:
         "pytest",
         "tests/unit/test_cli_modes_agent_capsule.py",
         "tests/unit/test_cli_modes_navigation.py",
-        "tests/unit/test_mcp_server.py",
+        "tests/unit/test_mcp_server_context_session.py",
     ]
     assert "agent_capsule" in capsule_check.command
 

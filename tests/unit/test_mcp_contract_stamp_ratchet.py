@@ -66,8 +66,8 @@ developer desktop and the CI pytest env. Two engine classes differ between them:
   envs. Which arm proves the stamp per tool: SUCCESS arm (controlled engine) +
   ERROR arm (real out-of-root confinement refusals, always engine-free) on BOTH
   envs. The real-engine success paths themselves are covered by the repo's own AST
-  unit tests (test_mcp_server.py::test_tg_ast_search_* et al.); the census's job is
-  stamping, not engine correctness.
+  unit tests (test_mcp_server_search.py::test_tg_ast_search_* et al.); the census's
+  job is stamping, not engine correctness.
 """
 
 import asyncio
@@ -88,9 +88,9 @@ from tensor_grep.core.result import SearchResult
 # The confinement ratchet's closed-world per-tool reach map, REUSED not duplicated
 # (A22): pytest runs with --import-mode=importlib (pyproject.toml), so a plain cross-
 # test-module import cannot resolve; load the sibling file by path instead. The one
-# authoritative copy stays in test_mcp_server.py; this is only a reader of it.
+# authoritative copy stays in test_mcp_server_shared.py; this is only a reader of it.
 _REACH_MAP_SPEC = importlib.util.spec_from_file_location(
-    "_m14_reach_map_source", Path(__file__).with_name("test_mcp_server.py")
+    "_m14_reach_map_source", Path(__file__).with_name("test_mcp_server_shared.py")
 )
 assert _REACH_MAP_SPEC.loader is not None
 _REACH_MAP_MODULE = importlib.util.module_from_spec(_REACH_MAP_SPEC)

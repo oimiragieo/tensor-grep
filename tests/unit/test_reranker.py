@@ -317,7 +317,7 @@ def test_late_reranker_base_exception_user_abort_propagates_not_swallowed() -> N
 # per-FILE MAX_CHUNKS guard existed. These tests exercise the shared reranker.py chokepoint
 # directly, which is what BOTH the CLI (cli/main.py:7222-7225) and the MCP `rank` tool
 # (cli/mcp_server.py:4258-4263) call unmodified -- see test_bm25_search_flag.py /
-# test_mcp_server.py for the end-to-end CLI/MCP-level twins of this same fix.
+# test_mcp_server_*.py for the end-to-end CLI/MCP-level twins of this same fix.
 
 
 def _write_three_line_file(tmp_path: Path, name: str) -> Path:
