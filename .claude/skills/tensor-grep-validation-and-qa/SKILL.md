@@ -1112,6 +1112,71 @@ was never observed to fail cannot be trusted to catch a regression.
 
 ---
 
+## Retention folds (2026-08-21)
+
+### A file split must reproduce its baseline PASS *and* SKIP counts
+
+Capture BOTH numbers before touching anything:
+
+```bash
+uv run python -m pytest <the file> -q -o addopts=      # record "N passed, M skipped"
+```
+
+A 2026-08-21 split of `test_mcp_server.py` reported **"484 passed, 5 skipped"** and looked green.
+The pre-split baseline was **489 passed, 0 skipped**. It had invented three
+`pytest.skip("embedded native rewrite unavailable in this environment")` guards, which would have
+permanently disabled three tests that pass in CI. Collected-node-count parity (489 → 489) did NOT
+catch it — the tests were still collected, just no longer run.
+
+- **Never silence a post-split failure with an environment probe.** A failure after a split is a
+  finding to report, not to guard around.
+- **A bare git worktree has no compiled native extension**, so native/embedded arms fail there and
+  pass in CI. That is an environment artifact — report it, let CI adjudicate, and do not add a
+  skip. (Confirmed: the three guarded tests failed in the worktree even in isolation, and the PR
+  went green at 49 checks in CI once the guards were removed.)
+- **Watch for the ratchet interaction:** removing a guard can leave an import unused (`F401`), and
+  lint is often the only thing that notices a stated intention was deleted.
+
+Law: **A126**.
+
+### An acceptance test must run against the PUBLISHED artifact, in a clean container
+
+A maintainer's machine is the wrong population. `tg scan --ruleset` works on a dev box that has a
+separately-installed native `tg` binary, and **fails on a stock `pip install tensor-grep`** — exit
+1, `ast-grep wrapper backend … not available` — because `ast_grep_py` is in no dependency and no
+extra and the wheel bundles no native binary. `tg rulesets` advertises six security rulesets with
+rule counts and no availability caveat.
+
+Every earlier check of that feature ran on a machine that happened to have the capability, so the
+measurement was taken from the wrong population until the same commands ran here:
+
+```bash
+docker build --build-arg TG_VERSION=<published> -f scripts/dogfood/Dockerfile -t tg-dog scripts/dogfood
+docker run --rm tg-dog                      # published-wheel battery (the customer path)
+
+docker build -f scripts/dogfood/Dockerfile.source -t tg-dog-src .   # WORKING TREE (beta path)
+docker run --rm tg-dog-src
+```
+
+**Read the build's exit code UNPIPED and verify the artifact.** `docker build … | tail` reports
+*tail's* status: a failing build read through a pipe looked like `exit 0` while producing **no
+image at all**. Use `docker build … > build.log 2>&1; echo $?` and confirm with
+`docker images <tag>` — the one claim a misread pipe cannot fake. (A127)
+
+Laws: **A125**, **A127**.
+
+### Resolve a caller's module namespace by LEAF name, not a dotted prefix
+
+`tests/` has no `__init__.py`, so pytest's prepend import mode names modules by **basename**.
+Measured with a `pytest_runtest_setup` probe: `test_cli_modes_blast_radius`, **not**
+`tests.unit.test_cli_modes_blast_radius`. A helper matching
+`startswith("tests.unit.test_cli_modes")` therefore matched nothing, its stack walk fell through to
+`return globals()`, and shared fakes read a stale copy — **the exact failure the shim existed to
+prevent, silently**, because falling back to a real namespace looks like success.
+
+If you write anything that resolves a caller's namespace by name, match the final dotted component
+and prove it with a probe rather than assuming the import path. Law: **A129**.
+
 ## Provenance and maintenance
 
 Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the 2nd fixture-blind-spot receipt
