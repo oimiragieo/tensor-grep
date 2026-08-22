@@ -47,6 +47,47 @@
 
 
 
+## Recent campaign notes (2026-08-21) - INLINE-RULES-DROPS-ENGINE (P1, silent misroute)
+
+- **`tg scan --inline-rules` silently ignores a rule's `engine:` declaration.**
+  `_load_inline_rule_specs` (`src/tensor_grep/cli/ast_scan.py`) parses the YAML into a rule-spec
+  dict but never copies the `engine` key. Measured directly, not inferred:
+
+      >>> _load_inline_rule_specs("id: probe\nengine: regex\npattern: SENTINEL\n"
+      ...                        "language: python\nseverity: high\nmessage: m")
+      parsed spec keys: ['id', 'language', 'message', 'pattern', 'severity']
+      engine preserved? False
+
+- **Consequence:** the regex fast path `if rule.get("engine") == "regex": continue`
+  (`src/tensor_grep/cli/ast_scan.py` ~:792) can never fire for an inline rule, so EVERY inline
+  rule -- including one explicitly declared `engine: regex` -- is routed through AST backend
+  selection (`_select_ast_backend_for_rule` / `_select_ast_backend_for_pattern`,
+  `src/tensor_grep/cli/ast_workflows.py`). A rule that asks for regex gets an AST backend, and on
+  a machine without an ast-grep binary it fails with
+  `Explicit AST search requires AST dependencies` instead of running as regex.
+- **This is a SILENT misroute, which is what makes it P1 rather than cosmetic.** The user's
+  declaration is accepted without complaint and then disregarded. There is no warning, no
+  `engine_ignored` field, and no error naming the key -- the only symptom is a dependency error
+  that mentions AST, on a rule the author explicitly said was not AST.
+- **Where it surfaced:** `tests/unit/test_w1c_sarif_version_disclosure.py` failed only on Linux CI
+  while passing on a Windows dev box, despite NEITHER having the `ast_grep_py` package. The
+  discriminating variable turned out to be an **`ast-grep`/`sg` CLI BINARY on `PATH`** -- a
+  different signal from the Python package -- which `AstGrepWrapperBackend.is_available()`
+  (`src/tensor_grep/backends/ast_wrapper_backend.py` ~:95-124) probes. The dev box has the binary;
+  a fresh `ubuntu-latest` runner does not. Two distinct "is AST available?" signals in one
+  codebase is itself worth a look.
+- **Not fixed here.** The test was made env-independent by forcing the seam (A85) rather than by
+  relying on the `engine:` tag being honored, because honoring it requires a `src/` change and a
+  deliberate decision about the intended contract. Someone taking this row must decide which is
+  true and then make the code and the docs agree:
+  1. `engine:` is SUPPORTED on inline rules -> preserve the key in `_load_inline_rule_specs` and
+     add a test asserting an `engine: regex` inline rule runs with NO ast-grep present; or
+  2. `engine:` is NOT supported on inline rules -> reject an inline rule that carries the key with
+     a named error, rather than accepting and ignoring it.
+  Silently accepting a key you discard is the one option that should not survive. Whichever is
+  chosen, the RED arm must run on a machine with no `ast-grep` binary on `PATH` -- otherwise the
+  wrapper backend serves the pattern and the test passes without exercising the defect.
+
 ## Recent campaign notes (2026-08-21) - RULESET-UNREACHABLE-ON-STOCK-INSTALL (P0, customer-facing, reproduced on the PUBLISHED wheel)
 
 - **`tg scan --ruleset <builtin>` does not work on a stock `pip install tensor-grep`, while
