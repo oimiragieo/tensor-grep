@@ -47,6 +47,72 @@
 
 
 
+## Recent campaign notes (2026-08-22) - EXTERNAL AGENT DOGFOOD of v1.111.7: triage with per-finding verification
+
+An external AI agent ran a full agentic dogfood of `tg 1.111.7` against a DIFFERENT checkout
+(`C:\dev\agentwork\tensor-grep`) using the real installed binary, and filed ~10 defects plus 8
+feature requests. **Every finding below carries what I did to check it**, because a dogfood report
+is a hypothesis like any other agent output — and two of its two CRITICAL findings did not
+reproduce here, which is information, not a dismissal.
+
+### Verification results
+
+| # | Finding | Reporter severity | My verification | Status |
+|---|---|---|---|---|
+| 1 | **Lexical target trap** — `prepare src "add retry with tests"` returned `repo_map._add` at confidence **1.0** with `ask_user_before_editing=false` | Critical | Re-ran on THIS tree at v1.111.7: primary was `_raw_validation_plan_for_tests`, confidence **0.55**, `ask_required=True` | **NOT REPRODUCED here** — corpus-dependent, NOT refuted |
+| 2 | **Confidence vs downgrade desync** — `partial=true` + truncation reasons while `confidence.overall=1.0` | High | Forced truncation (`--deadline 3`): `partial=True`, 3 downgrade reasons, `overall=0.94`, `ask_required=True`. Both invariants held | **NOT REPRODUCED here** — now PINNED, see below |
+| 3 | **Flag surface inconsistency** — `blast-radius --deadline` works, `blast-radius-render --deadline` does not | Medium | `tg blast-radius --help` contains `--deadline`; `tg blast-radius-render --help` does **not** | **CONFIRMED** |
+| 4 | **rg parity requires `--sort path`** — unsorted order diverges | Low | md5 of first 3 lines differs between `tg --format rg` and `rg` unsorted | **CONFIRMED** (rg itself does not guarantee unsorted order; this is a DOC gap, not a bug) |
+| 5 | Session cwd footgun — `session show` fails from a parent dir while `list` works | High | **NOT YET CHECKED** | UNVERIFIED |
+| 6 | Warm path not sub-second; `response_cache_hits=0` | Medium | **NOT YET CHECKED** | UNVERIFIED |
+| 7 | AST `run` fragile under Windows shells (`$` expansion; 0 matches on `def $NAME($$$)`) | Medium | **NOT YET CHECKED** — plausible; matches the known Windows argv-quoting class | UNVERIFIED |
+| 8 | `tg dogfood` FAILs on a worktree whose pyproject version != installed binary | Medium | **NOT YET CHECKED** | UNVERIFIED |
+| 9 | LSP provider split-brain — `defs --provider lsp` → `fallback-native, lsp_count=0`, while `agent --provider lsp` → `lsp_proof=true` with `lsp_resolution_basis=native-definition-anchor` | Medium | **NOT YET CHECKED** | UNVERIFIED |
+| 10 | `tg find` dense-absent easy to misread as full hybrid | Low-Med | Independently observed the same day: exit 0, `find_bm25_only`, stderr names `tg install-dense` | **CONFIRMED as behaviour**; disagree it is a defect — the payload carries `routing_reason` + `rank_fallback_reason` |
+
+**Do not treat rows 5-9 as closed.** They are unverified, not refuted. Each needs its own probe
+before it is either fixed or dismissed.
+
+### What shipped from this report
+
+**The confidence invariant is now a permanent ratchet** — `tests/unit/test_prepare_confidence_invariants.py`:
+
+```
+I1  downgrade_reasons non-empty  =>  confidence.overall < 1.0
+I2  partial is true              =>  confidence.overall < 1.0
+```
+
+This is the reporter's NFR-2, and it shipped **even though the bug did not reproduce**, because:
+a contract that happens to hold today is exactly the thing to pin before it drifts, and the failure
+shape they describe (certainty about a truncated scan) is the single most dangerous payload this
+tool can hand an agent. The test carries TWO negative controls (the detector must flag each
+violating shape) and a POSITIVE control (a correctly-downgraded payload must produce no
+violations) — without the positive control, a detector that flagged everything would pass both
+negatives and be useless.
+
+The invariant is a PURE FUNCTION over the payload so its failure path is testable without the
+CLI. A check that can only be exercised by a slow subprocess tends never to have its failure path
+tested at all.
+
+### What did NOT ship, and why
+
+- **The ranking fix (their NFR-1/NFR-5, stop-symbol filter).** A short lexical token winning as
+  primary is a RANKING concern, not a contract concern, and an invariant cannot express it. It
+  needs a corpus-based golden set with known-bad queries — the same discipline
+  `tensor-grep-semantic-search-campaign` already uses for retrieval quality. Filed, not guessed at.
+  **Their proposed discriminator is good and should be reused verbatim:** a known-bad query must
+  either set `ask.required=true` or refuse to name a primary.
+- **Anything for rows 5-9.** Unverified findings do not get fixes; that is how a wrong fix ships.
+
+### The reusable lesson
+
+The report's most valuable property is that it ran the REAL binary against a DIFFERENT checkout.
+Two of its critical findings did not reproduce on ours — which is itself the finding: **capsule
+confidence and target selection are corpus-dependent, so a single-corpus verification cannot
+falsify them.** That argues for the golden-set approach over one-off reproduction attempts, and it
+is the same lesson as [[tensor-grep-dogfood-real-corpus-before-shipping-precision-2026-07-03]]:
+fixture-green is false for heuristics.
+
 ## Recent campaign notes (2026-08-22) - WAVE 0a: the 6 BLOCKED rows RE-DERIVED against the tree
 
 The 2026-08-22 unblock plan was council-audited and the audit's falsifiable claims were then
