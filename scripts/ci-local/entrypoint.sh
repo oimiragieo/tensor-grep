@@ -163,6 +163,18 @@ cat <<'NOT_COVERED'
     - agent-readiness / windows-agent-readiness
     - native-build-smoke, cuda-feature-check, search-golden-parity, benchmark-regression
     - test-gpu-nvidia, the `-m eval` gate, and the whole release/publish chain
+  KNOWN LOCAL-ONLY FAILURE (not a product defect):
+    Whole-repo, DEADLINE-BOUNDED tests can fail here purely on bind-mount I/O.
+    /work is a Docker Desktop bind mount, which is materially slower than the
+    native checkout a GitHub runner uses. Measured on this box:
+      tests/unit/test_agent_capsule_hardcases.py
+        ::test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_helper
+      -> exit_code=2, partial=True, partial_reason=deadline, elapsed 60.7s vs a 60s budget.
+    The RANKING was correct in that run (primary_target = rust_core/src/python_sidecar.rs,
+    exactly what the test asserts) -- only the clock lost. Treat a `partial_reason=deadline`
+    failure here as an I/O artifact and confirm it on CI before believing it; do NOT widen
+    the product deadline to make this harness pass.
+
   The GitHub Actions run remains the merge arbiter. This harness is a fast local
   pre-filter, not a substitute for it.
 NOT_COVERED
