@@ -47,6 +47,56 @@
 
 
 
+## Recent campaign notes (2026-08-21) - LEDGER-FIXTURE-SKIPS-ITS-OWN-TEST (P1, FIXED, no CEO gate)
+
+- **Finding (2026-08-21): the CI `code` path filter did not watch `docs/audits`, so a PR editing
+  the handler-disposition ledger skipped every `test-python` lane - including the test that reads
+  that ledger.** `.github/workflows/ci.yml`'s `changes` job builds `CODE_FILES` from
+  `src rust_core tests scripts benchmarks .github/workflows pyproject.toml Cargo.toml Cargo.lock
+  uv.lock`. `docs/audits/2026-08-20-handler-dispositions.json` is **test input**, not
+  documentation: `tests/unit/test_handler_dispositions.py::test_ledger_locatability` reads it and
+  asserts every record still resolves to a real handler. Because it lives under `docs/`, a
+  ledger-only PR was classified docs-only.
+- **Measured on PR #1089**, whose entire purpose was to fix a `test_ledger_locatability` failure:
+  the rollup showed **3 `test-*` checks, 19 SKIPPED, zero failing, PR green**. A control separates
+  this from a runner problem: sibling PR #1086, same day, same repo, showed **12 `test-*` checks**.
+  The count was the only visible difference - a skipped lane and a passing lane are
+  indistinguishable in the rollup's pass/fail summary.
+- **This is the `scripts/` hole already documented in `ci.yml`, with the roles reversed.** That
+  comment states it exactly: *"The suite ran when the TESTS changed but not when their SUBJECT
+  did."* Here the suite did not run when its FIXTURE changed. The same filter has now been wrong in
+  both directions, which is the argument for enumerating what each lane CONSUMES rather than
+  patching paths one incident at a time.
+- **Blast radius was bounded, and the bound is the dangerous part.** `test-python`'s condition is
+  `github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'`, so pushes to
+  `main` always ran it. The gap was **pre-merge verification only** - the fix could not be proven
+  before landing, and the failure would surface on `main` after merge, where it is expensive.
+- **Fix (shipped in #1089):** added `docs/audits` to `CODE_FILES`, pinned in
+  `tests/unit/test_ci_code_path_filter.py::REQUIRED_PATHS` (which already carries a negative
+  control and a substring-decoy test). Perturbation-proved: removing `docs/audits` from `ci.yml`
+  alone fails exactly `test_filter_watches_path[docs/audits]` (1 failed, 18 passed); restored ->
+  19 passed. Not a cost regression: `docs/audits` holds a handful of JSON ledgers.
+- **Open follow-up (not yet done):** the filter is still a hand-maintained path list. The durable
+  form is to derive it from what the test lanes actually read, or at minimum to add a check that
+  any file loaded by a test under `tests/` is covered by `CODE_FILES`. Filed as a research item
+  rather than fixed, because deriving it needs a real import/IO census, not a guess.
+
+## Recent campaign notes (2026-08-21) - STALE-ROLLUP-AFTER-FORCE-PUSH (process hazard, no code fix)
+
+- **Finding: `statusCheckRollup` can report check runs belonging to a head that no longer exists**,
+  so a monitor keyed on the PR number reads a verdict for bytes nobody will merge. Measured: a
+  monitor reported `PR #1087 TERMINAL FAILED (8) :: Formatting & Linting, test-python (6 lanes),
+  test-gpu-nvidia`. Those checks belonged to `fd33dc5`, a head that had been force-pushed away; the
+  live run on the corrected head `c77c0fd3` was still `in_progress`. Acting on that verdict would
+  have meant debugging a failure on discarded code.
+- **Rule:** watch **by run ID** (`gh run view <run-id>`), or assert the check's head SHA equals the
+  PR's current `headRefOid` before believing any verdict. This is the same class as
+  `--limit 1 hides the executing run`: a query returning rows about the wrong object, where every
+  row is individually true.
+- **Second-order note:** this bit inside a session that had already written the
+  windowed-query law down. Knowing the rule did not prevent it - only keying the instrument to a
+  unique object id does.
+
 ## Recent campaign notes (2026-08-21) - INLINE-RULES-DROPS-ENGINE (P1, silent misroute)
 
 - **`tg scan --inline-rules` silently ignores a rule's `engine:` declaration.**
