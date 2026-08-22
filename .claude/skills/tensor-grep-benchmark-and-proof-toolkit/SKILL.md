@@ -247,6 +247,108 @@ pipeline this recipe belongs to (profile the shipped wheel → prove byte-identi
 microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the
 benchmark-reading slice of it.
 
+## Summary statistics, pairing, and intervals (the part that makes a number publishable)
+
+Added 2026-08-22 after a 5-seat council voted **5/5 to WITHDRAW** the public `7.5x` claim. The two
+internal numbers (`7.5x`, later `6.4x`) conflict, no committed harness produces either, and — the
+insight none of the council seats reached — **they may be different REGIMES against different
+baselines**, in which case neither supersedes the other and BOTH are unpublishable regardless of a
+re-run. Everything below is externally grounded; the sources are named so a reader can check them
+rather than take this file's word.
+
+### Ratios MUST be aggregated with the geometric mean, never the arithmetic mean
+
+Fleming & Wallace, *How not to lie with statistics: the correct way to summarize benchmark results*
+(CACM 1986, doi:10.1145/5666.5673) proves the arithmetic mean of NORMALIZED numbers is
+**mathematically meaningless**: the ranking it produces changes when you change which system is the
+baseline. A speedup is a normalized number. So:
+
+- Summarizing a suite of per-case speedups -> **geometric mean**.
+- Summarizing raw times for ONE case -> arithmetic mean / median / min (see next section).
+- If you ever report "average speedup" without saying which mean, assume it is the wrong one.
+
+### min vs mean vs median — pick from the DISTRIBUTION, and say which you used
+
+CLI/process timings are right-skewed: there is a hard floor (the work must take at least X) and no
+ceiling (any scheduler, page-cache miss, or antivirus scan adds time). Noise is therefore strictly
+ADDITIVE, which is the argument for the minimum as the least-contaminated estimate of intrinsic
+speed (Codeflash, `docs.codeflash.ai/codeflash-concepts/benchmarking`; kevmod,
+`blog.kevmod.com/2016/06/10/benchmarking-minimum-vs-average`, gives the variance analysis for when
+min beats mean and when it does not).
+
+| statistic | use when | fails when |
+|---|---|---|
+| **min** | right-skewed timings, you want intrinsic speed, noise is additive | you actually care about tail latency; rare-bad-event cost is the product question |
+| **median** | you want a robust central value and the tail matters a little | you need to detect a small shift and n is small |
+| **arithmetic mean** | raw times, roughly symmetric, you will also report the spread | ANY normalized/ratio quantity (see above) |
+
+Whichever you choose, the report must NAME it. "tg is 3x faster" with an unnamed statistic is not a
+claim, it is a mood.
+
+### Paired, interleaved sampling — never all-A-then-all-B
+
+Run arms as adjacent pairs and alternate which goes first; do not collect every `tg` sample and then
+every `rg` sample. Block sampling lets machine state (thermals, clock, page cache, another process
+waking up) load onto one arm. The protocol in `github.com/clocksmith/doppler/blob/main/docs/
+benchmark-methodology.md` is directly analogous to a tg-vs-rg comparison: interleave adjacent pairs,
+collect **>= 20 valid pairs**, keep every other condition fixed, and compute the paired difference
+per pair.
+
+### Confidence intervals are mandatory for anything externally used
+
+Hoefler & Belli, *Scientific Benchmarking of Parallel Computing Systems*
+(`spcl.inf.ethz.ch/Publications/.pdf/hoefler-scientific-benchmarking.pdf`) is the standard
+methodology reference; NIST TN 1830 (Pieterse & Flater) states the operational consequence plainly:
+comparing bare averages "often leads to incorrect conclusions", and it is the interval that
+separates a real difference from random fluctuation.
+
+- Report a **paired 95% CI** on the difference, not two independent CIs eyeballed for overlap.
+- **Stopping rule:** an interval crossing zero with a median difference under ~0.5% is PARITY —
+  stop tuning that lane, and do not publish the point estimate as a win.
+- **Round to the precision you earned.** A +-6-point interval justifies whole numbers. If a
+  presentation needs two decimal places to show a difference, there is no difference.
+
+### Noise floor, and the CI-specific one
+
+Establish the floor with a NO-OP control (same input, same arm, back to back) before believing any
+delta. Concrete published floors: **5% on a real machine, 10% on GitHub Actions** (Codeflash). Our
+benchmark lane runs on GitHub Actions, so **a sub-10% effect measured in CI is not a result**.
+
+### Never mix regimes
+
+`fak/BENCHMARK-GOVERNANCE.md` states the rule that explains our own 7.5x-vs-6.4x conflict: a live
+wall-clock speedup and a "value-add"/session ratio have DIFFERENT baselines and are not comparable.
+Before re-measuring anything, the first question is not "which number is right" but **"what baseline
+and regime did each one use"** — and if that cannot be recovered from the artifacts, both are
+unpublishable no matter how carefully you re-run.
+
+Corollary from the SIGPLAN Empirical Evaluation Guidelines (via `pldi-reproducibility`):
+**benchmark survivorship** — silently excluding the cases your tool loses on is "the most damaging
+silent choice" available. Report the losses in the same table as the wins.
+
+### Tombstoning a superseded public number (never silently delete)
+
+When a published number is replaced or withdrawn, it gets a **SUPERSEDED** marker beside it with the
+date, the replacement (or "withdrawn, no replacement"), and the reason. Deleting it makes the record
+unauditable and invites someone to re-derive the old figure from an old artifact. This is the
+append-only discipline `tensor-grep-release-drift-check` already applies to dated claims.
+
+### Pre-flight additions to the speed-claim checklist
+
+Before ANY externally-used number:
+
+- [ ] Ratio aggregation method NAMED and is geometric mean for speedups.
+- [ ] Summary statistic (min/median/mean) NAMED, and justified by the distribution.
+- [ ] Arms interleaved and paired; **>= 20 pairs**; paired 95% CI reported.
+- [ ] Noise floor measured with a no-op control; effect exceeds it (**>= 10% if measured in CI**).
+- [ ] Regime + baseline stated in the SAME sentence as the number.
+- [ ] Losses reported alongside wins (no survivorship).
+- [ ] Reproduction command committed; raw pairs committed.
+- [ ] Any superseded number TOMBSTONED, not deleted.
+
+A number missing any of these is "shape interesting, not publishable" — say exactly that rather than
+shipping it with a hedge.
+
 ## Fair-benchmark rules
 
 These are what separates a claim-quality artifact from a number you cannot defend in a PR review.
