@@ -797,6 +797,66 @@ concrete failure observed this session.
   with a fully green test matrix, which is otherwise baffling: **31 of 32 jobs succeeded and
   nothing shipped.**
 
+- **A143 — A GATE THAT CAN ONLY BE SATISFIED BY A FALSE STATEMENT IS A DEFECT, NOT A STANDARD
+  (2026-08-22).** `test_public_docs_governance.py` required the literal sentence *"the latest
+  complete public PyPI/release-asset distribution is also `<tag>`"*. While `v1.111.2` was TAGGED
+  WITH ZERO PYPI FILES that sentence was FALSE, so the only way to a green gate was to assert an
+  untruth in a public doc. Fixed by accepting EITHER the completeness claim OR an explicit
+  ``**`<tag>` is TAGGED AND NOT PUBLISHED`` disclosure — both name the tag, so neither can be
+  satisfied by vague prose. **Assert the SHAPE of a definite statement, never one of its possible
+  values.** A gate that pins one outcome silently becomes a mandate to lie the first time reality
+  takes the other branch, and the pressure lands on whoever is holding the release.
+
+- **A144 — A DOC-STALENESS GATE WITH A TOLERANCE IS A TIME BOMB: IT ARMS ITSELF WITH EVERY RELEASE
+  AND DETONATES ON AN UNRELATED COMMIT (2026-08-22).** `test_task_board_reconcile_stamp_is_not_many_releases_stale`
+  failed with *"reconcile stamp is v1.111.0 while pyproject ships v1.111.6 — 6 releases behind
+  (tolerance 5)"*. It fired on a **docs-only** PR that had nothing to do with the board. Four
+  releases shipped that day; the fifth crossed the threshold, so the next commit to touch `main`
+  was going to fail whatever it contained. **After a multi-release day, reconcile the board BEFORE
+  the next merge.** And when such a gate fires, the first question is "how many releases since the
+  last stamp", not "what did this PR break" — blaming the PR sends you auditing an innocent diff.
+
+- **A145 — A RATCHET'S OFFENDER SET CAN BE DEFINED BY THE TESTS, NOT THE SOURCE, SO A TEST-ONLY
+  CHANGE CAN RED A FILE THE DIFF NEVER TOUCHED (2026-08-22).** `scripts/bare_call_ratchet.py`
+  counts calls to names **the SUITE PATCHES on a module**. Adding one
+  `monkeypatch.setattr(cli_main, "dense_available", ...)` turned three PRE-EXISTING, untouched bare
+  calls in `cli/main.py` into UNPINNED OFFENDERs and failed CI. Two misdiagnoses to skip: *"the
+  rebase clobbered the pins file"* — the pins were BYTE-IDENTICAL on main and both branches, diff
+  them before theorising; and *"this is pre-existing on main"* — the call sites were, at identical
+  line numbers, but the PATCH was new, so compare the patch set, not the call sites. Its own
+  message (*"the pins file is empty but targets still have bare calls — the gate is off"*) reads as
+  a broken gate; an empty `bare_calls` map is CORRECT once every Route A target is converted.
+
+- **A146 — AN AMBIENT ENV VAR CAN TURN A FAIL-CLOSED TEST GREEN, AND THAT IS THE WORST DIRECTION
+  FOR A HARNESS TO BE WRONG IN (2026-08-22).** `test_missing_python_reports_actionable_error` copies
+  `tg` to an isolated dir, sets `PATH=""` and REQUIRES exit 2 with *"Python sidecar not found"*. It
+  clears `PATH` but not `TG_SIDECAR_PYTHON`, so a globally-exported interpreter handed it one and it
+  exited 0 (measured: `left: Some(0), right: Some(2)`). **Export nothing a CI job does not export.**
+  A false RED wastes an hour; a false GREEN on a fail-closed test retires the guard silently. Same
+  class as A128: the fix that makes one test pass is the thing that breaks another's premise.
+
+- **A147 — A PATH FILTER MUST WATCH WHAT A LANE READS, NOT ONLY WHAT IT IS (2026-08-22).** `ci.yml`'s
+  `code` filter watched `src rust_core tests scripts benchmarks .github/workflows` — but NOT
+  `docs/audits`, where the handler-disposition ledger lives. That ledger is TEST INPUT
+  (`test_handler_dispositions.py` reads it), so a ledger-only PR was classified docs-only and
+  **skipped every `test-python` lane including the test that consumes the ledger**. Measured on the
+  PR whose entire purpose was fixing that test: 3 `test-*` checks, 19 SKIPPED, green. Control: a
+  sibling PR the same day showed 12. This is the `scripts/` hole ci.yml already documents with the
+  roles REVERSED — *"the suite ran when the TESTS changed but not when their SUBJECT did"*, and here
+  the suite did not run when its FIXTURE changed. The same filter has now been wrong in both
+  directions, which is the argument for deriving it from what each lane READS rather than patching
+  paths one incident at a time.
+
+- **A148 — VERIFY A CUSTOMER-FACING CLAIM ON A CLEAN INSTALL; THE MAINTAINER'S MACHINE IS THE WRONG
+  POPULATION (2026-08-22, second receipt).** A backlog entry said `tg scan --ruleset` fails on a
+  stock `pip install`. Checking via `uvx` on this dev box, it WORKED — so I recorded a correction
+  saying the finding did not reproduce. It reproduces exactly: a clean `python:3.12-slim` container
+  returns `rulesets_runnable=false` and the documented remediation. The dev box has `ast-grep` on
+  PATH; customers do not. **A verification that runs where the tool was BUILT cannot falsify a
+  claim about where it is INSTALLED.** This is already
+  [[tensor-grep-advertised-is-not-installed-2026-08-21]] and I walked into it the next day while
+  holding the note — so the rule is not "remember it", it is: any claim about install-time
+  behaviour is checked in a fresh container off the PUBLISHED artifact, or it is not checked.
 
 ## Current Handoff
 release_docs_current_tag: v1.111.7
