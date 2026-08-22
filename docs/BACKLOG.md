@@ -47,6 +47,100 @@
 
 
 
+## Recent campaign notes (2026-08-21) - INLINE-RULES-DROPS-ENGINE (P1, silent misroute)
+
+- **`tg scan --inline-rules` silently ignores a rule's `engine:` declaration.**
+  `_load_inline_rule_specs` (`src/tensor_grep/cli/ast_scan.py`) parses the YAML into a rule-spec
+  dict but never copies the `engine` key. Measured directly, not inferred:
+
+      >>> _load_inline_rule_specs("id: probe\nengine: regex\npattern: SENTINEL\n"
+      ...                        "language: python\nseverity: high\nmessage: m")
+      parsed spec keys: ['id', 'language', 'message', 'pattern', 'severity']
+      engine preserved? False
+
+- **Consequence:** the regex fast path `if rule.get("engine") == "regex": continue`
+  (`src/tensor_grep/cli/ast_scan.py` ~:792) can never fire for an inline rule, so EVERY inline
+  rule -- including one explicitly declared `engine: regex` -- is routed through AST backend
+  selection (`_select_ast_backend_for_rule` / `_select_ast_backend_for_pattern`,
+  `src/tensor_grep/cli/ast_workflows.py`). A rule that asks for regex gets an AST backend, and on
+  a machine without an ast-grep binary it fails with
+  `Explicit AST search requires AST dependencies` instead of running as regex.
+- **This is a SILENT misroute, which is what makes it P1 rather than cosmetic.** The user's
+  declaration is accepted without complaint and then disregarded. There is no warning, no
+  `engine_ignored` field, and no error naming the key -- the only symptom is a dependency error
+  that mentions AST, on a rule the author explicitly said was not AST.
+- **Where it surfaced:** `tests/unit/test_w1c_sarif_version_disclosure.py` failed only on Linux CI
+  while passing on a Windows dev box, despite NEITHER having the `ast_grep_py` package. The
+  discriminating variable turned out to be an **`ast-grep`/`sg` CLI BINARY on `PATH`** -- a
+  different signal from the Python package -- which `AstGrepWrapperBackend.is_available()`
+  (`src/tensor_grep/backends/ast_wrapper_backend.py` ~:95-124) probes. The dev box has the binary;
+  a fresh `ubuntu-latest` runner does not. Two distinct "is AST available?" signals in one
+  codebase is itself worth a look.
+- **Not fixed here.** The test was made env-independent by forcing the seam (A85) rather than by
+  relying on the `engine:` tag being honored, because honoring it requires a `src/` change and a
+  deliberate decision about the intended contract. Someone taking this row must decide which is
+  true and then make the code and the docs agree:
+  1. `engine:` is SUPPORTED on inline rules -> preserve the key in `_load_inline_rule_specs` and
+     add a test asserting an `engine: regex` inline rule runs with NO ast-grep present; or
+  2. `engine:` is NOT supported on inline rules -> reject an inline rule that carries the key with
+     a named error, rather than accepting and ignoring it.
+  Silently accepting a key you discard is the one option that should not survive. Whichever is
+  chosen, the RED arm must run on a machine with no `ast-grep` binary on `PATH` -- otherwise the
+  wrapper backend serves the pattern and the test passes without exercising the defect.
+
+## Recent campaign notes (2026-08-21) - RULESET-UNREACHABLE-ON-STOCK-INSTALL (P0, customer-facing, reproduced on the PUBLISHED wheel)
+
+- **`tg scan --ruleset <builtin>` does not work on a stock `pip install tensor-grep`, while
+  `tg rulesets` advertises six security rulesets with rule counts and no availability caveat.**
+  This is the "capability the artifact claims and no install path reaches" class that `tg find`'s
+  own `--help` already names as a dishonesty equal to a stamped-but-unpublished version -- except
+  here it is on the SECURITY surface and it is the advertised feature, not a held one.
+- **Reproduced on the PUBLISHED artifact, not a dev tree.** Clean `python:3.12-slim` container,
+  `pip install tensor-grep==1.111.1`, nothing else:
+
+      tg rulesets            -> lists auth-safe, crypto-safe, deserialization-safe,
+                                secrets-basic (21 rules), subprocess-safe (33 rules), tls-safe
+      tg scan /probe --ruleset subprocess-safe --json   -> exit 1
+        Error: Explicit AST search requires AST dependencies: ast-grep wrapper backend is
+        required for this pattern but is not available
+
+  The probe directory contained a real `subprocess.call(..., shell=True)` finding, so this is not
+  an empty-input artifact. The SAME command against a path that does not exist returns the SAME
+  error and exit code -- the failure is unconditional, not input-dependent.
+- **Why: nothing installs the backend it needs.** `ast_grep_py` appears in NO dependency and NO
+  extra in `pyproject.toml` (the `ast` extra ships **tree-sitter**, which the error message itself
+  says cannot serve ast-grep code patterns). And the wheel bundles no native binary --
+  `tg doctor --json` in that container reports `native_tg_binary_exists: false`,
+  `native_tg_binary_kind: "missing"`, and `tg` on `PATH` is the Python console script.
+- **Why it looked fine from a dev box:** a developer machine with a separately-installed native
+  `tg` binary serves these rules and returns `matched_rules: 1`. The capability is present for
+  whoever built the native artifact and absent for whoever ran `pip install`. **Any check of this
+  feature that runs on a maintainer's machine is measuring the wrong population.**
+- **The sibling shows the house standard, and scan misses it.** With its optional backend absent,
+  `tg find` degrades VISIBLY, still returns results (BM25-only), and names the fix:
+  ``semantic ranking unavailable: model2vec not installed -- run `tg install-dense` (or pip
+  install 'tensor-grep[semantic]')``. `tg scan --ruleset` hard-fails with no remediation string,
+  and there is no `install-ast` counterpart to `install-dense`.
+- **This also explains a CI failure that looked unrelated.** `test-python (ubuntu-latest)` on
+  PR #1070 fails `test_w1c_sarif_version_disclosure` with this exact message. The Linux lanes have
+  no ast-grep, so any scan reaching a code pattern errors there while passing on a Windows dev box
+  -- an environment-tracking test, not a behaviour-tracking one (AGENTS.md A85).
+- **Remediation options, all `fix:`-class (cannot publish while PYPI-SIZE-CAP is open):**
+  1. Make the built-in rulesets work without ast-grep, or
+  2. add the backend to an extra plus an `install-ast` one-shot mirroring `install-dense`, and give
+     the error a remediation string naming it, and
+  3. have `tg rulesets` disclose availability on the CURRENT install rather than listing rules that
+     cannot run -- an advertised count of 33 rules that always errors is worse than an honest
+     "unavailable here".
+  Whichever is chosen, the acceptance test must run in a **clean container off the published
+  artifact**, not on a machine that has a native binary lying around, or it will pass while the
+  defect ships.
+- **Ordering note for the SCAN-SILENT-CLEAN fix (PR #1080):** on an install WITHOUT ast-grep the
+  AST-dependency check fires BEFORE the new missing-path guard, so the guard is not reached on that
+  path. That does not make the guard wrong -- with ast-grep present it is exactly what fails the
+  scan closed -- but a fix for THIS row should re-check the ordering so a missing path is reported
+  as a missing path rather than as a dependency error.
+
 ## Recent campaign notes (2026-08-21) - SCAN-SILENT-CLEAN-ON-MISSING-PATH (P0-class honesty defect on a SECURITY surface)
 
 - **`tg scan --ruleset` reports a CLEAN result, exit 0, for a path that does not exist.** Its exit
