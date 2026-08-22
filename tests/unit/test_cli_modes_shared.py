@@ -31,7 +31,17 @@ def _test_globals():
     frame = sys._getframe(1)
     while frame is not None:
         mod_name = frame.f_globals.get("__name__", "")
-        if mod_name.startswith("tests.unit.test_cli_modes") and mod_name != __name__:
+        # Match on the FINAL dotted component, not a fully-qualified prefix. `tests/` has no
+        # `__init__.py`, so pytest's default prepend import mode names these modules by basename
+        # -- measured: `test_cli_modes_blast_radius`, NOT `tests.unit.test_cli_modes_blast_radius`.
+        # A `startswith("tests.unit.test_cli_modes")` check therefore matched NOTHING here, the
+        # walk fell through to `return globals()`, and the fakes read this shared module's stale
+        # copy: exactly the failure the shim was written to prevent, silently, because falling
+        # back to a real namespace looks like success. Both spellings now resolve, since the same
+        # file is reachable as `tests.unit.test_cli_modes_*` when another module imports it by
+        # that path.
+        leaf_name = mod_name.rpartition(".")[2]
+        if leaf_name.startswith("test_cli_modes") and mod_name != __name__:
             return frame.f_globals
         frame = frame.f_back
     return globals()

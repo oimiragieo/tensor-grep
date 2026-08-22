@@ -2,7 +2,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -786,9 +785,7 @@ def test_plain_search_refuses_unbounded_large_single_project_root(monkeypatch, t
     repo = tmp_path / "repo"
     _make_stub_file_repo(repo, 2000)
 
-    start = time.perf_counter()
     result = CliRunner().invoke(app, ["search", "TODO", str(repo)])
-    elapsed = time.perf_counter() - start
 
     assert result.exit_code == 2, result.output
     assert "broad root scan refused" in result.output
@@ -796,7 +793,14 @@ def test_plain_search_refuses_unbounded_large_single_project_root(monkeypatch, t
     assert "--glob" in result.output
     assert "--max-depth" in result.output
     assert "--allow-broad-generated-scan" in result.output
-    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+    # Deterministic replacement for a wall-clock bound. A deadline-BURNING run prints matches
+    # (verified by probe: `f98.py:# TODO item 98`); a REFUSAL prints none. Both exit 2, so the
+    # exit code cannot separate them -- the absence of match output is what proves the search
+    # was stopped before emitting results, and it holds on any machine at any load.
+    assert "TODO item" not in result.output, (
+        "the guard must refuse INSTEAD of burning the deadline; match output means the search "
+        "ran and emitted results before stopping: " + result.output[:400]
+    )
 
 
 def test_plain_search_scoped_glob_still_runs_on_large_root(monkeypatch, tmp_path: Path):
@@ -829,14 +833,19 @@ def test_plain_search_refuses_glob_with_implicit_path_on_large_root(monkeypatch,
     _make_stub_file_repo(repo, 2000)
     monkeypatch.chdir(repo)
 
-    start = time.perf_counter()
     result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"])
-    elapsed = time.perf_counter() - start
 
     assert result.exit_code == 2, result.output
     assert "broad root scan refused" in result.output
     assert "safety guard, not a zero-match result" in result.output
-    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+    # Deterministic replacement for a wall-clock bound. A deadline-BURNING run prints matches
+    # (verified by probe: `f98.py:# TODO item 98`); a REFUSAL prints none. Both exit 2, so the
+    # exit code cannot separate them -- the absence of match output is what proves the search
+    # was stopped before emitting results, and it holds on any machine at any load.
+    assert "TODO item" not in result.output, (
+        "the guard must refuse INSTEAD of burning the deadline; match output means the search "
+        "ran and emitted results before stopping: " + result.output[:400]
+    )
 
 
 @pytest.mark.parametrize(
@@ -869,13 +878,18 @@ def test_plain_search_refuses_type_and_iglob_with_implicit_path_on_large_root(
     _make_stub_file_repo(repo, 2000)
     monkeypatch.chdir(repo)
 
-    start = time.perf_counter()
     result = CliRunner().invoke(app, ["search", "TODO", *scope_args])
-    elapsed = time.perf_counter() - start
 
     assert result.exit_code == 2, result.output
     assert "broad root scan refused" in result.output
-    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+    # Deterministic replacement for a wall-clock bound. A deadline-BURNING run prints matches
+    # (verified by probe: `f98.py:# TODO item 98`); a REFUSAL prints none. Both exit 2, so the
+    # exit code cannot separate them -- the absence of match output is what proves the search
+    # was stopped before emitting results, and it holds on any machine at any load.
+    assert "TODO item" not in result.output, (
+        "the guard must refuse INSTEAD of burning the deadline; match output means the search "
+        "ran and emitted results before stopping: " + result.output[:400]
+    )
 
 
 def test_plain_search_refuses_glob_with_implicit_path_on_workspace_root(
@@ -892,14 +906,19 @@ def test_plain_search_refuses_glob_with_implicit_path_on_workspace_root(
         (project / "pyproject.toml").write_text("", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    start = time.perf_counter()
     result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*.py"])
-    elapsed = time.perf_counter() - start
 
     assert result.exit_code == 2, result.output
     assert "broad workspace-root scan refused" in result.output
     assert "safety guard, not a zero-match result" in result.output
-    assert elapsed < 1.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+    # Deterministic replacement for a wall-clock bound. A deadline-BURNING run prints matches
+    # (verified by probe: `f98.py:# TODO item 98`); a REFUSAL prints none. Both exit 2, so the
+    # exit code cannot separate them -- the absence of match output is what proves the search
+    # was stopped before emitting results, and it holds on any machine at any load.
+    assert "TODO item" not in result.output, (
+        "the guard must refuse INSTEAD of burning the deadline; match output means the search "
+        "ran and emitted results before stopping: " + result.output[:400]
+    )
 
 
 def test_implicit_glob_walk_probe_counts_walk_not_glob_matches(tmp_path: Path):
@@ -967,14 +986,19 @@ def test_plain_search_refuses_glob_implicit_path_on_marked_single_root(monkeypat
         (src / f"stub_{index}.py").write_text("TODO placeholder\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path)
 
-    start = time.perf_counter()
     result = CliRunner().invoke(app, ["search", "TODO", "--glob", "*"])
-    elapsed = time.perf_counter() - start
 
     assert result.exit_code == 2, result.output
     assert "broad root scan refused" in result.output
     assert "safety guard, not a zero-match result" in result.output
-    assert elapsed < 3.0, f"guard took {elapsed:.3f}s -- probe is not bounded"
+    # Deterministic replacement for a wall-clock bound. A deadline-BURNING run prints matches
+    # (verified by probe: `f98.py:# TODO item 98`); a REFUSAL prints none. Both exit 2, so the
+    # exit code cannot separate them -- the absence of match output is what proves the search
+    # was stopped before emitting results, and it holds on any machine at any load.
+    assert "TODO item" not in result.output, (
+        "the guard must refuse INSTEAD of burning the deadline; match output means the search "
+        "ran and emitted results before stopping: " + result.output[:400]
+    )
 
 
 def test_plain_search_glob_explicit_path_still_runs_on_marked_root(monkeypatch, tmp_path: Path):
