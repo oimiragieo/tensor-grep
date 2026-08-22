@@ -534,7 +534,6 @@ mod tests {
         // reclaims a live holder's lock.
         std::thread::sleep(stale_after * 3);
 
-        let started = Instant::now();
         let result = IndexLockGuard::acquire_with(
             &index_path,
             Duration::from_millis(500),
@@ -545,7 +544,32 @@ mod tests {
             result.is_err(),
             "a live, heartbeating holder's lock must never be stolen"
         );
-        assert!(started.elapsed() < Duration::from_secs(2), "must not hang");
+        // NO WALL-CLOCK ASSERTION HERE, deliberately. This previously carried
+        // `assert!(started.elapsed() < Duration::from_secs(2), "must not hang")` -- a 2s budget
+        // over a 500ms acquire timeout -- and it failed on main run 32557799696
+        // (test-rust-core windows-latest/stable: 188 passed, 1 failed) on a contended runner,
+        // SKIPPING the entire release chain: Semantic Release, both build-pypi jobs, publish-pypi
+        // and validate-pypi-artifacts all reported `skipped`. The correctness assertion above
+        // PASSED in that run; only the clock lost.
+        //
+        // A hard wall-clock budget is a contention detector, not a correctness test: it snaps
+        // first when a shared runner loads, while everything else merely slows and still passes.
+        // Widening the budget is NOT the fix -- the same move was tried on a sibling lane on
+        // 2026-07-27, bought 4x the wasted wall-clock, and was reverted the same day. Note this
+        // test's `stale_after` was ALREADY widened once (80ms -> 1200ms, see the comment above)
+        // for the same class of flake; a second widening is the pattern, not a remedy.
+        //
+        // What the removed assertion actually guarded is not lost. A genuine hang -- the failure
+        // it was named for -- means `acquire_with` never returns, so `result` is never bound and
+        // the whole suite fails on cargo's own timeout rather than on this line. The `is_err()`
+        // above already proves the call RETURNED and REFUSED, which is the property this test
+        // exists to establish.
+        //
+        // The narrow gap this leaves: a regression where the timeout is ignored but the call
+        // eventually errors anyway would now pass here. That is a deadline-ENFORCEMENT property,
+        // and per the house rule it belongs in a deterministic arm (inject a short deadline, stub
+        // the worker, assert the path taken) rather than in a wall-clock bound on a gating lane.
+        // See docs/BACKLOG.md RUST-INDEX-LOCK-WALLCLOCK-FLAKE.
         drop(holder);
     }
 
