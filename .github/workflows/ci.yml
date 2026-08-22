@@ -57,7 +57,15 @@ jobs:
             # did. Measured on PR #1021: a
             # 3,500-line refactor of validate_release_assets.py, fully green, every test
             # lane `conclusion: skipped`. Pinned by tests/unit/test_ci_code_path_filter.py.
-            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)
+            # `docs/audits` added 2026-08-21: the handler-disposition ledger
+            # (docs/audits/2026-08-20-handler-dispositions.json) is TEST INPUT --
+            # tests/unit/test_handler_dispositions.py reads it and asserts every record still
+            # resolves to a real handler. It lives under docs/ but is not documentation. Same
+            # hole as the scripts/ one above with the roles reversed: the suite ran when the
+            # TEST changed but not when its FIXTURE did, so a PR editing only the ledger
+            # reported green having never run the test that consumes it. Measured on PR #1089,
+            # whose whole purpose was to fix that test: every test-python lane SKIPPED.
+            CODE_FILES=$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- src rust_core tests scripts benchmarks .github/workflows docs/audits pyproject.toml Cargo.toml Cargo.lock uv.lock 2>/dev/null || true)
           else
             CODE_FILES="main-push"
           fi
