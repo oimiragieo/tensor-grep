@@ -47,17 +47,27 @@ def _force_dense(monkeypatch):
     """Force the dense leg's availability so neither arm depends on this machine's extras."""
 
     def _set(available: bool) -> None:
-        from tensor_grep.cli import main as cli_main
-
+        # Patch the DEFINITION site, not `cli.main`'s namespace. The `tg find` code path does a
+        # function-local `from tensor_grep.core.retrieval_dense import dense_available`, so the
+        # name is resolved from the source module at CALL time and an attribute set on `cli.main`
+        # is never read. The first version of this fixture did exactly that, with `raising=False`
+        # suppressing the AttributeError that would have exposed it -- so both arms silently ran on
+        # whatever extras this machine happens to have, which is the one thing the module docstring
+        # above says must not decide the result.
+        #
+        # Proved before the fix: patching `cli.main` left routing_backend identical across
+        # available=True and available=False; patching the definition site moves it. Patching
+        # `cli.main` also re-welds a Route A target -- `scripts/bare_call_ratchet.py` counts calls
+        # to names the suite patches ON a module, so it turned three pre-existing bare
+        # `dense_available()` calls in cli/main.py into UNPINNED OFFENDERs and failed CI.
         if available:
-            monkeypatch.setattr(cli_main, "dense_available", lambda: (True, None), raising=False)
+            reason = None
         else:
-            monkeypatch.setattr(
-                cli_main,
-                "dense_available",
-                lambda: (False, "semantic ranking unavailable: forced off for this test"),
-                raising=False,
-            )
+            reason = "semantic ranking unavailable: forced off for this test"
+        monkeypatch.setattr(
+            "tensor_grep.core.retrieval_dense.dense_available",
+            lambda: (available, reason),
+        )
 
     return _set
 
