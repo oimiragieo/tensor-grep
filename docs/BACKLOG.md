@@ -47,6 +47,55 @@
 
 
 
+## Recent campaign notes (2026-08-22) - WAVE 0a: the 6 BLOCKED rows RE-DERIVED against the tree
+
+The 2026-08-22 unblock plan was council-audited and the audit's falsifiable claims were then
+checked against the code. **Three of the six BLOCKED rows are STALE** — they cite files or work
+states that the tree contradicts. Sequencing a campaign from them would have sent a builder at a
+file that does not exist.
+
+This is the [[verify-plan-against-code]] Step-0 failure in its purest form: every citation in the
+rows resolves against a DOCUMENT, and none of them had been resolved against the TREE.
+
+### Method
+
+For each of the 6 canonical BLOCKED rows (`#89`, `#90`, `F5`, `F6`, `F8`, `MCP-SURFACE`), every
+file path the row names was resolved with `ls`/`grep` against `main` at the time of writing.
+A row is STALE if any path it names is absent, or if the work it calls "remaining" is present and
+wired.
+
+### Findings
+
+| Row | Row says | Tree says | Verdict |
+|---|---|---|---|
+| **F8** | blocked on `rust_core/src/main.rs` + **`path_domain.rs`** + e2e routing parity | `rust_core/src/path_domain.rs` **DOES NOT EXIST**, and `grep -rln "path_domain\|PathDomain" rust_core/src/` returns **nothing** — the concept is absent from the Rust tree entirely | **STALE** — re-scope before any work |
+| **MCP-SURFACE** | blocked on Task 2C, which "modifies `rust_core/src/main.rs`" | `_TG_MCP_SERVER_CONTRACT_VERSION` lives at **`src/tensor_grep/cli/mcp_server.py:188`** (Python). `main.rs` contains **0** contract references | **STALE dependency** — the contract bump is a Python change and is not cargo-blocked at all |
+| **F6** | "Python/schema/evidence-signing slices are buildable-first ... remainder BLOCKED" | `src/tensor_grep/cli/evidence_signing.py` is **539 lines / 19 functions**, imported by `audit_manifest.py`, `checkpoint_store.py` and `evidence_receipt.py` | **PARTLY SHIPPED** — the evidence-signing slice is built and wired, not remaining |
+| **F6** (native half) | native `verify-edit` still blocked | `grep -rn "verify-edit\|verify_edit" src/tensor_grep/cli/main.py` returns **nothing** — the surface genuinely does not exist | **ROW CORRECT** on this half |
+| **F5** | blocked on `rust_core/**` + `tests/e2e/**` | both paths exist; the glob is unresolved, so "independent of the MCP chain" is **not assertable** from the row | **UNDER-SPECIFIED** — needs exact touch-points before sequencing |
+| **#89 / #90** | WSL path-domain reproduction; needs a real WSL host | no file citations to falsify; the WSL constraint is real and is NOT removed by the ubuntu container | **ROW CORRECT** |
+
+### What this changes
+
+1. **F8 cannot be planned until it is re-scoped.** Its central file does not exist. Whether the
+   work moved, was absorbed, or was never started is an open question — do NOT assume it moved to
+   `runtime_paths.rs` without checking; that is the nearest-name guess, not evidence.
+2. **MCP-SURFACE is probably NOT cargo-blocked.** If the only thing Task 4 needs is the contract
+   version, that is a Python edit plus its validator test and the 5-registration-site rule. The
+   Task 2C dependency was asserted from a `main.rs` premise that measurement does not support.
+3. **F6's disposition is MIXED and its shipped half must be closed**, not carried as remaining
+   work. Carrying shipped work as open is how 17 stale items accrued once before.
+4. **The container does NOT unblock #89/#90.** Those need a real WSL host. The harness removes the
+   *cargo* constraint, never the *WSL* one — the plan says this and the rows agree.
+
+### Discipline note
+
+A prior campaign entry (TASK_BOARD, W6) records "six BLOCKED rows re-derived". That re-derivation
+did NOT catch `path_domain.rs`, which means either the file was removed afterwards or the
+re-derivation checked row TEXT rather than file EXISTENCE. **A re-derivation that does not resolve
+every cited path against the tree is a proofread, not a re-derivation** — and it produces exactly
+the confidence that stops the next person from checking.
+
 ## Recent campaign notes (2026-08-22) - CEO-GATE COUNCIL: 5-seat verdicts on #48/#72/#77/#131/#169 + RULESETS
 
 Council run 2026-08-22 (`tt_council.sh`, 7 seats dispatched). **5 substantive seats**: `claude`
