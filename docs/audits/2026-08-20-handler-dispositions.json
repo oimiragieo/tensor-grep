@@ -811,7 +811,7 @@
   },
   {
     "module": "cli/ast_scan.py",
-    "lineno": 822,
+    "lineno": 857,
     "enclosing_symbol": "_run_ast_scan_payload",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -941,7 +941,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11769,
+    "lineno": 11775,
     "enclosing_symbol": "_run_install_dense",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1171,7 +1171,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11908,
+    "lineno": 11914,
     "enclosing_symbol": "audit_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1181,7 +1181,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11960,
+    "lineno": 11966,
     "enclosing_symbol": "audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1191,7 +1191,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12022,
+    "lineno": 12028,
     "enclosing_symbol": "audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1201,7 +1201,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12160,
+    "lineno": 12166,
     "enclosing_symbol": "review_bundle_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1211,7 +1211,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12323,
+    "lineno": 12329,
     "enclosing_symbol": "review_bundle_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1221,7 +1221,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12501,
+    "lineno": 12507,
     "enclosing_symbol": "evidence_emit",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1231,7 +1231,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12628,
+    "lineno": 12634,
     "enclosing_symbol": "evidence_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1241,7 +1241,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12858,
+    "lineno": 12864,
     "enclosing_symbol": "ledger_claim",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1251,7 +1251,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12953,
+    "lineno": 12959,
     "enclosing_symbol": "ledger_release",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1261,7 +1261,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13039,
+    "lineno": 13045,
     "enclosing_symbol": "ledger_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1271,7 +1271,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13138,
+    "lineno": 13144,
     "enclosing_symbol": "ledger_record",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1281,12 +1281,22 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13229,
+    "lineno": 13235,
     "enclosing_symbol": "ledger_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-find'); raise typer.Exit(code=2) from exc",
     "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/ast_scan.py",
+    "lineno": 201,
+    "enclosing_symbol": "_ruleset_backend_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False. The function answers one question -- can the listed built-in rulesets actually RUN on this install? -- by importing AstGrepWrapperBackend and calling is_available(), which probes for an ast-grep/sg binary on PATH. Both the import and the probe can fail on a stock install (the backend is in no dependency and no extra), which is the ordinary case this exists to detect, not an exceptional one.",
+    "reason": "Fails CLOSED on purpose: any import or probe error reports UNAVAILABLE, so the listing warns rather than staying silent. The asymmetry is deliberate -- over-warning is recoverable by installing the backend, while a silent overstatement on a security surface is the exact defect this function was added to fix (tg rulesets advertised six security rulesets with rule counts on installs where every tg scan --ruleset exits 1). It cannot swallow an incomplete RESULT because it produces no result: it returns a boolean that only ever adds disclosure, never suppresses a finding.",
     "hardened_in": null
   }
 ]
