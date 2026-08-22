@@ -123,11 +123,11 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # and the launcher scan) and OUTPUT-BUCKET (the launcher cleanup's `failed.append(...)`) --
     # so the audit that accepted them still applies; moving a file does not re-open it.
     # Retire these two entries together with main.py's when that module is drained.
-# RELOCATION 2026-08-21: `generated_scan_dir_names` moved main.py -> scan_guardrails.py
-# (paying for the missing-path guard under the file-size ratchet) and took its two
-# `except OSError` sites with it. Measured: main.py 6->4, scan_guardrails.py 5->7,
-# TOTAL 41 -> 41 unchanged. Re-pinned because the sites MOVED, not because any were added --
-# a growing total must be hardened or disposed, never re-pinned.
+    # RELOCATION 2026-08-21: `generated_scan_dir_names` moved main.py -> scan_guardrails.py
+    # (paying for the missing-path guard under the file-size ratchet) and took its two
+    # `except OSError` sites with it. Measured: main.py 6->4, scan_guardrails.py 5->7,
+    # TOTAL 41 -> 41 unchanged. Re-pinned because the sites MOVED, not because any were added --
+    # a growing total must be hardened or disposed, never re-pinned.
     "main.py": 4,
     "doctor_report.py": 5,
     "windows_launcher.py": 4,
