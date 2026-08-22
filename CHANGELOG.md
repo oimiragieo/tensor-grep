@@ -1,6 +1,48 @@
 # CHANGELOG
 
 
+## v1.111.5 (2026-08-22)
+
+### Bug Fixes
+
+- Drop the wall-clock assertion that made the index-lock heartbeat test a contention detector
+  ([#1091](https://github.com/oimiragieo/tensor-grep/pull/1091),
+  [`511a374`](https://github.com/oimiragieo/tensor-grep/commit/511a37460002636d9a9a20596b25580aaec1b970))
+
+One failing Rust test SKIPPED AN ENTIRE RELEASE. Main run 32557799696 (test-rust-core
+  windows-latest/stable) reported `188 passed; 1 failed` in
+  index_lock::tests::heartbeat_keeps_a_slow_holder_alive_past_the_stale_threshold, and Semantic
+  Release, both build-pypi jobs, publish-pypi and validate-pypi-artifacts all went `skipped`.
+
+THE CORRECTNESS ASSERTION PASSED. What failed was `assert!(started.elapsed() <
+  Duration::from_secs(2), "must not hang")` -- a 2s wall-clock budget over a 500ms acquire timeout.
+  The property the test exists to prove, `result.is_err()` (a live heartbeating holder is never
+  stolen from), held. Only the clock lost, on a contended Windows runner.
+
+WHY NOT WIDEN. This test's `stale_after` was ALREADY widened once for this class of flake (80ms ->
+  1200ms; the comment recording it is still in the file). A second widening is the pattern, not a
+  remedy -- and the same move on a sibling lane on 2026-07-27 bought 4x the wasted wall-clock and
+  was reverted the same day.
+
+WHAT IS NOT LOST. A genuine hang -- the failure the assertion was named for -- means acquire_with
+  never returns, so `result` is never bound and the suite fails on cargo's own timeout rather than
+  on that line. `is_err()` already proves the call RETURNED and REFUSED.
+
+THE GAP THIS LEAVES, stated rather than hidden: a regression where the timeout is ignored but the
+  call eventually errors would now pass here. That is a deadline-ENFORCEMENT property and belongs in
+  a deterministic arm (inject a short deadline, stub the worker, assert the path taken), not a
+  wall-clock bound on a release-gating lane. Recorded in docs/BACKLOG.md with the measured failure
+  rate (4 success / 1 failure across the 5 recent main runs where the lane materialised) and the
+  caveat that `<absent>` is not a pass and that my own re-run replaced the failing job's record.
+
+NOT LOCALLY COMPILED: `cargo` is forbidden on this shared box (CLAUDE.md), so CI is the oracle. The
+  change removes two lines and adds comments; `Instant` remains used elsewhere in the file, so the
+  import stays live. Brace balance verified with both a positive control (an untouched sibling fn)
+  and a negative control.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.4 (2026-08-22)
 
 ### Bug Fixes
