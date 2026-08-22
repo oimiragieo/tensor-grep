@@ -102,6 +102,60 @@ a platform flip; a single-platform local green proves nothing about the sibling 
 
 ---
 
+### 1.4 Patch the DEFINITION site — a namespace patch over a function-local import is INERT (2026-08-21)
+
+`monkeypatch.setattr(some_module, "name", ...)` only works if the code under test READS
+`some_module.name`. When the production path does a **function-local import**, the name is resolved
+from the SOURCE module at call time and the attribute you set is never read. The test then runs on
+whatever the machine actually has — the exact environment dependence the fixture exists to remove.
+
+`raising=False` is what makes this silent. It exists to allow setting an attribute that does not
+exist yet, so it suppresses the `AttributeError` that is otherwise your only warning that nothing
+reads that name.
+
+```python
+# tg find's real code path:
+def _run_find(...):
+    from tensor_grep.core.retrieval_dense import dense_available   # function-local
+    available, reason = dense_available()                          # bare call, resolved at CALL time
+
+# INERT -- cli.main.dense_available is never read; raising=False hides the AttributeError:
+monkeypatch.setattr(cli_main, "dense_available", lambda: (True, None), raising=False)
+
+# BINDS -- the function-local import resolves THIS at call time:
+monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
+```
+
+**Measured (PR #1087).** With the inert form, forcing `available=True` and `available=False`
+produced an **identical** `routing_backend` — the same arm twice, wearing two names, across three
+tests that all passed. Positive control in the same probe: patching the definition site MOVED the
+payload, proving the value could change and the fixture simply was not reaching it.
+
+**The two-part proof any forcing fixture owes.** Passing tests do not demonstrate either half:
+
+1. **BINDS** — a sentinel value set by the fixture appears in the observable output.
+   (`rank_fallback_reason == "semantic ranking unavailable: forced off for this test"`.)
+2. **DISCRIMINATES** — that value DIFFERS from the unpatched run.
+   (Unpatched: `"...model2vec not installed..."`.)
+
+**Second-order cost: a namespace patch can re-weld a Route A target.**
+`scripts/bare_call_ratchet.py` counts calls to names **the SUITE PATCHES on a module** — so the
+offender set is defined by the tests, not by the source. Adding `setattr(cli_main, "dense_available",
+...)` turned three **pre-existing, untouched** bare `dense_available()` calls in `cli/main.py` into
+UNPINNED OFFENDERs and failed CI, on a file the diff never touched. Two misdiagnoses to skip:
+
+- *"the rebase clobbered the pins file"* — the pins were **byte-identical** on `main`, and on both
+  branches. Diff them before theorising.
+- *"this is pre-existing on main"* — the call sites were, at identical line numbers. The **patch**
+  was new. Compare the patch set, not the call sites.
+
+Its message `the pins file is empty but targets still have bare calls -- the gate is off` reads as a
+broken gate; `bare_calls: {}` is **correct** (all three Route A targets converted to 0). The gate was
+on and right.
+
+**Tell:** a fixture parameterised `True/False` whose two arms produce identical output, and a
+`raising=False` beside a name the module does not define.
+
 ## Part 2 — Hostile-fixture construction (BITE it, or it bites you)
 
 ### 2.1 The fixture-BITES precondition (Form 6, AGENTS.md #281)
