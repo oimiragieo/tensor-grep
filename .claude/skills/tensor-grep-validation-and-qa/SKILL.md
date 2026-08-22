@@ -1177,6 +1177,41 @@ prevent, silently**, because falling back to a real namespace looks like success
 If you write anything that resolves a caller's namespace by name, match the final dotted component
 and prove it with a probe rather than assuming the import path. Law: **A129**.
 
+### A replacement assertion must be PROBE-VERIFIED to discriminate (2026-08-21)
+
+When you retire a flaky assertion, the replacement is a NEW instrument and inherits none of the old
+one's credibility. Prove it can fail before trusting it.
+
+**Worked example, including the wrong turn.** A guard test asserted
+`elapsed < 1.0, "probe is not bounded"`. It was flaky (windows-latest failed at 1.175s) and it
+measured the wrong thing entirely: the guard runs no probe of its own —
+`_should_refuse_unbounded_large_root_scan` is "checked using the candidate count the real search
+ALREADY collected (never a second walk)" — so `elapsed` was just the time to walk 2,000 stub files.
+
+The first replacement asserted the ABSENCE of `partial` / `result_incomplete` in the output. It
+looked principled and was **vacuous**: a probe of a real deadline-truncated PLAIN-TEXT run showed
+neither string EVER appears on that surface. It would have passed in both arms and proven nothing —
+the exact failure class this file exists to prevent, reintroduced while fixing a different one.
+
+**The probe is what found the real discriminator.** A deadline-BURNING run prints matches
+(observed: `f98.py:# TODO item 98`); a REFUSAL prints none. And crucially **both exit 2**, so the
+exit code alone cannot separate them. The final assertion — no match output — is therefore
+*stronger* than the timer it replaced: it proves the search stopped BEFORE emitting results, on any
+machine at any load.
+
+**The procedure:**
+
+1. Before writing the replacement, PROBE the failing condition on the exact surface the test uses
+   (text vs `--json` behave differently — that is what made the first attempt vacuous).
+2. Write the assertion against what the probe actually showed, not what you expect it to show.
+3. **Perturb it**: invert or break the assertion and confirm it FAILS. Measured here: inverted →
+   1 failed / 103 passed; reverted → 104 passed with the file byte-identical.
+4. Expect the lint fallout — removing the timing code left `time` unused (`F401`). Lint is often the
+   only witness that a stated intention stopped executing.
+
+Law **A138**. Related: the wall-clock guidance above, and A123/A135 on absent gates reading as
+passes.
+
 ## Provenance and maintenance
 
 Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the 2nd fixture-blind-spot receipt

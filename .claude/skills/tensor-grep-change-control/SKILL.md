@@ -221,6 +221,79 @@ exception rather than carry an allowlist entry implying a completion that cannot
 states its own direction of error: it is a LOWER bound and function-only, so a patched module-level
 CONSTANT is invisible to it — the real floor is never lower. (A130)
 
+### 10. A QUEUED run is not protected — batch the merges, then STOP pushing
+
+`ci.yml` sets `cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}`, which reads as "never
+cancel a main run". **That reading is wrong in the case that matters.** The flag governs runs
+already IN PROGRESS. A run still **QUEUED** in the same concurrency group is superseded by the next
+push regardless.
+
+This repo is runner-scarce — main runs sit queued for tens of minutes — so **every merge cancelled
+the previous release run before it started.** Measured 2026-08-21 on
+`gh run list --branch main --workflow=ci.yml`: `6909018` cancelled, `2d02a22` cancelled, `0eebab5`
+cancelled. Three consecutive main runs, all killed while queued.
+
+**This was a second, independent cause of "tagged but not published"** alongside PYPI-SIZE-CAP, and
+it was initially misattributed entirely to the cap. Clearing the cap alone would not have fixed
+publishing.
+
+**The protocol, superseding "one merge per tick":**
+
+1. Verify every candidate PR is genuinely green (see §11 — count is not enough).
+2. **Merge them all in one burst.** The release is cumulative from the last tag, so merging more
+   before the run starts LOSES NOTHING and gains a single publish covering everything.
+3. **Then stop pushing entirely** — including docs PRs, which consume the same runners.
+4. Wait for `gh run list --branch main --workflow=ci.yml --limit 1` to read **`completed`**, not
+   merely to exist. A created run is not a protected run.
+5. Verify the release **per-artifact** (A124): a tag or version appearing proves nothing; the
+   expected filename set does.
+
+**The same effect bites PR branches, where `cancel-in-progress` IS true.** Re-pushing to
+"re-trigger CI" starves it: measured on one branch, `08a7fe20` cancelled, `16fc31d1` queued 30+
+minutes and never started, head SHA with no run at all. Each rebase-push / fix-push /
+empty-commit-push killed the queued predecessor. **The remedy is the opposite of the instinct: stop
+pushing.** Before concluding CI is "broken", check queue depth
+(`gh run list --limit N --json status`) — a sibling branch's run sitting queued identifies runner
+scarcity rather than a dispatch fault. Laws **A133**, **A134**.
+
+### 11. Assert checks by NAME — a count cannot tell a matrix run from CodeQL
+
+A CI-watching script used `if total > 5 and pending == 0 -> GREEN`. Seven CodeQL + Dependabot
+entries satisfy that, so it reported **two PRs on which `ci.yml` had never run** as TERMINAL GREEN,
+and both became merge candidates on that basis.
+
+```bash
+# WRONG -- 7 CodeQL entries pass this
+[ "$total" -gt 5 ] && [ "$pending" -eq 0 ] && echo GREEN
+
+# RIGHT -- a real matrix run contains test-* checks
+testcount=$(gh pr view "$pr" --json statusCheckRollup \
+  -q '[.statusCheckRollup[]|.name]|map(select(startswith("test-")))|length')
+[ "$testcount" -lt 4 ] && echo "NO-CI: absent gate, not a pass"
+```
+
+This is A123's "absent gate renders as a pass" with the faulty instrument being your own. Law
+**A135**.
+
+### 12. One change can trip several independent ratchets — say which case you are in
+
+A single new `except Exception` had to satisfy BOTH the disposition ledger
+(`docs/audits/2026-08-20-handler-dispositions.json`, which records WHAT it is) and
+`TOTAL_BROAD_HANDLERS_CEILING` (which bounds HOW MANY exist). A single moved function tripped the
+file-size ratchet AND the silent-loss census. They are deliberately separate gates; satisfy each on
+its own terms.
+
+The distinction that decides the response:
+
+- **RELOCATION** — re-pin, but PROVE it: the total must be unchanged and the moved sites
+  byte-identical. Measured example: `main.py` 6→4, `scan_guardrails.py` 5→7, **total 41→41**, with
+  both new sites read and confirmed identical to the ones that left.
+- **GROWTH** — harden or disposition it. **Never re-pin.** A ratchet exists because "every added
+  site is a new way for an incomplete result to report success".
+
+Write which case you are in **beside the number**, so nobody later cites your relocation as
+precedent for absorbing real growth. Law **A137**.
+
 ## Part 2 — The written Operating Rules
 
 From `AGENTS.md` "Operating Rules" (`:856`) and `CONTRIBUTING.md`:
