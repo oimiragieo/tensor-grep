@@ -176,10 +176,36 @@ def _filter_ast_rule_specs(
     return [rule for rule in rules if compiled.search(str(rule.get("id", "")))]
 
 
+RULESETS_UNAVAILABLE_REASON = (
+    "the ast-grep backend is not installed, so none of these rulesets can run on this "
+    "install -- `pip install ast-grep-cli` (or `npm i -g @ast-grep/cli`) to enable them"
+)
+
+
+def _ruleset_backend_available() -> bool:
+    """Can the listed built-in rulesets actually RUN on this install?
+
+    The built-in packs are ast-grep code patterns, so they need the ast-grep wrapper backend.
+    `AstGrepWrapperBackend.is_available()` probes for an `ast-grep`/`sg` BINARY on PATH (with a
+    probe-run that rejects broken shims) -- which is a different signal from the `ast_grep_py`
+    Python package, and is why the remediation names `ast-grep-cli`.
+
+    Fails CLOSED: any import or probe error reports unavailable, because the failure mode this
+    exists to prevent is advertising rules that cannot execute. Over-warning is recoverable; a
+    silent overstatement on a security surface is the defect.
+    """
+    try:
+        from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+
+        return bool(AstGrepWrapperBackend().is_available())
+    except Exception:
+        return False
+
+
 def _build_rulesets_payload() -> dict[str, object]:
     from tensor_grep.cli.rule_packs import list_rule_packs
 
-    return {
+    payload: dict[str, object] = {
         "version": _self._json_output_version(),
         "schema_version": _self._json_output_version(),
         "routing_backend": "AstBackend",
@@ -187,6 +213,15 @@ def _build_rulesets_payload() -> dict[str, object]:
         "sidecar_used": False,
         "rulesets": list_rule_packs(),
     }
+    # Disclose whether the advertised rules can execute HERE. Without this, `tg rulesets` printed
+    # six security rulesets with rule counts on an install where every `tg scan --ruleset` exits 1
+    # -- an advertisement the product cannot honour. `rulesets_unavailable_reason` follows the
+    # repo's omit-when-complete convention so a healthy payload stays byte-identical.
+    runnable = _ruleset_backend_available()
+    payload["rulesets_runnable"] = runnable
+    if not runnable:
+        payload["rulesets_unavailable_reason"] = RULESETS_UNAVAILABLE_REASON
+    return payload
 
 
 def _ruleset_finding_fingerprint(

@@ -10059,6 +10059,12 @@ def rulesets(
         typer.echo("No built-in rulesets are currently registered.")
         return
 
+    # ONE banner, before the listing -- not one warning per ruleset. Six repetitions of the same
+    # sentence is noise that trains the reader to skip it.
+    if payload.get("rulesets_runnable") is False:
+        typer.echo(f"WARNING: {payload['rulesets_unavailable_reason']}")
+        typer.echo("")
+
     for ruleset in cast(list[dict[str, object]], payload["rulesets"]):
         typer.echo(
             f"{ruleset['name']}: {ruleset['description']} "
