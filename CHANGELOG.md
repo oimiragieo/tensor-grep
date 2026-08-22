@@ -1,6 +1,175 @@
 # CHANGELOG
 
 
+## v1.111.4 (2026-08-22)
+
+### Bug Fixes
+
+- Disclose whether the listed rulesets can actually run on this install
+  ([#1086](https://github.com/oimiragieo/tensor-grep/pull/1086),
+  [`e2621dc`](https://github.com/oimiragieo/tensor-grep/commit/e2621dca63a9c4b02d6442c266843620283191d7))
+
+* fix: disclose whether the listed rulesets can actually run on this install
+
+tg rulesets printed six security rulesets with rule counts (subprocess-safe ... rules=33) and no
+  caveat, on installs where every tg scan --ruleset exits 1 because the ast-grep backend is absent.
+  Measured on the PUBLISHED v1.111.1 wheel in a clean container. A listing that advertises 33
+  runnable rules when zero can execute is worse than an honest "unavailable here": it sends the user
+  to a command that fails and gives them no reason.
+
+This is the ADVERTISEMENT half of RULESET-UNREACHABLE-ON-STOCK-INSTALL. It does NOT make the
+  rulesets work -- the parent P0 still needs a decision on whether to ship the backend or add an
+  install-ast one-shot. It stops the listing from overstating what this install can do, which is
+  true and useful under any of those outcomes, so it is not gated on that decision.
+
+JSON gains rulesets_runnable (always) and rulesets_unavailable_reason (only when false, following
+  the repo omit-when-complete convention so a healthy payload stays byte-identical). The human
+  surface prints ONE banner before the listing, not one warning per ruleset -- six repetitions of
+  the same sentence is noise that trains the reader to skip it, and a test pins the count at exactly
+  1.
+
+_ruleset_backend_available() fails CLOSED: any import or probe error reports unavailable.
+  Over-warning is recoverable; a silent overstatement on a security surface is the defect being
+  fixed.
+
+BOTH ARMS ARE TESTED, because a disclosure that always prints is as useless as one that never does:
+  the field must be False with the backend missing AND True with it present, and a healthy install
+  must not be nagged about a dependency it already satisfies. The seam is forced explicitly rather
+  than env-detected (A85) -- the dev box that first reported this feature as working had an ast-grep
+  binary on PATH, so an ambient-state test measures the box, not the behaviour.
+
+RED observed first: 3 failed / 1 passed (the already-correct arm being "unchanged when available").
+  After: 4 passed.
+
+Verified: ruleset selection 84 passed; mypy src/tensor_grep clean (119 files); ruff check + format
+  --preview clean; file-size budget 892 files, 0 regressions, main.py 13518 under its 13523 pin.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: disposition the new _ruleset_backend_available broad handler
+
+The handler-disposition census failed this PR:
+
+audited handlers with no ledger record: [(cli/ast_scan.py, _ruleset_backend_available, 0)]
+
+That is the census doing exactly its job -- a new broad `except Exception` appeared in an audited
+  module and must be classified BEFORE it merges, not after. It is not a gate to silence.
+
+Classified INTENTIONAL-BOUNDARY. The function answers one question (can the listed built-in rulesets
+  actually RUN here?) by importing AstGrepWrapperBackend and calling is_available(), which probes
+  for an ast-grep/sg binary on PATH. Both the import and the probe can fail on a stock install --
+  the backend is in no dependency and no extra -- so that is the ORDINARY case this exists to
+  detect, not an exceptional one.
+
+It fails CLOSED on purpose: any error reports UNAVAILABLE, so the listing warns rather than staying
+  silent. The asymmetry is deliberate -- over-warning is recoverable by installing the backend,
+  while a silent overstatement on a security surface is the exact defect this function was added to
+  fix. And it cannot swallow an incomplete RESULT because it produces no result: it returns a
+  boolean that only ever ADDS disclosure, never suppresses a finding.
+
+Verified: test_handler_dispositions.py 11 passed; ledger 83 -> 84 records, with a duplicate-identity
+  guard so the same handler cannot be dispositioned twice.
+
+* test: raise the broad-handler ceiling by exactly one for the classified availability probe
+
+SECOND ratchet for the same handler. The disposition ledger was the first gate (records WHAT it is);
+  this one bounds HOW MANY exist, and it failed this PR:
+
+Broad exception handler population grew to 221 (ceiling 220)
+
+The gates own message names this path: raise the pin with a one-line reason when the handler
+  discloses its failure or is a documented best-effort boundary. _ruleset_backend_available is both,
+  and is already classified INTENTIONAL-BOUNDARY in
+  docs/audits/2026-08-20-handler-dispositions.json.
+
+The reason is written INLINE beside the number rather than only in this commit, because the pin is
+  what the next person reads: it answers "can the advertised built-in rulesets actually RUN on this
+  install?" by importing AstGrepWrapperBackend and calling is_available(). Both the import and the
+  probe fail on a stock install -- that is the ORDINARY case it exists to detect, not an exceptional
+  one. It fails CLOSED (any error reports unavailable, so tg rulesets warns rather than staying
+  silent) and it cannot swallow an incomplete RESULT because it produces no result: it returns a
+  boolean that only ever ADDS disclosure, never suppresses a finding.
+
+Raised because the handler is CLASSIFIED, not to make an unreviewed one pass -- that distinction is
+  the whole point of the ceiling and is stated in the comment so this is not cited later as
+  precedent for absorbing an unexamined handler.
+
+Verified: test_silent_failure_hardening.py + test_handler_dispositions.py 13 passed; ruff check +
+  format --preview clean.
+
+* docs: record v1.111.3 as published COMPLETE (4/4 artifacts)
+
+The docs-governance gate failed every lane on this PR: "AGENTS.md must state the publication status
+  of v1.111.3 definitely".
+
+That is the gate working. It was hardened earlier today so it could no longer be satisfied by a lie
+  -- it accepts EITHER the completeness claim OR an explicit TAGGED AND NOT PUBLISHED disclosure,
+  both naming the tag. v1.111.3 published while this PR was in flight, so the docs' v1.111.2-era
+  framing said nothing definite about the current tag.
+
+v1.111.3 IS complete, so the completeness claim is the true half. Verified PER-ARTIFACT against the
+  live PyPI index, not by version presence (A124):
+
+tensor_grep-1.111.3-cp311-abi3-macosx_11_0_arm64.whl
+  tensor_grep-1.111.3-cp311-abi3-manylinux_2_39_x86_64.whl
+  tensor_grep-1.111.3-cp311-abi3-win_amd64.whl tensor_grep-1.111.3.tar.gz
+
+win_amd64 is present -- the artifact that silently went missing in the 2026-08-21 partial publish,
+  where a version-presence check would have reported success.
+
+The v1.111.2 / v1.111.1 facts are PRESERVED, relabelled HISTORICAL rather than deleted: they are
+  still true of those tags and they are the receipt for why the size cap mattered. Added why
+  v1.111.3 could publish at all -- the cap was cleared on 2026-08-21 (713 -> 287 releases, 10.734 ->
+  4.747 GB).
+
+NOTE FOR THE NEXT RELEASE: this is now a required post-release step. The gate keys on pyproject's
+  version, which semantic-release bumps on main, so the FIRST PR after any release inherits a red
+  docs-governance until AGENTS.md and SKILL.md state the new tag's status. It is not that PR's
+  defect.
+
+Verified: test_public_docs_governance.py 43 passed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Retain the inert-namespace-patch lesson in the hermetic-tests skill
+  ([#1090](https://github.com/oimiragieo/tensor-grep/pull/1090),
+  [`ab2d485`](https://github.com/oimiragieo/tensor-grep/commit/ab2d48541b18e0b52c0799e673517fe2afb2a3b6))
+
+Adds section 1.4 to tensor-grep-hermetic-hostile-tests: patch the DEFINITION site, because a
+  namespace patch over a function-local import is INERT.
+
+The receipt (PR #1087). A fixture did `monkeypatch.setattr(cli_main, "dense_available", ...,
+  raising=False)`, but the `tg find` path does a function-local `from
+  tensor_grep.core.retrieval_dense import dense_available`, so the name resolves from the SOURCE
+  module at call time and the attribute on `cli.main` is never read. `raising=False` suppressed the
+  AttributeError that was the only warning.
+
+Measured: forcing True and forcing False produced an IDENTICAL routing_backend -- the same arm
+  twice, across three tests that all passed. This is the "check that passes in BOTH arms" law with
+  the defect in the SETUP, which is where this repo keeps finding it.
+
+The section states the two-part proof any forcing fixture owes, since passing tests demonstrate
+  neither half: BINDS (a sentinel set by the fixture reaches the output) and DISCRIMINATES (that
+  value differs from the unpatched run). Both are recorded with the real measured strings.
+
+Also records the second-order cost, which cost the most time to diagnose: a namespace patch can
+  re-weld a Route A target. bare_call_ratchet.py counts calls to names THE SUITE PATCHES on a
+  module, so the offender set is defined by the tests, not the source -- adding one patch turned
+  three pre-existing, untouched bare calls in cli/main.py into UNPINNED OFFENDERs and failed CI on a
+  file the diff never touched. Both misdiagnoses I actually made are written down with what refutes
+  them (the pins file was byte-identical; the call sites were pre-existing but the PATCH was new),
+  plus the note that its "the gate is off" message is misleading because an empty bare_calls map is
+  correct.
+
+Verified: test_skill_index_sync.py + test_skill_library_drift.py, 9 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.3 (2026-08-22)
 
 ### Bug Fixes
