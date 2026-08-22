@@ -46,6 +46,7 @@ REQUIRED_PATHS = (
     "tests",
     "scripts",
     "benchmarks",
+    "docs/audits",
     ".github/workflows",
     "pyproject.toml",
 )
