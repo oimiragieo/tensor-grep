@@ -1,6 +1,95 @@
 # CHANGELOG
 
 
+## v1.111.6 (2026-08-22)
+
+### Bug Fixes
+
+- Populate the required routing fields on tg find --json
+  ([#1087](https://github.com/oimiragieo/tensor-grep/pull/1087),
+  [`b923534`](https://github.com/oimiragieo/tensor-grep/commit/b923534d3e9bbfd1ca43efab7fa4573db9047ac9))
+
+* fix: populate the required routing fields on tg find --json
+
+tg find reuses the tg search JSON envelope but emitted routing_backend: null and routing_reason:
+  null. Both are listed in `required` in tests/schemas/tg_output.schema.json
+
+and typed {"type": "string", "minLength": 1}, so a schema-validating consumer REJECTS a real tg find
+  payload with "None is not of type string".
+
+Measured against installed tg 1.110.16, with tg search on the same tree as the control proving the
+  fields can be populated:
+
+tg search --json -> routing_backend "NativeCpuBackend" routing_reason "json_output" tg find --json
+  -> routing_backend null routing_reason null
+
+They are now populated HONESTLY, naming which retrieval route actually ran -- which the code already
+  knows, because the dense leg either loaded or it did not:
+
+dense leg ran -> HybridFindBackend / find_bm25_dense_rrf dense leg absent -> Bm25FindBackend /
+  find_bm25_only
+
+rank_fallback_reason says WHY the dense leg is absent; the routing fields say WHAT ran. A test
+  asserts they are not the same signal, and that the bm25-only route does NOT claim "dense" --
+  without that, hardcoding one constant would satisfy the required-field tests while telling every
+  consumer the same thing regardless of what executed.
+
+Deliberately NOT fixed by relaxing the schema: that would weaken the contract for tg search, which
+  is correct today, to accommodate a caller that was not.
+
+Both arms force the dense seam explicitly rather than reading ambient state (A85): whether a box
+  happens to have model2vec installed must not decide what the test measures. One arm also validates
+  the REAL emitted payload against the schema end-to-end, with a control asserting the result was
+  non-empty so an empty payload cannot validate trivially.
+
+RED observed first: 3 failed. After: 3 passed.
+
+Verified: find/schema/routing selection 238 passed (the 5 failures seen without it are the
+  shared-globals shim bug fixed separately in #1083, confirmed by applying that fix and re-running
+  to zero); mypy src/tensor_grep clean (119 files); ruff check + format --preview clean; file-size
+  budget 893 files, 0 regressions, main.py exactly 13523 at its pin.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: patch dense_available at its definition site, not cli.main's namespace
+
+CI caught this: the bare-call ratchet failed with "src/tensor_grep/cli/main.py has 3 bare calls to
+  patched symbols and no pin".
+
+TWO defects, one cause.
+
+1. THE FIXTURE WAS INERT. `_force_dense` set `dense_available` on `cli.main`, but the `tg find` path
+  does a function-local `from tensor_grep.core.retrieval_dense import dense_available`, so the name
+  is resolved from the SOURCE module at call time and the attribute on `cli.main` is never read.
+  `raising=False` suppressed the AttributeError that would have exposed it. Both arms therefore ran
+  on whatever extras the machine has -- precisely what the module docstring says must not decide the
+  result.
+
+Measured before the fix: available=True and available=False produced an IDENTICAL routing_backend.
+  Positive control in the same probe: patching the definition site moved it, so the payload could
+  move and the fixture simply was not reaching it.
+
+Measured after: the forced sentinel reaches the payload (rank_fallback_reason == "...forced off for
+  this test") and differs from the unpatched value ("...model2vec not installed..."). Binds AND
+  discriminates.
+
+2. IT RE-WELDED A ROUTE A TARGET. scripts/bare_call_ratchet.py counts calls to names the SUITE
+  PATCHES on a module. cli/main.py has three pre-existing bare `dense_available()` calls (also on
+  main, same lines) which were NOT offenders, because no test patched that name on cli.main. Adding
+  one made them offenders and reverted part of the split-floor work.
+
+Note the shape: the ratchet fired on a file my diff never touched. The pins file being empty is
+  CORRECT (all three targets converted to 0), so the accompanying "the gate is off" message was
+  misleading -- the gate was on and right.
+
+Verified: bare-call ratchet OK (3 modules, 0 bare calls, 0 regressions);
+  test_find_routing_envelope.py 3 passed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.5 (2026-08-22)
 
 ### Bug Fixes
