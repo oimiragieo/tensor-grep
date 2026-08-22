@@ -769,6 +769,33 @@ concrete failure observed this session.
   before collection is the false-green that looks most like a real one, because there is no failure
   text to notice. Kin: A127 (unpiped exit codes) and the `-p no:cacheprovider`/plugin-availability
   class generally.
+- **A142 — CORRECTS A133. "Batch the merges, then stop" must stop the moment a run is IN
+  PROGRESS, not merely before the next one (2026-08-21).** A133 says a QUEUED/PENDING run is
+  unprotected, so batching merges is free. That is true of pending runs and **false of a running
+  one**. Merging while `Semantic Release` is pushing its `chore(release)` commit makes that push
+  fail:
+
+  ```
+  ! [rejected]  main -> main (fetch first)
+  hint: Updates were rejected because the remote contains work that you do not have locally
+  ##[error] Failed to push branch (main) to remote
+  ```
+
+  Measured: run `32544510005` finished **31 success / 1 failure**, the single failure being
+  `Semantic Release` — killed by a merge landing mid-push. Every test passed; the release still did
+  not happen. **I wrote A133 an hour before doing this**, and read "batching is free" as covering a
+  case it explicitly does not.
+
+  **The operative rule:** check the run's STATE before every merge, not just whether one exists.
+  `queued` / `pending` -> batching is safe (the run is replaced, cumulatively). `in_progress` ->
+  **do not merge**; wait for `completed`. One command settles it:
+  `gh run list --branch main --workflow=ci.yml --limit 5 --json status,headSha` and look for
+  `in_progress`, remembering A139 (`--limit 1` hides the executing run).
+
+  A failed release self-heals on the next push — the successor run carries the same unreleased
+  commits cumulatively — so this costs a cycle, not the work. But it explains a release failing
+  with a fully green test matrix, which is otherwise baffling: **31 of 32 jobs succeeded and
+  nothing shipped.**
 
 
 ## Current Handoff
