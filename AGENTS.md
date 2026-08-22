@@ -744,6 +744,31 @@ concrete failure observed this session.
   refusal prints none, and **both exit 2**, so the exit code alone cannot separate them. Perturb the
   final assertion to confirm it fails when it should (inverted -> 1 failed / 103 passed; reverted ->
   104 passed, file byte-identical).
+- **A139 — `gh run list --limit 1` returns the NEWEST run and HIDES the one actually executing
+  (2026-08-21).** A release run was reported as "pending with 0 jobs, possibly stuck" for tens of
+  minutes. It was not stuck: `32544510005` had been **in_progress since 01:48 with 31 jobs, 27
+  already succeeded**, while a NEWER run sat pending behind it — and `--limit 1` returned only the
+  newer one. **Watch a run BY ID** (`gh run view <id>`), never by a windowed list, once you know
+  which run you care about. This is the same windowed-query trap already recorded for
+  `gh run list --commit` + `--limit`; it recurred inside a monitor written by the same session that
+  had just documented it.
+- **A140 — `pending` and `queued` are DIFFERENT states and mean different things (2026-08-21).**
+  `status: queued` = waiting for a runner. `status: pending` with **0 jobs** = held by the
+  **concurrency group**, i.e. an earlier run in the same group is still active. With
+  `cancel-in-progress: false` on `main`, that is the system working correctly, not a fault. Before
+  declaring a run broken, list every non-completed run repo-wide
+  (`gh api "repos/<o>/<r>/actions/runs?per_page=30" -q '.workflow_runs[]|select(.status!="completed")'`)
+  and find what holds the group. Corollary: **two main merges can produce TWO releases**, one per
+  run, not one combined — check which commits each run actually carries before claiming what
+  shipped.
+- **A141 — An unrecognised pytest argument can report success through a wrapper (2026-08-21).**
+  `pytest tests/unit -q --timeout=300` failed at argument parsing (`unrecognized arguments`, no
+  `pytest-timeout` installed) and the background wrapper reported **`[exited with code 0]`**. The
+  suite NEVER RAN. Trusting the status would have produced a claimed full-suite pass on zero
+  executed tests. **Read the tail of the output, not the exit status** — a test command that dies
+  before collection is the false-green that looks most like a real one, because there is no failure
+  text to notice. Kin: A127 (unpiped exit codes) and the `-p no:cacheprovider`/plugin-availability
+  class generally.
 
 
 ## Current Handoff

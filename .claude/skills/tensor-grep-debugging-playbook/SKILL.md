@@ -1250,3 +1250,55 @@ prefix first (`sed 's/^[0-9T:.Z-]* //'`) and anchor the pattern. And a check nam
 
 **Then it passed in 6 minutes on the next attempt.** Intermittency is the argument FOR a bound,
 not for reruns: `timeout-minutes` converts an invisible multi-hour stall into a fast, legible red.
+
+## A release run looks "stuck" — pending, 0 jobs (2026-08-21)
+
+**Do not conclude "stuck" from a windowed query.** Three distinct states get confused here, and the
+discriminating commands are cheap.
+
+| symptom | what it means | how to confirm |
+|---|---|---|
+| `status: queued` | waiting for a **runner** | check queue depth: `gh run list --limit 20 --json status` |
+| `status: pending`, **0 jobs** | held by the **concurrency group** — an earlier run in the same group is still active | list every non-completed run repo-wide (below) and find the holder |
+| no run at all for the head SHA | `ci.yml` never dispatched | `gh run list --commit <sha>`; compare against a sibling PR as a control |
+
+```bash
+# What actually holds the group? (the single most useful command here)
+gh api "repos/oimiragieo/tensor-grep/actions/runs?per_page=30" \
+  -q '.workflow_runs[]|select(.status!="completed")|"\(.created_at[11:19]) \(.name) \(.status) \(.head_branch)"'
+
+# Then watch the run you care about BY ID -- never by a windowed list.
+gh run view <id> --json status,conclusion,jobs
+```
+
+**The failure this encodes.** A release was reported as "pending with 0 jobs, possibly stuck" for
+tens of minutes. It was not stuck: run `32544510005` had been **in_progress since 01:48 with 31
+jobs, 27 succeeded**, while a NEWER run sat pending behind it. The monitor used
+`gh run list --limit 1`, which returns the newest run and **structurally hides the executing one**.
+With `cancel-in-progress: false` on `main`, that pending state is the system working correctly.
+
+**Corollaries:**
+
+- **Two main merges can produce TWO releases**, one per run — not one combined. Check which commits
+  each run carries (`git log --format='%s' <last-tag>..<sha>`) before claiming what shipped.
+- A merge while a run is **pending** SUPERSEDES it (cancel-in-progress does not protect a queued or
+  pending run — A133). That is usually what you want: the replacement run is cumulative from the
+  last tag, so batch the merges and let one run publish everything.
+- `--limit 1` is a window. The thing you care about can be outside it. Same trap as the
+  `gh run list --commit` + `--limit` case already recorded — it recurred inside a monitor written
+  by the session that had just documented it.
+
+Laws **A139**, **A140**. See also A133/A134 (queued runs are unprotected; push churn starves CI)
+and A135 (assert checks by NAME, not count).
+
+## A test command that dies before collection reports success (2026-08-21)
+
+`pytest tests/unit -q --timeout=300` failed at ARGUMENT PARSING (`unrecognized arguments`, because
+`pytest-timeout` is not installed here) and the background wrapper reported **`[exited with code
+0]`**. The suite never ran. Trusting that status would have produced a claimed full-suite pass over
+zero executed tests.
+
+**This is the false-green that looks most like a real one**, because there is no failure text to
+notice — just a short, clean-looking log. Always read the tail of the output and confirm a test
+COUNT (`N passed`), never the exit status alone. Kin: A127 (read exit codes unpiped — `cmd | tail`
+reports tail's status) and A141.
