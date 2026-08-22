@@ -158,6 +158,69 @@ of who owns the file, whether it is tracked by git, or whether CI currently exer
 
 ---
 
+### 8. Before merging ANY PR, assert its base is `main` — a "skipping" rollup is an ABSENT gate
+
+`.github/workflows/ci.yml` filters `pull_request: branches: ["main"]`, and that filter matches the
+**base** ref. A stacked PR (base = another feature branch) therefore **never triggers `ci.yml` at
+all** — and `gh pr checks` prints that absence as `skipping` while `mergeStateStatus` reports
+`MERGEABLE`. Both read as benign.
+
+Measured 2026-08-21: PRs #1068 and #1070 had **exactly one** check run each across their entire
+life (`Dependabot Automation`, conclusion `skipped`). Control proving it is the base ref and not
+the branch name or a runner outage: #1065, same `test/` prefix but base `main`, showed
+`SUCCESS=39`. **Both stacked PRs went RED the moment real CI ran** — and they carried
+error-handling hardening, sitting one click from merge with no test, lint, security, or
+cross-platform evidence whatsoever.
+
+```bash
+gh pr list --state open --json number,baseRefName    # every row must say "main"
+```
+
+Two mechanics worth knowing before you try to fix one:
+
+- `gh pr edit --base main` alone does **not** restore CI. It fires `pull_request` action `edited`,
+  which is not in the default trigger set. **Close/reopen** (action `reopened`, which is) does.
+- After the parent squash-merges, the child conflicts, because it still carries the parent's
+  individual commits against a squashed `main`. Rebase with
+  `git rebase --onto origin/main <parent-tip>` to drop exactly the absorbed commits.
+
+Related: **A123** in `AGENTS.md`.
+
+### 9. The file-size ratchet forbids GROWTH — pay for an addition, never raise the pin
+
+`scripts/file_size_budget.py` fails any allowlisted file that grows: *"An allowlisted file may
+shrink, never grow."* A 20-line security fix took `cli/main.py` 13,523 → 13,543 and CI rejected it.
+Raising the pin is explicitly forbidden ("never raise it to make a new unreviewed handler pass").
+
+**Pay for the addition instead**: move an equivalent amount OUT of the file, ideally something
+cohesive with where it's going. The 2026-08-21 fix moved a scan-guardrail helper from `main.py`
+into `scan_guardrails.py` (main.py → 13,512, budget 0 regressions, grandfathered 27 → 26).
+
+Two constraints on what you may move:
+
+- **A symbol tests monkeypatch by attribute cannot move.** Relocating it breaks the patch target
+  with **no import error**, so the test keeps passing while patching nothing. Check with
+  `grep -rn "<symbol>" tests/` before moving anything.
+- **Do not merge same-named things without comparing them.** `_BROAD_GENERATED_SCAN_DIR_NAMES`
+  exists in BOTH `cli/main.py` (22 entries — adds `.claude`, `.git`, `AppData`) and
+  `cli/scan_guardrails.py` (19). Collapsing them would have silently changed behaviour. Pass the
+  set in as a parameter instead. (A132)
+
+**And know that the limit is currently UNREACHABLE for the three giants.** Run the repo's own
+instrument before proposing any split:
+
+```bash
+uv run python scripts/measure_split_floor.py
+```
+
+It reports `SPLIT CANNOT REACH THE LIMIT` for `repo_map.py` (6,715 lines locked), `main.py`
+(7,416) and `mcp_server.py` (2,506) — all against a 1,500 limit, all locked to their facades by
+monkeypatch targets. The binding constraint is the **test strategy**, not code organisation, so the
+honest options are to reduce monkeypatch coupling (a programme, not a refactor) or to state the
+exception rather than carry an allowlist entry implying a completion that cannot come. The tool
+states its own direction of error: it is a LOWER bound and function-only, so a patched module-level
+CONSTANT is invisible to it — the real floor is never lower. (A130)
+
 ## Part 2 — The written Operating Rules
 
 From `AGENTS.md` "Operating Rules" (`:856`) and `CONTRIBUTING.md`:

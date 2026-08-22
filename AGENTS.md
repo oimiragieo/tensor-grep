@@ -622,6 +622,78 @@ concrete failure observed this session.
   DD-006 still needs both DD-006-PERF and DD-006-HONESTY product code under a separate
   deliberate build go (TDD + A3). Do not close the board row on docs alone.
 
+- **A123 — A PR whose BASE is a feature branch gets ZERO CI, and the absence renders as
+  "skipping" (2026-08-21).** `ci.yml` filters `pull_request: branches: ["main"]`, and that filter
+  matches the **base** ref. Measured: #1068 and #1070 each had exactly one check across their whole
+  life (`Dependabot Automation` / `skipped`) while `gh` reported `MERGEABLE`. Control: #1065, same
+  `test/` branch prefix but base `main`, `SUCCESS=39`. **Both went RED the moment real CI ran.**
+  Before merging anything, assert `baseRefName == "main"`
+  (`gh pr list --state open --json number,baseRefName`); a "skipping"-only rollup is an ABSENT
+  gate, not a pass. `gh pr edit --base main` alone does NOT restore CI (it fires action `edited`,
+  not a default trigger type) — close/reopen does. After the parent squash-merges, rebase the child
+  with `git rebase --onto origin/main <parent-tip>` to drop the absorbed commits.
+- **A124 — Verify a release PER-ARTIFACT, by expected filename set, never by the version
+  appearing (2026-08-21).** `v1.111.1` published 2 of 4 files (no `win_amd64` wheel, no sdist), so
+  `pip install` gave different versions per platform. `v1.111.2` then tagged with **zero** PyPI
+  files. Two different broken shapes, both of which read as "released" from a tag or a version
+  string. Sweep ALL releases, not just the newest — three were incomplete.
+- **A125 — "Advertised" is not "installed", and a maintainer's machine is the WRONG POPULATION
+  (2026-08-21).** `tg rulesets` lists six security rulesets with rule counts; `tg scan --ruleset`
+  exits 1 on a stock `pip install tensor-grep` because `ast_grep_py` is in no dependency and no
+  extra and the wheel bundles no native binary. It looked fine from a dev box that has a
+  separately-installed native `tg`. **Any acceptance test for a capability must run in a clean
+  container off the PUBLISHED artifact**, or it passes while the defect ships. The sibling shows
+  the standard: `tg find` degrades visibly, still returns results, and names its fix
+  (`tg install-dense`).
+- **A126 — A file split must reproduce its baseline PASS *and* SKIP counts (2026-08-21).** A
+  drafted split reported "484 passed, 5 skipped" and looked green; the pre-split baseline was
+  **489 passed, 0 skipped**. It had invented three `pytest.skip("... unavailable in this
+  environment")` guards that would have permanently disabled tests which pass in CI. Capture both
+  counts before touching anything, and never silence a post-split failure with an environment
+  probe. A bare worktree has no compiled native extension, so native/embedded arms fail there and
+  pass in CI — that is an environment artifact to report, not to guard around.
+- **A127 — Read exit codes UNPIPED (2026-08-21, twice in one session).** `docker build … | tail`
+  reported **exit 0 while producing no image** — that was `tail`'s status. Captured unpiped:
+  `REAL_BUILD_EXIT=1`. The same trap nearly produced a false bug report against `tg defs` (`| head`
+  masking a correct rc=1). For any command whose status you will act on:
+  `cmd > log 2>&1; echo $?`, and verify the ARTIFACT (`docker images …`) — the one claim a misread
+  pipe cannot fake.
+- **A128 — "Pre-existing / environment / not mine" was wrong three times in one session
+  (2026-08-21).** Each dismissal hid a real defect, and each discriminating measurement was cheap:
+  (a) `tg scan` returning exit 0 on a missing path was a security-surface false-zero, not WSL
+  weirdness; (b) a CI-only AST failure was caused by an `ast-grep`/`sg` **CLI binary on PATH** — a
+  different signal from the `ast_grep_py` package — not by the test's own injections, and the first
+  fix targeted the wrong mechanism entirely; (c) a locally-failing guardrail test was a genuine
+  broken shim (A129). Cost of checking: minutes. Cost of dismissing: the defect ships.
+- **A129 — Resolve a caller's module namespace by LEAF name, not a dotted prefix (2026-08-21).**
+  `tests/` has no `__init__.py`, so pytest's prepend import mode names modules by BASENAME —
+  measured with a `pytest_runtest_setup` probe: `test_cli_modes_blast_radius`, not
+  `tests.unit.test_cli_modes_blast_radius`. A `startswith("tests.unit.test_cli_modes")` check
+  therefore matched nothing, the stack walk fell through to `return globals()`, and the shared
+  fakes read a stale copy — **the exact failure the shim existed to prevent, silently**, because
+  falling back to a real namespace looks like success.
+- **A130 — The file-size ratchet forbids GROWTH: pay for an addition, never raise the pin
+  (2026-08-21).** A 20-line security fix took `main.py` 13,523 → 13,543 and CI failed it. Raising
+  the pin is forbidden ("never raise it to make a new unreviewed handler pass"), so the fix moved a
+  scan helper into `scan_guardrails.py` — main.py 13,512, budget 0 regressions. **And the limit is
+  currently UNREACHABLE for the three giants:** `scripts/measure_split_floor.py` reports
+  `SPLIT CANNOT REACH THE LIMIT` with 6,715 lines (`repo_map.py`), 7,416 (`main.py`) and 2,506
+  (`mcp_server.py`) locked to their facades by monkeypatch targets. The binding constraint is the
+  TEST STRATEGY, not code organisation — so either reduce monkeypatch coupling or state the
+  exception honestly; do not carry an allowlist entry that implies a completion that cannot come.
+- **A131 — Docker ignores `.gitignore`, and its patterns are ROOT-ANCHORED (2026-08-21).** Three
+  builds aborted in the context sender before any layer ran: `.pytest_tmp_review_<hex>/` and
+  `.tmp_council_<date>/` (`Access is denied`), then `rust_core/.venv/bin/python`
+  (`invalid file request`) — the third survived the first fix because a bare `.venv/` only excludes
+  the top-level one. Prefix every transient pattern with `**/`, and exclude the FAMILY (`.tmp*/`)
+  rather than the instances that happened to bite.
+- **A132 — Same name, different meaning: classify, never sweep (2026-08-21).**
+  `_BROAD_GENERATED_SCAN_DIR_NAMES` exists in BOTH `cli/main.py` (22 entries, adding `.claude`,
+  `.git`, `AppData`) and `cli/scan_guardrails.py` (19). They are deliberately different sets;
+  collapsing them during a helper move would have silently changed behaviour at the call site. Kin:
+  a guard's own docstring can trip its own grep — a move-script's check flagged the sentence
+  EXPLAINING why the constant is passed in as the defect it was hunting. Assert on the code
+  (the assignment), not the substring.
 
 
 ## Current Handoff
@@ -633,7 +705,7 @@ Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 C
 SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
 New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
 
-As of 2026-08-13, the current tagged release state is `v1.111.2`, and the latest complete public PyPI/release-asset distribution is also `v1.111.2`. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.111.2` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-21, the current tagged release state is `v1.111.2`, but **`v1.111.2` is TAGGED AND NOT PUBLISHED — it has ZERO files on PyPI**, and the newest release with any PyPI presence, `v1.111.1`, has only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist). The last release with a COMPLETE 4-file set is `v1.111.0`. Cause is PYPI-SIZE-CAP (the project is at 10.734 GB against PyPI's 10 GB cap); see `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.111.2` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
 **2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.

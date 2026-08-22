@@ -165,11 +165,25 @@ def test_handoff_docs_should_record_current_release_state_and_fast_gate() -> Non
         assert "python scripts/agent_readiness.py" in content
         assert "tg dogfood" in content
 
+    # The handoff docs must state the publication status of the current tag DEFINITELY -- but this
+    # gate must not dictate WHICH definite answer. It previously required the completeness claim
+    # verbatim, which meant that whenever publishing actually broke, the only way to keep CI green
+    # was to assert something false in AGENTS.md and SKILL.md. Measured 2026-08-21 (PYPI-SIZE-CAP):
+    # `v1.111.2` is tagged with ZERO files on PyPI and `v1.111.1` published 2 of its 4 artifacts,
+    # while both docs still claimed the tag was the latest COMPLETE distribution. A governance test
+    # that can only be satisfied by a lie is worse than no gate, because it launders the lie as
+    # green. Accept either the completeness claim or an explicit not-fully-published disclosure;
+    # both name the tag, so neither can be satisfied by vague prose. See A124.
+    complete_claim = (
+        f"latest complete public PyPI/release-asset distribution is also `{CURRENT_RELEASE_TAG}`"
+    )
+    incomplete_disclosure = f"**`{CURRENT_RELEASE_TAG}` is TAGGED AND NOT PUBLISHED"
     for path in ("AGENTS.md", "SKILL.md"):
-        assert (
-            "latest complete public PyPI/release-asset distribution is also "
-            f"`{CURRENT_RELEASE_TAG}`"
-        ) in docs[path]
+        assert complete_claim in docs[path] or incomplete_disclosure in docs[path], (
+            f"{path} must state the publication status of {CURRENT_RELEASE_TAG} definitely: "
+            "either the completeness claim or an explicit TAGGED AND NOT PUBLISHED disclosure. "
+            "Do not satisfy this by asserting completeness that the PyPI index contradicts."
+        )
 
     for path, content in docs.items():
         assert "Latest complete public release PR" not in content, path
