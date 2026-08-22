@@ -3,3 +3,11 @@
 # incident). eol=lf also stops the "LF will be replaced by CRLF" working-tree churn on Windows.
 *.py text eol=lf
 *.rs text eol=lf
+
+# Shell scripts and Dockerfiles MUST be LF, and this is a correctness requirement, not style:
+# a CRLF `#!/usr/bin/env bash` fails inside a Linux container with `bad interpreter: No such file
+# or directory`, and a CRLF Dockerfile line can carry a stray \r into an ENV value. Added with
+# scripts/ci-local/ (the local CI-parity harness), whose scripts run only inside a Linux container.
+*.sh text eol=lf
+Dockerfile text eol=lf
+Dockerfile.* text eol=lf
