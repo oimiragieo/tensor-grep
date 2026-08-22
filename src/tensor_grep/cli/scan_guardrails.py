@@ -292,3 +292,66 @@ def format_broad_scan_error(refusal: BroadScanRefusal) -> str:
         "For intentional broad scans:\n"
         "--allow-broad-generated-scan"
     )
+
+
+def missing_scan_paths(candidates: list[str]) -> list[str]:
+    """Return the entries of ``candidates`` that do not exist on disk, in order.
+
+    Callers use this to FAIL CLOSED on a scan root that is not there. Without such a guard,
+    ``tg scan --ruleset <name> <missing path>`` returned exit 0 with ``matched_rules: 0`` --
+    byte-comparable, on BOTH the exit code and the payload, to a real scan of a real tree that
+    genuinely found nothing. On a security-rule surface that means a CI gate pointed at a
+    mistyped, moved, or wrongly-translated path reports the repository CLEAN. "Measured nothing"
+    and "did not measure" must never render the same, least of all on a scanner.
+
+    ``tg search`` already fails closed on this input with the ``path_not_found`` taxonomy and
+    exit code 2, so callers should reuse that shape rather than invent a second vocabulary for
+    the same condition -- two spellings of one error is how CLI and MCP consumers end up
+    branching differently about the same filesystem.
+
+    Lives here, rather than inline at the one call site, so the sibling scan surfaces (config-file
+    scan, ``tg run``, the MCP ruleset-scan handler) can adopt the same check without copying it --
+    the class, not the instance.
+    """
+    return [entry for entry in candidates if not Path(entry).expanduser().exists()]
+
+
+def generated_scan_dir_names(
+    paths: list[str],
+    generated_dir_names: set[str],
+    *,
+    include_child_dirs: bool = True,
+) -> list[str]:
+    """Return the generated/vendored directory names present among ``paths``, sorted.
+
+    Moved here from ``cli/main.py`` so the module that owns scan guardrails owns this one
+    too. The caller supplies ``generated_dir_names`` EXPLICITLY rather than this module
+    reaching for its own ``_BROAD_GENERATED_SCAN_DIR_NAMES``: the two sets are deliberately
+    different (main.py's has 22 entries including ``.claude``/``.git``/``AppData``; this
+    module's has 19), so defaulting to the local one would silently change behaviour at the
+    call site. Same name, different meaning -- keep them apart.
+    """
+    found: set[str] = set()
+    generated_names = {name.lower() for name in generated_dir_names}
+    for raw_path in paths:
+        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
+            continue
+        path = Path(raw_path)
+        try:
+            if not path.is_dir():
+                continue
+            try:
+                resolved = path.resolve()
+            except OSError:
+                resolved = path
+            for candidate_name in {path.name, resolved.name}:
+                if candidate_name and candidate_name.lower() in generated_names:
+                    found.add(candidate_name)
+            if not include_child_dirs:
+                continue
+            for child in path.iterdir():
+                if child.is_dir() and child.name.lower() in generated_names:
+                    found.add(child.name)
+        except OSError:
+            continue
+    return sorted(found, key=lambda item: item.lower())

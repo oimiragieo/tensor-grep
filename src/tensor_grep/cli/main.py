@@ -2077,33 +2077,6 @@ def _config_with_guarded_broad_root_globs(config: "SearchConfig") -> "SearchConf
     return replace(config, glob=existing_globs)
 
 
-def _generated_scan_dir_names(paths: list[str], *, include_child_dirs: bool = True) -> list[str]:
-    found: set[str] = set()
-    generated_names = {name.lower() for name in _BROAD_GENERATED_SCAN_DIR_NAMES}
-    for raw_path in paths:
-        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
-            continue
-        path = Path(raw_path)
-        try:
-            if not path.is_dir():
-                continue
-            try:
-                resolved = path.resolve()
-            except OSError:
-                resolved = path
-            for candidate_name in {path.name, resolved.name}:
-                if candidate_name and candidate_name.lower() in generated_names:
-                    found.add(candidate_name)
-            if not include_child_dirs:
-                continue
-            for child in path.iterdir():
-                if child.is_dir() and child.name.lower() in generated_names:
-                    found.add(child.name)
-        except OSError:
-            continue
-    return sorted(found, key=lambda item: item.lower())
-
-
 def _has_generated_scan_bound(config: "SearchConfig") -> bool:
     return bool(
         config.max_depth is not None
@@ -2266,7 +2239,11 @@ def _should_refuse_unbounded_generated_scan(
         or config.unrestricted > 0
     ):
         return False, []
-    generated_dirs = _generated_scan_dir_names(paths, include_child_dirs=files_mode)
+    from tensor_grep.cli.scan_guardrails import generated_scan_dir_names
+
+    generated_dirs = generated_scan_dir_names(
+        paths, _BROAD_GENERATED_SCAN_DIR_NAMES, include_child_dirs=files_mode
+    )
     return bool(generated_dirs), generated_dirs
 
 
@@ -10239,6 +10216,18 @@ def scan(
         typer.echo("Error: positional PATHS are incompatible with --path.", err=True)
         sys.exit(1)
     effective_scan_paths = scan_paths or [path]
+
+    # FAIL CLOSED on a scan root that does not exist. Rationale, and the `tg search` precedent
+    # whose `path_not_found` taxonomy this reuses, live in the helper's docstring.
+    from tensor_grep.cli.scan_guardrails import missing_scan_paths
+
+    absent_scan_paths = missing_scan_paths(effective_scan_paths)
+    if absent_scan_paths:
+        _exit_search_error(
+            detail="scan path does not exist: " + ", ".join(absent_scan_paths),
+            error="path_not_found",
+            json_mode=bool(json_output),
+        )
 
     candidate_files: list[str] | None = None
     project_scan_fast_path = False
