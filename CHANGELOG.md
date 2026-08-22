@@ -1,6 +1,1280 @@
 # CHANGELOG
 
 
+## v1.111.3 (2026-08-22)
+
+### Bug Fixes
+
+- Fail closed when a tg scan root does not exist
+  ([#1080](https://github.com/oimiragieo/tensor-grep/pull/1080),
+  [`357f29e`](https://github.com/oimiragieo/tensor-grep/commit/357f29ea0a2738a6680bcb12f1d5d6b8e0a1a01c))
+
+* fix: fail closed when a tg scan root does not exist
+
+tg scan --ruleset <name> <missing path> returned exit 0 with matched_rules 0 and total_matches 0 --
+  byte-comparable, on BOTH the exit code and the payload, to a real scan of a real tree that
+  genuinely found nothing. On a security-rule surface that means a CI gate pointed at a mistyped,
+  moved, or wrongly-translated path reports the repository CLEAN and exits 0. "Measured nothing" and
+  "did not measure" rendered identically, on a scanner.
+
+Measured before the fix (exit codes read UNPIPED; a trailing pipe reports the pipelines status, not
+  tgs):
+
+tg scan <missing> --ruleset subprocess-safe -> exit 0, matched_rules 0 tg search <missing> -> exit
+  2, path_not_found tg scan <real path with one finding> -> exit 0, matched_rules 1
+
+tg search was already correct on identical input, so the guard reuses its path_not_found taxonomy
+  and exit code rather than inventing a second vocabulary for the same condition -- two spellings of
+  one error is how CLI and MCP consumers end up branching differently about the same filesystem.
+
+Found while premise-checking the BLOCKED WSL rows #89/#90. It is NOT WSL-specific: it reproduces on
+  a plain nonexistent Windows path with no WSL involved, which is why #90 was reframed. The WSL
+  symptom was a consequence -- /mnt/c/... is rewritten to C:\mnt\c\... (verified: C:\mnt does not
+  exist) and then scanned as if real.
+
+TDD, with the RED arm observed before the fix existed: 3 failed / 2 passed. The two that PASSED are
+  the load-bearing controls -- a real path WITH a finding still exits 0 with matched_rules 1, and a
+  real path WITHOUT a finding is still reported clean at exit 0. Without that second control, a
+  "fix" that made every clean scan fail would satisfy the treatment test and look correct. After: 5
+  passed.
+
+Verified: targeted suite 5 passed; scan/ruleset/sarif selection 405 passed 1 skipped; ruff check +
+  ruff format --preview clean; mypy src/tensor_grep clean (119 files).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* refactor: move generated_scan_dir_names into scan_guardrails to pay for the guard
+
+The file-size ratchet failed the first version of the missing-path fix: main.py grew 13523 -> 13543,
+  and an allowlisted file may shrink, never grow. Raising the pin is explicitly forbidden ("never
+  raise it to make a new unreviewed handler pass"), so this PAYS for the guard instead by moving a
+  scan-guardrail helper into the module that owns scan guardrails. main.py is now 13512, BELOW its
+  pin, and the budget reports 0 regressions with grandfathered 27 -> 26.
+
+The guard itself also moved out of the call site into scan_guardrails.missing_scan_paths, where its
+  rationale lives as a docstring -- better shape regardless, because the sibling scan surfaces named
+  in the backlog entry (config-file scan, tg run, the MCP ruleset-scan handler) need the same check
+  and should call it rather than copy it.
+
+SAFETY OF THE MOVE: generated_scan_dir_names is pure, had exactly ONE caller, and appears in ZERO
+  test files, so it is not a monkeypatch target and cannot be silently unbound by relocation (the
+  failure mode where a moved symbol breaks a patch target with no import error).
+
+The _BROAD_GENERATED_SCAN_DIR_NAMES set deliberately STAYS in main.py and is now passed in as a
+  parameter. main.py has 22 entries; scan_guardrails.py has a same-named set with 19 -- main adds
+  .claude, .git, AppData. They are different sets, so defaulting to the local one would have
+  silently changed behaviour at the call site. Same name, different meaning: classify, do not sweep.
+  Verified behaviour-identical after the move (22-entry set, .claude detected, same output for both
+  include_child_dirs arms).
+
+NOTE ON A LOCAL-ONLY FAILURE, recorded so the next person does not re-chase it:
+  test_cli_broad_claude_json_uses_python_guardrails_before_native fails on this Windows box. It
+  fails identically at origin/main with an unmodified main.py, so it is pre-existing environment
+  divergence, not a regression from this change -- and mains CI is green (it published v1.111.2). CI
+  is the oracle.
+
+Verified: targeted suite 5 passed; ruff check + ruff format --preview clean; mypy src/tensor_grep
+  clean (119 files); file-size budget 883 files, 0 regressions.
+
+* test: make the scan controls independent of the optional ast-grep backend
+
+The two content arms used --ruleset subprocess-safe, whose rules are ast-grep CODE PATTERNS, so on
+  CI (no ast-grep/sg binary on PATH) the scan raised before the guard under test was ever reached.
+  CI failure:
+
+test_scan_real_path_with_a_finding_still_succeeds -> Explicit AST search requires AST dependencies:
+  ast-grep wrapper backend ...
+
+That is A125 biting this very test: it measured which optional dependency the machine happened to
+  have, which is precisely the defect these tests exist to guard against. It is also the same root
+  cause as the P0 filed as RULESET-UNREACHABLE-ON-STOCK-INSTALL -- the built-in rulesets need a
+  backend a stock install does not ship.
+
+The arms now use --inline-rules with a real tree-sitter NODE-TYPE name, which the native AstBackend
+  resolves through its node-type index with no ast-grep dependency.
+
+And the seam is FORCED, because the node-type name is served two different ways: with no ast-grep
+  binary the native backend matches it, while a dev box that HAS the binary routes it to the
+  wrapper, which treats the same string as an ordinary code pattern and matches zero. The arm
+  therefore passed on CI and failed locally -- the mirror image of the failure being fixed. Pinning
+  AstGrepWrapperBackend.is_available to False makes the native path deterministic on every machine
+  (A85). The scan stays REAL: the native backend genuinely walks the file and genuinely finds the
+  node; nothing about the guard under test is mocked.
+
+Both controls keep their discriminating power: a real path WITH a match still exits 0 with
+  matched_rules >= 1, and a real path WITHOUT one is still reported clean at exit 0 with
+  matched_rules == 0. Without that second arm, a "fix" that made every clean scan error would
+  satisfy the treatment test and look correct.
+
+Verified: 5 passed; ruff check + format --preview clean.
+
+* test: re-base the silent-loss census pins on a RELOCATION, not an addition
+
+The census ratchet failed this PR: scan_guardrails.py rose 5 -> 7. That is the ratchet doing its
+  job, and the honest answer is that the sites MOVED.
+
+generated_scan_dir_names was relocated from cli/main.py into cli/scan_guardrails.py to pay for the
+  missing-path guard under the file-size ratchet (which forbids main.py growing), and it carries two
+  `except OSError` sites with it. Measured with the ratchets own _census():
+
+main.py 6 -> 4 scan_guardrails.py 5 -> 7 TOTAL 41 -> 41 (unchanged)
+
+The two new sites were read and confirmed byte-identical to the ones that left main.py -- the
+  resolve() guard and the iterdir() guard inside the moved function.
+
+Re-pinning is correct HERE and would not be if the total had grown: this ratchet exists because
+  "every added site is a new way for an incomplete result to report success", and no new way was
+  introduced. A growing total must be hardened or dispositioned, never re-pinned -- that distinction
+  is written into the file beside the change so the next reader does not cite this as precedent for
+  absorbing real growth.
+
+Verified: test_silent_loss_census_ratchet.py 3 passed; ruff check + format --preview clean.
+
+* style: ruff format --preview the census ratchet file
+
+The preceding commit was pushed without running the formatter -- ruff format --preview reported "1
+  file would be reformatted" in the same command whose lint line I read as clean. Exactly the
+  --preview gap this repo documents, caught one command too late.
+
+No behaviour change: 5 insertions / 5 deletions, all comment rewrapping.
+  test_silent_loss_census_ratchet.py still 3 passed.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Match the cli_modes globals shim on the module leaf name, not a dotted prefix
+  ([#1083](https://github.com/oimiragieo/tensor-grep/pull/1083),
+  [`b632876`](https://github.com/oimiragieo/tensor-grep/commit/b632876cc1a5bd3aea4357626d9e0efc559e9434))
+
+* fix: match the cli_modes globals shim on the module leaf name, not a dotted prefix
+
+_test_globals() resolved the calling tests namespace by checking
+  mod_name.startswith("tests.unit.test_cli_modes"). tests/ has no __init__.py, so pytests default
+  prepend import mode names these modules by BASENAME. Measured via a pytest_runtest_setup probe:
+  the module is imported as
+
+test_cli_modes_blast_radius
+
+not tests.unit.test_cli_modes_blast_radius. The prefix check therefore matched NOTHING, the stack
+  walk fell through to `return globals()`, and the shared fakes read THIS modules stale copy of
+  _FAKE_WALK / _FAKE_BACKEND -- exactly the failure the shim was written to prevent after the W4-d
+  split.
+
+It failed silently, which is why it survived: falling back to a real namespace looks like success.
+  The only visible symptom was one test,
+  test_cli_broad_claude_json_uses_python_guardrails_before_native, whose fake walk never reached the
+  scanner, so the broad .claude guardrail did not fire and the search fell through to ripgrep and
+  exited 1 instead of 0.
+
+The fix matches on the FINAL dotted component, so both spellings resolve -- the basename form pytest
+  actually uses here, and the fully-qualified form that appears when another module imports the file
+  as tests.unit.test_cli_modes_shared.
+
+RED baseline established before the fix and NOT assumed: the test failed at origin/main with
+  completely unmodified source, so this is a pre-existing defect rather than a regression from any
+  in-flight work. After the fix the full test_cli_modes*.py suite is 547 passed -- the same count
+  W4-d verified -- so the previously-failing test now passes and nothing that depended on the old
+  fallback regressed.
+
+Verified: 547 passed; ruff check + ruff format --preview clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: replace 5 flaky wall-clock guard bounds with a probe-verified discriminating check
+
+test-python (windows-latest, py3.11) failed at 1.175s against `assert elapsed < 1.0, "probe is not
+  bounded"`.
+
+WHAT THAT ASSERTION MEASURED: the time to walk 2,000 stub files on the runner. The guard runs no
+  probe of its own -- _should_refuse_unbounded_large_root_scan is "checked using the candidate count
+  the real search ALREADY collected (never a second walk)", per its own comment. The failure message
+  misdescribed the measurement.
+
+WHY IT FLAKED: measured locally, all 8 parametrized cases sit at 1.12-1.23s of total call time and
+  clear the 1.0s bound only because the perf_counter window excludes the 2,000-file fixture setup.
+  That is no margin at all, so a loaded runner tips it over. Per this repo law a hard wall-clock
+  budget is a contention detector, not a correctness test, and the remedy is NEVER to widen the
+  budget.
+
+A FIRST REPLACEMENT WAS VACUOUS AND WAS THROWN AWAY, recorded because the near-miss is the useful
+  part: asserting the absence of partial/result_incomplete looked principled, but probing a real
+  deadline-truncated PLAIN-TEXT run showed neither string ever appears on that surface. It would
+  have passed in both arms and proven nothing -- the exact failure class this repo documents.
+
+WHAT THE PROBE ACTUALLY SHOWED, and what is asserted now: a deadline-BURNING run prints matches
+  (observed: f98.py:# TODO item 98) while a REFUSAL prints none. Both exit 2, so the exit code
+  cannot separate them -- only the refusal message plus the absence of match output can. The new
+  assertion is therefore STRICTLY STRONGER than the timer it replaces: it proves the search stopped
+  BEFORE emitting results, on any machine at any load.
+
+PERTURBATION PROOF, not assumed: inverting the assertion makes it FAIL (1 failed / 103 passed);
+  reverting restores 104 passed with the file byte-identical. An assertion never observed failing is
+  not evidence.
+
+Verified: 104 passed; ruff check clean (the now-unused `time` import removed -- F841/F401 is often
+  the only witness that a stated intention stopped executing); ruff format --preview clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Name the remediation in every ast-grep-unavailable refusal
+  ([#1085](https://github.com/oimiragieo/tensor-grep/pull/1085),
+  [`ecaa1a0`](https://github.com/oimiragieo/tensor-grep/commit/ecaa1a063ca7de5e43c659b48ba70c258e21078a))
+
+On a stock pip install tensor-grep, every advertised built-in ruleset fails: tg rulesets lists six
+  security rulesets with rule counts, and tg scan --ruleset <name> exits 1 with "ast-grep wrapper
+  backend ... is not available" and NO remediation. ast_grep_py is in no dependency and no extra,
+  and the wheel bundles no native binary, so a user following the documented install path has an
+  advertised security scanner that cannot scan and no stated way to obtain it.
+
+The house standard is one command over: with its optional backend absent, tg find degrades visibly
+  and names the fix ("run tg install-dense, or pip install tensor-grep[semantic]"). This holds the
+  scan-side refusals to the same standard.
+
+THE REMEDIATION IS VERIFIED, NOT PLAUSIBLE. Measured in a clean container running the PUBLISHED
+  v1.111.1 wheel:
+
+tg scan /probe --ruleset subprocess-safe -> rc=1 (control: fails) pip install ast-grep-cli ->
+  /usr/local/bin/ast-grep tg scan /probe --ruleset subprocess-safe -> rc=0, matched_rules=1
+
+It names ast-grep-cli and NOT ast-grep-py, because AstGrepWrapperBackend.is_available() probes for
+  an ast-grep/sg BINARY on PATH -- naming the Python bindings would be advice that does not fix the
+  problem, and a test asserts that specifically.
+
+One shared constant, not a literal per site: a remediation present on one reachable path and absent
+  on another is the LOGGED-DEGRADE failure this repo has already paid for. A parametrized test
+  covers BOTH raise sites, and a CONTROL arm asserts both are reachable so an empty message list
+  cannot make the assertions vacuously true -- it earned its keep, catching a malformed
+  composite-rule fixture that raised KeyError before ever reaching the guard.
+
+This does not make the rulesets work; it makes the failure actionable. The underlying P0
+  (RULESET-UNREACHABLE-ON-STOCK-INSTALL, docs/BACKLOG.md) still needs a decision on whether to ship
+  the backend, add an install-ast one-shot, or have tg rulesets disclose availability.
+
+RED observed first: 2 failed / 2 passed, the two failures being exactly the remediation arms. After:
+  4 passed.
+
+Verified: mypy src/tensor_grep clean (119 files); ruff check + format --preview clean; file-size
+  budget 891 files, 0 regressions. The wider "ast or scan or ruleset" selection shows 4 failures
+  WITHOUT this change and 2 WITH it -- the residual two are pre-existing ordering artifacts of the
+  shared-globals shim fixed separately in #1083 (applying that fix here takes the same selection
+  from 17 failures to 2), not regressions from this commit.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Preserve an inline rules engine: declaration through parsing
+  ([#1088](https://github.com/oimiragieo/tensor-grep/pull/1088),
+  [`a3ec21e`](https://github.com/oimiragieo/tensor-grep/commit/a3ec21e3e6bcff8e10bb064f2c6de0c5326c8cb7))
+
+_load_inline_rule_specs built its spec dict without copying `engine`, so a rule declared `engine:
+  regex` came out as {id, pattern, language, severity, message}. Measured directly, not inferred.
+  The regex fast path in the per-rule loop (`if rule.get("engine") == "regex": continue`) therefore
+  could NEVER fire for --inline-rules input, and every inline rule was routed through AST backend
+  selection regardless of what it asked for -- so on a machine with no ast-grep/sg binary, a rule
+  that explicitly requested regex failed with an AST dependency error.
+
+The silence is what made it serious: the declaration was accepted without complaint and then
+  disregarded. No warning, no engine_ignored field; the only symptom was a dependency error
+  mentioning AST, on a rule the author said was not AST.
+
+This is not a design choice being reversed. cli/rule_packs.py already sets "engine": "regex" on
+  built-in pack entries and ast_scan already honours it for them; inline rules simply dropped the
+  key. Supporting it makes the two paths agree.
+
+`engine` joins the existing optional-metadata copy loop at BOTH construction sites (per-document and
+  per-rules-list-member), so it is carried only when the author declared it.
+
+BEHAVIOURAL PROOF, not just parsing. The load-bearing arm forces the ast-grep wrapper unavailable
+  (the stock-install / CI shape, A85) and asserts the rule now RUNS: exit 0, matched_rules 1, served
+  by RegexRulesetBackend and explicitly NOT by AstGrepWrapperBackend. Before the fix that same arm
+  raised the AST dependency error. Asserting the key survives parsing would not have shown routing
+  changed.
+
+BOTH DIRECTIONS covered: a rule that declares no engine must keep none
+  (test_absent_engine_stays_absent), because a fix that stamped a default would pass every other arm
+  while silently re-routing every existing inline rule. The value is carried verbatim rather than
+  normalised, parametrized over regex and ast-grep.
+
+RED observed first: 4 failed / 2 passed, the two passes being the controls (the parser returns a
+  spec at all; absent-engine stays absent). After: 7 passed.
+
+Verified: inline/ruleset/scan selection 440 passed; mypy src/tensor_grep clean (119 files); ruff
+  check + format --preview clean; file-size budget 891 files, 0 regressions.
+
+Found while root-causing a CI-only test failure; filed as INLINE-RULES-DROPS-ENGINE in
+  docs/BACKLOG.md.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Re-derive the handler-ledger advisory linenos after the merge wave
+  ([#1089](https://github.com/oimiragieo/tensor-grep/pull/1089),
+  [`52f1868`](https://github.com/oimiragieo/tensor-grep/commit/52f186803265f51e1e0a1e0e7ed27c650bda68f6))
+
+* fix: re-derive the handler-ledger advisory linenos after the merge wave
+
+MAIN IS RED. The release run 32546569015 failed with test-python red on all 7 lanes:
+
+test_ledger_locatability - cli/main.py: lineno 2723 outside _resolve_token span [2692, 2702]
+
+CAUSE: the cross-slice defect. Merging #1080, #1085, #1088 and #1083 each added lines to
+  cli/main.py, shifting every later handler. The disposition ledger pins an ADVISORY lineno per
+  record, so those pins went stale. Every one of those PRs was green ALONE; the union broke. Per-PR
+  validation is structurally blind to this -- the defect exists only in the merged state.
+
+The record IDENTITY is the symbol-anchored triple (module, enclosing_symbol,
+  handler_index_within_symbol) and is unaffected; only the advisory lineno moved. 44 of 129 records
+  re-derived.
+
+Re-derived with the TEST MODULE OWN _real_handlers_for_module extractor rather than a
+  reimplementation, so the refresh cannot drift from the predicate it must satisfy. The refresh
+  refuses to write unless EVERY record identity still resolves -- an unresolvable identity means a
+  handler genuinely disappeared, which is a review question, not something to silently re-stamp.
+
+Diff is exactly 44 changed lines, all linenos. No category, evidence, or reason field touched.
+
+Verified: reproduced the failure on main locally first, then test_handler_dispositions.py 11 passed
+  after.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: run test-python when the handler-disposition ledger changes
+
+The CI `code` path filter watches src/rust_core/tests/scripts/benchmarks/workflows but NOT
+  `docs/audits`. The handler-disposition ledger (docs/audits/2026-08-20-handler-dispositions.json)
+  lives there and is TEST INPUT: tests/unit/test_handler_dispositions.py reads it and asserts every
+  record still resolves to a real handler.
+
+So a PR touching only the ledger is classified docs-only and every test-python lane is SKIPPED.
+  Measured on PR #1089 -- a PR whose entire purpose was to fix a test_ledger_locatability failure,
+  and which CI therefore could not verify: 3 test-* checks, all skipped, PR green.
+
+This is the same hole ci.yml already documents for `scripts/`, with the roles reversed. That comment
+  says it exactly: "The suite ran when the TESTS changed but not when their SUBJECT did." Here the
+  suite does not run when its FIXTURE changes.
+
+Not a cost saving: docs/audits holds a handful of JSON ledgers, so this only adds lanes to PRs that
+  edit test input.
+
+Note the blast radius was bounded -- test-python's condition is `github.event_name != 'pull_request'
+  || needs.changes.outputs.code == 'true'`, so pushes to main always ran it. The gap was pre-merge
+  verification only, which is where it matters: the fix could not be proven before landing.
+
+Pinned in tests/unit/test_ci_code_path_filter.py::REQUIRED_PATHS, which already carries a negative
+  control and a substring-decoy test.
+
+Perturbation-proved: removing `docs/audits` from ci.yml alone fails exactly
+  test_filter_watches_path[docs/audits] (1 failed, 18 passed); restored -> 19 passed.
+
+* docs: record the ledger-fixture CI blindspot and the stale-rollup hazard
+
+Two findings from this session, both instrument defects rather than product bugs, recorded so the
+  next engineer does not re-derive them.
+
+LEDGER-FIXTURE-SKIPS-ITS-OWN-TEST (fixed in this PR): the `code` path filter did not watch
+  docs/audits, so a PR editing the handler-disposition ledger skipped every test-python lane --
+  including the test that reads that ledger. Measured on this very PR before the fix: 3 test-*
+  checks, 19 skipped, green. Control: sibling PR #1086 showed 12 test-* checks the same day. The
+  count was the only visible difference, because a skipped lane and a passing lane look identical in
+  the rollup summary.
+
+Includes the open follow-up honestly: the filter is still a hand-maintained path list, and the
+  durable form derives it from what the lanes actually read. Filed as research rather than guessed
+  at.
+
+STALE-ROLLUP-AFTER-FORCE-PUSH (process, no code fix): statusCheckRollup can report check runs
+  belonging to a head that no longer exists. A monitor reported #1087 TERMINAL FAILED on 8 checks
+  that belonged to a force-pushed-away head while the run on the real head was still in progress.
+  Watch by run ID, or assert the check's head SHA equals headRefOid.
+
+Both entries name the control that separated the finding from the benign explanation, per the
+  evidence laws.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- W1-b CLI/doctor/native-frontdoor handler audit -- 23 handlers dispositioned, 1 SILENT-SWALLOW
+  hardened ([#1068](https://github.com/oimiragieo/tensor-grep/pull/1068),
+  [`97fdb7f`](https://github.com/oimiragieo/tensor-grep/commit/97fdb7f945e203f16763aa47a5faefb2bf828d77))
+
+* fix: W1-b CLI/doctor/native-frontdoor handler audit -- 23 handlers dispositioned, 1 SILENT-SWALLOW
+  hardened
+
+Slice 3 of W1 (docs/plans/2026-08-20-worldclass-closeout-plan.md). Audits every broad `except
+  Exception:` / bare `except:` handler in `cli/doctor_report.py`, `cli/native_frontdoor.py`,
+  `cli/windows_launcher.py`, `cli/ast_scan.py`; retires their `_EXCLUDED_MODULES` entries; hardens
+  the one SILENT-SWALLOW site found.
+
+Population, re-derived (not copied from the plan's table):
+
+$ python scripts/handler_census.py --include-excluded --by-slice W1-b: handlers=23
+  not-provably-disclosing=16 modules=['cli/doctor_report.py', 'cli/native_frontdoor.py',
+  'cli/windows_launcher.py', 'cli/ast_scan.py']
+
+Matches W1.2's row exactly (23 / 16). Per-module: doctor_report.py 12, native_frontdoor.py 5,
+  windows_launcher.py 5, ast_scan.py 1.
+
+Dispositions: 8 LOGGED-DEGRADE, 14 INTENTIONAL-BOUNDARY, 1 SILENT-SWALLOW (hardened here).
+
+Ledger docs/audits/2026-08-20-handler-dispositions.json: 59 -> 82 records, matching W1.4's expected
+  size exactly.
+
+SILENT-SWALLOW: cli/doctor_report.py::_doctor_ast_cache_status, handler 0. Body was
+
+`except Exception: pass`, leaving `stale` at its pre-exception value (False on the common path) -- a
+  corrupt/unreadable AST cache manifest silently reported "not stale", indistinguishable from a
+  genuinely fresh cache. Hardened to fail SAFE (stale=True on any staleness-check error) and
+  disclose via a new `stale_check_error` field. RED-2 observed against the real pre-fix bytes
+  (scoped `git stash push -- <one file>`, popped immediately after):
+
+FAILED test_ast_cache_status_current_discloses_and_fails_safe AssertionError: hardened function must
+  fail SAFE ... Got {..., 'stale': False}
+
+Restored: 5 passed (tests/unit/test_w1b_cli_handler_fail_closed.py).
+
+Two behavioural (non-reading) proofs for the security-adjacent claims W1.5 names:
+  `_fetch_native_frontdoor_checksums` returning None on the checksum-gated asset install path drives
+  its real caller `_install_release_native_frontdoor` to REFUSE the install with a disclosed
+  RuntimeError, never silently proceeding unverified
+  (test_fetch_checksums_failure_causes_install_to_refuse_not_silently_succeed); and
+  `_run_ast_scan_payload`'s wrapper-fast-path failure routes its rules into the general resolution
+  path rather than dropping them, verified via AST inspection of the handler body since driving the
+  full scan needs a live ast-grep/tree-sitter engine this box may not have
+  (test_run_ast_scan_payload_wrapper_failure_falls_back_not_drops).
+
+Four-shape monkeypatch sweep (AGENTS.md): `main._fetch_native_frontdoor_checksums` /
+  `main._native_frontdoor_download_candidates` verified reachable and interchangeable via
+  `patch("tensor_grep.cli.main....")`, `patch.object(main, ...)`, `monkeypatch.setattr(main, ...)`
+  (used in the committed test), and a bare `main.X = stub` reassignment -- all four produced the
+  same RuntimeError. Patching on `native_frontdoor` module attributes directly would be a silent
+  no-op: `_self` (native_frontdoor.py:9-11,28) is `cli.main`'s module object by identity, and the
+  callee is looked up as `_self._fetch_native_frontdoor_checksums`, never off `native_frontdoor`'s
+  own globals.
+
+Ledger perturbation arms, all four run on the real committed file and reverted (git diff --stat
+  shows only this PR's +230/-0 append after each revert):
+
+| arm | result | |---|---| | drop the last record | `FAILED
+  test_ledger_completeness_scoped_to_audited_modules` | | duplicate the last record | `FAILED
+  test_ledger_uniqueness` | | shift a lineno +5000 outside its span | `FAILED
+  test_ledger_locatability` | | set category to "probably-fine" | `FAILED test_ledger_vocabulary` |
+
+RED-1 (the gate is blind): the four slice modules removed from `_EXCLUDED_MODULES` without touching
+  the ceiling produced
+
+AssertionError: Broad exception handler population grew to 219 (ceiling 196). assert 219 <= 196
+
+Ceiling arithmetic (plan W1.3 rule 5; base = this branch's parent commit, W1-a's own committed
+  ceiling, re-derived via `python scripts/handler_census.py --include-excluded --by-slice`
+  immediately before this commit):
+
+base (this branch's parent, W1-a) 196 + cli/doctor_report.py + native_frontdoor.py +
+  windows_launcher.py + ast_scan.py 23 --- 219
+
+Native-path branches (checksum-gated download, Windows launcher repair, GPU probe subprocess calls):
+  the native `tg` binary and several of these code paths (Windows COM/PATH manipulation, live
+  checksum-gated downloads) are NOT exercised locally on this Windows dev box beyond the targeted
+  behavioural test above -- CI is the only arm that exercises the full matrix of these branches;
+  this PR does not claim local proof for them.
+
+Local test evidence actually run this session (not the full suite -- CLAUDE.md's
+  anti-hang-test-protocol; only the gate files plus the directly-touched modules' existing tests):
+
+tests/unit/test_silent_failure_hardening.py + test_handler_dispositions.py +
+  test_w1b_cli_handler_fail_closed.py + test_feedback_ux_bundle.py +
+  test_native_frontdoor_checksum.py -> 32 passed tests/unit/test_native_asset_download_cap.py +
+  test_native_download_exclusive_temp.py + test_native_download_held_fd_toctou.py -> 20 passed
+  tests/unit/test_main_split_late_binding.py + test_install_scripts.py +
+  test_sarif_scan_integration.py -> 56 passed
+
+Gates: `python scripts/file_size_budget.py --report` -> 858 files scanned, 30 grandfathered, 0
+  regressions. `python scripts/bare_call_ratchet.py` -> 3 modules, 0 bare calls, 0 regressions.
+  `ruff check` / `ruff format --preview` clean on every file this PR touches. `mypy` clean on
+  `cli/doctor_report.py` and the new test file.
+
+No allowlist, no pyproject.toml, no uv.lock touched. No reconciliation needed: W1-a's ledger entries
+  for the four `cli/mcp_*` modules are untouched (append-only), and none of the four modules this PR
+  owns had any prior stub/partial disposition in the ledger.
+
+Base: test/w1a-mcp-handler-audit (PR #1065, codex-APPROVED, not yet merged). This is a STACKED PR --
+  do not merge ahead of #1065.
+
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+
+* fix: W1-b A3 round-1 remediation -- disclose swallowed daemon-restart probe error, fix a
+  check-that-passes-both-arms checksum test, relabel a structural test as structural
+
+Codex A3 reviewed 556f81f -> 86facdc and returned REVISE with three findings, all fixed:
+
+HIGH: _restart_session_daemon_after_upgrade's pre-restart status probe was miscategorized
+  LOGGED-DEGRADE. `current` was a purely local variable, so a probe exception's status_error was
+  discarded the moment the subsequent restart happened to succeed -- genuinely SILENT-SWALLOW on
+  that path. Hardened: status_probe_error now survives into every reachable return, including the
+  restart-succeeded path. This introduced one net-new broad except handler in
+  _install_release_native_frontdoor (see MEDIUM below), so TOTAL_BROAD_HANDLERS_CEILING moved 219 ->
+  220 and the ledger's W1-b split moved 23 handlers/14-8-1 -> 24 handlers/14-9-1.
+
+MEDIUM: test_w1b_cli_handler_fail_closed.py's checksum fail-closed test could pass without the
+  injected monkeypatch ever firing, because version "9.9.9"'s natural checksum fetch also returns
+  None. Fixed per the W1-a fixed-oracle shape: the injected dependency now raises carrying a marker
+  (asserted present in the injected arm, asserted absent in a new no-injection control arm that
+  stubs urlopen to fail fast rather than hitting the network). Hardened
+  _install_release_native_frontdoor to wrap a raising checksum-fetch dependency into the same
+  disclosed refusal the None-return branch already produced.
+
+LOW: the AST fallback test never executed _run_ast_scan_payload -- it inspects the handler's AST
+  shape only. Relabeled the test (name + docstring) as STRUCTURAL rather than BEHAVIOURAL, with the
+  reason a genuine behavioural drive isn't attempted here.
+
+* fix: W1-b A3 round-2 remediation -- disclose status_probe_error on the non-raising restart-failure
+  path too
+
+Codex round-2 REVISE on PR #1068 found `_restart_session_daemon_after_upgrade` still dropping
+  `status_probe_error` on its THIRD exit: round-1 covered the success path and the RAISING
+  restart-failure path, but the non-raising restart-failure path (start_session_daemon returns
+  `{"running": False}` without raising) still returned a bare WARNING with no trace of the
+  pre-restart probe failure -- genuinely SILENT-SWALLOW on that path.
+
+- Thread `status_probe_error` into the final WARNING return too, so all three reachable exits now
+  disclose it. - Add a frozen-af6457a RED fixture reproducing the drop on this specific path, plus a
+  GREEN arm proving the current function discloses it
+  (tests/unit/test_w1b_cli_handler_fail_closed.py). - Correct the disposition ledger's
+  evidence/reason text for this handler (docs/audits/2026-08-20-handler-dispositions.json) to record
+  that the truthful split between round 1 and round 2 was 14 INTENTIONAL-BOUNDARY / 8 LOGGED-DEGRADE
+  / 2 SILENT-SWALLOW, restored to 14/9/1 now that all three paths honestly disclose. Shifted
+  advisory linenos for the 9 doctor_report.py records after the fix site (+8 lines) to keep
+  test_ledger_locatability honest.
+
+No handler count change (W1-b stays 24 broad handlers), so TOTAL_BROAD_HANDLERS_CEILING is unchanged
+  at 220.
+
+* style: apply ruff format --preview to W1-b own files (fixes red lint lane)
+
+The Formatting & Linting lane went red the moment #1068 was retargeted to main and got real CI for
+  the first time. Cause is the known --preview gap: plain ruff format leaves the hug-brackets style
+  that --preview normalizes, in doctor_report.py and test_silent_failure_hardening.py.
+
+Scoped deliberately to the two files this branch already owns. A repo-wide ruff format --preview on
+  a Windows checkout reports 14-18 additional files as needing reformatting, but that is a CRLF
+  artifact of [tool.ruff.format] line-ending = "lf" against a Windows working tree, not real drift
+  -- those files are clean on Linux CI. Sweeping them in here would have produced a large spurious
+  diff.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: re-derive advisory linenos in the handler-disposition ledger after reformat
+
+The preceding ruff format --preview commit shifted line numbers in cli/doctor_report.py, so six
+  ledger records pointed outside their enclosing symbol span and test_ledger_locatability failed on
+  CI with:
+
+cli/doctor_report.py: lineno 1032 outside _doctor_gpu_tier_installed span [1017, 1029]
+
+The record IDENTITY is the symbol-anchored triple (module, enclosing_symbol,
+  handler_index_within_symbol) and is unchanged; only the ADVISORY lineno moved. Linenos were
+  re-derived using the test module own _real_handlers_for_module extractor rather than a
+  reimplementation, so the refresh cannot drift from the predicate it must satisfy. The refresh
+  refused to write unless every record identity still resolved, and 83/83 across 10 modules did.
+
+Diff is exactly 6 changed lines. tests/unit/test_handler_dispositions.py: 11 passed.
+
+This is the anchor-drift class the repo already documents: a line-pinned citation is a hypothesis
+  about a file version, and any reformat invalidates it.
+
+---------
+
+Co-authored-by: Claude Fable 5 <noreply@anthropic.com>
+
+- W1-c disclose degraded SARIF version provenance, audit final 46 cli/main.py handlers
+  ([#1070](https://github.com/oimiragieo/tensor-grep/pull/1070),
+  [`2c5680b`](https://github.com/oimiragieo/tensor-grep/commit/2c5680b086caf4a0a337de2ea111b8e54af5cddb))
+
+* test: W1-c audit the final 46 cli/main.py broad handlers, retire the last exclusion
+
+W1.2 slice 4/4 (docs/plans/2026-08-20-worldclass-closeout-plan.md). Read all 46 broad
+  except-Exception/bare-except handlers in cli/main.py in their enclosing functions (12
+  not-provably-disclosing per scripts/handler_census.py, 34 already provably-disclosing per the
+  gate's own AST heuristic) and recorded one disposition-ledger entry per handler in
+  docs/audits/2026-08-20-handler-dispositions.json.
+
+Findings: all 46 dispositioned INTENTIONAL-BOUNDARY. Zero SILENT-SWALLOW -- no product-code
+
+hardening or RED-2 receipts required this slice (hence `test:`, not `fix:`). The 12
+  not-provably-disclosing handlers break down as: 5 daemon-fast-path `_maybe_*_via_running_daemon`
+  helpers (fail-open `None` on any probe failure, every call site falls through to the pre-existing,
+  independently-correct cold path -- verified against each of the 5 call sites); 2 best-effort
+  version-string fallbacks (`_read_project_version_fallback` / `_cli_package_version`, cosmetic
+  display-only failure mode); a fail-closed PCRE2-availability probe
+  (`_pcre2_fallback_backend_available`, returns False -- the conservative direction -- on any probe
+  error); a self-documented advisory GPU device-id warning (`_warn_unavailable_gpu_device_ids`); a
+  `--replace` capture-group resolver (`_resolve_token`) that mirrors standard regex-engine semantics
+  for an invalid/unmatched group reference; a reversed-session-path auto-correct heuristic
+  (`_maybe_swap_reversed_session_path`) that fails safe to the user's literal (unswapped) input; and
+  `_run_install_dense`, whose failure IS disclosed (`steps["fetch_model"]["detail"]` + a returned
+  `message`) in a shape the AST heuristic cannot see (a dict-key write one level down, not a literal
+  `reason`/`error` local).
+
+RED-1 (gate-blind arm): confirmed by temporarily lifting cli/main.py from `_EXCLUDED_MODULES`
+  without moving the ceiling -- the population test failed at "grew to 266 (ceiling 220)", naming
+  exactly the delta this slice's modules contribute (matches `scripts/handler_census.py
+  --include-excluded --by-slice`'s W1-c row: 46 handlers). Reverted before the real change.
+
+Ledger perturbation arms (all four run against the final byte-identical file, restored between
+  each): (i) delete one record -> completeness names the missing fingerprint `('cli/main.py',
+  'ledger_find', 0)`; (ii) duplicate one record -> uniqueness names `('cli/repo_map_lang_js.py',
+  '_walk', 0)`; (iii) shift one lineno outside its symbol's span -> locatability fails "lineno 1
+  outside '_read_project_version_fallback''s span [567, 576]"; (iv) set one category to
+  "probably-fine" -> vocabulary fails. File sha256
+  48f44216bdef6e14d73cae1939984cce3a931165a6a859760c4e12691e3e9ee7 before and after all four arms.
+
+Ceiling: base 220 (W1-b's merged ceiling on this branch) + 46 (this slice's remaining broad handlers
+  after auditing -- none removed, since no hardening changed handler count) = 266, matching
+  `scripts/handler_census.py`'s positive control (no-flag run reproduces 266 exactly).
+  `_EXCLUDED_MODULES` is now the empty set -- every broad handler under src/tensor_grep is
+  in-census, closing W1 (docs/plans/2026-08-20-worldclass-closeout-plan.md).
+
+Ledger total: 95 (prior slices) + 34 (already-disclosed cli/main.py handlers, needed for W1.4's
+  cumulative-completeness assertion, which covers every broad handler in an audited module, not just
+  the not-provably-disclosing ones) = 129, matching 57+24+46+2 across all four W1 slices (the plan's
+  "128" was pre-W1-b's own +1 handler from its own A3 hardening).
+
+Local verification (foreground, bounded): - `pytest tests/unit/test_silent_failure_hardening.py
+  tests/unit/test_handler_dispositions.py -q` -> 13 passed - `python -c "...excluded/ceiling..."` ->
+  `excluded 0 ceiling 266` - `python -c "...ledger len/category split..."` -> `129
+  {'INTENTIONAL-BOUNDARY': 117, 'SILENT-SWALLOW': 3, 'LOGGED-DEGRADE': 9}` - `python
+  scripts/handler_census.py` (no flag, positive control) -> `TOTAL handlers: 266`
+
+Not run locally: the full unit suite (wall-clock latches per AGENTS.md; CI is the arbiter),
+  cargo/native builds (native binary absent locally per repo convention -- no native-path branches
+  were touched by this slice, so there is nothing native-specific to flag).
+
+cli/main.py itself was not modified (no hardening needed), so scripts/file_size_allowlist.json's
+  13523-line pin is untouched.
+
+Stacked on test/w1b-cli-handler-audit per W1.2's serialization order (W1-d -> W1-a -> W1-b -> W1-c).
+
+* fix: W1-c A3 round-1 remediation -- disclose degraded SARIF version provenance, fix ratchet doc
+  drift
+
+Codex A3 on PR #1070 returned REVISE with one MEDIUM and one LOW.
+
+[MEDIUM] The version-lookup fallback pair ledgered as "cosmetic, display-only" was not:
+  `_read_project_version_fallback()` silently converted any parse/IO failure to a bare "0.0.0",
+  `_cli_package_version()` fed that into `tg scan --sarif`'s SARIF output (main.py's `scan()`), and
+  `sarif.py` recorded it as both `driver.version` and `driver.semanticVersion` with nothing else
+  disclosing the degradation -- a double metadata failure (importlib.metadata AND pyproject.toml
+  both unreadable) produced normal-looking security-scan provenance a CI gate would trust.
+
+Fix: - cli/main.py: the fallback now returns `_VERSION_UNAVAILABLE_SENTINEL` ("0.0.0-unavailable")
+  instead of the bare "0.0.0" -- a value no real discovered version can equal, so its presence alone
+  is proof of the failure. `scan()`'s `--sarif` branch threads `version_unavailable=(tool_version ==
+  _VERSION_UNAVAILABLE_SENTINEL)` into `scan_payload_to_sarif`. - cli/sarif.py:
+  `scan_payload_to_sarif` gains a `version_unavailable: bool = False` keyword parameter; when set,
+  stamps `run.properties.tensorGrepVersionUnavailable = True` (merged with, not clobbering, the
+  existing `tensorGrepRuleset` property). - RED-2 (discriminating-oracle pattern, the shape both
+  W1-a and W1-b were sent back for missing): tests/unit/test_w1c_sarif_version_disclosure.py drives
+  the REAL `tg scan --sarif` CLI surface (CliRunner + app, not the private helper). (a) unique
+  injected marker: two exception TYPES (`_InjectedMetadataFailure`, `_InjectedPyprojectReadFailure`)
+  that do not exist in production code and that no natural failure can produce; (b) asserts on the
+  caller-observable SARIF JSON stdout; (c) a per-case NO-INJECTION control
+  (`test_normal_version_lookup_discloses_no_degradation`) proves the marker is ABSENT on an
+  unpatched run, ruling out an always-stamped bug; (d) both natural failure sources
+  (`importlib.metadata.version` AND the `pyproject.toml` read) are replaced, so a lone real failure
+  of either cannot masquerade as this scenario. Observed RED on the pre-fix bytes (`git show HEAD:`
+  copies of main.py/sarif.py restored temporarily, then reverted) with the exact expected reason
+  pinned: `assert '0.0.0' == '0.0.0-unavailable'`. - Ledger
+  (docs/audits/2026-08-20-handler-dispositions.json): both rows (`_read_project_version_fallback`,
+  `_cli_package_version`) updated -- category UNCHANGED (still INTENTIONAL-BOUNDARY: the
+  fallback-to-placeholder behaviour itself remains correct; what was missing was disclosure to the
+  downstream consumer, not the fallback's own logic), evidence/reason updated to cite the fix and
+  RED-2 receipt, `hardened_in` set to "#1070". All other cli/main.py `lineno` fields re-synced to
+  the post-fix file (advisory field, identity triples unchanged) since the sentinel constant shifted
+  every handler below it by a net of 0 lines file-wide but individual functions moved. - main.py
+  stayed line-neutral at the pinned 13523 (scripts/file_size_allowlist.json untouched): +6 lines
+  from the sentinel constant + threaded kwarg, offset by removing 6 pre-existing bare `#`
+  paragraph-break lines elsewhere in the file (pure whitespace, no content lost).
+
+[LOW] tests/unit/test_silent_failure_hardening.py's module docstring and the population test's
+  docstring still described "excluding the three modules another concurrent audit owns" and "All 137
+  broad handlers in scope" -- stale since W1-a/b/c retired every exclusion. Both now derive from the
+  code's own state (`_EXCLUDED_MODULES`, `TOTAL_BROAD_HANDLERS_CEILING`) rather than restating a
+  number that will drift again next slice.
+
+Verification (foreground, bounded): - `pytest test_silent_failure_hardening.py
+  test_w1c_sarif_version_disclosure.py test_sarif_output.py test_sarif_scan_integration.py -q` -> 26
+  passed - `pytest test_handler_dispositions.py -q` -> 11 passed (all 4 perturbation arms re-run
+  against the updated ledger, file byte-identical before/after each) - `ruff check` + `ruff format
+  --preview --check` on all five touched files -> clean - `python scripts/handler_census.py`
+  (positive control) -> `TOTAL handlers: 266` (unchanged) - `wc -l src/tensor_grep/cli/main.py` ->
+  13523 (unchanged, matches the pin)
+
+This makes the PR `fix:` class (retitled accordingly). No stash used.
+
+* fix: scope the injected metadata failure to the tensor-grep distribution (W1-c)
+
+test_double_version_lookup_failure_is_disclosed_in_sarif_provenance replaced
+  importlib.metadata.version with a function that raised for EVERY package. _cli_package_version()
+  only ever looks up "tensor-grep", so raising for everything is wider than the scenario requires --
+  and where the optional ast_grep_py extra IS installed, the AST backend availability probe calls
+  the same function, receives the injected failure, and the scan aborts with "Explicit AST search
+  requires AST dependencies" before any SARIF is emitted.
+
+That is why the outcome tracked WHICH OPTIONAL DEPENDENCY was installed rather than the behaviour
+  under test: it passed on a box without the extra (ast_grep_py absent, verified) and failed on the
+  CI lanes that have it -- first only test-gpu-nvidia, then test-python ubuntu once the full tree
+  ran in one process. The repo law here is A85: force the optional-engine seam, never env-detect.
+
+The injector now raises only for "tensor-grep" and delegates every other lookup to the real
+  implementation, which preserves the double-failure precondition the test exists to model (both
+  natural sources of the tensor-grep version are down) while leaving unrelated subsystems alone.
+
+Bidirectional control, run explicitly rather than assumed: the narrowed injector still RAISES for
+  "tensor-grep" (treatment preserved) and DELEGATES for another distribution (returns pytest 9.0.3)
+  -- the property whose absence caused the failure. Test file: 2 passed. ruff check + ruff format
+  --preview clean.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: force the AST seam in the W1-c SARIF test instead of tracking the runners PATH
+
+ROOT CAUSE, which is not what my previous attempt assumed. The test failed on Linux CI and passed on
+  this Windows box even though NEITHER has the ast_grep_py package. Scoping the
+  importlib.metadata.version injection did not help because that was never the mechanism.
+
+Two findings, both cited:
+
+1. _load_inline_rule_specs (cli/ast_scan.py) does not copy the "engine" key into the parsed rule
+  spec -- confirmed by calling it directly. So the `if rule.get("engine") == "regex": continue` fast
+  path (cli/ast_scan.py ~:792) NEVER fires for --inline-rules input, and every inline rule is routed
+  through AST backend selection regardless of its declared engine. That is a PRODUCT defect, filed
+  separately; this commit does not touch src/.
+
+2. The discriminating variable is an ast-grep/sg CLI BINARY on PATH, which is a different signal
+  from the ast_grep_py package. AstGrepWrapperBackend.is_available()
+  (backends/ast_wrapper_backend.py ~:95-124) probes for the binary. This box has it; a fresh
+  ubuntu-latest runner does not. Without it, selection falls to native AstBackend, which raises for
+  a bare-identifier pattern that matches no real tree-sitter node type.
+
+THE FIX follows A85 -- force the optional-engine seam explicitly, never env-detect, never
+  skip/xfail. AstGrepWrapperBackend.is_available is monkeypatched to a fixed value in both tests,
+  and the rule pattern becomes `identifier`, a real tree-sitter node-type name that the native
+  backend serves through its node-type index with no ast-grep dependency at all. The outcome
+  therefore no longer depends on what is on the runners PATH.
+
+Bidirectional verification, both arms run in-process: with the wrapper forced UNAVAILABLE (the CI
+  shape) the native backend serves the pattern, exit 0, SARIF emitted; with the wrapper left at this
+  boxs real AVAILABLE state it serves the same pattern without error, exit 0, SARIF emitted. Either
+  way the SARIF document is produced deterministically, so the three provenance assertions are
+  exercised on every platform.
+
+None of the three provenance assertions were weakened and the no-injection control test keeps its
+  purpose.
+
+Verified: 2 passed; ruff check + ruff format --preview clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Consolidated enterprise code audit report (2026-08-21)
+  ([#1079](https://github.com/oimiragieo/tensor-grep/pull/1079),
+  [`2d02a22`](https://github.com/oimiragieo/tensor-grep/commit/2d02a22f78c8a8ac2ece2bedfaca34bfab1e3b60))
+
+* docs: consolidated enterprise code audit report (2026-08-21)
+
+A single report in the requested 12-section format, consolidating the file-size census, the
+  data-contract audit, the documentation rebuild assessment, and the live dogfood of both the
+  installed binary and the published wheel.
+
+Verdict: FAIL, on three independently sufficient grounds -- 30 file-size violations including one
+  file at 30x its limit, one Critical plus three High findings unresolved, and 2 of 3 load-bearing
+  features failing the junior-rebuild test. The release pipeline is separately broken and
+  platform-skewed.
+
+The verdict is deliberately scoped: it is about the governance surface, not product quality. The
+  shipped artifact passed 17/17 feature checks in a clean container, and the broad-handler security
+  census found the large majority already correctly dispositioned. The defects concentrate in the
+  MEASUREMENT layer -- checks that could not fail, a schema nothing validated, PRs with no CI, and
+  files too large to review.
+
+Strengths are stated alongside the defects rather than omitted, because an audit that only lists
+  faults misrepresents the codebase: CONTRACTS.md documents its own anchor-rot history instead of
+  deleting it, the handler ledger is symbol-anchored with perturbation arms proving each check
+  discriminates, and the evidence contracts explicitly note that integrity does not imply
+  authenticity.
+
+Every limitation is named in section 12 rather than left implicit: what was not executed, which
+  finding is a candidate rather than a reproduction, which root cause is a hypothesis, and the
+  controls applied to each measurement (unpiped exit codes, MSYS_NO_PATHCONV on the WSL arms,
+  per-category census totals so an empty scan is distinguishable from a clean one).
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: correct F-1 -- the obvious remediation is measurably impossible
+
+The repo already ships the instrument that settles this, scripts/measure_split_floor.py, and I did
+  not run it before writing F-1s remediation. Run against the current tree it reports SPLIT CANNOT
+  REACH THE LIMIT for all three giants:
+
+main.py 13,523 lines, 49 patched symbols, 62 locked, 7,416 lines locked repo_map.py 15,243 lines, 66
+  patched symbols, 106 locked, 6,715 lines locked mcp_server.py 5,341 lines, 66 patched symbols, 28
+  locked, 2,506 lines locked
+
+against a 1,500 limit. A function a test monkeypatches by attribute on the facade cannot move --
+  moving it breaks the patch target with no import error, so the test keeps passing while patching
+  nothing -- and the locked set closes transitively over bare-name references and bare calls.
+
+The binding constraint is therefore the TEST STRATEGY, not code organisation. No amount of splitting
+  reaches 1,500 while ~6,700 lines are pinned by 66 patch targets. F-1 now says so, and offers the
+  two honest options: reduce monkeypatch coupling (a test-architecture programme), or consciously
+  accept a higher limit for facades and state it, rather than carrying an allowlist entry that reads
+  as temporary but can never be retired.
+
+The achievable, safety-relevant slice survives and is now the recommendation: the edit-plan
+  confidence gate (~356 lines, 12 functions) is measurably NOT in the locked set and can be
+  extracted today, which is the part the Critical severity was actually about.
+
+Also fixed a contradiction this correction exposed: section 2 said one file was at 30x its limit
+  (applying the 500-line CONTRACT limit to a CORE file whose limit is 1,500) while section 5s table
+  said 10.2x. Same file, two numbers, one document -- the precise failure mode this audit criticises
+  elsewhere. Section 4s scorecard rows for file sizing and design alignment were updated to match
+  rather than left asserting the superseded plan.
+
+Recorded as an in-place correction of the finding rather than a footnote, because a correction that
+  does not reach the artifact is not a correction: the artifact is what the next reader builds from.
+
+* docs: add F-0 (Critical) -- advertised security rulesets do not run on a stock install
+
+The consolidated audit was missing its most customer-impacting finding, and a report that omits the
+  top defect misrepresents the system it audits.
+
+tg scan --ruleset <builtin> does not run on a stock pip install tensor-grep, while tg rulesets
+  advertises six security rulesets with rule counts and no availability caveat. Reproduced on the
+  PUBLISHED v1.111.1 wheel in a clean python:3.12-slim container: exit 1 with "ast-grep wrapper
+  backend is required for this pattern but is not available", on a probe directory containing a real
+  finding, and identically on a nonexistent path -- the failure is unconditional.
+
+Cause: ast_grep_py is in no dependency and no extra (the ast extra ships tree-sitter, which the
+  error itself says cannot serve these patterns), and the wheel bundles no native binary (doctor
+  reports native_tg_binary_exists false).
+
+The transferable part is why every earlier check missed it: a maintainers machine has a
+  separately-installed native tg that serves these rules, so this audits OWN earlier probes reported
+  the feature working. The measurement was taken from the wrong population until the same commands
+  ran in a clean container against the published artifact. That is now stated in the executive
+  summary rather than quietly corrected, because the sampling error is more reusable than the
+  defect.
+
+Section 2 now reads TWO Critical findings, and the Security scorecard row moves from
+  PASS-with-1-High to FAIL -- leaving it at PASS while an advertised security scanner does not
+  execute would have been the exact false-green this report criticises elsewhere.
+
+Verified: docs/skill governance selection passed; ruff format --preview --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Document the Find JSON contract, including its known violation
+  ([#1078](https://github.com/oimiragieo/tensor-grep/pull/1078),
+  [`9f19a35`](https://github.com/oimiragieo/tensor-grep/commit/9f19a352fa9655f2f2e69457b7bde38dd3046553))
+
+docs/harness_api.md is designated the canonical JSON-contract doc and carries a section for every
+  other command surface, but had no Find JSON section at all -- a gap a documentation audit flagged
+  as one of two self-contradictions in the docs of record, and part of why tg find failed a
+  junior-rebuild assessment.
+
+The section records what the command ACTUALLY emits, derived by running it rather than from memory:
+  tg find --json reuses the Search JSON envelope and adds schema_version and rank_fallback_reason
+  (non-null meaning the dense leg was unavailable and the result is BM25-only -- the
+  visible-never-silent fallback, an explanation rather than an error).
+
+It also records the argument order, tg find QUERY [PATH], which is the reverse of the symbol
+  commands and exits 1 with a confusing Path not found error naming your query text when called the
+  other way round.
+
+And it states the KNOWN CONTRACT VIOLATION rather than documenting an idealised contract the product
+  does not honour: tg find --json emits routing_backend and routing_reason as null, both required
+  and typed string/minLength 1, so a schema-validating consumer rejects a real payload. tg search on
+  the same tree is the control, emitting NativeCpuBackend / json_output. Tracked as
+  FIND-JSON-CONTRACT-VIOLATION in docs/BACKLOG.md. Documenting the defect beside the contract is
+  deliberate: a consumer written today has to tolerate those nulls, and a reader who is not told
+  will conclude the doc is wrong rather than the code.
+
+Verified: docs/harness_api governance selection 177 passed; ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- File RULESET-UNREACHABLE-ON-STOCK-INSTALL (P0, reproduced on the published wheel)
+  ([#1082](https://github.com/oimiragieo/tensor-grep/pull/1082),
+  [`6909018`](https://github.com/oimiragieo/tensor-grep/commit/6909018fa334902b822e66ca2ddc36a80ee93b2b))
+
+* docs: file RULESET-UNREACHABLE-ON-STOCK-INSTALL (P0, reproduced on the published wheel)
+
+tg scan --ruleset <builtin> does not work on a stock pip install tensor-grep, while tg rulesets
+  advertises six security rulesets with rule counts and no availability caveat. This is the
+  "capability the artifact claims and no install path reaches" class that tg find --help already
+  names as a dishonesty equal to a stamped-but-unpublished version -- except here it is the
+  ADVERTISED feature, on the SECURITY surface.
+
+Reproduced on the PUBLISHED artifact, not a dev tree: clean python:3.12-slim, pip install
+  tensor-grep==1.111.1, nothing else.
+
+tg rulesets -> lists 6 rulesets incl. subprocess-safe (33 rules) tg scan /probe --ruleset
+  subprocess-safe --json -> exit 1 Error: Explicit AST search requires AST dependencies: ast-grep
+  wrapper backend is required for this pattern but is not available
+
+The probe contained a real finding, so it is not an empty-input artifact, and a nonexistent path
+  returns the same error -- the failure is unconditional.
+
+Cause: nothing installs the backend. ast_grep_py is in NO dependency and NO extra (the ast extra
+  ships tree-sitter, which the error itself says cannot serve ast-grep code patterns), and the wheel
+  bundles no native binary -- doctor in that container reports native_tg_binary_exists false, kind
+  "missing", and tg on PATH is the Python console script.
+
+Why it looked fine from a dev box: a machine with a separately-installed native tg serves these
+  rules and returns matched_rules 1. Any check of this feature that runs on a maintainers machine
+  measures the wrong population.
+
+The sibling shows the house standard and scan misses it: with its optional backend absent, tg find
+  degrades VISIBLY, still returns BM25 results, and names the fix (run tg install-dense). tg scan
+  hard-fails with no remediation string, and there is no install-ast counterpart.
+
+This also explains PR #1070s test-python failure, which looked unrelated: the Linux lanes have no
+  ast-grep, so any scan reaching a code pattern errors there while passing on Windows -- an
+  environment-tracking test, not a behaviour-tracking one (A85).
+
+The entry records three remediation options and one hard requirement: the acceptance test must run
+  in a clean container off the PUBLISHED artifact, not on a machine with a native binary lying
+  around, or it passes while the defect ships.
+
+Verified: docs/backlog governance selection 236 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: file INLINE-RULES-DROPS-ENGINE (P1, silent misroute)
+
+tg scan --inline-rules silently ignores a rules engine: declaration. _load_inline_rule_specs
+  (cli/ast_scan.py) parses the YAML but never copies the engine key. Measured directly rather than
+  inferred: the returned spec has keys [id, language, message, pattern, severity] and engine
+  preserved? False.
+
+Consequence: the regex fast path `if rule.get("engine") == "regex": continue`
+
+(cli/ast_scan.py ~:792) can never fire for an inline rule, so every inline rule -- including one
+  explicitly declared engine: regex -- is routed through AST backend selection. A rule that asks for
+  regex gets an AST backend, and on a machine with no ast-grep binary it fails with a dependency
+  error instead of running as regex.
+
+It is the SILENCE that makes this P1 rather than cosmetic: the declaration is accepted without
+  complaint and then disregarded -- no warning, no engine_ignored field, and an error that mentions
+  AST for a rule the author said was not AST.
+
+Also recorded: the discriminating variable behind the CI-only test failure that exposed this is an
+  ast-grep/sg CLI BINARY on PATH, which is a DIFFERENT signal from the ast_grep_py package --
+  AstGrepWrapperBackend.is_available() probes the binary. Two distinct "is AST available?" signals
+  in one codebase is worth a look in its own right.
+
+Not fixed here: honoring the tag requires a src/ change and a deliberate decision about the intended
+  contract. The entry names the two coherent options -- support the key, or reject a rule carrying
+  it -- and states that silently accepting a key you discard is the one option that should not
+  survive. It also pins the RED-arm requirement: the test must run with no ast-grep binary on PATH,
+  or the wrapper serves the pattern and the test passes without exercising the defect.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Retain 2026-08-21 session laws (A123-A132) and stop a gate from mandating a false release claim
+  ([#1084](https://github.com/oimiragieo/tensor-grep/pull/1084),
+  [`0eebab5`](https://github.com/oimiragieo/tensor-grep/commit/0eebab58cafb8f0669017fb0d0fd8a5681a4fef2))
+
+AGENTS.md gains ten dated laws from this sessions defects, each a receipt rather than a maxim:
+  stacked PRs get ZERO CI and it renders as "skipping" (A123); verify a release PER-ARTIFACT (A124);
+  advertised is not installed and a maintainers machine is the wrong population (A125); a split must
+  reproduce its baseline PASS and SKIP counts (A126); read exit codes unpiped (A127);
+  "pre-existing/environment/not mine" was wrong three times (A128); resolve a callers namespace by
+  LEAF name (A129); the file-size ratchet forbids growth, and the limit is currently unreachable for
+  the three giants (A130); Docker ignores .gitignore and its patterns are root-anchored (A131); same
+  name, different meaning -- classify, never sweep (A132).
+
+Folded into the two skills that actually govern the behaviour, so they load for the right task
+  rather than only living in a wall of laws: tensor-grep-change-control -> assert baseRefName ==
+  main before merging; pay for a ratchet addition, never raise the pin tensor-grep-validation-and-qa
+  -> baseline PASS+SKIP before a split; acceptance tests run in a clean container off the PUBLISHED
+  artifact; leaf-name namespace resolution
+
+AND FIXES A GATE THAT COULD ONLY BE SATISFIED BY A LIE.
+  test_handoff_docs_should_record_current_release_state_and_fast_gate required the literal sentence
+  "latest complete public PyPI/release-asset distribution is also `<tag>`" in AGENTS.md and
+  SKILL.md. Measured against the PyPI JSON API today that claim is false: v1.111.2 is tagged with
+  ZERO files and v1.111.1 published 2 of 4. So with publishing broken, the only way to keep CI green
+  was to assert something untrue in two docs of record -- a governance test that launders a lie as
+  green, which is worse than no gate.
+
+The gate now accepts EITHER the completeness claim OR an explicit "TAGGED AND NOT PUBLISHED"
+  disclosure. Both name the tag, so neither can be satisfied by vague prose, and the gates real
+  purpose (state the publication status definitely) is preserved. Both docs now carry the honest
+  state, including that the last COMPLETE 4-file release is v1.111.0.
+
+Verified: docs/governance/skill selection 278 passed; skill index + drift gates 9 passed; ruff check
+  and ruff format --preview clean on all five files.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Split test_mcp_server.py into 8 sibling modules (W4-e)
+  ([#1075](https://github.com/oimiragieo/tensor-grep/pull/1075),
+  [`3c8ec4a`](https://github.com/oimiragieo/tensor-grep/commit/3c8ec4af9cde913f4b875cfa1e6db5ad747f30f8))
+
+* refactor: split test_mcp_server.py into 8 sibling modules (W4-e)
+
+tests/unit/test_mcp_server.py was 9,729 physical lines against the repo's 2000-line test-file limit,
+  grandfathered in scripts/file_size_allowlist.json. It is now a 35-line shim re-exporting shared
+  helpers, with the tests moved into eight themed sibling modules, each under the limit:
+
+test_mcp_server_search.py test_mcp_server_rewrite_audit.py test_mcp_server_ruleset_scan.py
+  test_mcp_server_path_confinement.py test_mcp_server_context_session.py
+  test_mcp_server_symbol_navigation.py test_mcp_server_meta_dispatch.py test_mcp_server_shared.py
+  (helpers only)
+
+Behavior proof: the pre-split collected node-id set is captured in
+  tests/manifests/pre_split_mcp_server.txt and the sorted test-name set is identical before and
+  after the split (489 -> 489, module prefix ignored). scripts/file_size_allowlist.json drops the
+  test_mcp_server.py entry and gains nothing; file_size_budget.py reports 857 files scanned, 28
+  grandfathered, 0 regressions.
+
+Citation repoints (the bare-name references the drift gate cannot see, since it only validates
+  line-pinned citations): AGENTS.md, two .claude/skills SKILL.md files, docs/FIX_PLAN_1_13_16.md,
+  scripts/agent_readiness.py (harness argv, with non-zero selection re-verified), five sibling test
+  modules, and one stale test filename cited inside a src/tensor_grep/cli/mcp_server.py docstring.
+
+DELIBERATELY NOT INCLUDED - two things the drafting pass produced that were rejected on review:
+
+1. Three invented `pytest.skip("embedded native rewrite unavailable in this environment")` guards.
+  Baseline control on main is 489 passed / 0 skipped; with the guards the split reported 484 passed
+  / 5 skipped, i.e. it would have permanently disabled three tests that pass in CI. The three tests
+  were then confirmed to fail in the worktree even in isolation (exit_code 1, not a test ordering
+  effect) because a bare worktree has no compiled native extension - an environment artifact, not a
+  split defect. Guards removed; CI is the oracle. 2. An autouse conftest.py fixture that sanitized
+  PATH by detecting WindowsApps / systemprofile entries. Env-detecting test hardening is out of
+  scope for a file split and is the wrong shape regardless; reverted.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* test: project nested dicts in the additive-envelope assertions (W4-e)
+
+Eight assertions in this module already projected the TOP level onto the expected payloads keys,
+  with the comment "audit A4: tolerate the added mcp_contract_version envelope key" -- written
+  knowing the envelope grows additively. They compared NESTED dicts strictly, so an additive key
+  inside audit_manifest still broke them.
+
+That is what happened. The W1-a hardening merged as #1065 replaced a bare fail-open return in
+  _record_generated_audit_manifest with a disclosure that adds recorded / record_error into the
+  nested audit_manifest dict when recording fails. These tests mock subprocess.run, so the manifest
+  file they name is never written and the recording legitimately fails -- the product is behaving
+  correctly and disclosing, which is the whole point of that hardening.
+
+_project_onto() now recurses, so the assertions match their own stated intent at every level.
+  Bidirectional control, executed rather than assumed: an additive key is tolerated; a wrong NESTED
+  value is still caught; a MISSING expected key still raises KeyError. Only keys the test never
+  asserted are tolerated.
+
+HONEST LIMIT ON THE DIAGNOSIS: this surfaced on the split branch and not on main, and I did not
+  fully isolate why. Intra-module ordering is preserved (the four preceding tests landed in this
+  same module), so the trigger is inter-module position in a full-tree run, which I did not reduce
+  to a specific polluting test. The fix does not depend on that mechanism -- an over-specified
+  assertion on an additively-extended envelope is a defect on its own terms -- but the ordering
+  sensitivity is stated rather than implied to be solved.
+
+The three remaining local failures in this module are the known bare-worktree artifact (no compiled
+  native extension, so the embedded-rewrite arms cannot run); they passed in CI when this PR was
+  green at 49 checks.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Split test_release_assets_validation.py into 6 sibling modules (W4-g)
+  ([#1077](https://github.com/oimiragieo/tensor-grep/pull/1077),
+  [`97a0bdf`](https://github.com/oimiragieo/tensor-grep/commit/97a0bdfa646ed753aaeba49d6a1c131d427b4a15))
+
+tests/unit/test_release_assets_validation.py was 5,258 physical lines against the repo's 2000-line
+  test-file limit, grandfathered in scripts/file_size_allowlist.json. It is now a 35-line shim, with
+  the tests moved into six themed siblings plus a helpers-only module -- every one comfortably under
+  the limit:
+
+release_workflow_jobs 1412 security_and_audit 717 ci_release_gates 1308 docs_and_version_locks 486
+  publish_and_proof 879 package_managers 481 shared (helpers, no test_*) 10
+
+Behaviour proof: the pre-split collected node-id set is captured in
+  tests/manifests/pre_split_release_assets.txt and the sorted test-name set is identical before and
+  after (147 -> 147, module prefix ignored). The BASELINE was re-measured independently on main
+  before trusting the split report -- 147 passed, 0 skipped -- and the split reproduces it exactly:
+  147 passed, 0 skipped, no new skips. (That check exists because the previous split in this
+  campaign silently converted five passing tests into skips; a split must reproduce its baseline's
+  passed AND skipped counts, not just its collected count.)
+
+Verified independently of the drafting agent's report: - pytest test_release_assets_validation*.py +
+  test_ci_code_path_filter.py: 165 passed - ruff format --preview --check: 8 files already formatted
+  - ruff check: All checks passed - file_size_budget.py --report: 863 files scanned, 0 regressions,
+  grandfathered 28 -> 27
+
+Citation repoints (the bare-name references the drift gate cannot see, since it validates only
+  line-pinned citations): AGENTS.md, CONTRIBUTING.md, docs/CI_PIPELINE.md, docs/world_class_plan.md,
+  a plan doc, .claude/skills/tensor-grep-validation-and-qa/SKILL.md,
+  scripts/_release_assets_checks/constants.py, tests/unit/test_ci_code_path_filter.py, and one
+  COMMENT in .github/workflows/ci.yml (no pytest argv in CI named the monolith -- checked).
+
+Dated audit receipts (docs/audits/2026-08-19-*, docs/audits/2026-08-21-file-size-census.md) received
+  APPEND-ONLY "SUPERSEDED (W4-g)" notes rather than in-place edits -- verified as 3 insertions / 0
+  deletions each, because a dated receipt records what was true when it was written and must not be
+  rewritten to match today.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- Add a from-source Docker dogfood harness and a .dockerignore
+  ([#1081](https://github.com/oimiragieo/tensor-grep/pull/1081),
+  [`7a2d7c4`](https://github.com/oimiragieo/tensor-grep/commit/7a2d7c4148587ca3f7d36f7e6fa25672197bea53))
+
+The existing scripts/dogfood/Dockerfile installs the PUBLISHED wheel from PyPI, which by
+  construction cannot exercise unreleased code -- and installing a beta onto a developer machine
+  clobbers whatever stable tg that machine relies on. Dockerfile.source builds the WORKING TREE in a
+  container instead and runs the existing feature battery against the resulting real binary, so the
+  host tg is never touched.
+
+Measured: 17/17 checks passed against tensor-grep 1.111.2 built from the tree. The published-wheel
+  harness was also re-run for comparison and passed 17/17 against 1.111.1.
+
+The .dockerignore is not housekeeping -- without it the build FAILED three times, each abort
+  happening in the context sender before any layer ran:
+
+.pytest_tmp_review_<hex>/ error from sender: ... Access is denied .tmp_council_<date>/ error from
+  sender: ... Access is denied rust_core/.venv/bin/python invalid file request (venv symlink outside
+  context)
+
+Docker does not read .gitignore, so gitignored transients are still walked and sent. Two things are
+  encoded deliberately: patterns are anchored at the context ROOT unless prefixed **/ (a bare .venv/
+  missed the nested rust_core/.venv/, which is exactly how the third failure survived the first
+  fix), and the entries exclude the FAMILY (.tmp*/) rather than the two instances that happened to
+  bite, because naming instances is how this recurs. It also keeps target/ and .git/ out of the
+  context.
+
+The README records the trap that hid all of this: docker build ... | tail reports TAILs exit status,
+  so a failing build reads as exit 0 while producing NO IMAGE. The honest check is an unpiped exit
+  code plus docker images, which is the one claim a misread pipe cannot fake. Both were wrong for
+  two full build cycles here before being caught.
+
+Verified: docs/dogfood test selection 209 passed; ruff format --preview --check clean.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Validate the search JSON envelope against its own schema (+2 findings)
+  ([#1076](https://github.com/oimiragieo/tensor-grep/pull/1076),
+  [`1031f49`](https://github.com/oimiragieo/tensor-grep/commit/1031f496e7cb72f4a57fcce59946da8cdc23d45b))
+
+* test: validate the search JSON envelope against its own schema, and record two findings
+
+tests/schemas/tg_output.schema.json describes the primary `tg search --json` contract, but NOTHING
+  validated against it. Its only references in the entire tree were
+  tests/unit/test_file_size_budget.py (which merely counts its lines as a "contract" category) and
+  docs/code-map/tests_schemas.md (which lists the path). A schema no test loads cannot fail, so it
+  cannot be evidence -- and two real gaps had accumulated behind it.
+
+WHAT THIS ADDS
+
+tests/unit/test_search_json_schema_contract.py validates payloads against the schema with a
+  bidirectional control on every arm. Six mutation cases prove the schema actually CONSTRAINS
+  (missing `matches`, negative `total_matches`, empty `routing_backend`, non-boolean `sidecar_used`,
+  a match missing `text`, a match missing both `line` and `line_number`) -- without those, "the
+  payload validated" would mean nothing against a schema with `additionalProperties: true`.
+
+The schema now DECLARES the completeness triple -- `result_incomplete`, `incomplete_reason`,
+  `incomplete_reason_class` -- which docs/CONTRACTS.md makes load-bearing for agent retry decisions.
+  They previously fell through `additionalProperties: true`, so a mistyped emitter validated fine on
+  the one field an agent must branch on to avoid reading a truncated scan as complete. RED baseline
+  before the declarations: 4 failed / 9 passed, the four being exactly the wrong-type and
+  declaration arms. After: 13 passed, 1 skipped.
+
+They are deliberately NOT enum-constrained. docs/CONTRACTS.md records the vocabulary as "the set
+  wired so far", so pinning an enum would make the schema REJECT a valid payload the first time a
+  new cause is wired -- a worse failure than the gap being closed. A test asserts the absence of
+  that enum so a future edit has to argue with this reasoning rather than silently tighten it.
+
+FINDINGS RECORDED (docs/BACKLOG.md)
+
+FIND-JSON-CONTRACT-VIOLATION (P1, product defect): `tg find --json` reuses the search envelope but
+  emits `routing_backend: null` and `routing_reason: null`, both `required` and typed `{"type":
+  "string", "minLength": 1}`. Measured against installed tg 1.110.16, with `tg search` as the
+  control proving the fields can be populated (`"NativeCpuBackend"` / `"json_output"`). Validating a
+  real find payload fails with `None is not of type 'string'`. Not fixed here: the fix is a
+  `fix:`-class change that cannot publish while PYPI-SIZE-CAP is open, and it needs a deliberate
+  choice between populating the fields and giving find its own schema. A regression arm was
+  deliberately NOT added as a skip/xfail, which would have turned a real failure into a
+  green-looking suite.
+
+docs/TASK_BOARD.md gains a current campaign note: the board's newest entry was 2026-08-15 and still
+  described v1.110.16 while five days of closeout work had landed.
+
+ALSO
+
+scripts/dogfood/Dockerfile.source builds the WORKING TREE in a container and runs the existing
+  feature battery against the resulting real binary. The existing Dockerfile installs the PUBLISHED
+  wheel, which by construction cannot exercise unreleased code, and installing a beta on a developer
+  machine would clobber whatever stable `tg` that machine relies on.
+
+Verified: ruff check + ruff format --preview --check clean; targeted suite 13 passed 1 skipped;
+  test_file_size_budget.py 28 passed; file_size_budget.py --report 865 files, 0 regressions;
+  docs/contract/governance selection 444 passed, 2 skipped.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: file SCAN-SILENT-CLEAN-ON-MISSING-PATH (P0-class), and reframe #90
+
+tg scan --ruleset returns exit 0 with matched_rules 0 for a path that does not exist. Its exit code
+  and payload are indistinguishable between "scanned a real tree and found nothing" and "never read
+  a single file". On a security-ruleset surface that means a CI gate pointed at a mistyped or moved
+  path reports the repository CLEAN.
+
+tg search on the same input is the control and is correct: exit 2 with path_not_found. Measured
+  unpiped, because a trailing pipe reports the pipelines status rather than tgs.
+
+tg scan <missing path> --ruleset subprocess-safe -> exit 0, matched_rules 0 tg search <missing path>
+  -> exit 2, path_not_found tg scan <real path with one finding> -> exit 0, matched_rules 1
+
+This was found while premise-checking the BLOCKED WSL rows, and it reframes #90. That row is filed
+  as a WSL path-domain defect blocked behind the Task 2A/2B typed-path program, but the gap
+  reproduces on a plain nonexistent Windows path with no WSL involved. The WSL symptom is a
+  consequence: /mnt/c/... is silently rewritten to C:\mnt\c\... (verified: C:\mnt does not exist)
+  and scanned as if real. The missing-path validation gap is independent of typed paths and is
+  fixable today using the check tg search already has.
+
+#89 also still reproduces, so its premise is intact -- though exit 2 on a /mnt/c/... path is
+  arguably CORRECT for a Windows binary, and the real open question is whether the Windows front
+  door should translate WSL paths at all. The row now says so instead of calling it a bug.
+
+Recorded with the instrument note that cost real time: without MSYS_NO_PATHCONV=1, Git Bash mangles
+  /mnt/c/... into C:/Program Files/Git/mnt/c/... before tg sees it, producing a real-looking
+  path_not_found that is the shells doing and not the products.
+
+Not fixed here: the fix is fix:-class and cannot publish while PYPI-SIZE-CAP is open. The entry
+  names the required bidirectional RED arm and asks for a sweep of the sibling scan surfaces rather
+  than a single-instance fix.
+
+Verified: docs/backlog governance selection 222 passed; ruff format --preview --check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.111.2 (2026-08-21)
 
 ### Bug Fixes
