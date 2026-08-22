@@ -98,6 +98,25 @@ _SUFFIX_CACHE = {
 }
 
 
+_AST_GREP_REMEDIATION = (
+    " -- install the ast-grep CLI to enable it: `pip install ast-grep-cli` "
+    "(or `npm i -g @ast-grep/cli`). A stock `pip install tensor-grep` does not include it, "
+    "so every built-in `tg scan --ruleset` fails until it is on PATH."
+)
+"""Remediation appended to EVERY ast-grep-unavailable refusal.
+
+One constant, not a literal per site: a remediation present on one reachable path and absent
+on another is the LOGGED-DEGRADE failure this repo has already paid for -- the user meets
+whichever path their input takes.
+
+`AstGrepWrapperBackend.is_available()` probes for an `ast-grep`/`sg` BINARY on PATH, so the
+CLI distribution is what must be named; `ast-grep-py` ships Python bindings and would be
+advice that does not fix the problem. Verified in a clean container on the PUBLISHED wheel:
+`tg scan --ruleset subprocess-safe` exits 1, `pip install ast-grep-cli` puts `ast-grep` on
+PATH, and the same command then exits 0 with `matched_rules: 1`.
+"""
+
+
 def _fast_norm(p: str) -> str:
     """Fast path normalization for string comparison on Windows."""
     if p not in _NORM_CACHE:
@@ -673,7 +692,7 @@ def _select_ast_backend_for_pattern(
 
             raise ConfigurationError(
                 "Explicit AST search requires AST dependencies: ast-grep wrapper backend "
-                "is required for this pattern but is not available"
+                "is required for this pattern but is not available" + _AST_GREP_REMEDIATION
             )
         else:
             backend = Pipeline(config=replace(base_config, query_pattern=pattern)).get_backend()
@@ -705,6 +724,7 @@ def _select_ast_backend_for_rule(
         raise ConfigurationError(
             "Explicit AST search requires AST dependencies: ast-grep wrapper "
             "backend is required for composite rule members but is not available"
+            + _AST_GREP_REMEDIATION
         )
     return _select_ast_backend_for_pattern(
         base_config, _rule_member_patterns(rule)[0], backend_cache
