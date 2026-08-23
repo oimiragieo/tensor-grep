@@ -157,6 +157,13 @@ def _capsule_context_consistency(
     return consistency
 
 
+#: The highest confidence a result carrying ANY downgrade reason may report. Not a calibrated
+#: severity -- the branch-specific clamps below own that, because they know WHY a result is
+#: degraded. This is only the ceiling that keeps "here is why I am degraded" and "I am certain"
+#: from appearing in the same payload, so it is set as close to 1.0 as a strict inequality allows.
+_DEGRADED_CONFIDENCE_CEILING = 0.99
+
+
 def _confidence(
     payload: dict[str, Any],
     snippets: list[dict[str, Any]] | None,
@@ -200,6 +207,27 @@ def _confidence(
     if any("primary file" in reason for reason in downgrade_reasons):
         overall = min(overall, 0.55)
     deduped_reasons = list(dict.fromkeys(downgrade_reasons))
+
+    # THE INVARIANT, ENFORCED AT THE SINGLE EXIT: a result that lists reasons it is degraded may
+    # never also claim certainty. `ask_user_before_editing` keys off this number, so the
+    # certain-but-degraded shape tells an agent "edit this, no question needed" about a target
+    # derived from a scan that did not finish. Two external dogfoods reported exactly that
+    # (2026-08-22 v1.111.7, again 2026-08-23 v1.113.0).
+    #
+    # This is a GUARD, not another branch-specific clamp, and that distinction is the fix. Of the
+    # six reason-appending branches above, four clamp and two do not -- `confidence_downgraded`
+    # and any reason handed in by the CALLER both fall straight through to the return with
+    # `overall` untouched, which is how a caller-supplied 1.0 survives. Adding a fifth clamp would
+    # close today's hole and do nothing for the seventh branch someone adds next year. A guard at
+    # the exit holds for every branch that exists and every branch not written yet.
+    #
+    # The ceiling is deliberately the SMALLEST change that makes the statement true. Calibrating a
+    # meaningful number is the job of the branch-specific clamps, which know WHY the result is
+    # degraded; this guard only knows THAT it is, so it must not invent a severity it cannot
+    # justify or it would silently overwrite a better-informed value.
+    if deduped_reasons:
+        overall = min(overall, _DEGRADED_CONFIDENCE_CEILING)
+
     return {"overall": round(overall, 3), "downgrade_reasons": deduped_reasons}
 
 
