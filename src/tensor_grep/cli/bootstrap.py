@@ -1548,6 +1548,13 @@ def _force_utf8_streams() -> None:
 
 
 def main_entry() -> None:
+    # Rich's legacy Windows renderer can raise EINVAL, or truncate long option names, when help
+    # is piped/captured. Disable it here -- the true top-level entry for `tg` / `python -m
+    # tensor_grep` -- not at cli.main import time or inside cli.main.main_entry() (both either
+    # pollute unrelated renders or run too late; see docs/BACKLOG.md's help-flake writeup).
+    if sys.platform.startswith("win") and not sys.stdout.isatty():
+        os.environ.setdefault("TYPER_USE_RICH", "0")
+
     _force_utf8_streams()
     argv = sys.argv[1:]
     if argv and argv[0] in {"--version", "-V"}:

@@ -262,6 +262,41 @@ the test import `main` the same way the assertion's render requires and pin BOTH
 product/test-design changes outside a closeout's scope. Recorded with a reproduction so the next
 session starts from the mechanism instead of re-bisecting it a fifth time.
 
+### FIXED same day (option (a) taken) -- and the fix itself regressed once before landing clean
+
+PR #1115 (merged `3524397`) moved the `TYPER_USE_RICH` Windows-EINVAL workaround from
+`cli.main` **module-import time** into `cli.main.main_entry()`, making the pytest
+order-dependent flake deterministic (CliRunner never reaches either `main_entry`, so the render
+is now always the long/correct one regardless of import order). Verified: the exact
+previously-failing polluter-order combination (`test_agent_capsule_best_effort_primary.py` +
+`test_cli_modes_ast_misc.py`) now passes; full `tests/unit` 5835 passed (1 unrelated pre-existing
+local env gap: `model2vec` extra not installed).
+
+**That merge immediately broke the REAL Windows launcher**, caught only by post-merge CI on
+`main` (not by the PR's own checks -- a PR-vs-push CI divergence): `windows-agent-readiness`
+failed `public-search-advertised-flag-sweep` because `tg search --help` was missing
+`--no-ignore-file-case-insensitive`. Root cause: via the real launcher chain
+(`bootstrap.main_entry()` -> `_run_full_cli()` -> `cli.main.main_entry()`), something upstream
+resolves Rich's render mode before `cli.main.main_entry()` runs, so setting the env var there was
+too late -- Rich stayed enabled and truncated the flag name inside its box-drawn panel
+(confirmed directly against the built `tg.exe`, not just tests: the raw output showed
+`--no-ignore-file-case-insen...` cut mid-word).
+
+**Fix, PR #1116** (branch `fix/windows-help-rich-truncation-entry-point`): moved the guard again,
+this time into `bootstrap.main_entry()` -- the true single top-level entry for both the `tg`
+console-script and `python -m tensor_grep` -- so it runs before anything touches Typer/Rich.
+Verified against the real `tg.exe` launcher (flag renders uncut) and the full test suite (5835
+passed, same 1 unrelated gap). Also bumped `scripts/file_size_allowlist.json`'s `bootstrap.py`
+pin 1696 -> 1703 (the guard's comment is load-bearing; compressing it to dodge the ratchet would
+be worse than a small, justified bump). CI on #1116 was still running the Windows-specific jobs
+as of this note; merge is gated on `windows-agent-readiness` passing, not assumed.
+
+**Lesson for the next session:** a one-shot-process env-var side effect that depends on renderer
+internals (Rich resolving its mode lazily but not at the point you'd expect) cannot be validated
+by CliRunner alone -- CliRunner never exercises the real console-script launcher chain at all.
+Any fix to this class of bug needs a check against the built binary/launcher, not just the test
+suite, before it's called done.
+
 ## Session closeout (2026-08-23) - state, receipts, and what was NOT done
 
 Filed so a fresh session starts from measured state rather than from this session's prose.

@@ -506,14 +506,22 @@ def test_main_module_import_should_not_disable_rich_as_a_side_effect():
     assert result.stdout.strip() == "None"
 
 
-def test_main_entry_should_disable_rich_when_windows_stdout_is_redirected(monkeypatch):
+def test_bootstrap_main_entry_should_disable_rich_when_windows_stdout_is_redirected(monkeypatch):
+    # Regression guard: this MUST live in bootstrap.main_entry() -- the true single top-level
+    # entry point for both the `tg` console-script and `python -m tensor_grep` -- not inside
+    # cli.main.main_entry(). Via the real bootstrap -> _run_full_cli() launcher path, placing it
+    # in cli.main.main_entry() runs too late: Rich's render mode is already resolved by then, so
+    # it silently stayed enabled and truncated long option names in `tg`'s real --help output
+    # (docs/BACKLOG.md "the order-dependent help flake is deterministic").
+    from tensor_grep.cli import bootstrap as cli_bootstrap
+
     monkeypatch.delenv("TYPER_USE_RICH", raising=False)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
-    monkeypatch.setattr(cli_main, "app", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(sys, "argv", ["tg"])
+    monkeypatch.setattr(cli_bootstrap, "_run_full_cli", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["tg", "--help"])
 
-    cli_main.main_entry()
+    cli_bootstrap.main_entry()
 
     assert os.environ.get("TYPER_USE_RICH") == "0"
 
