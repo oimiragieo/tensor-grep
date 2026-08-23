@@ -47,6 +47,50 @@
 
 
 
+## Session closeout (2026-08-23) - state, receipts, and what was NOT done
+
+Filed so a fresh session starts from measured state rather than from this session's prose.
+
+### Open work, honest state + receipt
+
+| Item | State | Receipt |
+|---|---|---|
+| **PR #1103** session/daemon root anchoring (G4.1, G4.2) | CI green, merge in progress | 39 checks pass / 0 fail; fixes the external dogfood's #3, whose exact repro (open in subtree, `session show <id>` from root with NO PATH arg) returns exit 0 on the branch |
+| **PR #1105** confidence invariant enforced in production | CI green, awaiting the #1103 release window | 39 checks pass / 0 fail; RED reproduced on `origin/main` before the guard was written |
+| **PR #1102** `blast-radius-render --deadline` | **BLOCKED, not abandoned** | The file-size ratchet refuses +11 lines in `main.py`. Compressed as far as the feature allows (+14 → +11). Resolution is a `--deadline` option factory (the flag is declared **22 times** in `main.py`, each with bespoke help) or a `main.py` split — both larger than this PR. Blocker recorded as a PR comment |
+| `_add` lexical trap at `confidence=1.0` | OPEN, unassigned | External dogfood #1; ranking quality, not a guard. Highest severity of the open set: an agent edits the wrong symbol at full confidence |
+| Warm-path latency ~4s, `tg dogfood` timeout, absent rank scores | OPEN, unassigned | External dogfood #5/#6/#7 |
+| `tests/unit/test_cli_modes_ast_misc.py` order-dependent help failures | OPEN | **Three sightings** this session (`test_app_help_...`, `test_search_help_...`, and #1102's `test_positive_control_both_siblings_have_help` in CI). Each passes alone, passes as a whole file, and passes on `main` — only fails inside a larger selection, so another test mutates the CLI help surface. Third sighting is this repo's trigger for a structural fix; the polluter was NOT identified (the two candidates checked were monkeypatch-restored) |
+
+### Closeout steps that were N/A, not done
+
+Three artifacts named in the closeout request **do not exist in this repository**, so the
+corresponding steps were skipped rather than performed. Recorded because "skipped" and "done"
+must not be confused by the next session:
+
+- `.wayfinder/<slug>/MAP.md` — absent. There is **no answer key**, so `verify-feature` had
+  nothing to run against. Not a failure; this repo has never used the wayfinder lane.
+- `.orchestrator/state.json` — absent. Nothing to refresh. Creating one would be inventing a
+  structure this repo does not use.
+- `QUEUE.md` — absent, so `feature-batch` had no queue to keep accurate. There are also no
+  `feature folders`; work here is tracked by this file plus `docs/TASK_BOARD.md`.
+
+### Worktree harvest (2026-08-23)
+
+`.claude/worktrees/` held **21 orphan directories, 5.2 GB**, none of which git could see
+(`git worktree list` knew only the main checkout and one live temp worktree; `.git/worktrees/`
+held exactly one admin entry). 12 carried content, 9 were empty. All were ≥15 days stale
+(newest file 2026-08-08) with no process running from any of them.
+
+Source-only slices (`src/`, `tests/`, `docs/`, `scripts/`, root `*.md`) were archived to
+`~/.tensor-grep-worktree-archive/2026-08-23` (**408 MB**) before deletion, so any uncommitted
+work survives at ~7% of the size. The rest was Rust `target/` build output.
+
+Measurement note worth keeping: the first size probe reported **`non-build=0MB`**, which would
+have justified deleting without archiving anything. A positive control over the repo's own
+`src/` returned 58 MB and exposed the pattern as broken; the true figure was **1547 MB**. A zero
+from an unproven probe is UNRESOLVED, not ABSENT.
+
 ## Recent campaign notes (2026-08-23) - EXTERNAL AGENT DOGFOOD of v1.113.0 + open findings filed
 
 Second external agent dogfood, this time against **v1.113.0** (their binary
