@@ -1,6 +1,197 @@
 # CHANGELOG
 
 
+## v1.113.0 (2026-08-23)
+
+### Documentation
+
+- Wave 0a -- re-derive the 6 BLOCKED rows against the tree (3 are STALE)
+  ([#1101](https://github.com/oimiragieo/tensor-grep/pull/1101),
+  [`d29b013`](https://github.com/oimiragieo/tensor-grep/commit/d29b0133802e18fd67c6c470092a24921b7ea228))
+
+* docs: wave 0a -- re-derive the 6 BLOCKED rows against the tree (3 are STALE)
+
+The 2026-08-22 unblock plan was council-audited (6 seats, all APPROVE_WITH_CHANGES). Checking the
+  audit's falsifiable claims against the CODE found something no seat predicted: three of the six
+  BLOCKED rows are stale. Sequencing a campaign from them would have sent a builder at a file that
+  does not exist.
+
+WHAT THE TREE SAYS:
+
+F8 cites `rust_core/src/path_domain.rs`. It DOES NOT EXIST, and `grep -rln "path_domain\|PathDomain"
+  rust_core/src/` returns NOTHING -- the concept is absent from the Rust tree entirely. Seat
+  droid_glm called this; verification confirmed it. F8 cannot be planned until re-scoped, and the
+  nearest-name guess (runtime_paths.rs) is a guess, not evidence.
+
+MCP-SURFACE is blocked on Task 2C because Task 2C "modifies rust_core/src/main.rs". But
+  `_TG_MCP_SERVER_CONTRACT_VERSION` lives at src/tensor_grep/cli/mcp_server.py:188 and main.rs
+  contains ZERO contract references. The contract bump is a PYTHON change and is not cargo-blocked
+  at all. The dependency was asserted from a premise measurement does not support.
+
+F6 calls its evidence-signing slice "remaining". src/tensor_grep/cli/ evidence_signing.py is 539
+  lines / 19 functions and is imported by audit_manifest.py, checkpoint_store.py and
+  evidence_receipt.py. It is SHIPPED and wired. Carrying shipped work as open is how 17 stale items
+  accrued once before.
+
+ROWS CONFIRMED CORRECT: F6's native half (grep for verify-edit in main.py returns nothing -- the
+  surface genuinely does not exist), and #89/#90 (the WSL constraint is real and is NOT removed by
+  an ubuntu container; the harness removes the CARGO constraint, never the WSL one).
+
+ROW UNDER-SPECIFIED: F5 is scoped `rust_core/**` -- a glob. "Independent of the MCP chain" is not
+  assertable from a glob; exact touch-points are needed before sequencing.
+
+DISCIPLINE NOTE, recorded because it is the reusable part: TASK_BOARD's W6 entry says "six BLOCKED
+  rows re-derived", and that pass did not catch path_domain.rs. Either the file went away
+  afterwards, or the re-derivation checked row TEXT rather than file EXISTENCE. A re-derivation that
+  does not resolve every cited path against the tree is a PROOFREAD, not a re-derivation -- and it
+  produces exactly the confidence that stops the next person from checking.
+
+Also removed 1.7 MB of `src/.tensor-grep/` session artifacts my own dogfooding created inside src/
+  (gitignored, so it was not dirtying git, but it was my litter).
+
+Verified: test_public_docs_governance.py + test_skill_library_drift.py -- 48 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* feat: pin the prepare confidence invariant; triage the external agent dogfood
+
+An external AI agent dogfooded v1.111.7 against a DIFFERENT checkout using the real installed binary
+  and filed ~10 defects + 8 feature requests. Triaged with PER-FINDING verification, because a
+  dogfood report is a hypothesis like any other agent output.
+
+VERIFICATION RESULTS -- 2 confirmed, 2 NOT reproduced, 5 unverified:
+
+CONFIRMED: blast-radius has --deadline, blast-radius-render does NOT. An agent copying flags between
+  siblings breaks. Also confirmed unsorted rg-format order diverges (a DOC gap; rg itself makes no
+  unsorted-order guarantee).
+
+NOT REPRODUCED (both of their CRITICAL findings): "prepare returns _add at confidence 1.0 with
+  ask=false" -- on this tree the primary was _raw_validation_plan_for_tests at 0.55 with
+  ask_required=True. And the confidence/downgrade desync -- forcing truncation gave partial=True, 3
+  downgrade reasons, overall=0.94, ask_required=True. Both invariants held.
+
+NOT REPRODUCED IS NOT REFUTED. They ran a different corpus and gave specific evidence. Rows 5-9
+  (session cwd, warm path, Windows AST argv, dogfood version skew, LSP split-brain) are recorded
+  UNVERIFIED -- not closed, not dismissed. Unverified findings do not get fixes; that is how a wrong
+  fix ships.
+
+WHAT SHIPPED: tests/unit/test_prepare_confidence_invariants.py pins their NFR-2 as a permanent
+  ratchet:
+
+I1 downgrade_reasons non-empty => confidence.overall < 1.0 I2 partial is true => confidence.overall
+  < 1.0
+
+It ships EVEN THOUGH the bug did not reproduce, because a contract that happens to hold today is
+  exactly the thing to pin before it drifts -- and "certainty about a truncated scan" is the single
+  most dangerous payload this tool can hand an agent.
+
+The test carries TWO negative controls (the detector must flag each violating shape) AND a positive
+  control (a correctly-downgraded payload must produce zero violations). Without the positive
+  control a detector that flagged everything would pass both negatives and be useless. The invariant
+  is a PURE FUNCTION over the payload so its failure path is testable without the CLI -- a check
+  reachable only through a slow subprocess tends never to have its failure path tested at all.
+
+WHAT DID NOT SHIP, and why: their ranking fix (stop-symbol filter for short lexical tokens). That is
+  a RANKING concern, not a contract concern, and an invariant cannot express it -- it needs a
+  corpus-based golden set. Filed rather than guessed at. Their proposed discriminator is good and is
+  recorded verbatim for whoever builds it: a known-bad query must either set ask.required=true or
+  refuse to name a primary.
+
+THE REUSABLE LESSON: two critical findings did not reproduce on our corpus, which is itself the
+  finding -- capsule confidence and target selection are CORPUS-DEPENDENT, so single-corpus
+  verification cannot falsify them. That argues for the golden-set approach over one-off
+  reproduction, the same lesson as the 2026-07-03 fixture-green-is-false-for-heuristics receipt.
+
+Verified: 53 passed (invariants + both docs gates); ruff format --preview + check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Local Docker CI-parity harness for the lanes banned on the shared box
+  ([#1093](https://github.com/oimiragieo/tensor-grep/pull/1093),
+  [`6dda05c`](https://github.com/oimiragieo/tensor-grep/commit/6dda05c7871af3d4ebe732ac62f0696f18873daa))
+
+* feat: local Docker CI-parity harness for the lanes banned on the shared box
+
+AGENTS.md/CLAUDE.md forbid local `cargo test` and tests/e2e/test_routing_parity.py because this dev
+  box is a SHARED SERVER. That ban left F5, F8 and Task 2C (and so MCP-SURFACE) unbuildable locally
+  and pushed every Rust verification onto GitHub Actions. This runs those lanes in a CPU-capped
+  container instead: $0 Actions minutes, and the ban's PURPOSE (do not saturate the box) is
+  preserved by the cap.
+
+WHAT IT IS NOT. Ubuntu + python3.12 only. It does not run windows/macos, python 3.11, nightly Rust,
+  Formatting & Linting, docs-governance, agent-readiness, native-build-smoke, cuda-feature-check,
+  search-golden-parity, benchmark-regression, the eval gate, or the release chain. The PASSED banner
+  enumerates every one of them and states that the GitHub run remains the merge arbiter. Today's
+  main breakage was Windows-specific, so that limit is not theoretical.
+
+TWELVE MEASURED CI-vs-LOCAL DIVERGENCES, each documented in-file with its symptom: MSYS rewriting a
+  leading-slash env value into a Windows path; python3.12-dev for the PyO3 link; running as root
+  making a chmod-000 fixture not bite; a failed build leaving the previous image tagged so a run
+  tested stale bytes; two flavours of volume-ownership denial; the operator's Windows .venv leaking
+  into a Linux container via the bind mount; tmpfs mounted noexec killing native extension imports;
+  git refusing the bind mount as dubious ownership (which aborted pytest COLLECTION, so zero tests
+  ran); an out-of-tree CARGO_TARGET_DIR breaking tg's own PYTHONPATH injection; and an ambient
+  TG_SIDECAR_PYTHON turning a fail-closed test green.
+
+COUNCIL-REVIEWED (5 substantive seats, all MERGE_WITH_CHANGES; agy + codex hit read failures and
+  correctly refused to vote). Every change applied:
+
+* REMOVED the package-install step. A seat argued it would mask a regression in tg's PYTHONPATH
+  injection -- the very mechanism one of these tests guards. That was testable and correct: with the
+  target dir repo-relative the parity test passes against a BARE venv, exactly as ci.yml uses. The
+  original failure was my out-of-tree target dir, not a missing install. The superset is gone. *
+  Venv creation is error-checked; setup failure exits 2 instead of mislabelling itself as an install
+  failure. * Corrected a FALSE claim of mine: "zero writes reach the host" is wrong. Only the venv
+  guarantee holds; pytest still writes __pycache__/.pytest_cache into /work. * Default CPU cap 6 ->
+  4, with the cold-run I/O caveat stated (a cgroup quota bounds CPU, not disk I/O, page cache or
+  memory bandwidth). * ast-grep-cli scoped to the PYTHON lane only: it is needed there (1 failed ->
+  68 passed) but an ast-grep binary on PATH changes AST-backend availability, and the rust lane is
+  green without it.
+
+DRIFT TRIPWIRE (4 of 5 seats asked for it): tests/unit/test_ci_local_harness_parity.py pins the
+  mirrored strings -- cargo invocation, pytest invocation, uv==0.11.25, TG_REQUIRE_SYMLINK_TESTS,
+  the editable extras -- in BOTH ci.yml and the harness, so ci.yml cannot change one without
+  reddening a test that names this harness. It carries a positive control (both sources present and
+  non-trivial) and a negative control (the matcher must be able to fail). Perturbation-proved:
+  changing the cargo flags fails exactly [cargo test invocation]; reverting returns 9 passed, file
+  byte-identical.
+
+.gitattributes now pins *.sh and Dockerfile to eol=lf. That is correctness, not style: a CRLF
+  shebang fails in a Linux container with `bad interpreter`.
+
+Verified: rust lane exit 0; python lane run; drift gate 9 passed with both arms; ruff format
+  --preview + ruff check clean; repo hygiene guard passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: record the bind-mount deadline artifact in the harness banner
+
+Running both lanes end-to-end surfaced one python failure that is NOT a product defect and must not
+  be "fixed" by touching the product:
+
+test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_helper exit_code=2
+  partial=True partial_reason=deadline elapsed 60.7s (60s budget)
+
+The test scans the LIVE repo, and /work is a Docker Desktop bind mount -- materially slower than the
+  native checkout a GitHub runner uses. Measured directly rather than inferred: the RANKING was
+  correct in that run (primary_target = rust_core/src/python_sidecar.rs, exactly what the test
+  asserts). Only the clock lost.
+
+Recorded in the PASSED banner so the next person reads it before reacting. The banner explicitly
+  says not to widen the product deadline to make this harness pass -- that move was tried on a
+  sibling lane on 2026-07-27, bought 4x the wasted wall-clock, and was reverted the same day.
+
+Rust lane remains exit 0. Python lane: 1 failed, 423 passed, and that one failure is this artifact.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.112.0 (2026-08-22)
 
 ### Documentation
