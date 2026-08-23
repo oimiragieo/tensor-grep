@@ -20,7 +20,7 @@
     "rust_core/tests/test_public_native_cli_parity.rs": 2318,
     "rust_core/tests/test_routing.rs": 2995,
     "rust_core/tests/test_schema_compat.rs": 4412,
-    "src/tensor_grep/cli/bootstrap.py": 1696,
+    "src/tensor_grep/cli/bootstrap.py": 1703,
     "src/tensor_grep/cli/main.py": 13523,
     "src/tensor_grep/cli/mcp_server.py": 5341,
     "src/tensor_grep/cli/repo_map.py": 15243,
