@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -179,8 +180,26 @@ def _confidence(
     output -- see ``_capsule_confidence_and_ask_without_render``, the only ``None`` caller."""
     edit_confidence = _as_dict(_as_dict(payload.get("edit_plan_seed")).get("confidence"))
     raw_overall = edit_confidence.get("overall")
-    if isinstance(raw_overall, (int, float)):
-        overall = float(raw_overall)
+    if isinstance(raw_overall, (int, float)) and math.isfinite(float(raw_overall)):
+        # CLAMP AT THE DOOR, not at the exit. `confidence.overall` is a 0..1 contract, and the
+        # branch clamps below all use `min(...)` -- which cannot bound a value that is already
+        # out of range in the wrong direction, and cannot bound NaN at all (`min(NaN, x)` is NaN).
+        #
+        # Measured on this function before the guard, with values arriving via
+        # `edit_plan_seed.confidence.overall`:
+        #     NaN -> nan     inf -> inf     5.0 -> 5.0
+        #
+        # The 5.0 case is the dangerous one, and an adversarial review that raised the NaN case
+        # did not name it. Downstream logic compares this number against thresholds (`< 0.75`
+        # decides `ask_user_before_editing`), so an out-of-range 5.0 does not merely look wrong --
+        # it WINS every such comparison and reads as maximally certain while carrying no
+        # downgrade reason to contradict it. NaN is the safer failure of the two, because NaN
+        # loses every comparison instead of winning it.
+        #
+        # A non-finite value is treated as ABSENT rather than clamped to a number: we do not know
+        # what it meant, and inventing 1.0 or 0.0 would be asserting a confidence nobody computed.
+        # Falling through to the derived defaults below is the honest handling.
+        overall = min(1.0, max(0.0, float(raw_overall)))
     else:
         if not consistency.get("primary_file_included", True) or not consistency.get(
             "rendered_context_includes_primary", True
