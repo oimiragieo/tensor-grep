@@ -1,6 +1,446 @@
 # CHANGELOG
 
 
+## v1.113.4 (2026-08-23)
+
+### Bug Fixes
+
+- Blast-radius-render deadline parity + partial_reason honesty
+  ([#1102](https://github.com/oimiragieo/tensor-grep/pull/1102),
+  [`7e06a16`](https://github.com/oimiragieo/tensor-grep/commit/7e06a16cc6ba468dc9566d1a5b2444a46d61efce))
+
+* fix: give blast-radius-render the --deadline flag its sibling already has
+
+An external agent dogfood (v1.111.7) filed this with the framing that matters: "Agents copying flags
+  across siblings break." `tg blast-radius --deadline` works; `tg blast-radius-render --deadline`
+  returned "No such option". Confirmed against the published binary before touching anything.
+
+TDD, RED FIRST. tests/unit/test_blast_radius_sibling_flag_parity.py was written and seen to FAIL,
+  naming exactly the defect:
+
+blast-radius siblings disagree on scan-bounding flags ... blast-radius-render is missing --deadline
+
+It pins the CLASS, not the one flag: both siblings run the SAME scan with different output, so a
+  flag that bounds THE SCAN (--max-depth, --max-repo-files, --deadline) must exist on both. Fixing
+  only --deadline leaves the next divergence for the next agent to find.
+
+It also guards the OVER-correction: a fourth test asserts the renderer's output-shaping flags
+  (--max-sources, --max-symbols-per-file) do NOT appear on plain blast-radius, so a future "make
+  them identical" edit fails loudly instead of quietly adding dead options. Plus a positive control
+  (both --help outputs are real) and a negative control (the substring matcher must be able to
+  report absence).
+
+IMPLEMENTED BY cursor-agent on the free tier. The council was explicit about which leaves may go
+  there: a fix whose gate ALREADY EXISTS is safe; a verification leaf that writes its own probes is
+  not, because "the probe that says 'not reproduced' could be the probe that can't fail." This is
+  the safe kind.
+
+AUDIT (the DONE line is never trusted): - exactly 2 files changed, and the gate test is
+  BYTE-IDENTICAL to my pre-dispatch backup -- the "you may not modify any test" constraint held. -
+  4/4 parity tests pass when I re-run them myself. - default path proven unchanged:
+  _deadline_monotonic_from_seconds(None) is None, and the command without the flag returns the same
+  56-key payload as before. - THE FLAG ACTUALLY BITES: --deadline 0.2 on the repo root returns
+  partial=true. A flag that parses but does nothing is worse than no flag. - parity confirmed on the
+  PAYLOAD too: the sibling ALSO returns partial_reason=None under a tight deadline, so this change
+  introduces no new inconsistency. That both commands omit partial_reason (unlike prepare, which
+  sets it) is PRE-EXISTING and is filed separately rather than silently folded into this fix.
+
+Verified: 4/4 parity tests; ruff format --preview + ruff check clean on both files.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Co-Authored-By: cursor-agent (auto) <noreply@cursor.com>
+
+* fix: blast-radius-render must say WHY it is partial, not just that it is
+
+Follow-on to the --deadline parity fix in the previous commit, and the thing I had deferred.
+  `partial=true` with `partial_reason=None` tells an agent the result is incomplete but not why.
+  `deadline_limit` alone is NOT equivalent -- a consumer that learned `partial_reason` on `tg
+  prepare` reads None here and can only conclude "partial for an unknown reason". Every other
+  deadline-bearing command stamps it.
+
+TWO WRONG TURNS ON THE WAY, both recorded because the reasoning is the reusable part:
+
+1. I first tried adding `blast-radius-render` to `_RENDER_FAMILY_DEADLINE_COMMAND_ARGS` in
+  test_cli_deadline_coverage_gaps.py, assuming the family meant "commands with --deadline". It does
+  not. That set is defined by the STAGE the test patches -- `build_context_pack_from_map` -- and
+  blast-radius-render never touches it, running `build_symbol_blast_radius_render_from_map` instead.
+  The row failed for a STRUCTURAL reason (the simulated overrun could not fire), which would have
+  read as a product defect and is not one. Reverted, with a comment at the parametrize site saying
+  why the command is deliberately absent, so the next person does not re-add it.
+
+2. Before that I nearly "fixed" a non-defect: I reported the missing partial_reason as a half-honest
+  signal, then found the payload DOES disclose the cause via `deadline_limit={"deadline_exceeded":
+  true}`. So this is not a silent partial. The real issue is narrower and worth stating precisely:
+  prepare discloses via partial_reason, blast-radius* via deadline_limit -- DIFFERENT KEYS for the
+  same fact, which is the same class as the flag-parity bug (agents generalise across surfaces).
+
+THE FIX: `payload.setdefault("partial_reason", "deadline")` on the render path's own source-loop
+  overrun. setdefault, not assignment -- never clobber a richer upstream reason already stamped by
+  build_symbol_blast_radius_from_map or the edit-plan-seed fold-in above it.
+
+THE TEST patches the stage this command ACTUALLY runs, and skips honestly if the overrun does not
+  fire on a given machine rather than asserting vacuously on a run that never overran.
+
+PERTURBATION-PROVED: removing the single setdefault line makes
+  test_blast_radius_render_source_loop_overrun_stamps_partial_reason FAIL; restoring it returns 5
+  passed, and repo_map.py is byte-identical to its pre-perturbation backup.
+
+Verified: 5/5 parity+reason tests; test_cli_deadline_coverage_gaps.py 39 passed (no regression from
+  the reverted row); ruff format --preview + ruff check clean.
+
+* test: close the codex audit findings on the blast-radius-render deadline branch
+
+A codex audit of this branch found three defects IN MY OWN TESTS. The first attempt at the audit did
+  not run at all -- its sandbox blocked `git diff` -- and its CHANGES_REQUIRED was a read-failure
+  refusal, not a finding. Re-run with the diff INLINED into the prompt so it needed no shell access;
+  then it produced real findings. A verdict beside an unresolved read failure is discarded, not
+  counted.
+
+HIGH -- the overrun test SKIPPED when the overrun did not fire, so it could report success without
+  observing anything. I wrote that skip believing it was honest. Codex is right and I was wrong:
+  skipping is only honest when the precondition is outside the test's control. This test OWNS the
+  patch and the deadline, so a non-firing overrun means the HARNESS broke and must FAIL. Replaced
+  with two setup assertions that run BEFORE the real one -- the patch was actually called, and
+  partial is actually true -- each with a message naming what broke.
+
+MED -- the parity test checks only HELP TEXT, so it would stay green if `--deadline` were accepted
+  and then dropped before the scan. A flag that parses but does nothing is worse than no flag. Added
+  a wiring test that captures the value arriving at build_symbol_blast_radius_render as a float
+  monotonic stamp, plus a CONTROL asserting that with NO flag the builder receives None -- without
+  that control the wiring test would still pass if the code hardcoded a deadline for every run,
+  which is the exact default-path change the branch promised not to make.
+
+LOW -- the diff touches an existing test file despite the no-test-modification constraint. Accepted
+  as accurate. The constraint was written for the cursor builder, not the orchestrator, and the
+  change is a comment plus the removal of my own earlier wrong addition -- but codex could not know
+  that from the diff, and flagging it was correct.
+
+PERTURBATION PROOFS, both arms measured rather than asserted: - wiring test: deleting the exact
+  pass-through line at the render call site (main.py, the `deadline_monotonic=deadline_monotonic`
+  inside build_symbol_blast_radius_render(...)) makes it FAIL; restore is byte-identical. My FIRST
+  perturbation attempt removed nothing (14 pass-through sites survived and the test still passed) --
+  that proved nothing, and I did not count it. - partial_reason: removing the single setdefault
+  makes the overrun test FAIL.
+
+FLAKE HONESTY: the overrun test failed ONCE, in the same shell command as a `cp` restore of main.py
+  -- a mid-restore import state. Measured after: 3/3 in isolation and 5/5 for the whole file.
+  Recorded rather than omitted, because "it passes now" is the reasoning that ships flakes.
+
+Verified: 7/7; ruff check clean.
+
+* fix: convert the bare call this branch's own test turned into a ratchet offender
+
+CI was red on 8 lanes (every test-python + test-gpu-nvidia). Cause is not the deadline change
+  itself: `test_bare_call_ratchet` reported `repo_map.py is a Route A target with 1 bare calls and
+  NO pin`.
+
+The offending line is NOT new on this branch. What is new is the test at
+  tests/unit/test_cli_deadline_coverage_gaps.py, which does `monkeypatch.setattr(repo_map,
+  "build_symbol_blast_radius_render", _capture)` to prove --deadline actually reaches the builder.
+  That patch is what makes the symbol a PATCHED name, and a pre-existing bare call to a patched name
+  is by definition an offender. The ratchet's offender set is defined by the TESTS, so adding a
+  legitimate wiring test can turn previously-clean code red without touching that code.
+
+Fixed the Route A way rather than by pinning: `build_symbol_blast_radius_render(...)` ->
+  `_self.build_symbol_blast_radius_render(...)`, a late attribute read, which is the exact idiom the
+  module documents at line ~408 and already uses elsewhere. Pinning would have been wrong twice over
+  -- the pins file records repo_map as RETIRED at 0 after a completed 166 -> 0 conversion, so
+  re-adding a pin would un-bank finished work, and this is GROWTH (a new offender), which this repo
+  requires be converted, never re-pinned.
+
+Verified: ratchet `3 modules, 0 bare calls, 0 regressions`; the branch's own 64 tests pass; ruff
+  check + `format --check --preview` clean.
+
+Not fixed here, filed instead: `tests/unit/test_cli_modes_ast_misc.py` has an order-dependent
+  help-surface failure. It passes alone, passes as a whole file, and passes on main -- it only fails
+  inside a larger `-k` selection, so some other test mutates the CLI help surface. Second sighting;
+  out of scope for this branch.
+
+* refactor: shrink the deadline addition to its minimum (file-size ratchet, still short)
+
+CI's file-size ratchet refuses this branch: main.py 13523 -> 13537 and repo_map.py 15243 -> 15255.
+  An allowlisted giant may shrink, never grow.
+
+I missed this locally by running the ratchet against the MAIN checkout instead of the worktree, so
+  it measured a tree that does not contain this change. Same class as the earlier mistake on this
+  branch of running the branch's tests without PYTHONPATH pointing at the branch's source: the
+  command ran, the number was real, and it described the wrong tree.
+
+Compressed the addition to its minimum -- single-line imports, one-line option help, and the
+  `partial_reason` comment cut to the part that is actually load-bearing (WHY the stamp is required
+  and why it is `setdefault`). That takes main.py +14 -> +9 and repo_map.py +12 -> +7 over their
+  pins. Behaviour unchanged; 46 tests still pass; ruff clean.
+
+STILL RED, and deliberately not forced green. The remaining overage is the feature itself -- a typer
+  option cannot be declared in under ~7 lines -- so no further compression closes it. The two honest
+  resolutions are both larger than this PR:
+
+1. A `--deadline` option FACTORY. main.py declares the flag 22 times, each with bespoke help text.
+  Folding them into one helper would remove far more than 9 lines and make this whole class of
+  sibling-parity gap impossible. It also touches 22 commands' help output, which contract tests pin,
+  so it is its own slice with its own review. 2. A main.py split, per
+  docs/design/2026-08-19-split-floor-escape.md.
+
+Doing either inside this PR would be exactly the silent scope expansion this repo forbids, so the
+  blocker is recorded rather than worked around. Not re-pinning: this is GROWTH, and the rule is
+  that growth is reduced or split, never re-pinned.
+
+* style: re-sort the import ruff I001 flagged after the compression
+
+The two single-line imports I split to save a line were un-sorted, which would have kept the lint
+  lane red for a SECOND, unrelated reason and masked the real blocker (the file-size ratchet) behind
+  a trivial one.
+
+* refactor: delete a dead wrapper and the inert stub that kept it alive (repo_map ratchet)
+
+This branch was blocked by TWO file-size pins, not one. I reported only main.py and was wrong:
+  repo_map.py was also +7 over (15,250 vs 15,243) because the --deadline plumbing lands there too.
+  This commit closes the repo_map half. main.py is closed by #1107 (13,523 -> 13,400), measured on
+  the union.
+
+WHAT WAS DELETED, AND HOW I KNOW IT WAS SAFE. `build_symbol_blast_radius_render_json` (34 lines
+  incl. spacing) had **zero real references** in main.py -- AST-checked, counting ast.Name /
+  ast.Attribute / ImportFrom, not grep. The one grep hit is a comment reading "the old
+  build_symbol_blast_radius_render_json helper". The CLI calls `build_symbol_blast_radius_render`
+  directly.
+
+Its only apparent consumer was a monkeypatch in
+  `test_cli_blast_radius_render_accepts_provider_option`, and that patch was INERT. Proven, not
+  assumed: I replaced the stub body with `raise AssertionError("STUB WAS CALLED")` and the test
+  still PASSED, so the fake was never invoked once. The test's assertion
+  (`payload["semantic_provider"] == "lsp"`) was always being satisfied by the REAL code path.
+
+So the fake and the `monkeypatch` fixture are REMOVED rather than repointed -- the test now plainly
+  exercises what it always actually exercised, and is strictly stronger for it.
+
+PERTURBATION PROOF that the de-stubbed test still discriminates (a test I just edited must be shown
+  able to fail): hardcode `semantic_provider="native"` at the CLI call site -> the test FAILS;
+  restore -> PASSES, main.py byte-identical between arms.
+
+Verified: repo_map.py 15,250 -> 15,216 (27 under its pin); bare-call, silent-loss and
+  handler-disposition ratchets green; 109 passed across this branch's tests plus the touched
+  semantic-provider suite; ruff check clean; mypy clean over 76 files.
+
+Remaining on this branch: main.py +11, which #1107 removes. Nothing else.
+
+* fix: strip ANSI before asserting on --help; my test read colored output
+
+Six CI test-python lanes failed on this branch's own positive control: "blast-radius --help lacks
+  --max-depth, so it is not the command this test thinks it is".
+
+The command is fine. MY TEST WAS WRONG. Rich renders each flag as SEVERAL ANSI spans, so `--json`
+  arrives as ESC[1;36m + "-" + ESC[0m + ESC[1;36m + "-json" + ESC[0m. A literal `"--max-depth" in
+  output` therefore fails on COLORED output and passes on PLAIN output.
+
+That makes it an environment-dependent assertion, not a contract test -- and the environment it
+  passed in was mine. CliRunner emits no color without a TTY, so my local run was the arm
+  STRUCTURALLY UNABLE to see the defect. Same shape as this repo's standing law that a control which
+  cannot cross the boundary is the same arm twice.
+
+Reproduced deliberately before fixing: `FORCE_COLOR=1 pytest <test>` fails locally, one command.
+  Both arms now pass -- 7 passed with color, 7 passed without -- and BOTH are run, because fixing it
+  in only the arm I can see is how this happened in the first place.
+
+`tests/unit/test_cli_modes_ast_misc.py` already carried exactly this `_strip_ansi` helper. This file
+  simply never copied it, which is the more useful lesson than the regex: the repo had the answer
+  and a new test re-derived the bug instead.
+
+Checked the sibling for the same latent defect rather than assuming:
+  `test_cli_deadline_coverage_gaps.py` passes under FORCE_COLOR (39 passed) -- it does not
+  substring-match on rendered help.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Co-authored-by: cursor-agent (auto) <noreply@cursor.com>
+
+### Chores
+
+- Delete three cursor dispatch-scratch files from main and ignore the pattern
+  ([#1110](https://github.com/oimiragieo/tensor-grep/pull/1110),
+  [`90993f4`](https://github.com/oimiragieo/tensor-grep/commit/90993f4dc8c3eec0e2d38937a00064e5ccc719fb))
+
+`.claude/` on main carried three one-shot `cursor-agent -p` task specs -- about 20KB of dispatch
+  scratch that was never repo content:
+
+.claude/cursor_task_ci_local_onboarding.md 4,012 B .claude/cursor_task_reten2.md 9,811 B
+  .claude/cursor_task_reten3.md 5,982 B
+
+Verified unreferenced before deleting, not assumed: grep across *.md/*.py/*.json/*.yml finds 0 files
+  mentioning any of the three, with a positive control proving the grep works (the same search finds
+  `skill_anchor_audit` in 2 skill files). An unreferenced-file claim backed by a grep nobody proved
+  can return a hit is just a zero.
+
+One of them is mine. `cursor_task_ci_local_onboarding.md` rode in on #1100, whose actual deliverable
+  was a docs page -- the task spec used to PRODUCE the page got committed alongside it. I found it
+  while tracing an unexpected `A` entry in a merge commit, not because any gate objected.
+
+THE DELETION IS THE CLEANUP; THE IGNORE IS THE FIX. Three of these reached main across different
+  sessions, so the failure is structural, not a lapse: nothing stopped them. `.gitignore` now
+  carries `.claude/cursor_task_*.md`, verified with a control -- created a probe file and confirmed
+  `git check-ignore` names the new rule.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- #72 premise measured -- the benchmark number is on no public surface
+  ([#1112](https://github.com/oimiragieo/tensor-grep/pull/1112),
+  [`c48d6bd`](https://github.com/oimiragieo/tensor-grep/commit/c48d6bd8137d0b072d0a939ce635dee73269c8fd))
+
+The gated board asserted "public wording still needs approval", which presumes a public claim exists
+  to re-word. Measured across every public surface today:
+
+root README.md ............................. no headline multiple rust_core/README.md (the PyPI long
+  desc, which pyproject's `readme =` points at) ... no headline multiple pyproject.toml
+  ............................. no headline multiple GitHub About blurb ......................... no
+  headline multiple packaging: include = ["LICENSE", "NOTICE"] . docs/ never ships
+
+The 7.5x/6.4x pair lives only in BACKLOG.md, TASK_BOARD.md and one audit -- all internal. So there
+  is nothing public to withdraw, and the CEO gate is on PUBLISHING a number, not on retracting one.
+
+I checked root README.md first and nearly wrote "clean" on that alone. The published long
+  description is a DIFFERENT file; enumerating the populations is what turned a one-file answer into
+  a four-surface one.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Measure the _add trap on the published wheel — only one half reproduces
+  ([#1111](https://github.com/oimiragieo/tensor-grep/pull/1111),
+  [`1ef8dd4`](https://github.com/oimiragieo/tensor-grep/commit/1ef8dd42c9b17774beecb1a435f9516abebfdea7))
+
+* docs: measure the `_add` trap on the published wheel -- only ONE half reproduces
+
+The external dogfood's #1 was "prepare 'add retry with tests' -> repo_map._add @ conf=1.0,
+  ask=false". Measured against PUBLISHED v1.113.2 in a clean python:3.12-slim container, on a corpus
+  holding both `_add` and an obvious `replace_with_retry`:
+
+primary_symbol : '_add' <- selected primary_conf : 1.0 <- at full confidence ask_required : True <-
+  but the ask IS enforced downgrade : []
+
+RANKING half REPRODUCES: a three-character underscore-prefixed helper beats a well-named function on
+  a query word. That is the reported defect and it is real on the shipped build.
+
+AUTO-EDIT half does NOT, on this corpus: `ask_user_before_editing.required` is True, so a
+  contract-following agent asks before editing. The report said ask=false; their corpus differed.
+
+The split changes the item's SEVERITY, which is why it is worth writing down. As "an agent silently
+  edits the wrong symbol" it is a safety bug; as "ranking picks a poor primary but the human check
+  still fires" it is a quality bug with a working backstop. On the published build it is currently
+  the second. Do not re-file it as the first without re-measuring, and do not close it as fixed
+  either.
+
+Also recorded so nobody mistakes it for a guard failure: `overall: 1.0` with EMPTY downgrade_reasons
+  is CORRECT -- the degraded ceiling only applies when a reason exists. The ranking here is
+  confidently wrong, which no confidence guard can detect. A guard bounds the number against the
+  REASONS, never against the ANSWER.
+
+METHOD CAVEAT, kept because it nearly buried the finding: my first verdict line required BOTH
+  "_-prefixed at high confidence" AND "ask_required == False", so it printed "trap NOT reproduced"
+  while half of it plainly did. One compound assertion over two independent properties collapses to
+  a single boolean that hides which half failed. Assert the halves separately.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: audit the 6 DEMAND_GATED rows -- all accurate, unlike 2 of the 6 BLOCKED
+
+The closeout audit checked the 6 BLOCKED rows and found 2 stale (F8 cites a file that does not
+  exist; MCP-SURFACE is Python-only, not rust-blocked). The 6 DEMAND_GATED rows had never been
+  checked at all. Checked them: all six hold, including RUST-REPLACE-TOCTOU, whose own acceptance
+  signal -- the residual-TOCTOU characterization pin in backend_cpu.rs INVERTING -- has NOT fired,
+  so the row is correctly still open rather than quietly satisfied.
+
+THE PATTERN IS THE FINDING, not the six greens. The BLOCKED rows rotted because their evidence
+  points at LINE-LEVEL FACTS about code that moved. The DEMAND_GATED rows held because they cite
+  CONDITIONS ("demand for X", "this pin inverting"). When writing a gated row, cite the condition: a
+  row that names a line number has a shelf life.
+
+TWO OF MY OWN ZEROS IN THIS AUDIT WERE WRONG, and both would have produced a false "stale row":
+
+- `grep request_queue_size session_daemon.py` -> 0 hits, which reads as DD-006 citing a missing
+  symbol. It is not: the daemon subclasses `socketserver.ThreadingMixIn, socketserver.TCPServer`, so
+  the value is an INHERITED default and the row's "default request_queue_size=5" is exactly right.
+  An explicit hit would have CONTRADICTED the row. - AST-DSL-PARITY returned 0 because I globbed
+  `cli/` when the backends live in `backends/`.
+
+A control (`ZzzNotARealSymbolXyz` -> 0) proved the grep MECHANISM worked in both cases. That is what
+  makes a wrong PATH the dangerous residual: the mechanism check passes while the question goes
+  unanswered. A control proves your tool RUNS; it does not prove you pointed it at the right thing.
+
+* docs: record that the two governance docs have no size gate (368KB / 331KB)
+
+Measured at the end of a session that appended heavily to both:
+
+AGENTS.md 368 KB (+69 lines today) docs/BACKLOG.md 331 KB (+371 lines today)
+
+Nothing gates this. `scripts/file_size_budget.py` covers source only -- 0 mentions of AGENTS.md /
+  BACKLOG.md / TASK_BOARD.md -- and no doc-size check exists anywhere in scripts/.
+
+This is the SAME failure class this session hit in MEMORY.md, with one difference that is the whole
+  point: MEMORY.md HAD a limit, so it announced itself when entries at the tail went silently
+  unreadable. These two have no such signal. A truncated governance doc is worse than a missing one,
+  because the reader believes they have the whole thing.
+
+Partial mitigation already in place and worth not breaking: CLAUDE.md reaches AGENTS.md through GREP
+  commands rather than telling anyone to read it end to end. Grep-first access is what makes a 368KB
+  reference usable, and it is exactly why the A-law summary in CLAUDE.md was replaced earlier today
+  with a derivation command instead of being extended inline -- extending it would have grown the
+  file AND rotted again at the next law.
+
+NOT fixed here, deliberately. The options -- split AGENTS.md by law family with an index, age dated
+  receipts out to docs/audits/ with pointers, or add a size ratchet so growth becomes deliberate --
+  each change how every agent in this repo finds things. That is a design pass, not a late-session
+  edit. Filed with the numbers so the next person starts from a measurement rather than a hunch.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Reconcile the TASK_BOARD stamp to v1.113.3 (unbreaks main)
+  ([#1114](https://github.com/oimiragieo/tensor-grep/pull/1114),
+  [`ea56a07`](https://github.com/oimiragieo/tensor-grep/commit/ea56a07a5aa506c0c448aa0977f7456840a8b17e))
+
+* chore: add report-only governance-doc size visibility
+
+AGENTS.md and docs/BACKLOG.md grow unbounded with nothing anywhere reporting their size (3893/3548
+  lines as of this change). Both are append-only by design (dated instrument laws, council
+  receipts), so they cannot be added to the file_size_budget.py ratchet without forbidding the exact
+  appends the house rules mandate.
+
+Add governance_doc_census() + a --docs-report flag that print line/byte counts for AGENTS.md,
+  CLAUDE.md, docs/BACKLOG.md, and docs/TASK_BOARD.md, git-tracked only, never affecting the gate's
+  exit code. Choosing a blocking threshold is left to the CEO.
+
+* docs: reconcile the TASK_BOARD stamp to v1.113.3 (unbreaks main)
+
+Publishing v1.113.3 pushed the board's reconcile stamp from 5 to 6 releases behind, crossing
+  test_task_board_freshness's tolerance. Six test-python lanes plus test-gpu-nvidia went red on
+  every open PR AND on main:
+
+AssertionError: docs/TASK_BOARD.md's reconcile stamp is v1.111.6 while pyproject ships v1.113.3 -- 6
+  releases behind (tolerance 5).
+
+The gate is correct and fired on genuine neglect; the fix is to reconcile, not to widen the
+  tolerance. This session actually did the reconcile work -- three releases published and verified
+  per-artifact, four PRs merged, the #72 premise corrected, the skill library audited -- so the new
+  stamp records measurements rather than re-stamping an unverified version.
+
+Inserted ABOVE the existing stamps rather than overwriting: the board keeps its reconcile history
+  newest-first, and the gate reads the first match. Verified both properties in the edit script
+  (assert the first stamp is 1.113.3, assert 1.111.6 survives).
+
+Red arm is CI itself: six lanes failed this exact assertion before the change;
+  tests/unit/test_task_board_freshness.py is 11 passed after it.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.113.3 (2026-08-23)
 
 ### Bug Fixes
