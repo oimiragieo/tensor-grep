@@ -121,3 +121,9 @@ src/tensor_grep/core/profile_stats
 /.factory/skills/
 /.factory/init.sh
 /.review_tmp/
+
+# Cursor/agent DISPATCH SCRATCH. These are one-shot task specs handed to `cursor-agent -p`,
+# not repo content -- three of them reached main before anyone noticed (~20KB), and one landed
+# via a PR whose actual deliverable was a docs page. Ignoring the pattern is the structural fix;
+# deleting the three was only the cleanup.
+.claude/cursor_task_*.md
