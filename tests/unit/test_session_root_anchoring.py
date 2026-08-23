@@ -49,24 +49,35 @@ def test_subtree_under_a_nested_manifest_still_resolves_to_the_vcs_root(tmp_path
     )
 
 
-def test_no_marker_falls_back_to_todays_behaviour(monkeypatch, tmp_path: Path) -> None:
+def test_no_marker_falls_back_to_todays_behaviour(tmp_path: Path) -> None:
     """A directory with no project marker above it keeps the old semantics.
 
     Without this the change would silently relocate stores for every ad-hoc directory.
 
-    THE TEST MUST CONTROL ITS OWN ENVIRONMENT, BUT NOT BY STUBBING THE THING IT TESTS. The first
-    draft monkeypatched `_find_project_root` itself, which a codex audit (2026-08-22) correctly
-    called out: it could not observe the real resolver at all, and passed against the PRE-CHANGE
-    code too. The premise really is false on this machine -- `%TEMP%` holds a stray `Cargo.toml`
-    and `$HOME` a `package.json`, so a pytest `tmp_path` genuinely HAS a marker ~5 levels up.
-    The honest control is to bound the ASCENT so the real walk cannot leave the isolated subtree.
+    THIS TEST HAS NO MONKEYPATCH, AND THAT IS THE POINT -- it needed one twice, and both times the
+    control was wrong in a different way:
+
+      1. The first draft stubbed `_find_project_root` itself. A codex audit called it out: it
+         could not observe the real resolver at all, and passed against the PRE-CHANGE code too.
+      2. The replacement bounded `_MAX_PROJECT_ROOT_ASCENT` on `session_store`. Splitting the
+         resolver into `session_root` silently DISARMED that: Python resolves the bare name
+         through the DEFINING module's globals, so rebinding the re-exported copy left the real
+         reader on 24. Measured after the split -- patch `session_store`, `session_root` still
+         sees 24. The test kept passing while controlling nothing, which is the worst outcome
+         available.
+
+    Both controls existed because `tmp_path` lives under `%TEMP%`, which holds a stray
+    `Cargo.toml` on this machine, so the stated premise ("no marker anywhere above") was FALSE.
+    `_shared_territory_roots` now makes the premise TRUE by construction -- temp and home are
+    denied outright -- so the honest test is the plain assertion with no control at all.
+
+    What guards that: `test_a_project_under_the_temp_dir_does_not_anchor_to_the_temp_dir` below,
+    which is perturbation-proved (drop the deny rule from the manifest pass and it FAILS). If that
+    deny rule is ever removed, this test fails too rather than passing vacuously.
     """
     sub = tmp_path / "loose" / "dir"
     sub.mkdir(parents=True)
 
-    # depth of `sub` below tmp_path is 2, so an ascent of 3 covers sub, loose, tmp_path and stops
-    # strictly BELOW any ambient marker on the host.
-    monkeypatch.setattr(session_store, "_MAX_PROJECT_ROOT_ASCENT", 3)
     assert session_store._resolve_root(sub) == sub.resolve()
 
 

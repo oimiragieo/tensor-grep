@@ -19,6 +19,7 @@ There are TWO resolutions here and confusing them has already caused one regress
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -49,12 +50,21 @@ def _shared_territory_roots() -> frozenset[Path]:
     `<temp>/tmpXXXX/proj` resolved to `<temp>` itself, which silently routed the client away from
     the daemon its own test had just started. An accepted risk that a test can trip is a defect.
     """
+    # NEVER `continue` past an unresolvable candidate. This is a DENY set: dropping an entry
+    # silently re-opens the exact escape the function exists to close, and the caller cannot tell
+    # a complete deny set from a truncated one. The silent-loss census ratchet caught precisely
+    # this shape here (`tests/unit/test_silent_loss_census_ratchet.py`) and it was right to --
+    # an OSError resolving TEMP would have let every tree under TEMP share one store again.
+    #
+    # So an unresolvable candidate degrades to its UNRESOLVED path instead of vanishing. That is
+    # strictly better than dropping it: the literal path still matches a caller who names the same
+    # spelling, so the deny rule keeps working for the common case rather than failing open.
     roots: set[Path] = set()
     for candidate in (tempfile.gettempdir(), os.path.expanduser("~")):
         try:
             roots.add(Path(candidate).resolve())
         except OSError:  # pragma: no cover - unresolvable HOME/TEMP
-            continue
+            roots.add(Path(candidate))
     return frozenset(roots)
 
 
@@ -178,3 +188,55 @@ def _session_payload_path(root: Path, session_id: str) -> Path:
     if resolved != sessions_dir_resolved and sessions_dir_resolved not in resolved.parents:
         raise ValueError(f"Refusing session id outside sessions dir: {session_id!r}")
     return resolved
+
+
+_SESSION_NEARBY_LOOKUP_ENV = "TG_SESSION_NEARBY_LOOKUP"
+
+
+def _nearby_lookup_enabled() -> bool:
+    # audit S9: default to confined (explicit-root) lookups; only widen to parent/sibling
+    # discovery when the operator explicitly opts in.
+    raw_value = os.environ.get(_SESSION_NEARBY_LOOKUP_ENV)
+    if raw_value is None:
+        return False
+    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _nearby_session_roots(path: str = ".") -> list[Path]:
+    root = _resolve_root(Path(path))
+    candidates: list[Path] = [root]
+    candidates.extend(parent for parent in root.parents if parent != root)
+    try:
+        candidates.extend(child for child in root.iterdir() if child.is_dir())
+    except OSError:
+        pass
+
+    seen: set[str] = set()
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            resolved = candidate
+        key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
+        if key in seen:
+            continue
+        seen.add(key)
+        if _index_path(resolved).exists():
+            roots.append(resolved)
+    return roots
+
+
+def _session_root_for_payload(session_id: str, path: str = ".") -> Path:
+    root = _resolve_root(Path(path))
+    if _session_payload_path(root, session_id).exists():
+        return root
+    # audit S9: nearby (parent/sibling) discovery silently loads payloads from outside the
+    # requested root. Keep it off unless explicitly enabled.
+    if _nearby_lookup_enabled():
+        for candidate in _nearby_session_roots(path):
+            if candidate == root:
+                continue
+            if _session_payload_path(candidate, session_id).exists():
+                return candidate
+    return root

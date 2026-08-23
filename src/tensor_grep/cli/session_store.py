@@ -39,6 +39,52 @@ from tensor_grep.cli.repo_map import (
     build_symbol_refs_from_map,
 )
 
+# Project-root resolution lives in `session_root` (split out when the file-size ratchet
+# refused this file's growth). Re-exported here because `session_daemon`, `ledger_store`
+# and `evidence_receipt` import these names from `session_store`; moving them without the
+# re-export would be an invisible break for three modules. `X as X` is the EXPLICIT
+# re-export form -- mypy runs with implicit re-export disabled, so the plain spelling
+# fails CI for every consumer. The aliases are load-bearing; do not tidy them away.
+from tensor_grep.cli.session_root import (
+    _MAX_PROJECT_ROOT_ASCENT as _MAX_PROJECT_ROOT_ASCENT,
+)
+from tensor_grep.cli.session_root import (
+    _PROJECT_MANIFEST_MARKERS as _PROJECT_MANIFEST_MARKERS,
+)
+from tensor_grep.cli.session_root import (
+    _SESSION_NEARBY_LOOKUP_ENV as _SESSION_NEARBY_LOOKUP_ENV,
+)
+from tensor_grep.cli.session_root import (
+    _find_project_root as _find_project_root,
+)
+from tensor_grep.cli.session_root import (
+    _index_path as _index_path,
+)
+from tensor_grep.cli.session_root import (
+    _nearby_lookup_enabled as _nearby_lookup_enabled,
+)
+from tensor_grep.cli.session_root import (
+    _nearby_session_roots as _nearby_session_roots,
+)
+from tensor_grep.cli.session_root import (
+    _resolve_literal_dir as _resolve_literal_dir,
+)
+from tensor_grep.cli.session_root import (
+    _resolve_root as _resolve_root,
+)
+from tensor_grep.cli.session_root import (
+    _session_payload_path as _session_payload_path,
+)
+from tensor_grep.cli.session_root import (
+    _session_root_for_payload as _session_root_for_payload,
+)
+from tensor_grep.cli.session_root import (
+    _sessions_dir as _sessions_dir,
+)
+from tensor_grep.cli.session_root import (
+    _shared_territory_roots as _shared_territory_roots,
+)
+
 logger = logging.getLogger(__name__)
 
 # Task #287. Windows ERROR_PATH_NOT_FOUND: a path COMPONENT did not resolve, as opposed to
@@ -89,7 +135,6 @@ _SESSION_MAX_ENV = "TG_SESSION_MAX"
 _DEFAULT_SESSION_MAX = 64
 # audit S9: nearby-root session discovery loads payloads from parent/sibling dirs. Confine
 # resolution to the explicit root by default; opt back in with TG_SESSION_NEARBY_LOOKUP=1.
-_SESSION_NEARBY_LOOKUP_ENV = "TG_SESSION_NEARBY_LOOKUP"
 
 
 @dataclass
@@ -157,15 +202,6 @@ def _configured_positive_int(env_var: str, default: int) -> int:
 
 def _configured_session_max() -> int:
     return _configured_positive_int(_SESSION_MAX_ENV, _DEFAULT_SESSION_MAX)
-
-
-def _nearby_lookup_enabled() -> bool:
-    # audit S9: default to confined (explicit-root) lookups; only widen to parent/sibling
-    # discovery when the operator explicitly opts in.
-    raw_value = os.environ.get(_SESSION_NEARBY_LOOKUP_ENV)
-    if raw_value is None:
-        return False
-    return raw_value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _json_size_bytes(payload: dict[str, Any]) -> int:
@@ -348,66 +384,6 @@ class _SessionServeResponseCache:
     @property
     def oversized_skips(self) -> int:
         return self._oversized_skips
-
-
-# Project-root resolution lives in `session_root` (split out when the file-size ratchet refused
-# this file's growth). Re-exported here because `session_daemon`, `ledger_store` and
-# `evidence_receipt` all import these names from `session_store`; moving them without the
-# re-export would be an invisible break for three modules.
-# `X as X` is the EXPLICIT re-export form. mypy runs with implicit re-export disabled, so the
-# plain `from ... import X` spelling type-checks locally yet fails CI with
-# "does not explicitly export attribute" for every consumer -- which is exactly what happened.
-from tensor_grep.cli.session_root import (  # noqa: E402  (deliberate re-export)
-    _MAX_PROJECT_ROOT_ASCENT as _MAX_PROJECT_ROOT_ASCENT,
-    _PROJECT_MANIFEST_MARKERS as _PROJECT_MANIFEST_MARKERS,
-    _find_project_root as _find_project_root,
-    _index_path as _index_path,
-    _resolve_literal_dir as _resolve_literal_dir,
-    _resolve_root as _resolve_root,
-    _session_payload_path as _session_payload_path,
-    _sessions_dir as _sessions_dir,
-    _shared_territory_roots as _shared_territory_roots,
-)
-
-
-def _session_root_for_payload(session_id: str, path: str = ".") -> Path:
-    root = _resolve_root(Path(path))
-    if _session_payload_path(root, session_id).exists():
-        return root
-    # audit S9: nearby (parent/sibling) discovery silently loads payloads from outside the
-    # requested root. Keep it off unless explicitly enabled.
-    if _nearby_lookup_enabled():
-        for candidate in _nearby_session_roots(path):
-            if candidate == root:
-                continue
-            if _session_payload_path(candidate, session_id).exists():
-                return candidate
-    return root
-
-
-def _nearby_session_roots(path: str = ".") -> list[Path]:
-    root = _resolve_root(Path(path))
-    candidates: list[Path] = [root]
-    candidates.extend(parent for parent in root.parents if parent != root)
-    try:
-        candidates.extend(child for child in root.iterdir() if child.is_dir())
-    except OSError:
-        pass
-
-    seen: set[str] = set()
-    roots: list[Path] = []
-    for candidate in candidates:
-        try:
-            resolved = candidate.resolve()
-        except OSError:
-            resolved = candidate
-        key = str(resolved).lower() if sys.platform.startswith("win") else str(resolved)
-        if key in seen:
-            continue
-        seen.add(key)
-        if _index_path(resolved).exists():
-            roots.append(resolved)
-    return roots
 
 
 def _load_index(root: Path) -> list[SessionRecord]:
