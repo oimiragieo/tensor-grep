@@ -90,6 +90,182 @@ session has no task-store; the board is the durable tracker.
   says so and lists the six valid names. The remaining RULESETS question is the CEO-gated packaging
   one (a `tensor-grep[scan]` extra), not a correctness bug.
 
+## Recent campaign notes (2026-08-23) - G4.2 REPRODUCED: the warm cache is unreachable from a SUBTREE path
+
+Fourth of the external dogfood's five UNVERIFIED findings. The report said warm
+`session edit-plan` was ~2.9s and the daemon showed `response_cache_hits=0`. **Reproduced, and
+the mechanism is a real product defect, not a cold cache.**
+
+### The measurement (published v1.111.7, daemon RUNNING)
+
+Two identical `tg defs src missing_scan_paths --json` calls against a live daemon:
+
+```
+call 1 (cold)  2505 ms
+call 2 (same)  2702 ms      <- SLOWER, no warm benefit at all
+counters:      response_cache_hits=0  entries=0  cache_misses=0
+```
+
+`cache_misses = 0` is the tell, and it is the reason this is a defect rather than a cold start.
+A miss would prove the daemon was consulted and had nothing. **Zero misses proves it was never
+consulted.**
+
+### The control that isolates it
+
+Same daemon, same symbol, only the PATH argument changed:
+
+| query path | daemon counters after |
+|---|---|
+| `src/` (a subtree of the daemon root) | `misses=0, entries=0` — **daemon never consulted** |
+| `.` (exactly the daemon root) | `misses=1, entries=1` — consulted, stored |
+| `.` again | **`hits=1`** — cache works correctly |
+
+So the response cache is functioning perfectly. It is simply **unreachable unless the query path
+exactly equals the daemon root**.
+
+### Why this matters more than the reported symptom
+
+The tool's own guidance tells agents to scope queries to a subdirectory — `tensor-grep-prepare`
+says *"Prefer `REPO/src`"*, and `tensor-grep-find-and-route` says *"always scope `tg find` to a
+PATH"*. Following that advice **silently disables the warm-daemon moat**. An agent doing exactly
+what the docs recommend gets cold-path latency and a daemon reporting `hits=0`, with no signal
+explaining why.
+
+There is no honesty field for this either: the payload does not say "daemon skipped: path is not
+the daemon root". It just runs cold.
+
+### Status
+
+VERIFIED, not fixed. The fix touches daemon path-matching (root vs subtree containment) and is
+shared by every warm-path command, so it needs its own RED-first change with a subtree fixture and
+a cross-check that a subtree query cannot read a STALE root-scoped entry. Filed rather than patched
+into an unrelated branch.
+
+**Kin to G4.1**: both are path-identity bugs in the session/daemon layer — G4.1 is cwd-keyed
+STORE selection, this is root-equality daemon selection. A fix for either should check whether it
+also resolves the other.
+
+## Recent campaign notes (2026-08-23) - G4.4 REPRODUCED, G4.5 NOT REPRODUCED (opposite numbers)
+
+Two more of the external dogfood's five UNVERIFIED findings, probed against the published
+v1.111.7 wheel.
+
+### G4.4 — `tg dogfood` version-skew FAIL: **REPRODUCED**, with a sharper diagnosis
+
+```
+pyproject.toml : 1.112.0      <- the worktree (a release landed)
+installed tg   : 1.111.7      <- what every probe actually executes
+verdict        : FAIL, agent-readiness passed=15 failed=8
+```
+
+All 8 failures are ONE cause, and the payload says so verbatim:
+
+```
+agent_readiness.expected_version = 1.112.0
+public-version-powershell :: expected one of ['tensor-grep 1.112.0', 'tg 1.112.0']
+                             in version output, got ['tensor-grep 1.111.7']
+```
+
+`expected_version` is read from the **worktree's `pyproject.toml`**, while every `public-version-*`
+and `public-doctor-*` probe runs the **installed binary**. The gate is comparing a CHECKOUT against
+a PUBLISHED ARTIFACT and calling the difference a failure. The reporter's phrasing — *"confuses
+'published binary' vs 'this checkout'"* — is exactly right.
+
+Their proposed fix is sound: default `--expected-version` to the INSTALLED binary, with an optional
+pin to pyproject for the release-verification case. Two different questions ("does the published
+artifact work" vs "does this checkout match what shipped") currently share one default, and the
+default answers the rarer one.
+
+**Probe honesty:** my first attempt at this read a top-level `checks` key and reported `failed
+checks: 0` while the text output said 8. That was MY probe being wrong, not a payload/text
+divergence in the product — the failures live under `verdict.failed_checks` and
+`agent_readiness.results`. Recorded because "JSON says 0, text says 8" would have been a plausible
+and completely false product bug.
+
+### G4.5 — LSP provider split-brain: **NOT REPRODUCED**, and the numbers are the OPPOSITE
+
+Reported: `defs --provider lsp` -> `fallback-native, lsp_count=0`, while `agent --provider lsp`
+claimed `lsp_proof=true` on a native anchor — i.e. the weaker command over-claiming.
+
+Measured here:
+
+| Command | Reported | Measured |
+|---|---|---|
+| `defs --provider lsp` | `fallback-native`, `lsp_count=0` | `lsp_evidence_status=lsp_proof`, `lsp_count=1`, `native_count=1`, `merged_count=1`, **`fallback_used=False`**, full `provider_agreement` object present |
+| `agent --provider lsp` | `lsp_proof=true` on a native anchor | `lsp_proof=None`, no `provider_agreement` key at all |
+
+So on this machine `defs` is the command with the RICHER evidence and `agent` is the one carrying
+NO lsp fields — the reverse of the report. The most likely explanation is environmental: their
+Pyright was not serving that symbol (hence `lsp_count=0`), mine was.
+
+**This is NOT a refutation.** It means the finding is environment-dependent, which makes it a
+worse bug to reason about, not a lesser one: the same command emits different honesty fields
+depending on whether a language server happens to be warm. What both runs agree on is the
+reporter's actual concern — **an agent cannot tell from the payload alone whether "lsp" evidence
+is real**, because `agent` ships no `provider_agreement` object to cross-check while `defs` does.
+That asymmetry reproduces here and is the part worth fixing.
+
+### Running tally on the five unverified findings
+
+| # | Finding | Verdict |
+|---|---|---|
+| G4.1 | session cwd footgun | **REPRODUCED** — worse than reported (two cwd-keyed stores; `list` returns 64 wrong sessions) |
+| G4.2 | warm-path latency / `response_cache_hits=0` | not yet probed |
+| G4.3 | Windows AST `run` argv fragility | not yet probed |
+| G4.4 | `tg dogfood` version skew | **REPRODUCED** — checkout-vs-published comparison |
+| G4.5 | LSP provider split-brain | **NOT REPRODUCED** — opposite numbers; environment-dependent, and the payload asymmetry is the real finding |
+
+## Recent campaign notes (2026-08-23) - G4.1 VERIFIED: session store is cwd-keyed, and `list` answers from the WRONG store
+
+The external agent dogfood (v1.111.7) reported: `tg session open src` then `tg session show <id>`
+from the repo root returns "Session not found", while `list` works from the parent. **Reproduced
+exactly, and the mechanism is worse than the report describes.**
+
+### Reproduction (published wheel, v1.111.7)
+
+```
+$ tg session open src --json
+  session_id: session-20260823004352130555-src-6dc6b0f9
+
+$ cd src && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  {"version": 1, ...}                      # WORKS
+
+$ cd .. && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  Session not found: session-20260823004352130555-src-6dc6b0f9   # SAME ID, one dir up
+```
+
+### The mechanism — TWO stores, selected by cwd
+
+```
+src/.tensor-grep/sessions/     <- holds the new session (1 match)
+.tensor-grep/sessions/         <- 67 files, holds 0 matches for that id
+```
+
+`tg session list` from the repo root returns **64 sessions and does not contain the one just
+opened**. That is the part the report understates: this is not a "not found" error, it is a
+**confidently wrong answer**. An agent that opens a session, then lists from a parent directory,
+receives a plausible non-empty list that silently omits its own session. A missing-item error is
+recoverable; a wrong list that looks complete is not.
+
+### Why it is fixable
+
+The session id **already carries its root token**: `session-<ts>-src-<hash>`. So `show` has enough
+information in the id itself to resolve which store to read, without depending on cwd. The reporter's
+proposed fix ("resolve session store from ID, or require `--root` and error with the exact path to
+use") is therefore implementable, not aspirational.
+
+### Severity for agents
+
+HIGH. An agent's cwd changes between turns for ordinary reasons (a tool call, a subprocess, a
+worktree). A session handle that silently changes meaning with cwd is a state bug an agent cannot
+detect from the payload -- both answers look successful.
+
+### Status
+
+VERIFIED, not fixed. The fix touches session-store resolution, which is shared state used by
+`open`/`show`/`list`/`edit-plan`; it needs its own RED-first change with a two-store fixture, and
+must not silently re-point existing sessions. Filed rather than patched inside an unrelated branch.
+
 ## Recent campaign notes (2026-08-22) - EXTERNAL AGENT DOGFOOD of v1.111.7: triage with per-finding verification
 
 An external AI agent ran a full agentic dogfood of `tg 1.111.7` against a DIFFERENT checkout

@@ -178,7 +178,22 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # separate OUTPUT BUCKET, resolved outside the handler. Not worth widening the rule for:
     # "appends to a collection that is also returned" would match almost every real accumulator
     # and blind the detector. Recorded here instead, per CONTRACTS.md section 0.
-    "session_store.py": 2,
+    # RELOCATION, not a new site, and the arithmetic is spelled out because this repo's rule is
+    # that GROWTH must be hardened while RELOCATION may re-pin ONLY on proof the total is
+    # unchanged. Measured before and after the 2026-08-23 split of project-root resolution into
+    # `session_root.py`:
+    #     session_store.py  2 -> 1     (the `_nearby_session_roots` handler moved out)
+    #     session_root.py   absent -> 1 (the same handler, byte-identical, at its new home)
+    #     TOTAL             2 -> 2
+    # session_store's pin is LOWERED in the same change, because this ratchet fails on a pin left
+    # above the real count -- a pin above the count accepts a range, and a range is where the next
+    # regression hides.
+    #
+    # The other handler in `session_root.py` (`_shared_territory_roots`) is deliberately NOT a
+    # silent-loss site: it degrades an unresolvable candidate to its unresolved path instead of
+    # dropping it, because that set is a DENY set and a dropped entry fails OPEN.
+    "session_store.py": 1,
+    "session_root.py": 1,
     "ledger_store.py": 1,
     "runtime_paths.py": 1,
     "session_daemon.py": 1,
