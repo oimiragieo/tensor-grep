@@ -495,7 +495,7 @@ Before implementing any AI/subagent-drafted plan, **cite `file:line` for every f
 
 **Why / incident:** AI plans reliably identify plausible-but-wrong edit locations (dead code paths, renamed symbols, already-fixed lines). A citation-enforced read-only review caught **5 blockers in two unverified plans in a single session**. After building, run a **post-build adversarial audit** (a distinct stage from planning) until **zero must-fix findings** remain — that zero-finding state is the convergence gate before promoting to a draft PR. See the global skill `verify-plan-against-code`.
 
-**Post-merge gotcha:** apply follow-up fixes **by SYMBOL, not line number** — a squash-merge shifts every line below the change, so "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name via `tg defs` or grep (`AGENTS.md:902`).
+**Post-merge gotcha:** apply follow-up fixes **by SYMBOL, not line number** — a squash-merge shifts every line below the change, so "fix `main.py:8351`" is stale the moment anything above it lands. Re-anchor on the function/const name via `tg defs` or grep (`AGENTS.md:902`).
 
 **A banked hypothesis is not exempt from this gate, even your own (#736, 2026-07-24).** A one-line
 memory note claiming a C symbol-graph mis-kind was fixable by "requiring `function_declarator`
