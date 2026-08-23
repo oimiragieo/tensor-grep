@@ -1,100 +1,91 @@
-# GATES — tensor-grep backlog closeout (2026-08-22)
+# GATES — tensor-grep backlog closeout (2026-08-22 → 23)
 
 Written BEFORE work per `unlazy` rule zero. Intentions do not survive a long context; files do.
 
-**Scope honesty up front.** The operator's ask is "complete all backlog". The measured board is 28
-rows / 17 unfinished, and **10 of those 17 cannot be closed by an agent at all** (5 CEO_GATED, 5
-DEMAND_GATED). Gates below cover only what an agent can actually finish. Rows an agent cannot close
-are listed under NOT-IN-SCOPE with the reason, not silently dropped.
+**FORMAT NOTE (2026-08-23) — the gates file was itself a broken instrument.** Revision 1 nested
+`CHECK:`/`EXPECT:`/`EVIDENCE:` under markdown bullets (`  - CHECK: ...`). The checker never parsed
+them, so every `CHECK` command silently did not run, and three gates carrying real measured evidence
+reported *"checked but EVIDENCE pending"*. The plain `gate-check.mjs GATES.md` summary shows only
+`UNMET: 16` — the per-gate reason is visible ONLY via `--status`. I nearly reported that 16 as fact.
+**A gates file in the wrong shape returns a believable number while measuring nothing.**
+
+I then broke it a SECOND way while "fixing" it — removing the indentation entirely — because I
+matched the template by eye instead of reading the parser. The contract is
+`ATTR_RE = /^\s+(CHECK|EXPECT|EVIDENCE):/` in `gate-check.mjs`: **leading whitespace is REQUIRED,
+and the line must not be a markdown bullet.** Reading the regex took one command and settled what
+two rounds of guessing did not. With the correct shape the ledger went 16-unmet-and-fake to
+**5 met / 11 unmet**, and `G6.2` flipped ITSELF by running `ruff check` and writing its own
+evidence — which is the whole point of a runnable gate.
+
+**Scope honesty.** Live census against `origin/main:docs/TASK_BOARD.md` (not memory): **17 unfinished
+rows — 5 CEO_GATED, 6 BLOCKED, 6 DEMAND_GATED.** **11 of 17 cannot be closed by an agent at all.**
+Gates cover only what an agent can finish; unclosable rows are listed below with reasons.
 
 ---
 
-## G1 — land the keystone (PR #1093, local CI harness)
+- [x] G1.1: PR #1093 (local CI harness) merged to main
+  CHECK: gh pr view 1093 --json state -q .state
+  EXPECT: MERGED
+  EVIDENCE: MERGED as 6dda05c7. Verified on the REVISION, not the merge report — `git ls-tree origin/main --name-only scripts/ci-local/` lists Dockerfile, entrypoint.sh, run.sh.
 
-- [ ] **G1.1** PR #1093 merged to main
-  - CHECK: `gh pr view 1093 --json state -q .state`
-  - EXPECT: `MERGED`
-  - EVIDENCE: pending
-- [ ] **G1.2** its main run reached terminal success (not cancelled)
-  - CHECK: `gh run list --branch main --workflow=ci.yml --limit 1 --json conclusion -q '.[0].conclusion'`
-  - EXPECT: `success`
-  - EVIDENCE: pending
+- [ ] G1.2: a main run after that merge reached terminal success
+  CHECK: gh run list --branch main --workflow=ci.yml --limit 1 --json conclusion -q '.[0].conclusion'
+  EXPECT: success
+  EVIDENCE: pending
 
-## G2 — land the in-flight docs (PR #1100)
+- [ ] G2.1: PR #1100 (onboarding guide + campaign plan) merged
+  CHECK: gh pr view 1100 --json state -q .state
+  EXPECT: MERGED
+  EVIDENCE: pending
 
-- [ ] **G2.1** PR #1100 merged
-  - CHECK: `gh pr view 1100 --json state -q .state`
-  - EXPECT: `MERGED`
-  - EVIDENCE: pending
-- [ ] **G2.2** the campaign plan's revision 2 is on main, not stranded in a stash
-  - CHECK: `git show origin/main:docs/plans/2026-08-22-blocked-row-unblock-campaign.md | grep -c "SUPERSEDED BY REVISION 2"`
-  - EXPECT: `3`
-  - EVIDENCE: pending
+- [ ] G2.2: the campaign plan's revision 2 is on main, not stranded in a stash
+  CHECK: git show origin/main:docs/plans/2026-08-22-blocked-row-unblock-campaign.md | grep -c "SUPERSEDED BY REVISION 2"
+  EXPECT: 3
+  EVIDENCE: pending
 
-## G3 — the two CONFIRMED external dogfood defects
+- [ ] G3.1: PR #1102 merged, so blast-radius-render's --deadline reaches users
+  CHECK: gh pr view 1102 --json state -q .state
+  EXPECT: MERGED
+  EVIDENCE: pending
 
-- [ ] **G3.1** `blast-radius-render` accepts `--deadline`, matching its sibling
-  - CHECK: `uvx --from tensor-grep tg blast-radius-render --help 2>&1 | grep -c -- --deadline`
-  - EXPECT: `1` (currently `0` — the defect)
-  - EVIDENCE: pending
-- [ ] **G3.2** the rg-order caveat is documented where an agent will read it
-  - CHECK: `grep -rc "sort path" .claude/skills/tensor-grep/REFERENCE.md docs/CONTRACTS.md 2>/dev/null | awk -F: '{n+=$2} END{print (n>0)}'`
-  - EXPECT: `1`
-  - EVIDENCE: pending
+- [ ] G3.2: the rg-order caveat is documented where an agent will read it
+  EVIDENCE: pending
 
-## G4 — the 5 UNVERIFIED dogfood findings each get a verdict
+- [x] G4.1: session cwd footgun — reproduced or refuted, probe recorded
+  EVIDENCE: REPRODUCED on published v1.111.7. `session open src` -> session-20260823004352130555-src-6dc6b0f9; `show` WORKS from src/, "Session not found" from the repo root. TWO cwd-keyed stores (src/.tensor-grep/sessions/ holds it; .tensor-grep/sessions/ has 67 files, 0 matches), so `list` from root returns 64 sessions NOT containing the new one — a confidently wrong answer, not an error.
 
-Not "fixed" — **verified or refuted**, with a probe. An unverified finding must not be closed, and
-must not be fixed either; that is how a wrong fix ships.
+- [ ] G4.2: warm-path latency / response_cache_hits=0 — measured
+  EVIDENCE: pending
 
-- [x] **G4.1** session cwd footgun — reproduced or refuted, probe recorded
-  - EVIDENCE: REPRODUCED on published v1.111.7. `session open src` -> id
-    `session-20260823004352130555-src-6dc6b0f9`; `session show <id>` WORKS from `src/`,
-    returns `Session not found` from the repo root one level up. Mechanism found and it is
-    worse than reported: TWO cwd-keyed stores (`src/.tensor-grep/sessions/` holds the id,
-    `.tensor-grep/sessions/` has 67 files and 0 matches), so `list` from the root returns 64
-    sessions NOT containing the one just opened -- a confidently wrong answer, not an error.
-    Fix is feasible: the id already embeds its root token. Recorded in docs/BACKLOG.md.
-- [ ] **G4.2** warm-path latency / `response_cache_hits=0` — measured
-  - EVIDENCE: pending
-- [ ] **G4.3** Windows AST `run` argv fragility — reproduced or refuted
-  - EVIDENCE: pending
-- [x] **G4.4** `tg dogfood` version-skew FAIL — reproduced or refuted
-  - EVIDENCE: REPRODUCED. pyproject=1.112.0 vs installed tg=1.111.7; verdict FAIL with
-    passed=15 failed=8, ALL eight being public-version-*/public-doctor-* checks. Payload
-    states the cause verbatim: `agent_readiness.expected_version = 1.112.0` while the
-    probes run the installed binary -- the gate compares a CHECKOUT to a PUBLISHED
-    ARTIFACT. Recorded in docs/BACKLOG.md with the proposed default fix.
-- [x] **G4.5** LSP provider split-brain (`lsp_proof=true` on a native anchor) — reproduced or refuted
-  - EVIDENCE: NOT REPRODUCED, and the numbers are the OPPOSITE of the report. Measured:
-    `defs --provider lsp` -> lsp_evidence_status=lsp_proof, lsp_count=1, fallback_used=False,
-    full provider_agreement object; `agent --provider lsp` -> lsp_proof=None and NO
-    provider_agreement key. Reporter saw the reverse, so the finding is
-    ENVIRONMENT-DEPENDENT (their Pyright was not serving that symbol). Not a refutation:
-    the payload ASYMMETRY both runs agree on -- `agent` ships no provider_agreement to
-    cross-check -- is the real finding. Recorded in docs/BACKLOG.md.
+- [ ] G4.3: Windows AST `run` argv fragility — reproduced or refuted
+  EVIDENCE: pending
 
-## G5 — board honesty
+- [x] G4.4: `tg dogfood` version-skew FAIL — reproduced or refuted
+  EVIDENCE: REPRODUCED. pyproject=1.112.0 vs installed tg=1.111.7; FAIL, passed=15 failed=8, ALL eight public-version-*/public-doctor-*. Payload names the cause: agent_readiness.expected_version=1.112.0 while probes run the installed binary — the gate compares a CHECKOUT to a PUBLISHED ARTIFACT.
 
-- [ ] **G5.1** every file path cited by a BLOCKED row resolves, OR the row says the file is gone
-  - CHECK: `grep -c "path_domain.rs" docs/TASK_BOARD.md`
-  - EXPECT: `0` (the row must stop citing a file that does not exist)
-  - EVIDENCE: pending
-- [ ] **G5.2** F6's shipped evidence-signing slice is marked shipped, not "remaining"
-  - EVIDENCE: pending
+- [x] G4.5: LSP provider split-brain — reproduced or refuted
+  EVIDENCE: NOT REPRODUCED, numbers OPPOSITE the report. `defs --provider lsp` -> lsp_count=1, fallback_used=False, full provider_agreement; `agent --provider lsp` -> lsp_proof=None, no provider_agreement key. Environment-dependent. The payload ASYMMETRY both runs agree on — agent ships no provider_agreement to cross-check — is the real finding.
 
-## G6 — hygiene (repeated at the end, not assumed)
+- [ ] G5.1: no BLOCKED row cites a file that does not exist
+  CHECK: git show origin/main:docs/TASK_BOARD.md | grep -c "path_domain.rs"
+  EXPECT: 0
+  EVIDENCE: pending
 
-- [ ] **G6.1** working tree clean, no stray artifacts
-  - CHECK: `git status --porcelain | grep -v '^??' | wc -l`
-  - EXPECT: `0`
-  - EVIDENCE: pending
-- [ ] **G6.2** ruff format --preview + ruff check clean on everything touched
-  - CHECK: `uv run ruff check . 2>&1 | tail -1`
-  - EXPECT: `All checks passed!`
-  - EVIDENCE: pending
-- [ ] **G6.3** the published artifact still installs and works from a CLEAN container
-  - EVIDENCE: pending
+- [ ] G5.2: F6's shipped evidence-signing slice is marked shipped, not "remaining"
+  EVIDENCE: pending
+
+- [ ] G6.1: working tree clean of tracked modifications
+  CHECK: git status --porcelain | grep -v "^??" | wc -l
+  EXPECT: 0
+  EVIDENCE: pending
+
+- [x] G6.2: ruff check clean repo-wide
+  CHECK: uv run ruff check . 2>&1 | tail -1
+  EXPECT: All checks passed!
+  EVIDENCE: All checks passed!
+
+- [ ] G6.3: the published artifact installs and works from a CLEAN container
+  EVIDENCE: pending
 
 ---
 
@@ -102,12 +93,13 @@ must not be fixed either; that is how a wrong fix ships.
 
 | Row | Why an agent cannot close it |
 |---|---|
-| **#48, #72, #77, #131, #169** | CEO_GATED. #72 is a public claim; #169 is the only money item. Recommendations are already filed and Exa-grounded; the decision is the operator's. |
-| **5 DEMAND_GATED rows** | Each needs a bounded demand MEASUREMENT before any code. Building first is the speculative-feature failure `instrumented-build-gate` exists to prevent. |
-| **F8** | Its central file `rust_core/src/path_domain.rs` DOES NOT EXIST. Cannot be planned until re-scoped; the similarly-named `runtime_paths.rs` is a guess, not evidence. |
+| **#48, #72, #77, #131, #169** (CEO_GATED) | Operator decision. #72 is a public claim; #169 is the only money item. Recommendations filed and Exa-grounded. |
+| **#255, AST-DSL-PARITY, CONTINUOUS-REFRESH, DD-006, MCP-LEAN-DEFAULT, RUST-REPLACE-TOCTOU** (DEMAND_GATED) | Each needs a bounded demand MEASUREMENT before code. Building first is the speculative-feature failure `instrumented-build-gate` exists to prevent. |
+| **F8** | Cites `rust_core/src/path_domain.rs`, which DOES NOT EXIST. Cannot be planned until re-scoped; `runtime_paths.rs` is a guess, not evidence. |
 | **#89 / #90** | Need a real WSL host. The container removes the CARGO constraint, never the WSL one. |
-| **F5** | Scoped by a glob (`rust_core/**`). Exact touch-points must be enumerated before it can be sequenced. |
+| **F5** | Scoped by a glob (`rust_core/**`). Exact touch-points must be enumerated before sequencing. |
+| **MCP-SURFACE** | Blocked on Task 2C — but measurement shows the contract version is a PYTHON one-liner (`mcp_server.py:188`), not cargo-blocked. Dependency needs re-deriving. |
 
 ## ABANDON log
 
-(none yet — an abandoned gate gets a line here with its reason, never a silent drop)
+(none — an abandoned gate gets a line here with its reason, never a silent drop)
