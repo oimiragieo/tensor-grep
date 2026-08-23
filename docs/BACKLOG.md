@@ -47,6 +47,41 @@
 
 
 
+## AUDITED (2026-08-23): all 6 DEMAND_GATED rows verified — the board's staleness is NOT uniform
+
+The 2026-08-23 closeout audit covered the 6 **BLOCKED** rows and found **2 stale** (F8 citing a
+file that does not exist; MCP-SURFACE framed as rust-blocked when the contract version is a
+Python one-liner). The 6 **DEMAND_GATED** rows had never been checked. All six hold:
+
+| Row | Cited evidence | Verified |
+|---|---|---|
+| RUST-REPLACE-TOCTOU | residual-TOCTOU characterization pin in `backend_cpu.rs` | Present and **NOT inverted** — the row's own acceptance signal has not fired, so it is correctly still open |
+| MCP-LEAN-DEFAULT | contract version 1.7.0 | Exact match |
+| DD-006 | `_DAEMON_CONNECT_TIMEOUT_SECONDS` | Present |
+| AST-DSL-PARITY | ast-grep wrapper backend | Present in `src/tensor_grep/backends/` |
+| CONTINUOUS-REFRESH | warm session daemon | Present |
+| #255 | `find_golden_corpus` | Present |
+
+**The pattern is worth keeping:** the BLOCKED rows rotted because their evidence points at
+line-level facts about code that moved. The DEMAND_GATED rows held because they cite
+CONDITIONS ("demand for X", "this pin inverting") rather than locations. When writing a gated
+row, cite the condition — a row that names a line number has a shelf life.
+
+### Two of my own zeros in this audit were wrong, and both would have produced a false "stale"
+
+- `grep request_queue_size src/tensor_grep/cli/session_daemon.py` → **0 hits**. That looks like
+  DD-006 citing a symbol that does not exist. It is not: the daemon subclasses
+  `socketserver.ThreadingMixIn, socketserver.TCPServer`, so `request_queue_size` is an INHERITED
+  default and the row's wording ("default `request_queue_size=5` backlog") is exactly right. An
+  explicit hit would have CONTRADICTED the row.
+- AST-DSL-PARITY returned 0 because I globbed `src/tensor_grep/cli/` when the backends live in
+  `src/tensor_grep/backends/`. Wrong path, not missing code.
+
+A control (`ZzzNotARealSymbolXyz` → 0) proved the grep MECHANISM worked in both cases, which is
+precisely what makes a wrong PATH the dangerous residual: the mechanism check passes while the
+question goes unanswered. A control proves your tool runs; it does not prove you pointed it at
+the right thing.
+
 ## MEASURED (2026-08-23): the `_add` trap splits in two, and only ONE half reproduces
 
 The external dogfood's finding #1 — *"`prepare "add retry with tests"` → `repo_map._add` @
