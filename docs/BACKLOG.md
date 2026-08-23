@@ -1493,7 +1493,7 @@ Recommendations only. No silent reclassification. No question asked for the non-
 | id | topic | recommendation | status |
 |---|---|---|---|
 | **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CEO_GATED` |
-| **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope, and public wording still needs approval. | `CEO_GATED` |
+| **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope. **MEASURED 2026-08-23: the number is on NO public surface** — root `README.md`, the PyPI long description (`rust_core/README.md`, the file `pyproject.toml`'s `readme =` actually points at), `pyproject.toml`, and the GitHub About blurb all carry no headline multiple, and `include = ["LICENSE", "NOTICE"]` means `docs/` never ships. So there is nothing public to withdraw; the 7.5x/6.4x pair lives only in this board, `TASK_BOARD.md`, and one audit. The CEO gate is on PUBLISHING a number, not on retracting one. | `CEO_GATED` |
 | **#77** / F9 | ledger enforcement scope | Local opt-in advisory only; no auth/CI blocking. | `CEO_GATED` |
 | **#131** | GPU-flavor native assets | Optional experimental NVIDIA asset with CPU default/fallback and **no** speed claim. Physical proof/spend stays under **#169**. | `CEO_GATED` |
 
@@ -1567,7 +1567,7 @@ closure change may mark it `SHIPPED`.
   Status stays `CEO_GATED`; no question asked under the current instruction.
 - **#72** public benchmark claim. Recommendation only: HOLD public 7.5x (conflicts with later 6.4x;
   no committed current harness); allow only a zero-spend fresh six-repo/180-task quality-gated
-  benchmark, and public wording still needs approval. Status stays `CEO_GATED`.
+  benchmark. Status stays `CEO_GATED`. **MEASURED 2026-08-23: no public surface carries the number (root README, the PyPI long description rust_core/README.md, pyproject, the GitHub About blurb; docs/ never ships). Nothing to withdraw -- the gate is on PUBLISHING a number, not on retracting one.**
 - **#77** / F9 ledger enforcement scope. Recommendation only: local opt-in advisory only; no auth/CI
   blocking. Status stays `CEO_GATED`.
 - **#131** GPU-flavor native-asset publication. Recommendation only: optional experimental NVIDIA
