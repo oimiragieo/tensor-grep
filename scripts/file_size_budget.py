@@ -74,6 +74,15 @@ _CONTRACT_PATHS = frozenset({
 
 _SOURCE_SUFFIXES = frozenset({".py", ".rs"})
 
+# Governance docs (AGENTS.md, CLAUDE.md, docs/BACKLOG.md, docs/TASK_BOARD.md) are
+# REPORT-ONLY, never gated -- see governance_doc_census() below for why.
+GOVERNANCE_DOC_PATHS: tuple[str, ...] = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "docs/BACKLOG.md",
+    "docs/TASK_BOARD.md",
+)
+
 
 @dataclass(frozen=True)
 class FileRecord:
@@ -127,6 +136,57 @@ def _tracked_files() -> list[str]:
 def _count_lines(path: Path) -> int:
     with path.open("rb") as handle:
         return sum(1 for _ in handle)
+
+
+def governance_doc_census(files: list[str] | None = None) -> list[tuple[str, int, int]]:
+    """(path, lines, bytes) for each GOVERNANCE_DOC_PATHS entry that is git-tracked.
+
+    WHY REPORT-ONLY, NOT GATED
+    ---------------------------
+    AGENTS.md and docs/BACKLOG.md are APPEND-ONLY BY DESIGN: AGENTS.md's dated
+    instrument laws (A1, A2, ...) and BACKLOG.md's council receipts accumulate
+    forever as a permanent, citable record -- that is the whole point of them.
+    The ratchet above exists to make files SHRINK; pointing it at a doc whose
+    house rule is "never edit history, only append" would forbid the exact
+    growth the doc is required to do, and the first honest append would FAIL
+    the gate ("allowlisted file above its pinned baseline"). Adding these paths
+    to file_size_allowlist.json would not fix that -- it would just make the
+    ratchet lie about ever holding, since every future append is expected to
+    grow past whatever baseline got pinned.
+
+    So this function exists purely to make the SIZE VISIBLE (a `--docs-report`
+    flag, never wired into the pass/fail exit code) so a human -- not this
+    script -- can decide when a doc has grown enough to need trimming/splitting.
+    That threshold is a CEO decision, not something this ratchet should infer.
+
+    Only git-tracked docs are counted, reusing _tracked_files()/_count_lines()
+    exactly as census() does, so an untracked worktree artifact sharing one of
+    these filenames can never be reported as if it were the real governance doc.
+    """
+    tracked = set(files if files is not None else _tracked_files())
+    results: list[tuple[str, int, int]] = []
+    for rel in GOVERNANCE_DOC_PATHS:
+        if rel not in tracked:
+            continue
+        absolute = REPO_ROOT / rel
+        if not absolute.is_file():
+            continue
+        results.append((rel, _count_lines(absolute), absolute.stat().st_size))
+    return results
+
+
+def _render_governance_doc_report(rows: list[tuple[str, int, int]]) -> str:
+    if not rows:
+        return (
+            "NO TRACKED DOCS MATCHED -- probe found nothing (not the same as 'the docs are small')."
+        )
+    lines = [
+        "governance doc size (REPORT-ONLY, never gates CI -- see governance_doc_census docstring):",
+        "",
+    ]
+    for path, doc_lines, doc_bytes in rows:
+        lines.append(f"  {doc_lines:>6} lines  {doc_bytes:>8} bytes  {path}")
+    return "\n".join(lines)
 
 
 def census(files: list[str] | None = None) -> list[FileRecord]:
@@ -226,7 +286,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Regenerate the allowlist from the live census. Review the diff.",
     )
     parser.add_argument("--report", action="store_true", help="Print the census.")
+    parser.add_argument(
+        "--docs-report",
+        action="store_true",
+        help="Print governance-doc sizes (report-only; never affects the exit code).",
+    )
     args = parser.parse_args(argv)
+
+    if args.docs_report:
+        print(_render_governance_doc_report(governance_doc_census()))
 
     records = census()
 
