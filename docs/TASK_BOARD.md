@@ -472,7 +472,7 @@ None at this snapshot. #109 shipped in PR #605. WSL path bugs above are program-
 
 ## CEO-GATED (do not start without an explicit go)
 
-- [ ] **#72** publish the benchmark proof-point (7.5× fewer tokens than grep) — public claim
+- [ ] **#72** publish the benchmark proof-point (7.5× fewer tokens than grep) — public claim -- MEASURED 2026-08-23: no public surface carries the number (root README, the PyPI long description rust_core/README.md, pyproject, the GitHub About blurb; docs/ never ships). Nothing to withdraw -- the gate is on PUBLISHING a number, not on retracting one.
 - [ ] **#131 / #169** GPU deep-dive + multi-week rebuild; CUDA asset publishing is on a deliberate
   HOLD. Phase-0 shipped correctness-proven assets gated OFF by
   `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE`; the flag-flip is the CEO's call.
