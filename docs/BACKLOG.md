@@ -47,6 +47,38 @@
 
 
 
+## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
+
+Measured at the end of a session that appended heavily to both:
+
+| file | size | added today |
+|---|---:|---:|
+| `AGENTS.md` | **368 KB** | +69 lines |
+| `docs/BACKLOG.md` | **331 KB** | +371 lines |
+| `docs/TASK_BOARD.md` | 57 KB | +8 |
+| `CLAUDE.md` | 25 KB | +6 |
+
+**Nothing gates this.** `scripts/file_size_budget.py` covers source files only — 0 mentions of
+`AGENTS.md`, `BACKLOG.md` or `TASK_BOARD.md` — and no doc-size check exists anywhere in
+`scripts/`.
+
+That is the same failure class this session hit in `MEMORY.md`, which DID have a limit and so
+announced itself: an append-only document grows until readers silently receive a truncated view,
+and a truncated governance doc is worse than a missing one because the reader believes they have
+the whole thing. `MEMORY.md` told me. These two cannot.
+
+**Partial mitigation already in place, worth not breaking:** `CLAUDE.md` points at `AGENTS.md`
+via GREP commands (`grep -nE '^- \*\*A[0-9]+ ' AGENTS.md`, and two others) rather than telling
+anyone to read it end to end. Grep-first access is what makes a 368 KB reference usable at all —
+this is exactly why the A-law summary in `CLAUDE.md` was replaced with a derivation command
+earlier today instead of being extended inline.
+
+**Not fixed here, and the fix is a real decision, not a tidy-up.** Options are (a) split
+`AGENTS.md` by law family with an index, (b) age dated receipts out to `docs/audits/` and leave
+pointers, or (c) add a size ratchet so growth becomes visible and deliberate. Each changes how
+every agent in this repo finds things, so it wants a design pass rather than a late-session edit.
+Recorded with the numbers so the next person starts from a measurement.
+
 ## AUDITED (2026-08-23): all 6 DEMAND_GATED rows verified — the board's staleness is NOT uniform
 
 The 2026-08-23 closeout audit covered the 6 **BLOCKED** rows and found **2 stale** (F8 citing a
