@@ -47,6 +47,64 @@
 
 
 
+## ROOT-CAUSED (2026-08-23): the "order-dependent help flake" is deterministic, not a flake
+
+Filed after four sightings across three PRs. It is **not** flaky, **not** terminal-width
+dependent, and **not** caused by any change in this session — it reproduces on pristine `main`.
+
+### The measurement
+
+`tg --help` renders **two different documents** depending on WHEN `tensor_grep.cli.main` is
+first imported:
+
+| how `main` is imported | help chars | command rows | contains `sidecar-routed GPU results` |
+|---|---:|---:|---|
+| at **module scope** (pytest collection time) | **10,429** | 50 | **NO** |
+| inside the **test function** (run time) | **20,641** | 0 | **YES** |
+
+Reproduce with nothing but a two-line test file:
+
+```python
+# module-scope import -> the SHORT render
+from tensor_grep.cli.main import _scan_incomplete  # noqa: F401
+def test_probe():
+    from typer.testing import CliRunner
+    from tensor_grep.cli.main import app
+    print(len(CliRunner().invoke(app, ["--help"]).stdout))
+```
+
+Move that import inside the function and the number doubles. `COLUMNS=200` changes neither
+number, so terminal width is ruled out.
+
+### Why it looked like a flake
+
+`tests/unit/test_cli_modes_ast_misc.py::test_app_help_should_expose_the_python_public_top_level_surface`
+asserts a snippet that exists ONLY in the long render. It therefore fails whenever ANY
+earlier-collected test module imports `tensor_grep.cli.main` at module scope — and passes when run
+alone or as a whole file, because then nothing has imported `main` at collection time. The polluter
+in the observed failures is `tests/unit/test_agent_capsule_best_effort_primary.py`, whose only
+"offence" is a perfectly ordinary module-scope
+`from tensor_grep.cli.main import _scan_incomplete`.
+
+Bisected to that single file, then to import time specifically: the failure reproduces with **every
+test in the polluter deselected**, so no test body is involved.
+
+Counter-intuitive tell that misled the first two investigations: running MORE tests can make it
+PASS, because a later-collected module can re-import and re-render.
+
+### Why this is a product question, not just a test-hygiene one
+
+Two renders of `--help` differing by 10 KB and by whether the agent-contract prose appears is a
+user-visible surface. An agent that shells out to `tg --help` may get either document depending on
+process state. The test is the messenger.
+
+### Not fixed here, and why
+
+The fix is either (a) make the help render deterministic regardless of import timing, or (b) make
+the test import `main` the same way the assertion's render requires and pin BOTH renders. Both are
+product/test-design changes outside a closeout's scope. Recorded with a reproduction so the next
+session starts from the mechanism instead of re-bisecting it a fifth time.
+
 ## Session closeout (2026-08-23) - state, receipts, and what was NOT done
 
 Filed so a fresh session starts from measured state rather than from this session's prose.
