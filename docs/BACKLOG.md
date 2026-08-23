@@ -47,6 +47,113 @@
 
 
 
+## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
+
+Measured at the end of a session that appended heavily to both:
+
+| file | size | added today |
+|---|---:|---:|
+| `AGENTS.md` | **368 KB** | +69 lines |
+| `docs/BACKLOG.md` | **331 KB** | +371 lines |
+| `docs/TASK_BOARD.md` | 57 KB | +8 |
+| `CLAUDE.md` | 25 KB | +6 |
+
+**Nothing gates this.** `scripts/file_size_budget.py` covers source files only — 0 mentions of
+`AGENTS.md`, `BACKLOG.md` or `TASK_BOARD.md` — and no doc-size check exists anywhere in
+`scripts/`.
+
+That is the same failure class this session hit in `MEMORY.md`, which DID have a limit and so
+announced itself: an append-only document grows until readers silently receive a truncated view,
+and a truncated governance doc is worse than a missing one because the reader believes they have
+the whole thing. `MEMORY.md` told me. These two cannot.
+
+**Partial mitigation already in place, worth not breaking:** `CLAUDE.md` points at `AGENTS.md`
+via GREP commands (`grep -nE '^- \*\*A[0-9]+ ' AGENTS.md`, and two others) rather than telling
+anyone to read it end to end. Grep-first access is what makes a 368 KB reference usable at all —
+this is exactly why the A-law summary in `CLAUDE.md` was replaced with a derivation command
+earlier today instead of being extended inline.
+
+**Not fixed here, and the fix is a real decision, not a tidy-up.** Options are (a) split
+`AGENTS.md` by law family with an index, (b) age dated receipts out to `docs/audits/` and leave
+pointers, or (c) add a size ratchet so growth becomes visible and deliberate. Each changes how
+every agent in this repo finds things, so it wants a design pass rather than a late-session edit.
+Recorded with the numbers so the next person starts from a measurement.
+
+## AUDITED (2026-08-23): all 6 DEMAND_GATED rows verified — the board's staleness is NOT uniform
+
+The 2026-08-23 closeout audit covered the 6 **BLOCKED** rows and found **2 stale** (F8 citing a
+file that does not exist; MCP-SURFACE framed as rust-blocked when the contract version is a
+Python one-liner). The 6 **DEMAND_GATED** rows had never been checked. All six hold:
+
+| Row | Cited evidence | Verified |
+|---|---|---|
+| RUST-REPLACE-TOCTOU | residual-TOCTOU characterization pin in `backend_cpu.rs` | Present and **NOT inverted** — the row's own acceptance signal has not fired, so it is correctly still open |
+| MCP-LEAN-DEFAULT | contract version 1.7.0 | Exact match |
+| DD-006 | `_DAEMON_CONNECT_TIMEOUT_SECONDS` | Present |
+| AST-DSL-PARITY | ast-grep wrapper backend | Present in `src/tensor_grep/backends/` |
+| CONTINUOUS-REFRESH | warm session daemon | Present |
+| #255 | `find_golden_corpus` | Present |
+
+**The pattern is worth keeping:** the BLOCKED rows rotted because their evidence points at
+line-level facts about code that moved. The DEMAND_GATED rows held because they cite
+CONDITIONS ("demand for X", "this pin inverting") rather than locations. When writing a gated
+row, cite the condition — a row that names a line number has a shelf life.
+
+### Two of my own zeros in this audit were wrong, and both would have produced a false "stale"
+
+- `grep request_queue_size src/tensor_grep/cli/session_daemon.py` → **0 hits**. That looks like
+  DD-006 citing a symbol that does not exist. It is not: the daemon subclasses
+  `socketserver.ThreadingMixIn, socketserver.TCPServer`, so `request_queue_size` is an INHERITED
+  default and the row's wording ("default `request_queue_size=5` backlog") is exactly right. An
+  explicit hit would have CONTRADICTED the row.
+- AST-DSL-PARITY returned 0 because I globbed `src/tensor_grep/cli/` when the backends live in
+  `src/tensor_grep/backends/`. Wrong path, not missing code.
+
+A control (`ZzzNotARealSymbolXyz` → 0) proved the grep MECHANISM worked in both cases, which is
+precisely what makes a wrong PATH the dangerous residual: the mechanism check passes while the
+question goes unanswered. A control proves your tool runs; it does not prove you pointed it at
+the right thing.
+
+## MEASURED (2026-08-23): the `_add` trap splits in two, and only ONE half reproduces
+
+The external dogfood's finding #1 — *"`prepare "add retry with tests"` → `repo_map._add` @
+conf=1.0, ask=false"* — measured against the **published** v1.113.2 in a clean
+`python:3.12-slim` container, on a corpus containing both `_add` and an obvious
+`replace_with_retry`:
+
+```
+primary_symbol : '_add'      <- the trap symbol IS selected
+primary_conf   : 1.0         <- at FULL confidence
+overall        : 1.0
+ask_required   : True        <- but the ask IS enforced
+downgrade      : []
+```
+
+**The RANKING half reproduces.** `_add` wins for a query whose obvious intent is
+`replace_with_retry`. A three-character underscore-prefixed helper beating a well-named
+function on a query word is exactly the defect reported.
+
+**The AUTO-EDIT half does not, on this corpus.** `ask_user_before_editing.required` is `True`,
+so an agent following the contract would ask before editing. The report said `ask=false`; their
+corpus differed from this one.
+
+That split matters for severity. As "an agent silently edits the wrong symbol" this is a
+safety bug. As "ranking picks a poor primary but still forces a human check" it is a quality
+bug with a working backstop. **On the published build it is currently the second.** Nobody
+should re-file it as the first without re-measuring, and nobody should close it as fixed
+either — the ranking defect is real and present.
+
+Note the `overall: 1.0` with `downgrade_reasons: []` is CORRECT and not the guard failing:
+the degraded-confidence ceiling only applies when a reason exists, and here none does. The
+ranking is confidently wrong, which no confidence guard can detect — a guard bounds the number
+against the *reasons*, not against the *answer*.
+
+**Method caveat worth keeping:** my first pass reported "trap NOT reproduced" because the
+verdict expression required BOTH `_`-prefixed-at-high-confidence AND `ask_required == False`.
+One compound assertion over two independent properties returns a single boolean that hides
+which half failed. Assert the halves separately, or the measurement reports the opposite of
+what it found.
+
 ## OPEN (2026-08-23): the shipped confidence guard fixes the CONTRACT, not the ASK-GATE
 
 Filed against my own change (PR #1105, merged `65cf67f`, released v1.113.2) after an adversarial
