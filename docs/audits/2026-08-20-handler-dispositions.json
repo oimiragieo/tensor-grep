@@ -831,7 +831,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 576,
+    "lineno": 571,
     "enclosing_symbol": "_read_project_version_fallback",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -841,7 +841,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 586,
+    "lineno": 581,
     "enclosing_symbol": "_cli_package_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -851,7 +851,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 1984,
+    "lineno": 1979,
     "enclosing_symbol": "_pcre2_fallback_backend_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -861,7 +861,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2719,
+    "lineno": 2714,
     "enclosing_symbol": "_resolve_token",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5396,
+    "lineno": 5391,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5443,
+    "lineno": 5438,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5512,
+    "lineno": 5507,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5562,
+    "lineno": 5557,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5604,
+    "lineno": 5599,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9524,
+    "lineno": 9519,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
