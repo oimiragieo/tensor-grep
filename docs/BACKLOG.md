@@ -67,9 +67,12 @@ Reproduce with nothing but a two-line test file:
 ```python
 # module-scope import -> the SHORT render
 from tensor_grep.cli.main import _scan_incomplete  # noqa: F401
+
+
 def test_probe():
     from typer.testing import CliRunner
     from tensor_grep.cli.main import app
+
     print(len(CliRunner().invoke(app, ["--help"]).stdout))
 ```
 
