@@ -32,6 +32,8 @@ concern and is not smuggled in here.
 
 from __future__ import annotations
 
+import re
+
 from typer.testing import CliRunner
 
 from tensor_grep.cli.main import app
@@ -43,10 +45,27 @@ SCAN_BOUNDING_FLAGS = ("--max-depth", "--max-repo-files", "--deadline")
 SIBLINGS = ("blast-radius", "blast-radius-render")
 
 
+#: Rich renders each flag as SEVERAL ANSI spans, so `--json` comes back as
+#: ESC[1;36m + "-" + ESC[0m + ESC[1;36m + "-json" + ESC[0m. A literal `"--max-depth" in output`
+#: therefore FAILS on colored output while passing on plain output — an environment-dependent
+#: assertion, not a contract test.
+#:
+#: This bit for real. Every assertion in this file passed locally and the positive control failed
+#: on ALL SIX CI `test-python` lanes. CliRunner emits no color without a TTY, so the local run was
+#: the arm structurally unable to see the defect; `FORCE_COLOR=1` reproduces it in one command.
+#: `tests/unit/test_cli_modes_ast_misc.py` already carries this helper — this file just never
+#: copied it.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
+
+
 def _help_text(command: str) -> str:
     result = CliRunner().invoke(app, [command, "--help"])
     assert result.exit_code == 0, f"{command} --help exited {result.exit_code}\n{result.output}"
-    return result.output
+    return _strip_ansi(result.output)
 
 
 def test_positive_control_both_siblings_have_help() -> None:
