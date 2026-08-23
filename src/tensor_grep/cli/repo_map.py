@@ -15237,7 +15237,7 @@ def build_symbol_blast_radius_render_json(
     max_repo_files: int | None = None,
 ) -> str:
     return json.dumps(
-        build_symbol_blast_radius_render(
+        _self.build_symbol_blast_radius_render(
             symbol,
             path,
             max_depth=max_depth,
