@@ -1,6 +1,276 @@
 # CHANGELOG
 
 
+## v1.113.3 (2026-08-23)
+
+### Bug Fixes
+
+- Bound confidence.overall to [0,1] -- an out-of-range 5.0 read as maximally certain
+  ([#1109](https://github.com/oimiragieo/tensor-grep/pull/1109),
+  [`d697217`](https://github.com/oimiragieo/tensor-grep/commit/d69721746afa464be8da70199501139b2cbdd3d0))
+
+An adversarial security review of the SHIPPED degraded-confidence guard raised a MED: a non-finite
+  `overall` propagates unclamped, because `min(NaN, ceiling)` does not bound NaN.
+
+Probing the real function to confirm found something the review did NOT name, and it is worse:
+
+NaN in -> nan inf in -> inf 5.0 in -> 5.0
+
+The 5.0 case is the dangerous one. `confidence.overall` is a 0..1 contract that downstream logic
+  compares against thresholds (`< 0.75` decides `ask_user_before_editing`). A 5.0 is not merely
+  malformed -- it WINS every such comparison and reads as maximally certain while carrying no
+  downgrade reason to contradict it. NaN is the safer of the two failures, because NaN LOSES every
+  comparison instead of winning it. An adversarial review that names the non-finite case and stops
+  there leaves the winning direction open.
+
+Fixed by clamping AT THE DOOR, not at the exit: the branch clamps below all use `min(...)`, which
+  cannot bound a value already out of range in the wrong direction and cannot bound NaN at all. A
+  finite value is clamped into [0,1]; a NON-finite value is treated as ABSENT and falls through to
+  the derived defaults, because we do not know what it meant and inventing 1.0 or 0.0 would assert a
+  confidence nobody computed.
+
+Tests carry both controls, since a clamp that fires always and one that never fires are equally
+  useless: - NEGATIVE: 0.0 / 0.25 / 0.5 / 0.9 / 1.0 are returned UNCHANGED, so the clamp is a no-op
+  on legitimate values and cannot be a constant-pinner. - COMPOSITION: out-of-range AND degraded
+  still lands below 1.0, so a clamp applied in the wrong order cannot raise a degraded result back
+  to certainty. RED before / GREEN after: 8 new tests.
+
+Scope note: this bounds an out-of-contract NUMBER. It does NOT change any threshold and does NOT
+  address the separately-filed finding that the 0.99 degraded ceiling sits above the 0.75 ask-gate
+  -- that one changes agent-safety behaviour and is deliberately left to a design review.
+
+Verified: 665 passed across capsule/prepare/agent/confidence/edit-plan; the previously shipped
+  invariant guards still pass (10); ruff check clean; mypy clean; all three ratchets green.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Root-cause the order-dependent help failure (it is deterministic)
+  ([#1108](https://github.com/oimiragieo/tensor-grep/pull/1108),
+  [`4cd3da4`](https://github.com/oimiragieo/tensor-grep/commit/4cd3da4781a0bef0750a4bb3252c8dd038c60378))
+
+* docs: root-cause the "order-dependent help flake" -- it is deterministic
+
+Four sightings across three PRs, twice waved past as an order-dependent flake (including by me). It
+  is not flaky, not width-dependent, and not caused by anything in this session -- it reproduces on
+  pristine main.
+
+`tg --help` renders TWO DIFFERENT DOCUMENTS depending on when `tensor_grep.cli.main` is first
+  imported:
+
+module-scope import (pytest collection) -> 10,429 chars, 50 command rows, snippet ABSENT import
+  inside the test function -> 20,641 chars, 0 command rows, snippet PRESENT
+
+`COLUMNS=200` changes neither number, so terminal width is ruled out -- which is what the first two
+  investigations tested and cleared, then stopped.
+
+`test_app_help_should_expose_the_python_public_top_level_surface` asserts a snippet that exists ONLY
+  in the long render, so it fails whenever any earlier-collected module imports `main` at module
+  scope. Bisected 164 files -> 38 -> 5 -> 1 (`test_agent_capsule_best_effort_primary.py`), then to
+  IMPORT TIME: it reproduces with every test in that file DESELECTED, so no test body is involved.
+  The polluter's only "offence" is an ordinary `from tensor_grep.cli.main import _scan_incomplete`.
+
+The tell that misled earlier passes: running MORE tests can make it PASS, because a later-collected
+  module re-imports and re-renders. That is the opposite of how pollution usually reads, which is
+  why "passes alone, fails in a selection" got filed as flakiness.
+
+Recorded as a PRODUCT question, not only test hygiene: two renders of `--help` differing by 10 KB,
+  one of them missing the agent-contract prose entirely, is a user-visible surface, and an agent
+  shelling out to `tg --help` can get either. Not fixed here -- the fix is either deterministic help
+  rendering or pinning both renders, both outside a closeout's scope. Filed with a two-line
+  reproduction so the next session starts from the mechanism rather than re-bisecting it a fifth
+  time.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: close the G4.1/G4.2 loop on the PUBLISHED artifact, not a branch
+
+The row said "CI green, merge in progress" and cited a repro that passed ON THE BRANCH. That is the
+  weakest form of this claim, and this repo has a law about it (A148): a verification that runs
+  where the tool was BUILT cannot settle a claim about where it is INSTALLED.
+
+Now closed end-to-end with the strong form: merged cb42752 -> released v1.113.1 -> published 4/4 BY
+  FILENAME (macosx_11_0_arm64, manylinux_2_39_x86_64, win_amd64, sdist; counted per-artifact, never
+  by version presence, because a partial publish leaves "latest" resolving while one platform
+  silently lags) -> dogfooded on a clean python:3.12-slim with a stock `pip install
+  tensor-grep==1.113.1`.
+
+The external auditor's exact repro -- open a session in a SUBTREE, then `tg session show <id>` from
+  the repo root with NO PATH argument -- returns OK on that stock install, and `search`/`defs` show
+  no regression.
+
+So the sequence is complete for the first time this session: reproduced on the published v1.111.7,
+  fixed, released, and re-verified on the published wheel. Not on a branch, not on this machine.
+
+* style: format the python fence CI's ruff --preview formats inside markdown
+
+`Formatting & Linting` failed on #1108 with "unformatted: File would be reformatted". Cause: the
+  repro I added to docs/BACKLOG.md is a ```python fence, and this repo's CI runs `ruff format
+  --check --preview .` -- which formats python blocks INSIDE markdown. My fence was PEP8-invalid (no
+  blank lines before a top-level def), so a docs-only PR failed a code formatter.
+
+Worth remembering because it is not obvious: a prose file can fail the CODE formatter here. Any
+  fenced python in docs/ or .claude/skills/ is subject to the same gate as src/.
+
+Content unchanged -- 3 blank lines added, no words touched. Verified: `ruff format --check --preview
+  docs/BACKLOG.md` reports already-formatted.
+
+* docs: A154 -- a monitor that cannot read its own signal fakes supervision
+
+Three watch loops ran BLIND in one session and I did not notice twice.
+
+`jq` is not on PATH in this environment. A loop doing `gh pr checks N --json bucket | jq ...`
+  receives an EMPTY STRING, not an error it notices. Empty then loses every numeric comparison, so a
+  terminal condition like `[ "$pend" != "0" ]` is permanently true and the "all clear" branch can
+  NEVER fire. The monitor runs to timeout having observed nothing.
+
+What made it invisible: two of the three reported "timed out without producing output", and I read
+  that as STILL RUNNING rather than NEVER WORKED -- twice, in the same session, after writing the
+  law about probes that return empty. The third gave itself away only because its output line
+  printed `#1102(p=,f=)` with the fields blank.
+
+Fix is two-part and the second half is the load-bearing one: 1. use gh's BUILT-IN `--jq`, never a
+  pipe to external `jq`; 2. give every monitor a probe SELF-CHECK that ABORTS when blind -- `case
+  "$probe" in ''|*[!0-9]*) echo ABORT; exit 2;; esac`. The self-check proved itself on the very next
+  run: `probe OK (pending=1)`, then real counts.
+
+Filed as the A149 family one level up: there a CHECK could not fail, here the WATCHER could not
+  observe. The watcher is the worse of the two, because its silence is indistinguishable from the
+  patience it is supposed to be providing -- a broken test at least stays quiet about something you
+  were not relying on.
+
+* docs: correct my own PR #1105 claim -- the guard fixes the contract, not the ask-gate
+
+An adversarial security review of the SHIPPED code (65cf67f, released v1.113.2) returned
+  CHANGES_REQUIRED with one HIGH: the guard's safety effect was unverified because the auto-edit
+  threshold was not in the diff it reviewed. Measured it:
+
+_DEGRADED_CONFIDENCE_CEILING = 0.99 (agent_capsule_confidence.py:164) ask-gate threshold = 0.75
+  (agent_capsule_confidence.py:256)
+
+0.99 is well above 0.75, so the guard NEVER changes `ask_user_before_editing.required`.
+
+What the guard does close, and it is real: a payload can no longer list the reasons it is degraded
+  AND report overall == 1.0. That contradiction is gone and its tests are perturbation-proved.
+
+What it does NOT close is the hole the external dogfood actually reported -- `downgrade_reasons`
+  non-empty AND `ask_required == false`, i.e. an agent editing without asking on a scan that did not
+  finish. Post-guard such a payload reports 0.99 and the agent still auto-edits.
+
+PR #1105's body says "ask_user_before_editing keys off that number, so the certain-but-degraded
+  shape tells an agent 'edit this, no question needed'" -- implying the guard prevents that. It does
+  not. That sentence overstated the fix; this row is the correction, filed against my own change
+  rather than left to be discovered later.
+
+Severity is bounded by what was already correct: the branch-specific clamps (0.94 / 0.72 / 0.55) DO
+  drop below 0.75 for truncation and primary-file omission, so those paths already force the ask.
+  The gap is the two branches that never had a clamp -- `consistency["confidence_downgraded"]` and a
+  caller-supplied reason.
+
+NOT fixed in the same breath, deliberately: lowering the ceiling below 0.75 makes ANY downgrade
+  reason force a human prompt, including minor ones on otherwise-strong results. That changes an
+  agent-safety threshold AND how often the tool interrupts a user -- a design decision needing a
+  council and real capsule distributions, not a late-session edit.
+
+Two smaller findings from the same review recorded with it: a NaN `overall` propagates unclamped
+  (`min(NaN, 0.99)` does not bound it; never yields 1.0, so not the certainty bug), and an
+  empty-string caller reason counts as a reason.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Refactoring
+
+- Declare --deadline once instead of twenty times
+  ([#1107](https://github.com/oimiragieo/tensor-grep/pull/1107),
+  [`4ace9eb`](https://github.com/oimiragieo/tensor-grep/commit/4ace9ebab8ae57daee7de894c2916a49ecbfb50f))
+
+* refactor: declare --deadline once instead of twenty times (unblocks the ratchet)
+
+PR #1102 could not add `--deadline` to a 21st command because the file-size ratchet refuses ANY
+  growth in main.py. I first compressed the new declaration until it nearly fit (+14 -> +11) and
+  still fell short. That was treating the symptom: the ratchet was correctly refusing a file whose
+  bulk is copy-paste.
+
+`--deadline` was declared **20 separate times**, each an identical 10-line `typer.Option(None,
+  "--deadline", min=0.1, help=...)` differing only in its help string -- **204 lines** of duplicated
+  machinery. Folded into one `_deadline_option(help_text)`.
+
+main.py: **13,523 -> 13,400 lines (-123)**, which is 123 lines of headroom under the pin where there
+  were zero. #1102's +11 now fits with room left over.
+
+`help_text` stays a REQUIRED parameter, not a shared default. The 20 sites carry 12 DISTINCT
+  explanations, all user-facing and pinned by contract tests; collapsing them into one generic
+  sentence would be a behaviour change wearing a refactor's name. The duplication worth deleting was
+  the machinery, not the wording.
+
+HELP PARITY IS THE CONTRACT, AND IT CAUGHT MY FIRST ATTEMPT. I captured all 20 commands' `--help`
+  output BEFORE touching anything. The first pass extracted help strings with a regex over string
+  literals and broke **2 of 20** -- both texts containing an embedded quote
+  (`partial_reason="deadline"`, `agreement_basis="path"`), which the regex silently truncated into
+  `partial deadlinerunning`. Reverted and re-extracted with `ast.literal_eval`, which handles
+  implicit concatenation AND escapes, re-emitting via `repr()`. Final: **20/20 byte-identical**,
+  with a control that perturbs one expected value and confirms the comparison detects exactly 1
+  difference -- otherwise "identical" would only prove the comparison was inert.
+
+Pre-existing failure NOT introduced here, measured both ways:
+  `test_cli_modes_ast_misc.py::test_app_help_should_expose_the_python_public_top_level_surface`
+  fails in a wide `-k` selection and passes alone and as a whole file. Baselined by running the SAME
+  selection against pristine main: identical result (1 failed / 628 passed). It is an
+  order-dependent help-surface flake, now its 4th sighting, filed in docs/BACKLOG.md.
+
+Verified: ruff check + format --preview clean; mypy clean; file-size, bare-call and silent-loss
+  ratchets all green (49 passed); 628 passed across the cli/deadline/help/ contract selection.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: repair the two consumer populations the -123-line refactor silently moved
+
+CI on #1107 went red on two gates the refactor's own test run never touched, both because main.py
+  shrank underneath them. Neither is a defect in the refactor; both are consumers a line-shift
+  invalidates, and the file-size ratchet is not the only thing a 13k-line file has hanging off its
+  line numbers.
+
+1. THE HANDLER-DISPOSITION LEDGER pins an advisory `lineno` per record and asserts it falls inside
+  its enclosing symbol's span. 44 linenos went stale; one fell outside its span and failed the gate.
+  Re-derived from the ledger gate's OWN helper (`_real_handlers_for_module`) so the derivation
+  matches what the gate checks, and the script REFUSES to write if any record's identity triple
+  (module, symbol, index) stops resolving -- a broken identity is a real change, not a line shift.
+  Result: 130 records, 44 linenos re-derived, **0 identities broken**, which is itself the proof the
+  refactor moved lines without touching a single handler.
+
+2. NINETY-FIVE SKILL CITATIONS into main.py. The docs-governance gate only catches citations past
+  END-OF-FILE, so it flagged 2 -- while **74 more pointed at different code and still resolved**,
+  completely silently. Remapped by difflib alignment against origin/main, with a per-citation proof
+  that the new line holds BYTE-IDENTICAL text to the old one; any citation whose old line was
+  DELETED is reported, never guessed. Final: 92 verified byte-identical, 3 de-pinned, 0 wrong. The
+  verifier re-derives the original numbers from git rather than trusting the remap's bookkeeping,
+  and carries a control proving it can report WRONG.
+
+The 3 de-pinned citations pointed INSIDE the deleted `--deadline` blocks, so they have no successor
+  line at all -- they are now greps with no number, per law A150. One of them
+  (`tensor-grep-semantic-search-campaign`) already carried the sentence "this seam has already
+  drifted twice inside two weeks, cite the grep, not the number" and then appended a line number
+  anyway; this is its third drift.
+
+TWO MISTAKES I MADE HERE, both caught by controls rather than review: - I ran the first ledger fix
+  while the working tree was checked out on `main`, so the linenos were derived from a file that
+  does not contain the refactor, and the citation comparison was main-vs-main -- an arm that cannot
+  detect a difference. The remap script now REFUSES to run when both sides have identical length. -
+  I then re-ran the remap on already-remapped citations, moving 68 of them a second time. Reverted
+  the skill tree to HEAD and redid it in a single pass. A remap is not idempotent and must never be
+  re-run for confirmation; confirm with the separate verifier instead.
+
+Verified: ruff check + format --preview clean; mypy clean; 69 passed across handler dispositions,
+  skill drift/index, and all three ratchets; help parity still 20/20 byte-identical.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.113.2 (2026-08-23)
 
 ### Bug Fixes
