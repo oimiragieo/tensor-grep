@@ -15200,15 +15200,10 @@ def build_symbol_blast_radius_render_from_map(
     # this only adds the flag when THIS loop was the one that broke early.
     if source_loop_deadline_hit:
         payload["partial"] = True
-        # `partial_reason` is REQUIRED by the render-family contract, not decoration: the other
-        # three members (context-render, edit-plan, context) all stamp it, and
-        # test_render_family_tail_overrun_after_checkpointed_pack_stage_still_reports_partial
-        # asserts `partial_reason == "deadline"` for every member. This command was absent from
-        # that parametrize list, so it shipped without the stamp AND without `--deadline` at all.
-        # `deadline_limit` alone is not equivalent: a consumer that learned `partial_reason` on
-        # `prepare` reads None here and can only conclude "partial for an unknown reason".
-        # setdefault, not assignment -- never clobber a richer upstream reason already stamped by
-        # build_symbol_blast_radius_from_map or the edit-plan-seed fold-in above.
+        # REQUIRED by the render-family contract: the other three members all stamp it and
+        # test_render_family_tail_overrun_..._still_reports_partial asserts it for every member.
+        # This command was absent from that parametrize list, so it shipped without the stamp.
+        # setdefault, never assignment -- do not clobber a richer upstream reason.
         payload.setdefault("partial_reason", "deadline")
         payload.setdefault(
             "deadline_limit",

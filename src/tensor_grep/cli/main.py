@@ -4878,10 +4878,7 @@ def docs_coverage(
         None,
         "--deadline",
         min=0.1,
-        help=(
-            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
-            "whatever was found so far, instead of running unbounded."
-        ),
+        help="Stop the repo scan after N seconds and return partial:true JSON, not unbounded.",
     ),
 ) -> None:
     """List source files not referenced by any governing doc (CLAUDE.md/README/AGENTS.md)."""
@@ -8606,10 +8603,8 @@ def blast_radius_render(
     (callers/caller_tree/affected_files/blast_radius_score), use
     `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
     """
-    from tensor_grep.cli.repo_map import (
-        _deadline_monotonic_from_seconds,
-        build_symbol_blast_radius_render,
-    )
+    from tensor_grep.cli.repo_map import _deadline_monotonic_from_seconds
+    from tensor_grep.cli.repo_map import build_symbol_blast_radius_render
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
