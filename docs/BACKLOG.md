@@ -47,6 +47,57 @@
 
 
 
+## Recent campaign notes (2026-08-23) - G4.1 VERIFIED: session store is cwd-keyed, and `list` answers from the WRONG store
+
+The external agent dogfood (v1.111.7) reported: `tg session open src` then `tg session show <id>`
+from the repo root returns "Session not found", while `list` works from the parent. **Reproduced
+exactly, and the mechanism is worse than the report describes.**
+
+### Reproduction (published wheel, v1.111.7)
+
+```
+$ tg session open src --json
+  session_id: session-20260823004352130555-src-6dc6b0f9
+
+$ cd src && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  {"version": 1, ...}                      # WORKS
+
+$ cd .. && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  Session not found: session-20260823004352130555-src-6dc6b0f9   # SAME ID, one dir up
+```
+
+### The mechanism — TWO stores, selected by cwd
+
+```
+src/.tensor-grep/sessions/     <- holds the new session (1 match)
+.tensor-grep/sessions/         <- 67 files, holds 0 matches for that id
+```
+
+`tg session list` from the repo root returns **64 sessions and does not contain the one just
+opened**. That is the part the report understates: this is not a "not found" error, it is a
+**confidently wrong answer**. An agent that opens a session, then lists from a parent directory,
+receives a plausible non-empty list that silently omits its own session. A missing-item error is
+recoverable; a wrong list that looks complete is not.
+
+### Why it is fixable
+
+The session id **already carries its root token**: `session-<ts>-src-<hash>`. So `show` has enough
+information in the id itself to resolve which store to read, without depending on cwd. The reporter's
+proposed fix ("resolve session store from ID, or require `--root` and error with the exact path to
+use") is therefore implementable, not aspirational.
+
+### Severity for agents
+
+HIGH. An agent's cwd changes between turns for ordinary reasons (a tool call, a subprocess, a
+worktree). A session handle that silently changes meaning with cwd is a state bug an agent cannot
+detect from the payload -- both answers look successful.
+
+### Status
+
+VERIFIED, not fixed. The fix touches session-store resolution, which is shared state used by
+`open`/`show`/`list`/`edit-plan`; it needs its own RED-first change with a two-store fixture, and
+must not silently re-point existing sessions. Filed rather than patched inside an unrelated branch.
+
 ## Recent campaign notes (2026-08-22) - EXTERNAL AGENT DOGFOOD of v1.111.7: triage with per-finding verification
 
 An external AI agent ran a full agentic dogfood of `tg 1.111.7` against a DIFFERENT checkout
