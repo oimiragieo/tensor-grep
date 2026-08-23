@@ -50,43 +50,70 @@ def test_subtree_under_a_nested_manifest_still_resolves_to_the_vcs_root(tmp_path
 
 
 def test_no_marker_falls_back_to_todays_behaviour(monkeypatch, tmp_path: Path) -> None:
-    """A directory with no project marker anywhere above it keeps the old semantics.
+    """A directory with no project marker above it keeps the old semantics.
 
-    Without this the change would silently relocate stores for every ad-hoc directory, which is
-    a behaviour change nobody asked for and the kind of blast radius this slice excludes.
+    Without this the change would silently relocate stores for every ad-hoc directory.
 
-    THE TEST MUST CONTROL ITS OWN ENVIRONMENT. Written naively it FAILED on this machine, and the
-    failure was real information, not noise: `%TEMP%` contains a stray `Cargo.toml` and the home
-    directory contains a `package.json`, so a pytest `tmp_path` genuinely HAS a marker 5 levels
-    above it and the test's stated premise ("no marker anywhere above") was false. Asserting a
-    premise the filesystem does not satisfy tests the machine, not the code -- the same class as
-    a fixture that never bites. The walk is stubbed to the isolated subtree so the premise holds
-    by construction.
-
-    The underlying hazard is documented in `_find_project_root` rather than hidden: a caller
-    inside a directory with a stray manifest above it and no closer project marker WILL anchor to
-    that stray. Every real checkout has a `.git` or its own manifest nearer, and the VCS pass runs
-    first.
+    THE TEST MUST CONTROL ITS OWN ENVIRONMENT, BUT NOT BY STUBBING THE THING IT TESTS. The first
+    draft monkeypatched `_find_project_root` itself, which a codex audit (2026-08-22) correctly
+    called out: it could not observe the real resolver at all, and passed against the PRE-CHANGE
+    code too. The premise really is false on this machine -- `%TEMP%` holds a stray `Cargo.toml`
+    and `$HOME` a `package.json`, so a pytest `tmp_path` genuinely HAS a marker ~5 levels up.
+    The honest control is to bound the ASCENT so the real walk cannot leave the isolated subtree.
     """
     sub = tmp_path / "loose" / "dir"
     sub.mkdir(parents=True)
 
-    real_find = session_store._find_project_root
-
-    def _bounded(start: Path):
-        # Only consider candidates inside tmp_path, so ambient markers on the host cannot leak in.
-        if not str(start).startswith(str(tmp_path)):
-            return None
-        for candidate in (start, *start.parents):
-            if not str(candidate).startswith(str(tmp_path)):
-                return None
-            found = real_find(candidate) if candidate == start else None
-            if found is not None and str(found).startswith(str(tmp_path)):
-                return found
-        return None
-
-    monkeypatch.setattr(session_store, "_find_project_root", _bounded)
+    # depth of `sub` below tmp_path is 2, so an ascent of 3 covers sub, loose, tmp_path and stops
+    # strictly BELOW any ambient marker on the host.
+    monkeypatch.setattr(session_store, "_MAX_PROJECT_ROOT_ASCENT", 3)
     assert session_store._resolve_root(sub) == sub.resolve()
+
+
+def test_a_nested_project_anchors_to_itself_not_the_outer_checkout(tmp_path: Path) -> None:
+    """The HIGH a codex audit (2026-08-22) found in the first draft of this fix.
+
+    The first `_find_project_root` kept walking and returned the OUTERMOST `.git`, so a standalone
+    project vendored inside another checkout anchored to the OUTER repo -- two unrelated trees
+    then share one session store AND one daemon, which is a worse bug than the one being fixed.
+    Reproduced before the fix landed: `<outer>/vendor/standalone/src` resolved to `<outer>`.
+    """
+    (tmp_path / ".git").mkdir()  # OUTER checkout
+    inner = tmp_path / "vendor" / "standalone"
+    (inner / "src").mkdir(parents=True)
+    (inner / ".git").mkdir()  # INNER standalone project
+    (inner / "pyproject.toml").write_text("[project]\nname='inner'\n", encoding="utf-8")
+
+    assert session_store._resolve_root(inner / "src") == inner.resolve(), (
+        "a vendored project anchored to the OUTER checkout -- it would share the outer repo's "
+        "session store and daemon with an unrelated tree"
+    )
+
+
+def test_anchoring_reaches_the_daemon_not_only_the_session_store(tmp_path: Path) -> None:
+    """G4.2 proper: the daemon lookup, not just the store.
+
+    A codex audit (2026-08-22) noted that all the other tests here pin the RESOLVER or the SESSION
+    STORE, so every one of them could pass while the daemon half of the fix did nothing. The
+    daemon derives its metadata path from the same resolver (`session_daemon._nearby_daemon_roots`
+    calls `_resolve_root`), and this asserts that seam directly: a subtree and the project root
+    must name the SAME daemon metadata file, or a daemon started at the root is unreachable from
+    the subtree.
+    """
+    from tensor_grep.cli import session_daemon
+
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
+    sub = tmp_path / "src" / "pkg"
+    sub.mkdir(parents=True)
+
+    from_root = session_daemon._daemon_metadata_path(session_store._resolve_root(tmp_path))
+    from_sub = session_daemon._daemon_metadata_path(session_store._resolve_root(sub))
+
+    assert from_sub == from_root, (
+        f"the subtree looks for its daemon at {from_sub} while one started at the project root "
+        f"registers at {from_root} -- the warm daemon is unreachable from a subtree (G4.2)"
+    )
 
 
 def test_file_argument_still_resolves_to_a_directory(tmp_path: Path) -> None:

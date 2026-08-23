@@ -378,10 +378,13 @@ def _find_project_root(start: Path) -> Path | None:
     and `docs` (measured). Returns None when nothing matches, so an ad-hoc directory outside any
     project keeps today's behaviour instead of being silently relocated.
 
-    Submodule note: preferring the outermost `.git` means a git submodule resolves to its
-    SUPERPROJECT. Correct for this repo (`rust_core/` is a plain directory, not a submodule) and
-    the right default for a single-checkout tool; a consumer wanting per-submodule sessions would
-    need an explicit override, which is out of scope here.
+    Nesting note: the INNERMOST `.git` wins. A codex audit (2026-08-22) caught the first draft
+    preferring the OUTERMOST one, which made a standalone project vendored inside another checkout
+    anchor to the OUTER repo -- two unrelated projects then SHARE one session store and one daemon.
+    Reproduced before the fix: `<outer>/vendor/standalone/src` resolved to `<outer>`.
+    A git SUBMODULE has a `.git` FILE (not a directory), so it also anchors to itself under this
+    rule; that is the same answer the outermost rule gave only by accident of this repo having no
+    submodules, and self-anchoring is the safer default (an isolated store, never a shared one).
     """
     # THE WALK IS BOUNDED. An unbounded climb reaches the filesystem root and can pick up markers
     # in shared territory -- measured on this box, `C:\Users\<user>\AppData\Local\Temp` contains a
@@ -397,12 +400,9 @@ def _find_project_root(start: Path) -> Path | None:
     # or its own manifest nearer than any such stray, and the VCS pass runs first.
     ladder = [start, *start.parents][:_MAX_PROJECT_ROOT_ASCENT]
 
-    vcs_root: Path | None = None
     for candidate in ladder:
         if (candidate / ".git").exists():
-            vcs_root = candidate  # keep walking; the LAST hit is the outermost
-    if vcs_root is not None:
-        return vcs_root
+            return candidate  # FIRST hit == innermost; see the nesting note above
 
     for candidate in ladder:
         for marker in _PROJECT_MANIFEST_MARKERS:
@@ -578,11 +578,13 @@ def _capture_snapshot(
             if unreadable_hit is not None:
                 unreadable_hit.record(exc)
             continue
-        snapshot.append({
-            "path": str(path),
-            "size": int(stat.st_size),
-            "mtime_ns": int(stat.st_mtime_ns),
-        })
+        snapshot.append(
+            {
+                "path": str(path),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        )
     snapshot.sort(key=lambda item: str(item["path"]))
     return snapshot
 
