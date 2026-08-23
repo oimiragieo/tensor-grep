@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import sys
+import tempfile
 import threading
 from collections import OrderedDict
 from dataclasses import asdict, dataclass
@@ -359,6 +360,29 @@ _PROJECT_MANIFEST_MARKERS = ("pyproject.toml", "Cargo.toml", "package.json")
 _MAX_PROJECT_ROOT_ASCENT = 24
 
 
+def _shared_territory_roots() -> frozenset[Path]:
+    """Directories that are NEVER a project root, however many markers they carry.
+
+    The system temp dir and the user home dir are SHARED TERRITORY: unrelated trees live side by
+    side under them. Anchoring to one makes every such tree share a single session store and a
+    single daemon -- the identical hazard the innermost-`.git` rule fixes for nested checkouts,
+    reached through the manifest pass instead.
+
+    This is not hypothetical and was not caught by review. An earlier revision documented it as an
+    accepted residual risk; it then failed a real warm-daemon test, because `%TEMP%` on this
+    machine holds a stray `Cargo.toml` and `$HOME` a `package.json`. Measured before the fix:
+    `<temp>/tmpXXXX/proj` resolved to `<temp>` itself, which silently routed the client away from
+    the daemon its own test had just started. An accepted risk that a test can trip is a defect.
+    """
+    roots: set[Path] = set()
+    for candidate in (tempfile.gettempdir(), os.path.expanduser("~")):
+        try:
+            roots.add(Path(candidate).resolve())
+        except OSError:  # pragma: no cover - unresolvable HOME/TEMP
+            continue
+    return frozenset(roots)
+
+
 def _find_project_root(start: Path) -> Path | None:
     """Walk UP from `start` to the project root: the INNERMOST `.git`, else the nearest manifest.
 
@@ -401,15 +425,40 @@ def _find_project_root(start: Path) -> Path | None:
     # or its own manifest nearer than any such stray, and the VCS pass runs first.
     ladder = [start, *start.parents][:_MAX_PROJECT_ROOT_ASCENT]
 
+    shared = _shared_territory_roots()
+
     for candidate in ladder:
+        if candidate in shared:
+            continue
         if (candidate / ".git").exists():
             return candidate  # FIRST hit == innermost; see the nesting note above
 
     for candidate in ladder:
+        if candidate in shared:
+            continue
         for marker in _PROJECT_MANIFEST_MARKERS:
             if (candidate / marker).exists():
                 return candidate
     return None
+
+
+def _resolve_literal_dir(path: Path) -> Path:
+    """`path` resolved to an existing DIRECTORY, with no project anchoring.
+
+    This is exactly what `_resolve_root` did before the G4.1/G4.2 anchoring landed, and it is
+    split out because anchoring silently changed the meaning of a value two ledger call sites
+    depend on. `ledger_store._normalize_scope` derives a root-RELATIVE scope string from it: once
+    `_resolve_root` began returning the project root, `claim core/hooks` recorded its scope as
+    "." instead of "core/hooks" -- every subtree claim collapsing onto the repo root, silently.
+
+    Caught by `test_claim_subpath_rolls_up_into_root_list`, which passes on `origin/main`. The
+    lesson is the same one the scan/store split in `open_session` records: one helper served two
+    different questions ("where does state live?" and "what literal directory did the caller
+    name?"), and anchoring is correct for the first and wrong for the second. Callers now say
+    which they mean.
+    """
+    resolved = path.expanduser().resolve()
+    return resolved if resolved.is_dir() else resolved.parent
 
 
 def _resolve_root(path: Path) -> Path:

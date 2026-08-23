@@ -25,7 +25,8 @@ the Slice 1 fix as it originally shipped; Slice 2 was migrated onto the SAME hel
 not read "claims" here as excluding findings -- see :func:`_ledger_physical_root` for the current,
 derived membership):
 unlike every sibling store, ``root`` for ``submit_claim``/``release_claim``/``list_claims`` is
-NOT simply ``session_store._resolve_root(path)`` (the literal, caller-supplied directory) --
+NOT simply ``session_store._resolve_literal_dir(path)`` (the literal, caller-supplied
+directory) --
 that was the bug. ``claim core/hooks`` and ``list .`` each independently resolved to a
 DIFFERENT physical directory (``core/hooks/.tensor-grep/...`` vs ``./.tensor-grep/...``), so a
 claim filed from one subtree was invisible to a list/release call from another, even within the
@@ -49,7 +50,7 @@ ancestor scope), but when nothing matches, it now names what IS live elsewhere
 ``released_count: 0``.
 
 Slice 2 (``record_finding``/``find_findings`` below) originally kept plain
-``session_store._resolve_root``, deliberately, "per the same footgun it has not (yet) been
+``session_store._resolve_literal_dir``, deliberately, "per the same footgun it has not (yet) been
 reported for". **It has now been reported** -- twice, in the live external dogfoods of v1.101.7
 and v1.101.9 ("Slice 2 ledger still more path-literal than Slice 1"), so the condition that
 justified leaving it alone has expired and both entry points now use
@@ -112,7 +113,7 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import atomic_write_json, index_lock
 from tensor_grep.cli.evidence_receipt import _repo_revision_identity
 from tensor_grep.cli.evidence_signing import receipt_digest, verify_receipt
-from tensor_grep.cli.session_store import _resolve_root
+from tensor_grep.cli.session_store import _resolve_literal_dir
 
 LEDGER_SCHEMA_VERSION = 1
 
@@ -396,7 +397,7 @@ def _normalize_relative_file(root: Path, raw: str) -> str:
 
 
 def _discover_repo_root(start: Path) -> Path:
-    """Walk upward from ``start`` (an already-``_resolve_root``-resolved, existing directory)
+    """Walk upward from ``start`` (an already-``_resolve_literal_dir``-resolved, existing directory)
     looking for the nearest ancestor -- including ``start`` itself -- that carries a ``.git``
     entry (a directory for a normal checkout, a FILE for a git worktree/submodule; ``.exists()``
     does not care which). ``.git`` is the one unambiguous, universally-understood repo-boundary
@@ -410,7 +411,7 @@ def _discover_repo_root(start: Path) -> Path:
     the OS temp-dir boundary, mirroring ``_validation_repo_root``'s own stop condition so a
     pytest ``tmp_path`` fixture -- itself created under the system temp dir -- can never
     accidentally walk into an unrelated repo that happens to contain the temp dir) -- a non-git
-    working directory keeps today's exact ``_resolve_root``-only behavior; every EXISTING test
+    working directory keeps today's exact ``_resolve_literal_dir``-only behavior; every EXISTING test
     fixture (none of which ``git init`` by default) is therefore byte-for-byte unaffected.
 
     Pure filesystem ``.exists()`` stat calls only, no subprocess -- keeps ``list_claims``/
@@ -437,14 +438,14 @@ def _discover_repo_root(start: Path) -> Path:
 
 def _ledger_physical_root(path: str) -> Path:
     """The canonical physical location for THIS repository's claims/findings index: today's
-    literal ``_resolve_root(path)`` resolution followed by the ``.git``-boundary walk-up above.
+    literal ``_resolve_literal_dir(path)`` resolution followed by the ``.git``-boundary walk-up above.
     Used by every Slice 1 + Slice 2 entry point that reads or writes the ledger index -- derive
     the CURRENT membership from this function's own call sites
     (``grep -n "_ledger_physical_root(path)" src/tensor_grep/cli/ledger_store.py``), never from an
     enumerated list here: a name list goes stale the moment a new entry point is added, which is
     exactly why Slice 2 was migrated onto this helper in the first place -- see the module
     docstring's "PATH scoping" paragraph for that history."""
-    return _discover_repo_root(_resolve_root(Path(path)))
+    return _discover_repo_root(_resolve_literal_dir(Path(path)))
 
 
 def _normalize_scope(path: str, root: Path) -> str:
@@ -458,7 +459,7 @@ def _normalize_scope(path: str, root: Path) -> str:
     of it BY CONSTRUCTION: ``root`` is discovered by walking upward from exactly this same
     resolution (see ``_ledger_physical_root``), so it is always ``resolved`` or one of its
     ancestors -- the ``ValueError`` branch below is defensive only."""
-    resolved = _resolve_root(Path(path))
+    resolved = _resolve_literal_dir(Path(path))
     try:
         relative = resolved.relative_to(root)
     except ValueError:
@@ -621,15 +622,17 @@ def _find_overlaps(
         file_overlap = sorted(new_files & entry_files)
         if not symbol_overlap and not file_overlap:
             continue
-        overlaps.append({
-            "claim_id": entry.get("claim_id"),
-            "agent_id": entry.get("agent_id"),
-            "symbols": symbol_overlap,
-            "files": file_overlap,
-            "intent": entry.get("intent"),
-            "expires_at": entry.get("expires_at"),
-            "revision_matches": _revision_matches(entry.get("revision"), new_record.revision),
-        })
+        overlaps.append(
+            {
+                "claim_id": entry.get("claim_id"),
+                "agent_id": entry.get("agent_id"),
+                "symbols": symbol_overlap,
+                "files": file_overlap,
+                "intent": entry.get("intent"),
+                "expires_at": entry.get("expires_at"),
+                "revision_matches": _revision_matches(entry.get("revision"), new_record.revision),
+            }
+        )
     return overlaps
 
 

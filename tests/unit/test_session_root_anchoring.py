@@ -128,6 +128,37 @@ def test_anchoring_reaches_the_daemon_not_only_the_session_store(tmp_path: Path)
     )
 
 
+def test_a_project_under_the_temp_dir_does_not_anchor_to_the_temp_dir(tmp_path: Path) -> None:
+    """Shared territory is never a project root -- found by a REGRESSION, not by review.
+
+    An earlier revision of this slice documented this as an accepted residual risk. It then broke
+    `test_context_render_warm_daemon_bounds_suggested_edits_same_as_cold`, which passed on
+    `origin/main` and failed here: the test builds a project under `tmp_path`, starts a real
+    daemon at it, and the client resolved that project to `%TEMP%` itself (measured), so the
+    request silently fell back to the COLD route -- `routing_reason` read `context-render` instead
+    of `session-context-render`. Nothing errored; the wrong answer simply looked slower.
+
+    `%TEMP%` holds a stray `Cargo.toml` on this machine and `$HOME` a `package.json`, so without
+    the deny rule every unrelated tree under either would share ONE session store and ONE daemon
+    -- the same hazard the innermost-`.git` rule fixes for nested checkouts, reached through the
+    manifest pass instead. An accepted risk that a test can trip is a defect.
+
+    This test uses the REAL temp dir on purpose: `tmp_path` already lives under it, so the stray
+    marker is genuinely present rather than simulated.
+    """
+    project = tmp_path / "proj"
+    (project / "src").mkdir(parents=True)
+
+    resolved = session_store._resolve_root(project)
+
+    assert resolved == project.resolve(), (
+        f"a project under the system temp dir anchored to {resolved} -- every unrelated tree "
+        f"under temp would share one session store and one daemon"
+    )
+    for shared in session_store._shared_territory_roots():
+        assert resolved != shared, f"anchored to shared territory {shared}"
+
+
 def test_file_argument_still_resolves_to_a_directory(tmp_path: Path) -> None:
     """Control for the existing `.parent` behaviour on a file path."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
