@@ -47,6 +47,76 @@
 
 
 
+## Recent campaign notes (2026-08-23) - G4.4 REPRODUCED, G4.5 NOT REPRODUCED (opposite numbers)
+
+Two more of the external dogfood's five UNVERIFIED findings, probed against the published
+v1.111.7 wheel.
+
+### G4.4 — `tg dogfood` version-skew FAIL: **REPRODUCED**, with a sharper diagnosis
+
+```
+pyproject.toml : 1.112.0      <- the worktree (a release landed)
+installed tg   : 1.111.7      <- what every probe actually executes
+verdict        : FAIL, agent-readiness passed=15 failed=8
+```
+
+All 8 failures are ONE cause, and the payload says so verbatim:
+
+```
+agent_readiness.expected_version = 1.112.0
+public-version-powershell :: expected one of ['tensor-grep 1.112.0', 'tg 1.112.0']
+                             in version output, got ['tensor-grep 1.111.7']
+```
+
+`expected_version` is read from the **worktree's `pyproject.toml`**, while every `public-version-*`
+and `public-doctor-*` probe runs the **installed binary**. The gate is comparing a CHECKOUT against
+a PUBLISHED ARTIFACT and calling the difference a failure. The reporter's phrasing — *"confuses
+'published binary' vs 'this checkout'"* — is exactly right.
+
+Their proposed fix is sound: default `--expected-version` to the INSTALLED binary, with an optional
+pin to pyproject for the release-verification case. Two different questions ("does the published
+artifact work" vs "does this checkout match what shipped") currently share one default, and the
+default answers the rarer one.
+
+**Probe honesty:** my first attempt at this read a top-level `checks` key and reported `failed
+checks: 0` while the text output said 8. That was MY probe being wrong, not a payload/text
+divergence in the product — the failures live under `verdict.failed_checks` and
+`agent_readiness.results`. Recorded because "JSON says 0, text says 8" would have been a plausible
+and completely false product bug.
+
+### G4.5 — LSP provider split-brain: **NOT REPRODUCED**, and the numbers are the OPPOSITE
+
+Reported: `defs --provider lsp` -> `fallback-native, lsp_count=0`, while `agent --provider lsp`
+claimed `lsp_proof=true` on a native anchor — i.e. the weaker command over-claiming.
+
+Measured here:
+
+| Command | Reported | Measured |
+|---|---|---|
+| `defs --provider lsp` | `fallback-native`, `lsp_count=0` | `lsp_evidence_status=lsp_proof`, `lsp_count=1`, `native_count=1`, `merged_count=1`, **`fallback_used=False`**, full `provider_agreement` object present |
+| `agent --provider lsp` | `lsp_proof=true` on a native anchor | `lsp_proof=None`, no `provider_agreement` key at all |
+
+So on this machine `defs` is the command with the RICHER evidence and `agent` is the one carrying
+NO lsp fields — the reverse of the report. The most likely explanation is environmental: their
+Pyright was not serving that symbol (hence `lsp_count=0`), mine was.
+
+**This is NOT a refutation.** It means the finding is environment-dependent, which makes it a
+worse bug to reason about, not a lesser one: the same command emits different honesty fields
+depending on whether a language server happens to be warm. What both runs agree on is the
+reporter's actual concern — **an agent cannot tell from the payload alone whether "lsp" evidence
+is real**, because `agent` ships no `provider_agreement` object to cross-check while `defs` does.
+That asymmetry reproduces here and is the part worth fixing.
+
+### Running tally on the five unverified findings
+
+| # | Finding | Verdict |
+|---|---|---|
+| G4.1 | session cwd footgun | **REPRODUCED** — worse than reported (two cwd-keyed stores; `list` returns 64 wrong sessions) |
+| G4.2 | warm-path latency / `response_cache_hits=0` | not yet probed |
+| G4.3 | Windows AST `run` argv fragility | not yet probed |
+| G4.4 | `tg dogfood` version skew | **REPRODUCED** — checkout-vs-published comparison |
+| G4.5 | LSP provider split-brain | **NOT REPRODUCED** — opposite numbers; environment-dependent, and the payload asymmetry is the real finding |
+
 ## Recent campaign notes (2026-08-23) - G4.1 VERIFIED: session store is cwd-keyed, and `list` answers from the WRONG store
 
 The external agent dogfood (v1.111.7) reported: `tg session open src` then `tg session show <id>`

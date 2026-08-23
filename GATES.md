@@ -59,10 +59,20 @@ must not be fixed either; that is how a wrong fix ships.
   - EVIDENCE: pending
 - [ ] **G4.3** Windows AST `run` argv fragility — reproduced or refuted
   - EVIDENCE: pending
-- [ ] **G4.4** `tg dogfood` version-skew FAIL — reproduced or refuted
-  - EVIDENCE: pending
-- [ ] **G4.5** LSP provider split-brain (`lsp_proof=true` on a native anchor) — reproduced or refuted
-  - EVIDENCE: pending
+- [x] **G4.4** `tg dogfood` version-skew FAIL — reproduced or refuted
+  - EVIDENCE: REPRODUCED. pyproject=1.112.0 vs installed tg=1.111.7; verdict FAIL with
+    passed=15 failed=8, ALL eight being public-version-*/public-doctor-* checks. Payload
+    states the cause verbatim: `agent_readiness.expected_version = 1.112.0` while the
+    probes run the installed binary -- the gate compares a CHECKOUT to a PUBLISHED
+    ARTIFACT. Recorded in docs/BACKLOG.md with the proposed default fix.
+- [x] **G4.5** LSP provider split-brain (`lsp_proof=true` on a native anchor) — reproduced or refuted
+  - EVIDENCE: NOT REPRODUCED, and the numbers are the OPPOSITE of the report. Measured:
+    `defs --provider lsp` -> lsp_evidence_status=lsp_proof, lsp_count=1, fallback_used=False,
+    full provider_agreement object; `agent --provider lsp` -> lsp_proof=None and NO
+    provider_agreement key. Reporter saw the reverse, so the finding is
+    ENVIRONMENT-DEPENDENT (their Pyright was not serving that symbol). Not a refutation:
+    the payload ASYMMETRY both runs agree on -- `agent` ships no provider_agreement to
+    cross-check -- is the real finding. Recorded in docs/BACKLOG.md.
 
 ## G5 — board honesty
 
