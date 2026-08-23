@@ -91,15 +91,20 @@ def test_a_nested_project_anchors_to_itself_not_the_outer_checkout(tmp_path: Pat
 
 
 def test_anchoring_reaches_the_daemon_not_only_the_session_store(tmp_path: Path) -> None:
-    """G4.2 proper: the daemon lookup, not just the store.
+    """G4.2 through the daemon's OWN entry point, not through the resolver twice.
 
-    A codex audit (2026-08-22) noted that all the other tests here pin the RESOLVER or the SESSION
-    STORE, so every one of them could pass while the daemon half of the fix did nothing. The
-    daemon derives its metadata path from the same resolver (`session_daemon._nearby_daemon_roots`
-    calls `_resolve_root`), and this asserts that seam directly: a subtree and the project root
-    must name the SAME daemon metadata file, or a daemon started at the root is unreachable from
-    the subtree.
+    Two codex rounds landed on this test. Round 1: none of the six tests touched the daemon at
+    all, so every one could pass while the G4.2 half did nothing. Round 2 caught the fix for that
+    -- the replacement called `session_store._resolve_root` itself on both inputs and compared the
+    results, which exercises the RESOLVER twice and would pass even if `session_daemon` stopped
+    resolving subtree roots entirely. A test that re-runs the function under test on both arms
+    cannot observe the caller it claims to cover.
+
+    So this drives `get_session_daemon_status`, the daemon's public path-taking entry: register a
+    daemon at the project root, ask from a SUBTREE, and require the answer to name the root.
     """
+    import json
+
     from tensor_grep.cli import session_daemon
 
     (tmp_path / ".git").mkdir()
@@ -107,12 +112,19 @@ def test_anchoring_reaches_the_daemon_not_only_the_session_store(tmp_path: Path)
     sub = tmp_path / "src" / "pkg"
     sub.mkdir(parents=True)
 
-    from_root = session_daemon._daemon_metadata_path(session_store._resolve_root(tmp_path))
-    from_sub = session_daemon._daemon_metadata_path(session_store._resolve_root(sub))
+    metadata_path = session_daemon._daemon_metadata_path(tmp_path.resolve())
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.write_text(
+        json.dumps({"pid": 999999, "port": 65000, "token": "t", "root": str(tmp_path.resolve())}),
+        encoding="utf-8",
+    )
 
-    assert from_sub == from_root, (
-        f"the subtree looks for its daemon at {from_sub} while one started at the project root "
-        f"registers at {from_root} -- the warm daemon is unreachable from a subtree (G4.2)"
+    status = session_daemon.get_session_daemon_status(str(sub))
+
+    assert Path(status["root"]).resolve() == tmp_path.resolve(), (
+        f"asked from the subtree {sub}, the daemon layer reported root {status.get('root')} "
+        f"instead of the project root {tmp_path} -- a daemon started at the root is unreachable "
+        f"from a subtree (G4.2)"
     )
 
 

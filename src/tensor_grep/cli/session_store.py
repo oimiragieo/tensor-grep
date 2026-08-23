@@ -360,7 +360,7 @@ _MAX_PROJECT_ROOT_ASCENT = 24
 
 
 def _find_project_root(start: Path) -> Path | None:
-    """Walk UP from `start` to the project root: the OUTERMOST `.git`, else the nearest manifest.
+    """Walk UP from `start` to the project root: the INNERMOST `.git`, else the nearest manifest.
 
     The two-pass shape is load-bearing. A single nearest-marker walk over
     `(".git", "pyproject.toml", "Cargo.toml", "package.json")` picks whichever marker appears
@@ -374,8 +374,9 @@ def _find_project_root(start: Path) -> Path | None:
     which is worse than not fixing it: a partial fix that looks complete. Measured against the
     real tree before this function was written.
 
-    Preferring the OUTERMOST `.git` gives `tensor-grep` for all of `rust_core/src`, `src`, `npm`
-    and `docs` (measured). Returns None when nothing matches, so an ad-hoc directory outside any
+    A dedicated VCS pass gives `tensor-grep` for all of `rust_core/src`, `src`, `npm` and `docs`
+    (measured) -- none of those carry their own `.git`, so the innermost-`.git` rule below returns
+    the checkout root for every one of them. Returns None when nothing matches, so an ad-hoc directory outside any
     project keeps today's behaviour instead of being silently relocated.
 
     Nesting note: the INNERMOST `.git` wins. A codex audit (2026-08-22) caught the first draft
