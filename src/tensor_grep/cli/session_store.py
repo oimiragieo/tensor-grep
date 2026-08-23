@@ -354,16 +354,19 @@ class _SessionServeResponseCache:
 # this file's growth). Re-exported here because `session_daemon`, `ledger_store` and
 # `evidence_receipt` all import these names from `session_store`; moving them without the
 # re-export would be an invisible break for three modules.
-from tensor_grep.cli.session_root import (  # noqa: E402,F401  (deliberate re-export)
-    _MAX_PROJECT_ROOT_ASCENT,
-    _PROJECT_MANIFEST_MARKERS,
-    _find_project_root,
-    _index_path,
-    _resolve_literal_dir,
-    _resolve_root,
-    _session_payload_path,
-    _sessions_dir,
-    _shared_territory_roots,
+# `X as X` is the EXPLICIT re-export form. mypy runs with implicit re-export disabled, so the
+# plain `from ... import X` spelling type-checks locally yet fails CI with
+# "does not explicitly export attribute" for every consumer -- which is exactly what happened.
+from tensor_grep.cli.session_root import (  # noqa: E402  (deliberate re-export)
+    _MAX_PROJECT_ROOT_ASCENT as _MAX_PROJECT_ROOT_ASCENT,
+    _PROJECT_MANIFEST_MARKERS as _PROJECT_MANIFEST_MARKERS,
+    _find_project_root as _find_project_root,
+    _index_path as _index_path,
+    _resolve_literal_dir as _resolve_literal_dir,
+    _resolve_root as _resolve_root,
+    _session_payload_path as _session_payload_path,
+    _sessions_dir as _sessions_dir,
+    _shared_territory_roots as _shared_territory_roots,
 )
 
 
