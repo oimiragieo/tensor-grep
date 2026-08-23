@@ -15214,37 +15214,3 @@ def build_symbol_blast_radius_render_from_map(
             },
         )
     return _attach_profiling(payload, collector)
-
-
-def build_symbol_blast_radius_render_json(
-    symbol: str,
-    path: str | Path = ".",
-    *,
-    max_depth: int = 3,
-    max_files: int = 3,
-    max_sources: int = 5,
-    max_symbols_per_file: int = 6,
-    max_render_chars: int | None = None,
-    optimize_context: bool = False,
-    render_profile: str = "full",
-    profile: bool = False,
-    semantic_provider: str = "native",
-    max_repo_files: int | None = None,
-) -> str:
-    return json.dumps(
-        _self.build_symbol_blast_radius_render(
-            symbol,
-            path,
-            max_depth=max_depth,
-            max_files=max_files,
-            max_sources=max_sources,
-            max_symbols_per_file=max_symbols_per_file,
-            max_render_chars=max_render_chars,
-            optimize_context=optimize_context,
-            render_profile=render_profile,
-            profile=profile,
-            semantic_provider=semantic_provider,
-            max_repo_files=max_repo_files,
-        ),
-        indent=2,
-    )

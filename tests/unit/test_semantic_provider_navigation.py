@@ -1734,34 +1734,20 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
     assert payload["semantic_provider"] == "hybrid"
 
 
-def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path, monkeypatch) -> None:
-    def fake_build_symbol_blast_radius_render_json(
-        symbol,
-        path,
-        max_depth=3,
-        max_files=3,
-        max_sources=5,
-        max_symbols_per_file=6,
-        max_render_chars=None,
-        optimize_context=False,
-        render_profile="full",
-        profile=False,
-        semantic_provider="native",
-        **_,
-    ):
-        return json.dumps({
-            "symbol": symbol,
-            "path": str(path),
-            "max_depth": max_depth,
-            "semantic_provider": semantic_provider,
-        })
+def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path) -> None:
+    """`--provider` must reach the emitted payload.
 
-    monkeypatch.setattr(
-        repo_map,
-        "build_symbol_blast_radius_render_json",
-        fake_build_symbol_blast_radius_render_json,
-    )
+    THIS TEST USED TO CARRY AN INERT MONKEYPATCH. It stubbed
+    `repo_map.build_symbol_blast_radius_render_json` and the CLI never called it -- the command
+    calls `build_symbol_blast_radius_render` directly. Proven, not inferred: replacing the stub
+    body with `raise AssertionError("STUB WAS CALLED")` left this test PASSING, so the fake was
+    never invoked once.
 
+    The assertion below was therefore always being satisfied by the REAL code path, which is the
+    stronger thing to test -- so the fake and the `monkeypatch` fixture are gone rather than
+    repointed. The wrapper they referenced is deleted too: it had zero real references in
+    `main.py` (AST-checked; the only grep hit is a comment calling it "the old ... helper").
+    """
     result = CliRunner().invoke(
         app,
         [
