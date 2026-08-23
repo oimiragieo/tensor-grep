@@ -525,6 +525,13 @@ _RENDER_FAMILY_DEADLINE_COMMAND_ARGS = {
     ],
     "edit-plan": lambda p, d: ["edit-plan", str(p), "helper", "--deadline", str(d), "--json"],
     "context": lambda p, d: ["context", str(p), "helper", "--deadline", str(d), "--json"],
+    # NOT blast-radius-render, deliberately. It gained `--deadline` on 2026-08-22 and looks like a
+    # family member, but this parametrize set is defined by the STAGE the test patches
+    # (`build_context_pack_from_map`), not by which commands accept a deadline.
+    # `blast-radius-render` runs `build_symbol_blast_radius_render_from_map` and never touches the
+    # pack stage, so the simulated tail overrun cannot fire for it and the row would fail for a
+    # structural reason rather than a product defect. Its own overrun path is covered by
+    # test_blast_radius_render_source_loop_overrun_stamps_partial_reason below.
 }
 
 

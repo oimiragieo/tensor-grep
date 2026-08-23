@@ -8472,6 +8472,15 @@ def blast_radius_render(
     profile: bool = typer.Option(
         False, "--profile", help="Include per-phase profiling in JSON output."
     ),
+    deadline: float | None = typer.Option(
+        None,
+        "--deadline",
+        min=0.1,
+        help=(
+            "Stop the underlying repo scan after N seconds and return partial:true JSON with "
+            "whatever was found so far, instead of running unbounded."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready blast-radius bundle for a symbol.
@@ -8480,7 +8489,10 @@ def blast_radius_render(
     (callers/caller_tree/affected_files/blast_radius_score), use
     `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
     """
-    from tensor_grep.cli.repo_map import build_symbol_blast_radius_render
+    from tensor_grep.cli.repo_map import (
+        _deadline_monotonic_from_seconds,
+        build_symbol_blast_radius_render,
+    )
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
@@ -8491,6 +8503,7 @@ def blast_radius_render(
         )
         resolved_render_profile = render_profile or ("llm" if json_output else "full")
         resolved_optimize_context = optimize_context or (json_output and render_profile is None)
+        deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
 
         payload = build_symbol_blast_radius_render(
             resolved_symbol,
@@ -8505,6 +8518,7 @@ def blast_radius_render(
             profile=profile,
             semantic_provider=provider,
             max_repo_files=max_repo_files,
+            deadline_monotonic=deadline_monotonic,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
