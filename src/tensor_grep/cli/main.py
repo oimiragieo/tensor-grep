@@ -8603,8 +8603,10 @@ def blast_radius_render(
     (callers/caller_tree/affected_files/blast_radius_score), use
     `tg blast-radius SYMBOL --json` instead -- it is faster and agent-consumable.
     """
-    from tensor_grep.cli.repo_map import _deadline_monotonic_from_seconds
-    from tensor_grep.cli.repo_map import build_symbol_blast_radius_render
+    from tensor_grep.cli.repo_map import (
+        _deadline_monotonic_from_seconds,
+        build_symbol_blast_radius_render,
+    )
 
     try:
         resolved_path, resolved_symbol = _resolve_path_and_symbol(
