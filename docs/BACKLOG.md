@@ -47,6 +47,49 @@
 
 
 
+## Recent campaign notes (2026-08-23) - EXTERNAL AGENT DOGFOOD of v1.113.0 + open findings filed
+
+Second external agent dogfood, this time against **v1.113.0** (their binary
+`~/.tensor-grep/bin/tg.exe`, corpus `C:\dev\agentwork\tensor-grep`). Filed here because this
+session has no task-store; the board is the durable tracker.
+
+| Their finding | Disposition, with the receipt | Owner |
+|---|---|---|
+| **#3** `session show/edit-plan` defaults `[PATH]` to `.`, so a session opened in a subtree is invisible from the repo root | **FIXED, unreleased.** PR #1103 anchors `_resolve_root` to the project root. Their exact repro (open in subtree, `session show <id>` from root with NO PATH argument) re-run on that branch returns **exit 0**. Correct on v1.113.0 because the fix is not published yet | PR #1103 |
+| **#4** `blast-radius-render` rejects `--deadline` its sibling accepts | **FIXED, unreleased.** PR #1102 | PR #1102 |
+| **#1** lexical primary trap: `"add retry with tests"` selects `_add` at `confidence=1.0`, `ask=false` | **OPEN, no owner.** The highest-severity row here: an agent edits the wrong symbol at full confidence. Needs a weak-lexical/stop-symbol gate (a 1-3 char or `_`-prefixed symbol matched from a query word must not be primary at conf >= 0.9) plus a dogfood known-bad case | unassigned |
+| **#2** `downgrade_reasons` non-empty while `confidence.overall=1.0` | **OPEN.** Invariant tests exist on main (`d29b013`, `tests/unit/test_prepare_confidence_invariants.py`) but the external run still reports the violation, so the invariant is **not actually enforced on the production path** -- the tests pass without binding it | unassigned |
+| **#5** warm session ~4.0-4.3s vs cold ~6.8s; `response_cache_hits=0` | **OPEN.** Note this is the same *class* as G4.2 (warm cache unreachable) but measured with a correct cwd, so PR #1103 is not automatically its fix -- re-measure after #1103 lands before scoping | unassigned |
+| **#6** `tg dogfood` still red on `agent-readiness-timeout` (170s) | **OPEN.** Public-version checks now pass when pinned with `--expected-version`, so this is the only remaining failure | unassigned |
+| **#7** `--rank --json` exposes no scores; `tg find` still BM25-only | **OPEN**, low | unassigned |
+
+### Other findings from the same session (not from the external audit)
+
+- **The canonical index in `docs/TASK_BOARD.md` is stale.** It is stamped `v1.110.16 / main 8f7db83`
+  while main is at `v1.113.0`+; it asserts **0 IN_FLIGHT** while PRs #1102 and #1103 are open; and
+  its own count says **5 CEO_GATED** while the 2026-08-22 campaign note names **six**
+  (`#48 #72 #77 #131 #169` **+ RULESETS**). Re-derive the index from live state.
+- **F8's blocker receipt cites a file that does not exist.** It names
+  `rust_core/src/path_domain.rs`; `git cat-file -e origin/main:rust_core/src/path_domain.rs` fails.
+  The block itself (shared-box cargo/e2e ban) may still hold, but the stated evidence does not.
+  Re-derived and confirmed live in the same pass: **MCP-SURFACE** is accurate
+  (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"` at `cli/mcp_server.py:188`) and **F6** is accurate
+  (`evidence_signing.py` = 539 lines / 19 functions).
+- **`tests/unit/test_cli_modes_ast_misc.py` has an order-dependent failure.** Two sightings this
+  session (`test_app_help_should_expose_the_python_public_top_level_surface` and
+  `test_search_help_should_render_python_search_help_smoke`). Each passes alone, passes as a whole
+  file, and passes on main -- they fail only inside a larger selection, so another test mutates the
+  CLI help surface. Third sighting triggers the structural fix.
+- **RULESETS is NOT a live defect, contrary to an earlier claim in this session.** Measured on a
+  clean `python:3.12-slim` with a stock `pip install tensor-grep==1.113.0`: `tg rulesets` prints
+  `WARNING: the ast-grep backend is not installed ... pip install ast-grep-cli`, and
+  `tg scan --ruleset subprocess-safe` fails **closed** with that same remediation plus the explicit
+  sentence that a stock install does not include it. After `pip install ast-grep-cli` the scan runs
+  and correctly reports `matched_rules=1` on a `shell=True` fixture. The earlier "still broken"
+  reading came from passing `--ruleset security`, which is a **category, not a ruleset** -- the CLI
+  says so and lists the six valid names. The remaining RULESETS question is the CEO-gated packaging
+  one (a `tensor-grep[scan]` extra), not a correctness bug.
+
 ## Recent campaign notes (2026-08-23) - G4.2 REPRODUCED: the warm cache is unreachable from a SUBTREE path
 
 Fourth of the external dogfood's five UNVERIFIED findings. The report said warm
