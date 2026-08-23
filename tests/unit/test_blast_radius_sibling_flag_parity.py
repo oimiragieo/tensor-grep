@@ -93,3 +93,57 @@ def test_render_only_flags_are_not_demanded_of_the_plain_command() -> None:
             f"blast-radius unexpectedly grew {render_only}; render-shaping flags belong to "
             "blast-radius-render only"
         )
+
+
+def test_blast_radius_render_source_loop_overrun_stamps_partial_reason(tmp_path, monkeypatch):
+    """An overrun on the RENDER path must say WHY, not just that it is partial.
+
+    Deliberately NOT added to `_RENDER_FAMILY_DEADLINE_COMMAND_ARGS` in
+    tests/unit/test_cli_deadline_coverage_gaps.py: that set is defined by the stage it patches
+    (`build_context_pack_from_map`), which this command never touches. Adding it there fails for
+    a STRUCTURAL reason -- the simulated overrun cannot fire -- which would look like a product
+    defect and is not one. This test patches the stage `blast-radius-render` actually runs.
+
+    The contract being pinned: `partial=true` with `partial_reason=None` tells an agent the
+    result is incomplete but not why. `deadline_limit` alone is not equivalent -- a consumer
+    that learned `partial_reason` on `tg prepare` reads None here and can only conclude
+    "partial for an unknown reason". Every other deadline-bearing command stamps the reason.
+    """
+    import time as _time
+
+    from tensor_grep.cli import repo_map
+
+    (tmp_path / "helper.py").write_text("def helper(x):\n    return x\n", encoding="utf-8")
+    (tmp_path / "caller.py").write_text(
+        "from helper import helper\n\n\ndef use(y):\n    return helper(y)\n", encoding="utf-8"
+    )
+
+    original = repo_map.build_symbol_blast_radius_from_map
+
+    def _slow(*args, **kwargs):
+        result = original(*args, **kwargs)
+        _time.sleep(0.4)  # push the shared deadline past its budget before the source loop
+        return result
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_from_map", _slow)
+
+    result = CliRunner().invoke(
+        app,
+        ["blast-radius-render", str(tmp_path), "helper", "--deadline", "0.3", "--json"],
+    )
+    import json as _json
+
+    payload = _json.loads(result.stdout)
+
+    if payload.get("partial") is not True:
+        # The overrun did not fire on this machine; asserting the reason would be vacuous.
+        # Skipping is honest here -- a green from a run that never overran proves nothing.
+        import pytest as _pytest
+
+        _pytest.skip("render source-loop overrun did not trigger; nothing to assert about it")
+
+    assert payload.get("partial_reason") == "deadline", (
+        "blast-radius-render reported partial=true without saying why. "
+        f"partial_reason={payload.get('partial_reason')!r} "
+        f"deadline_limit={payload.get('deadline_limit')!r}"
+    )
