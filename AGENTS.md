@@ -903,6 +903,22 @@ concrete failure observed this session.
   the skill exists to prevent. **When auditing freshness, audit the auditor first: an artifact
   whose stated purpose is freshness reads as evidence that it ran.**
 
+- **A154 — A MONITOR THAT CANNOT READ ITS OWN SIGNAL MANUFACTURES THE APPEARANCE OF SUPERVISION
+  (2026-08-23).** `jq` is **not on PATH** in this environment. A watch loop doing
+  `gh pr checks N --json bucket | jq ...` receives an EMPTY STRING — not an error the loop
+  notices. Empty then fails every numeric comparison, so a terminal condition like
+  `[ "$pend" != "0" ]` is **permanently true** and the "all clear" branch can never fire. Three
+  monitors ran blind in one session on exactly this: two reported *"timed out without producing
+  output"*, which I read as **still running** rather than **never worked** — twice — and only the
+  third gave itself away by printing `#1102(p=,f=)` with empty fields.
+  Use `gh`'s BUILT-IN `--jq` (`gh pr checks N --json bucket --jq '...'`), never a pipe to external
+  `jq`. And give every monitor a probe SELF-CHECK that aborts when blind:
+  `probe=$(...); case "$probe" in ''|*[!0-9]*) echo ABORT; exit 2;; esac` — it caught the fix
+  working on the very next run.
+  This is the [[A149]] family one level up: there a CHECK could not fail, here the WATCHER could
+  not observe. Both present as quiet green, and the watcher is worse, because its silence is
+  indistinguishable from the patience it is supposed to be providing.
+
 ## Current Handoff
 release_docs_current_tag: v1.113.2
 

@@ -47,6 +47,114 @@
 
 
 
+## OPEN (2026-08-23): the shipped confidence guard fixes the CONTRACT, not the ASK-GATE
+
+Filed against my own change (PR #1105, merged `65cf67f`, released v1.113.2) after an adversarial
+security review of the shipped code returned CHANGES_REQUIRED with one HIGH.
+
+### The measurement
+
+`_DEGRADED_CONFIDENCE_CEILING = 0.99` (`agent_capsule_confidence.py:164`).
+The ask-gate threshold is **0.75** (`agent_capsule_confidence.py:256`:
+`if confidence_overall < 0.75: return "confidence below 0.75"`).
+
+**0.99 is well above 0.75**, so the guard never changes `ask_user_before_editing.required`.
+
+### What that means, stated plainly
+
+The guard closes a real hole: a payload can no longer list the reasons it is degraded AND report
+`overall == 1.0`. That contradiction is gone, and its tests are perturbation-proved.
+
+It does **not** close the hole the external dogfood actually reported, which was
+`downgrade_reasons` non-empty **and** `ask_required == false` — i.e. an agent editing without
+asking on a scan that did not finish. With the guard, such a payload now reports 0.99 and the
+agent **still** auto-edits.
+
+PR #1105's body says *"`ask_user_before_editing` keys off that number, so the certain-but-degraded
+shape tells an agent 'edit this, no question needed'"* — implying the guard prevents that. It does
+not. That sentence overstated the fix and this row is the correction.
+
+Note the severity is bounded by what was ALREADY correct: the branch-specific clamps
+(0.94 / 0.72 / 0.55) do drop below 0.75 for truncation and primary-file omission, so those paths
+already force the ask. The gap is the two branches that had no clamp of their own —
+`consistency["confidence_downgraded"]` and a caller-supplied reason.
+
+### Why it is not fixed in the same breath
+
+Lowering the ceiling below 0.75 would make ANY downgrade reason force a human prompt, including
+minor ones on otherwise-strong results. That is a change to an agent-safety threshold and a
+change to how often the tool interrupts a user — a design decision, not a tuning nit. It wants a
+council and a look at real capsule distributions, not a late-session edit.
+
+### Also raised by the same review, unresolved
+
+- **MED** — a non-finite `overall` (NaN) supplied via `edit_plan_seed.confidence.overall`
+  propagates as NaN rather than a bounded value. `min(NaN, 0.99)` does not clamp. Never yields
+  1.0, so it is not the certainty bug, but the output contract is not bounded either.
+- **LOW** — a caller-supplied EMPTY STRING counts as a downgrade reason and lowers confidence to
+  0.99. Cosmetic, but it means "a reason" is currently "any truthy-or-not list element".
+
+## ROOT-CAUSED (2026-08-23): the "order-dependent help flake" is deterministic, not a flake
+
+Filed after four sightings across three PRs. It is **not** flaky, **not** terminal-width
+dependent, and **not** caused by any change in this session — it reproduces on pristine `main`.
+
+### The measurement
+
+`tg --help` renders **two different documents** depending on WHEN `tensor_grep.cli.main` is
+first imported:
+
+| how `main` is imported | help chars | command rows | contains `sidecar-routed GPU results` |
+|---|---:|---:|---|
+| at **module scope** (pytest collection time) | **10,429** | 50 | **NO** |
+| inside the **test function** (run time) | **20,641** | 0 | **YES** |
+
+Reproduce with nothing but a two-line test file:
+
+```python
+# module-scope import -> the SHORT render
+from tensor_grep.cli.main import _scan_incomplete  # noqa: F401
+
+
+def test_probe():
+    from typer.testing import CliRunner
+    from tensor_grep.cli.main import app
+
+    print(len(CliRunner().invoke(app, ["--help"]).stdout))
+```
+
+Move that import inside the function and the number doubles. `COLUMNS=200` changes neither
+number, so terminal width is ruled out.
+
+### Why it looked like a flake
+
+`tests/unit/test_cli_modes_ast_misc.py::test_app_help_should_expose_the_python_public_top_level_surface`
+asserts a snippet that exists ONLY in the long render. It therefore fails whenever ANY
+earlier-collected test module imports `tensor_grep.cli.main` at module scope — and passes when run
+alone or as a whole file, because then nothing has imported `main` at collection time. The polluter
+in the observed failures is `tests/unit/test_agent_capsule_best_effort_primary.py`, whose only
+"offence" is a perfectly ordinary module-scope
+`from tensor_grep.cli.main import _scan_incomplete`.
+
+Bisected to that single file, then to import time specifically: the failure reproduces with **every
+test in the polluter deselected**, so no test body is involved.
+
+Counter-intuitive tell that misled the first two investigations: running MORE tests can make it
+PASS, because a later-collected module can re-import and re-render.
+
+### Why this is a product question, not just a test-hygiene one
+
+Two renders of `--help` differing by 10 KB and by whether the agent-contract prose appears is a
+user-visible surface. An agent that shells out to `tg --help` may get either document depending on
+process state. The test is the messenger.
+
+### Not fixed here, and why
+
+The fix is either (a) make the help render deterministic regardless of import timing, or (b) make
+the test import `main` the same way the assertion's render requires and pin BOTH renders. Both are
+product/test-design changes outside a closeout's scope. Recorded with a reproduction so the next
+session starts from the mechanism instead of re-bisecting it a fifth time.
+
 ## Session closeout (2026-08-23) - state, receipts, and what was NOT done
 
 Filed so a fresh session starts from measured state rather than from this session's prose.
@@ -55,7 +163,7 @@ Filed so a fresh session starts from measured state rather than from this sessio
 
 | Item | State | Receipt |
 |---|---|---|
-| **PR #1103** session/daemon root anchoring (G4.1, G4.2) | CI green, merge in progress | 39 checks pass / 0 fail; fixes the external dogfood's #3, whose exact repro (open in subtree, `session show <id>` from root with NO PATH arg) returns exit 0 on the branch |
+| **PR #1103** session/daemon root anchoring (G4.1, G4.2) | **SHIPPED and VERIFIED ON THE PUBLISHED ARTIFACT** | Merged `cb42752`; released **v1.113.1**, published **4/4 by filename** (`macosx_11_0_arm64`, `manylinux_2_39_x86_64`, `win_amd64`, sdist — checked per-artifact, never by version presence). Dogfooded on a clean `python:3.12-slim` with a stock `pip install tensor-grep==1.113.1`: the external auditor's exact repro (open a session in a SUBTREE, then `tg session show <id>` from the repo root with **no PATH argument**) now returns **OK**, and `search`/`defs` show no regression. This is the loop closed end-to-end: reproduced on the published v1.111.7, fixed, released, and re-verified on the published wheel — not on a branch and not on a maintainer's machine |
 | **PR #1105** confidence invariant enforced in production | CI green, awaiting the #1103 release window | 39 checks pass / 0 fail; RED reproduced on `origin/main` before the guard was written |
 | **PR #1102** `blast-radius-render --deadline` | **BLOCKED, not abandoned** | The file-size ratchet refuses +11 lines in `main.py`. Compressed as far as the feature allows (+14 → +11). Resolution is a `--deadline` option factory (the flag is declared **22 times** in `main.py`, each with bespoke help) or a `main.py` split — both larger than this PR. Blocker recorded as a PR comment |
 | `_add` lexical trap at `confidence=1.0` | OPEN, unassigned | External dogfood #1; ranking quality, not a guard. Highest severity of the open set: an agent edits the wrong symbol at full confidence |
