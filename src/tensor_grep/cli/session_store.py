@@ -350,9 +350,83 @@ class _SessionServeResponseCache:
         return self._oversized_skips
 
 
+#: Language manifests that identify a project root ONLY when no VCS root exists above them.
+#: Deliberately NOT including `.git` here -- see `_find_project_root`.
+_PROJECT_MANIFEST_MARKERS = ("pyproject.toml", "Cargo.toml", "package.json")
+
+#: How far `_find_project_root` may climb. A project root is near by construction; this stops a
+#: deep path from walking all the way to the filesystem root.
+_MAX_PROJECT_ROOT_ASCENT = 24
+
+
+def _find_project_root(start: Path) -> Path | None:
+    """Walk UP from `start` to the project root: the OUTERMOST `.git`, else the nearest manifest.
+
+    The two-pass shape is load-bearing. A single nearest-marker walk over
+    `(".git", "pyproject.toml", "Cargo.toml", "package.json")` picks whichever marker appears
+    first in the CLOSEST directory, which in this repo resolves:
+
+        rust_core/src -> rust_core   (rust_core/Cargo.toml)   WRONG
+        npm           -> npm         (npm/package.json)       WRONG
+        src           -> tensor-grep (root pyproject.toml)    right, by luck
+
+    -- i.e. it fixes `src/` and silently leaves `rust_core/` and `npm/` with the original defect,
+    which is worse than not fixing it: a partial fix that looks complete. Measured against the
+    real tree before this function was written.
+
+    Preferring the OUTERMOST `.git` gives `tensor-grep` for all of `rust_core/src`, `src`, `npm`
+    and `docs` (measured). Returns None when nothing matches, so an ad-hoc directory outside any
+    project keeps today's behaviour instead of being silently relocated.
+
+    Submodule note: preferring the outermost `.git` means a git submodule resolves to its
+    SUPERPROJECT. Correct for this repo (`rust_core/` is a plain directory, not a submodule) and
+    the right default for a single-checkout tool; a consumer wanting per-submodule sessions would
+    need an explicit override, which is out of scope here.
+    """
+    # THE WALK IS BOUNDED. An unbounded climb reaches the filesystem root and can pick up markers
+    # in shared territory -- measured on this box, `C:\Users\<user>\AppData\Local\Temp` contains a
+    # stray `Cargo.toml` and `C:\Users\<user>` contains a `package.json`, so a scratch directory
+    # under TEMP resolves to a "project root" inside the user's profile, putting a session store
+    # in the home directory and letting two unrelated trees SHARE one store.
+    #
+    # The bound does NOT eliminate that case (the offending marker is only ~5 levels up, well
+    # inside any sane cap) -- it is honest about what it does: it stops the walk from running to
+    # the filesystem root on a deep path. The residual risk is documented rather than papered
+    # over: a caller operating inside a directory that has a stray manifest above it and no
+    # closer project marker will anchor to that stray manifest. Every real checkout has a `.git`
+    # or its own manifest nearer than any such stray, and the VCS pass runs first.
+    ladder = [start, *start.parents][:_MAX_PROJECT_ROOT_ASCENT]
+
+    vcs_root: Path | None = None
+    for candidate in ladder:
+        if (candidate / ".git").exists():
+            vcs_root = candidate  # keep walking; the LAST hit is the outermost
+    if vcs_root is not None:
+        return vcs_root
+
+    for candidate in ladder:
+        for marker in _PROJECT_MANIFEST_MARKERS:
+            if (candidate / marker).exists():
+                return candidate
+    return None
+
+
 def _resolve_root(path: Path) -> Path:
+    # G4.1/G4.2 (2026-08-23): this used to return the caller's path as-is, so `tg ... src` got its
+    # OWN session store under src/.tensor-grep/ and could not see a daemon started at the repo
+    # root. Measured on published v1.111.7: `session show <id>` worked from src/ and returned
+    # "Session not found" one directory up, while `session list` from the root returned 64
+    # sessions NOT containing the new one -- a confidently wrong answer, not an error. The same
+    # cause made the warm daemon unreachable from a subtree: two identical `tg defs src ...` calls
+    # against a RUNNING daemon gave hits=0 entries=0 and cache_misses=0, and zero MISSES proves
+    # the daemon was never consulted at all (control: the same query at `.` gave misses=1, then a
+    # repeat gave hits=1).
+    #
+    # Anchoring to the project root makes both lookups agree regardless of which directory inside
+    # the project the caller passes. No marker found -> keep the old behaviour.
     resolved = path.expanduser().resolve()
-    return resolved if resolved.is_dir() else resolved.parent
+    start = resolved if resolved.is_dir() else resolved.parent
+    return _find_project_root(start) or start
 
 
 def _sessions_dir(root: Path) -> Path:
@@ -740,10 +814,21 @@ def open_session(
     stated deadline could be exceeded roughly twofold with no disclosure anywhere.
     """
     root = _resolve_root(Path(path))
+    # SCAN THE CALLER'S PATH, STORE AT THE ANCHORED ROOT. These are two different questions and
+    # conflating them is a real regression: once `_resolve_root` anchors a subtree to the project
+    # root (G4.1/G4.2), passing `root` here would silently widen `tg session open src` from
+    # scanning 119 files to scanning 2,226 -- a ~19x blow-up, measured on this repo. A council
+    # seat caught this; the plan that introduced the anchoring did not name it.
+    #
+    # The anchored `root` is still what locates the session store and the daemon, which is the
+    # whole point of the fix. Only the SCAN scope stays where the caller pointed.
+    scan_target = Path(path).expanduser().resolve()
+    if not scan_target.is_dir():
+        scan_target = scan_target.parent
     started_at = monotonic()
     effective_max_repo_files = _effective_session_max_repo_files(max_repo_files)
     repo_map = build_repo_map(
-        root,
+        scan_target,
         max_repo_files=effective_max_repo_files,
         deadline_monotonic=deadline_monotonic,
     )
