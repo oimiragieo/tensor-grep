@@ -858,6 +858,51 @@ concrete failure observed this session.
   holding the note — so the rule is not "remember it", it is: any claim about install-time
   behaviour is checked in a fresh container off the PUBLISHED artifact, or it is not checked.
 
+- **A149 — A CHECK IS ONLY EVIDENCE FOR THE PROPERTY IT CAN OBSERVE (2026-08-23).** Splitting
+  `session_store` into `session_root`, an import smoke asserted `hasattr(session_store, name)` for
+  all seven re-exported names and PASSED. CI's lint lane also runs **mypy with implicit re-export
+  disabled**, which failed all five consumers with "does not explicitly export attribute". Runtime
+  presence is not the property mypy enforces; the smoke was WEAKER than the gate it stood in for.
+  Fix: the `X as X` explicit form, and **run the real gate locally rather than approximating it.**
+  Sibling receipt the same day: `ruff format` WITHOUT `--preview` is not a no-op here — it rewrites
+  preview styling across a whole file, including code the branch never touched, and CI checks
+  `--check --preview`. The safe-looking tidy-up command is the one that breaks the gate.
+
+- **A150 — A LINE NUMBER RE-STAMPED ONCE WILL BE WRONG AGAIN; REMOVE IT (2026-08-23).**
+  `tensor-grep-validation-and-qa` cited `TG_REQUIRE_RG_PARITY` at `:764` (already moved from
+  `:706`). Measured days later: real hits 907/918/925, and `:764` had drifted onto unrelated
+  `cargo test --lib` commentary. It now carries the bare grep with **no line number at all**. The
+  sharpest part is the location: that row exists to warn about *a gate whose conclusion is right
+  and root cause is false* — the table documented the failure while committing it. **Cite the
+  SYMBOL or the grep; a re-stamp is not a fix, it is the next stale anchor.**
+
+- **A151 — `git -C <dir>` SILENTLY ANSWERS ABOUT THE PARENT REPO (2026-08-23).** Censusing 21
+  directories under `.claude/worktrees/`, `git -C "$d" branch --show-current` returned the parent's
+  branch and `dirty=0` for **nine directories that were completely empty** and contained no git
+  anything. Git walked UP and answered about the enclosing repo — confidently, with no error.
+  **Test what a directory IS** (`-f "$d/.git"` holding `gitdir:`, plus whether
+  `.git/worktrees/<name>` exists), never what `git -C "$d"` says about it. The cold orphan case —
+  admin entry GONE, directory PRESENT — is the inverse of the documented one: `git worktree list`
+  does not show it, `prune` is a no-op, and `remove` cannot see it. Mechanics:
+  `~/.claude/skills/harvest-agent-worktrees` "The COLD case".
+
+- **A152 — A PROBE WHOSE RESULT LICENSES DESTRUCTION RUNS ITS CONTROL FIRST (2026-08-23).** Sizing
+  5.2 GB of orphan worktrees before deleting them, the first probe reported **`non-build=0MB`** —
+  which would have justified deleting with no archive at all. A positive control over the repo's
+  own `src/` returned 58 MB and exposed the pattern as broken. True figure: **1547 MB**; the source
+  slice archived to 408 MB. The false-zero law already exists here many times over; this is its
+  most dangerous form, because the zero was about to authorise an irreversible delete. **Control
+  first, not after, whenever the number decides whether something gets destroyed.**
+
+- **A153 — THE MAINTENANCE SWEEP ROTS, AND IT ROTS INVISIBLY (2026-08-23).**
+  `tensor-grep-release-drift-check` — the skill whose entire job is catching stale version stamps —
+  carried `v1.110.14` known-state facts with **no caveat** while the tag was `v1.113.0`. Both
+  sibling skills carried honesty notes; this one did not, which is exactly why it read as current.
+  It was deliberately **not** re-stamped: nobody re-ran those checks at v1.113.0, and re-stamping
+  an unverified version converts *stale but honest* into *current and false* — the precise failure
+  the skill exists to prevent. **When auditing freshness, audit the auditor first: an artifact
+  whose stated purpose is freshness reads as evidence that it ran.**
+
 ## Current Handoff
 release_docs_current_tag: v1.113.0
 

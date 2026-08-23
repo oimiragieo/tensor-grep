@@ -135,6 +135,12 @@ Claude Code guidance for the **tensor-grep** repository.
   is mechanically re-derived; wave receipts are per-row tables, never group sentences; never let
   `uv run` create a venv inside a bare worktree (run worktree tests from the main checkout's
   venv targeting worktree paths). **A117–A122 (2026-08-15, DD-006 design-packet closeout):** operator “skip Fable” waives that seat for the named docs packet only — not product code, spend, or CEO_GATED flips (extends A74); local `gh pr merge` failure is not remote truth when another worktree owns `main` (judge `mergedAt` / API); docs-only PR job skips are not a cheap main push; enclosing shell timeout must strictly exceed probe duration (+ grace); raising `request_queue_size` without a fail-closed aggregate pre-auth concurrency cap enlarges DoS admission; demand SATISFIED + design on main is not SHIPPED (parent DD-006 still needs PERF + HONESTY product code under a deliberate build go).
+  **A123 AND EVERYTHING AFTER IT ARE DELIBERATELY NOT SUMMARISED HERE.** This prose enumeration
+  stopped at A122 while `AGENTS.md` reached A153 -- 31 laws that nothing in this file pointed at,
+  which is the exact "an enumeration in prose rots the moment the set grows" failure this repo has
+  receipts for. Enumerate them from the source instead, never from this paragraph:
+  `grep -nE '^- \*\*A[0-9]+ ' AGENTS.md` (count-free by design -- a number here is a third place
+  to drift). Read the tail of that output at session start; it is where the newest receipts land.
 - **Campaign Orchestration Disciplines (2026-07-08, extended 2026-07-16, 2026-07-22)** — running a
   multi-PR drain+build campaign so fixes *land*: the WIP cap, the self-firing drain-cron (beats a
   long-lived background drain), the mandatory adversarial security gate before merge,
