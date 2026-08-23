@@ -15030,6 +15030,7 @@ def build_symbol_blast_radius_render(
     profile: bool = False,
     semantic_provider: str = "native",
     max_repo_files: int | None = None,
+    deadline_monotonic: float | None = None,
     _profiling_collector: _ProfileCollector | None = None,
 ) -> dict[str, Any]:
     collector = _resolve_profiling_collector(profile=profile, collector=_profiling_collector)
@@ -15048,6 +15049,7 @@ def build_symbol_blast_radius_render(
         render_profile=render_profile,
         profile=profile,
         semantic_provider=semantic_provider,
+        deadline_monotonic=deadline_monotonic,
         _profiling_collector=collector,
     )
 
