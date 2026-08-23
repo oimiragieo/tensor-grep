@@ -1,6 +1,102 @@
 # CHANGELOG
 
 
+## v1.113.5 (2026-08-23)
+
+### Bug Fixes
+
+- Move TYPER_USE_RICH guard to the real top-level entry
+  ([#1116](https://github.com/oimiragieo/tensor-grep/pull/1116),
+  [`a168524`](https://github.com/oimiragieo/tensor-grep/commit/a168524ba21cfc040f123900fac5cf9595951937))
+
+* fix: move TYPER_USE_RICH guard to the real top-level entry (bootstrap.main_entry)
+
+The prior commit on this branch moved the Windows-EINVAL Rich workaround from cli.main's
+  module-import time into cli.main.main_entry(). That fixed the pytest order-dependent help flake
+  (CliRunner never reaches either main_entry), but broke the REAL `tg` launcher: via the actual
+  bootstrap.main_entry() -> _run_full_cli() -> cli.main.main_entry() call chain, something upstream
+  had already resolved Rich's render mode by the time cli.main.main_entry() ran, so the guard set
+  TYPER_USE_RICH too late and Rich silently stayed enabled for every real Windows `tg` invocation --
+  truncating long option names inside its box-drawn help panels (confirmed via the real `tg.exe`
+  launcher, not just CliRunner: `tg search --help` rendered `--no-ignore-file-case-insen...` cut off
+  mid-word, tripping CI's windows-agent-readiness advertised-flag sweep after merge).
+
+Moves the guard into bootstrap.main_entry() -- the true single top-level entry for both the `tg`
+  console-script and `python -m tensor_grep` -- so it runs before anything reaches Typer/Rich,
+  restoring correct output on the real launcher while keeping the CliRunner-path flake fix
+  (unaffected, since CliRunner invokes `app` directly and never runs either main_entry).
+
+Also bumps bootstrap.py's pinned file-size-ratchet baseline (1696 -> 1703): the guard's minimal,
+  load-bearing comment legitimately grows the file rather than being compressed into unreadable
+  prose to dodge the ratchet.
+
+Verified against the real launcher (not just tests): built the current tree's console-script and
+  confirmed `tg search --help` renders the flag uncut. Full tests/unit: 5835 passed (1 unrelated
+  pre-existing local environment gap: model2vec optional extra not installed in this venv).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* docs: record the #1115/#1116 help-flake fix-then-regression-then-fix in BACKLOG.md
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- Scope TYPER_USE_RICH override to main_entry, not module import
+  ([#1115](https://github.com/oimiragieo/tensor-grep/pull/1115),
+  [`3524397`](https://github.com/oimiragieo/tensor-grep/commit/35243978b038b9c1d9030d5f3bc6fb6b9fd79c26))
+
+* docs: groom the backlog rows the v1.113.4 release falsified
+
+Five rows asserted states that today's releases disproved, and one was parked on a precondition that
+  has since been met:
+
+PR #1102 "BLOCKED, not abandoned" -> SHIPPED, released v1.113.4 PR #1105 "awaiting the #1103
+  release" -> SHIPPED, released v1.113.2 #4 "FIXED, unreleased" -> released v1.113.4 #3 "FIXED,
+  unreleased" -> released v1.113.1 #5 "re-measure after #1103 lands" -> #1103 landed; UNPARKED,
+  AI-doable
+
+#1102's row named its own way out -- a --deadline option factory -- and that is exactly how it was
+  resolved: _deadline_option(help_text) replaced 20 duplicated blocks, taking main.py 13,523 ->
+  13,400 lines and freeing headroom under the file-size pin.
+
+Dogfooded on the PUBLISHED wheel rather than a branch. uvx --from tensor-grep==1.113.4:
+  `blast-radius-render src _find_project_root --deadline 15 --json` returns exit 0 with valid JSON,
+  and the negative control confirms the parser genuinely registered the flag -- `--deadlinexyz` is
+  rejected with "Did you mean '--deadline'?". A help-text grep alone would not have proven this; a
+  hidden=True flag is invisible to that check.
+
+#5's unparking carries the measurement it needs: run it against the published wheel and record
+  whether response_cache_hits is still 0, because a warm/cold delta alone cannot distinguish a cache
+  that MISSES from one never CONSULTED.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* fix: scope TYPER_USE_RICH override to main_entry, not module import
+
+The Windows-EINVAL workaround set TYPER_USE_RICH via os.environ.setdefault at module import time,
+  gated on sys.stdout.isatty(). Since Typer reads that env var per-render (not once at typer-import
+  time) and many unrelated modules import tensor_grep.cli.main for helper symbols, whichever module
+  happened to import it first in a process permanently decided every later --help render's content
+  -- including inside pytest, where stdout is never a tty. Root-caused and reproduced the documented
+  "order-dependent help flake" (docs/BACKLOG.md, 5 prior sightings): CliRunner's rendered --help
+  silently omits the agent-contract prose whenever any earlier-collected test module imported
+  main.py first.
+
+Moves the check into main_entry(), the real CLI entry point, so the decision reflects the actual
+  invocation's tty state instead of import order. Updates the test that had pinned the old (buggy)
+  import-time contract, adds a test for the corrected main_entry-scoped contract, and re-derives the
+  8 cli/main.py lineno citations in docs/audits/2026-08-20-handler-dispositions.json that this
+  file's net line-count shift invalidated (re-verified against the live AST via
+  _real_handlers_for_module, not hand-computed).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.113.4 (2026-08-23)
 
 ### Bug Fixes
