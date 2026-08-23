@@ -51,11 +51,13 @@ Gates cover only what an agent can finish; unclosable rows are listed below with
 - [ ] G3.2: the rg-order caveat is documented where an agent will read it
   EVIDENCE: pending
 
-- [x] G4.1: session cwd footgun — reproduced or refuted, probe recorded
+- [x] G4.1: session cwd footgun — FIXED (was: reproduced or refuted, probe recorded)
   EVIDENCE: REPRODUCED on published v1.111.7. `session open src` -> session-20260823004352130555-src-6dc6b0f9; `show` WORKS from src/, "Session not found" from the repo root. TWO cwd-keyed stores (src/.tensor-grep/sessions/ holds it; .tensor-grep/sessions/ has 67 files, 0 matches), so `list` from root returns 64 sessions NOT containing the new one — a confidently wrong answer, not an error.
+  FIXED on this branch (PR #1103): `_resolve_root` now anchors a subtree to the project root. Perturbation-proved -- revert anchoring and `test_subtree_resolves_to_the_project_root` FAILS; restore -> 9 passed.
 
-- [x] G4.2: warm-path latency / response_cache_hits=0 — measured
+- [x] G4.2: warm-path latency / response_cache_hits=0 — FIXED (was: measured)
   EVIDENCE: REPRODUCED, and it is a path-matching defect not a cold cache. Two identical `tg defs src ...` calls against a RUNNING daemon: 2505ms then 2702ms (slower), response_cache_hits=0 entries=0 AND cache_misses=0. Zero MISSES proves the daemon was never consulted. Control isolates it: query path `.` (== daemon root) -> misses=1 entries=1, and a second `.` query -> hits=1. The cache works; it is unreachable unless the query path exactly equals the daemon root -- so the docs' own advice to scope to a subdirectory silently disables the warm moat, with no honesty field explaining why.
+  FIXED on this branch (PR #1103): the daemon derives its root through the same anchoring (`session_daemon.py` `_nearby_daemon_roots`/`get_session_daemon_status`). Pinned through the daemon's OWN entry point, not the resolver twice -- a codex round caught that first attempt. Perturbation: remove anchoring -> `test_anchoring_reaches_the_daemon_not_only_the_session_store` FAILS.
 
 - [ ] G4.3: Windows AST `run` argv fragility — reproduced or refuted
   EVIDENCE: pending
