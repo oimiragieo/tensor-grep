@@ -47,6 +47,53 @@
 
 
 
+## OPEN (2026-08-23): the shipped confidence guard fixes the CONTRACT, not the ASK-GATE
+
+Filed against my own change (PR #1105, merged `65cf67f`, released v1.113.2) after an adversarial
+security review of the shipped code returned CHANGES_REQUIRED with one HIGH.
+
+### The measurement
+
+`_DEGRADED_CONFIDENCE_CEILING = 0.99` (`agent_capsule_confidence.py:164`).
+The ask-gate threshold is **0.75** (`agent_capsule_confidence.py:256`:
+`if confidence_overall < 0.75: return "confidence below 0.75"`).
+
+**0.99 is well above 0.75**, so the guard never changes `ask_user_before_editing.required`.
+
+### What that means, stated plainly
+
+The guard closes a real hole: a payload can no longer list the reasons it is degraded AND report
+`overall == 1.0`. That contradiction is gone, and its tests are perturbation-proved.
+
+It does **not** close the hole the external dogfood actually reported, which was
+`downgrade_reasons` non-empty **and** `ask_required == false` — i.e. an agent editing without
+asking on a scan that did not finish. With the guard, such a payload now reports 0.99 and the
+agent **still** auto-edits.
+
+PR #1105's body says *"`ask_user_before_editing` keys off that number, so the certain-but-degraded
+shape tells an agent 'edit this, no question needed'"* — implying the guard prevents that. It does
+not. That sentence overstated the fix and this row is the correction.
+
+Note the severity is bounded by what was ALREADY correct: the branch-specific clamps
+(0.94 / 0.72 / 0.55) do drop below 0.75 for truncation and primary-file omission, so those paths
+already force the ask. The gap is the two branches that had no clamp of their own —
+`consistency["confidence_downgraded"]` and a caller-supplied reason.
+
+### Why it is not fixed in the same breath
+
+Lowering the ceiling below 0.75 would make ANY downgrade reason force a human prompt, including
+minor ones on otherwise-strong results. That is a change to an agent-safety threshold and a
+change to how often the tool interrupts a user — a design decision, not a tuning nit. It wants a
+council and a look at real capsule distributions, not a late-session edit.
+
+### Also raised by the same review, unresolved
+
+- **MED** — a non-finite `overall` (NaN) supplied via `edit_plan_seed.confidence.overall`
+  propagates as NaN rather than a bounded value. `min(NaN, 0.99)` does not clamp. Never yields
+  1.0, so it is not the certainty bug, but the output contract is not bounded either.
+- **LOW** — a caller-supplied EMPTY STRING counts as a downgrade reason and lowers confidence to
+  0.99. Cosmetic, but it means "a reason" is currently "any truthy-or-not list element".
+
 ## ROOT-CAUSED (2026-08-23): the "order-dependent help flake" is deterministic, not a flake
 
 Filed after four sightings across three PRs. It is **not** flaky, **not** terminal-width
