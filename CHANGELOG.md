@@ -1,6 +1,135 @@
 # CHANGELOG
 
 
+## v1.113.2 (2026-08-23)
+
+### Bug Fixes
+
+- Enforce the confidence invariant in production, not just in a test
+  ([#1105](https://github.com/oimiragieo/tensor-grep/pull/1105),
+  [`65cf67f`](https://github.com/oimiragieo/tensor-grep/commit/65cf67f004cd3d07a587957266f63c5e26aa3248))
+
+Two external agent dogfoods reported the same shape -- `downgrade_reasons` non-empty while
+  `confidence.overall == 1.0` (2026-08-22 v1.111.7, again 2026-08-23 v1.113.0) -- and
+  `tests/unit/test_prepare_confidence_invariants.py` has pinned that invariant since d29b013 and
+  passes.
+
+Both are true. That file pins the invariant for the cases IT constructs; it is a test of some paths,
+  not a property of the function. Reproduced against the real `_confidence` on origin/main: pass
+  `edit_plan_seed.confidence.overall = 1.0` with any downgrade reason and the emitted payload keeps
+  1.0. RED confirmed before writing the fix.
+
+Of the six reason-appending branches, four clamp `overall` and two do not:
+  `consistency["confidence_downgraded"]` appends and falls through, and a reason supplied by the
+  CALLER is never clamped at all. So the capsule can list the reasons it is degraded and claim
+  certainty in the same payload -- the most dangerous shape this tool emits, because
+  `ask_user_before_editing` keys off that number and an agent will edit without asking.
+
+Fixed with a GUARD at the single exit rather than a fifth branch-specific clamp. A fifth clamp
+  closes today's hole and does nothing for the seventh branch someone adds later; a guard at the
+  exit holds for every branch that exists and every branch not yet written.
+
+The ceiling (0.99) is deliberately the smallest change that makes the statement true. Calibrating a
+  meaningful severity is the job of the branch-specific clamps, which know WHY a result is degraded;
+  the guard only knows THAT it is, so inventing a severity would silently overwrite a
+  better-informed value.
+
+Tests carry both controls, because a guard that cannot fire and a guard that always fires are both
+  worthless: - NEGATIVE: a clean result still reports exactly 1.0 (the guard is not a blanket cap).
+  - POSITIVE: the unclamped branch is driven and `overall` must land on the guard's ceiling, NOT on
+  any branch-specific value (0.94/0.72/0.55) -- otherwise the case would prove an incidental clamp
+  fired rather than the guard.
+
+Verified: 5 new tests RED before / GREEN after; the pre-existing 5 invariant tests still pass; 657
+  passed across the capsule/prepare/agent/confidence/edit-plan suites; all three ratchets green;
+  ruff check + format --preview + mypy clean.
+
+Does NOT address the sibling dogfood finding that a short lexical token (`_add`) wins as primary
+  target -- that is ranking, a separate row.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Closeout corrections -- broken citation, stale board claims, self-drifted skill
+  ([#1106](https://github.com/oimiragieo/tensor-grep/pull/1106),
+  [`d08d131`](https://github.com/oimiragieo/tensor-grep/commit/d08d131505481f9e2e06407c5205a236de095763))
+
+* docs: closeout corrections -- one broken citation, four stale board claims, one self-drifted skill
+
+A read-only closeout audit (4 lenses) produced 6 findings; each was re-verified with a positive
+  control before being acted on, and only the drift corrections are here -- no feature work, no
+  redesign.
+
+1. BROKEN CITATION, and the fix is to REMOVE the anchor, not move it.
+  tensor-grep-validation-and-qa's Form-4 row cited `TG_REQUIRE_RG_PARITY` at `:764`. Measured: the
+  real hits are 907/918/925, and `:764` had drifted onto unrelated `cargo test --lib` commentary.
+  This anchor has now been re-stamped twice (`:706` -> `:764`) and was wrong again within days, so
+  it is now the bare grep with NO line number -- which is what this repo's own anti-re-stamping rule
+  requires, in the very table that warns about gates whose conclusion is right and root cause is
+  false.
+
+2-4. FOUR STALE BOARD CLAIMS, corrected APPEND-ONLY (dated receipts are never rewritten): - F8's
+  blocker cites `rust_core/src/path_domain.rs`, which does not exist on origin/main (control: the
+  same grep finds `backend_cpu.rs`, so it is not a dead probe). The shared-box ban may still block
+  the row; the stated EVIDENCE does not. - MCP-SURFACE is recorded as rust/Task-2C blocked.
+  Re-derived: the contract version is a PYTHON one-liner at `cli/mcp_server.py:188` and
+  `rust_core/src/` has ZERO references (control: the same grep finds `fn main` in `main.rs`).
+  Sequencing may hold; the rust/shared-box framing does not. - "Public product v1.110.16" and the
+  `2026-08-13.1` canonical index are four minors behind (tag is v1.113.0), assert 0 IN_FLIGHT while
+  two PRs are open, and count 5 CEO_GATED where this file's own campaign note names six (RULESETS
+  omitted).
+
+5. THE DRIFT-CHECK SKILL WAS ITSELF THE DRIFT. `tensor-grep-release-drift-check` -- whose entire job
+  is catching stale stamps -- carried v1.110.14 known-state facts with NO caveat, while both sibling
+  skills carried honesty notes. Deliberately NOT re-stamped to v1.113.0: nobody re-ran those checks
+  there, and re-stamping an unverified version converts "stale but honest" into "current and false",
+  which is the exact failure the skill exists to prevent. Marked NOT re-verified instead. A
+  maintenance sweep that is not itself swept rots invisibly, because its stated purpose reads as
+  evidence that it ran.
+
+Also files the session closeout state in docs/BACKLOG.md: every open item with an honest state and a
+  receipt, the worktree harvest (21 orphans / 5.2 GB removed, 408 MB of source archived first), and
+  -- explicitly -- the three closeout artifacts that DO NOT EXIST in this repo (`.wayfinder/`,
+  `.orchestrator/state.json`, `QUEUE.md`), so "skipped" is not mistaken for "done" by the next
+  session.
+
+`docs:` -- deliberately no release.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: capture A149-A153 and stop CLAUDE.md's law enumeration from rotting
+
+Five laws from this session, each with a receipt:
+
+A149 A check is only evidence for the property it can OBSERVE. An import smoke asserting `hasattr`
+  passed while CI's mypy (implicit re-export disabled) failed five consumers. Sibling: `ruff format`
+  without `--preview` rewrites whole files against a gate that checks `--preview` -- the
+  safe-looking tidy-up is the one that breaks it. A150 A line number re-stamped once will be wrong
+  again -- remove it. `:706` -> `:764` -> wrong again within days (real hits 907/918/925), in the
+  very row warning about a gate whose conclusion is right and root cause is false. A151 `git -C
+  <dir>` silently answers about the PARENT repo -- it reported a branch and `dirty=0` for nine EMPTY
+  directories containing no git anything. A152 A probe whose result licenses destruction runs its
+  control FIRST. A `0MB` sizing would have justified deleting 5.2 GB with no archive; the control
+  exposed it, true figure 1547 MB. A153 The maintenance sweep rots, and it rots invisibly, because
+  its stated purpose reads as evidence that it ran.
+
+AND THE DRIFT THAT PROMPTED THE SECOND HALF OF THIS COMMIT: CLAUDE.md's prose summary of the A-laws
+  stopped at **A122** while AGENTS.md had reached **A153** -- 31 laws nothing in that file pointed
+  at. That is precisely the "an enumeration in prose rots the moment the set grows" failure this
+  repo already has receipts for, committed by the file that documents it.
+
+Fixed by DELETING the growth path rather than extending it: instead of appending A123-A153 inline
+  (which would rot again at A154), CLAUDE.md now says the summary deliberately stops and gives the
+  derivation instead -- `grep -nE '^- \*\*A[0-9]+ ' AGENTS.md`, count-free on purpose, because a
+  number in a third file is a third place to drift. Verified: the stated command returns 153 and its
+  tail surfaces A151/A152/A153.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.113.1 (2026-08-23)
 
 ### Bug Fixes

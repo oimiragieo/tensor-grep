@@ -4,11 +4,11 @@ Last updated: 2026-08-15
 
 ## Current Release State
 
-release_docs_current_tag: v1.113.1
+release_docs_current_tag: v1.113.2
 
-- Latest tagged version: `v1.113.1`
-- Latest complete PyPI version: `v1.113.1`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.113.1>
+- Latest tagged version: `v1.113.2`
+- Latest complete PyPI version: `v1.113.2`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.113.2>
 
 ## Current Backlog Closeout
 Canonical status index version: 2026-08-13.1
@@ -171,8 +171,8 @@ entry in `.claude/skill_rules.json`. A-laws **A94–A96** captured (stamp rot is
 - Previous CodeQL proof run `26064676072`: passed on the `v1.12.32` release line
 - Previous CodeQL run `25951813292`: passed on the `v1.12.14` release line
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.113.1 tg --version` reports `tensor-grep 1.113.1`
-- GitHub release assets: `v1.113.1` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.113.2 tg --version` reports `tensor-grep 1.113.2`
+- GitHub release assets: `v1.113.2` has uploaded native CPU front doors for Windows/Linux/macOS, checksums, winget manifest, Homebrew formula, and publish instructions
 - Closed v1.13.23 dogfood follow-up gap: PR #236 makes `tg repair-launcher` remove verified tensor-grep-owned Python Scripts entrypoints that shadow the managed native front door, preserves explicit `--allow-foreign-rename` for unrelated foreign launchers, and keeps help/docs aligned with that Windows launcher repair contract.
 - Closed v1.13.22 dogfood follow-up gap: PR #235 keeps Windows public launcher routes contract-equivalent for `tg run --diff`, bounds MCP `tg_search` with `query`, `max_results`, `max_files`, and `structured_json`, makes capsule validation tie resolution cite concrete `targeted-validation` evidence, gives literal `classify` inputs a clear file-path error, and keeps explicit `tg dogfood --output` writes beside the requested artifact.
 - Closed v1.13.21 dogfood follow-up gap: PR #233 restarts pre-existing session daemons after direct or scheduled Windows `tg upgrade` handoff loss and keeps successful LSP proof payloads from surfacing stale Pyright SRE mismatch tracebacks as current stderr; post-v1.13.21 dogfood should verify daemon handoff and LSP diagnostic quieting on public installs.
