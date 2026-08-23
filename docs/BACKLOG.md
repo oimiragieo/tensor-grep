@@ -47,6 +47,61 @@
 
 
 
+## Recent campaign notes (2026-08-23) - G4.2 REPRODUCED: the warm cache is unreachable from a SUBTREE path
+
+Fourth of the external dogfood's five UNVERIFIED findings. The report said warm
+`session edit-plan` was ~2.9s and the daemon showed `response_cache_hits=0`. **Reproduced, and
+the mechanism is a real product defect, not a cold cache.**
+
+### The measurement (published v1.111.7, daemon RUNNING)
+
+Two identical `tg defs src missing_scan_paths --json` calls against a live daemon:
+
+```
+call 1 (cold)  2505 ms
+call 2 (same)  2702 ms      <- SLOWER, no warm benefit at all
+counters:      response_cache_hits=0  entries=0  cache_misses=0
+```
+
+`cache_misses = 0` is the tell, and it is the reason this is a defect rather than a cold start.
+A miss would prove the daemon was consulted and had nothing. **Zero misses proves it was never
+consulted.**
+
+### The control that isolates it
+
+Same daemon, same symbol, only the PATH argument changed:
+
+| query path | daemon counters after |
+|---|---|
+| `src/` (a subtree of the daemon root) | `misses=0, entries=0` — **daemon never consulted** |
+| `.` (exactly the daemon root) | `misses=1, entries=1` — consulted, stored |
+| `.` again | **`hits=1`** — cache works correctly |
+
+So the response cache is functioning perfectly. It is simply **unreachable unless the query path
+exactly equals the daemon root**.
+
+### Why this matters more than the reported symptom
+
+The tool's own guidance tells agents to scope queries to a subdirectory — `tensor-grep-prepare`
+says *"Prefer `REPO/src`"*, and `tensor-grep-find-and-route` says *"always scope `tg find` to a
+PATH"*. Following that advice **silently disables the warm-daemon moat**. An agent doing exactly
+what the docs recommend gets cold-path latency and a daemon reporting `hits=0`, with no signal
+explaining why.
+
+There is no honesty field for this either: the payload does not say "daemon skipped: path is not
+the daemon root". It just runs cold.
+
+### Status
+
+VERIFIED, not fixed. The fix touches daemon path-matching (root vs subtree containment) and is
+shared by every warm-path command, so it needs its own RED-first change with a subtree fixture and
+a cross-check that a subtree query cannot read a STALE root-scoped entry. Filed rather than patched
+into an unrelated branch.
+
+**Kin to G4.1**: both are path-identity bugs in the session/daemon layer — G4.1 is cwd-keyed
+STORE selection, this is root-equality daemon selection. A fix for either should check whether it
+also resolves the other.
+
 ## Recent campaign notes (2026-08-23) - G4.4 REPRODUCED, G4.5 NOT REPRODUCED (opposite numbers)
 
 Two more of the external dogfood's five UNVERIFIED findings, probed against the published

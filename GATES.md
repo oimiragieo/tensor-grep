@@ -54,8 +54,8 @@ Gates cover only what an agent can finish; unclosable rows are listed below with
 - [x] G4.1: session cwd footgun — reproduced or refuted, probe recorded
   EVIDENCE: REPRODUCED on published v1.111.7. `session open src` -> session-20260823004352130555-src-6dc6b0f9; `show` WORKS from src/, "Session not found" from the repo root. TWO cwd-keyed stores (src/.tensor-grep/sessions/ holds it; .tensor-grep/sessions/ has 67 files, 0 matches), so `list` from root returns 64 sessions NOT containing the new one — a confidently wrong answer, not an error.
 
-- [ ] G4.2: warm-path latency / response_cache_hits=0 — measured
-  EVIDENCE: pending
+- [x] G4.2: warm-path latency / response_cache_hits=0 — measured
+  EVIDENCE: REPRODUCED, and it is a path-matching defect not a cold cache. Two identical `tg defs src ...` calls against a RUNNING daemon: 2505ms then 2702ms (slower), response_cache_hits=0 entries=0 AND cache_misses=0. Zero MISSES proves the daemon was never consulted. Control isolates it: query path `.` (== daemon root) -> misses=1 entries=1, and a second `.` query -> hits=1. The cache works; it is unreachable unless the query path exactly equals the daemon root -- so the docs' own advice to scope to a subdirectory silently disables the warm moat, with no honesty field explaining why.
 
 - [ ] G4.3: Windows AST `run` argv fragility — reproduced or refuted
   EVIDENCE: pending
