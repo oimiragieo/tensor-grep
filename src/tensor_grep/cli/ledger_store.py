@@ -622,17 +622,15 @@ def _find_overlaps(
         file_overlap = sorted(new_files & entry_files)
         if not symbol_overlap and not file_overlap:
             continue
-        overlaps.append(
-            {
-                "claim_id": entry.get("claim_id"),
-                "agent_id": entry.get("agent_id"),
-                "symbols": symbol_overlap,
-                "files": file_overlap,
-                "intent": entry.get("intent"),
-                "expires_at": entry.get("expires_at"),
-                "revision_matches": _revision_matches(entry.get("revision"), new_record.revision),
-            }
-        )
+        overlaps.append({
+            "claim_id": entry.get("claim_id"),
+            "agent_id": entry.get("agent_id"),
+            "symbols": symbol_overlap,
+            "files": file_overlap,
+            "intent": entry.get("intent"),
+            "expires_at": entry.get("expires_at"),
+            "revision_matches": _revision_matches(entry.get("revision"), new_record.revision),
+        })
     return overlaps
 
 

@@ -628,13 +628,11 @@ def _capture_snapshot(
             if unreadable_hit is not None:
                 unreadable_hit.record(exc)
             continue
-        snapshot.append(
-            {
-                "path": str(path),
-                "size": int(stat.st_size),
-                "mtime_ns": int(stat.st_mtime_ns),
-            }
-        )
+        snapshot.append({
+            "path": str(path),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        })
     snapshot.sort(key=lambda item: str(item["path"]))
     return snapshot
 
