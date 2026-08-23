@@ -24,11 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import uuid4
 
-# Rich's legacy Windows renderer can raise EINVAL when long help is piped through
-# PowerShell. Disable Typer/Rich help before Typer imports when stdout is not a TTY.
-if sys.platform.startswith("win") and not sys.stdout.isatty():
-    os.environ.setdefault("TYPER_USE_RICH", "0")
-
 import click
 import typer
 from typer.core import TyperGroup
@@ -13353,6 +13348,16 @@ def worker(
 
 def main_entry() -> None:
     import sys
+
+    # Rich's legacy Windows renderer can raise EINVAL when long help is piped through
+    # PowerShell. Disable Typer/Rich help for THIS invocation when stdout is not a TTY.
+    # Deliberately set here (at the real entry point), not at module import time: Typer reads
+    # TYPER_USE_RICH per-render rather than caching it at typer-import time, so setting this as
+    # a persistent os.environ mutation on module import made --help's rendered content depend on
+    # which unrelated module happened to import tensor_grep.cli.main first in the process (every
+    # helper caller does) -- see docs/BACKLOG.md "the order-dependent help flake is deterministic".
+    if sys.platform.startswith("win") and not sys.stdout.isatty():
+        os.environ.setdefault("TYPER_USE_RICH", "0")
 
     # Emulate ripgrep's top-level help behavior and transparent drop-in compatibility.
     # Typer requires an explicit subcommand (like `tg search pattern`).

@@ -482,7 +482,11 @@ def test_main_entry_should_not_rewrite_top_level_help(monkeypatch):
     not sys.platform.startswith("win"),
     reason="Rich legacy Windows pipe workaround is Windows-specific.",
 )
-def test_main_module_should_disable_rich_when_windows_stdout_is_redirected():
+def test_main_module_import_should_not_disable_rich_as_a_side_effect():
+    # Regression guard for the "order-dependent help flake" (docs/BACKLOG.md): merely importing
+    # tensor_grep.cli.main -- which many unrelated modules do, for helper symbols -- must never
+    # mutate process-wide TYPER_USE_RICH. That mutation belongs to main_entry() only, scoped to
+    # the actual CLI invocation, not to whichever module happens to import this one first.
     env = dict(os.environ)
     env.pop("TYPER_USE_RICH", None)
 
@@ -499,7 +503,19 @@ def test_main_module_should_disable_rich_when_windows_stdout_is_redirected():
     )
 
     assert result.returncode == 0
-    assert result.stdout.strip() == "0"
+    assert result.stdout.strip() == "None"
+
+
+def test_main_entry_should_disable_rich_when_windows_stdout_is_redirected(monkeypatch):
+    monkeypatch.delenv("TYPER_USE_RICH", raising=False)
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(cli_main, "app", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(sys, "argv", ["tg"])
+
+    cli_main.main_entry()
+
+    assert os.environ.get("TYPER_USE_RICH") == "0"
 
 
 def test_main_entry_should_not_rewrite_empty_argv(monkeypatch):
