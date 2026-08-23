@@ -47,6 +47,269 @@
 
 
 
+## Session closeout (2026-08-23) - state, receipts, and what was NOT done
+
+Filed so a fresh session starts from measured state rather than from this session's prose.
+
+### Open work, honest state + receipt
+
+| Item | State | Receipt |
+|---|---|---|
+| **PR #1103** session/daemon root anchoring (G4.1, G4.2) | CI green, merge in progress | 39 checks pass / 0 fail; fixes the external dogfood's #3, whose exact repro (open in subtree, `session show <id>` from root with NO PATH arg) returns exit 0 on the branch |
+| **PR #1105** confidence invariant enforced in production | CI green, awaiting the #1103 release window | 39 checks pass / 0 fail; RED reproduced on `origin/main` before the guard was written |
+| **PR #1102** `blast-radius-render --deadline` | **BLOCKED, not abandoned** | The file-size ratchet refuses +11 lines in `main.py`. Compressed as far as the feature allows (+14 → +11). Resolution is a `--deadline` option factory (the flag is declared **22 times** in `main.py`, each with bespoke help) or a `main.py` split — both larger than this PR. Blocker recorded as a PR comment |
+| `_add` lexical trap at `confidence=1.0` | OPEN, unassigned | External dogfood #1; ranking quality, not a guard. Highest severity of the open set: an agent edits the wrong symbol at full confidence |
+| Warm-path latency ~4s, `tg dogfood` timeout, absent rank scores | OPEN, unassigned | External dogfood #5/#6/#7 |
+| `tests/unit/test_cli_modes_ast_misc.py` order-dependent help failures | OPEN | **Three sightings** this session (`test_app_help_...`, `test_search_help_...`, and #1102's `test_positive_control_both_siblings_have_help` in CI). Each passes alone, passes as a whole file, and passes on `main` — only fails inside a larger selection, so another test mutates the CLI help surface. Third sighting is this repo's trigger for a structural fix; the polluter was NOT identified (the two candidates checked were monkeypatch-restored) |
+
+### Closeout steps that were N/A, not done
+
+Three artifacts named in the closeout request **do not exist in this repository**, so the
+corresponding steps were skipped rather than performed. Recorded because "skipped" and "done"
+must not be confused by the next session:
+
+- `.wayfinder/<slug>/MAP.md` — absent. There is **no answer key**, so `verify-feature` had
+  nothing to run against. Not a failure; this repo has never used the wayfinder lane.
+- `.orchestrator/state.json` — absent. Nothing to refresh. Creating one would be inventing a
+  structure this repo does not use.
+- `QUEUE.md` — absent, so `feature-batch` had no queue to keep accurate. There are also no
+  `feature folders`; work here is tracked by this file plus `docs/TASK_BOARD.md`.
+
+### Worktree harvest (2026-08-23)
+
+`.claude/worktrees/` held **21 orphan directories, 5.2 GB**, none of which git could see
+(`git worktree list` knew only the main checkout and one live temp worktree; `.git/worktrees/`
+held exactly one admin entry). 12 carried content, 9 were empty. All were ≥15 days stale
+(newest file 2026-08-08) with no process running from any of them.
+
+Source-only slices (`src/`, `tests/`, `docs/`, `scripts/`, root `*.md`) were archived to
+`~/.tensor-grep-worktree-archive/2026-08-23` (**408 MB**) before deletion, so any uncommitted
+work survives at ~7% of the size. The rest was Rust `target/` build output.
+
+Measurement note worth keeping: the first size probe reported **`non-build=0MB`**, which would
+have justified deleting without archiving anything. A positive control over the repo's own
+`src/` returned 58 MB and exposed the pattern as broken; the true figure was **1547 MB**. A zero
+from an unproven probe is UNRESOLVED, not ABSENT.
+
+## Recent campaign notes (2026-08-23) - EXTERNAL AGENT DOGFOOD of v1.113.0 + open findings filed
+
+Second external agent dogfood, this time against **v1.113.0** (their binary
+`~/.tensor-grep/bin/tg.exe`, corpus `C:\dev\agentwork\tensor-grep`). Filed here because this
+session has no task-store; the board is the durable tracker.
+
+| Their finding | Disposition, with the receipt | Owner |
+|---|---|---|
+| **#3** `session show/edit-plan` defaults `[PATH]` to `.`, so a session opened in a subtree is invisible from the repo root | **FIXED, unreleased.** PR #1103 anchors `_resolve_root` to the project root. Their exact repro (open in subtree, `session show <id>` from root with NO PATH argument) re-run on that branch returns **exit 0**. Correct on v1.113.0 because the fix is not published yet | PR #1103 |
+| **#4** `blast-radius-render` rejects `--deadline` its sibling accepts | **FIXED, unreleased.** PR #1102 | PR #1102 |
+| **#1** lexical primary trap: `"add retry with tests"` selects `_add` at `confidence=1.0`, `ask=false` | **OPEN, no owner.** The highest-severity row here: an agent edits the wrong symbol at full confidence. Needs a weak-lexical/stop-symbol gate (a 1-3 char or `_`-prefixed symbol matched from a query word must not be primary at conf >= 0.9) plus a dogfood known-bad case | unassigned |
+| **#2** `downgrade_reasons` non-empty while `confidence.overall=1.0` | **OPEN.** Invariant tests exist on main (`d29b013`, `tests/unit/test_prepare_confidence_invariants.py`) but the external run still reports the violation, so the invariant is **not actually enforced on the production path** -- the tests pass without binding it | unassigned |
+| **#5** warm session ~4.0-4.3s vs cold ~6.8s; `response_cache_hits=0` | **OPEN.** Note this is the same *class* as G4.2 (warm cache unreachable) but measured with a correct cwd, so PR #1103 is not automatically its fix -- re-measure after #1103 lands before scoping | unassigned |
+| **#6** `tg dogfood` still red on `agent-readiness-timeout` (170s) | **OPEN.** Public-version checks now pass when pinned with `--expected-version`, so this is the only remaining failure | unassigned |
+| **#7** `--rank --json` exposes no scores; `tg find` still BM25-only | **OPEN**, low | unassigned |
+
+### Other findings from the same session (not from the external audit)
+
+- **The canonical index in `docs/TASK_BOARD.md` is stale.** It is stamped `v1.110.16 / main 8f7db83`
+  while main is at `v1.113.0`+; it asserts **0 IN_FLIGHT** while PRs #1102 and #1103 are open; and
+  its own count says **5 CEO_GATED** while the 2026-08-22 campaign note names **six**
+  (`#48 #72 #77 #131 #169` **+ RULESETS**). Re-derive the index from live state.
+- **F8's blocker receipt cites a file that does not exist.** It names
+  `rust_core/src/path_domain.rs`; `git cat-file -e origin/main:rust_core/src/path_domain.rs` fails.
+  The block itself (shared-box cargo/e2e ban) may still hold, but the stated evidence does not.
+  Re-derived and confirmed live in the same pass: **MCP-SURFACE** is accurate
+  (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"` at `cli/mcp_server.py:188`) and **F6** is accurate
+  (`evidence_signing.py` = 539 lines / 19 functions).
+- **`tests/unit/test_cli_modes_ast_misc.py` has an order-dependent failure.** Two sightings this
+  session (`test_app_help_should_expose_the_python_public_top_level_surface` and
+  `test_search_help_should_render_python_search_help_smoke`). Each passes alone, passes as a whole
+  file, and passes on main -- they fail only inside a larger selection, so another test mutates the
+  CLI help surface. Third sighting triggers the structural fix.
+- **RULESETS is NOT a live defect, contrary to an earlier claim in this session.** Measured on a
+  clean `python:3.12-slim` with a stock `pip install tensor-grep==1.113.0`: `tg rulesets` prints
+  `WARNING: the ast-grep backend is not installed ... pip install ast-grep-cli`, and
+  `tg scan --ruleset subprocess-safe` fails **closed** with that same remediation plus the explicit
+  sentence that a stock install does not include it. After `pip install ast-grep-cli` the scan runs
+  and correctly reports `matched_rules=1` on a `shell=True` fixture. The earlier "still broken"
+  reading came from passing `--ruleset security`, which is a **category, not a ruleset** -- the CLI
+  says so and lists the six valid names. The remaining RULESETS question is the CEO-gated packaging
+  one (a `tensor-grep[scan]` extra), not a correctness bug.
+
+## Recent campaign notes (2026-08-23) - G4.2 REPRODUCED: the warm cache is unreachable from a SUBTREE path
+
+Fourth of the external dogfood's five UNVERIFIED findings. The report said warm
+`session edit-plan` was ~2.9s and the daemon showed `response_cache_hits=0`. **Reproduced, and
+the mechanism is a real product defect, not a cold cache.**
+
+### The measurement (published v1.111.7, daemon RUNNING)
+
+Two identical `tg defs src missing_scan_paths --json` calls against a live daemon:
+
+```
+call 1 (cold)  2505 ms
+call 2 (same)  2702 ms      <- SLOWER, no warm benefit at all
+counters:      response_cache_hits=0  entries=0  cache_misses=0
+```
+
+`cache_misses = 0` is the tell, and it is the reason this is a defect rather than a cold start.
+A miss would prove the daemon was consulted and had nothing. **Zero misses proves it was never
+consulted.**
+
+### The control that isolates it
+
+Same daemon, same symbol, only the PATH argument changed:
+
+| query path | daemon counters after |
+|---|---|
+| `src/` (a subtree of the daemon root) | `misses=0, entries=0` — **daemon never consulted** |
+| `.` (exactly the daemon root) | `misses=1, entries=1` — consulted, stored |
+| `.` again | **`hits=1`** — cache works correctly |
+
+So the response cache is functioning perfectly. It is simply **unreachable unless the query path
+exactly equals the daemon root**.
+
+### Why this matters more than the reported symptom
+
+The tool's own guidance tells agents to scope queries to a subdirectory — `tensor-grep-prepare`
+says *"Prefer `REPO/src`"*, and `tensor-grep-find-and-route` says *"always scope `tg find` to a
+PATH"*. Following that advice **silently disables the warm-daemon moat**. An agent doing exactly
+what the docs recommend gets cold-path latency and a daemon reporting `hits=0`, with no signal
+explaining why.
+
+There is no honesty field for this either: the payload does not say "daemon skipped: path is not
+the daemon root". It just runs cold.
+
+### Status
+
+VERIFIED, not fixed. The fix touches daemon path-matching (root vs subtree containment) and is
+shared by every warm-path command, so it needs its own RED-first change with a subtree fixture and
+a cross-check that a subtree query cannot read a STALE root-scoped entry. Filed rather than patched
+into an unrelated branch.
+
+**Kin to G4.1**: both are path-identity bugs in the session/daemon layer — G4.1 is cwd-keyed
+STORE selection, this is root-equality daemon selection. A fix for either should check whether it
+also resolves the other.
+
+## Recent campaign notes (2026-08-23) - G4.4 REPRODUCED, G4.5 NOT REPRODUCED (opposite numbers)
+
+Two more of the external dogfood's five UNVERIFIED findings, probed against the published
+v1.111.7 wheel.
+
+### G4.4 — `tg dogfood` version-skew FAIL: **REPRODUCED**, with a sharper diagnosis
+
+```
+pyproject.toml : 1.112.0      <- the worktree (a release landed)
+installed tg   : 1.111.7      <- what every probe actually executes
+verdict        : FAIL, agent-readiness passed=15 failed=8
+```
+
+All 8 failures are ONE cause, and the payload says so verbatim:
+
+```
+agent_readiness.expected_version = 1.112.0
+public-version-powershell :: expected one of ['tensor-grep 1.112.0', 'tg 1.112.0']
+                             in version output, got ['tensor-grep 1.111.7']
+```
+
+`expected_version` is read from the **worktree's `pyproject.toml`**, while every `public-version-*`
+and `public-doctor-*` probe runs the **installed binary**. The gate is comparing a CHECKOUT against
+a PUBLISHED ARTIFACT and calling the difference a failure. The reporter's phrasing — *"confuses
+'published binary' vs 'this checkout'"* — is exactly right.
+
+Their proposed fix is sound: default `--expected-version` to the INSTALLED binary, with an optional
+pin to pyproject for the release-verification case. Two different questions ("does the published
+artifact work" vs "does this checkout match what shipped") currently share one default, and the
+default answers the rarer one.
+
+**Probe honesty:** my first attempt at this read a top-level `checks` key and reported `failed
+checks: 0` while the text output said 8. That was MY probe being wrong, not a payload/text
+divergence in the product — the failures live under `verdict.failed_checks` and
+`agent_readiness.results`. Recorded because "JSON says 0, text says 8" would have been a plausible
+and completely false product bug.
+
+### G4.5 — LSP provider split-brain: **NOT REPRODUCED**, and the numbers are the OPPOSITE
+
+Reported: `defs --provider lsp` -> `fallback-native, lsp_count=0`, while `agent --provider lsp`
+claimed `lsp_proof=true` on a native anchor — i.e. the weaker command over-claiming.
+
+Measured here:
+
+| Command | Reported | Measured |
+|---|---|---|
+| `defs --provider lsp` | `fallback-native`, `lsp_count=0` | `lsp_evidence_status=lsp_proof`, `lsp_count=1`, `native_count=1`, `merged_count=1`, **`fallback_used=False`**, full `provider_agreement` object present |
+| `agent --provider lsp` | `lsp_proof=true` on a native anchor | `lsp_proof=None`, no `provider_agreement` key at all |
+
+So on this machine `defs` is the command with the RICHER evidence and `agent` is the one carrying
+NO lsp fields — the reverse of the report. The most likely explanation is environmental: their
+Pyright was not serving that symbol (hence `lsp_count=0`), mine was.
+
+**This is NOT a refutation.** It means the finding is environment-dependent, which makes it a
+worse bug to reason about, not a lesser one: the same command emits different honesty fields
+depending on whether a language server happens to be warm. What both runs agree on is the
+reporter's actual concern — **an agent cannot tell from the payload alone whether "lsp" evidence
+is real**, because `agent` ships no `provider_agreement` object to cross-check while `defs` does.
+That asymmetry reproduces here and is the part worth fixing.
+
+### Running tally on the five unverified findings
+
+| # | Finding | Verdict |
+|---|---|---|
+| G4.1 | session cwd footgun | **REPRODUCED** — worse than reported (two cwd-keyed stores; `list` returns 64 wrong sessions) |
+| G4.2 | warm-path latency / `response_cache_hits=0` | not yet probed |
+| G4.3 | Windows AST `run` argv fragility | not yet probed |
+| G4.4 | `tg dogfood` version skew | **REPRODUCED** — checkout-vs-published comparison |
+| G4.5 | LSP provider split-brain | **NOT REPRODUCED** — opposite numbers; environment-dependent, and the payload asymmetry is the real finding |
+
+## Recent campaign notes (2026-08-23) - G4.1 VERIFIED: session store is cwd-keyed, and `list` answers from the WRONG store
+
+The external agent dogfood (v1.111.7) reported: `tg session open src` then `tg session show <id>`
+from the repo root returns "Session not found", while `list` works from the parent. **Reproduced
+exactly, and the mechanism is worse than the report describes.**
+
+### Reproduction (published wheel, v1.111.7)
+
+```
+$ tg session open src --json
+  session_id: session-20260823004352130555-src-6dc6b0f9
+
+$ cd src && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  {"version": 1, ...}                      # WORKS
+
+$ cd .. && tg session show session-20260823004352130555-src-6dc6b0f9 --json
+  Session not found: session-20260823004352130555-src-6dc6b0f9   # SAME ID, one dir up
+```
+
+### The mechanism — TWO stores, selected by cwd
+
+```
+src/.tensor-grep/sessions/     <- holds the new session (1 match)
+.tensor-grep/sessions/         <- 67 files, holds 0 matches for that id
+```
+
+`tg session list` from the repo root returns **64 sessions and does not contain the one just
+opened**. That is the part the report understates: this is not a "not found" error, it is a
+**confidently wrong answer**. An agent that opens a session, then lists from a parent directory,
+receives a plausible non-empty list that silently omits its own session. A missing-item error is
+recoverable; a wrong list that looks complete is not.
+
+### Why it is fixable
+
+The session id **already carries its root token**: `session-<ts>-src-<hash>`. So `show` has enough
+information in the id itself to resolve which store to read, without depending on cwd. The reporter's
+proposed fix ("resolve session store from ID, or require `--root` and error with the exact path to
+use") is therefore implementable, not aspirational.
+
+### Severity for agents
+
+HIGH. An agent's cwd changes between turns for ordinary reasons (a tool call, a subprocess, a
+worktree). A session handle that silently changes meaning with cwd is a state bug an agent cannot
+detect from the payload -- both answers look successful.
+
+### Status
+
+VERIFIED, not fixed. The fix touches session-store resolution, which is shared state used by
+`open`/`show`/`list`/`edit-plan`; it needs its own RED-first change with a two-store fixture, and
+must not silently re-point existing sessions. Filed rather than patched inside an unrelated branch.
+
 ## Recent campaign notes (2026-08-22) - EXTERNAL AGENT DOGFOOD of v1.111.7: triage with per-finding verification
 
 An external AI agent ran a full agentic dogfood of `tg 1.111.7` against a DIFFERENT checkout

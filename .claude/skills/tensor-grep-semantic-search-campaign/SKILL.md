@@ -38,7 +38,7 @@ flag-flip** (see Phase 5).
 > `DenseUnavailableError`/`BackendExecutionError` fail-closed contract exactly as §6
 > specifies) and `src/tensor_grep/core/retrieval_fusion.py`
 > (`reciprocal_rank_fusion(rankings, k=DEFAULT_K=60)` — matches §3/§5 exactly), wired
-> as `tg search --semantic` (`grep -n '"--semantic"' src/tensor_grep/cli/main.py`; was `main.py:7141`, now `main.py:7403` typer option, default `False`; bootstrap
+> as `tg search --semantic` (`grep -n '"--semantic"' src/tensor_grep/cli/main.py`; was `main.py:7069`, now `main.py:7331` typer option, default `False`; bootstrap
 > front doors at `bootstrap.py:70` [`_TG_ONLY_SEARCH_FLAGS`, keeps it off the
 > rg-passthrough] and `bootstrap.py:478` [`_can_delegate_to_native_tg_search`'s
 > `unsupported_flags`, keeps it off native-Rust delegation]) gated on the optional
@@ -133,8 +133,8 @@ flag-flip** (see Phase 5).
 > byte-identical no-op)" with the flip "a separate, still-open CEO checkpoint" — is FALSE at this
 > SHA. The flip SHIPPED (#191/#634, commit `c1d4ba4`); the CEO checkpoint is closed by it.**
 > Verified resolution rule (`grep -n "_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT"
-> src/tensor_grep/cli/main.py` — `= 5.0` at `main.py:4600`; reader `_find_dense_weight` at
-> `main.py:4613-4684`): unset / empty / malformed / non-finite env → the adaptive
+> src/tensor_grep/cli/main.py` — `= 5.0` at `main.py:4614`; reader `_find_dense_weight` at
+> `main.py:4627-4684`): unset / empty / malformed / non-finite env → the adaptive
 > `_FIND_DENSE_WEIGHT_ADAPTIVE_DEFAULT` (`5.0`, the ledger-swept 1:5 bm25:dense ratio) for genuinely
 > multi-word NL queries; a single whitespace-free token stays pinned at `_FIND_DENSE_WEIGHT_DEFAULT`
 > (`1.0`) regardless of the env var's state; explicit `TG_FIND_DENSE_WEIGHT=1.0` is the opt-out back
@@ -212,7 +212,7 @@ of v1.17.25.
 **How `--rank` is wired (verify before changing):**
 - Flag: `--rank` (alias `--bm25`), default OFF. `SearchConfig.rank_bm25 = False` (`config.py:183`, re-verified 2026-07-24 against v1.96.0). The dense leg's own flag sits right below it: `SearchConfig.semantic_rank = False` (`config.py:188`).
 - It is a **TG-only** search flag: `bootstrap.py::_TG_ONLY_SEARCH_FLAGS` (`--rank` line 68, `--bm25` line 69, `--semantic` line 70 — re-verified 2026-07-24) — the bootstrap front door intercepts it and does NOT forward it to ripgrep. This is one of the two flag front doors; see `tensor-grep-config-and-flags`.
-- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` and `and not config.semantic_rank` (`grep -n "not config.rank_bm25\|not config.semantic_rank" src/tensor_grep/cli/main.py`; was `main.py:5249-5250` at v1.96.0, now `main.py:5462-5463` at v1.101.27 — this seam has already drifted twice inside two weeks, cite the grep, not the number), so the request runs the tg engine and results are re-ordered right after match aggregation — the `elif config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call (`grep -n "elif config.rank_bm25 and all_results.matches\|rerank_by_bm25" src/tensor_grep/cli/main.py`; was `main.py:8067-8069`, now `main.py:8411-8414`).
+- Setting `--rank` **leaves the ripgrep passthrough fast-path**: the `_can_passthrough_rg()` condition includes `and not config.rank_bm25` and `and not config.semantic_rank` (`grep -n "not config.rank_bm25\|not config.semantic_rank" src/tensor_grep/cli/main.py`; was `main.py:5232-5250` at v1.96.0, now `main.py:5438-5463` at v1.101.27 — this seam has already drifted twice inside two weeks, cite the grep, not the number), so the request runs the tg engine and results are re-ordered right after match aggregation — the `elif config.rank_bm25 and all_results.matches:` guard through the `rerank_by_bm25(...)` call (`grep -n "elif config.rank_bm25 and all_results.matches\|rerank_by_bm25" src/tensor_grep/cli/main.py`; was `main.py:7965-8069`; the follow-up `:8411-8414` pin then landed INSIDE a `--deadline` option block deleted by the 2026-08-23 de-duplication, so it has no successor either -- the THIRD drift of this one anchor. Use the grep above and stop pinning it).
 - User docs: `grep -n -- "--rank" README.md` (feature bullet `:39`, example `:172-173` as of 2026-08-14; were `:38` and `:147-148` at the v1.96.0 pass).
 
 **Bottom line:** the **lexical leg (BM25) and the persisted-index building blocks
@@ -314,7 +314,7 @@ and editor-plane benchmarks.**
 | --- | --- | --- |
 | **API-key / hosted embeddings** (OpenAI, Voyage, Cohere, any `*_API_KEY`) | Breaks "no API key, runs on every install, local-first." The whole point is $0, offline. | Static local model only. If a candidate needs a key or a network call at query time, it's disqualified. |
 | **GPU / CUDA dependency for the dense leg** | GPU is EXPERIMENTAL, default-OFF, and currently *slower* than CPU with no promotion-ready path (Roadmap Sequencing Phase 1, "reversible flag-flip, not yet authorized" — no crossover proven, `grep -n "reversible flag-flip, not yet authorized" AGENTS.md`; was `:539-541` at v1.96.0, now `:1715` at v1.101.27). A GPU-gated ranking layer would not run on the common install. | CPU static embeddings. GPU may be an *optional* future accelerator, never a requirement. |
-| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:5229`, `_can_passthrough_rg`, re-verified 2026-07-24) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
+| **Breaking `--format rg` / `--json` / `--ndjson` semantics** | Those output contracts are the raw-grep parity surface. `--rank` is a **re-order overlay**: same matches, different order. When `--rank` is NOT set, the ripgrep passthrough fast-path (`main.py:5212`, `_can_passthrough_rg`, re-verified 2026-07-24) must remain byte-for-byte. | Keep ranking strictly post-processing over an already-produced `SearchResult`. Never change match membership or the rg-shaped output when ranking is off. |
 | **A hard new install dependency** | Every-install must keep working. | Make the dense model an optional extra; degrade to BM25-only when absent (see §6). |
 | **Shipping user-visible before the gate** | Violates experimental-until-proven (change-control gate D). | Default-OFF flag + benchmark + conscious flag-flip (Phase 5). |
 | **Eyeballing "it feels more relevant"** | Ranking surfaces silently FLIP on corpus change; the blast radius is invisible to the call graph (known weak point — flat scorer, incident #302). | Measure `recall@k` / `ndcg@k` on a real corpus. Numbers or it didn't happen. |

@@ -157,6 +157,17 @@ goes red and future readers never find it:
 ## Receipts
 
 - 2026-08-11 sweep (v1.110.14): 21 stale stamps, 7 tier contradictions, 2 stale state facts
+- **2026-08-23 (v1.113.0): THIS SKILL WAS ITSELF THE DRIFT.** A closeout audit found the two
+  known-state facts above still stamped **v1.110.14** while the tag was **v1.113.0** -- four
+  minors -- with no caveat, in the one skill whose job is to catch exactly that. Its two sibling
+  skills (`tensor-grep-prepare`, `tensor-grep-workspace-dogfood`) both carried honesty notes; this
+  one did not, which is why it read as current.
+  Deliberately NOT re-stamped to v1.113.0: nobody re-ran those checks at v1.113.0, and re-stamping
+  an unverified version is the failure this skill exists to prevent -- it would convert "stale but
+  honest" into "current and false". Treat every `v1.110.14` marker below as **NOT re-verified past
+  v1.110.14** until a dated sweep replaces it.
+  The generalisable point: a maintenance sweep that is not itself swept rots like anything else,
+  and it rots INVISIBLY, because its stated purpose reads as evidence that it ran.
   (doctor schema, index-fingerprint) — all corrected or SUPERSEDED, and this skill created as the
   standing maintenance mechanism. Ledger: `docs/audits/2026-08-11-skill-audit-findings.md`.
 

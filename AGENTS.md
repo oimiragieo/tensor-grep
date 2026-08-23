@@ -858,8 +858,53 @@ concrete failure observed this session.
   holding the note — so the rule is not "remember it", it is: any claim about install-time
   behaviour is checked in a fresh container off the PUBLISHED artifact, or it is not checked.
 
+- **A149 — A CHECK IS ONLY EVIDENCE FOR THE PROPERTY IT CAN OBSERVE (2026-08-23).** Splitting
+  `session_store` into `session_root`, an import smoke asserted `hasattr(session_store, name)` for
+  all seven re-exported names and PASSED. CI's lint lane also runs **mypy with implicit re-export
+  disabled**, which failed all five consumers with "does not explicitly export attribute". Runtime
+  presence is not the property mypy enforces; the smoke was WEAKER than the gate it stood in for.
+  Fix: the `X as X` explicit form, and **run the real gate locally rather than approximating it.**
+  Sibling receipt the same day: `ruff format` WITHOUT `--preview` is not a no-op here — it rewrites
+  preview styling across a whole file, including code the branch never touched, and CI checks
+  `--check --preview`. The safe-looking tidy-up command is the one that breaks the gate.
+
+- **A150 — A LINE NUMBER RE-STAMPED ONCE WILL BE WRONG AGAIN; REMOVE IT (2026-08-23).**
+  `tensor-grep-validation-and-qa` cited `TG_REQUIRE_RG_PARITY` at `:764` (already moved from
+  `:706`). Measured days later: real hits 907/918/925, and `:764` had drifted onto unrelated
+  `cargo test --lib` commentary. It now carries the bare grep with **no line number at all**. The
+  sharpest part is the location: that row exists to warn about *a gate whose conclusion is right
+  and root cause is false* — the table documented the failure while committing it. **Cite the
+  SYMBOL or the grep; a re-stamp is not a fix, it is the next stale anchor.**
+
+- **A151 — `git -C <dir>` SILENTLY ANSWERS ABOUT THE PARENT REPO (2026-08-23).** Censusing 21
+  directories under `.claude/worktrees/`, `git -C "$d" branch --show-current` returned the parent's
+  branch and `dirty=0` for **nine directories that were completely empty** and contained no git
+  anything. Git walked UP and answered about the enclosing repo — confidently, with no error.
+  **Test what a directory IS** (`-f "$d/.git"` holding `gitdir:`, plus whether
+  `.git/worktrees/<name>` exists), never what `git -C "$d"` says about it. The cold orphan case —
+  admin entry GONE, directory PRESENT — is the inverse of the documented one: `git worktree list`
+  does not show it, `prune` is a no-op, and `remove` cannot see it. Mechanics:
+  `~/.claude/skills/harvest-agent-worktrees` "The COLD case".
+
+- **A152 — A PROBE WHOSE RESULT LICENSES DESTRUCTION RUNS ITS CONTROL FIRST (2026-08-23).** Sizing
+  5.2 GB of orphan worktrees before deleting them, the first probe reported **`non-build=0MB`** —
+  which would have justified deleting with no archive at all. A positive control over the repo's
+  own `src/` returned 58 MB and exposed the pattern as broken. True figure: **1547 MB**; the source
+  slice archived to 408 MB. The false-zero law already exists here many times over; this is its
+  most dangerous form, because the zero was about to authorise an irreversible delete. **Control
+  first, not after, whenever the number decides whether something gets destroyed.**
+
+- **A153 — THE MAINTENANCE SWEEP ROTS, AND IT ROTS INVISIBLY (2026-08-23).**
+  `tensor-grep-release-drift-check` — the skill whose entire job is catching stale version stamps —
+  carried `v1.110.14` known-state facts with **no caveat** while the tag was `v1.113.0`. Both
+  sibling skills carried honesty notes; this one did not, which is exactly why it read as current.
+  It was deliberately **not** re-stamped: nobody re-ran those checks at v1.113.0, and re-stamping
+  an unverified version converts *stale but honest* into *current and false* — the precise failure
+  the skill exists to prevent. **When auditing freshness, audit the auditor first: an artifact
+  whose stated purpose is freshness reads as evidence that it ran.**
+
 ## Current Handoff
-release_docs_current_tag: v1.112.0
+release_docs_current_tag: v1.113.2
 
 **2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
 Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 CEO_GATED,
@@ -867,7 +912,7 @@ Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 C
 SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
 New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
 
-As of 2026-08-22, the current tagged release state is `v1.112.0`, and the latest complete public PyPI/release-asset distribution is also `v1.112.0` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.112.0` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-22, the current tagged release state is `v1.113.2`, and the latest complete public PyPI/release-asset distribution is also `v1.113.2` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.113.2` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
 **2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.
@@ -1075,8 +1120,8 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.112.0 tg --version` reports `tensor-grep 1.112.0`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.112.0>
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.113.2 tg --version` reports `tensor-grep 1.113.2`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.113.2>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.14`
 - Public `v1.12.14` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` verified `tensor-grep 1.12.14`; the release includes `21e5437 fix: collect capsule call-site evidence` while preserving `8a73f8d fix: harden agent bridge ranking`, `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.13 dogfood contract fixes. Public managed GPU is not promotion-ready.

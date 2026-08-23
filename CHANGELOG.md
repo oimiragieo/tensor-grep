@@ -1,6 +1,806 @@
 # CHANGELOG
 
 
+## v1.113.2 (2026-08-23)
+
+### Bug Fixes
+
+- Enforce the confidence invariant in production, not just in a test
+  ([#1105](https://github.com/oimiragieo/tensor-grep/pull/1105),
+  [`65cf67f`](https://github.com/oimiragieo/tensor-grep/commit/65cf67f004cd3d07a587957266f63c5e26aa3248))
+
+Two external agent dogfoods reported the same shape -- `downgrade_reasons` non-empty while
+  `confidence.overall == 1.0` (2026-08-22 v1.111.7, again 2026-08-23 v1.113.0) -- and
+  `tests/unit/test_prepare_confidence_invariants.py` has pinned that invariant since d29b013 and
+  passes.
+
+Both are true. That file pins the invariant for the cases IT constructs; it is a test of some paths,
+  not a property of the function. Reproduced against the real `_confidence` on origin/main: pass
+  `edit_plan_seed.confidence.overall = 1.0` with any downgrade reason and the emitted payload keeps
+  1.0. RED confirmed before writing the fix.
+
+Of the six reason-appending branches, four clamp `overall` and two do not:
+  `consistency["confidence_downgraded"]` appends and falls through, and a reason supplied by the
+  CALLER is never clamped at all. So the capsule can list the reasons it is degraded and claim
+  certainty in the same payload -- the most dangerous shape this tool emits, because
+  `ask_user_before_editing` keys off that number and an agent will edit without asking.
+
+Fixed with a GUARD at the single exit rather than a fifth branch-specific clamp. A fifth clamp
+  closes today's hole and does nothing for the seventh branch someone adds later; a guard at the
+  exit holds for every branch that exists and every branch not yet written.
+
+The ceiling (0.99) is deliberately the smallest change that makes the statement true. Calibrating a
+  meaningful severity is the job of the branch-specific clamps, which know WHY a result is degraded;
+  the guard only knows THAT it is, so inventing a severity would silently overwrite a
+  better-informed value.
+
+Tests carry both controls, because a guard that cannot fire and a guard that always fires are both
+  worthless: - NEGATIVE: a clean result still reports exactly 1.0 (the guard is not a blanket cap).
+  - POSITIVE: the unclamped branch is driven and `overall` must land on the guard's ceiling, NOT on
+  any branch-specific value (0.94/0.72/0.55) -- otherwise the case would prove an incidental clamp
+  fired rather than the guard.
+
+Verified: 5 new tests RED before / GREEN after; the pre-existing 5 invariant tests still pass; 657
+  passed across the capsule/prepare/agent/confidence/edit-plan suites; all three ratchets green;
+  ruff check + format --preview + mypy clean.
+
+Does NOT address the sibling dogfood finding that a short lexical token (`_add`) wins as primary
+  target -- that is ranking, a separate row.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Closeout corrections -- broken citation, stale board claims, self-drifted skill
+  ([#1106](https://github.com/oimiragieo/tensor-grep/pull/1106),
+  [`d08d131`](https://github.com/oimiragieo/tensor-grep/commit/d08d131505481f9e2e06407c5205a236de095763))
+
+* docs: closeout corrections -- one broken citation, four stale board claims, one self-drifted skill
+
+A read-only closeout audit (4 lenses) produced 6 findings; each was re-verified with a positive
+  control before being acted on, and only the drift corrections are here -- no feature work, no
+  redesign.
+
+1. BROKEN CITATION, and the fix is to REMOVE the anchor, not move it.
+  tensor-grep-validation-and-qa's Form-4 row cited `TG_REQUIRE_RG_PARITY` at `:764`. Measured: the
+  real hits are 907/918/925, and `:764` had drifted onto unrelated `cargo test --lib` commentary.
+  This anchor has now been re-stamped twice (`:706` -> `:764`) and was wrong again within days, so
+  it is now the bare grep with NO line number -- which is what this repo's own anti-re-stamping rule
+  requires, in the very table that warns about gates whose conclusion is right and root cause is
+  false.
+
+2-4. FOUR STALE BOARD CLAIMS, corrected APPEND-ONLY (dated receipts are never rewritten): - F8's
+  blocker cites `rust_core/src/path_domain.rs`, which does not exist on origin/main (control: the
+  same grep finds `backend_cpu.rs`, so it is not a dead probe). The shared-box ban may still block
+  the row; the stated EVIDENCE does not. - MCP-SURFACE is recorded as rust/Task-2C blocked.
+  Re-derived: the contract version is a PYTHON one-liner at `cli/mcp_server.py:188` and
+  `rust_core/src/` has ZERO references (control: the same grep finds `fn main` in `main.rs`).
+  Sequencing may hold; the rust/shared-box framing does not. - "Public product v1.110.16" and the
+  `2026-08-13.1` canonical index are four minors behind (tag is v1.113.0), assert 0 IN_FLIGHT while
+  two PRs are open, and count 5 CEO_GATED where this file's own campaign note names six (RULESETS
+  omitted).
+
+5. THE DRIFT-CHECK SKILL WAS ITSELF THE DRIFT. `tensor-grep-release-drift-check` -- whose entire job
+  is catching stale stamps -- carried v1.110.14 known-state facts with NO caveat, while both sibling
+  skills carried honesty notes. Deliberately NOT re-stamped to v1.113.0: nobody re-ran those checks
+  there, and re-stamping an unverified version converts "stale but honest" into "current and false",
+  which is the exact failure the skill exists to prevent. Marked NOT re-verified instead. A
+  maintenance sweep that is not itself swept rots invisibly, because its stated purpose reads as
+  evidence that it ran.
+
+Also files the session closeout state in docs/BACKLOG.md: every open item with an honest state and a
+  receipt, the worktree harvest (21 orphans / 5.2 GB removed, 408 MB of source archived first), and
+  -- explicitly -- the three closeout artifacts that DO NOT EXIST in this repo (`.wayfinder/`,
+  `.orchestrator/state.json`, `QUEUE.md`), so "skipped" is not mistaken for "done" by the next
+  session.
+
+`docs:` -- deliberately no release.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: capture A149-A153 and stop CLAUDE.md's law enumeration from rotting
+
+Five laws from this session, each with a receipt:
+
+A149 A check is only evidence for the property it can OBSERVE. An import smoke asserting `hasattr`
+  passed while CI's mypy (implicit re-export disabled) failed five consumers. Sibling: `ruff format`
+  without `--preview` rewrites whole files against a gate that checks `--preview` -- the
+  safe-looking tidy-up is the one that breaks it. A150 A line number re-stamped once will be wrong
+  again -- remove it. `:706` -> `:764` -> wrong again within days (real hits 907/918/925), in the
+  very row warning about a gate whose conclusion is right and root cause is false. A151 `git -C
+  <dir>` silently answers about the PARENT repo -- it reported a branch and `dirty=0` for nine EMPTY
+  directories containing no git anything. A152 A probe whose result licenses destruction runs its
+  control FIRST. A `0MB` sizing would have justified deleting 5.2 GB with no archive; the control
+  exposed it, true figure 1547 MB. A153 The maintenance sweep rots, and it rots invisibly, because
+  its stated purpose reads as evidence that it ran.
+
+AND THE DRIFT THAT PROMPTED THE SECOND HALF OF THIS COMMIT: CLAUDE.md's prose summary of the A-laws
+  stopped at **A122** while AGENTS.md had reached **A153** -- 31 laws nothing in that file pointed
+  at. That is precisely the "an enumeration in prose rots the moment the set grows" failure this
+  repo already has receipts for, committed by the file that documents it.
+
+Fixed by DELETING the growth path rather than extending it: instead of appending A123-A153 inline
+  (which would rot again at A154), CLAUDE.md now says the summary deliberately stops and gives the
+  derivation instead -- `grep -nE '^- \*\*A[0-9]+ ' AGENTS.md`, count-free on purpose, because a
+  number in a third file is a third place to drift. Verified: the stated command returns 153 and its
+  tail surfaces A151/A152/A153.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v1.113.1 (2026-08-23)
+
+### Bug Fixes
+
+- Anchor session/daemon root resolution to the project root (G4.1, G4.2)
+  ([#1103](https://github.com/oimiragieo/tensor-grep/pull/1103),
+  [`cb42752`](https://github.com/oimiragieo/tensor-grep/commit/cb42752471aa9b91ef3d734358a7bd4218f19acb))
+
+* docs: G4.1 VERIFIED -- session store is cwd-keyed and `list` answers from the WRONG store
+
+Third of the external dogfood's five UNVERIFIED findings, now verified against the published
+  v1.111.7 wheel. REPRODUCED exactly, and the mechanism is WORSE than reported.
+
+REPRODUCTION (same session id, one directory apart): tg session open src ->
+  session-20260823004352130555-src-6dc6b0f9 cd src && tg session show <id> -> {"version": 1, ...}
+  WORKS cd .. && tg session show <id> -> Session not found: <id> SAME ID
+
+MECHANISM: there are TWO stores, selected by cwd. src/.tensor-grep/sessions/ holds the id (1 match)
+  .tensor-grep/sessions/ 67 files, 0 matches
+
+So `tg session list` from the repo root returns 64 sessions and DOES NOT CONTAIN the one just
+  opened. That is the part the report understates: this is not a "not found" error, it is a
+  CONFIDENTLY WRONG ANSWER. A missing-item error is recoverable; a plausible non-empty list that
+  silently omits your own session is not -- and an agent cannot detect it from the payload, because
+  both answers look successful.
+
+Severity HIGH for agents specifically: an agent's cwd changes between turns for ordinary reasons (a
+  tool call, a subprocess, a worktree). A session handle whose meaning silently depends on cwd is
+  state corruption the caller cannot see.
+
+FIXABLE, and the reporter's proposed fix is implementable rather than aspirational: the session id
+  ALREADY embeds its root token (`session-<ts>-src-<hash>`), so `show` has enough information to
+  resolve the store without consulting cwd.
+
+VERIFIED, NOT FIXED -- deliberately. The fix touches session-store resolution, shared by
+  open/show/list/edit-plan, and must not silently re-point existing sessions. It needs its own
+  RED-first change with a two-store fixture, not a patch smuggled into an unrelated branch.
+
+GATES.md G4.1 is checked with this evidence. The ledger still reports 16 unmet because the checker
+  only counts gates whose CHECK command passes, and G4.1 is manual -- the checker being stricter
+  than my checkbox is correct, and I am not going to weaken it to make the count look better.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: G4.4 REPRODUCED (checkout-vs-published skew), G4.5 NOT REPRODUCED (opposite numbers)
+
+Two more of the external dogfood's five UNVERIFIED findings, probed against the published v1.111.7
+  wheel. 3 of 5 now have verdicts.
+
+G4.4 REPRODUCED, with a sharper diagnosis than the report. pyproject reads 1.112.0 (a release
+  landed) while the installed binary is 1.111.7; verdict FAIL, passed=15 failed=8, and ALL EIGHT are
+  public-version-*/public-doctor-* checks. The payload states the cause verbatim:
+
+agent_readiness.expected_version = 1.112.0 public-version-powershell :: expected one of
+  ['tensor-grep 1.112.0', 'tg 1.112.0'] in version output, got ['tensor-grep 1.111.7']
+
+expected_version comes from the WORKTREE's pyproject while every probe runs the INSTALLED binary --
+  the gate compares a checkout to a published artifact and calls the difference a failure. Two
+  different questions ("does the published artifact work" vs "does this checkout match what
+  shipped") share one default, and the default answers the rarer one.
+
+G4.5 NOT REPRODUCED, and the numbers are the OPPOSITE of the report:
+
+defs --provider lsp -> lsp_evidence_status=lsp_proof, lsp_count=1, native_count=1,
+  fallback_used=False, full provider_agreement object agent --provider lsp -> lsp_proof=None, no
+  provider_agreement key at all
+
+The reporter saw defs falling back with lsp_count=0 while agent over-claimed. Here it is reversed,
+  which makes the finding ENVIRONMENT-DEPENDENT -- their Pyright was not serving that symbol, mine
+  was. That is NOT a refutation and arguably worse: the same command emits different honesty fields
+  depending on whether a language server happens to be warm. Both runs agree on the part that
+  matters and it reproduces here: `agent` ships NO provider_agreement object, so an agent cannot
+  cross-check whether "lsp" evidence is real. That asymmetry is the real finding.
+
+PROBE HONESTY: my first G4.4 attempt read a top-level `checks` key and reported "failed checks: 0"
+  while the text output said 8. That was MY probe being wrong -- the failures live under
+  verdict.failed_checks and agent_readiness.results -- not a payload/text divergence in the product.
+  Recorded because "JSON says 0, text says 8" would have been a plausible and completely false
+  product bug, and I nearly wrote it down.
+
+Verified: test_public_docs_governance.py 43 passed.
+
+* docs: fix the gates file that was itself a broken instrument (16 fake UNMET -> 5 met / 11 unmet)
+
+GATES.md reported "UNMET: 16 (met: 0)" and I nearly put that number in a CEO update. It was
+  measuring nothing.
+
+TWO FORMAT BUGS, BOTH MINE:
+
+1. Revision 1 nested the attribute lines under markdown bullets (` - CHECK: ...`). The parser never
+  saw them, so EVERY `CHECK` command silently did not run, and three gates carrying real measured
+  evidence reported "checked but EVIDENCE pending". The plain `gate-check.mjs GATES.md` summary
+  shows ONLY the total -- the per-gate reason is visible exclusively via `--status`, which is what
+  exposed it.
+
+2. Fixing it, I removed the indentation ENTIRELY, because I matched the template by eye instead of
+  reading the parser. Gate IDs then parsed (G1.1 instead of line14) so it LOOKED fixed, while CHECK
+  still did not run.
+
+The contract is one line of source: ATTR_RE = /^\s+(CHECK|EXPECT|EVIDENCE):/ in gate-check.mjs --
+  leading whitespace REQUIRED, and not a bullet. Reading the regex took one command and settled what
+  two rounds of guessing did not.
+
+RESULT, measured: 5 met / 11 unmet. G6.2 flipped ITSELF by executing `ruff check` and writing "All
+  checks passed!" as its own evidence -- which is the entire point of a runnable gate, and was
+  impossible in both prior shapes.
+
+ALSO CORRECTED IN THIS COMMIT: the scope line said "28 rows / 17 unfinished, 10 of 17 unclosable". A
+  live census against origin/main:docs/TASK_BOARD.md (not memory) gives 17 unfinished = 5 CEO_GATED
+  + 6 BLOCKED + 6 DEMAND_GATED, so ELEVEN of 17 are unclosable by an agent, not ten. Every row is
+  now named individually in the NOT-IN-SCOPE table -- #48/#72/#77/#131/#169,
+  #255/AST-DSL-PARITY/CONTINUOUS-REFRESH/DD-006/MCP-LEAN-DEFAULT/ RUST-REPLACE-TOCTOU,
+  F5/F6/F8/#89/#90/MCP-SURFACE -- so nothing is summarized away.
+
+G1.1 records the keystone: PR #1093 MERGED as 6dda05c7, verified on the REVISION via `git ls-tree
+  origin/main scripts/ci-local/` rather than trusting the merge report.
+
+* docs: G4.2 REPRODUCED -- the warm cache is unreachable from a SUBTREE path
+
+Fourth of the external dogfood's five UNVERIFIED findings. 4 of 5 now have verdicts. The report said
+  warm `session edit-plan` was ~2.9s with response_cache_hits=0. REPRODUCED -- and the mechanism is
+  a product defect, not a cold cache.
+
+MEASURED, daemon RUNNING, two identical `tg defs src missing_scan_paths --json` calls:
+
+call 1 (cold) 2505 ms call 2 (same) 2702 ms <- SLOWER; no warm benefit at all counters:
+  response_cache_hits=0 entries=0 cache_misses=0
+
+`cache_misses = 0` is the tell and it is what makes this a defect rather than a cold start. A MISS
+  would prove the daemon was consulted and had nothing. ZERO MISSES proves it was never consulted at
+  all.
+
+THE CONTROL THAT ISOLATES IT -- same daemon, same symbol, only the PATH changed:
+
+query `src/` (subtree of daemon root) -> misses=0 entries=0 never consulted query `.` (exactly the
+  daemon root) -> misses=1 entries=1 consulted, stored query `.` again -> hits=1 cache works
+
+So the response cache is functioning perfectly. It is simply UNREACHABLE unless the query path
+  exactly equals the daemon root.
+
+WHY THIS IS WORSE THAN THE REPORTED SYMPTOM: the tool's own guidance tells agents to scope queries
+  to a subdirectory -- tensor-grep-prepare says "Prefer REPO/src", tensor-grep-find-and-route says
+  "always scope tg find to a PATH". Following that advice SILENTLY DISABLES the warm-daemon moat,
+  and no honesty field says so; the payload does not report "daemon skipped: path is not the daemon
+  root". It just runs cold.
+
+KIN TO G4.1: both are path-identity bugs in the session/daemon layer -- G4.1 is cwd-keyed STORE
+  selection, this is root-equality DAEMON selection. Whoever fixes either should check whether it
+  also resolves the other.
+
+VERIFIED, NOT FIXED. The fix touches daemon path-matching shared by every warm-path command and
+  needs its own RED-first change with a subtree fixture plus a cross-check that a subtree query
+  cannot read a STALE root-scoped entry.
+
+Cleanup: stopped the daemon this probe started.
+
+Ledger: 6 met / 10 unmet (was 5/11).
+
+* fix: anchor session/daemon root resolution to the project root (G4.1, G4.2)
+
+Closes two defects reproduced on the published v1.111.7 wheel, which share one cause:
+  session_store._resolve_root returned the caller's path as-is.
+
+G4.1 `tg session open src` wrote to src/.tensor-grep/sessions/; `session show <id>` from the repo
+  root returned "Session not found". Worse, `session list` from the root returned 64 sessions NOT
+  containing the new one -- a confidently wrong answer, not an error. G4.2 Two identical `tg defs
+  src <sym>` calls against a RUNNING daemon gave hits=0 entries=0 cache_misses=0 (2505ms then
+  2702ms). ZERO MISSES proves the daemon was never consulted. Control: the same query at `.` gave
+  misses=1, then a repeat gave hits=1 -- the cache works, it was unreachable from a subtree.
+
+TDD: the test file was EXTRACTED VERBATIM from the plan rather than retyped, so the
+
+audited artifact and the executed artifact cannot drift. RED arm: 3 failed / 2 passed, exactly as
+  the plan predicted.
+
+COUNCIL AUDIT (4 substantive seats, unanimous APPROVE_WITH_CHANGES, DEPTH=2-3 solo; codex REJECT
+  discarded -- it sat beside 3 CANNOT_READ_REQUIRED_FILE lines, and a verdict beside a read failure
+  is void). Three findings, all applied:
+
+1. A ~19x SCAN BLOW-UP I would have shipped. `build_repo_map(root, ...)` scans FROM the resolved
+  root, so anchoring would have widened `tg session open src` from 119 files to 2,226 -- MEASURED,
+  not estimated. Fixed by separating the two questions the plan conflated: the SCAN stays where the
+  caller pointed; only the STORE and DAEMON use the anchored root. 2. My end-to-end test was broken.
+  `session show` takes an OPTIONAL trailing PATH defaulting to `.`, so the draft read the test
+  process cwd -- the real repo -- instead of tmp_path, and would have passed or failed for an
+  unrelated reason. Both invocations now pass their path explicitly. 3. audit_manifest._resolve_root
+  is a byte-identical divergent twin feeding _audit_dir, so audit manifests keep the same cwd-keying
+  defect. NOT fixed here -- that would be the silent scope expansion this slice forbade -- but
+  documented in-file as a KNOWN gap so the next reader does not read it as an oversight.
+
+THE MARKER ORDERING WAS WRONG IN THE PLAN AND I CAUGHT IT BY MEASURING FIRST. A naive nearest-marker
+  walk over (".git","pyproject.toml","Cargo.toml","package.json") picks the marker per DIRECTORY,
+  giving rust_core/src -> rust_core and npm -> npm on this repo: it would have fixed src/ and
+  silently left rust_core/ and npm/ broken -- a partial fix that looks complete. Preferring the
+  OUTERMOST .git gives tensor-grep for rust_core/src, src, npm and docs (all measured). A test pins
+  that case.
+
+THE FALLBACK CONTROL FAILED AND IT WAS RIGHT TO. %TEMP% on this box contains a stray Cargo.toml and
+  $HOME a package.json, so a pytest tmp_path genuinely HAS a marker 5 levels up and the test's
+  premise ("no marker anywhere above") was FALSE. My first two instincts were to patch the resolver;
+  both were wrong. The test now controls its own environment, and the residual hazard is DOCUMENTED
+  in _find_project_root rather than hidden: a caller with a stray manifest above it and no closer
+  marker will anchor to that stray. Every real checkout has a .git or its own manifest nearer, and
+  the VCS pass runs first.
+
+PERTURBATION-PROVED twice: reverting _resolve_root fails 3 unit tests; reverting it also fails the
+  end-to-end test on its own; restore is byte-identical both times.
+
+Verified: 6 passed; ruff format --preview + ruff check clean; diff secret-scanned.
+
+* fix: anchor to the INNERMOST .git, and test the daemon half (codex HIGH+2 MED)
+
+A codex (Sol) audit of 7e45e5d found three real defects, all in work I had already
+  perturbation-proved. The proof was sound; it was aimed at the wrong properties.
+
+HIGH -- _find_project_root preferred the OUTERMOST .git, so a standalone project vendored inside
+  another checkout anchored to the OUTER repo. Two unrelated trees would then share one session
+  store AND one daemon: worse than the bug being fixed. Reproduced before changing anything:
+  <outer>/vendor/standalone/src -> <outer>. Now the FIRST (innermost) hit wins. A submodule has a
+  .git FILE, so it also self-anchors -- the safer default, and the answer the old rule gave only by
+  the accident of this repo having no submodules.
+
+MED -- the fallback control monkeypatched _find_project_root, i.e. stubbed the function under test;
+  it passed against the PRE-CHANGE code too. Its premise really is false on this box (%TEMP% has a
+  stray Cargo.toml, $HOME a package.json), so the fix is to bound the ASCENT to 3 and let the REAL
+  walk run inside the isolated tree.
+
+MED -- none of the six tests touched the daemon, so every one could pass while the G4.2 half did
+  nothing. Anchoring does reach it (session_daemon.py:174 calls _resolve_root), but nothing proved
+  it. Now asserted at the seam: a subtree and the project root must name the same daemon metadata
+  path.
+
+Perturbation proof, each arm reverting one property, file byte-identical after: outermost-.git
+  restored -> nested-project test FAILS anchoring removed -> subtree test FAILS anchoring removed ->
+  daemon test FAILS (run alone; -x hid it) 8 passed restored.
+
+* fix: drive the daemon test through the daemon, and correct two stale doc claims
+
+Codex round 2 on a579d67. Both findings correct.
+
+MED -- my round-1 daemon test called `session_store._resolve_root` on BOTH inputs and compared the
+  results. That exercises the resolver twice; it would pass even if `session_daemon` stopped
+  resolving subtree roots entirely. A test that re-runs the function under test on both arms cannot
+  observe the caller it claims to cover -- the same class as a control that inherits the treatment's
+  state. Now driven through `get_session_daemon_status`, the daemon's public path-taking entry:
+  register a daemon at the project root, ask from a subtree, require the answer to name the root.
+  Perturbation: anchoring removed -> FAILS through that entry point.
+
+LOW -- the `_find_project_root` summary still said OUTERMOST. Grepping the whole file rather than
+  fixing the one cited line found a SECOND stale claim at :377 that the audit did not name,
+  restating the outermost rationale as measured fact. Both corrected; the only surviving "OUTERMOST"
+  is the historical note recording what round 1 caught. (This repo's own law: fix a fact, then grep
+  the whole document for the old anchor.)
+
+8 passed; ruff format + check clean.
+
+* fix: two real regressions the codex rounds could not see (deny shared territory, split literal vs
+  anchored)
+
+Found by RUNNING the wider suite, not by review. Both passed on origin/main and failed here, and
+  neither was among the failures I had baselined as pre-existing -- which is why each was baselined
+  individually before being called mine.
+
+1. SHARED TERRITORY IS NEVER A PROJECT ROOT. An earlier revision documented this as an accepted
+  residual risk. It then broke test_context_render_warm_daemon_bounds_suggested_edits_same_as_cold:
+  that test builds a project under tmp_path and starts a REAL daemon at it, and the client resolved
+  the project to %TEMP% itself (measured), silently taking the COLD route -- routing_reason read
+  "context-render" instead of "session-context-render". Nothing errored; the wrong answer just
+  looked slower. %TEMP% holds a stray Cargo.toml here and $HOME a package.json, so without the deny
+  rule every unrelated tree under either shares ONE session store and ONE daemon: the same hazard
+  the innermost-.git rule fixes for nested checkouts, reached through the manifest pass instead. An
+  accepted risk a test can trip is a defect.
+
+2. ONE HELPER, TWO QUESTIONS. _resolve_root answered both "where does state live?" and "what literal
+  directory did the caller name?". Anchoring is correct for the first and wrong for the second, so
+  ledger scope derivation silently collapsed: `claim core/hooks` recorded scope "." instead of
+  "core/hooks" -- every subtree claim folding onto the repo root with no error. Split out
+  _resolve_literal_dir (the pre-anchoring semantics) and pointed ledger_store's two sites at it; the
+  daemon and evidence store keep the anchored root. Same shape as the scan/store split the design
+  council caught in open_session, one layer down. Five prose references calling _resolve_root "the
+  literal" resolution went stale the moment it was split; all five corrected in this change.
+
+New test pins the deny rule using the REAL temp dir (tmp_path already lives under it, so the stray
+  marker is genuine, not simulated). Perturbation: drop the deny rule from the manifest pass ->
+  FAILS; restore -> 9 passed.
+
+Verified: 1240 passed, 2 skipped across the session/daemon/ledger/evidence selection. ruff format +
+  check clean.
+
+* docs: G4.1 and G4.2 -> FIXED, with the perturbation arm that proves each
+
+Both gates were VERIFIED (reproduced) and are now fixed on this branch. Each row records the arm
+  that makes its evidence falsifiable rather than just asserting a fix: revert the property, the
+  named test fails; restore, 9 pass.
+
+G4.2's note also records that the first attempt to pin it did not test the daemon at all -- it
+  called the resolver on both arms -- so the row names the daemon's own entry point, which is the
+  thing that was actually broken.
+
+* style: restore --preview formatting my non-preview run reverted
+
+CI's "Formatting & Linting" lane ran RED on this branch. Cause was mine and not in the code I wrote:
+  I ran `ruff format` WITHOUT `--preview` on session_store.py and ledger_store.py, which un-hugged
+  brackets across the WHOLE file -- including functions this branch never touches (e.g.
+  ledger_store._find_overlaps). CI checks `ruff format --check --preview`, so it correctly failed.
+
+This repo's rule is `--preview` mandatory for format (and NOT for lint). A bare `ruff format` is not
+  a no-op on an already-formatted file here; it actively rewrites preview styling into non-preview
+  styling, so the "safe" tidy-up command is the one that breaks the gate.
+
+Local reproduction note, recorded so the next person does not chase it: running CI's exact command
+  over `.` on this Windows checkout reports 16 files, but 14 are markdown that main is green on.
+  Those are a CRLF artifact of a `core.autocrlf=true` checkout versus CI's LF, not defects -- they
+  were reverted rather than committed, which would have produced a large phantom-churn diff. Only
+  the 2 genuinely-affected Python files are in this commit. Verified: `--check --preview` reports "4
+  files already formatted"; ruff check clean; 97 tests pass.
+
+* refactor: split project-root resolution into session_root (file-size ratchet)
+
+CI's file-size ratchet failed on macos/py3.11: session_store.py grew 1828 -> 1963. The growth is
+  real and mostly prose -- every rule in this concern is a receipt from a defect that shipped or
+  nearly did -- so re-pinning the baseline was not available. This repo's rule: RELOCATION may
+  re-pin when the total is provably unchanged; GROWTH must be reduced or split. This is the split.
+
+`session_root.py` now owns project-root resolution and the `.tensor-grep` path helpers that key off
+  it. The module docstring states the distinction that caused a regression earlier in this same
+  branch, so it cannot be lost again: `_resolve_root` answers WHERE STATE LIVES (anchored),
+  `_resolve_literal_dir` answers WHAT DIRECTORY THE CALLER NAMED (not anchored).
+
+The move is import-invisible on purpose: `session_store` re-exports all seven names, because
+  `session_daemon`, `ledger_store` and `evidence_receipt` import them from there and a silent break
+  across three modules is exactly the hazard a split introduces. The re-export carries `# noqa:
+  F401` with the reason inline -- lint cannot distinguish a re-export from a dead import, and
+  deleting them is the cheapest way to "fix" the warning and break everything.
+
+Verified, not assumed: 74 import sites censused; all 7 names asserted present on session_store by an
+  import smoke; 938 passed / 2 skipped across the session, daemon, ledger, evidence, file-size and
+  skill suites; ratchet 28 passed; ruff check clean and `format --check --preview` reports
+  already-formatted. session_store.py 1963 -> 1822, under the 1828 pin without moving it.
+
+* fix: use the explicit `X as X` re-export form so mypy accepts the split
+
+The "Formatting & Linting" lane is not only ruff -- it runs mypy, and mypy runs with implicit
+  re-export disabled. A plain `from session_root import _resolve_root` makes the name available at
+  runtime but is NOT an explicit export, so all five consumers failed with "does not explicitly
+  export attribute" in session_daemon.py and ledger_store.py.
+
+My own import smoke passed this: it asserted `hasattr(session_store, name)`, which is true for the
+  plain form. The check was WEAKER than the gate it stood in for -- runtime presence is not the
+  property mypy enforces. Running the real gate locally (mypy on the three modules) is what settles
+  it, and now reports "Success: no issues found".
+
+Fixed with `X as X`, the canonical explicit re-export, with the reason recorded inline so the next
+  person does not "tidy" the redundant-looking aliases away and re-break five consumers.
+
+* fix: finish the split -- three more CI gates, and a control the split silently disarmed
+
+CI found three separate gates the local run had not, and the last one is the worst because it was
+  GREEN.
+
+1. SILENT-LOSS CENSUS RATCHET. `session_root.py` appeared as a new file swallowing an OSError inside
+  an accumulating loop. Two different causes, handled differently: - `_shared_territory_roots` was
+  GROWTH, so it is HARDENED, not pinned. It now degrades an unresolvable candidate to its unresolved
+  path instead of dropping it. This is a DENY set: a dropped entry fails OPEN and silently re-opens
+  the %TEMP% escape the function exists to close. - `_nearby_session_roots` was pure RELOCATION, so
+  it re-pins, with the arithmetic written into the pins file: session_store 2 -> 1, session_root
+  absent -> 1, TOTAL 2 -> 2. session_store's pin is LOWERED in the same change, because this ratchet
+  also fails on a pin left ABOVE the real count -- a pin above the count accepts a range, and a
+  range is where the next regression hides.
+
+2. FILE-SIZE RATCHET, again. mypy's required `X as X` re-export form is longer than the plain one,
+  which pushed the file back over. Moved the session-root LOOKUP group (`_nearby_lookup_enabled`,
+  `_nearby_session_roots`, `_session_root_for_payload`) into session_root -- they answer one
+  question and depend only on names already there.
+
+3. `ruff check` I001 + mypy. The re-export now sits in the import section (no E402) and ruff's
+  canonical form for `as` re-exports is one statement per name. It is verbose; it is also what the
+  gate accepts, so it stays.
+
+AND THE ONE THAT MATTERED: THE SPLIT SILENTLY DISARMED MY OWN CONTROL.
+  `test_no_marker_falls_back_to_todays_behaviour` patched `session_store._MAX_PROJECT_ROOT_ASCENT`.
+  Once `_find_project_root` moved into session_root, Python resolved that bare name through
+  session_root's globals, so the patch rebound a re-exported copy and the real reader stayed on 24.
+  Measured: patch session_store, session_root still sees 24. The test kept PASSING while controlling
+  nothing.
+
+The fix is not a better patch target. The control existed only because tmp_path lives under %TEMP%,
+  which holds a stray Cargo.toml, making the test's stated premise false. `_shared_territory_roots`
+  now makes that premise TRUE by construction, so the monkeypatch is dead weight and is REMOVED. The
+  property is guarded instead by
+  `test_a_project_under_the_temp_dir_does_not_anchor_to_the_temp_dir`, which is perturbation-proved:
+  drop the deny rule from the manifest pass and it FAILS (verified; restored, 9 pass).
+
+A consumer census caught one more invisible break before CI could: the moved
+  `_SESSION_NEARBY_LOOKUP_ENV` constant had two consumers and no re-export, failing
+  test_session_daemon_security. All 13 moved names were checked, not just the one that happened to
+  fail.
+
+Verified: 94 passed / 1 skipped across the slice, daemon-security, and all three ratchets; ruff
+  check clean over src/ and tests/; format --check --preview clean; mypy clean over 77 source files.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- File the v1.113.0 dogfood findings and four board defects
+  ([#1104](https://github.com/oimiragieo/tensor-grep/pull/1104),
+  [`af48c1f`](https://github.com/oimiragieo/tensor-grep/commit/af48c1fc618a4b3bdeeef26350e5a8637cd6a647))
+
+No task-store is available in this session, so the board is the durable tracker -- these were named
+  in a CEO update and would otherwise live only in prose.
+
+Filed from the second external agent dogfood (v1.113.0), each with its disposition and a receipt
+  rather than a restatement: #3 session default PATH -> FIXED unreleased (PR #1103); their exact
+  repro re-run on that branch returns exit 0, including the no-PATH-argument form they identified as
+  the actual bug #4 blast-radius-render --deadline -> FIXED unreleased (PR #1102) #1 the `_add`
+  lexical trap at confidence 1.0 -> OPEN, unassigned, highest severity here #2 downgrade_reasons vs
+  overall=1.0 -> OPEN; invariant TESTS are on main (d29b013) but the external run still shows the
+  violation, so the invariant is not bound to the production path -- passing tests that do not
+  enforce the property #5/#6/#7 warm-path latency, dogfood timeout, absent rank scores -> OPEN
+
+Four defects found in our own records in the same pass: - the canonical index is stamped three
+  releases behind, claims 0 IN_FLIGHT with two PRs open, and counts 5 CEO_GATED where its own
+  campaign note names six (RULESETS omitted) - F8's blocker receipt cites
+  rust_core/src/path_domain.rs, which does not exist on main (the ban may still hold; the stated
+  evidence does not). MCP-SURFACE and F6 re-derived and CONFIRMED accurate in the same pass, so this
+  is a stale citation, not a stale row - test_cli_modes_ast_misc.py has an order-dependent
+  help-surface failure, two sightings - RULESETS is recorded as NOT a live defect, correcting a
+  claim made earlier in this session. Measured on a clean container against the published wheel: it
+  fails CLOSED with an actionable remediation and works after it. The earlier reading came from
+  passing `--ruleset security`, a CATEGORY rather than a ruleset -- the tool says so and lists the
+  valid names. Recorded because a wrong "still broken" in the ledger is worse than no entry.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- Junior-analyst onboarding guide for the local CI harness (built by cursor-agent)
+  ([#1100](https://github.com/oimiragieo/tensor-grep/pull/1100),
+  [`493ca66`](https://github.com/oimiragieo/tensor-grep/commit/493ca66d1736756679f3c16e5752aa11e3b50c10))
+
+Written by cursor-agent on the FREE auto tier per the operator's cost directive -- zero premium
+  tokens spent on the prose. The orchestrator wrote the spec, audited the output, adjudicated its
+  one open question, and did all git. That split is the point: the builder produces volume, the
+  orchestrator decides.
+
+WHAT IT COVERS: 7 sections a junior needs to run scripts/ci-local/ without prior context -- why a
+  local harness exists at all (SHARED box, Actions minutes), the run commands, what a green run does
+  NOT mean, the twelve container-vs-runner divergences with the WRONG VERDICT each produced, the
+  anti-drift gate and why passing it does not mean the harness matches CI, when to use act instead
+  (with act's own documented limits), and a five-step "if it breaks" checklist.
+
+AUDIT RESULT (never trust the DONE line): - scope: exactly ONE new file, nothing staged, no git
+  touched -- the EDIT-ONLY constraint held, which matters because cursor's checkpoint auto-add would
+  otherwise churn the whole repo CRLF<->LF on a Windows checkout. - structure: all 7 H2 sections
+  present IN ORDER; the required literal sentence "The GitHub Actions run remains the merge
+  arbiter." is present. - facts: spot-checked every cited command (run.sh rust, TG_CI_CPUS,
+  safe.directory, Config.User) against the five input files -- ZERO invented facts. This is cursor's
+  documented failure mode and it did not fire here. - it raised ONE `TODO(verify):` instead of
+  guessing -- whether the `shell` lane should be documented. That is the sanctioned escape hatch
+  working. I adjudicated it myself (a BLOCKER is a claim to verify, not a verdict to accept),
+  confirmed the lane exists at entrypoint.sh:139, and documented it WITH the caveat that it runs no
+  tests and can never tell you a lane passed.
+
+Also lands docs/plans/2026-08-22-blocked-row-unblock-campaign.md -- the campaign plan now under
+  council audit at frozen hash 9423e749d2ae917bd1877146aed369cee24b335c. It is marked DRAFT with two
+  UNCHECKED approval boxes and an explicit "no wave may start while either box is unchecked". Its
+  premise was MEASURED, not assumed: F5/F8/Task 2C all cite the same blocker verbatim ("cargo and
+  the e2e routing suite are forbidden on this shared box"), and the container ran
+  tests/e2e/test_routing_parity.py to 68 passed. The plan states its most falsifiable claim outright
+  -- the harness removes the CARGO half of Task 2C's blocker and NOT the WSL path-domain half -- and
+  tells the council to attack that first.
+
+Verified: test_public_docs_governance.py + test_skill_library_drift.py -- 48 passed.
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Co-authored-by: cursor-agent (auto) <noreply@cursor.com>
+
+
+## v1.113.0 (2026-08-23)
+
+### Documentation
+
+- Wave 0a -- re-derive the 6 BLOCKED rows against the tree (3 are STALE)
+  ([#1101](https://github.com/oimiragieo/tensor-grep/pull/1101),
+  [`d29b013`](https://github.com/oimiragieo/tensor-grep/commit/d29b0133802e18fd67c6c470092a24921b7ea228))
+
+* docs: wave 0a -- re-derive the 6 BLOCKED rows against the tree (3 are STALE)
+
+The 2026-08-22 unblock plan was council-audited (6 seats, all APPROVE_WITH_CHANGES). Checking the
+  audit's falsifiable claims against the CODE found something no seat predicted: three of the six
+  BLOCKED rows are stale. Sequencing a campaign from them would have sent a builder at a file that
+  does not exist.
+
+WHAT THE TREE SAYS:
+
+F8 cites `rust_core/src/path_domain.rs`. It DOES NOT EXIST, and `grep -rln "path_domain\|PathDomain"
+  rust_core/src/` returns NOTHING -- the concept is absent from the Rust tree entirely. Seat
+  droid_glm called this; verification confirmed it. F8 cannot be planned until re-scoped, and the
+  nearest-name guess (runtime_paths.rs) is a guess, not evidence.
+
+MCP-SURFACE is blocked on Task 2C because Task 2C "modifies rust_core/src/main.rs". But
+  `_TG_MCP_SERVER_CONTRACT_VERSION` lives at src/tensor_grep/cli/mcp_server.py:188 and main.rs
+  contains ZERO contract references. The contract bump is a PYTHON change and is not cargo-blocked
+  at all. The dependency was asserted from a premise measurement does not support.
+
+F6 calls its evidence-signing slice "remaining". src/tensor_grep/cli/ evidence_signing.py is 539
+  lines / 19 functions and is imported by audit_manifest.py, checkpoint_store.py and
+  evidence_receipt.py. It is SHIPPED and wired. Carrying shipped work as open is how 17 stale items
+  accrued once before.
+
+ROWS CONFIRMED CORRECT: F6's native half (grep for verify-edit in main.py returns nothing -- the
+  surface genuinely does not exist), and #89/#90 (the WSL constraint is real and is NOT removed by
+  an ubuntu container; the harness removes the CARGO constraint, never the WSL one).
+
+ROW UNDER-SPECIFIED: F5 is scoped `rust_core/**` -- a glob. "Independent of the MCP chain" is not
+  assertable from a glob; exact touch-points are needed before sequencing.
+
+DISCIPLINE NOTE, recorded because it is the reusable part: TASK_BOARD's W6 entry says "six BLOCKED
+  rows re-derived", and that pass did not catch path_domain.rs. Either the file went away
+  afterwards, or the re-derivation checked row TEXT rather than file EXISTENCE. A re-derivation that
+  does not resolve every cited path against the tree is a PROOFREAD, not a re-derivation -- and it
+  produces exactly the confidence that stops the next person from checking.
+
+Also removed 1.7 MB of `src/.tensor-grep/` session artifacts my own dogfooding created inside src/
+  (gitignored, so it was not dirtying git, but it was my litter).
+
+Verified: test_public_docs_governance.py + test_skill_library_drift.py -- 48 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* feat: pin the prepare confidence invariant; triage the external agent dogfood
+
+An external AI agent dogfooded v1.111.7 against a DIFFERENT checkout using the real installed binary
+  and filed ~10 defects + 8 feature requests. Triaged with PER-FINDING verification, because a
+  dogfood report is a hypothesis like any other agent output.
+
+VERIFICATION RESULTS -- 2 confirmed, 2 NOT reproduced, 5 unverified:
+
+CONFIRMED: blast-radius has --deadline, blast-radius-render does NOT. An agent copying flags between
+  siblings breaks. Also confirmed unsorted rg-format order diverges (a DOC gap; rg itself makes no
+  unsorted-order guarantee).
+
+NOT REPRODUCED (both of their CRITICAL findings): "prepare returns _add at confidence 1.0 with
+  ask=false" -- on this tree the primary was _raw_validation_plan_for_tests at 0.55 with
+  ask_required=True. And the confidence/downgrade desync -- forcing truncation gave partial=True, 3
+  downgrade reasons, overall=0.94, ask_required=True. Both invariants held.
+
+NOT REPRODUCED IS NOT REFUTED. They ran a different corpus and gave specific evidence. Rows 5-9
+  (session cwd, warm path, Windows AST argv, dogfood version skew, LSP split-brain) are recorded
+  UNVERIFIED -- not closed, not dismissed. Unverified findings do not get fixes; that is how a wrong
+  fix ships.
+
+WHAT SHIPPED: tests/unit/test_prepare_confidence_invariants.py pins their NFR-2 as a permanent
+  ratchet:
+
+I1 downgrade_reasons non-empty => confidence.overall < 1.0 I2 partial is true => confidence.overall
+  < 1.0
+
+It ships EVEN THOUGH the bug did not reproduce, because a contract that happens to hold today is
+  exactly the thing to pin before it drifts -- and "certainty about a truncated scan" is the single
+  most dangerous payload this tool can hand an agent.
+
+The test carries TWO negative controls (the detector must flag each violating shape) AND a positive
+  control (a correctly-downgraded payload must produce zero violations). Without the positive
+  control a detector that flagged everything would pass both negatives and be useless. The invariant
+  is a PURE FUNCTION over the payload so its failure path is testable without the CLI -- a check
+  reachable only through a slow subprocess tends never to have its failure path tested at all.
+
+WHAT DID NOT SHIP, and why: their ranking fix (stop-symbol filter for short lexical tokens). That is
+  a RANKING concern, not a contract concern, and an invariant cannot express it -- it needs a
+  corpus-based golden set. Filed rather than guessed at. Their proposed discriminator is good and is
+  recorded verbatim for whoever builds it: a known-bad query must either set ask.required=true or
+  refuse to name a primary.
+
+THE REUSABLE LESSON: two critical findings did not reproduce on our corpus, which is itself the
+  finding -- capsule confidence and target selection are CORPUS-DEPENDENT, so single-corpus
+  verification cannot falsify them. That argues for the golden-set approach over one-off
+  reproduction, the same lesson as the 2026-07-03 fixture-green-is-false-for-heuristics receipt.
+
+Verified: 53 passed (invariants + both docs gates); ruff format --preview + check clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Features
+
+- Local Docker CI-parity harness for the lanes banned on the shared box
+  ([#1093](https://github.com/oimiragieo/tensor-grep/pull/1093),
+  [`6dda05c`](https://github.com/oimiragieo/tensor-grep/commit/6dda05c7871af3d4ebe732ac62f0696f18873daa))
+
+* feat: local Docker CI-parity harness for the lanes banned on the shared box
+
+AGENTS.md/CLAUDE.md forbid local `cargo test` and tests/e2e/test_routing_parity.py because this dev
+  box is a SHARED SERVER. That ban left F5, F8 and Task 2C (and so MCP-SURFACE) unbuildable locally
+  and pushed every Rust verification onto GitHub Actions. This runs those lanes in a CPU-capped
+  container instead: $0 Actions minutes, and the ban's PURPOSE (do not saturate the box) is
+  preserved by the cap.
+
+WHAT IT IS NOT. Ubuntu + python3.12 only. It does not run windows/macos, python 3.11, nightly Rust,
+  Formatting & Linting, docs-governance, agent-readiness, native-build-smoke, cuda-feature-check,
+  search-golden-parity, benchmark-regression, the eval gate, or the release chain. The PASSED banner
+  enumerates every one of them and states that the GitHub run remains the merge arbiter. Today's
+  main breakage was Windows-specific, so that limit is not theoretical.
+
+TWELVE MEASURED CI-vs-LOCAL DIVERGENCES, each documented in-file with its symptom: MSYS rewriting a
+  leading-slash env value into a Windows path; python3.12-dev for the PyO3 link; running as root
+  making a chmod-000 fixture not bite; a failed build leaving the previous image tagged so a run
+  tested stale bytes; two flavours of volume-ownership denial; the operator's Windows .venv leaking
+  into a Linux container via the bind mount; tmpfs mounted noexec killing native extension imports;
+  git refusing the bind mount as dubious ownership (which aborted pytest COLLECTION, so zero tests
+  ran); an out-of-tree CARGO_TARGET_DIR breaking tg's own PYTHONPATH injection; and an ambient
+  TG_SIDECAR_PYTHON turning a fail-closed test green.
+
+COUNCIL-REVIEWED (5 substantive seats, all MERGE_WITH_CHANGES; agy + codex hit read failures and
+  correctly refused to vote). Every change applied:
+
+* REMOVED the package-install step. A seat argued it would mask a regression in tg's PYTHONPATH
+  injection -- the very mechanism one of these tests guards. That was testable and correct: with the
+  target dir repo-relative the parity test passes against a BARE venv, exactly as ci.yml uses. The
+  original failure was my out-of-tree target dir, not a missing install. The superset is gone. *
+  Venv creation is error-checked; setup failure exits 2 instead of mislabelling itself as an install
+  failure. * Corrected a FALSE claim of mine: "zero writes reach the host" is wrong. Only the venv
+  guarantee holds; pytest still writes __pycache__/.pytest_cache into /work. * Default CPU cap 6 ->
+  4, with the cold-run I/O caveat stated (a cgroup quota bounds CPU, not disk I/O, page cache or
+  memory bandwidth). * ast-grep-cli scoped to the PYTHON lane only: it is needed there (1 failed ->
+  68 passed) but an ast-grep binary on PATH changes AST-backend availability, and the rust lane is
+  green without it.
+
+DRIFT TRIPWIRE (4 of 5 seats asked for it): tests/unit/test_ci_local_harness_parity.py pins the
+  mirrored strings -- cargo invocation, pytest invocation, uv==0.11.25, TG_REQUIRE_SYMLINK_TESTS,
+  the editable extras -- in BOTH ci.yml and the harness, so ci.yml cannot change one without
+  reddening a test that names this harness. It carries a positive control (both sources present and
+  non-trivial) and a negative control (the matcher must be able to fail). Perturbation-proved:
+  changing the cargo flags fails exactly [cargo test invocation]; reverting returns 9 passed, file
+  byte-identical.
+
+.gitattributes now pins *.sh and Dockerfile to eol=lf. That is correctness, not style: a CRLF
+  shebang fails in a Linux container with `bad interpreter`.
+
+Verified: rust lane exit 0; python lane run; drift gate 9 passed with both arms; ruff format
+  --preview + ruff check clean; repo hygiene guard passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+* docs: record the bind-mount deadline artifact in the harness banner
+
+Running both lanes end-to-end surfaced one python failure that is NOT a product defect and must not
+  be "fixed" by touching the product:
+
+test_agent_capsule_live_repo_prefers_exe_bridge_implementation_over_marker_helper exit_code=2
+  partial=True partial_reason=deadline elapsed 60.7s (60s budget)
+
+The test scans the LIVE repo, and /work is a Docker Desktop bind mount -- materially slower than the
+  native checkout a GitHub runner uses. Measured directly rather than inferred: the RANKING was
+  correct in that run (primary_target = rust_core/src/python_sidecar.rs, exactly what the test
+  asserts). Only the clock lost.
+
+Recorded in the PASSED banner so the next person reads it before reacting. The banner explicitly
+  says not to widen the product deadline to make this harness pass -- that move was tried on a
+  sibling lane on 2026-07-27, bought 4x the wasted wall-clock, and was reverted the same day.
+
+Rust lane remains exit 0. Python lane: 1 failed, 423 passed, and that one failure is this artifact.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.112.0 (2026-08-22)
 
 ### Documentation

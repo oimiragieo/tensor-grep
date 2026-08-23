@@ -800,7 +800,7 @@ number: §2's AST-routing description was **backwards**. `AstBackend.is_availabl
 on `torch_geometric`/CUDA — that gate was deleted in #542 (v1.65.0, 2026-07-12, 11 days before this
 doc's own original "current" baseline was first written) — and the router has PREFERRED
 `AstGrepWrapperBackend` whenever it's available ever since, using native `AstBackend` only as a
-fallback (`main.py:6655`, `_select_ast_backend_for_pattern`); this document said the opposite. New
+fallback (`main.py:6593`, `_select_ast_backend_for_pattern`); this document said the opposite. New
 §2a documents the separate, third `lang_registry` symbol-graph tier (an unrelated code path to the
 AstBackend/AstGrepWrapperBackend routing above), now covering 8 of the top-10 languages. One
 process note for future re-verifiers doing a from-scratch sweep like this one: `origin/main` itself

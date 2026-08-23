@@ -69,10 +69,10 @@ rust_core/src/main.rs` — `:7581`).
 | `TG_NATIVE_TG_BINARY` (alias `TG_MCP_TG_BINARY`) | auto-resolved | Path to the native `tg` binary front door used by Python-backed commands. Priority 1 override; stale in-tree dev builds (`rust_core/target/{debug,release}/tg.exe`) are otherwise skipped unless pinned here. | `main.py:189`, `runtime_paths.py:238-248` |
 | `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR` (alias `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR`) | `cpu` | `nvidia`/`cuda` prefers the NVIDIA release-native front-door asset (`tg-*-nvidia.exe`), with CPU fallback; anything else normalizes to `cpu`. | `main.py` (`grep -n "def _normalize_native_frontdoor_flavor" src/tensor_grep/cli/main.py` -- `:550` as of 2026-08-14; the prior `:7276`/`:454-473` cites were stale) |
 | `TG_RG_PATH` | auto-resolved | Path to the `rg` executable used for text-search passthrough. | `main.py:191`, `runtime_paths.py:281` |
-| `TG_FORCE_CPU` | off | Force CPU routing for search commands (boolean convention). | `main.py:192`, `main.py:2758` |
+| `TG_FORCE_CPU` | off | Force CPU routing for search commands (boolean convention). | `main.py:192`, `main.py:2772` |
 | `TG_RUST_FIRST_SEARCH` | off | Opt-in: prefer the Rust native front door before Python bootstrap logic for search dispatch. | `bootstrap.py:242` |
-| `TG_RUST_EARLY_RG`, `TG_RUST_EARLY_POSITIONAL_RG` | off | Internal early-dispatch toggles surfaced by `tg doctor --json`; not documented in the public `--help` epilogs. | `main.rs:53-54`, `main.py:2761-2762` |
-| `TG_RESIDENT_AST` | off | Enables the resident AST worker path (see `docs/runbooks/resident-worker.md`); reported by `tg doctor --json`. | `main.py:2759`, `main.rs` (search `TG_RESIDENT_AST`) |
+| `TG_RUST_EARLY_RG`, `TG_RUST_EARLY_POSITIONAL_RG` | off | Internal early-dispatch toggles surfaced by `tg doctor --json`; not documented in the public `--help` epilogs. | `main.rs:53-54`, `main.py:2775-2762` |
+| `TG_RESIDENT_AST` | off | Enables the resident AST worker path (see `docs/runbooks/resident-worker.md`); reported by `tg doctor --json`. | `main.py:2773`, `main.rs` (search `TG_RESIDENT_AST`) |
 | `TG_DISABLE_NATIVE_TG` | off | Kill-switch: forces `resolve_native_tg_binary()` to return `None`, fully bypassing the native `tg` binary front door (Python-backed commands fall back to pure-Python routing even if a compatible native binary is resolvable). | `runtime_paths.py:234` |
 | `TG_DISABLE_RG` | off | Kill-switch: forces the native binary's ripgrep resolver to return `None`, so the native front door treats `rg` as unavailable regardless of `TG_RG_PATH`/PATH. | `rust_core/src/rg_passthrough.rs:13,477` |
 | `TG_DOCTOR_OFFLINE` | off | Disables `tg doctor`'s PyPI latest-version probe: `pypi_latest` becomes `None` and `installation_health` reports `unknown_pypi` instead of a network result. Test/offline escape hatch for the v1.110.14 doctor schema-3 freshness fields; deliberately disclosed (never a silent clean). | `main.py:489-492` |
@@ -87,7 +87,7 @@ rust_core/src/main.rs` — `:7581`).
 | `TG_GIT_TIMEOUT_SECONDS` | 120.0s | Timeout for git subprocess calls (checkpoint/session git operations). | `subprocess_policy.py:28-29` |
 | `TENSOR_GREP_TRITON_TIMEOUT_SECONDS` | 5.0s | Timeout for Triton-backed NLP (CyBERT) probes. | `cybert_backend.py:18-19`, `main.py:196` |
 | `TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS` | 2.0s | Total per-command budget for optional external LSP provider requests before falling back to native evidence. | `grep -n "TENSOR_GREP_LSP_OPERATION_BUDGET_SECONDS" src/tensor_grep/cli/repo_map.py` (was `:95-96`, now `:193-194`), `main.py:198` |
-| `TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS`, `TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS` | implementation defaults | Per-request / per-initialize LSP timeouts; reported (not overridden) by `tg doctor --json`. | `main.py:2763-2764` |
+| `TENSOR_GREP_LSP_REQUEST_TIMEOUT_SECONDS`, `TENSOR_GREP_LSP_INITIALIZE_TIMEOUT_SECONDS` | implementation defaults | Per-request / per-initialize LSP timeouts; reported (not overridden) by `tg doctor --json`. | `main.py:2777-2764` |
 
 Every non-positive or unparseable value for the float-typed timeout vars above silently falls back to
 the compiled-in default (`_configured_positive_float`, `subprocess_policy.py:9-17`) — a bad value does
@@ -98,7 +98,7 @@ not crash, it just gets ignored. Do not assume "I set it, therefore it changed" 
 
 | Var / flag | Default | Effect | Source |
 |---|---|---|---|
-| `--gpu-device-ids IDS` (CLI flag, e.g. `tg search --gpu-device-ids 0,1`) | unset (no GPU routing) | **Explicit, user-intent GPU pin** for search / `tg agent` / benchmark evidence probes. Comma-separated non-negative ints; parse errors raise `typer.BadParameter` immediately (`main.py:4047-4074`). | `main.py:5758-5762`, `main.py:6962-6969` |
+| `--gpu-device-ids IDS` (CLI flag, e.g. `tg search --gpu-device-ids 0,1`) | unset (no GPU routing) | **Explicit, user-intent GPU pin** for search / `tg agent` / benchmark evidence probes. Comma-separated non-negative ints; parse errors raise `typer.BadParameter` immediately (`main.py:4061-4074`). | `main.py:5725-5762`, `main.py:6890-6969` |
 | `TENSOR_GREP_DEVICE_IDS` | unset (all detected devices visible) | Lower-level env allow-list of GPU IDs available to tensor-grep at all (like `CUDA_VISIBLE_DEVICES`), consulted by device detection/memory-manager code, not just the CLI flag. | `device_detect.py:30-55`, `main.py:194` |
 | `--gpu-timeout-s` (flag, `tg agent` only) | 5.0s | Max seconds for each opt-in agent GPU evidence subcommand. | `grep -n "gpu_timeout_s: float = typer.Option" src/tensor_grep/cli/main.py` (was `:6970-6975`, now `:9987-9991`) |
 
@@ -230,7 +230,7 @@ env-configurable knobs above before assuming a behavior can be tuned at runtime:
 
 | Var | Default | Effect | Source |
 |---|---|---|---|
-| `TG_LSP_PROVIDER` | `native` | Overrides the LSP semantic-provider mode for editor/MCP clients; same value space as `--provider` (`native`/`lsp`/`hybrid`). Set by `tg lsp --provider ...` before calling `run_lsp()`. | `main.py:9772-9799`, `main.rs:51` |
+| `TG_LSP_PROVIDER` | `native` | Overrides the LSP semantic-provider mode for editor/MCP clients; same value space as `--provider` (`native`/`lsp`/`hybrid`). Set by `tg lsp --provider ...` before calling `run_lsp()`. | `main.py:9649-9799`, `main.rs:51` |
 | `TG_ALLOW_UNVERIFIED_TOOLCHAIN` | off | Security opt-out: skips checksum verification of downloaded LSP-toolchain archives/binaries (rust-analyzer, etc.) for air-gapped/offline installs — same default-secure/opt-out-to-weaken pattern as `TG_MCP_ALLOW_VALIDATION_COMMANDS` below. Off by default; fails closed (refuses the unverified binary) unless set. | `lsp_provider_setup.py:229-265,465-480` |
 
 ## Provider modes: `native` / `lsp` / `hybrid`
@@ -250,7 +250,7 @@ tg lsp --provider hybrid
 - `hybrid` — combines native with LSP evidence when available.
 
 `tg lsp` validates the value explicitly and exits 2 on anything else
-(`{"native", "lsp", "hybrid"}` check, `main.py:9779-9785`):
+(`{"native", "lsp", "hybrid"}` check, `main.py:9656-9785`):
 
 ```
 Unsupported LSP provider mode; expected one of: native, lsp, hybrid
@@ -280,7 +280,7 @@ when it carries `lsp_provider_response = true` from a completed provider request
 ## `tg inventory`: walk-only repo manifest (v1.19.0, #343)
 
 `tg inventory PATH [--json] [--max-repo-files N] [--deadline SECONDS]` (`src/tensor_grep/cli/inventory.py`,
-registered `main.py:8403-8404`) emits a single-pass file/byte/language/category manifest by
+registered `main.py:8292-8404`) emits a single-pass file/byte/language/category manifest by
 reusing the same gitignore-aware walker (`repo_map._iter_repo_files`) that `orient`/`callers`/
 `blast-radius` trust — so counts stay truth-consistent with every other `tg` command and inherit
 its `.tensor-grep`/`.git`/vendor exclusions for free.
@@ -292,7 +292,7 @@ divergence** (backlog #1, 2026-07-06): `DEFAULT_AGENT_REPO_MAP_LIMIT` was raised
 was raised to match — do not describe the AST cap as `512` anymore.
 
 - `DEFAULT_MAX_INVENTORY_FILES = 50_000` (`inventory.py:40`), passed to the CLI option as a
-  literal `50_000` (`main.py:8406-8413`) rather than importing the constant, so the (heavy)
+  literal `50_000` (`grep -n "50_000" src/tensor_grep/cli/main.py` -- **no line range**: the old `:8406-8413` pin sat INSIDE a `--deadline` option block that the 2026-08-23 de-duplication deleted outright, so it has no successor line to re-stamp to) rather than importing the constant, so the (heavy)
   `repo_map` import stays lazy. A nearby code comment still says "matching `map`'s 512 pattern" —
   that comment is about the STYLE (keep-literal, don't import), not the current live number; `map`'s
   own limit is 2000 now, not 512. A guard test pins the `50_000` literals together; re-verify with
@@ -323,12 +323,12 @@ was raised to match — do not describe the AST cap as `512` anymore.
   both ASCII-only (fixed from a U+26A0 emoji that crashed `typer.echo` on Windows cp1252 consoles —
   `#346`, commit `6b7b518`; ASCII-only is now the rule for all `tg` CLI output, not just
   `inventory`). Either cause trips the same shared exit-2 gate, `_scan_incomplete`
-  (`main.py:10940`, checked at `main.py:8446-8447`) — it only looks at `possibly_truncated`, not
+  (`main.py:10817`, checked at `main.py:8329-8447`) — it only looks at `possibly_truncated`, not
   which cause fired.
 - Fails closed: a nonexistent `path` raises `FileNotFoundError` -> CLI exits 1
   (`inventory.py:201-202`) — a missing path must never read as a valid empty repo.
 
-### `--deadline SECONDS`: the wall-clock twin of `--max-repo-files` (registered `main.py:8414-8423`)
+### `--deadline SECONDS`: the wall-clock twin of `--max-repo-files` (registered `main.py:8297-8423`)
 
 Threads a `deadline_seconds` float (`inventory.py:187`) into `build_inventory()` so a huge/slow
 tree returns a partial, honestly-labeled manifest instead of hanging. `inventory`'s own
@@ -437,7 +437,7 @@ AST-derives the forwarded-field set directly from `_build_native_tg_search_comma
    double-negation flags) that were *already* dropped through delegation before `#342` and are
    acknowledged tech debt, not blessed as safe — a documented gap, not a silently-dropped one.
    **`case_sensitive` is NOT in this set anymore** — audit #19 forwarded it into the native argv
-   via `-s` (`main.py:3353`), so it's now bucket 1 (Forwarded), not a gap; the test file's own
+   via `-s` (`main.py:3367`), so it's now bucket 1 (Forwarded), not a gap; the test file's own
    comment at the `KNOWN_GAP` set records this explicitly. Don't describe `case_sensitive` as a
    native-delegation gap in new docs. A companion test (`test_known_gap_has_no_stale_entries`)
    fails if a `KNOWN_GAP` entry is later forwarded/refused/removed and the entry isn't pruned, so
@@ -549,11 +549,11 @@ native-delegation field-coverage ratchet including `case_sensitive`'s removal fr
 (audit #19); the new `TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS` env var (#390).
 
 Re-verified as of 2026-07-16 (v1.78.1): the new `TG_FIND_DENSE_WEIGHT` row above, read directly
-against `main.py:4007-4072`.
+against `main.py:4021-4072`.
 
 Re-verified as of 2026-07-22 (v1.93.2): the 3 native-delegation cites (`_can_delegate_to_native_tg_search`
-→ `main.py:3698`, `_build_native_tg_search_command` → `main.py:3731`,
-`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` → `main.py:1894`); the new `TG_CAPSULE_INLINE_CALLERS`
+→ `main.py:3712`, `_build_native_tg_search_command` → `main.py:3745`,
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` → `main.py:1908`); the new `TG_CAPSULE_INLINE_CALLERS`
 catalog row (`agent_capsule_constants.py` (find it: `grep -n "_CAPSULE_INLINE_CALLER_ANNOTATION_ENV = " src/tensor_grep/cli/agent_capsule_constants.py`)); the new "Internal constants" subsection
 (`IMPLICIT_SEARCH_WALK_FILE_CEILING = 1500`, defined in `io/scan_limits.py`, re-exported by
 `io/directory_scanner.py`); and the `tg prepare --out`

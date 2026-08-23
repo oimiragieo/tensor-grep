@@ -119,23 +119,23 @@ mirroring `suggested_scope`'s convention (present only when non-empty).
 ```powershell
 tg search "invoice tax" C:\repo --rank --json
 ```
-`--rank` (alias `--bm25`, `main.py:7134`) re-ranks ripgrep hits by BM25 lexical relevance —
+`--rank` (alias `--bm25`, `main.py:7062`) re-ranks ripgrep hits by BM25 lexical relevance —
 pure CPU, no API key, no model download. Default `--format` for plain search is `rg` (exact
 ripgrep-style text); use `tg search PATTERN PATH --format rg --json` for ripgrep JSON Lines, or
 `--json` alone for tensor-grep's own aggregate JSON object, or `--ndjson` for tensor-grep's
 flattened streaming rows. These three JSON shapes are **not interchangeable** — `--json` is NOT
-`rg`'s JSON Lines schema (`--json`/`--rank`/`--ndjson`/`--format` at `main.py:7126-7202`, in
+`rg`'s JSON Lines schema (`--json`/`--rank`/`--ndjson`/`--format` at `main.py:7054-7202`, in
 `search_command`).
 
 ```powershell
 tg agent C:\repo "change invoice tax rounding" --json
 ```
 `agent` (`grep -n "^def agent" src/tensor_grep/cli/main.py` -- `:10331` as of 2026-08-14, was `:9640`) is opt-in and takes `path` then positional `query` (not `--query`, which
-is a hidden deprecated alias, `main.py:9464-9468`). Key flags: `--max-files` (3), `--max-sources`
+is a hidden deprecated alias, `main.py:9341-9468`). Key flags: `--max-files` (3), `--max-sources`
 (5), `--max-tokens` (1200), `--max-repo-files` (2000, `_DEFAULT_AGENT_REPO_SCAN_LIMIT`; raised from
 the old 512 — see §11a's exit-code history below), `--provider native|lsp|hybrid`,
 `--gpu-device-ids` (opt-in native GPU evidence only — sidecar-routed GPU is reported unsupported),
-and `--ignore GLOB` (repeatable, `main.py:9509`) — the same vendor/skill-tree ranking exclusion as
+and `--ignore GLOB` (repeatable, `main.py:9386`) — the same vendor/skill-tree ranking exclusion as
 `orient` above, here keeping a vendor/skill tree from being picked as the capsule's **primary target**
 on a harness repo (`#397`). Before editing from a capsule, check top-level `ambiguity.status`:
 `"tie_requires_confirmation"` is a hard stop for autonomous edits.
@@ -156,7 +156,7 @@ tg prepare C:\repo\src "task" --out capsule.json --json   # persists the capsule
 `prepare` (`grep -n "^def prepare" src/tensor_grep/cli/main.py` -- `:11144` as of 2026-08-14, was `:10862`) composes the orient→search→agent→route-test→callers→evidence→ledger loop
 into one call: `path` then positional `query`, default 60s deadline (`DEFAULT_AGENT_CLI_DEADLINE_SECONDS`,
 same class as `tg agent`'s cold-path default), `--claim` (opt-in only, submits an advisory
-`tg ledger claim`), `--out FILE` (`main.py:10685`, v1.93.0/#705 — atomic write, refuses a symlink/
+`tg ledger claim`), `--out FILE` (`main.py:10562`, v1.93.0/#705 — atomic write, refuses a symlink/
 dangling-symlink/directory destination, works with `--text` too). Response carries `primary_target` +
 `confidence` + `ask_user_before_editing`, `validation_commands`, a `blast_radius_floor`
 (`callers_count`/`top_callers`/trust summary), and `coordination.claim`/`coordination.evidence` hooks so
@@ -206,7 +206,7 @@ extra hint round-trip (`_maybe_swap_reversed_positionals` -- `grep -n "^def _may
 the current directory.
 
 A hidden `--symbol` / `--query` flag still works and prints a deprecation warning to stderr
-(`main.py:11179`) — treat it as legacy, not the contract; the positional form is canonical.
+(`main.py:11056`) — treat it as legacy, not the contract; the positional form is canonical.
 
 Common flags: `--provider native|lsp|hybrid` (default `native`), `--max-repo-files` (2000,
 `_DEFAULT_AGENT_REPO_SCAN_LIMIT` — raised from the old 512 the #398→#399 exit-code history below
@@ -222,14 +222,14 @@ option on `defs` even carries an in-source comment naming the v1.71.3 dogfood fi
 `blast-radius`
 additionally takes `--max-depth` (3), `--max-callers` (25), `--max-files` (25) (in the `blast_radius`
 def, `grep -n "^def blast_radius" src/tensor_grep/cli/main.py` -- `:12813` as of 2026-08-14, was `:12047`+). `defs` additionally takes `--class TEXT` to disambiguate a common method name
-by its enclosing class (`main.py:11251`).
+by its enclosing class (`main.py:11128`).
 
 **Truncation contract (read §11 before scripting an exit code):** when a `callers`/`refs`/`impact`/
 `blast-radius` JSON payload carries `"result_incomplete": true` (a scan cap) or `"partial": true`
 (a `--deadline` cutoff), the scan did **not** finish — treat the list as a floor, never as proof of
 zero callers. The exit code encodes this too, and truncation **trumps** found:
-`main.py:11467-11470` raises `typer.Exit(2)` on ANY `partial`/`result_incomplete`
-(found OR empty) BEFORE the not-found check, and the comment at `main.py:11457-11466`
+`main.py:11344-11470` raises `typer.Exit(2)` on ANY `partial`/`result_incomplete`
+(found OR empty) BEFORE the not-found check, and the comment at `main.py:11334-11466`
 records #399's "found-but-truncated exits 0" as tried and overturned by a unanimous
 design council (§11). The full audit decision procedure (P2 = truncation,
 P7 = "zero callers != dead code") lives in `tensor-grep-code-audit`; this skill covers how to invoke
@@ -261,13 +261,13 @@ tg session daemon status C:\repo --json
 tg session daemon stop C:\repo --json
 ```
 
-`session open` (`main.py:12407`) takes `path` (default `.`) and `--max-repo-files` (default 512,
+`session open` (`main.py:12284`) takes `path` (default `.`) and `--max-repo-files` (default 512,
 the agent-safe cap — this literal is unrelated to the agent-family 2000 default in §2/§3, still 512
-as of this pass). `session refresh` (`main.py:12600`) and every `session <subcmd> SESSION_ID
+as of this pass). `session refresh` (`main.py:12477`) and every `session <subcmd> SESSION_ID
 [PATH]` command require `session_id` as the **first** positional argument — it is not implicit.
-`session serve` (`main.py:13278`) additionally accepts `--refresh-on-stale` to refresh once and
+`session serve` (`main.py:13155`) additionally accepts `--refresh-on-stale` to refresh once and
 retry a request when file changes are detected mid-stream; passing `--no-jsonl` errors (JSONL is
-currently the only serve mode, `main.py:13296`). `session context-render` / `session context` accept
+currently the only serve mode, `main.py:13173`). `session context-render` / `session context` accept
 `--max-tokens` (default 16000, `0` = unbounded) — see §14.
 
 `session daemon start/status/stop` (`session_daemon_app`, `main.py:238`) each take only
@@ -288,9 +288,9 @@ tg checkpoint undo CHECKPOINT_ID C:\repo --json
 tg checkpoint undo --last C:\repo --json            # restore the newest checkpoint in scope
 ```
 
-`checkpoint undo` (`main.py:13485`) takes `checkpoint_id` as an optional positional, or `--last` to
+`checkpoint undo` (`main.py:13362`) takes `checkpoint_id` as an optional positional, or `--last` to
 restore the newest checkpoint for `path` without naming an ID — do not pass both
-(`main.py:13504`/`13510`). If `checkpoint_id` resolves to an existing filesystem path, the error
+(`main.py:13381`/`13510`). If `checkpoint_id` resolves to an existing filesystem path, the error
 message suggests `--last` explicitly (`main.py`'s `checkpoint_undo`), which is a strong signal the two
 positionals (`checkpoint_id`, `path`) got confused.
 
@@ -603,7 +603,7 @@ gate (§13). Plain command/usage/argument errors across the CLI exit **2** (`typ
 handled runtime errors exit **1**.
 
 `tg find` (v1.77.0, #189) has its own hybrid contract, closer to the symbol-command shape than to
-plain `tg search` (`main.py:4574-4672`, in `find`): a `BackendExecutionError` (e.g. a corrupt dense model) is
+plain `tg search` (`main.py:4588-4672`, in `find`): a `BackendExecutionError` (e.g. a corrupt dense model) is
 caught at the command boundary and exits **2** (JSON error envelope with `code="find_backend_error"`
 under `--json`, else a `tg: ...` stderr line) — never a raw traceback. An empty result exits **2** if
 `result_incomplete` else **1**. A **found** result that is ALSO `result_incomplete` (a
@@ -641,18 +641,18 @@ full set before trusting it (`grep -n '"--deadline"' src/tensor_grep/cli/main.py
 
 | Command | `--deadline` line | Notes |
 | --- | --- | --- |
-| `tg callers` | `main.py:11754` | bounds the caller-scan traversal (`#393`) |
-| `tg refs` | `main.py:11647` | bounds the reference-file scan |
-| `tg impact` | `main.py:11442` | bounds both the impact pass and its caller sub-pass |
-| `tg blast-radius` | `main.py:12085` | bounds the graph traversal |
-| `tg inventory` | `main.py:8416` | bounds the single-pass walk |
-| `tg defs` | `main.py:11274` | bounds the definition scan |
-| `tg source` | `main.py:11375` | bounds the source-block scan (was undefined pre-CEO-campaign #232; fixed same wave as `docs-coverage`/`blast-radius-plan`) |
-| `tg orient` | `main.py:8609` | bounds the orientation scan; **no exit-2 contract** — a truncated `orient` still exits 0, surfacing `partial`/`deadline_limit` as informational only, never a retry signal |
-| `tg context` | `main.py:8847` | bounds the context-pack scan |
-| `tg docs-coverage` | `main.py:8485` | bounds the coverage walk |
-| `tg agent` | `main.py:9518` | cold path (no running session daemon) defaults to **60s**; pass `--no-deadline` to disable |
-| `tg prepare` | `main.py:10664` | same 60s cold-path default as `tg agent`; reuses the §11a symbol-command exit contract |
+| `tg callers` | `main.py:11631` | bounds the caller-scan traversal (`#393`) |
+| `tg refs` | `main.py:11524` | bounds the reference-file scan |
+| `tg impact` | `main.py:11319` | bounds both the impact pass and its caller sub-pass |
+| `tg blast-radius` | `main.py:11962` | bounds the graph traversal |
+| `tg inventory` | `main.py:8299` | bounds the single-pass walk |
+| `tg defs` | `main.py:11151` | bounds the definition scan |
+| `tg source` | `main.py:11252` | bounds the source-block scan (was undefined pre-CEO-campaign #232; fixed same wave as `docs-coverage`/`blast-radius-plan`) |
+| `tg orient` | `main.py:8492` | bounds the orientation scan; **no exit-2 contract** — a truncated `orient` still exits 0, surfacing `partial`/`deadline_limit` as informational only, never a retry signal |
+| `tg context` | `main.py:8724` | bounds the context-pack scan |
+| `tg docs-coverage` | `main.py:8368` | bounds the coverage walk |
+| `tg agent` | `main.py:9395` | cold path (no running session daemon) defaults to **60s**; pass `--no-deadline` to disable |
+| `tg prepare` | `main.py:10541` | same 60s cold-path default as `tg agent`; reuses the §11a symbol-command exit contract |
 
 **This list has grown well past the older "graph commands only" framing** — a CEO-driven campaign
 (#232, `#585`) extended `--deadline` to `source`/`docs-coverage`/`blast-radius-plan` and several others
@@ -751,7 +751,7 @@ truncation_cause}`.
 
 `tg context PATH "query" --max-tokens N` returns a ranked context pack for edit planning, **bounded
 by default** so it is safe to inject into a prompt. Default **16000**, `min=0`, and **`0` = explicit
-unbounded opt-out** (`main.py:8840`, mirrors `repo_map._DEFAULT_CONTEXT_MAX_TOKENS` — re-verify the
+unbounded opt-out** (`main.py:8717`, mirrors `repo_map._DEFAULT_CONTEXT_MAX_TOKENS` — re-verify the
 current line with `grep -n _DEFAULT_CONTEXT_MAX_TOKENS src/tensor_grep/cli/repo_map.py`).
 The bound exists because an unbounded pack ballooned past 1MB (dogfood v1.19.9).
 
@@ -765,7 +765,7 @@ pack cannot sneak in through a side door:
 
 | Surface | Cap | Receipt |
 | --- | --- | --- |
-| `tg context` (standalone) | 16000, `0`=off | `main.py:8840` |
+| `tg context` (standalone) | 16000, `0`=off | `main.py:8717` |
 | `tg context-render` / `tg session context-render` / `tg session context` (incl. `--daemon`) | 16000, `0`=off | mirrored `#364`; daemon path capped `#373` (dogfood 1.27.0: `session context --daemon` was UNBOUNDED at ~557KB / 384 files) |
 | MCP context tools (`tg_context_pack` / `tg_context_render`) | `_DEFAULT_MCP_CONTEXT_MAX_TOKENS = 16000`, `0`/`None`=off | `mcp_server.py:188`; added `#372` (round-6 HIGH) after `#359`'s CLI cap never reached the MCP surface |
 
