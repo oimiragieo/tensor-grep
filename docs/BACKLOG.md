@@ -47,6 +47,46 @@
 
 
 
+## MEASURED (2026-08-23): the `_add` trap splits in two, and only ONE half reproduces
+
+The external dogfood's finding #1 — *"`prepare "add retry with tests"` → `repo_map._add` @
+conf=1.0, ask=false"* — measured against the **published** v1.113.2 in a clean
+`python:3.12-slim` container, on a corpus containing both `_add` and an obvious
+`replace_with_retry`:
+
+```
+primary_symbol : '_add'      <- the trap symbol IS selected
+primary_conf   : 1.0         <- at FULL confidence
+overall        : 1.0
+ask_required   : True        <- but the ask IS enforced
+downgrade      : []
+```
+
+**The RANKING half reproduces.** `_add` wins for a query whose obvious intent is
+`replace_with_retry`. A three-character underscore-prefixed helper beating a well-named
+function on a query word is exactly the defect reported.
+
+**The AUTO-EDIT half does not, on this corpus.** `ask_user_before_editing.required` is `True`,
+so an agent following the contract would ask before editing. The report said `ask=false`; their
+corpus differed from this one.
+
+That split matters for severity. As "an agent silently edits the wrong symbol" this is a
+safety bug. As "ranking picks a poor primary but still forces a human check" it is a quality
+bug with a working backstop. **On the published build it is currently the second.** Nobody
+should re-file it as the first without re-measuring, and nobody should close it as fixed
+either — the ranking defect is real and present.
+
+Note the `overall: 1.0` with `downgrade_reasons: []` is CORRECT and not the guard failing:
+the degraded-confidence ceiling only applies when a reason exists, and here none does. The
+ranking is confidently wrong, which no confidence guard can detect — a guard bounds the number
+against the *reasons*, not against the *answer*.
+
+**Method caveat worth keeping:** my first pass reported "trap NOT reproduced" because the
+verdict expression required BOTH `_`-prefixed-at-high-confidence AND `ask_required == False`.
+One compound assertion over two independent properties returns a single boolean that hides
+which half failed. Assert the halves separately, or the measurement reports the opposite of
+what it found.
+
 ## OPEN (2026-08-23): the shipped confidence guard fixes the CONTRACT, not the ASK-GATE
 
 Filed against my own change (PR #1105, merged `65cf67f`, released v1.113.2) after an adversarial
