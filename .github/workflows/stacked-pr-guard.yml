@@ -1,0 +1,31 @@
+name: Stacked PR Guard
+
+# ci.yml only triggers on `pull_request: branches: [ "main" ]`, which filters on the PR's BASE
+# ref. A PR based on another feature branch (a "stacked" PR) never fires ci.yml at all, and the
+# absence renders in `gh pr checks` as an indistinguishable "skipping" row next to real passes
+# (docs/BACKLOG.md "STACKED-PR-CI-BLINDSPOT", 2026-08-21; measured on #1068/#1070, which sat
+# merge-ready with zero test/lint/security evidence). This workflow has NO `branches:` filter, so
+# it fires on every pull_request regardless of base, and its only job is to name that condition
+# out loud as a real, visible check instead of a silent absence.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  assert-main-base:
+    name: assert-main-base
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if this PR's base is not main
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ "$BASE_REF" != "main" ]; then
+            echo "::error::This PR's base branch is '$BASE_REF', not 'main'. Stacked PRs (base = another feature branch) never trigger ci.yml (its 'branches: [ main ]' filter matches the base ref), so they merge with ZERO test/lint/security evidence while looking identical to a passing PR. Retarget this PR's base to main (gh pr edit --base main), then close/reopen it to force ci.yml to run (an --base edit alone fires the 'edited' event, which is not in ci.yml's trigger set and will not restart it)."
+            exit 1
+          fi
+          echo "base is main, ok"
