@@ -36,6 +36,8 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       code: ${{ steps.code.outputs.code }}
       docs: ${{ steps.docs.outputs.docs }}
@@ -1078,6 +1080,16 @@ jobs:
           ref: ${{ steps.benchmark-base.outputs.base_sha }}
           path: base-revision
           fetch-depth: 0
+          # CodeQL actions/cache-poisoning/poisonable-step (#16): this checkout resolves a
+          # shell-computed ref (base_sha) rather than github.sha, then `cargo build`s it in this
+          # job's default-branch/push context. base_sha only ever resolves to same-repo trusted
+          # history (github.event.pull_request.base.sha on pull_request, github.event.before or
+          # `git rev-parse HEAD^` on push -- never a fork/attacker-controlled value; no
+          # pull_request_target is used anywhere in this workflow), and the job already runs
+          # with `permissions: contents: read`. persist-credentials: false is the remaining cheap
+          # hardening step: nothing this checkout builds needs write-capable git credentials on
+          # disk at all.
+          persist-credentials: false
 
       - name: Install base benchmark dependencies
         if: github.event_name != 'schedule'
