@@ -18,7 +18,20 @@
 >    `tag == PyPI` cannot distinguish *released* from *not started* from *died* and cost a release
 >    on 2026-07-28.
 
-## Campaign note (2026-08-21)
+## Freshness correction (2026-08-23)
+
+**Public product is now `v1.113.5`** (verified two independent ways: PyPI JSON API for
+`tensor-grep/1.113.5` lists exactly 4 files — both wheels, `win_amd64`, and the sdist — and a
+live `pip download tensor-grep==1.113.5 --platform win_amd64` actually pulled the win_amd64
+wheel). The size-cap crisis described below (2 of 4 artifacts, Windows/sdist missing) does
+**not** reproduce on this release: all 4 artifacts are real and downloadable. This note does not
+confirm WHY (whether Policy A remediation actually ran, or the cap simply wasn't hit yet this
+release) — only that the CURRENT release is clean. Do not re-run the size-cap decision packet's
+authorization step without first re-measuring the project's total size; the campaign note below
+is left as-is for history, not deleted, per this board's own rule 4 (retire with reason, don't
+erase).
+
+## Campaign note (2026-08-21) — HISTORICAL, see freshness correction above
 
 Public product `v1.111.1` — but read the next paragraph before treating that as shipped.
 
