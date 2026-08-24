@@ -1671,7 +1671,7 @@ Recommendations only. No silent reclassification. No question asked for the non-
 
 | id | topic | recommendation | status |
 |---|---|---|---|
-| **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CEO_GATED` |
+| **#48** | native front-door startup | Accept the shipped hybrid (native managed front door + Python sidecar). Retire a larger rewrite unless pip/uv parity is explicitly prioritized. | `CLOSED 2026-08-24` — GitHub issue #48 closed "not planned" applying this standing verdict; reopen if the rewrite is later authorized on its own merits |
 | **#72** | public benchmark claim | HOLD public 7.5× (conflicts with later 6.4×; no committed current harness). Only a zero-spend fresh six-repo/180-task quality-gated re-run is in scope. **MEASURED 2026-08-23: the number is on NO public surface** — root `README.md`, the PyPI long description (`rust_core/README.md`, the file `pyproject.toml`'s `readme =` actually points at), `pyproject.toml`, and the GitHub About blurb all carry no headline multiple, and `include = ["LICENSE", "NOTICE"]` means `docs/` never ships. So there is nothing public to withdraw; the 7.5x/6.4x pair lives only in this board, `TASK_BOARD.md`, and one audit. The CEO gate is on PUBLISHING a number, not on retracting one. | `CEO_GATED` |
 | **#77** / F9 | ledger enforcement scope | Local opt-in advisory only; no auth/CI blocking. | `CEO_GATED` |
 | **#131** | GPU-flavor native assets | Optional experimental NVIDIA asset with CPU default/fallback and **no** speed claim. Physical proof/spend stays under **#169**. | `CEO_GATED` |

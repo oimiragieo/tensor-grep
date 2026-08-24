@@ -80,7 +80,7 @@ EXPECTED_IDS = {
     "RUST-REPLACE-SYMLINK",
     "RUST-REPLACE-TOCTOU",
 }
-CEO_IDS = {"#48", "#72", "#77", "#131", "#169"}
+CEO_IDS = {"#72", "#77", "#131", "#169"}
 DEMAND_IDS = {
     "#255",
     "DD-006",
