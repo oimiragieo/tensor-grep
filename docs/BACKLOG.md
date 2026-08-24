@@ -1540,6 +1540,43 @@ command; tombstone the 7.5x rather than deleting it.
 `docs/TASK_BOARD.md` owns the machine-parsed rows. This is the human-readable mirror; older sections
 below are historical evidence and do not override these dispositions.
 
+### CORRECTION (2026-08-24): the "owned by #89/#90" framing below is STALE, do not merge this branch as a fix for those rows
+
+A 4-agent parallel analysis of `task2a-round60-red` (the branch PR #966 was built from, retained on
+origin since 2026-08-13, RED by design, never merged, PR closed as stale by the CEO 2026-08-20) found:
+
+- **Content mismatch:** the branch's actual ~15,000-line diff (26 files) is Windows installer/trust
+  hardening -- `SearchInputLedger` input-cap admission control, `_win32_path_domain.py` (Job Object
+  containment, Authenticode/WinTrust chain checks, CNG signing, SDDL/DACL parsing), an
+  `InstallerShimReceiptV1` schema, and a `NativeCiReceiptV1` CI-evidence-escrow schema. Nowhere in
+  this diff is there WSL-to-Windows path translation code or a test for it. The "nine Round-60
+  blockers owned by #89/#90" list immediately below never mentions WSL, `/mnt/c`, or path
+  translation either -- it is entirely about installer authority, Job containment, and CI receipt
+  integrity. The `#89`/`#90` ownership label appears to be inherited/copied attribution, not a
+  description of matching scope -- the same failure mode already caught this session on the F8 and
+  MCP-SURFACE backlog rows (both cited stale/nonexistent dependencies).
+- **RED cause (verified by actually running the suites, not assumed):** a genuine mix -- (a) a real,
+  narrow wiring gap (`SearchInputLedger.on_public_route_entry` is defined and instantiated but never
+  called from `bootstrap.py`/`main.py`'s route entry points), (b) Windows-native security primitives
+  (Job Objects, CNG, WinVerifyTrust) that fundamentally cannot be proven from this WSL/local sandbox
+  and need a real Windows CI runner, and (c) a handful of narrow logic bugs. This is a substantial,
+  mostly-real implementation deliberately left RED, not empty scaffold -- but "mostly real" does not
+  mean "ready," and none of the remaining work is about #89/#90's WSL blocker.
+- **Rebase cost, if this scaffold is ever resumed on its own merits:** cheap. `git merge-tree`
+  dry-run against current main shows exactly 3 real conflicts (`.github/workflows/ci.yml`,
+  `rust_core/src/native_search.rs`, `tests/unit/test_cli_atomic_writer_ratchet.py`) out of 26 touched
+  files; the rest auto-merge clean despite main's unrelated 297-file drift since divergence
+  (the 2026-08-20 giants-split). Rebase cost is NOT what is blocking this branch.
+- **The `fix/wsl-path-domain` branch** referenced in `docs/audits/2026-08-13-stranded-work-premise-
+  recheck.md` as a possibly-more-relevant alternative does not exist on `origin` (confirmed via the
+  GitHub API branch list, 2026-08-24) -- that lead is dead too.
+- **Recommendation:** do not merge `task2a-round60-red` to close #89/#90 -- it was never going to.
+  #89/#90 remain genuinely blocked on a real WSL host and need a fresh, correctly-scoped plan written
+  against that actual blocker. Whether the installer/CNG/Job-containment hardening this branch
+  actually contains is still wanted product work is a separate, open prioritization question this
+  correction does not answer -- it has had zero demand signal recorded anywhere in this backlog
+  outside of its own RED-scaffold receipt doc.
+
 ### Task 2A plan gate — nine Round-60 blockers owned by #89/#90; current RED is FIX-FIRST
 
 Round-60 plan blockers (still required by the approved plan):
