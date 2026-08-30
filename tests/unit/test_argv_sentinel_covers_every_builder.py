@@ -95,6 +95,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli.bootstrap import _bootstrap_native_tg_search_argv
 from tensor_grep.cli.main import _build_native_tg_search_command
 from tensor_grep.cli.mcp_server import _build_index_search_command, _build_rewrite_command
 from tensor_grep.core.config import SearchConfig
@@ -118,6 +119,14 @@ def _native_search() -> list[str]:
         config=SearchConfig(),  # type: ignore[arg-type]
         ndjson=False,
     )
+
+
+def _bootstrap_native_search() -> list[str]:
+    return [
+        "tg.exe",
+        "search",
+        *_bootstrap_native_tg_search_argv(["--json", _PATTERN, _PATH]),
+    ]
 
 
 def _mcp_index_search() -> list[str]:
@@ -347,6 +356,11 @@ _ANY = object()
 # that was CALLED and observed, not one reasoned about.
 _BUILDERS: tuple[tuple[str, object, list[object]], ...] = (
     ("cli/main.py::_build_native_tg_search_command", _native_search, [_PATTERN, _PATH]),
+    (
+        "cli/bootstrap.py::_bootstrap_native_tg_search_argv",
+        _bootstrap_native_search,
+        [_PATTERN, _PATH],
+    ),
     ("cli/mcp_server.py::_build_index_search_command", _mcp_index_search, [_PATTERN, _PATH]),
     ("cli/mcp_server.py::_build_rewrite_command", _mcp_rewrite, [_PATTERN, _PATH]),
     ("backends/ripgrep_backend.py::_append_search_paths", _rg_paths, [_PATH]),
