@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-15
+Last updated: 2026-08-30
 
 ## Current Release State
 
@@ -11,7 +11,21 @@ release_docs_current_tag: v1.113.6
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.113.6>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-13.1
+Canonical status index version: 2026-08-30.1
+
+### 2026-08-30 — SEC-001 ship + ENV-SYNC close + docs reconcile
+
+- **SEC-001 SHIPPED:** PR #1122 / `a77a150` — bootstrap native `tg search` argv `--` sentinel for
+  dash-led positionals (CWE-88); extracted `bootstrap_native_argv.py` with census in
+  `test_argv_sentinel_covers_every_builder.py`.
+- **ENV-SYNC CLOSED:** dev toolchain via `uv sync --frozen --extra dev`; `tg doctor --json` reports
+  `rust_binary_version_status: matches`; routing parity **68/68** on two consecutive runs at
+  `a77a150`.
+- **Public product:** still `v1.113.5` on PyPI until the `fix:` release from SEC-001 publishes
+  (main CI run `33292669573` was in progress at reconcile time).
+- **DOCS-RECONCILE:** `docs/TASK_BOARD.md` stamp `post-**v1.113.5**`; F8/MCP-SURFACE triggers
+  corrected; canonical index bumped to `2026-08-30.1`.
+- **Next ranked slice:** HYGIENE-FORMAT (`docs:` PR, no release).
 
 ### 2026-08-15 — CEO update + A117–A122 retention
 
