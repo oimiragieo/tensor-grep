@@ -1,6 +1,147 @@
 # CHANGELOG
 
 
+## v1.113.6 (2026-08-30)
+
+### Bug Fixes
+
+- **security**: Bootstrap native search -- sentinel for dash-led args
+  ([#1122](https://github.com/oimiragieo/tensor-grep/pull/1122),
+  [`a77a150`](https://github.com/oimiragieo/tensor-grep/commit/a77a1500c55ff6506ca789ee8f7dc17eeef43ae6))
+
+* fix(security): insert -- before dash-led bootstrap native search args
+
+Bootstrap passthrough to native tg search now mirrors the CWE-88 guard in
+  main._build_native_tg_search_command for dash-led caller patterns/paths, without stranding
+  trailing search flags after the sentinel.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* fix(security): extract bootstrap native argv sentinel for size ratchet
+
+Move SEC-001 sentinel helpers into bootstrap_native_argv.py so bootstrap.py stays under the
+  file-size pin while preserving dash-led -- insertion before native tg search delegation.
+
+---------
+
+### Continuous Integration
+
+- Add a visible guard for stacked PRs that never trigger ci.yml
+  ([#1117](https://github.com/oimiragieo/tensor-grep/pull/1117),
+  [`6c1f298`](https://github.com/oimiragieo/tensor-grep/commit/6c1f298787965c07dd9419cd9e4c98bcaa9c2c8e))
+
+ci.yml only fires pull_request when base == main. A PR based on another feature branch (a "stacked"
+  PR) triggers nothing at all, and the absence renders in `gh pr checks` as an indistinguishable
+  "skipping" row next to real passing checks (docs/BACKLOG.md STACKED-PR-CI-BLINDSPOT, 2026-08-21;
+  measured on #1068/#1070, which sat merge-ready with zero real evidence).
+
+This workflow has no branches: filter, so it fires on every pull_request regardless of base and
+  fails loudly, by name, when base != main -- turning a silent absence into a visible red check
+  instead of ci.yml's blind spot.
+
+Deliberately NOT wired into branch protection as a required check in this PR -- per this repo's
+  enablement discipline (every self-acting gate ships default-off, graduates only after a verified
+  dry run), flipping "required" is a separate, conscious step for the repo owner, not bundled into
+  the guard's own introduction.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- Fix CodeQL alerts #16 (cache poisoning pattern) and #17 (missing permissions)
+  ([#1119](https://github.com/oimiragieo/tensor-grep/pull/1119),
+  [`c9dc30b`](https://github.com/oimiragieo/tensor-grep/commit/c9dc30b6b06d9f10a61a0d19b2b6652b4393d942))
+
+#17: the `changes` job had no explicit `permissions:` block (every other job in this workflow does).
+  Adds `contents: read`, matching its sibling `release-intent` job. Verified: every one of the 26
+  jobs in ci.yml now has an explicit permissions block (previously 25/26).
+
+#16: `benchmark-regression`'s "Checkout base revision" step resolves a shell-computed ref (base_sha)
+  rather than github.sha, then `cargo build`s it in this job's push/schedule (default-branch)
+  context -- the structural pattern actions/cache-poisoning/poisonable-step flags.
+
+Reviewed the actual data flow before changing anything: base_sha only ever resolves to same-repo
+  trusted history -- github.event.pull_request.base.sha on pull_request (the PR's declared base,
+  never the PR author's own commits), github.event.before or a `git rev-parse HEAD^` fallback on
+  push/schedule -- never a fork or attacker-controlled value. This workflow uses plain
+  `pull_request` nowhere uses `pull_request_target`, and this job already ran with `permissions:
+  contents: read`. There is also no `actions/cache` step anywhere in this file. So the concrete live
+  exploit path CodeQL's query generically warns about does not exist here today.
+
+Added the remaining free hardening anyway, since it costs nothing and directly matches CodeQL's own
+  remediation guidance: `persist-credentials: false` on that checkout step. Nothing it builds needs
+  a write-capable git credential on disk, so there is nothing gained by leaving one there.
+
+Swept for the same class of finding elsewhere: two other workflows also resolve a `ref:` dynamically
+  (audit.yml from a pull_request's own head SHA; public-gpu-proof.yml from a workflow_dispatch
+  input). Reviewed both -- audit.yml uses plain `pull_request` (not `_target`) with `contents: read`
+  already set, which is GitHub's own recommended safe pattern for building fork code (no
+  secrets/write token exposed); public-gpu-proof.yml's ref is a human-typed manual-dispatch input,
+  not attacker-reachable. Neither changed.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- Correct #89/#90's stale "owned by Task 2A" attribution
+  ([#1120](https://github.com/oimiragieo/tensor-grep/pull/1120),
+  [`35ad16d`](https://github.com/oimiragieo/tensor-grep/commit/35ad16d98edf221d93ffef4a48cfd8b8020c14df))
+
+A 4-agent parallel analysis of branch `task2a-round60-red` (retained on origin since 2026-08-13, RED
+  by design, never merged; PR #966 built from it was already closed as stale by the CEO on
+  2026-08-20) found its actual ~15,000-line content is Windows installer/trust hardening --
+  SearchInputLedger admission control, Job Object containment, CNG signing, Authenticode/ WinTrust
+  checks, SDDL/DACL parsing, an installer receipt schema, and a CI-evidence-escrow receipt schema.
+  Nowhere in its 26-file diff is there WSL-to-Windows path translation code or a test for it, and
+  the branch's own "nine Round-60 blockers" list never mentions WSL or path translation either.
+
+The "owned by #89/#90" attribution on both rows is the same class of drift already caught this
+  session on the F8 and MCP-SURFACE rows: an inherited citation that no longer describes what it
+  points at. #89/#90 remain genuinely blocked on a real WSL host (re-verified, unaffected by this
+  correction) but need a fresh, correctly-scoped plan -- resuming task2a-round60-red would not
+  advance them.
+
+Also recorded: rebase cost against current main is cheap (3 real conflicts of 26 touched files,
+  verified via `git merge-tree` dry-run) -- rebase cost was never what was blocking this branch. And
+  the `fix/wsl-path-domain` branch referenced as a possible alternative in a 2026-08-13 audit doc
+  does not exist on origin (confirmed via the GitHub API branch list).
+
+Whether the installer/CNG/Job-containment hardening this branch actually contains is still wanted
+  product work is left as an open question -- no demand signal for it exists anywhere in this
+  backlog outside the branch's own RED-scaffold receipt doc.
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- Correct TASK_BOARD's stale v1.111.1 size-cap stamp against live PyPI
+  ([`ddbfb3f`](https://github.com/oimiragieo/tensor-grep/commit/ddbfb3f4a8789bfd8fab4326631bd72054c7ac1b))
+
+Verified two independent ways that v1.113.5 ships all 4 artifacts clean (win_amd64 wheel + sdist
+  included) -- the size-cap crisis the 2026-08-21 note describes does not reproduce on the current
+  release.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+- Retire #48 (native front-door startup) per the standing council verdict
+  ([#1121](https://github.com/oimiragieo/tensor-grep/pull/1121),
+  [`8a879b2`](https://github.com/oimiragieo/tensor-grep/commit/8a879b286a470866dec12ba6aac80ff80aa61adc))
+
+GitHub issue #48 was carrying stale/incorrect labels from an automated triage bot (security-review,
+  needs-private-security-review, area:security, a redundant priority:medium alongside priority:high)
+  despite being pure performance/benchmarking content with no security-sensitive material. Removed
+  the mislabels via the GitHub API.
+
+Applied the standing 5/5 review-council verdict already recorded for this same #48 backlog item
+  (docs/BACKLOG.md:1674): accept the shipped hybrid (native managed front door + Python sidecar
+  delegation fast-path), retire the larger native-front-door rewrite absent a concrete driving
+  complaint. Posted the verdict + rationale as a comment on the issue and closed it "not planned"
+  per the issue's own stated re-close condition.
+
+Flips #48's row from CEO_GATED to RETIRED in both docs/TASK_BOARD.md's canonical status index and
+  docs/BACKLOG.md's CEO-gated table, and updates the CEO_IDS pinned set in
+  test_backlog_tracker_truth.py to match (the governance test enforces this set stays in sync with
+  the doc).
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.113.5 (2026-08-23)
 
 ### Bug Fixes
