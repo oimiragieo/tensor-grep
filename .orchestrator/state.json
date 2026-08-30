@@ -5,10 +5,10 @@
   "session_mode": "CLOSEOUT_CLEAN",
   "git": {
     "branch": "docs/handler-census-w2-2026-08-30",
-    "head_sha": "42b98406c0c507791727825cc392314fa837ee69",
+    "head_sha": "dc221b95db3242d55b7e87a67ea5eee693b0892e",
     "base_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
     "open_prs": [1124],
-    "pin_meaning": "verified PR tip before this closeout commit; re-derive git rev-parse HEAD"
+    "pin_meaning": "closeout body dc221b9; re-derive git rev-parse HEAD for tip"
   },
   "last_shipped_slice": {
     "id": "DOCS-RECONCILE",
