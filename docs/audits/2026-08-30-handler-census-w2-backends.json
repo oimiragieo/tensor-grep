@@ -1,0 +1,291 @@
+{
+  "generated_at": "2026-08-30",
+  "source_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
+  "population": "src/tensor_grep/backends/*.py broad except Exception handlers",
+  "backend_broad_handler_count": 47,
+  "ledger_rows_today": 0,
+  "handlers": [
+    {
+      "module": "backends/ast_backend.py",
+      "enclosing_symbol": "_get_parser",
+      "handler_index_within_symbol": 0,
+      "lineno": 662
+    },
+    {
+      "module": "backends/ast_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 803
+    },
+    {
+      "module": "backends/ast_wrapper_backend.py",
+      "enclosing_symbol": "search_project",
+      "handler_index_within_symbol": 0,
+      "lineno": 401
+    },
+    {
+      "module": "backends/ast_wrapper_backend.py",
+      "enclosing_symbol": "search_many",
+      "handler_index_within_symbol": 0,
+      "lineno": 447
+    },
+    {
+      "module": "backends/ast_wrapper_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 481
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 548
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 1,
+      "lineno": 676
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 2,
+      "lineno": 688
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 3,
+      "lineno": 692
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 4,
+      "lineno": 705
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 5,
+      "lineno": 750
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 6,
+      "lineno": 760
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 7,
+      "lineno": 764
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 8,
+      "lineno": 777
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 9,
+      "lineno": 810
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "_decode_line",
+      "handler_index_within_symbol": 0,
+      "lineno": 830
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "_search_word_line_context_via_rust",
+      "handler_index_within_symbol": 0,
+      "lineno": 933
+    },
+    {
+      "module": "backends/cpu_backend.py",
+      "enclosing_symbol": "_search_ltl",
+      "handler_index_within_symbol": 0,
+      "lineno": 1059
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "_process_chunk_on_device",
+      "handler_index_within_symbol": 0,
+      "lineno": 71
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "_process_chunk_on_device",
+      "handler_index_within_symbol": 1,
+      "lineno": 75
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "_device_context",
+      "handler_index_within_symbol": 0,
+      "lineno": 148
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "is_available",
+      "handler_index_within_symbol": 0,
+      "lineno": 232
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 335
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "_search_uncapped",
+      "handler_index_within_symbol": 0,
+      "lineno": 437
+    },
+    {
+      "module": "backends/cudf_backend.py",
+      "enclosing_symbol": "_search_uncapped",
+      "handler_index_within_symbol": 1,
+      "lineno": 583
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "_triton_model_ready",
+      "handler_index_within_symbol": 0,
+      "lineno": 128
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "deobfuscate_payload",
+      "handler_index_within_symbol": 0,
+      "lineno": 146
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "tokenize",
+      "handler_index_within_symbol": 0,
+      "lineno": 189
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "tokenize",
+      "handler_index_within_symbol": 1,
+      "lineno": 203
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "is_available",
+      "handler_index_within_symbol": 0,
+      "lineno": 224
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 260
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "_classify_impl",
+      "handler_index_within_symbol": 0,
+      "lineno": 333
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "_classify_impl",
+      "handler_index_within_symbol": 1,
+      "lineno": 355
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "_classify_impl",
+      "handler_index_within_symbol": 2,
+      "lineno": 377
+    },
+    {
+      "module": "backends/cybert_backend.py",
+      "enclosing_symbol": "_classify_impl",
+      "handler_index_within_symbol": 3,
+      "lineno": 381
+    },
+    {
+      "module": "backends/ripgrep_backend.py",
+      "enclosing_symbol": "supports_pcre2",
+      "handler_index_within_symbol": 0,
+      "lineno": 77
+    },
+    {
+      "module": "backends/ripgrep_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 203
+    },
+    {
+      "module": "backends/ripgrep_backend.py",
+      "enclosing_symbol": "_search_files_with_matches",
+      "handler_index_within_symbol": 0,
+      "lineno": 356
+    },
+    {
+      "module": "backends/ripgrep_backend.py",
+      "enclosing_symbol": "_search_counts",
+      "handler_index_within_symbol": 0,
+      "lineno": 475
+    },
+    {
+      "module": "backends/rust_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 268
+    },
+    {
+      "module": "backends/rust_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 1,
+      "lineno": 321
+    },
+    {
+      "module": "backends/stringzilla_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 449
+    },
+    {
+      "module": "backends/torch_backend.py",
+      "enclosing_symbol": "is_available",
+      "handler_index_within_symbol": 0,
+      "lineno": 103
+    },
+    {
+      "module": "backends/torch_backend.py",
+      "enclosing_symbol": "is_available",
+      "handler_index_within_symbol": 1,
+      "lineno": 118
+    },
+    {
+      "module": "backends/torch_backend.py",
+      "enclosing_symbol": "is_available",
+      "handler_index_within_symbol": 2,
+      "lineno": 122
+    },
+    {
+      "module": "backends/torch_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 0,
+      "lineno": 202
+    },
+    {
+      "module": "backends/torch_backend.py",
+      "enclosing_symbol": "search",
+      "handler_index_within_symbol": 1,
+      "lineno": 312
+    }
+  ]
+}
