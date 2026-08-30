@@ -1246,11 +1246,7 @@ def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
         or "--force-cpu" in search_args
     ):
         return list(search_args)
-    # Audit #11: a forced `--cpu` must never land AFTER a user `--` sentinel -- everything
-    # past `--` is positional (rg/native argv semantics), so appending there would both
-    # silently defeat TG_FORCE_CPU (the token is no longer parsed as a flag) and inject a
-    # bogus `--cpu` path argument alongside the user's own pattern/paths. Insert it before
-    # the sentinel instead; with no sentinel present, append at the end as before.
+    # Audit #11: forced ``--cpu`` must land before a user ``--`` sentinel, not after it.
     if "--" in search_args:
         sentinel_index = search_args.index("--")
         return [*search_args[:sentinel_index], "--cpu", *search_args[sentinel_index:]]
@@ -1411,7 +1407,9 @@ def _streaming_passthrough_returncode(
 
 
 def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
-    return _streaming_passthrough_returncode([binary_name, "search", *search_args])
+    from tensor_grep.cli.bootstrap_native_argv import run_native_tg_search
+
+    return run_native_tg_search(binary_name, search_args)
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
