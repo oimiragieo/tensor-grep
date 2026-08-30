@@ -2549,6 +2549,8 @@ A round-3 security sweep (shipped v1.17.23–v1.17.25) fixed four recurring clas
 
 Three kinds of skills apply to this repo; load the relevant one before non-trivial work.
 
+**User-level composition is not listed here.** Load `~/.claude/skills/skill-library-map/` (Cursor mirror: `~/.cursor/skills/skill-library-map/`) then 1-3 leaves. Plan vs answer-key vs execute vs verify is `compose-build-pipeline`, not a new skill.
+
 - **Using `tg` itself** — `.claude/skills/tensor-grep/SKILL.md` (+ `REFERENCE.md`): the agent-usage skill for the command surface (`search`, `search --rank`, `orient`, `map`, `agent`, `session`, AST, blast-radius). Keep it in sync whenever commands/flags change.
 - **Working ON `tg` (build + release discipline)** — reusable global skills at `~/.claude/skills/`:
   - `dogfood-the-shipped-artifact` — after a release, install the published wheel in clean Docker and run the REAL `tg` binary across every feature; never trust CliRunner (it bypasses the bootstrap front door). Harness: `scripts/dogfood/`.

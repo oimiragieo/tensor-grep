@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "updated_at": "2026-08-30T09:50:00-04:00",
+  "sdlc_phase": "SESSION_CLOSEOUT",
+  "session_mode": "CLOSEOUT_CLEAN",
+  "git": {
+    "branch": "docs/handler-census-w2-2026-08-30",
+    "head_sha": "dc221b95db3242d55b7e87a67ea5eee693b0892e",
+    "base_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
+    "open_prs": [1124],
+    "pin_meaning": "closeout body dc221b9; re-derive git rev-parse HEAD for tip"
+  },
+  "last_shipped_slice": {
+    "id": "DOCS-RECONCILE",
+    "pr": 1123,
+    "merge_at": "2026-08-30T06:24:02Z",
+    "merge_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
+    "release_class": "docs: (no publish)"
+  },
+  "completed_slice": {
+    "id": "HANDLER-CENSUS-W2-WAVE1",
+    "status": "IN_FLIGHT_PR",
+    "pr": 1124,
+    "artifacts": [
+      "docs/audits/2026-08-30-handler-census-w2.md",
+      "docs/audits/2026-08-30-handler-census-w2-backends.json",
+      "docs/plans/HANDLER-CENSUS-W2.md"
+    ],
+    "counts": { "backend_broad_handlers": 47, "mcp_str_exc": 58 }
+  },
+  "retired_slice": {
+    "id": "HYGIENE-FORMAT",
+    "reason": "15/15 origin/main blobs pass ruff via stdin; Windows CRLF false RED",
+    "parked_ref": "archive/hygiene-format-retired-2026-08-30"
+  },
+  "next_action": "Do not start HANDLER-CENSUS-W2 wave 2. Do not merge #1124 in closeout. Next session: wait CI / human merge; then wave 2 under A3.",
+  "spend": { "authorized_usd": 0, "cumulative_usd": 0 },
+  "seats": { "sol_task": "FAILED_A78_quota", "fable": "FAILED_A78_quota" }
+}
