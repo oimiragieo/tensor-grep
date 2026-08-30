@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | **WAVE 1 SHIPPED** (audit receipt on branch) |
+| Status | **WAVE 1 IN_FLIGHT** (PR #1124; not SHIPPED until merge) |
 | Date | 2026-08-30 |
 | Base SHA | `e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6` |
 | Depends on | None |

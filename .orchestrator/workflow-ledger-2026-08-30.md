@@ -32,3 +32,16 @@ python -c "import json; print(json.load(open('docs/audits/2026-08-30-handler-cen
 
 1. Push `docs/handler-census-w2-2026-08-30` + open `docs:` PR
 2. Wave 2: backend ledger append (3 PR slices) + MCP sanitize (A3)
+## Session closeout (2026-08-30)
+
+| Step | Status | Evidence |
+|---|---|---|
+| Harvest `.tmp-fmt-check` | REMOVED | detached `e6ba187`; AGENTS.md dirty was CRLF-only; unique log empty |
+| Local `main` | RESET to origin | `e6ba187`; unique `7b73e92` parked `docs/docs-reconcile-local-closeout` |
+| HYGIENE branch | DELETED working name | SHA parked `archive/hygiene-format-retired-2026-08-30` (`c8a978b`) |
+| PR #1124 | OPEN leave | expanded test-python SUCCESS; prior state.json ghost pin `27a956` |
+| Wave 2 | NOT STARTED | research-council-defer; cap-off-path |
+| New optimization skill | FOLD | CRLF-md false-RED folded into validation-and-qa |
+| Sol/Fable seats | FAILED A78 | quota; not pending |
+| Adversarial money/security | N/A | no product money/security path this closeout |
+| agent --yolo MAP probe | PARKED | hung empty output; cap-off-path; do not pkill -f agent |

@@ -743,6 +743,7 @@ Gotchas that each cost a real CI cycle when missed:
   `eol=lf`; run `ruff format --preview <files>` (which normalizes) before trusting a local check.
   Audit real on-disk endings with `git ls-files --eol` — `git show`/`git cat-file -p` smudge output
   and can report false CR. (`CONTRIBUTING.md:24`)
+- **Markdown `ruff format --check --preview` on Windows disk is not a blob defect.** `*.md` is not in `.gitattributes` `eol=lf`. A working-tree FAIL with `core.autocrlf=true` can be CRLF-only; pipe the git blob (`git show origin/main:path | ruff format --check --preview --stdin-filename path -`) before opening a format PR. HYGIENE-FORMAT 2026-08-30 retired on this: 15/15 blobs passed, disk failed. (`detect-the-false-green`)
 - **`mypy` runs in `strict = true` mode** targeting `python_version = "3.11"` syntax even though the
   repo's CI-tested floor is 3.11-3.12 (`pyproject.toml:559`, `requires-python = ">=3.11"`) — new functions need full type
   annotations (`disallow_untyped_defs = true`); do not rely on inference alone.

@@ -8,15 +8,15 @@
 
 | Field | Value |
 |---|---|
-| HEAD | `3b6145b1a72ffb5a72392e6acbed8bc787b412aa` on `docs/docs-reconcile-2026-08-30` |
-| `origin/main` | `6450923` — `chore(release): v1.113.6` |
-| Branch | `docs/docs-reconcile-2026-08-30` (PR #1123) |
-| Dirty / untracked | `.orchestrator/`, `.wayfinder/`, `backlog.md`, `docs/plans/ENV-SYNC.md`, `docs/audits/2026-08-29-ceo-backlog-update.md` |
-| PyPI / pyproject | **1.113.6** on branch; local venv `tg` reports **1.113.5** |
-| Published tag | **v1.113.6** on `origin/main` (4/4 artifacts per AGENTS handoff) |
-| Open PRs | **1** — #1123 **READY_TO_MERGE** (CI `33295639980` **success** @ `3b6145b`) |
-| Main CI | **success** run `33292669573` @ `a77a150` (SEC-001 merge; `6450923` is `[skip ci]`) |
-| Worktrees | **1** — canonical checkout only |
+| HEAD | closeout parent `42b98406c0c507791727825cc392314fa837ee69` on `docs/handler-census-w2-2026-08-30`; **re-derive** `git rev-parse HEAD` after this commit |
+| `origin/main` | `e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6` — PR #1123 merge |
+| Branch | `docs/handler-census-w2-2026-08-30` (PR #1124) |
+| Dirty / untracked | local temps; `.wayfinder/` answer keys (STALE stamps); `docs/audits/2026-08-29-ceo-backlog-update.md` (historical, not merged) |
+| PyPI / pyproject | **1.113.6**; local `tg --version` **1.113.6** |
+| Published tag | **v1.113.6** (4/4 per AGENTS handoff; not re-fetched this closeout) |
+| Open PRs | **1** — #1124 **OPEN** @ `42b9840` (expanded `test-python` SUCCESS; do not merge in closeout) |
+| Main CI | **success** run `33296804300` @ `e6ba187` |
+| Worktrees | **1** — canonical only (`.tmp-fmt-check` removed 2026-08-30 closeout) |
 | Tests (inventory) | **450** `test_*.py` — unit **409**, e2e **22**, integration **17**, eval **2** |
 
 ---
@@ -81,7 +81,7 @@ Raw artifacts: `.orchestrator/baseline-pass5-governance.txt` (this run)
 | ENV-002 | LOW | Doctor stale-skipped native | dev box without in-tree `tg.exe` | Expected; not a product bug |
 | DOCS-RECONCILE | — | **SHIPPED** | PR #1123 @ `e6ba187` | Merged 2026-08-30 |
 | HYGIENE-FORMAT | — | **RETIRED** | Premise falsified: 15/15 blobs pass ruff via stdin @ `e6ba187` | Do not merge hollow branch |
-| HANDLER-CENSUS-W2 | — | **WAVE 1 READY** | 47 backend + 58 MCP `str(exc)` census | Open `docs:` PR |
+| HANDLER-CENSUS-W2 | — | **WAVE 1 IN_FLIGHT** | PR #1124 @ `42b9840`; census JSON `backend_broad_handler_count` **47** | Wave 2 **not started** |
 | SEC-001 | — | **SHIPPED on main** | #1122 @ `a77a150` → release **v1.113.6** | Verify published wheel after next `uv sync` |
 
 ---
@@ -166,7 +166,7 @@ Source: `docs/TASK_BOARD.md` index **`2026-08-30.1`**.
 
 | Area | Gap |
 |---|---|
-| Handler dispositions — backends | **50** broad handlers; ledger has **0** backend module rows |
+| Handler dispositions — backends | **47** broad handlers (census JSON @ `42b9840`); ledger has **0** backend module rows |
 | Handler dispositions — MCP `str(exc)` | **58** raw exception strings on wire |
 | Checkpoint reads | **8** unbounded `read_text()` |
 | Bootstrap A90 | `edit-ready <path>` still searches when no flag |
@@ -204,9 +204,24 @@ Source: `docs/TASK_BOARD.md` index **`2026-08-30.1`**.
 
 ---
 
+
+## Wayfinder Checks -- closeout 2026-08-30 (unsettled; not memory facts)
+
+Composition: `compose-build-pipeline` (wayfinder = answer-key worker, not the spine).
+
+| MAP | Check | Verdict | Receipt |
+|---|---|---|---|
+| `.wayfinder/docs-reconcile/MAP.md` | PR 1123 OPEN | **STALE** | MERGED `e6ba187` 2026-08-30T06:24:02Z |
+| `.wayfinder/docs-reconcile/MAP.md` | Next slice HYGIENE-FORMAT | **STALE** | RETIRED; TASK_BOARD still names it |
+| `.wayfinder/docs-reconcile/MAP.md` | Governance 97 passed | **UNVERIFIED** locally this closeout | #1124 `docs-governance` SUCCESS |
+| `.wayfinder/env-sync/MAP.md` | version `1.113.5` | **STALE** | live `tg --version` 1.113.6 |
+| `.wayfinder/env-sync/MAP.md` | routing 68 passed | **STALE as current count** | dated ENV-SYNC receipt; later pass cited 120 |
+
+Not yet specified (park, do not invent): `*.md eol=lf` follow-up (HYGIENE-001b); HANDLER wave 2 ledger append; TASK_BOARD next-slice rewrite (docs-reconcile-2).
+
 ## Recommended SESSION CONTINUE slices (ranked)
 
-1. **HANDLER-CENSUS-W2** — **WAVE 1 READY** (audit receipt + JSON census; `docs:` PR)
+1. **HANDLER-CENSUS-W2** — **WAVE 1** PR #1124 OPEN (do not start wave 2 this session)
 2. ~~**HYGIENE-FORMAT**~~ — **RETIRED** (blob premise falsified)
 3. ~~**ENV-RESYNC**~~ — **CLOSED** (venv already 1.113.6)
 4. **HANDLER-CENSUS-W2 wave 2** — ledger append + MCP sanitize (build; A3 gate)
