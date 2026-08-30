@@ -5,7 +5,7 @@
   "session_mode": "SESSION_CONTINUE_HANDLER_CENSUS_W2",
   "git": {
     "branch": "docs/handler-census-w2-2026-08-30",
-    "head_sha": "27a956a8f8e8c8f0e8b8e8f0e8b8e8f0e8b8e8f0",
+    "head_sha": "27a956aaee9032f5f593dcdf0ac715f87ce83c7e",
     "base_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
     "open_prs": []
   },
