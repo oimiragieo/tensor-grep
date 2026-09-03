@@ -1,6 +1,70 @@
 # CHANGELOG
 
 
+## v1.114.0 (2026-09-03)
+
+### Bug Fixes
+
+- **ci**: Narrow broad exception handlers to satisfy silent-failure hardening ratchet
+  ([`e26bc68`](https://github.com/oimiragieo/tensor-grep/commit/e26bc6877769f70be8e0bd60ea3cb00953d31d42))
+
+- **ci**: Satisfy file-size budget and atomic-writer ratchets
+  ([`d222a8b`](https://github.com/oimiragieo/tensor-grep/commit/d222a8bfea9f84fcf986298563ca5398c57fe01b))
+
+- **cpu**: Separate decode and search exceptions in CPU fallback cascade
+  ([`2b5a3c7`](https://github.com/oimiragieo/tensor-grep/commit/2b5a3c707a91980eb97db41d94bb5abbc84877ce))
+
+### Documentation
+
+- Handler census W2 wave 1 audit ([#1124](https://github.com/oimiragieo/tensor-grep/pull/1124),
+  [`ed740d0`](https://github.com/oimiragieo/tensor-grep/commit/ed740d09ea93e2dce800b990a2ac2df24b9ce8bf))
+
+* docs: handler census W2 wave 1 audit (47 backends, 58 MCP str(exc))
+
+Mechanical census for ARCH-002/SEC-007 with closed-world JSON artifact. Retire HYGIENE-FORMAT —
+  origin/main markdown blobs already pass ruff via stdin; prior branch was a Windows CRLF false RED
+  with no blob diffs.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* docs: fix orchestrator state head_sha pin
+
+* docs: session closeout harvest, backlog receipts, skill composition pointer
+
+Park HYGIENE-FORMAT as retired, stamp HANDLER-CENSUS-W2 wave 1 as PR #1124 in-flight, and point
+  AGENTS/CLAUDE at skill-library-map instead of a bulk skill dump. Wave 2 not started.
+
+* docs: rebind orchestrator state.json head_sha to closeout SHA
+
+Derived-value cascade: pin the closeout body after it exists, so the file does not keep a ghost
+  parent SHA.
+
+---------
+
+- Reconcile TASK_BOARD and SESSION_HANDOFF to v1.113.5
+  ([#1123](https://github.com/oimiragieo/tensor-grep/pull/1123),
+  [`e6ba187`](https://github.com/oimiragieo/tensor-grep/commit/e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6))
+
+* docs: reconcile TASK_BOARD and SESSION_HANDOFF to v1.113.5
+
+Stamp post-v1.113.5 reconcile after SEC-001 and ENV-SYNC; correct F8/MCP trigger citations; remove
+  corrupted live-snapshot prose; bump canonical index.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+* docs: add DOCS-RECONCILE plan with Tier-0 APPROVED and AUDIT_CLEAR
+
+Records the approved implementation plan, verification matrix, and QA gate receipt for PR #1123
+  (TASK_BOARD + SESSION_HANDOFF reconcile slice).
+
+---------
+
+### Features
+
+- **cli**: Ast container enrichment and multi-agent MCP installer
+  ([`d8eae34`](https://github.com/oimiragieo/tensor-grep/commit/d8eae3413abd850a8093acf333444e4328c2bf69))
+
+
 ## v1.113.6 (2026-08-30)
 
 ### Bug Fixes
