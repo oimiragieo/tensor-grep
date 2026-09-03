@@ -49,6 +49,7 @@ _ORIG_RUN_SUBPROCESS = run_subprocess
 
 _TG_ONLY_SEARCH_FLAGS = {
     "--ast",
+    "--enrich-ast",
     "--cpu",
     "--debug",
     "--files",
@@ -600,6 +601,7 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
 
     unsupported_flags = {
         "--ast",
+        "--enrich-ast",
         "--bm25",
         "--files",
         "--files-with-matches",

@@ -3378,6 +3378,11 @@ def search_command(
             "--max-depth for agent runs."
         ),
     ),
+    enrich_ast: bool = typer.Option(
+        False,
+        "--enrich-ast",
+        help="Enrich code search matches with the enclosing AST container (function/class) using tree-sitter.",
+    ),
 ) -> None:
     """
     Search files for a regex pattern. GPU routing is experimental and opt-in via --gpu-device-ids; CPU/ripgrep is the default and the current speed baseline.
@@ -3854,6 +3859,7 @@ def search_command(
         and not guarded_broad_root
         and not explicit_hidden_search_root
         and not (json and explicit_rg_format)
+        and not enrich_ast
         and _self._can_delegate_to_native_tg_search(
             config,
             ndjson=ndjson,
@@ -4560,6 +4566,37 @@ def search_command(
     if quiet:
         _emit_stats()
         sys.exit(2 if exit_incomplete else 0)
+
+    if enrich_ast and all_results.matches:
+        from tensor_grep.cli.ast_enrichment import (
+            AST_ENRICH_FILE_LIMIT,
+            enrich_match_with_container,
+        )
+        from tensor_grep.core.result import MatchLine
+
+        unique_files = list(dict.fromkeys(m.file for m in all_results.matches))
+        selected_files = set(unique_files[:AST_ENRICH_FILE_LIMIT])
+        if len(unique_files) > AST_ENRICH_FILE_LIMIT:
+            all_results.ast_enrichment_truncated = True
+        symbols_cache: dict[str, Any] = {}
+        enriched_matches = []
+        for m in all_results.matches:
+            if m.file in selected_files:
+                container = enrich_match_with_container(m.file, m.line_number, symbols_cache)
+                if container:
+                    m = MatchLine(
+                        line_number=m.line_number,
+                        text=m.text,
+                        file=m.file,
+                        start_byte=m.start_byte,
+                        end_byte=m.end_byte,
+                        range=m.range,
+                        meta_variables=m.meta_variables,
+                        submatches=m.submatches,
+                        container=container,
+                    )
+            enriched_matches.append(m)
+        all_results.matches = enriched_matches
 
     formatter: OutputFormatter
 
@@ -11719,6 +11756,96 @@ def install_dense(
             typer.echo(f"  fetch_model detail: {fetch_step['detail']}", err=True)
     if not payload["ok"]:
         raise typer.Exit(code=1)
+
+
+@app.command(name="install")
+def install_command(
+    target: str = typer.Option(
+        "all",
+        "--target",
+        "-t",
+        help="Agent target to configure: claude, cursor, codex, opencode, qwen, or all.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate configuration without writing files.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm installation without prompting.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Configure AI coding agents (Claude Code, Cursor, Codex, OpenCode, Qwen) to use tensor-grep's built-in MCP server."""
+    from tensor_grep.cli.agent_installer import install_agent_integration
+
+    try:
+        res = install_agent_integration(target=target, dry_run=dry_run)
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if json_output:
+        typer.echo(json.dumps(res, indent=2))
+    else:
+        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
+        for f in res.get("files", []):
+            typer.echo(f"  configured: {f}")
+
+
+@app.command(name="uninstall")
+def uninstall_command(
+    target: str = typer.Option(
+        "all",
+        "--target",
+        "-t",
+        help="Agent target to remove: claude, cursor, codex, opencode, qwen, or all.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate removal without writing files.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm uninstallation without prompting.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Remove tensor-grep MCP integration and search guidance from AI coding agents."""
+    from tensor_grep.cli.agent_installer import uninstall_agent_integration
+
+    try:
+        res = uninstall_agent_integration(target=target, dry_run=dry_run)
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if json_output:
+        typer.echo(json.dumps(res, indent=2))
+    else:
+        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
+        for f in res.get("files", []):
+            typer.echo(f"  uninstalled: {f}")
 
 
 def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:

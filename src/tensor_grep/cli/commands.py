@@ -62,6 +62,8 @@ KNOWN_COMMANDS = {
     "checkpoint",
     "dogfood",
     "install-dense",
+    "install",
+    "uninstall",
 }
 
 # `RESERVED_TOP_LEVEL_COMMANDS` = roadmap commands that DO NOT EXIST yet (A90). They must never

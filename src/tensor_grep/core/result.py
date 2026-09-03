@@ -89,6 +89,7 @@ class MatchLine:
     # populated. Excluding it from == is correct: these offsets are a pure function of text+line,
     # so two matches equal on those fields are equal here too.
     submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)
+    container: dict[str, object] | None = field(default=None, compare=False)
 
 
 @dataclass
@@ -109,6 +110,7 @@ class SearchResult:
     # stderr scope note to reach the JSON body: "agents that ignore stderr can miss it".
     path_was_defaulted: bool = False
     scope_note: str | None = None
+    ast_enrichment_truncated: bool = False
     routing_gpu_device_ids: list[int] = field(default_factory=list)
     routing_gpu_chunk_plan_mb: list[tuple[int, int]] = field(default_factory=list)
     routing_distributed: bool = False

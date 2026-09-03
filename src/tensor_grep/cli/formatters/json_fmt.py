@@ -86,6 +86,8 @@ def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict
         subs = [dict(sub) for sub in match.submatches if isinstance(sub, dict)]
         if subs:
             payload["submatches"] = subs
+    if getattr(match, "container", None) is not None:
+        payload["container"] = match.container
     return payload
 
 
@@ -138,6 +140,8 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
         # one of these four" rather than "the cause is one of these four, or unknown".
         if result.incomplete_reason_class is not None:
             envelope["incomplete_reason_class"] = result.incomplete_reason_class
+    if getattr(result, "ast_enrichment_truncated", False):
+        envelope["ast_enrichment_truncated"] = True
     return envelope
 
 
@@ -226,6 +230,7 @@ class JsonFormatter(OutputFormatter):
             "result_incomplete",
             "incomplete_reason",
             "incomplete_reason_class",
+            "ast_enrichment_truncated",
         ):
             if key in envelope:
                 data[key] = envelope[key]

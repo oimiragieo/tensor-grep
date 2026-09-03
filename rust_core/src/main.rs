@@ -1196,6 +1196,18 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Configure AI coding agents to use tensor-grep MCP
+    #[command(name = "install", disable_help_flag = true)]
+    Install {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Remove tensor-grep MCP integration from AI coding agents
+    #[command(name = "uninstall", disable_help_flag = true)]
+    Uninstall {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// One-call edit-readiness capsule: primary target, blast-radius floor, validation, claims
     #[command(name = "prepare", disable_help_flag = true)]
     Prepare {
@@ -7590,6 +7602,8 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Context { args } => handle_python_passthrough("context", args),
         Commands::RouteTest { args } => handle_python_passthrough("route-test", args),
         Commands::InstallDense { args } => handle_python_passthrough("install-dense", args),
+        Commands::Install { args } => handle_python_passthrough("install", args),
+        Commands::Uninstall { args } => handle_python_passthrough("uninstall", args),
         Commands::Prepare { args } => handle_python_passthrough("prepare", args),
         Commands::PythonPassthrough(args) => {
             let command = args[0].clone();
