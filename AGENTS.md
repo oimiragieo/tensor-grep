@@ -915,12 +915,20 @@ concrete failure observed this session.
   `jq`. And give every monitor a probe SELF-CHECK that aborts when blind:
   `probe=$(...); case "$probe" in ''|*[!0-9]*) echo ABORT; exit 2;; esac` — it caught the fix
   working on the very next run.
-  This is the [[A149]] family one level up: there a CHECK could not fail, here the WATCHER could
-  not observe. Both present as quiet green, and the watcher is worse, because its silence is
-  indistinguishable from the patience it is supposed to be providing.
+- **A155 — Pre-Push Silent-Failure & Hygiene Ratchet Preflight (2026-09-03).** Any new implementation
+  or installer changes touching `src/` must be verified against
+  `tests/unit/test_silent_failure_hardening.py` (`test_broad_exception_handler_population_does_not_regress`)
+  and `ruff format --preview --check .` BEFORE pushing to `main` or opening a PR. A bare
+  `except Exception:` in `src/` violates the repository's AST silent-failure ratchet and will break
+  every single `test-python` and `test-gpu-nvidia` lane across the entire CI matrix (observed in run
+  `33776390432`). Always narrow exceptions to explicit typed tuples (e.g.,
+  `(FileNotFoundError, KeyError, PermissionError, ValueError, json.JSONDecodeError)` or
+  `(UnicodeDecodeError, OSError, ValueError)`). Never push until both `test_silent_failure_hardening.py`
+  and repo-wide `ruff format --preview --check .` exit 0.
 
 ## Current Handoff
 release_docs_current_tag: v1.114.0
+
 
 **2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
 Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 CEO_GATED,
