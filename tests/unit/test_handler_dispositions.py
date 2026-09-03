@@ -61,6 +61,10 @@ _ORIGINAL_EXCLUDED_MODULES = frozenset({
 _EXPLICIT_AUDITED_MODULES = frozenset({
     "backends/cpu_backend.py",
     "backends/ripgrep_backend.py",
+    "backends/ast_backend.py",
+    "backends/ast_wrapper_backend.py",
+    "backends/rust_backend.py",
+    "backends/stringzilla_backend.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

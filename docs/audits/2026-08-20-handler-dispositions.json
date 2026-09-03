@@ -1468,5 +1468,85 @@
     "evidence": "except Exception as e: raise BackendExecutionError(f\"Ripgrep backend failed: {e}\") from e after the L7 TimeoutExpired partial tally recovery. Residual non-timeout failures of --count/--count-matches raise rather than returning zeros as a complete scan.",
     "reason": "INTENTIONAL-BOUNDARY: count-route twin of search/_search_files_with_matches fail-closed residuals. A timed-out count may return partial+result_incomplete above; any other exception must not look like total_matches=0 success.",
     "hardened_in": null
+  },
+  {
+    "module": "backends/ast_backend.py",
+    "lineno": 662,
+    "enclosing_symbol": "_get_parser",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/ast_backend.py:662 except Exception as e: raise RuntimeError(f\"Failed to load tree-sitter grammar for {lang}: {e}\") from e wrapping the per-language tree_sitter_* import + Parser(Language(...)) construction in _get_parser. ImportError/AttributeError/ValueError from a missing or broken grammar become a raised RuntimeError naming the language.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: grammar load failure TERMINATES parser acquisition with a raised error naming lang. Callers never receive a half-initialized parser or a silent empty AST walk disguised as success.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ast_backend.py",
+    "lineno": 803,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/ast_backend.py:803 except Exception as exc around self._get_query(parser, lang, pattern): simple node-type patterns raise BackendExecutionError requiring the ast-grep wrapper (DSL divergence / #141); non-simple patterns raise BackendExecutionError(\"AST query compilation failed ...\"). Inline audit MED comment documents the prior silent 0-match false-negative this replaced.",
+    "reason": "INTENTIONAL-BOUNDARY: Backend Fail-Closed Contract for native AstBackend.search query compile. A malformed or wrong-DSL pattern must surface as BackendExecutionError, never as a clean 0-match SearchResult (the SILENT-FALLBACK class the comment names).",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ast_wrapper_backend.py",
+    "lineno": 401,
+    "enclosing_symbol": "search_project",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/ast_wrapper_backend.py:401 except Exception as e: raise BackendExecutionError(f\"AstGrepWrapperBackend failed: {e}\") from e after re-raising BackendExecutionError. Residual failures of the project-wide ast-grep --json --config run (non-BackendExecutionError) become BackendExecutionError rather than an empty grouped_results dict.",
+    "reason": "INTENTIONAL-BOUNDARY: project-scan residual fail-closed twin of search/search_many. An empty rule-id map as success would look like \"no findings\" on a security/structural surface; raising preserves the Backend Fail-Closed Contract.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ast_wrapper_backend.py",
+    "lineno": 447,
+    "enclosing_symbol": "search_many",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/ast_wrapper_backend.py:447 except Exception as e: raise BackendExecutionError(f\"AstGrepWrapperBackend failed: {e}\") from e after re-raising BackendExecutionError around _build_command/_run_ast_grep_command/_parse_result for multi-file search_many. Invert/word refusals and availability checks live above; this arm is the residual hard failure.",
+    "reason": "INTENTIONAL-BOUNDARY: multi-file wrapper residual. Same raise-not-empty shape as search idx 0; a swallowed Exception would return a clean SearchResult and violate the Backend Fail-Closed Contract on the batch path.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ast_wrapper_backend.py",
+    "lineno": 481,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/ast_wrapper_backend.py:481 except Exception as e: raise BackendExecutionError(f\"AstGrepWrapperBackend failed: {e}\") from e after re-raising BackendExecutionError around the single-file _build_command/_run_ast_grep_command/_parse_result path. Precedes only by availability and -v/-w refusals that already raise BackendExecutionError.",
+    "reason": "INTENTIONAL-BOUNDARY: single-file wrapper search residual. Callers must see BackendExecutionError on unexpected wrapper failure, never a silent empty match list that reads as \"no AST hits\".",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/rust_backend.py",
+    "lineno": 268,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "backends/rust_backend.py:268 except Exception as exc on the native ripgrep-passthrough arm: InvalidRegexError re-raises; pcre2 raises BackendExecutionError (fail-closed, no engine swap); non-pcre2 limit/sort failures set bridge_fallback_reason = f\"native ripgrep passthrough failed (...); limit/sort flags may not be honored by the Python fallback\" and continue into the inner.count_matches/inner.search path, which stamps fallback_reason onto the returned SearchResult.",
+    "reason": "LOGGED-DEGRADE and not SILENT-SWALLOW: the only continue path is the non-PCRE2 residual, and it is disclosed via SearchResult.fallback_reason (visible routing metadata). PCRE2 and invalid-regex arms terminate with raises; the degrade arm is the audit #1 visible engine-swap disclosure, not a silent contract downgrade.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/rust_backend.py",
+    "lineno": 321,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/rust_backend.py:321 except Exception as exc around inner.count_matches / inner.search: InvalidRegexError re-raises; all other failures raise BackendExecutionError(f\"RustCoreBackend failed to search {file_path}: {exc}\") from exc. Inline comment (audit B2): never return an empty success-shaped result for a native panic/encoding/IO/version-skew error.",
+    "reason": "INTENTIONAL-BOUNDARY: Backend Fail-Closed Contract for the RustCoreBackend native search residual. A silent empty SearchResult here would be indistinguishable from a real no-match; raising BackendExecutionError lets the pipeline fall back visibly.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/stringzilla_backend.py",
+    "lineno": 449,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "backends/stringzilla_backend.py:449 except Exception as e: raise BackendExecutionError(f\"StringZillaBackend failed to search {file_path}: {e}\") from e wrapping the fixed-strings StringZilla match loop that builds SearchResult. Any unexpected failure of the SZ path becomes BackendExecutionError naming the file.",
+    "reason": "INTENTIONAL-BOUNDARY: StringZillaBackend.search residual fail-closed. Callers must not observe a clean empty match list when the fixed-strings engine itself failed; raising preserves the Backend Fail-Closed Contract shared with RustCoreBackend/RipgrepBackend.",
+    "hardened_in": null
   }
 ]
