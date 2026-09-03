@@ -1,4 +1,5 @@
 import base64
+import binascii
 import importlib.util
 import logging
 import os
@@ -143,7 +144,7 @@ def deobfuscate_payload(line: str) -> str:
             b64_decoded = base64.b64decode(match).decode("utf-8")
             if all(32 <= ord(c) < 127 or c in "\r\n\t" for c in b64_decoded):
                 decoded = decoded.replace(match, f" [DECODED_B64: {b64_decoded}] ")
-        except Exception:
+        except (ValueError, binascii.Error):
             pass
 
     return decoded
@@ -374,7 +375,11 @@ class CybertBackend(ComputeBackend):
             with tracer.start_as_current_span("cybert_classification_inference"):
                 result = client.infer(model_name=self.model_name, inputs=inputs)
                 probs = result.as_numpy("logits")
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "CyBERT traced inference failed, retrying inference without tracer: %s",
+                exc,
+            )
             try:
                 result = client.infer(model_name=self.model_name, inputs=inputs)
                 probs = result.as_numpy("logits")

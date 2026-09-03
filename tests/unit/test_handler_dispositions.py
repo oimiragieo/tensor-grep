@@ -65,6 +65,9 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "backends/ast_wrapper_backend.py",
     "backends/rust_backend.py",
     "backends/stringzilla_backend.py",
+    "backends/cudf_backend.py",
+    "backends/torch_backend.py",
+    "backends/cybert_backend.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

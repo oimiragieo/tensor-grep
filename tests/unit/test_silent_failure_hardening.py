@@ -158,7 +158,8 @@ _EXCLUDED_MODULES = frozenset({
 # produces no result: it returns a boolean that only ever ADDS disclosure, never suppresses a
 # finding. Raised because the handler is classified, not to make an unreviewed one pass.
 #     266 + 1 (ast_scan.py ruleset-backend availability probe, INTENTIONAL-BOUNDARY)   267
-TOTAL_BROAD_HANDLERS_CEILING = 267
+# - 2026-09-03 (HANDLER-CENSUS-W2-b): 267 -> 266 (-1: cybert_backend.py deobfuscate_payload narrowed to ValueError, binascii.Error)
+TOTAL_BROAD_HANDLERS_CEILING = 266
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

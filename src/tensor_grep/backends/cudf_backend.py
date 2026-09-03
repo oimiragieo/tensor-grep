@@ -68,12 +68,16 @@ def _process_chunk_on_device(
 
     try:
         rmm.reinitialize(devices=[local_device_id])
-    except Exception:
-        # Fallback to default RMM initialization if specific device mapping fails (common in WSL multiprocess)
+    except Exception as exc:
+        logger.debug(
+            "RMM device-specific reinitialize failed for device %s, falling back to default: %s",
+            local_device_id,
+            exc,
+        )
         try:
             rmm.reinitialize()
-        except Exception:
-            pass
+        except Exception as exc2:
+            logger.warning("RMM default reinitialize failed: %s", exc2)
 
     series = cudf.read_text(
         file_path,
@@ -145,7 +149,8 @@ class CuDFBackend(ComputeBackend):
             # cupy this attribute access is a harmless no-op.
             _ = device.compute_capability
             return device
-        except Exception:
+        except Exception as exc:
+            logger.debug("CuPy device capability probe failed, using nullcontext: %s", exc)
             import contextlib
 
             return contextlib.nullcontext()

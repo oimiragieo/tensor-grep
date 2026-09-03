@@ -1548,5 +1548,215 @@
     "evidence": "backends/stringzilla_backend.py:449 except Exception as e: raise BackendExecutionError(f\"StringZillaBackend failed to search {file_path}: {e}\") from e wrapping the fixed-strings StringZilla match loop that builds SearchResult. Any unexpected failure of the SZ path becomes BackendExecutionError naming the file.",
     "reason": "INTENTIONAL-BOUNDARY: StringZillaBackend.search residual fail-closed. Callers must not observe a clean empty match list when the fixed-strings engine itself failed; raising preserves the Backend Fail-Closed Contract shared with RustCoreBackend/RipgrepBackend.",
     "hardened_in": null
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 71,
+    "enclosing_symbol": "_process_chunk_on_device",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:71-74 logs debug on device-specific reinit failure and falls back to default reinit.",
+    "reason": "RMM per-device pool init failure falls back to default pool with logger.debug disclosure.",
+    "hardened_in": "HANDLER-CENSUS-W2-b"
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 79,
+    "enclosing_symbol": "_process_chunk_on_device",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:79-80 logs warning on default reinit failure before cudf.read_text allocation.",
+    "reason": "RMM default pool init failure logs warning and degrades to unmanaged pool allocator.",
+    "hardened_in": "HANDLER-CENSUS-W2-b"
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 152,
+    "enclosing_symbol": "_device_context",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:152-155 logs debug and returns contextlib.nullcontext() when compute_capability check fails.",
+    "reason": "CuPy device capability probe failure logs debug disclosure and returns nullcontext.",
+    "hardened_in": "HANDLER-CENSUS-W2-b"
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 237,
+    "enclosing_symbol": "is_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:237-238 catches Exception on import/allocation probe and returns False.",
+    "reason": "CuDF device and series allocation probe fail-closed returning False.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 340,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:340-341 re-raises 'raise BackendExecutionError(f\"CuDFBackend failed: {exc}\") from exc'.",
+    "reason": "CuDF search entry point fail-closed re-raising BackendExecutionError for uncaught engine failures.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 442,
+    "enclosing_symbol": "_search_uncapped",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:442-446 logs warning and falls back to self._read_text_series(file_path).",
+    "reason": "Zero-copy Rust bridge failure logs warning and degrades to native cudf.read_text fallback.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cudf_backend.py",
+    "lineno": 588,
+    "enclosing_symbol": "_search_uncapped",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cudf_backend.py:588-592 logs warning on chunked processing error and continues to process pool fallback.",
+    "reason": "Chunked PyArrow/cuDF processing failure logs warning and falls back to process pool.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/torch_backend.py",
+    "lineno": 103,
+    "enclosing_symbol": "is_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/torch_backend.py:103-104 returns False if torch import or torch.cuda.is_available() fails.",
+    "reason": "PyTorch CUDA availability check fail-closed returning False.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/torch_backend.py",
+    "lineno": 118,
+    "enclosing_symbol": "is_available",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/torch_backend.py:118-123 catches exception during enumerate_device_ids and checks get_device_ids.",
+    "reason": "Device detector enumeration probe fallback to get_device_ids().",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/torch_backend.py",
+    "lineno": 122,
+    "enclosing_symbol": "is_available",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/torch_backend.py:122-124 returns False when device detector query raises.",
+    "reason": "Device detector fallback probe fail-closed returning False.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/torch_backend.py",
+    "lineno": 202,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/torch_backend.py:202-211 catches detector exception and raises BackendExecutionError if resolved_device_ids is empty.",
+    "reason": "Device detector resolution fallback; raises BackendExecutionError if no devices resolved.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/torch_backend.py",
+    "lineno": 312,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/torch_backend.py:312-313 re-raises 'raise BackendExecutionError(f\"TorchBackend compute failed: {e}\") from e'.",
+    "reason": "Torch compute loop fail-closed re-raising BackendExecutionError.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 129,
+    "enclosing_symbol": "_triton_model_ready",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:129-130 returns False on any client readiness exception.",
+    "reason": "Triton server model readiness check fail-closed returning False.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 190,
+    "enclosing_symbol": "tokenize",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:190-191 logs warning on cudf tokenization error and continues to transformers.",
+    "reason": "cuDF tokenization failure logs warning and degrades to transformers tokenizer.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 204,
+    "enclosing_symbol": "tokenize",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:204-209 logs debug and returns _basic_tokenize(cleaned_lines).",
+    "reason": "Transformers tokenizer failure logs debug and degrades to deterministic basic tokenizer.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 225,
+    "enclosing_symbol": "is_available",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:225-226 returns False if client creation fails.",
+    "reason": "Triton HTTP client creation probe fail-closed returning False.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 261,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:261-262 re-raises 'raise BackendExecutionError(f\"CyBERT classification failed: {exc}\") from exc'.",
+    "reason": "CyBERT classification entry point fail-closed re-raising BackendExecutionError.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 334,
+    "enclosing_symbol": "_classify_impl",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:334-339 returns fallback_reason: 'Triton client unavailable: {exc}'.",
+    "reason": "Triton client connection failure returns heuristic classification with fallback_reason metadata.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 356,
+    "enclosing_symbol": "_classify_impl",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:356-364 returns fallback_reason if not raise_on_provider_error else raises RuntimeError.",
+    "reason": "Tokenization failure returns heuristic classification with fallback_reason or raises RuntimeError.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 378,
+    "enclosing_symbol": "_classify_impl",
+    "handler_index_within_symbol": 2,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:378-382 logs debug on traced inference failure and retries infer.",
+    "reason": "Traced inference failure logs debug disclosure and retries client infer directly.",
+    "hardened_in": "HANDLER-CENSUS-W2-b"
+  },
+  {
+    "module": "backends/cybert_backend.py",
+    "lineno": 386,
+    "enclosing_symbol": "_classify_impl",
+    "handler_index_within_symbol": 3,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "src/tensor_grep/backends/cybert_backend.py:386-393 returns fallback_reason if not raise_on_provider_error else raises RuntimeError.",
+    "reason": "Triton inference failure returns heuristic classification with fallback_reason or raises RuntimeError.",
+    "hardened_in": null
   }
 ]
