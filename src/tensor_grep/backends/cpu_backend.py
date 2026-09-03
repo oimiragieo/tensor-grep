@@ -682,15 +682,21 @@ class CPUBackend(ComputeBackend):
                         # this iteration proceeds to build output, so the `.rstrip("\n\r")` here
                         # does not affect any MatchLine.text a caller ever sees (task #262 only
                         # targets the CRLF-fidelity of what actually reaches output).
+                        # Decode-only inside try/except; regex_str.search stays OUTSIDE so a
+                        # regex engine failure cannot look like "line unmatched" (Sol FIX-FIRST
+                        # on HANDLER-CENSUS-W2-a / Backend Fail-Closed). Outer try at ~810 wraps
+                        # unexpected failures as RuntimeError.
                         try:
                             line_text = line_bytes.decode("utf-8").rstrip("\n\r")
-                            matched = bool(regex_str.search(line_text))
                         except Exception:
                             try:
                                 line_text = line_bytes.decode("latin-1").rstrip("\n\r")
-                                matched = bool(regex_str.search(line_text))
                             except Exception:
                                 pass
+                            else:
+                                matched = bool(regex_str.search(line_text))
+                        else:
+                            matched = bool(regex_str.search(line_text))
 
                     if config.invert_match:
                         matched = not matched
@@ -754,15 +760,18 @@ class CPUBackend(ComputeBackend):
                             # Throwaway match-test decode -- see the sibling comment above; this
                             # `line_text` is unconditionally overwritten via
                             # `strip_line_terminator` before anything is returned.
+                            # Twin of the source_lines arm: decode-only in try/except.
                             try:
                                 line_text = line_bytes.decode("utf-8").rstrip("\n\r")
-                                matched = bool(regex_str.search(line_text))
                             except Exception:
                                 try:
                                     line_text = line_bytes.decode("latin-1").rstrip("\n\r")
-                                    matched = bool(regex_str.search(line_text))
                                 except Exception:
                                     pass
+                                else:
+                                    matched = bool(regex_str.search(line_text))
+                            else:
+                                matched = bool(regex_str.search(line_text))
 
                         if config.invert_match:
                             matched = not matched

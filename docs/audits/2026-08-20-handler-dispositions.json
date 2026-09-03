@@ -871,7 +871,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2845,
+    "lineno": 2840,
     "enclosing_symbol": "_warn_unavailable_gpu_device_ids",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5391,
+    "lineno": 5428,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5438,
+    "lineno": 5475,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5507,
+    "lineno": 5544,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5557,
+    "lineno": 5594,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5599,
+    "lineno": 5636,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -931,7 +931,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 7334,
+    "lineno": 7366,
     "enclosing_symbol": "_maybe_swap_reversed_session_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -941,7 +941,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11671,
+    "lineno": 11703,
     "enclosing_symbol": "_run_install_dense",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -961,7 +961,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 3990,
+    "lineno": 3991,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -971,7 +971,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4169,
+    "lineno": 4170,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4232,
+    "lineno": 4233,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -991,7 +991,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8645,
+    "lineno": 8677,
     "enclosing_symbol": "session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1001,7 +1001,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8676,
+    "lineno": 8708,
     "enclosing_symbol": "session_daemon_start",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1011,7 +1011,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8701,
+    "lineno": 8733,
     "enclosing_symbol": "session_daemon_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1021,7 +1021,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8729,
+    "lineno": 8761,
     "enclosing_symbol": "session_daemon_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1031,7 +1031,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8751,
+    "lineno": 8783,
     "enclosing_symbol": "session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1041,7 +1041,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8800,
+    "lineno": 8832,
     "enclosing_symbol": "session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1051,7 +1051,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8833,
+    "lineno": 8865,
     "enclosing_symbol": "session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8922,
+    "lineno": 8954,
     "enclosing_symbol": "session_context_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1071,7 +1071,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9063,
+    "lineno": 9095,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9165,
+    "lineno": 9197,
     "enclosing_symbol": "session_edit_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1091,7 +1091,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9240,
+    "lineno": 9272,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9289,
+    "lineno": 9321,
     "enclosing_symbol": "session_importers_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1111,7 +1111,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9396,
+    "lineno": 9428,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9485,
+    "lineno": 9517,
     "enclosing_symbol": "session_blast_radius_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9519,
+    "lineno": 9556,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1141,7 +1141,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9539,
+    "lineno": 9571,
     "enclosing_symbol": "checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1151,7 +1151,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9670,
+    "lineno": 9702,
     "enclosing_symbol": "checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1161,7 +1161,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9748,
+    "lineno": 9780,
     "enclosing_symbol": "checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1171,7 +1171,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11810,
+    "lineno": 11932,
     "enclosing_symbol": "audit_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1181,7 +1181,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11862,
+    "lineno": 11984,
     "enclosing_symbol": "audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1191,7 +1191,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11924,
+    "lineno": 12046,
     "enclosing_symbol": "audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1201,7 +1201,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12062,
+    "lineno": 12184,
     "enclosing_symbol": "review_bundle_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1211,7 +1211,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12225,
+    "lineno": 12347,
     "enclosing_symbol": "review_bundle_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1221,7 +1221,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12403,
+    "lineno": 12525,
     "enclosing_symbol": "evidence_emit",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1231,7 +1231,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12530,
+    "lineno": 12652,
     "enclosing_symbol": "evidence_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1241,7 +1241,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12760,
+    "lineno": 12882,
     "enclosing_symbol": "ledger_claim",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1251,7 +1251,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12855,
+    "lineno": 12977,
     "enclosing_symbol": "ledger_release",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1261,7 +1261,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12941,
+    "lineno": 13063,
     "enclosing_symbol": "ledger_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1271,7 +1271,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13040,
+    "lineno": 13162,
     "enclosing_symbol": "ledger_record",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1281,12 +1281,32 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13131,
+    "lineno": 13253,
     "enclosing_symbol": "ledger_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-find'); raise typer.Exit(code=2) from exc",
     "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 11791,
+    "enclosing_symbol": "install_command",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(json.dumps({\"ok\": False, \"error\": str(exc)}) if json_output else f\"Error: {exc}\", err=True); raise typer.Exit(code=2) from None",
+    "reason": "INTENTIONAL-BOUNDARY: the install command boundary serializes any unexpected failure to stderr (or JSON error payload if json_output=True) and exits with code 2 via typer.Exit. Fully disclosing and fail-closed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/main.py",
+    "lineno": 11836,
+    "enclosing_symbol": "uninstall_command",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: typer.echo(json.dumps({\"ok\": False, \"error\": str(exc)}) if json_output else f\"Error: {exc}\", err=True); raise typer.Exit(code=2) from None",
+    "reason": "INTENTIONAL-BOUNDARY: the uninstall command boundary serializes any unexpected failure to stderr (or JSON error payload if json_output=True) and exits with code 2 via typer.Exit. Fully disclosing and fail-closed.",
     "hardened_in": null
   },
   {
@@ -1297,6 +1317,176 @@
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception: return False. The function answers one question -- can the listed built-in rulesets actually RUN on this install? -- by importing AstGrepWrapperBackend and calling is_available(), which probes for an ast-grep/sg binary on PATH. Both the import and the probe can fail on a stock install (the backend is in no dependency and no extra), which is the ordinary case this exists to detect, not an exceptional one.",
     "reason": "Fails CLOSED on purpose: any import or probe error reports UNAVAILABLE, so the listing warns rather than staying silent. The asymmetry is deliberate -- over-warning is recoverable by installing the backend, while a silent overstatement on a security surface is the exact defect this function was added to fix (tg rulesets advertised six security rulesets with rule counts on installs where every tg scan --ruleset exits 1). It cannot swallow an incomplete RESULT because it produces no result: it returns a boolean that only ever adds disclosure, never suppresses a finding.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 548,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception as exc around the native Rust adapter call: InvalidRegexError / BackendExecutionError raise on unsafe/backtracking/non-fixed-strings failures (Backend Fail-Closed Contract); the ONLY continue path is fixed_strings-only, which emits logger.warning(\"Rust backend failed for %s, using Python regex (fixed-strings): %s\", file_path, exc) then falls into the Python re.escape path. Callers of CPUBackend.search observe either a raised contract error or the logged degrade.",
+    "reason": "LOGGED-DEGRADE and not SILENT-SWALLOW: the degrade-and-continue arm is the fixed_strings residual and is disclosed via logger.warning with the exception text. Not purely INTENTIONAL-BOUNDARY because that arm does continue after the exception rather than only terminating; the raise arms are the fail-closed siblings documented inline (audit #16 / #111).",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 676,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass after regex.search(line_bytes) on the prefilter/source_lines arm -- matched stays False and the next block tries a decoded-text search. Comment above: \"Try using python regex to decode byte string, else try the decoded string\". Failure of the bytes-mode regex probe is treated as \"no match yet\", not as a backend fault.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: a per-line bytes-regex probe that cannot match (or raises) must not abort the whole-file scan; the cascade continues to utf-8/latin-1 decode probes. The AST detector sees bare pass, which is why this is not-provably-disclosing rather than undisclosed -- the disclosure is the control-flow cascade itself.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 691,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: try latin-1 decode ONLY after utf-8 decode failed on the source_lines match-test arm; regex_str.search runs in the try/except ELSE (or the nested else after latin-1 decode). Sol FIX-FIRST (HANDLER-CENSUS-W2-a): previously utf-8 decode+search shared one try so a regex engine failure fell into latin-1 and could be swallowed by the terminal pass.",
+    "reason": "INTENTIONAL-BOUNDARY after harden: the handler covers DECODE failure only. A regex_str.search failure propagates to the outer search RuntimeError wrapper (idx 9) and is never treated as unmatched-line. Continuing into latin-1 remains the designed multi-encoding fallback for hostile/binary-ish lines.",
+    "hardened_in": "HANDLER-CENSUS-W2-a"
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 694,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 3,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass as the terminal arm of the source_lines latin-1 DECODE-ONLY cascade -- matched remains False for that line when BOTH utf-8 and latin-1 decode fail. regex_str.search is NOT inside this handler (Sol FIX-FIRST harden); it runs only after a successful decode via the else clause.",
+    "reason": "INTENTIONAL-BOUNDARY after harden: exhausting decode probes for one line means \"treat as unmatched\", never \"raise\". Regex engine failures no longer reach this pass -- they propagate. Raising on undecodable bytes would convert a single hostile line into a whole-file failure, which remains the wrong boundary for a line-oriented scanner.",
+    "hardened_in": "HANDLER-CENSUS-W2-a"
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 711,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 4,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: line = line_bytes.decode(\"utf-8\", errors=\"replace\") after UnicodeDecodeError -> latin-1 also failed on the source_lines output-build path. Always produces a decodable line_text via strip_line_terminator before MatchLine construction.",
+    "reason": "INTENTIONAL-BOUNDARY: last-resort decode with replacement characters so a hostile byte sequence cannot abort match emission. Not SILENT-SWALLOW -- the path still returns the line to the caller with replacement glyphs rather than dropping the match silently.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 756,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 5,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass after regex.search(line_bytes) on the open(path,\"rb\") streaming arm -- byte-identical control-flow twin of search idx 1 for the non-prefilter file walk. matched stays False; decoded-text probes follow.",
+    "reason": "INTENTIONAL-BOUNDARY: same per-line bytes-regex probe boundary as the source_lines twin (idx 1). Streaming vs prefilter topology must not change the disposition; a probe failure remains \"try decoded text\", not a backend fault.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 766,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 6,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: try latin-1 decode ONLY after utf-8 decode failed on the streaming arm -- twin of search idx 2. regex_str.search runs outside the decode handlers (Sol FIX-FIRST harden / HANDLER-CENSUS-W2-a).",
+    "reason": "INTENTIONAL-BOUNDARY after harden: streaming-arm decode cascade covers encoding failure only. Regex engine failures propagate (twin of idx 2).",
+    "hardened_in": "HANDLER-CENSUS-W2-a"
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 769,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 7,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass terminal arm of the streaming latin-1 DECODE-ONLY cascade -- twin of search idx 3. matched remains False when both decodes fail; regex_str.search is not inside this handler (Sol FIX-FIRST harden).",
+    "reason": "INTENTIONAL-BOUNDARY after harden: exhausting per-line decode probes must not fail the whole streaming search. Regex failures propagate to idx 9. Same boundary as idx 3 on the source_lines arm.",
+    "hardened_in": "HANDLER-CENSUS-W2-a"
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 786,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 8,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: line = line_bytes.decode(\"utf-8\", errors=\"replace\") after latin-1 failed on the streaming output-build path -- twin of search idx 4. Guarantees MatchLine.text is always constructible.",
+    "reason": "INTENTIONAL-BOUNDARY: last-resort replace decode on the streaming arm. Caller still receives the line; the handler does not drop matches or return a silent empty SearchResult.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 819,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 9,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: raise RuntimeError(f\"CPU backend search failed for {file_path}: {exc}\") from exc wrapping the entire line-iteration try (source_lines or streaming). Any unexpected failure after the native-adapter arm becomes a raised RuntimeError carrying the path and original exception.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: the handler TERMINATES the search with a raised error naming the file. Pipeline/caller surfaces see a failure, never an empty-as-success SearchResult (Backend Fail-Closed Contract shape).",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 839,
+    "enclosing_symbol": "_decode_line",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return strip_line_terminator(line_bytes.decode(\"utf-8\", errors=\"replace\")) after UnicodeDecodeError -> latin-1 also failed. Static helper used by _search_ltl line materialization; always returns a string.",
+    "reason": "INTENTIONAL-BOUNDARY: decode helper must never raise on hostile bytes when assembling --ltl line lists. Replacement decode is the designed terminal fallback, identical in spirit to search idxs 4/8.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 942,
+    "enclosing_symbol": "_search_word_line_context_via_rust",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: raise BackendExecutionError(\"cannot safely evaluate this pattern through CPUBackend's -C/-A/-B/-w/-x path without the linear-time Rust engine (...); install ripgrep, or drop the -C/-A/-B/-w/-x/--pcre2 flag combination\") from exc. Docstring and inline comments name audit #6/#16 ReDoS gate: no silent fallthrough to Python re.",
+    "reason": "INTENTIONAL-BOUNDARY: fail-closed residual when Rust cannot service -w/-x/-C/-A/-B. Raising BackendExecutionError is the Backend Fail-Closed Contract; falling open to unbounded Python re would be the SILENT-SWALLOW this path was rewritten to close.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/cpu_backend.py",
+    "lineno": 1068,
+    "enclosing_symbol": "_search_ltl",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as exc: raise BackendExecutionError(\"cannot safely evaluate this --ltl query through CPUBackend without the linear-time Rust engine (...); install ripgrep or drop --ltl\") from exc after _rust_match_set for left/right sub-expressions. Inline comment: FAIL CLOSED rather than silently falling open.",
+    "reason": "INTENTIONAL-BOUNDARY: --ltl residual without Rust must refuse visibly. Same audit #6/#16 ReDoS class as _search_word_line_context_via_rust; a silent empty or Python-re fallthrough would hang or lie.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ripgrep_backend.py",
+    "lineno": 77,
+    "enclosing_symbol": "supports_pcre2",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False wrapping rg --help / -P smoke probes. supports_pcre2 is a capability predicate; any timeout/OSError/decode failure means \"PCRE2 not usable\" and callers treat False as unsupported.",
+    "reason": "INTENTIONAL-BOUNDARY and not SILENT-SWALLOW: a capability probe returning False is the honest negative for \"is PCRE2 available\", not a hidden search failure. Raising would convert doctor/feature detection into a hard error for a missing optional engine.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ripgrep_backend.py",
+    "lineno": 203,
+    "enclosing_symbol": "search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as e: raise BackendExecutionError(f\"Ripgrep backend failed: {e}\") from e after the TimeoutExpired partial-recovery arm. Non-timeout failures of the aggregate rg --json search become BackendExecutionError; callers never see a clean empty success from this arm.",
+    "reason": "INTENTIONAL-BOUNDARY: Backend Fail-Closed Contract for RipgrepBackend.search. TimeoutExpired is handled by a narrower preceding arm (result_incomplete); this broad arm is the residual hard failure path.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ripgrep_backend.py",
+    "lineno": 356,
+    "enclosing_symbol": "_search_files_with_matches",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as e: raise BackendExecutionError(f\"Ripgrep backend failed: {e}\") from e after the L7 TimeoutExpired partial file-list recovery. Residual non-timeout failures of -l/--files-with-matches raise rather than returning an empty matched_file_paths list as success.",
+    "reason": "INTENTIONAL-BOUNDARY: same fail-closed residual shape as RipgrepBackend.search idx 0, applied to the files-with-matches route. Timeout partials are handled above; this arm refuses silent empty success.",
+    "hardened_in": null
+  },
+  {
+    "module": "backends/ripgrep_backend.py",
+    "lineno": 475,
+    "enclosing_symbol": "_search_counts",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception as e: raise BackendExecutionError(f\"Ripgrep backend failed: {e}\") from e after the L7 TimeoutExpired partial tally recovery. Residual non-timeout failures of --count/--count-matches raise rather than returning zeros as a complete scan.",
+    "reason": "INTENTIONAL-BOUNDARY: count-route twin of search/_search_files_with_matches fail-closed residuals. A timed-out count may return partial+result_incomplete above; any other exception must not look like total_matches=0 success.",
     "hardened_in": null
   }
 ]

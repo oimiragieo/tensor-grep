@@ -55,6 +55,14 @@ _ORIGINAL_EXCLUDED_MODULES = frozenset({
     "cli/windows_launcher.py",
 })
 
+# Backend modules never lived in _ORIGINAL_EXCLUDED_MODULES (W1 carve-out was CLI-only).
+# Completeness for backends is gated by this explicit set, grown only when a slice
+# appends matching ledger rows (HANDLER-CENSUS-W2).
+_EXPLICIT_AUDITED_MODULES = frozenset({
+    "backends/cpu_backend.py",
+    "backends/ripgrep_backend.py",
+})
+
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})
 
 
@@ -127,7 +135,7 @@ def _load_ledger() -> list[dict]:
 
 
 def _audited_modules_so_far() -> frozenset[str]:
-    return _ORIGINAL_EXCLUDED_MODULES - _current_excluded_modules()
+    return (_ORIGINAL_EXCLUDED_MODULES - _current_excluded_modules()) | _EXPLICIT_AUDITED_MODULES
 
 
 def test_ledger_completeness_scoped_to_audited_modules() -> None:

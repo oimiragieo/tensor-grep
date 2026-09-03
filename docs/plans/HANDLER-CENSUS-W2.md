@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Status | **WAVE 1 IN_FLIGHT** (PR #1124; not SHIPPED until merge) |
+| Status | **WAVE 2-a IN_FLIGHT** on `fix/handler-census-w2a-cpu-ripgrep` (base `ed740d0`; Wave 1 merged). Not SHIPPED until W2-a PR merges. |
 | Date | 2026-08-30 |
-| Base SHA | `e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6` |
-| Depends on | None |
-| Blocks | ARCH-002 ledger extension; SEC-007 MCP sanitize PRs |
-| Release class | Wave 1: `docs:` · Wave 2: `fix:` per cluster |
+| Base SHA | `ed740d0` (origin/main after Wave 1 / PR #1124) |
+| Depends on | Wave 1 census merged |
+| Blocks | ARCH-002 remaining backends (W2-b/c); SEC-007 MCP sanitize PRs |
+| Release class | Wave 2-a: `docs:` (ledger+tests; `fix:` only if SILENT-SWALLOW hardened) |
 
 ---
 
@@ -39,13 +39,15 @@ Close the measured gaps from pass-5 backlog:
 
 ---
 
-## Wave 2 — build (authorized, not started)
+## Wave 2 — build (authorized)
 
 ### Task A — Backend ledger extension (ARCH-002)
 
-1. **RED:** Add test asserting every handler in `2026-08-30-handler-census-w2-backends.json` has a ledger row (new completeness arm or extend audited-module set).
+**W2-a status:** IN_FLIGHT on `fix/handler-census-w2a-cpu-ripgrep` — `_EXPLICIT_AUDITED_MODULES` + 17 ledger rows for `cpu_backend.py` / `ripgrep_backend.py`; Sol pass-1 FIX-FIRST harden applied (decode/search separation on cpu search cascade idxs 2/3/6/7).
+
+1. **RED:** Add `_EXPLICIT_AUDITED_MODULES` (backends never lived in `_ORIGINAL_EXCLUDED_MODULES`); union into `_audited_modules_so_far()`.
 2. **Read-in-context:** For each of 47 handlers, assign category + evidence paragraph (mirror W1 slice discipline — ~8–12 handlers per PR max).
-3. **GREEN:** `test_handler_dispositions.py` + `test_silent_failure_hardening.py` green; bump ceiling only if net new handlers (not relocation).
+3. **GREEN:** `test_handler_dispositions.py` + `test_silent_failure_hardening.py` green; bump ceiling only if a handler is narrowed (A137).
 
 **Suggested PR slices:**
 

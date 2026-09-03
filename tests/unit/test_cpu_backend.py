@@ -1439,3 +1439,43 @@ def test_fixed_strings_nonascii_literal_matches_via_python_fallback_but_regex_fa
 
     with pytest.raises(BackendExecutionError):
         CPUBackend().search(str(f), literal, config=SearchConfig())
+
+
+def test_python_fallback_regex_engine_failure_is_not_clean_no_match(tmp_path):
+    """Sol FIX-FIRST (HANDLER-CENSUS-W2-a): regex_str.search failures must not look like no-match.
+
+    Pre-harden, utf-8/latin-1 match-test arms wrapped decode+search in one ``except Exception:
+    pass``, so a terminal regex engine error became ``matched=False`` and a clean empty
+    ``SearchResult``. Both topology arms (source_lines prefilter + streaming open) must raise.
+    """
+
+    class _BoomPattern:
+        def search(self, _text):
+            raise RuntimeError("injected regex engine failure")
+
+    def _boom_compile(pattern, flags, config):
+        boom = _BoomPattern()
+        return boom, boom
+
+    rust_mod = types.ModuleType("tensor_grep.rust_core")
+
+    class AbsentRustBackend:
+        def search(self, **_kwargs):
+            raise ImportError("simulated rust_core absent")
+
+    rust_mod.RustBackend = AbsentRustBackend
+
+    target = tmp_path / "probe.txt"
+    target.write_text("ERROR one\nERROR two\n", encoding="utf-8")
+
+    with (
+        patch.dict("sys.modules", {"tensor_grep.rust_core": rust_mod}),
+        patch.object(CPUBackend, "_compile_regexes", staticmethod(_boom_compile)),
+    ):
+        backend = CPUBackend()
+        # Streaming arm: fixed_strings disables the source_lines prefilter.
+        with pytest.raises(RuntimeError, match="CPU backend search failed"):
+            backend.search(str(target), "ERROR", config=SearchConfig(fixed_strings=True))
+        # source_lines / prefilter arm: literal extractable pattern, not fixed_strings.
+        with pytest.raises(RuntimeError, match="CPU backend search failed"):
+            backend.search(str(target), "ERROR", config=SearchConfig())

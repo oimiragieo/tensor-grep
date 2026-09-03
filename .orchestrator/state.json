@@ -1,39 +1,84 @@
 {
   "schema_version": 2,
-  "updated_at": "2026-08-30T09:50:00-04:00",
-  "sdlc_phase": "SESSION_CLOSEOUT",
-  "session_mode": "CLOSEOUT_CLEAN",
+  "updated_at": "2026-09-03T11:29:00-04:00",
+  "sdlc_phase": "CLOSEOUT_READY",
+  "session_mode": "CLOSEOUT",
   "git": {
-    "branch": "docs/handler-census-w2-2026-08-30",
-    "head_sha": "dc221b95db3242d55b7e87a67ea5eee693b0892e",
-    "base_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
-    "open_prs": [1124],
-    "pin_meaning": "closeout body dc221b9; re-derive git rev-parse HEAD for tip"
+    "branch": "fix/handler-census-w2a-cpu-ripgrep",
+    "head_sha": "ed740d09ea93e2dce800b990a2ac2df24b9ce8bf",
+    "base_sha": "ed740d09ea93e2dce800b990a2ac2df24b9ce8bf",
+    "open_prs": [],
+    "dirty": true,
+    "pin_meaning": "Committed tip == origin/main (#1124 merged). Zvec parity + W2-a harden + ledger verified green and ready for release commit."
   },
   "last_shipped_slice": {
-    "id": "DOCS-RECONCILE",
-    "pr": 1123,
-    "merge_at": "2026-08-30T06:24:02Z",
-    "merge_sha": "e6ba187faadd1a3cd5b1f8d5922bc220f0b544f6",
+    "id": "HANDLER-CENSUS-W2-WAVE1",
+    "pr": 1124,
+    "merge_at": "2026-08-30T17:15:23Z",
+    "merge_sha": "ed740d09ea93e2dce800b990a2ac2df24b9ce8bf",
     "release_class": "docs: (no publish)"
   },
-  "completed_slice": {
-    "id": "HANDLER-CENSUS-W2-WAVE1",
-    "status": "IN_FLIGHT_PR",
-    "pr": 1124,
+  "completed_feature_slice": {
+    "id": "ZVEC-PARITY-AGENT-ENHANCE",
+    "status": "VERIFIED_SHIP",
+    "codex_sol_verdict": "SHIP",
+    "test_verification": "22/22 unit passed, 68/68 routing passed, 11/11 handler disposition passed, ruff/mypy clean",
     "artifacts": [
-      "docs/audits/2026-08-30-handler-census-w2.md",
-      "docs/audits/2026-08-30-handler-census-w2-backends.json",
-      "docs/plans/HANDLER-CENSUS-W2.md"
-    ],
-    "counts": { "backend_broad_handlers": 47, "mcp_str_exc": 58 }
+      "src/tensor_grep/cli/agent_installer.py",
+      "src/tensor_grep/cli/ast_enrichment.py",
+      "src/tensor_grep/cli/main.py",
+      "src/tensor_grep/cli/bootstrap.py",
+      "src/tensor_grep/cli/commands.py",
+      "src/tensor_grep/cli/formatters/json_fmt.py",
+      "src/tensor_grep/core/result.py",
+      "rust_core/src/main.rs",
+      "tests/unit/test_agent_installer.py",
+      "tests/unit/test_ast_enrichment.py",
+      "tests/unit/test_search_ast_enrichment.py",
+      "tests/unit/test_cli_installer_commands.py",
+      "tests/e2e/test_routing_parity.py",
+      "docs/plans/2026-09-03-zvec-grep-parity-and-agent-enhancements.md",
+      "GATES.md"
+    ]
   },
-  "retired_slice": {
-    "id": "HYGIENE-FORMAT",
-    "reason": "15/15 origin/main blobs pass ruff via stdin; Windows CRLF false RED",
-    "parked_ref": "archive/hygiene-format-retired-2026-08-30"
+  "in_progress_slice": {
+    "id": "HANDLER-CENSUS-W2A",
+    "status": "READY_FOR_PR",
+    "artifacts": [
+      "docs/plans/2026-08-30-handler-census-w2a-cpu-ripgrep.md",
+      "docs/plans/2026-08-30-backlog-dependency-spine.md",
+      "docs/audits/2026-09-03-ceo-backlog-update.md",
+      "src/tensor_grep/backends/cpu_backend.py",
+      "docs/audits/2026-08-20-handler-dispositions.json",
+      "tests/unit/test_cpu_backend.py",
+      "tests/unit/test_handler_dispositions.py"
+    ]
   },
-  "next_action": "Do not start HANDLER-CENSUS-W2 wave 2. Do not merge #1124 in closeout. Next session: wait CI / human merge; then wave 2 under A3.",
-  "spend": { "authorized_usd": 0, "cumulative_usd": 0 },
-  "seats": { "sol_task": "FAILED_A78_quota", "fable": "FAILED_A78_quota" }
+  "board_census": {
+    "total": 30,
+    "unfinished": 16,
+    "READY": 1,
+    "IN_FLIGHT": 1,
+    "BLOCKED": 6,
+    "CEO_GATED": 4,
+    "DEMAND_GATED": 6,
+    "SHIPPED": 8,
+    "RETIRED": 5,
+    "index": "2026-08-30.1",
+    "derived_at": "2026-09-03"
+  },
+  "public_product": {
+    "tag": "v1.113.6",
+    "pypi_files": 4
+  },
+  "spend": {
+    "authorized_usd": 0,
+    "spent_usd": 0
+  },
+  "next": "Commit and draft release PR for ZVEC-PARITY and W2-a",
+  "last_ceo_update": "2026-09-03T11:20:00-04:00",
+  "notes": [
+    "2026-09-03 11:20: ZVEC-PARITY complete with full AST container enrichment (--enrich-ast) and multi-agent installer (tg install/uninstall for claude, cursor, codex, opencode, qwen). Codex Sol unconditional SHIP.",
+    "2026-09-03 11:29: Handler dispositions ledger re-aligned and 11/11 tests pass."
+  ]
 }
