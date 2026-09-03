@@ -183,24 +183,8 @@ const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-stats",
 ];
 /// Flags that route a search to the Python passthrough front door rather than being handled by
-/// the native fast path. Matched via `token_matches_any_flag`/`search_args_contain_any_flag` /
-/// `raw_args_contain_any_flag`, which is **exact-token only** (plus a `--long-flag=value` prefix
-/// for the long spellings): a token matches an entry here only if it equals that entry
-/// character-for-character, or starts with `"{long_flag}="`. It does NOT understand ripgrep's
-/// combined short-flag clusters -- `-u` and `--unrestricted` are listed below, but `-uu`,
-/// `-uuu`, `-iu`, and `-Nu` are each a DIFFERENT literal token that never equals `"-u"`, so none
-/// of them match this list (task #271; confirmed empirically: `tg search --no-heading -Q needle
-/// .` prints `rg: unrecognized flag -Q`, i.e. the raw Python forwarder ran even though `-Q`
-/// itself is not in this list either). This list is a ROUTING OPTIMIZATION, not a safety net --
-/// it lets the RECOGNIZED spellings skip a `parse_early_ripgrep_args` round trip. The actual
-/// fail-closed guarantee that an unrecognized flag (including every `-u`-prefixed cluster) never
-/// silently reaches the native fast path is `parse_early_ripgrep_args`'s own catch-all arm,
-/// `_ if token.starts_with('-') => return None` -- returning `None` there is what forces
-/// the caller back to the full Python CLI for anything this list (or the rest of that function)
-/// does not explicitly recognize. A future change that makes this list PREFIX-match instead of
-/// exact-match (e.g. to "cover" `-uu` here directly) would not be wrong, but would be redundant
-/// with that catch-all and should not be read as filling a gap that catch-all does not already
-/// close.
+/// the native fast path. Exact token matches only; unrecognized flags are caught fail-closed by
+/// `parse_early_ripgrep_args`'s catch-all arm returning `None`.
 const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     "-H",
     "--with-filename",

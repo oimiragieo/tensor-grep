@@ -7,12 +7,13 @@ to use tensor-grep's built-in MCP server and adds search guidance rules.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
+
+import typer
 
 SUPPORTED_TARGETS = ("claude", "cursor", "codex", "opencode", "qwen")
 
@@ -59,17 +60,9 @@ def _strip_json_comments_and_trailing_commas(text: str) -> str:
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.parent / f".tmp_{path.name}_{os.getpid()}"
-    try:
-        temp_path.write_text(content, encoding="utf-8")
-        temp_path.replace(path)
-    finally:
-        if temp_path.exists():
-            try:
-                temp_path.unlink()
-            except OSError:
-                pass
+    from tensor_grep.cli._index_lock import atomic_write_bytes
+
+    atomic_write_bytes(path, content.encode("utf-8"))
 
 
 def _update_json_mcp(path: Path, add_entry: bool = True) -> bool:
@@ -321,3 +314,87 @@ def uninstall_agent_integration(
         "status": status,
         "files": [str(f) for f in files_modified],
     }
+
+
+def install_command(
+    target: str = typer.Option(
+        "all",
+        "--target",
+        "-t",
+        help="Agent target to configure: claude, cursor, codex, opencode, qwen, or all.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate configuration without writing files.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm installation without prompting.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Configure AI coding agents (Claude Code, Cursor, Codex, OpenCode, Qwen) to use tensor-grep's built-in MCP server."""
+    try:
+        res = install_agent_integration(target=target, dry_run=dry_run)
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if json_output:
+        typer.echo(json.dumps(res, indent=2))
+    else:
+        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
+        for f in res.get("files", []):
+            typer.echo(f"  configured: {f}")
+
+
+def uninstall_command(
+    target: str = typer.Option(
+        "all",
+        "--target",
+        "-t",
+        help="Agent target to remove: claude, cursor, codex, opencode, qwen, or all.",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate removal without writing files.",
+    ),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm uninstallation without prompting.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit machine-readable JSON output.",
+    ),
+) -> None:
+    """Remove tensor-grep MCP integration and search guidance from AI coding agents."""
+    try:
+        res = uninstall_agent_integration(target=target, dry_run=dry_run)
+    except Exception as exc:
+        if json_output:
+            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
+        else:
+            typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    if json_output:
+        typer.echo(json.dumps(res, indent=2))
+    else:
+        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
+        for f in res.get("files", []):
+            typer.echo(f"  uninstalled: {f}")

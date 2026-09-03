@@ -11767,40 +11767,15 @@ def install_command(
         help="Agent target to configure: claude, cursor, codex, opencode, qwen, or all.",
     ),
     dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Simulate configuration without writing files.",
+        False, "--dry-run", help="Simulate configuration without writing files."
     ),
-    yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Confirm installation without prompting.",
-    ),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit machine-readable JSON output.",
-    ),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm installation without prompting."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Configure AI coding agents (Claude Code, Cursor, Codex, OpenCode, Qwen) to use tensor-grep's built-in MCP server."""
-    from tensor_grep.cli.agent_installer import install_agent_integration
+    """Configure AI coding agents to use tensor-grep's built-in MCP server."""
+    from tensor_grep.cli.agent_installer import install_command as _impl
 
-    try:
-        res = install_agent_integration(target=target, dry_run=dry_run)
-    except Exception as exc:
-        if json_output:
-            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
-        else:
-            typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=2) from None
-
-    if json_output:
-        typer.echo(json.dumps(res, indent=2))
-    else:
-        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
-        for f in res.get("files", []):
-            typer.echo(f"  configured: {f}")
+    _impl(target=target, dry_run=dry_run, yes=yes, json_output=json_output)
 
 
 @app.command(name="uninstall")
@@ -11812,40 +11787,17 @@ def uninstall_command(
         help="Agent target to remove: claude, cursor, codex, opencode, qwen, or all.",
     ),
     dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Simulate removal without writing files.",
+        False, "--dry-run", help="Simulate removal without writing files."
     ),
     yes: bool = typer.Option(
-        False,
-        "--yes",
-        "-y",
-        help="Confirm uninstallation without prompting.",
+        False, "--yes", "-y", help="Confirm uninstallation without prompting."
     ),
-    json_output: bool = typer.Option(
-        False,
-        "--json",
-        help="Emit machine-readable JSON output.",
-    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Remove tensor-grep MCP integration and search guidance from AI coding agents."""
-    from tensor_grep.cli.agent_installer import uninstall_agent_integration
+    from tensor_grep.cli.agent_installer import uninstall_command as _impl
 
-    try:
-        res = uninstall_agent_integration(target=target, dry_run=dry_run)
-    except Exception as exc:
-        if json_output:
-            typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
-        else:
-            typer.echo(f"Error: {exc}", err=True)
-        raise typer.Exit(code=2) from None
-
-    if json_output:
-        typer.echo(json.dumps(res, indent=2))
-    else:
-        typer.echo(f"tensor-grep MCP integration {res['status']} for {res['target']}")
-        for f in res.get("files", []):
-            typer.echo(f"  uninstalled: {f}")
+    _impl(target=target, dry_run=dry_run, yes=yes, json_output=json_output)
 
 
 def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:

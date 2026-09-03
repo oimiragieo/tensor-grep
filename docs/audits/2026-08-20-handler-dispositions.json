@@ -1171,7 +1171,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11932,
+    "lineno": 11884,
     "enclosing_symbol": "audit_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1181,7 +1181,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11984,
+    "lineno": 11936,
     "enclosing_symbol": "audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1191,7 +1191,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12046,
+    "lineno": 11998,
     "enclosing_symbol": "audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1201,7 +1201,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12184,
+    "lineno": 12136,
     "enclosing_symbol": "review_bundle_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1211,7 +1211,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12347,
+    "lineno": 12299,
     "enclosing_symbol": "review_bundle_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1221,7 +1221,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12525,
+    "lineno": 12477,
     "enclosing_symbol": "evidence_emit",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1231,7 +1231,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12652,
+    "lineno": 12604,
     "enclosing_symbol": "evidence_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1241,7 +1241,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12882,
+    "lineno": 12834,
     "enclosing_symbol": "ledger_claim",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1251,7 +1251,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 12977,
+    "lineno": 12929,
     "enclosing_symbol": "ledger_release",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1261,7 +1261,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13063,
+    "lineno": 13015,
     "enclosing_symbol": "ledger_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1271,7 +1271,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13162,
+    "lineno": 13114,
     "enclosing_symbol": "ledger_record",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1281,32 +1281,12 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13253,
+    "lineno": 13205,
     "enclosing_symbol": "ledger_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception as exc: _emit_ledger_error(exc, json_output=json_output, code='internal_error', routing_reason='ledger-find'); raise typer.Exit(code=2) from exc",
     "reason": "INTENTIONAL-BOUNDARY: the ledger command boundary routes every exception through _emit_ledger_error, which serializes the failure into the command's structured (JSON or text) output before the command exits code 2 via typer.Exit. Already provably-disclosing per the census's AST heuristic (the helper call is a recognized disclosure shape); recorded here for completeness of the cumulative population.",
-    "hardened_in": null
-  },
-  {
-    "module": "cli/main.py",
-    "lineno": 11791,
-    "enclosing_symbol": "install_command",
-    "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception as exc: typer.echo(json.dumps({\"ok\": False, \"error\": str(exc)}) if json_output else f\"Error: {exc}\", err=True); raise typer.Exit(code=2) from None",
-    "reason": "INTENTIONAL-BOUNDARY: the install command boundary serializes any unexpected failure to stderr (or JSON error payload if json_output=True) and exits with code 2 via typer.Exit. Fully disclosing and fail-closed.",
-    "hardened_in": null
-  },
-  {
-    "module": "cli/main.py",
-    "lineno": 11836,
-    "enclosing_symbol": "uninstall_command",
-    "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception as exc: typer.echo(json.dumps({\"ok\": False, \"error\": str(exc)}) if json_output else f\"Error: {exc}\", err=True); raise typer.Exit(code=2) from None",
-    "reason": "INTENTIONAL-BOUNDARY: the uninstall command boundary serializes any unexpected failure to stderr (or JSON error payload if json_output=True) and exits with code 2 via typer.Exit. Fully disclosing and fail-closed.",
     "hardened_in": null
   },
   {

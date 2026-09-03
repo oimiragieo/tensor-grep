@@ -1500,6 +1500,7 @@ _EXPECTED_HELPER_BACKED = {
         "_write_json_atomic",
         "tensor_grep.cli._index_lock.atomic_write_json",
     ),
+    ("agent_installer.py", "_atomic_write_text", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     ("dogfood.py", "_write_json_atomic", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     (
         "evidence_signing.py",
