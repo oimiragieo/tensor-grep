@@ -32,7 +32,7 @@ def enrich_match_with_container(
     else:
         try:
             _, symbols = repo_map._imports_and_symbols_for_path(path_obj)
-        except Exception:
+        except (OSError, UnicodeDecodeError, SyntaxError, ValueError):
             symbols = []
         if symbols_cache is not None:
             symbols_cache[norm_path] = symbols

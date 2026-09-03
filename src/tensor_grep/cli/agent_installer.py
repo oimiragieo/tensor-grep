@@ -72,10 +72,10 @@ def _update_json_mcp(path: Path, add_entry: bool = True) -> bool:
         if raw_text.strip():
             try:
                 data = json.loads(raw_text)
-            except Exception:
+            except (json.JSONDecodeError, ValueError):
                 try:
                     data = json.loads(_strip_json_comments_and_trailing_commas(raw_text))
-                except Exception as exc:
+                except (json.JSONDecodeError, ValueError) as exc:
                     raise ValueError(
                         f"Cannot safely parse existing configuration file '{path}': {exc}. "
                         "Refusing to modify to prevent configuration loss."
@@ -343,7 +343,7 @@ def install_command(
     """Configure AI coding agents (Claude Code, Cursor, Codex, OpenCode, Qwen) to use tensor-grep's built-in MCP server."""
     try:
         res = install_agent_integration(target=target, dry_run=dry_run)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         if json_output:
             typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
@@ -385,7 +385,7 @@ def uninstall_command(
     """Remove tensor-grep MCP integration and search guidance from AI coding agents."""
     try:
         res = uninstall_agent_integration(target=target, dry_run=dry_run)
-    except Exception as exc:
+    except (ValueError, OSError) as exc:
         if json_output:
             typer.echo(json.dumps({"ok": False, "error": str(exc)}, indent=2))
         else:
