@@ -666,3 +666,30 @@ def test_agent_path_scoring_ignores_checkout_parent_terms():
     )
 
     assert repo_map._score_file_path(noisy_absolute_path, ["harden"]) == 0
+
+
+def test_agent_capsule_unrequested_private_symbol_yields_to_public_implementation():
+    from tensor_grep.cli.agent_capsule_targets import (
+        _prefer_public_implementation_over_private_helper,
+    )
+
+    primary = {
+        "file": "src/tensor_grep/cli/repo_map_lang_python.py",
+        "symbol": "_add",
+        "kind": "function",
+        "confidence": 1.0,
+    }
+    alternatives = [
+        {
+            "file": "src/tensor_grep/core/retrieval.py",
+            "symbol": "replace_with_retry",
+            "kind": "function",
+            "confidence": 0.85,
+        }
+    ]
+    query = "add retry with tests"
+    new_primary, new_alts = _prefer_public_implementation_over_private_helper(
+        query, primary, alternatives
+    )
+    assert new_primary["symbol"] == "replace_with_retry"
+    assert new_alts[0]["symbol"] == "_add"

@@ -61,6 +61,9 @@ from tensor_grep.cli.agent_capsule_targets import (
     _prefer_implementation_over_marker_helper as _prefer_implementation_over_marker_helper,
 )
 from tensor_grep.cli.agent_capsule_targets import (
+    _prefer_public_implementation_over_private_helper as _prefer_public_implementation_over_private_helper,
+)
+from tensor_grep.cli.agent_capsule_targets import (
     _primary_target as _primary_target,
 )
 from tensor_grep.cli.agent_capsule_targets import (
@@ -223,9 +226,10 @@ def _confidence(
         downgrade_reasons.append("primary file omitted from rendered context")
     if consistency.get("capsule_primary_file_omitted"):
         downgrade_reasons.append("primary file omitted from capsule snippets by token budget")
-    if any("primary file" in reason for reason in downgrade_reasons):
+    if any(isinstance(reason, str) and "primary file" in reason for reason in downgrade_reasons):
         overall = min(overall, 0.55)
-    deduped_reasons = list(dict.fromkeys(downgrade_reasons))
+    valid_reasons = [r.strip() for r in downgrade_reasons if isinstance(r, str) and r.strip()]
+    deduped_reasons = list(dict.fromkeys(valid_reasons))
 
     # THE INVARIANT, ENFORCED AT THE SINGLE EXIT: a result that lists reasons it is degraded may
     # never also claim certainty. `ask_user_before_editing` keys off this number, so the
@@ -329,6 +333,9 @@ def _capsule_confidence_and_ask_without_render(
     alternatives = _alternative_targets(payload, target, limit=None)[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
     target, alternatives = _prefer_implementation_over_cli_dispatcher_helper(target, alternatives)
+    target, alternatives = _prefer_public_implementation_over_private_helper(
+        query, target, alternatives
+    )
 
     edit_plan_seed = _as_dict(payload.get("edit_plan_seed"))
     validation_plan = _as_list_of_dicts(edit_plan_seed.get("validation_plan"))

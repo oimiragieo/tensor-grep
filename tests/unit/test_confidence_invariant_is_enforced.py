@@ -135,3 +135,14 @@ def test_guard_is_not_vacuous() -> None:
         f"overall={result['overall']} matches a branch-specific clamp, so this case does not "
         f"prove the exit guard fired"
     )
+
+
+def test_empty_or_whitespace_downgrade_reasons_do_not_lower_confidence() -> None:
+    result = _confidence(
+        {"edit_plan_seed": {"confidence": {"overall": 1.0}}},
+        [{"path": "a.py"}],
+        ["", "   "],
+        _consistency(),
+    )
+    assert result["downgrade_reasons"] == []
+    assert result["overall"] == 1.0

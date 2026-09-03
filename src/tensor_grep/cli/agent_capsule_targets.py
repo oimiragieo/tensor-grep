@@ -338,6 +338,54 @@ def _prefer_implementation_over_cli_dispatcher_helper(
     return implementation, demoted
 
 
+def _prefer_public_implementation_over_private_helper(
+    query: str,
+    primary_target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Promote a genuine public implementation over an unrequested private helper primary (e.g. `_add`).
+
+    When the query does NOT explicitly search for a `_`-prefixed identifier, but BM25/lexical
+    scoring selects a private helper (`_add`) that happens to match a common verb ("add"),
+    and viable public non-test function alternatives exist (confidence >= 0.7 with term overlap),
+    prefer the public implementation.
+    """
+    symbol = str(primary_target.get("symbol") or "")
+    if not (symbol.startswith("_") and not symbol.startswith("__")):
+        return primary_target, alternatives
+
+    query_terms = set(repo_map._query_terms(query))
+    if any(term.startswith("_") for term in query_terms):
+        return primary_target, alternatives
+
+    best_index = -1
+    best_confidence = -1.0
+    for index, alternative in enumerate(alternatives):
+        alt_symbol = str(alternative.get("symbol") or "")
+        if not alt_symbol or alt_symbol.startswith("_"):
+            continue
+        alt_kind = str(alternative.get("kind") or "")
+        if alt_kind not in {"function", "method", "class"}:
+            continue
+        alt_confidence = _numeric_confidence(alternative.get("confidence"), 0.0)
+        if alt_confidence < 0.7:
+            continue
+        alt_terms = set(split_terms(alt_symbol))
+        if not (alt_terms & query_terms):
+            continue
+        if alt_confidence > best_confidence:
+            best_confidence = alt_confidence
+            best_index = index
+
+    if best_index < 0:
+        return primary_target, alternatives
+
+    public_impl = alternatives[best_index]
+    demoted = [*alternatives[:best_index], *alternatives[best_index + 1 :]]
+    demoted.insert(0, primary_target)
+    return public_impl, demoted
+
+
 def _dedupe(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 

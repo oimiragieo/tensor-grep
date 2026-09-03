@@ -108,6 +108,9 @@ from tensor_grep.cli.agent_capsule_targets import (
     _prefer_implementation_over_marker_helper as _prefer_implementation_over_marker_helper,
 )
 from tensor_grep.cli.agent_capsule_targets import (
+    _prefer_public_implementation_over_private_helper as _prefer_public_implementation_over_private_helper,
+)
+from tensor_grep.cli.agent_capsule_targets import (
     _primary_target as _primary_target,
 )
 from tensor_grep.cli.agent_capsule_targets import (
@@ -345,6 +348,10 @@ def build_agent_capsule_from_map(
     alternatives = all_alternatives[:4]
     target, alternatives = _prefer_implementation_over_marker_helper(query, target, alternatives)
     target, alternatives = _prefer_implementation_over_cli_dispatcher_helper(target, alternatives)
+    target, alternatives = _prefer_public_implementation_over_private_helper(
+        query, target, alternatives
+    )
+
     # T2: capture the RAW pre-cap seed confidence now, before any of this function's own trust/
     # tie/budget caps mutate `target["confidence"]` in place -- `_collect_capsule_call_site_evidence`
     # must gate on this seed value, not the post-cap one, or a capped target could never earn the
