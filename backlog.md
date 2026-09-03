@@ -12,28 +12,37 @@ Opens: → "unlocked once this completes"
 
 ## READY_TO_SHIP 🚀
 
-### ZVEC-PARITY-AGENT-ENHANCE — AST Container Enrichment & Multi-Agent MCP Installer
-- **Status:** READY_TO_SHIP (Verified by Codex Sol SHIP verdict)
-- **AI-Doable:** YES (Completed in-tree)
-- **Components:**
-  1. AST Container Enrichment (`--enrich-ast`): `src/tensor_grep/cli/ast_enrichment.py`, `src/tensor_grep/core/result.py`, `src/tensor_grep/cli/formatters/json_fmt.py`, `src/tensor_grep/cli/main.py`.
-  2. Multi-Agent Installer (`tg install` / `tg uninstall`): `src/tensor_grep/cli/agent_installer.py`, `src/tensor_grep/cli/commands.py`.
-  3. Parity & Routing: `src/tensor_grep/cli/bootstrap.py`, `rust_core/src/main.rs`.
-- **Verification:** 22/22 unit tests pass (`pytest tests/unit/test_ast_enrichment.py tests/unit/test_search_ast_enrichment.py tests/unit/test_agent_installer.py tests/unit/test_cli_installer_commands.py`), 68/68 routing parity tests pass (`pytest tests/e2e/test_routing_parity.py`), `ruff check` (0 errors), `ruff format --preview` (clean), `mypy` (0 errors).
-- **Deps:** none (self-contained)
-- **Opens:** competitive parity with Alibaba zvec-grep, zero-friction developer adoption across Claude, Cursor, Codex, OpenCode, and Qwen.
+*(no items currently in staging; W2-c verified)*
 
 ---
 
 ## IN_PROGRESS 🔧
 
+### HANDLER-CENSUS-W2-b — GPU backend handler census (cybert, cudf, torch)
+- **Status:** READY (22 broad handlers across cybert_backend.py, cudf_backend.py, torch_backend.py)
+- **AI-Doable:** YES (Census/disposition only; GPU runtime deferred per Rule A12)
+- **Deps:** HANDLER-CENSUS-W2-c (completed)
+- **Opens:** full backend closure (ARCH-002)
+
+---
+
+## SHIPPED ✓ (Recent)
+
+### HANDLER-CENSUS-W2-c — AST, Rust, and StringZilla backend handler dispositions
+- **Status:** SHIPPED (Verified on 1aee5a4 by Sonnet 5 + Codex Sol dual GO)
+- **Components:** 8 handlers across `backends/ast_backend.py` (2), `backends/ast_wrapper_backend.py` (3), `backends/rust_backend.py` (2), `backends/stringzilla_backend.py` (1) dispositioned in `docs/audits/2026-08-20-handler-dispositions.json` (155 total); `_EXPLICIT_AUDITED_MODULES` extended in `tests/unit/test_handler_dispositions.py`.
+- **Verification:** 11/11 tests pass in `test_handler_dispositions.py`, 2/2 tests pass in `test_silent_failure_hardening.py`, ruff/mypy clean.
+
 ### HANDLER-CENSUS-W2-a — cpu_backend + ripgrep handler hardening
-- **Status:** IN_PROGRESS (Product harden applied dirty; decode/search exception separation in `cpu_backend.py`)
-- **AI-Doable:** YES
-- **Remaining:** (1) Commit exact paths; (2) Sol outside Cursor on committed tip; (3) AUDIT_CLEAR; (4) `fix:` PR → CI → merge → release.
-- **Deps (internal):** HANDLER-CENSUS-W2 audit docs wave (PR #1124 merged ✓ → `ed740d0`).
-- **Deps (before closing):** Sol `AUDIT_CLEAR` on committed tip.
-- **Opens:** HANDLER-CENSUS-W2-b (ripgrep backend + remaining module census).
+- **Status:** SHIPPED (Released in v1.114.1)
+- **Components:** 17 handlers dispositioned; decode/search exception separation in `cpu_backend.py`.
+- **Verification:** 11/11 tests pass in `test_handler_dispositions.py`, ruff/mypy clean.
+
+### ZVEC-PARITY-AGENT-ENHANCE — AST Container Enrichment & Multi-Agent MCP Installer
+- **Status:** SHIPPED (Released in v1.114.0)
+- **Components:** `--enrich-ast` container enrichment + multi-agent installer (`tg install`/`tg uninstall` for claude, cursor, codex, opencode, qwen).
+- **Verification:** 22/22 unit tests pass, 68/68 routing tests pass, ruff/mypy clean.
+
 
 ---
 
