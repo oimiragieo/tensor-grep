@@ -18,15 +18,16 @@ Opens: → "unlocked once this completes"
 
 ## IN_PROGRESS 🔧
 
-### HANDLER-CENSUS-W2-b — GPU backend handler census (cybert, cudf, torch)
-- **Status:** READY (22 broad handlers across cybert_backend.py, cudf_backend.py, torch_backend.py)
-- **AI-Doable:** YES (Census/disposition only; GPU runtime deferred per Rule A12)
-- **Deps:** HANDLER-CENSUS-W2-c (completed)
-- **Opens:** full backend closure (ARCH-002)
+*(no unblocked slices in flight; ARCH-002 backend census closed; remaining items blocked on WSL hardware or A12 shared-box cargo ban)*
 
 ---
 
 ## SHIPPED ✓ (Recent)
+
+### HANDLER-CENSUS-W2-b — GPU backend handler census & error hardening (cudf, torch, cybert)
+- **Status:** SHIPPED (Verified on 5816afe by Sonnet 5 + Codex Sol dual GO)
+- **Components:** In-slice hardening: narrowed `deobfuscate_payload` in `cybert_backend.py` from broad `except Exception:` to `(ValueError, binascii.Error)` (ceiling ratcheted 267 -> 266 per Rule A137); added logging disclosures to RMM fallbacks and CuPy capability probe in `cudf_backend.py` and traced inference retry in `cybert_backend.py`. Appended 21 records to `docs/audits/2026-08-20-handler-dispositions.json` (176 total: 11 LOGGED-DEGRADE, 10 INTENTIONAL-BOUNDARY, 0 SILENT-SWALLOW). Enrolled `backends/cudf_backend.py`, `backends/torch_backend.py`, `backends/cybert_backend.py` in `_EXPLICIT_AUDITED_MODULES`.
+- **Verification:** 11/11 disposition tests pass, 2/2 silent failure hardening tests pass, ruff/mypy clean. Closes ARCH-002 across all 9 backend modules and all 46 backend broad handlers.
 
 ### HANDLER-CENSUS-W2-c — AST, Rust, and StringZilla backend handler dispositions
 - **Status:** SHIPPED (Verified on 1aee5a4 by Sonnet 5 + Codex Sol dual GO)
