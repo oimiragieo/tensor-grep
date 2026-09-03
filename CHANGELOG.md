@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.114.2 (2026-09-03)
+
+### Bug Fixes
+
+- **backends**: Harden GPU backend error disclosures and complete ARCH-002 census
+  ([`5816afe`](https://github.com/oimiragieo/tensor-grep/commit/5816afef4d3a71a2fb522d9d31fb4182a165fe89))
+
+### Documentation
+
+- Reconcile orchestrator state, backlog, and build receipts for W2-b
+  ([`c7a515d`](https://github.com/oimiragieo/tensor-grep/commit/c7a515d794ff84d677f9426222828a0fbad5096a))
+
+- Reconcile orchestrator state, backlog, and build receipts for W2-c
+  ([`f72360a`](https://github.com/oimiragieo/tensor-grep/commit/f72360af1c05c861f2c0bfba35eda33136bb709e))
+
+- **handler-census**: Disposition 8 AST, Rust, and StringZilla backend handlers (W2-c)
+  ([`1aee5a4`](https://github.com/oimiragieo/tensor-grep/commit/1aee5a4d65a9e1b90c72830df87a28e365b21d45))
+
+
 ## v1.114.1 (2026-09-03)
 
 ### Bug Fixes
