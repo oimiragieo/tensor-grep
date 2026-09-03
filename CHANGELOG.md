@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.114.1 (2026-09-03)
+
+### Bug Fixes
+
+- **agent**: Prefer public implementations over unrequested private helpers and enforce governance
+  doc size budget
+  ([`2bb3144`](https://github.com/oimiragieo/tensor-grep/commit/2bb31446ca1d18385875e42ccc89ed2451da6b3b))
+
+### Documentation
+
+- Add Rule A155 pre-push silent-failure and hygiene preflight in AGENTS.md
+  ([`5421c51`](https://github.com/oimiragieo/tensor-grep/commit/5421c5181792d9fc1fc3bd6171322a5027513f46))
+
+- Reconcile 2026-09-03 session closeout in TASK_BOARD.md
+  ([`4e55059`](https://github.com/oimiragieo/tensor-grep/commit/4e5505948b9167b2dfd751222def2cb6b83d012c))
+
+
 ## v1.114.0 (2026-09-03)
 
 ### Bug Fixes
