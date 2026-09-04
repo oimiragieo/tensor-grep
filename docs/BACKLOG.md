@@ -111,6 +111,18 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Traverse the symbol dependency and importer graphs constructed by `repo_map.py` to identify unreferenced symbols and circular dependencies across all 10 parser-backed languages.
   - **Acceptance:** Returns structured JSON with `unreferenced_symbols` and `import_cycles` within Section 0 bounded budgets.
 
+- **[ ] P9 — Memory-Resident Watcher & Cache Daemon for Agent Multi-Turn Loops (`tg daemon --watch`)**
+  - **Objective:** Eliminate repetitive cold-scan and AST parse latency across consecutive agent edit rounds.
+  - **Scope:** Provide a lightweight background watcher service holding parsed AST and symbol tables in memory, invalidating only touched files on filesystem events.
+  - **Seat & Cost:** Opus 5 design pass (Claude Max $200/mo flat plan) -> Sonnet 5 build (Droid Plus $100/mo flat plan); $0.00 marginal overage.
+  - **Acceptance:** Turnaround time for `tg prepare` drops from ~2.5s to <150ms on warm multi-turn agent turns; fail-closed fallback if daemon crashes.
+
+- **[ ] P10 — Verified Test-Execution Evidence Enclave (`tg verify --enforce-evidence`)**
+  - **Objective:** Guarantee that agent claims of passing tests are backed by cryptographically verifiable execution hashes before git commit.
+  - **Scope:** Extend `tg evidence` to execute designated test commands in an isolated subprocess, capture signed execution metadata, and output a tamper-evident `.evidence.json` receipt.
+  - **Seat & Cost:** Codex Pro $200/mo flat plan; deterministic subshell harness; $0.00 marginal overage.
+  - **Acceptance:** Deterministic verification gate; prevents "false-green" agent completion claims.
+
 
 
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
