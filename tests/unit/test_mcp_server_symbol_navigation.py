@@ -676,7 +676,7 @@ def test_tg_symbol_blast_radius_returns_structured_error_on_unexpected_exception
     payload = json.loads(out)
     assert payload["error"]["code"] == "internal_error"
     assert payload["error"]["retryable"] is False
-    assert "boom" in payload["error"]["message"]
+    assert "KeyError" in payload["error"]["message"]
 
 
 def test_tg_symbol_blast_radius_render_returns_structured_error_on_unexpected_exception(

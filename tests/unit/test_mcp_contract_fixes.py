@@ -31,7 +31,7 @@ def test_c4_symbol_refs_wraps_value_error() -> None:
     parsed = json.loads(result)
     assert "error" in parsed
     assert parsed["error"]["code"] == "internal_error"
-    assert "simulated repo_map crash" in parsed["error"]["message"]
+    assert "tg_symbol_refs failed due to an internal error (ValueError)." == parsed["error"]["message"]
 
 
 def test_c4_symbol_refs_wraps_runtime_error() -> None:
