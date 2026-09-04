@@ -1387,14 +1387,14 @@ def test_direct_call_tool_cwd_failure_sanitized(capsys):
 def test_direct_call_tool_external_path_redacted(capsys):
     """SEC-007: Direct FastMCP mcp.call_tool redacts external paths to [refused] on the wire."""
     import asyncio
+    import sys
 
     from tensor_grep.cli import mcp_server
 
-    poison_file = r"C:\outside\secret.py"
+    poison_file = r"C:\outside\secret.py" if sys.platform == "win32" else "/outside/secret.py"
     content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_file_imports", {"file": poison_file}))
     text = content[0].text
-    assert "outside" not in text
-    assert "secret.py" not in text
+    assert "outside" not in text and "secret.py" not in text
     payload = json.loads(text)
     assert payload["error"]["code"] == "invalid_input"
     assert payload["file"] == "[refused]"
