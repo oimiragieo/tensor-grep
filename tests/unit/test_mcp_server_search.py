@@ -872,7 +872,8 @@ def test_tg_search_semantic_backend_execution_error_returns_distinguishable_erro
     payload = json.loads(out)
     assert payload["error"]["code"] == "semantic_backend_error"
     assert payload["error"]["code"] != "internal_error"
-    assert "corrupt dense model directory" in payload["error"]["message"]
+    assert "BackendExecutionError" in payload["error"]["message"]
+    assert "corrupt dense model directory" not in payload["error"]["message"]
 
 
 def test_tg_search_semantic_probes_fallback_reason_on_empty_matches(monkeypatch):

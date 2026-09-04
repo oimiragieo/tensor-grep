@@ -63,9 +63,7 @@ Close the measured gaps from pass-5 backlog:
 
 ### Task B — MCP sanitize (SEC-007)
 
-1. **RED:** Test that tool error payloads never match raw exception message patterns for injected secrets.
-2. **GREEN:** Route through `_sanitized_tool_error` (or equivalent) for all 58 sites; preserve fail-closed envelope shape.
-3. **A3 gate** before merge.
+**Status:** COMPLETE — 16 Class A broad internal error arms sanitized via `_sanitized_tool_error`/`_text`; 2 Class C curated `BackendExecutionError` arms preserved; 38 narrow/confinement arms preserved with `PathConfinementError` stripping absolute path leaks; AST structural ratchet enforced in `tests/unit/test_mcp_error_sanitization.py`.
 
 ---
 

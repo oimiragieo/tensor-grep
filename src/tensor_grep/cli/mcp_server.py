@@ -781,7 +781,13 @@ def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
     print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
 
 
-def _sanitized_tool_error(tool_name: str, exc: BaseException) -> dict[str, Any]:
+def _sanitized_tool_error(
+    tool_name: str,
+    exc: BaseException,
+    *,
+    code: str = "internal_error",
+    retryable: bool = False,
+) -> dict[str, Any]:
     """Build a stable, sanitized error object for an MCP tool JSON response.
 
     Logs the full exception server-side (see `_log_tool_exception`) and
@@ -792,9 +798,9 @@ def _sanitized_tool_error(tool_name: str, exc: BaseException) -> dict[str, Any]:
     """
     _log_tool_exception(tool_name, exc)
     return {
-        "code": "internal_error",
+        "code": code,
         "message": f"{tool_name} failed due to an internal error ({exc.__class__.__name__}).",
-        "retryable": False,
+        "retryable": retryable,
     }
 
 
@@ -849,7 +855,14 @@ def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
     return json.dumps(payload, indent=2)
 
 
-def _meta_confinement_error(tool: str, action: str, exc: ValueError) -> str:
+class PathConfinementError(ValueError):
+    """Raised when a path escapes the allowed MCP root anchor."""
+
+    def __init__(self, label: str):
+        super().__init__(f"{label} must stay within the MCP root (refused)")
+
+
+def _meta_confinement_error(tool: str, action: str, exc: PathConfinementError) -> str:
     payload = _meta_envelope(tool=tool, action=action)
     payload["error"] = {"code": "invalid_input", "message": str(exc)}
     return json.dumps(payload, indent=2)
@@ -1291,18 +1304,34 @@ def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
     its bytes disclosed. Resolve the candidate (relative paths join the anchor), which also
     follows symlinks -- correct for confinement, since a symlink planted inside the anchor
     that points outside it must resolve to its real (outside) target to be caught -- and
-    require the result to be the anchor itself or a descendant; raise ``ValueError``
+    require the result to be the anchor itself or a descendant; raise ``PathConfinementError``
     otherwise (fail closed). Callers MUST forward the resolved ``Path`` this returns, not the
     raw candidate string, so the downstream read/write sees the same anchor-validated
     location this check validated (closes the discard/TOCTOU class).
+
+    SEC-007: the client-facing message is a constant refusal (no absolute paths). The
+    resolved escape target is logged to stderr for server-side debugging only.
     """
-    anchor_resolved = anchor.expanduser().resolve()
-    raw = Path(candidate).expanduser()
-    target = raw if raw.is_absolute() else (anchor_resolved / raw)
-    resolved = target.resolve()
-    if resolved != anchor_resolved and anchor_resolved not in resolved.parents:
-        raise ValueError(f"{label} must stay within {anchor_resolved} (refused: {resolved})")
-    return resolved
+    try:
+        anchor_resolved = anchor.expanduser().resolve()
+        raw = Path(candidate).expanduser()
+        target = raw if raw.is_absolute() else (anchor_resolved / raw)
+        resolved = target.resolve()
+        if resolved != anchor_resolved and anchor_resolved not in resolved.parents:
+            print(
+                f"[tensor-grep-mcp] path confinement refusal: {label} {resolved} escapes {anchor_resolved}",
+                file=sys.stderr,
+            )
+            raise PathConfinementError(label)
+        return resolved
+    except PathConfinementError:
+        raise
+    except Exception as exc:
+        print(
+            f"[tensor-grep-mcp] path confinement resolution failure: {label} {candidate}: {exc}",
+            file=sys.stderr,
+        )
+        raise PathConfinementError(label) from exc
 
 
 def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
@@ -1317,7 +1346,8 @@ def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
     chokepoint to route through -- so this class (an unconfined read-path param forwarded raw
     to a loader/reader = arbitrary-file-read/exfil primitive) can't recur one tool at a time.
     See ``_confine_write_path``'s docstring for the confinement semantics (symlink-following
-    resolve, fail-closed ValueError, callers MUST forward the resolved ``Path`` this returns).
+    resolve, fail-closed PathConfinementError, callers MUST forward the resolved ``Path``
+    this returns).
     """
     return _confine_write_path(candidate, anchor, label=label)
 
@@ -1350,7 +1380,7 @@ def _mcp_root() -> Path:
         return Path.cwd()
     try:
         resolved = Path(raw).expanduser().resolve()
-    except OSError:
+    except Exception:
         print(
             f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved; "
             "falling back to the current working directory.",
@@ -1391,7 +1421,12 @@ def _confine_mcp_path(candidate: str, *, label: str) -> Path:
     confined param in this file now moves uniformly with `TG_MCP_ROOT`. See
     test_round8_residual_cwd_params_move_with_tg_mcp_root for the regression coverage.
     """
-    return _confine_read_path(candidate, _mcp_root(), label=label)
+    try:
+        root = _mcp_root()
+    except Exception as exc:
+        print(f"[tensor-grep-mcp] root resolution failure for {label}: {exc}", file=sys.stderr)
+        raise PathConfinementError(label) from exc
+    return _confine_read_path(candidate, root, label=label)
 
 
 # [SEC] audit #95 Part 2: bound the raw `inline_rules` string BEFORE it ever reaches
@@ -1496,13 +1531,13 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
     # tg_file_imports/tg_classify_logs lacked this).
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="repo-map",
             include_schema_version=False,
         )
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1525,7 +1560,7 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -1535,11 +1570,7 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
             include_schema_version=False,
         )
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_repo_map", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -1572,13 +1603,13 @@ def tg_orient(
     # root before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="orient",
             include_schema_version=False,
         )
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1591,16 +1622,23 @@ def tg_orient(
                 ignore=tuple(ignore or ()),
             )
         )
-    except (FileNotFoundError, ValueError) as exc:
-        # Mirrors the CLI `orient` command's except clause (main.py) -- a bad path or
-        # unresolvable root must return a clean structured error, never a raw traceback.
+    except FileNotFoundError:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="orient",
             include_schema_version=False,
         )
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
+        return json.dumps(payload, indent=2)
+    except ValueError:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="orient",
+            include_schema_version=False,
+        )
+        payload["path"] = str(Path(path).expanduser())
+        payload["error"] = {"code": "invalid_input", "message": "Invalid orient parameter"}
         return json.dumps(payload, indent=2)
     except Exception as exc:  # propagate as structured error, never a raw exception
         payload = _envelope_base(
@@ -1639,13 +1677,13 @@ def tg_doctor(
     # root before any probe -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="Doctor",
             routing_reason="doctor",
             include_schema_version=False,
         )
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1663,13 +1701,14 @@ def tg_doctor(
     if config:
         try:
             config = str(_confine_read_path(config, Path(path), label="config"))
-        except ValueError as exc:
+        except PathConfinementError as exc:
             payload = _envelope_base(
                 routing_backend="Doctor",
                 routing_reason="doctor",
                 include_schema_version=False,
             )
             payload["path"] = path
+            payload["config"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
             return json.dumps(payload, indent=2)
 
@@ -1706,14 +1745,14 @@ def tg_context_pack(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-pack",
             include_schema_version=False,
         )
         payload["query"] = query
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1731,7 +1770,7 @@ def tg_context_pack(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -1742,11 +1781,7 @@ def tg_context_pack(
         )
         payload["query"] = query
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_context_pack", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -1780,14 +1815,14 @@ def tg_edit_plan(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-edit-plan",
             include_schema_version=False,
         )
         payload["query"] = query
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1817,7 +1852,7 @@ def tg_edit_plan(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -1828,11 +1863,7 @@ def tg_edit_plan(
         )
         payload["query"] = query
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_edit_plan", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -1865,14 +1896,14 @@ def tg_context_render(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-render",
             include_schema_version=False,
         )
         payload["query"] = query
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -1907,7 +1938,7 @@ def tg_context_render(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -1918,11 +1949,7 @@ def tg_context_render(
         )
         payload["query"] = query
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_context_render", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -1963,12 +1990,12 @@ def tg_agent_capsule(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _agent_capsule_error(str(exc), code="invalid_input", query=query, path=path)
+    except PathConfinementError as exc:
+        return _agent_capsule_error(str(exc), code="invalid_input", query=query, path="[refused]")
 
     if not Path(path).expanduser().exists():
         return _agent_capsule_error(
-            f"Path not found: {Path(path).expanduser().resolve()}",
+            f"Path not found: {path}",
             code="invalid_input",
             query=query,
             path=path,
@@ -1997,21 +2024,21 @@ def tg_agent_capsule(
         )
     except FileNotFoundError:
         return _agent_capsule_error(
-            f"Path not found: {Path(path).expanduser().resolve()}",
+            f"Path not found: {path}",
             code="invalid_input",
             query=query,
             path=path,
         )
-    except ValueError as exc:
+    except ValueError:
         return _agent_capsule_error(
-            str(exc),
+            "Invalid input parameter for tg_agent_capsule",
             code="invalid_input",
             query=query,
             path=path,
         )
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
         return _agent_capsule_error(
-            str(exc),
+            _sanitized_tool_error("tg_agent_capsule", exc)["message"],
             code="internal_error",
             query=query,
             path=path,
@@ -2050,10 +2077,10 @@ def tg_session_edit_plan(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
@@ -2079,12 +2106,12 @@ def tg_session_edit_plan(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
             query=query,
         )
@@ -2093,7 +2120,7 @@ def tg_session_edit_plan(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
             query=query,
         )
@@ -2102,7 +2129,7 @@ def tg_session_edit_plan(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_edit_plan", exc),
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
             query=query,
         )
@@ -2147,10 +2174,10 @@ def tg_session_context_render(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={"query": query, "render_profile": render_profile},
@@ -2181,12 +2208,12 @@ def tg_session_context_render(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={"query": query, "render_profile": render_profile},
             query=query,
         )
@@ -2195,7 +2222,7 @@ def tg_session_context_render(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={"query": query, "render_profile": render_profile},
             query=query,
         )
@@ -2204,7 +2231,7 @@ def tg_session_context_render(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_context_render", exc),
             detail={"query": query, "render_profile": render_profile},
             query=query,
         )
@@ -2234,10 +2261,10 @@ def tg_session_blast_radius(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
@@ -2260,12 +2287,12 @@ def tg_session_blast_radius(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
@@ -2275,7 +2302,7 @@ def tg_session_blast_radius(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
@@ -2285,7 +2312,7 @@ def tg_session_blast_radius(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_blast_radius", exc),
             detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
@@ -2322,14 +2349,14 @@ def tg_session_file_importers(
     # when session_root != cwd -- see the comment on the file confinement immediately below.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
-            detail={"file": file},
-            file=file,
+            detail={"file": "[refused]"},
+            file="[refused]",
         )
 
     # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
@@ -2343,14 +2370,14 @@ def tg_session_file_importers(
         session_root = session_root.parent
     try:
         file = str(_confine_read_path(file, session_root, label="file"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
             message=str(exc),
-            detail={"file": file},
-            file=file,
+            detail={"file": "[refused]"},
+            file="[refused]",
         )
 
     effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
@@ -2367,21 +2394,21 @@ def tg_session_file_importers(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={"file": file},
             file=file,
         )
-    except FileNotFoundError as exc:
+    except FileNotFoundError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"File not found: {file}",
             detail={"file": file},
             file=file,
         )
@@ -2390,7 +2417,7 @@ def tg_session_file_importers(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_file_importers", exc),
             detail={"file": file},
             file=file,
         )
@@ -2435,10 +2462,10 @@ def tg_session_blast_radius_render(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={
@@ -2471,12 +2498,12 @@ def tg_session_blast_radius_render(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2490,7 +2517,7 @@ def tg_session_blast_radius_render(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2504,7 +2531,7 @@ def tg_session_blast_radius_render(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_blast_radius_render", exc),
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2543,10 +2570,10 @@ def tg_session_blast_radius_plan(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={
@@ -2576,12 +2603,12 @@ def tg_session_blast_radius_plan(
                 indent=2,
             )
         )
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2596,7 +2623,7 @@ def tg_session_blast_radius_plan(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2611,7 +2638,7 @@ def tg_session_blast_radius_plan(
             session_id=session_id,
             path=path,
             code="internal_error",
-            message=str(exc),
+            message=_sanitized_tool_error_text("tg_session_blast_radius_plan", exc),
             detail={
                 "symbol": symbol,
                 "max_depth": max(0, int(max_depth)),
@@ -2669,14 +2696,14 @@ def tg_find(
     # whole-repo walk root from `path`) is ever invoked.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend=_FIND_ROUTING_BACKEND,
             routing_reason=_FIND_ROUTING_REASON,
             include_schema_version=False,
         )
         payload["query"] = query
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -2690,10 +2717,7 @@ def tg_find(
             deadline=deadline,
         )
     except FileNotFoundError as exc:
-        # S2: this branch (like the confinement ValueError branch above) deliberately echoes
-        # str(exc) -- it already resolves to the WITHIN-ROOT path `_execute_find` refused
-        # (mirrors tg_file_importers's FileNotFoundError branch, mcp_server.py). Never widen this
-        # raw echo to the generic Exception branch below.
+        _log_tool_exception("tg_find", exc)
         payload = _envelope_base(
             routing_backend=_FIND_ROUTING_BACKEND,
             routing_reason=_FIND_ROUTING_REASON,
@@ -2701,18 +2725,13 @@ def tg_find(
         )
         payload["query"] = query
         payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
         return json.dumps(payload, indent=2)
     except BackendExecutionError as exc:
         # C1 mirror (main.py's find command boundary): a genuine backend fault (corrupt dense
         # model directory, encode-time crash) propagates out of `_execute_find` by design -- it is
-        # never silently degraded. `BackendExecutionError` messages are curated single-line text
-        # under the Backend Fail-Closed Contract (never a raw traceback), so echoing str(exc) here
-        # mirrors the choice already shipped for tg_search's own `_apply_semantic_rerank`
-        # BackendExecutionError branch below (code "semantic_backend_error"); this one gets its
-        # own distinguishable code matching the CLI's own --json error code (main.py's
-        # `find_backend_error`) so an agent caller can tell "the backend broke" apart from an
-        # ordinary internal_error.
+        # never silently degraded. SEC-007 sanitization strips raw model paths and third-party
+        # messages on the wire while preserving the distinct code and logging full trace to stderr.
         payload = _envelope_base(
             routing_backend=_FIND_ROUTING_BACKEND,
             routing_reason=_FIND_ROUTING_REASON,
@@ -2720,11 +2739,11 @@ def tg_find(
         )
         payload["query"] = query
         payload["path"] = path
-        payload["error"] = {
-            "code": "find_backend_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error(
+            "tg_find",
+            exc,
+            code="find_backend_error",
+        )
         return json.dumps(payload, indent=2)
     except Exception as exc:  # S2: propagate as a structured, SANITIZED error -- never raw
         payload = _envelope_base(
@@ -2826,11 +2845,11 @@ def tg_search(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         if structured_json:
             payload = {
                 "pattern": search_pattern,
-                "path": path,
+                "path": "[refused]",
                 "total_matches": 0,
                 "total_files": 0,
                 "rendered_match_count": 0,
@@ -3013,17 +3032,21 @@ def tg_search(
                         error_payload = {
                             "pattern": search_pattern,
                             "path": path,
-                            "error": {
-                                "code": "semantic_backend_error",
-                                "message": str(exc),
-                                "retryable": False,
-                            },
+                            "error": _sanitized_tool_error(
+                                "tg_search",
+                                exc,
+                                code="semantic_backend_error",
+                            ),
                         }
                         # M14: error envelope crossed the wire un-stamped.
                         return _self._inject_mcp_contract_fields(
                             json.dumps(error_payload, indent=2)
                         )
-                    return f"Search failed: semantic backend error: {exc}"
+                    _log_tool_exception("tg_search", exc)
+                    return (
+                        f"Search failed: semantic backend error ({exc.__class__.__name__}). "
+                        "See server logs for detail."
+                    )
             else:
                 # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
                 # availability even on a 0-match search so rank_fallback_reason is set whenever
@@ -3238,7 +3261,7 @@ def tg_ast_search(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         if structured_json:
             # M14: confinement-refusal envelope crossed the wire un-stamped.
             return _self._inject_mcp_contract_fields(
@@ -3246,7 +3269,7 @@ def tg_ast_search(
                     {
                         "pattern": pattern,
                         "lang": lang,
-                        "path": path,
+                        "path": "[refused]",
                         "error": {"code": "invalid_input", "message": str(exc)},
                     },
                     indent=2,
@@ -3260,6 +3283,7 @@ def tg_ast_search(
         pipeline = _self.Pipeline(config=config)
         backend = pipeline.get_backend()
     except ConfigurationError as exc:
+        _log_tool_exception("tg_ast_search", exc)
         # Fail closed with a STRUCTURED "unavailable" error instead of letting the
         # ConfigurationError escape as an unwrapped FastMCP ToolError (Backend Fail-Closed
         # Contract). `Pipeline(ast=True)` construction itself raises when the ast-grep /
@@ -3276,13 +3300,13 @@ def tg_ast_search(
                         "path": path,
                         "error": {
                             "code": "unavailable",
-                            "message": f"AstBackend is not available on this system: {exc}",
+                            "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
                         },
                     },
                     indent=2,
                 )
             )
-        return f"Error: AstBackend is not available on this system: {exc}"
+        return "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
 
     backend_name = type(backend).__name__
     if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
@@ -3575,13 +3599,13 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     # downstream read below sees the same anchor-validated location this check validated.
     try:
         file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         if structured_json:
             # M14: confinement-refusal envelope crossed the wire un-stamped.
             return _self._inject_mcp_contract_fields(
                 json.dumps(
                     {
-                        "file_path": file_path,
+                        "file_path": "[refused]",
                         "error": {"code": "invalid_input", "message": str(exc)},
                     },
                     indent=2,
@@ -3732,15 +3756,17 @@ def tg_session_open(
     # returned verbatim by tg_session_show/tg_session_context/etc.).
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+    except PathConfinementError as exc:
+        return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
     from tensor_grep.cli.session_store import get_session, open_session
 
     try:
         result = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+        return _session_exception_payload(
+            path=path, message=_sanitized_tool_error_text("open_session", exc), detail={}
+        )
 
     degraded: dict[str, object]  # M13: tracked_file_count counts source + TEST files
     try:
@@ -3776,15 +3802,17 @@ def tg_session_list(path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+    except PathConfinementError as exc:
+        return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
     from tensor_grep.cli.session_store import list_sessions
 
     try:
         sessions = [record.__dict__ for record in list_sessions(path)]
     except Exception as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+        return _session_exception_payload(
+            path=path, message=_sanitized_tool_error_text("list_sessions", exc), detail={}
+        )
 
     return json.dumps(
         {
@@ -3809,10 +3837,10 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_exception_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             message=str(exc),
             detail={},
         )
@@ -3825,7 +3853,7 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
         return _session_exception_payload(
             session_id=session_id,
             path=path,
-            message=str(exc),
+            message=_sanitized_tool_error_text("get_session", exc),
             detail={},
         )
 
@@ -3845,10 +3873,10 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_exception_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             message=str(exc),
             detail={},
         )
@@ -3861,7 +3889,7 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
         return _session_exception_payload(
             session_id=session_id,
             path=path,
-            message=str(exc),
+            message=_sanitized_tool_error_text("refresh_session", exc),
             detail={},
         )
 
@@ -3891,10 +3919,10 @@ def tg_session_context(
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _session_error_payload(
             session_id=session_id,
-            path=path,
+            path="[refused]",
             code="invalid_input",
             message=str(exc),
             detail={"query": query},
@@ -3915,12 +3943,12 @@ def tg_session_context(
         # here (imported from repo_map.py, not reimplemented) since `session_store.py` is out
         # of scope for this fix.
         payload = _apply_context_token_budget(payload, max_tokens)
-    except SessionStaleError as exc:
+    except SessionStaleError:
         return _session_error_payload(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=str(exc),
+            message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
             detail={"query": query},
             query=query,
         )
@@ -3929,7 +3957,7 @@ def tg_session_context(
             session_id=session_id,
             path=path,
             code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
+            message=f"Path not found: {path}",
             detail={"query": query},
             query=query,
         )
@@ -3937,7 +3965,7 @@ def tg_session_context(
         return _session_exception_payload(
             session_id=session_id,
             path=path,
-            message=str(exc),
+            message=_sanitized_tool_error_text("session_context", exc),
             detail={"query": query},
             query=query,
         )
@@ -4019,7 +4047,7 @@ def tg_navigate(
         path = str(_confine_mcp_path(path, label="path"))
         if file is not None:
             file = str(_confine_mcp_path(file, label="file"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_navigate", action, exc)
 
     try:
@@ -4125,7 +4153,7 @@ def tg_impact(
     """
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_impact", action, exc)
 
     if symbol is None:
@@ -4346,7 +4374,7 @@ def tg_query(
     """
     try:
         confined_path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_query", action, exc)
 
     confined_roots: list[str] | None = None
@@ -4362,7 +4390,7 @@ def tg_query(
             confined_roots = [
                 str(_confine_mcp_path(root, label="workspace_roots")) for root in workspace_roots
             ]
-        except ValueError as exc:
+        except PathConfinementError as exc:
             return _meta_confinement_error("tg_query", action, exc)
 
     try:
@@ -4527,7 +4555,7 @@ def tg_context(
     """
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_context", action, exc)
 
     if query is None:
@@ -4626,7 +4654,7 @@ def tg_explore(
         path = str(_confine_mcp_path(path, label="path"))
         if config:
             config = str(_confine_read_path(config, Path(path), label="config"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_explore", action, exc)
 
     try:
@@ -4735,7 +4763,7 @@ def tg_session(
         path = str(_confine_mcp_path(path, label="path"))
         if file is not None:
             file = str(_confine_mcp_path(file, label="file"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_session", action, exc)
 
     if action in _TG_SESSION_ACTIONS_NEEDING_ID and session_id is None:
@@ -4900,7 +4928,7 @@ def tg_scan(
     """
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_scan", action, exc)
 
     try:
@@ -4988,7 +5016,7 @@ def tg_audit(
             output_path = str(_confine_mcp_path(output_path, label="output_path"))
         if bundle_path is not None:
             bundle_path = str(_confine_mcp_path(bundle_path, label="bundle_path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_audit", action, exc)
 
     try:
@@ -5057,7 +5085,7 @@ def tg_checkpoint(
     """
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_checkpoint", action, exc)
 
     try:
@@ -5127,7 +5155,7 @@ def tg_rewrite(
     """
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _meta_confinement_error("tg_rewrite", action, exc)
 
     if pattern is None or replacement is None or lang is None:
