@@ -1607,50 +1607,72 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         }
 
         for h in broad_handlers:
-            # 1. Must call _log_tool_exception
-            has_log = any(
-                isinstance(c, ast.Call)
-                and isinstance(c.func, ast.Name)
-                and c.func.id == "_log_tool_exception"
-                for c in ast.walk(h)
+            # 1. Must directly call _log_tool_exception at top level of handler body
+            has_direct_log = any(
+                isinstance(s, ast.Expr)
+                and isinstance(s.value, ast.Call)
+                and isinstance(s.value.func, ast.Name)
+                and s.value.func.id == "_log_tool_exception"
+                for s in h.body
             )
-            if not has_log:
+            if not has_direct_log:
                 return False
 
-            # 2. Must have a return statement
-            returns = [r for r in ast.walk(h) if isinstance(r, ast.Return)]
-            if not returns:
+            # 2. Must end with a terminal return statement
+            if not (h.body and isinstance(h.body[-1], ast.Return)):
                 return False
 
-            # 3. Taint check: the bound exception variable must NOT be returned directly,
-            # nor passed into arbitrary calls/sinks outside approved sanitization sinks.
-            name = h.name
-            if name:
-                for parent in ast.walk(h):
-                    for child in ast.iter_child_nodes(parent):
-                        child.parent = parent
-                for sub in ast.walk(h):
-                    if (
-                        isinstance(sub, ast.Name)
-                        and sub.id == name
-                        and isinstance(sub.ctx, ast.Load)
+            # 3. Taint analysis: track the bound exception and any derived variables
+            tainted = set()
+            if h.name:
+                tainted.add(h.name)
+
+            # Propagate taint through assignments
+            for stmt in h.body:
+                if isinstance(stmt, ast.Assign):
+                    rhs_tainted = any(
+                        isinstance(n, ast.Name) and n.id in tainted for n in ast.walk(stmt.value)
+                    )
+                    if rhs_tainted:
+                        for target in stmt.targets:
+                            if isinstance(target, ast.Name):
+                                tainted.add(target.id)
+                elif isinstance(stmt, ast.AnnAssign) and stmt.value:
+                    if any(
+                        isinstance(n, ast.Name) and n.id in tainted for n in ast.walk(stmt.value)
                     ):
-                        p = getattr(sub, "parent", None)
-                        # Direct return of exc (e.g. return exc)
-                        if isinstance(p, ast.Return):
+                        if isinstance(stmt.target, ast.Name):
+                            tainted.add(stmt.target.id)
+
+            # Walk all nodes and ensure tainted variables are only used in approved contexts
+            for parent in ast.walk(h):
+                for child in ast.iter_child_nodes(parent):
+                    child.parent = parent
+
+            for sub in ast.walk(h):
+                if (
+                    isinstance(sub, ast.Name)
+                    and sub.id in tainted
+                    and isinstance(sub.ctx, ast.Load)
+                ):
+                    p = getattr(sub, "parent", None)
+                    # Direct return of exc or alias (e.g. return exc / return leaked)
+                    if isinstance(p, ast.Return):
+                        return False
+                    # Safe attribute access: only exc.__class__.__name__
+                    if isinstance(p, ast.Attribute):
+                        if p.attr != "__class__":
                             return False
-                        # Safe attribute access: exc.__class__.__name__
-                        if isinstance(p, ast.Attribute) and p.attr == "__class__":
+                        continue
+                    # Approved call sink
+                    if isinstance(p, ast.Call):
+                        func_name = getattr(p.func, "id", None) or getattr(p.func, "attr", None)
+                        if func_name in allowed_sinks:
                             continue
-                        # Approved call sink
-                        if isinstance(p, ast.Call):
-                            func_name = getattr(p.func, "id", None) or getattr(p.func, "attr", None)
-                            if func_name in allowed_sinks:
-                                continue
-                            return False
-                        # Passed into dict, tuple, list, etc. (e.g. {"error": exc})
-                        if isinstance(p, (ast.Dict, ast.List, ast.Tuple, ast.Set, ast.keyword)):
-                            return False
+                        return False
+                    # Passed into dict, tuple, list, etc. (e.g. {"error": exc})
+                    if isinstance(p, (ast.Dict, ast.List, ast.Tuple, ast.Set, ast.keyword)):
+                        return False
 
         return True
 
@@ -1734,6 +1756,42 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     ).body[0]
     assert isinstance(t8, ast.FunctionDef)
     assert not _check_encompassing_boundary(t8), "Mutation control: json.dumps error dict must fail"
+
+    # 9. Mutation control: taint propagated via alias assignment and return
+    t9 = ast.parse(
+        "@mcp.tool()\ndef t9():\n    try:\n        return 'ok'\n    except Exception as exc:\n        _log_tool_exception('t9', exc)\n        leaked = exc\n        return leaked\n"
+    ).body[0]
+    assert isinstance(t9, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t9), (
+        "Mutation control: taint propagated alias return must fail"
+    )
+
+    # 10. Mutation control: arbitrary attribute access on exc (exc.__dict__)
+    t10 = ast.parse(
+        "@mcp.tool()\ndef t10():\n    try:\n        return 'ok'\n    except Exception as exc:\n        _log_tool_exception('t10', exc)\n        return str(exc.__dict__)\n"
+    ).body[0]
+    assert isinstance(t10, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t10), (
+        "Mutation control: arbitrary attribute access on exc must fail"
+    )
+
+    # 11. Mutation control: unreachable logging inside if False
+    t11 = ast.parse(
+        "@mcp.tool()\ndef t11():\n    try:\n        return 'ok'\n    except Exception as exc:\n        if False:\n            _log_tool_exception('t11', exc)\n        return 'error'\n"
+    ).body[0]
+    assert isinstance(t11, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t11), (
+        "Mutation control: unreachable logging in handler must fail"
+    )
+
+    # 12. Mutation control: handler missing terminal return
+    t12 = ast.parse(
+        "@mcp.tool()\ndef t12():\n    try:\n        return 'ok'\n    except Exception as exc:\n        _log_tool_exception('t12', exc)\n        return 'error'\n        print('unreachable')\n"
+    ).body[0]
+    assert isinstance(t12, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t12), (
+        "Mutation control: non-terminal return in handler must fail"
+    )
 
 
 def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):

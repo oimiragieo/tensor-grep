@@ -1,63 +1,45 @@
-# FIX-FIRST
+# SEC-007 Round 11 — FIX-FIRST
 
-Audited `f108cb3` against `c7a515d`. One blocking finding remains.
+Audited `f0af1253a31906c02e80d3c4d3846cdb5fff0efc` against `c7a515d794ff84d677f9426222828a0fbad5096a`. Read-only audit; no files changed.
 
-## [HIGH] MCP rewrite engine bypasses the three-module sanitization ratchet
+## Findings
 
-The claimed 52-site closed world excludes [`mcp_rewrite_tools.py`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1), even though it produces responses forwarded directly by registered MCP tools at [`mcp_audit_tools.py:518`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_audit_tools.py:518).
+- [MEDIUM] The “taint-aware” boundary ratchet remains bypassable. At [test_mcp_error_sanitization.py:1625](</C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1625>), only the immediate parent of each `exc` load is examined. Assignments and most attribute accesses fall through without rejection. At [test_mcp_error_sanitization.py:1610](</C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1610>), any syntactic logging call satisfies the gate, including unreachable calls.
 
-Multiple paths still serialize raw exception text:
+  Reproduced in memory with these mutations:
 
-- Embedded rewrite exceptions: [`mcp_rewrite_tools.py:558`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:558) and [`mcp_rewrite_tools.py:578`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:578)
-- Rewrite subprocess failures: [`mcp_rewrite_tools.py:508`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:508)
-- Diff subprocess failures: [`mcp_rewrite_tools.py:1027`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1027)
-- Index-search subprocess failures: [`mcp_rewrite_tools.py:1066`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1066)
+  ```python
+  leaked = exc
+  return leaked
 
-The ratchets explicitly inspect only three files at [`test_mcp_error_sanitization.py:242`](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:242) and [`test_mcp_error_sanitization.py:392`](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:392).
+  return exc.__dict__
 
-Direct FastMCP repros:
+  if False:
+      _log_tool_exception("tool", exc)
+  return "safe"
+  ```
 
-```text
-tg_rewrite_plan + poisoned embedded RuntimeError:
-TOKEN_IN_TEXT True
-TOKEN_IN_DATA True
-ERROR_MESSAGE SEC007_REWRITE_SECRET at C:\private\native_model.bin
+  The first mutation produced `FALSE-GREEN` from all four relevant AST ratchets, including `test_all_mcp_registered_tools_have_outer_fail_closed_boundary`. Direct probes of `_check_encompassing_boundary` returned `True` for all three bypass classes.
 
-tg_rewrite_diff + poisoned OSError:
-TOKEN_IN_TEXT True
-TOKEN_IN_DATA True
-ERROR_MESSAGE Failed to execute rewrite diff command:
-              SEC007_SUBPROCESS_SECRET at C:\private\runner.exe
-```
+  Minimal fix: propagate taint through assignments, containers, attributes, formatting, and calls; require `_log_tool_exception` as an unconditional direct handler statement; require a direct terminal return whose exception-derived values reach only explicitly approved sanitizers. Add mutation controls for alias-return, arbitrary attributes, and unreachable/nested logging.
 
-Thus secrets and internal paths reach both FastMCP text content and structured result data.
+- [MEDIUM] The handler ceiling is synchronized, but the claimed audited disposition population is not. [test_silent_failure_hardening.py:162](</C:/dev/projects/tensor-grep/tests/unit/test_silent_failure_hardening.py:162>) raises the ceiling with an aggregate classification, while the file says the complete per-handler table lives in [2026-08-20-handler-dispositions.json](</C:/dev/projects/tensor-grep/docs/audits/2026-08-20-handler-dispositions.json:1>). That ledger is unchanged and contains only the original MCP population:
 
-Minimal fix:
+  - Ledger: `35 + 10 + 8 + 4 = 57`
+  - Current source: `74 + 20 + 27 + 10 = 131`
+  - Missing dispositions: exactly `74`
 
-- Include `mcp_rewrite_tools.py` in the broad, narrow, and closed-world ratchets.
-- Log raw exception/subprocess diagnostics server-side and return stable messages containing at most the safe exception class and curated error code.
-- Treat native stderr as untrusted diagnostic material; classify it internally rather than returning it verbatim.
-- Add direct `mcp.call_tool` poison tests for `tg_rewrite_plan` and `tg_rewrite_diff`, asserting absence from both `content` and structured data.
-- Recalculate the documented population and receipts.
+  Minimal fix: add the 74 current handlers to the canonical disposition ledger with enclosing-function/site evidence, then ratchet ledger/source set equality—not only `total <= 340`.
 
-## Round 6 verification
+## Verified clean
 
-The requested Round 6 corrections themselves are effective:
+- `_log_tool_exception` is non-throwing around traceback formatting and stderr output at [mcp_server.py:769](</C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:769>).
+- Broken-stderr FastMCP regression passed.
+- Exact census verified: repository `266 → 340`; module deltas `+39/+10/+19/+6`.
+- Exactly 58 registered tools remain; all current outer handlers have direct logging and terminal returns.
+- 54 `str(exc)` sites remain; current allowed confinement behavior passed.
+- `96 passed in 25.55s`; collection counts independently confirmed as 39 and 94.
+- Ruff check and format check passed; mypy passed for 123 source files.
+- Worktree remained clean.
 
-- `tracked_file_count_error` is sanitized; poison was absent from both FastMCP outputs and present in stderr.
-- All 22 newly changed narrow handlers are bound and logged. The current module contains 23 relevant handlers total, including the pre-existing logged `tg_find` handler.
-- Per-case stderr assertions execute independently.
-- The 52-site count is accurate for the three selected files—but is not a closed-world count of the complete MCP wire-producing surface.
-
-Verification completed:
-
-- Dedicated sanitization suite: **24 passed**
-- Sanitization + fail-closed suites: **79 passed**
-- Path-confinement suite: **175 passed**
-- Ruff check and format: passed
-- Mypy on all three changed production modules: passed
-- `git diff --check`: passed
-
-No files were modified. Audit followed the [codebase-audit skill](/C:/Users/oimir/.codex/skills/codebase-audit/SKILL.md).
-
-**Final verdict: FIX-FIRST**
+Final verdict: **FIX-FIRST**. Round 10 finding 1 is resolved; finding 2 is only partially resolved; finding 3 remains unresolved.
