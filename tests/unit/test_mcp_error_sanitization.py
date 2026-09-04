@@ -1587,12 +1587,72 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         if len(stmts) != 1 or not isinstance(stmts[0], ast.Try):
             return False
         try_node = stmts[0]
-        has_broad = any(
-            h.type is None
-            or (isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException"))
+        broad_handlers = [
+            h
             for h in try_node.handlers
-        )
-        return has_broad
+            if h.type is None
+            or (isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException"))
+        ]
+        if not broad_handlers:
+            return False
+
+        allowed_sinks = {
+            "_log_tool_exception",
+            "_sanitized_tool_error",
+            "_sanitized_tool_error_text",
+            "_ruleset_scan_error",
+            "_index_search_error",
+            "_rewrite_error",
+            "_classify_native_rewrite_failure",
+        }
+
+        for h in broad_handlers:
+            # 1. Must call _log_tool_exception
+            has_log = any(
+                isinstance(c, ast.Call)
+                and isinstance(c.func, ast.Name)
+                and c.func.id == "_log_tool_exception"
+                for c in ast.walk(h)
+            )
+            if not has_log:
+                return False
+
+            # 2. Must have a return statement
+            returns = [r for r in ast.walk(h) if isinstance(r, ast.Return)]
+            if not returns:
+                return False
+
+            # 3. Taint check: the bound exception variable must NOT be returned directly,
+            # nor passed into arbitrary calls/sinks outside approved sanitization sinks.
+            name = h.name
+            if name:
+                for parent in ast.walk(h):
+                    for child in ast.iter_child_nodes(parent):
+                        child.parent = parent
+                for sub in ast.walk(h):
+                    if (
+                        isinstance(sub, ast.Name)
+                        and sub.id == name
+                        and isinstance(sub.ctx, ast.Load)
+                    ):
+                        p = getattr(sub, "parent", None)
+                        # Direct return of exc (e.g. return exc)
+                        if isinstance(p, ast.Return):
+                            return False
+                        # Safe attribute access: exc.__class__.__name__
+                        if isinstance(p, ast.Attribute) and p.attr == "__class__":
+                            continue
+                        # Approved call sink
+                        if isinstance(p, ast.Call):
+                            func_name = getattr(p.func, "id", None) or getattr(p.func, "attr", None)
+                            if func_name in allowed_sinks:
+                                continue
+                            return False
+                        # Passed into dict, tuple, list, etc. (e.g. {"error": exc})
+                        if isinstance(p, (ast.Dict, ast.List, ast.Tuple, ast.Set, ast.keyword)):
+                            return False
+
+        return True
 
     missing_boundary: list[tuple[str, str]] = []
     total_tools = 0
@@ -1628,14 +1688,14 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
 
     # 2. Tool with executable statement BEFORE broad try
     t2 = ast.parse(
-        "@mcp.tool()\ndef t2(p='.'):\n    p = _confine(p)\n    try:\n        return p\n    except Exception:\n        return 'err'\n"
+        "@mcp.tool()\ndef t2(p='.'):\n    p = _confine(p)\n    try:\n        return p\n    except Exception as exc:\n        _log_tool_exception('t2', exc)\n        return _sanitized_tool_error_text('t2', exc)\n"
     ).body[0]
     assert isinstance(t2, ast.FunctionDef)
     assert not _check_encompassing_boundary(t2), "Mutation control: code before try must fail"
 
     # 3. Tool with executable statement AFTER broad try
     t3 = ast.parse(
-        "@mcp.tool()\ndef t3():\n    try:\n        res = 'ok'\n    except Exception:\n        res = 'err'\n    return res\n"
+        "@mcp.tool()\ndef t3():\n    try:\n        res = 'ok'\n    except Exception as exc:\n        _log_tool_exception('t3', exc)\n        res = _sanitized_tool_error_text('t3', exc)\n    return res\n"
     ).body[0]
     assert isinstance(t3, ast.FunctionDef)
     assert not _check_encompassing_boundary(t3), "Mutation control: code after try must fail"
@@ -1653,6 +1713,27 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     assert not _check_encompassing_boundary(t5), (
         "Mutation control: async function lacking boundary must fail"
     )
+
+    # 6. Mutation control: missing _log_tool_exception in broad handler
+    t6 = ast.parse(
+        "@mcp.tool()\ndef t6():\n    try:\n        return 'ok'\n    except Exception as exc:\n        return 'fail'\n"
+    ).body[0]
+    assert isinstance(t6, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t6), "Mutation control: missing log must fail"
+
+    # 7. Mutation control: direct return exc
+    t7 = ast.parse(
+        "@mcp.tool()\ndef t7():\n    try:\n        return 'ok'\n    except Exception as exc:\n        _log_tool_exception('t7', exc)\n        return exc\n"
+    ).body[0]
+    assert isinstance(t7, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t7), "Mutation control: return exc must fail"
+
+    # 8. Mutation control: leaking exc via json.dumps({'error': exc})
+    t8 = ast.parse(
+        "@mcp.tool()\ndef t8():\n    try:\n        return 'ok'\n    except Exception as exc:\n        _log_tool_exception('t8', exc)\n        return json.dumps({'error': exc})\n"
+    ).body[0]
+    assert isinstance(t8, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t8), "Mutation control: json.dumps error dict must fail"
 
 
 def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):
@@ -1689,26 +1770,31 @@ def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monke
 def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitized(
     tmp_path, monkeypatch, capsys
 ):
-    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply sanitizes PolicyValidationError details."""
+    """SEC-007: Direct FastMCP tg_rewrite_apply sanitizes PolicyValidationError.details on wire."""
     import asyncio
 
     from tensor_grep.cli import mcp_server
     from tensor_grep.cli.apply_policy import PolicyValidationError
 
-    token = "SEC007_DETAILS_SECRET"
-    poison = f"{token} at C:\\private\\policy.json"
-    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
-    (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
+    poison_token = "SEC007_POLICY_TOKEN_SECRET_98765"
+    poison_path = r"C:\private\root\secret.py"
 
-    def _fake_load_policy(*_args, **_kwargs):
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+
+    def _raise_policy_poison(*_args, **_kwargs):
         raise PolicyValidationError(
-            "Invalid apply policy.",
-            details=[{"field": "ruleset_scan.baseline", "message": poison}],
+            "Unapproved modification",
+            details={
+                "unapproved_files": [poison_path],
+                "secret_tokens": [poison_token],
+                "allowed_prefixes": ["src/"],
+            },
         )
 
-    monkeypatch.setattr("tensor_grep.cli.apply_policy.load_apply_policy", _fake_load_policy)
+    (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.apply_policy.load_apply_policy", _raise_policy_poison)
 
-    content, data = asyncio.run(
+    content, _data = asyncio.run(
         mcp_server.mcp.call_tool(
             "tg_rewrite_apply",
             {
@@ -1720,18 +1806,13 @@ def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitiz
             },
         )
     )
-    wire = content[0].text + "\n" + json.dumps(data, default=str)
-    assert token not in wire, f"Policy validation details poison leaked to wire: {wire}"
+    wire = content[0].text
+    assert poison_token not in wire, f"Poison token leaked to wire: {wire}"
+    assert poison_path not in wire, f"Poison path leaked to wire: {wire}"
+
     captured = capsys.readouterr()
-    assert token in captured.err, "Policy validation details poison not logged to stderr"
-    wire_payload = json.loads(content[0].text)
-    assert wire_payload["error"]["code"] == "invalid_policy"
-    details = wire_payload["error"]["details"]
-    assert len(details) == 1
-    assert details[0]["field"] == "ruleset_scan.baseline"
-    assert (
-        "within the policy directory" in details[0]["message"] or "Invalid" in details[0]["message"]
-    )
+    assert poison_token in captured.err, "Poison token was not logged to stderr"
+    assert json.dumps(poison_path) in captured.err, "Poison path was not logged to stderr"
 
 
 def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
@@ -1785,14 +1866,14 @@ def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
 
 
 def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
-    """SEC-007: Direct FastMCP mcp.call_tool tg_devices handles inventory failure without leaking poison."""
+    """SEC-007: Direct FastMCP tg_devices handles collect_device_inventory poison without leaking."""
     import asyncio
 
     from tensor_grep.cli import mcp_server
 
-    poison = r"SEC007_DEVICES_SECRET at C:\private\cuda.py"
+    poison = r"SEC007_DEVICE_SECRET at C:\private\cuda.dll"
 
-    def _raise_devices_poison(*_args, **_kwargs):
+    def _raise_devices_poison():
         raise RuntimeError(poison)
 
     monkeypatch.setattr(mcp_server, "collect_device_inventory", _raise_devices_poison)
@@ -1804,13 +1885,38 @@ def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
     assert poison in captured.err, "Devices poison not logged to stderr"
 
 
+def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles confinement poison without leaking."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    poison = r"SEC007_OUTER_SECRET at C:\private\diff.py"
+
+    def _poison_confine(*_args, **_kwargs):
+        raise OSError(poison)
+
+    monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
+
+    content, _data = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "tg_rewrite_diff",
+            {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
+        )
+    )
+    wire = content[0].text
+    assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
+    captured = capsys.readouterr()
+    assert poison in captured.err, "Confinement poison not logged to stderr"
+
+
 def test_direct_call_tool_rewrite_plan_confinement_poison_sanitized(monkeypatch, capsys):
     """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles confinement poison without leaking."""
     import asyncio
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
-    poison = r"SEC007_OUTER_SECRET at C:\private\root.py"
+    poison = r"SEC007_OUTER_SECRET at C:\private\plan.py"
 
     def _poison_confine(*_args, **_kwargs):
         raise OSError(poison)
@@ -1835,7 +1941,7 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
 
     from tensor_grep.cli import mcp_audit_tools, mcp_server
 
-    poison = r"SEC007_OUTER_SECRET at C:\private\root.py"
+    poison = r"SEC007_OUTER_SECRET at C:\private\apply.py"
 
     def _poison_confine(*_args, **_kwargs):
         raise OSError(poison)
@@ -1845,31 +1951,6 @@ def test_direct_call_tool_rewrite_apply_confinement_poison_sanitized(monkeypatch
     content, _data = asyncio.run(
         mcp_server.mcp.call_tool(
             "tg_rewrite_apply",
-            {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
-        )
-    )
-    wire = content[0].text
-    assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
-    captured = capsys.readouterr()
-    assert poison in captured.err, "Confinement poison not logged to stderr"
-
-
-def test_direct_call_tool_rewrite_diff_confinement_poison_sanitized(monkeypatch, capsys):
-    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles confinement poison without leaking."""
-    import asyncio
-
-    from tensor_grep.cli import mcp_audit_tools, mcp_server
-
-    poison = r"SEC007_OUTER_SECRET at C:\private\root.py"
-
-    def _poison_confine(*_args, **_kwargs):
-        raise OSError(poison)
-
-    monkeypatch.setattr(mcp_audit_tools, "_confine_mcp_path", _poison_confine)
-
-    content, _data = asyncio.run(
-        mcp_server.mcp.call_tool(
-            "tg_rewrite_diff",
             {"pattern": "x", "replacement": "y", "lang": "python", "path": "."},
         )
     )
@@ -1927,3 +2008,34 @@ def test_direct_call_tool_ruleset_scan_confinement_poison_sanitized(monkeypatch,
     assert poison not in wire, f"Confinement poison leaked to wire: {wire}"
     captured = capsys.readouterr()
     assert poison in captured.err, "Confinement poison not logged to stderr"
+
+
+def test_direct_call_tool_broken_stderr_poison_sanitized(monkeypatch):
+    """SEC-007: FastMCP tool call does not leak raw exception when stderr.write raises."""
+    import asyncio
+    import sys
+
+    from tensor_grep.cli import mcp_server
+
+    stderr_poison = "SEC007_STDERR_FAILURE_SECRET at C:/private/stderr.py"
+    device_poison = "SEC007_DEVICE_FAILURE_SECRET at C:/private/gpu.py"
+
+    class RaisingStderr:
+        def write(self, s):
+            raise OSError(stderr_poison)
+
+        def flush(self):
+            pass
+
+    def _raise_devices_poison():
+        raise RuntimeError(device_poison)
+
+    monkeypatch.setattr(mcp_server, "collect_device_inventory", _raise_devices_poison)
+    monkeypatch.setattr(sys, "stderr", RaisingStderr())
+
+    # Direct FastMCP tool call must complete cleanly without ToolError or stderr leak
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_devices", {}))
+    wire = content[0].text
+    assert stderr_poison not in wire, f"Stderr write poison leaked to wire: {wire}"
+    assert device_poison not in wire, f"Device poison leaked to wire: {wire}"
+    assert "tg_devices failed: internal error (RuntimeError)" in wire

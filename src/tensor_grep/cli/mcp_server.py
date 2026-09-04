@@ -774,11 +774,16 @@ def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
     paths, internal module structure, or a full stack trace and must never
     be shipped there. The full detail is written to stderr instead, which
     carries server-side diagnostics, not the MCP JSON-RPC channel.
+    Strictly non-throwing: even if stderr write/flush raises, this must
+    never raise and allow exceptions to escape to the MCP transport.
     """
-    import traceback
+    try:
+        import traceback
 
-    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
+        detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
+    except BaseException:
+        pass
 
 
 def _sanitized_tool_error(

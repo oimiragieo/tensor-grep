@@ -1,48 +1,45 @@
-# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 10
+# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 11
 
 You are the Codex Sol security auditor. Perform a rigorous, adversarial security audit of the changes in branch `fix/sec-007-mcp-sanitize` against base `c7a515d`.
 
-## Target Contracts & Round 9 Finding Resolutions:
+## Target Contracts & Round 10 Finding Resolutions:
 
-1. **Whole-Body Encompassing Outer Error Boundaries (Resolving Round 9 High Finding)**:
-   - Round 9 identified that the outer error boundary ratchet allowed broad `try/except` anywhere inside tool functions, which permitted executable code before the `try` block (e.g. `_confine_mcp_path`) in 5 audit tools (`tg_rewrite_plan`, `tg_rewrite_apply`, `tg_rewrite_diff`, `tg_index_search`, `tg_ruleset_scan`), letting exceptions escape to `ToolError` as raw strings.
-   - In Round 10, **all 58 registered MCP tools across all modules** have been verified and wrapped in single encompassing `try/except Exception as exc:` blocks encompassing their entire post-docstring body:
-     - `src/tensor_grep/cli/mcp_server.py` (34 tools)
-     - `src/tensor_grep/cli/mcp_audit_tools.py` (14 tools)
-     - `src/tensor_grep/cli/mcp_symbol_tools.py` (10 tools)
-   - Every single registered tool handles broad exceptions cleanly, logs via `_log_tool_exception` to server stderr, and returns structured sanitized JSON error diagnostics (`_sanitized_tool_error` / `_sanitized_tool_error_text`).
+1. **Non-Throwing Server-Side Exception Logging (Resolving Round 10 Finding 1 - HIGH)**:
+   - `_log_tool_exception` in `src/tensor_grep/cli/mcp_server.py` is now strictly non-throwing: wraps traceback formatting and `print(..., file=sys.stderr)` in `try ... except BaseException: pass`.
+   - Even if `sys.stderr.write` or `sys.stderr.flush` raises (e.g. broken pipe or custom erroring stream), `_log_tool_exception` will never throw or let exceptions escape to the FastMCP transport layer.
+   - Verified via direct FastMCP test: `test_direct_call_tool_broken_stderr_poison_sanitized` where `sys.stderr` raises `OSError(SEC007_STDERR_FAILURE_SECRET)` simultaneously with tool failure; FastMCP tool call completes cleanly with zero wire leak.
 
-2. **AST Ratchet Hardening & Mutation Controls**:
-   - In `tests/unit/test_mcp_error_sanitization.py`:
-     - Hardened `test_all_mcp_registered_tools_have_outer_fail_closed_boundary` with `_check_encompassing_boundary(node)` requiring:
-       - Exactly 1 top-level statement after any docstring (`len(remaining_stmts) == 1`).
-       - That statement must be an `ast.Try`.
-       - That `ast.Try` must catch broad `Exception` or `BaseException` and log to stderr.
-     - Mutation controls verify detection of:
-       - No try block at all.
-       - Code preceding the try block.
-       - Code following the try block.
-       - Narrow handler without broad fallback.
-       - Async tool without encompassing boundary.
-     - Added 5 new direct FastMCP confinement poison tests targeting `tg_rewrite_plan`, `tg_rewrite_apply`, `tg_rewrite_diff`, `tg_index_search`, and `tg_ruleset_scan`, verifying zero raw wire leak when `_confine_mcp_path` raises.
+2. **Broad-Handler Census & Population Ceiling Synchronized (Resolving Round 10 Finding 2 - HIGH)**:
+   - In `tests/unit/test_silent_failure_hardening.py`, `TOTAL_BROAD_HANDLERS_CEILING` is updated from 266 to 340 with exact audited arithmetic:
+     - Exact delta across 4 audited modules is +74 (+39 in `mcp_server.py`, +10 in `mcp_symbol_tools.py`, +19 in `mcp_audit_tools.py`, +6 in `mcp_rewrite_tools.py`).
+     - All 74 additions are classified as `INTENTIONAL-BOUNDARY` providing whole-body fail-closed error containment for all 58 registered MCP tools and engine helpers.
+     - `test_broad_exception_handler_population_does_not_regress` is completely GREEN (passes in 1.86s).
 
-3. **Test & Static Analysis Verification**:
-   - Total tests in `test_mcp_error_sanitization.py`: 38 (all passing).
-   - G3 joint fail-closed suite: 93 (all passing).
+3. **AST Ratchet Taint Analysis & Terminal Sanitized Return (Resolving Round 10 Finding 3 - MEDIUM)**:
+   - Hardened `_check_encompassing_boundary` in `tests/unit/test_mcp_error_sanitization.py`:
+     - Requires every broad handler of the encompassing outer `try` to invoke `_log_tool_exception`.
+     - Requires a return statement in the handler body.
+     - Performs taint analysis on the bound exception variable: rejects any direct return of `exc`, rejection of passing `exc` into data structures (dicts, tuples, lists, kwargs like `json.dumps({'error': exc})`), and allows only approved sanitization sinks (`_log_tool_exception`, `_sanitized_tool_error`, `_sanitized_tool_error_text`, `_ruleset_scan_error`, etc.) or safe attribute access (`exc.__class__.__name__`).
+     - Backed by 8 comprehensive mutation controls (including missing log, `return exc`, and `json.dumps({'error': exc})`).
+
+4. **Test & Static Analysis Verification**:
+   - Total tests in `test_mcp_error_sanitization.py`: 39 (all passing).
+   - G3 joint fail-closed suite: 94 (all passing).
+   - Combined test suite (sanitization + silent failure + w1a fail closed): 96 passed in 25.7s.
    - AST `str(exc)` sites across 4 modules: exactly 54 sites, 100% `PathConfinementError`.
    - `ruff check`: clean.
-   - `ruff format --preview --check`: clean (1017 files formatted, including docs/BACKLOG.md).
+   - `ruff format --preview --check`: clean.
    - `mypy src/tensor_grep`: clean (0 issues in 123 source files).
 
-4. **Synchronized Documentation & Receipts**:
-   - `gates/from-map.md` and `RECEIPTS.md` synchronized to 54 AST sites, 38 unit tests, and 93 joint tests.
+5. **Synchronized Documentation & Receipts**:
+   - `gates/from-map.md` and `RECEIPTS.md` synchronized to 54 AST sites, 39 unit tests, and 94 joint tests.
 
 ## Review Instructions:
 1. Inspect the git diff against base `c7a515d`.
-2. Verify that all Round 9 findings are fully resolved:
-   - Whole-body encompassing try/except boundaries across all 58 tools.
-   - Zero wire leak under confinement or resolver poisons.
-   - Clean formatting and ratchet test coverage.
+2. Verify that all Round 10 findings are fully resolved:
+   - Non-throwing `_log_tool_exception` under broken stderr.
+   - Synchronized broad handler ceiling and audited dispositions.
+   - Taint-aware AST ratchet enforcing sanitized terminal returns and server logging.
 3. Try to BREAK it: search for any bypass, unintended leak, unhandled exception, or regression.
 4. Output your findings and final verdict:
    - If clean: `AUDIT_CLEAR / VERIFIED: GO` or `SHIP`.
