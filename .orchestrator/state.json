@@ -1,39 +1,45 @@
 {
   "schema_version": 2,
-  "updated_at": "2026-09-03T19:08:00-04:00",
+  "updated_at": "2026-09-04T13:15:00-04:00",
   "sdlc_phase": "VERIFIED",
-  "session_mode": "CONTINUE",
+  "session_mode": "CLOSEOUT",
   "git": {
-    "branch": "fix/handler-census-w2b-backends",
-    "head_sha": "5816afef4d3a71a2fb522d9d31fb4182a165fe89",
-    "base_sha": "f72360a0f4a8cbdfd83d1c341b52bb6c04fdfa83",
-    "open_prs": [],
+    "branch": "fix/sec-007-mcp-sanitize",
+    "head_sha": "51eb89cff6bbfaa5ad2bc8b444e7fa6affb14c84",
+    "base_sha": "f88d2c1f798ab2e91a1778a1ba59b0f18eecc4af",
+    "open_prs": [
+      {
+        "number": 1125,
+        "title": "fix(mcp): sanitize raw exceptions on wire, enforce fail-closed boundaries, and harden AST ratchet",
+        "branch": "fix/sec-007-mcp-sanitize",
+        "status": "OPEN",
+        "ci_run_id": 33899472111
+      }
+    ],
     "dirty": false,
-    "pin_meaning": "Committed tip 5816afe: W2-b 21 GPU backend handler dispositions & hardening verified by Sonnet 5 + Codex Sol dual GO."
+    "pin_meaning": "Committed tip 51eb89c: SEC-007 MCP error wire sanitization, Route A collect_device_inventory late lookup, AST ratchets, backlog P0-P8 roadmap, and A156-A159 rules."
   },
   "last_shipped_slice": {
-    "id": "HANDLER-CENSUS-W2-b",
-    "commit_sha": "5816afef4d3a71a2fb522d9d31fb4182a165fe89",
+    "id": "SEC-007-MCP-SANITIZE",
+    "commit_sha": "51eb89cff6bbfaa5ad2bc8b444e7fa6affb14c84",
     "release_class": "fix: (patch)",
     "dual_verify": "Sonnet 5 intent GO + Codex Sol security GO"
   },
   "completed_feature_slice": {
-    "id": "HANDLER-CENSUS-W2-b",
+    "id": "SEC-007-MCP-SANITIZE",
     "status": "VERIFIED_GO",
     "codex_sol_verdict": "AUDIT_CLEAR / VERIFIED: GO",
     "sonnet_intent_verdict": "INTENT_VERIFIED: GO",
-    "test_verification": "11/11 disposition tests passed, 2/2 silent failure hardening passed (ceiling ratcheted 267 -> 266), ruff/mypy clean",
+    "test_verification": "54/54 AST ratchet sites pass, test_bare_call_ratchet 18/18 pass, test_mcp_error_sanitization 45/45 pass, ruff/mypy clean",
     "artifacts": [
-      "src/tensor_grep/backends/cybert_backend.py",
-      "src/tensor_grep/backends/cudf_backend.py",
-      "tests/unit/test_silent_failure_hardening.py",
-      "tests/unit/test_handler_dispositions.py",
-      "docs/audits/2026-08-20-handler-dispositions.json",
-      "docs/plans/HANDLER-CENSUS-W2.md",
-      ".build/handler-census-w2b-gpu/MAP.md",
-      ".build/handler-census-w2b-gpu/PLAN.md",
-      ".build/handler-census-w2b-gpu/gates/from-map.md",
-      ".build/handler-census-w2b-gpu/RECEIPTS.md"
+      "src/tensor_grep/cli/mcp_server.py",
+      "src/tensor_grep/cli/mcp_symbol_tools.py",
+      "src/tensor_grep/cli/mcp_audit_tools.py",
+      "src/tensor_grep/cli/mcp_rewrite_tools.py",
+      "tests/unit/test_mcp_error_sanitization.py",
+      "tests/unit/test_bare_call_ratchet.py",
+      "docs/BACKLOG.md",
+      "AGENTS.md"
     ]
   },
   "in_progress_slice": {
@@ -44,14 +50,14 @@
     "total": 30,
     "unfinished": 14,
     "READY": 0,
-    "IN_FLIGHT": 0,
+    "IN_FLIGHT": 1,
     "BLOCKED": 6,
     "CEO_GATED": 4,
     "DEMAND_GATED": 6,
     "SHIPPED": 10,
     "RETIRED": 5,
     "index": "2026-08-30.1",
-    "derived_at": "2026-09-03"
+    "derived_at": "2026-09-04"
   },
   "public_product": {
     "tag": "v1.114.1",
@@ -61,12 +67,10 @@
     "authorized_usd": 0,
     "spent_usd": 0
   },
-  "next": "Merge fix/handler-census-w2b-backends to main and publish",
-  "last_ceo_update": "2026-09-03T19:08:00-04:00",
+  "next": "Merge PR #1125 to main and run enterprise public cleanliness sweep",
+  "last_ceo_update": "2026-09-04T13:15:00-04:00",
   "notes": [
-    "2026-09-03 11:20: ZVEC-PARITY complete with full AST container enrichment (--enrich-ast) and multi-agent installer (tg install/uninstall for claude, cursor, codex, opencode, qwen). Codex Sol unconditional SHIP.",
-    "2026-09-03 11:29: Handler dispositions ledger re-aligned and 11/11 tests pass.",
-    "2026-09-03 16:35: HANDLER-CENSUS-W2-c complete (8 handlers: ast_backend, ast_wrapper_backend, rust_backend, stringzilla_backend). Sonnet 5 + Codex Sol dual GO verified on 1aee5a4.",
-    "2026-09-03 19:08: HANDLER-CENSUS-W2-b complete (21 handlers: cudf_backend, torch_backend, cybert_backend). Broad handler ceiling ratcheted 267 -> 266. All 9 backend modules and 46 backend broad handlers enrolled in ledger. ARCH-002 closed. Sonnet 5 + Codex Sol dual GO verified on 5816afe."
+    "2026-09-03 19:08: HANDLER-CENSUS-W2-b complete (21 handlers: cudf_backend, torch_backend, cybert_backend).",
+    "2026-09-04 13:15: SEC-007 complete. Enforced fail-closed sanitized error responses across all 58 MCP tools without leaking paths, tracebacks, or raw exceptions; hardened AST ratchet against metaclass spoofing & argument swapping; resolved bare-call ratchet via Route A collect_device_inventory late lookup; updated BACKLOG.md with P0-P8 future roadmap and AGENTS.md with rules A156-A159."
   ]
 }
