@@ -91,6 +91,26 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Update `README.md` and `docs/tool_comparison.md` to lead with `tg prepare` and the 4-element comparison table; demote cold grep speed benchmarks to an engine appendix; generate the published language tier table dynamically from `LANGUAGE_REGISTRY` to prevent documentation rot.
   - **Acceptance:** `README.md` hero section features `tg prepare`; zero hardcoded language count drift against `LANGUAGE_REGISTRY`.
 
+- **[ ] P5 — Public Repository Cleanliness & Agent Scratch Partitioning (Enterprise OS Parity)**
+  - **Objective:** Match top-tier enterprise open-source repositories (e.g. Alibaba `open-code-review`, `zvec`) by untracking and ignoring internal agent orchestration files from public view.
+  - **Scope:** Add `.build/`, `.wayfinder/`, `.orchestrator/`, and `MEMORY.md` to `.gitignore`. Untrack them from the git tree (`git rm -r --cached`). Maintain all standard open-source collaboration infrastructure (`.github/` issue templates, actions, workflows, `docs/`, `src/`, `tests/`).
+  - **Acceptance:** Public GitHub root displays only production-grade code, tests, docs, and standard `.github/` directories; `git status` clean.
+
+- **[ ] P6 — Merge PR #1125 & Drain Pipeline (SEC-007 Wire Error Sanitization)**
+  - **Objective:** Close out SEC-007 vulnerability by sanitizing raw exceptions across all 58 MCP tool endpoints and hardening AST ratchets.
+  - **Scope:** Await completion of CI run `33898390695` (which addresses the Route A `collect_device_inventory` bare-call ratchet fix), squash-merge PR #1125 into `main`, and verify published release pipeline.
+  - **Acceptance:** Zero raw tracebacks or secret paths leak over MCP JSON-RPC; AST closed-world ratchet passes on all 54 authorized sites.
+
+- **[ ] P7 — Pre-computed Persistent AstGrep Structural Rule Cache**
+  - **Objective:** Accelerate repeated AST pattern queries across large multi-language repos.
+  - **Scope:** Cache parsed AST rule representations and structural fingerprints in `.tensor-grep/ast_cache/` with mtime/hash validation, eliminating redundant tree-sitter parse overhead during multi-step agent edit loops.
+  - **Acceptance:** Second invocation of identical AST query executes in <5ms; zero cache invalidation desyncs on modified files.
+
+- **[ ] P8 — Cross-File Import-Graph Cycle & Dead-Code Detector (`tg graph --dead-code`)**
+  - **Objective:** Enable agents to find dead code and cyclic imports during refactoring without external linters.
+  - **Scope:** Traverse the symbol dependency and importer graphs constructed by `repo_map.py` to identify unreferenced symbols and circular dependencies across all 10 parser-backed languages.
+  - **Acceptance:** Returns structured JSON with `unreferenced_symbols` and `import_cycles` within Section 0 bounded budgets.
+
 
 
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
