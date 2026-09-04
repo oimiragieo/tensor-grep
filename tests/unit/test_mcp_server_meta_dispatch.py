@@ -95,7 +95,7 @@ def test_tg_mcp_capabilities_reports_bad_native_override(monkeypatch, tmp_path):
 
     assert payload["native_tg"]["available"] is False
     assert payload["native_tg"]["path"] is None
-    assert "Configured binary" in payload["native_tg"]["error"]
+    assert "Native binary not found: FileNotFoundError" in payload["native_tg"]["error"]
 
 
 def test_mcp_legacy_tools_flag_on_by_default_subprocess():
