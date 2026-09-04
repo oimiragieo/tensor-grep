@@ -106,6 +106,9 @@ from tensor_grep.cli.mcp_server import (
     _TG_MCP_SERVER_CONTRACT_VERSION as _TG_MCP_SERVER_CONTRACT_VERSION,
 )
 from tensor_grep.cli.mcp_server import (
+    PathConfinementError as PathConfinementError,
+)
+from tensor_grep.cli.mcp_server import (
     _confine_mcp_path as _confine_mcp_path,
 )
 from tensor_grep.cli.mcp_server import (
@@ -118,10 +121,16 @@ from tensor_grep.cli.mcp_server import (
     _json_output_version as _json_output_version,
 )
 from tensor_grep.cli.mcp_server import (
+    _log_tool_exception as _log_tool_exception,
+)
+from tensor_grep.cli.mcp_server import (
     _mcp_root as _mcp_root,
 )
 from tensor_grep.cli.mcp_server import (
     _register_legacy_tool as _register_legacy_tool,
+)
+from tensor_grep.cli.mcp_server import (
+    _sanitized_tool_error as _sanitized_tool_error,
 )
 
 
@@ -204,9 +213,17 @@ def tg_ruleset_scan(
         # the scan itself -- an unconfined path was a full arbitrary-directory scan/read
         # (and, via write_baseline/write_suppressions, write) primitive over the MCP surface.
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _ruleset_scan_error(
             str(exc),
+            code="invalid_input",
+            ruleset=ruleset,
+            path="[refused]",
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_ruleset_scan", exc)
+        return _ruleset_scan_error(
+            f"Invalid path: {path}",
             code="invalid_input",
             ruleset=ruleset,
             path=path,
@@ -246,7 +263,10 @@ def tg_ruleset_scan(
         try:
             rules = _load_inline_rule_specs(inline_rules, default_language=language)
         except ValueError as exc:
-            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
+            _log_tool_exception("tg_ruleset_scan", exc)
+            return _ruleset_scan_error(
+                "Invalid inline rules YAML", code="invalid_input", ruleset=ruleset, path=path
+            )
         if not rules:
             return _ruleset_scan_error(
                 "No valid inline rules were found.",
@@ -276,7 +296,13 @@ def tg_ruleset_scan(
             # `language=` override reaches here UNGUARDED -- a raw traceback on a valid-but-bogus
             # payload, violating the tool's fail-closed contract. (audit #95 Part-2 round-5 gate:
             # demonstrated with language="zzznotalang" + a rule that sets its own language.)
-            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
+            _log_tool_exception("tg_ruleset_scan", exc)
+            return _ruleset_scan_error(
+                f"Unsupported AST language {language}",
+                code="invalid_input",
+                ruleset=ruleset,
+                path=path,
+            )
         project_cfg: dict[str, object] = {
             "config_path": "inline-rules",
             "root_dir": Path(path).expanduser().resolve(),
@@ -290,8 +316,9 @@ def tg_ruleset_scan(
         try:
             ruleset_meta, rules = resolve_rule_pack(cast(str, ruleset), language)
         except ValueError as exc:
+            _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
-                str(exc),
+                f"Invalid ruleset: {ruleset}",
                 code="invalid_input",
                 ruleset=ruleset,
                 path=path,
@@ -332,8 +359,13 @@ def tg_ruleset_scan(
             suppressions_path = str(
                 _confine_read_path(suppressions_path, scan_root, label="suppressions_path")
             )
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
+    except ValueError as exc:
+        _log_tool_exception("tg_ruleset_scan", exc)
+        return _ruleset_scan_error(
+            "Invalid scan path configuration", code="invalid_input", ruleset=ruleset, path=path
+        )
     try:
         payload = _self._run_ast_scan_payload(
             project_cfg,
@@ -354,15 +386,17 @@ def tg_ruleset_scan(
             max_evidence_snippet_chars=max_evidence_snippet_chars,
         )
     except BroadScanRefusedError as exc:
+        _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            str(exc),
+            "broad AST scan refused: root directory matches broad scan criteria. Pass --allow-broad-generated-scan to override.",
             code="broad_scan_refused",
             ruleset=ruleset,
             path=path,
         )
     except ValueError as exc:
+        _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            str(exc),
+            "Invalid scan parameter",
             code="invalid_input",
             ruleset=ruleset,
             path=path,
@@ -374,8 +408,9 @@ def tg_ruleset_scan(
         # ConfigurationError (a RuntimeError, NOT a ValueError/BackendExecutionError). It was
         # escaping as a RAW TRACEBACK on the common default-install path. Surface it structured.
         # (audit #95 Part-2 round-4 gate; mirrors tg_ast_search's ConfigurationError handling.)
+        _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            str(exc),
+            "AST scan backend unavailable. Run 'tg doctor' or install ast extras.",
             code="unavailable",
             ruleset=ruleset,
             path=path,
@@ -385,8 +420,9 @@ def tg_ruleset_scan(
         # permission-denied, a race-deleted file) makes _load_ruleset_baseline/_load_ruleset_
         # suppressions' read_text raise OSError/PermissionError/IsADirectoryError (NOT a
         # ValueError) -- was a raw traceback. Fail closed. (audit #95 Part-2 round-4 gate.)
+        _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            f"unreadable scan path: {exc}",
+            "unreadable scan path",
             code="invalid_input",
             ruleset=ruleset,
             path=path,
@@ -398,8 +434,9 @@ def tg_ruleset_scan(
         # whole RuntimeError class, mirroring the CLI twin's `except (ValueError, RuntimeError)`
         # (main.py). Logic bugs (KeyError/TypeError/AttributeError) are NOT RuntimeError and still
         # surface. (audit #95 Part-2 round-4 gate: BLOCK on the incomplete fault class.)
+        _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            f"scan backend failed: {exc}",
+            "scan backend failed",
             code="backend_error",
             ruleset=ruleset,
             path=path,
@@ -421,8 +458,15 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
+    except PathConfinementError as exc:
+        return _index_search_error(
+            str(exc), code="invalid_input", pattern=pattern, path="[refused]"
+        )
     except ValueError as exc:
-        return _index_search_error(str(exc), code="invalid_input", pattern=pattern, path=path)
+        _log_tool_exception("tg_index_search", exc)
+        return _index_search_error(
+            f"Invalid path: {path}", code="invalid_input", pattern=pattern, path=path
+        )
 
     validation_error = _validate_index_search_inputs(pattern, path)
     if validation_error:
@@ -459,8 +503,11 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _rewrite_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_rewrite_plan", exc)
+        return _rewrite_error("Invalid path", code="invalid_input")
 
     validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:
@@ -534,8 +581,11 @@ def tg_rewrite_apply(
     # rationale, and tg_session_file_importers for the exact class of bug this order avoids).
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _rewrite_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_rewrite_apply", exc)
+        return _rewrite_error("Invalid path", code="invalid_input")
 
     # Audit HIGH (2026-06-24): lint_cmd/test_cmd execute a free-form shell command
     # in the native apply path. Over the MCP trust boundary (agent-steerable args)
@@ -621,8 +671,11 @@ def tg_audit_manifest_verify(
             previous_manifest = str(
                 _confine_write_path(previous_manifest, _mcp_root(), label="previous_manifest")
             )
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _audit_manifest_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_audit_manifest_verify", exc)
+        return _audit_manifest_error("Invalid manifest path", code="invalid_input")
 
     try:
         # M14: verify_audit_manifest_json serializes a flat CLI payload with no MCP
@@ -636,11 +689,17 @@ def tg_audit_manifest_verify(
             )
         )
     except FileNotFoundError as exc:
-        return _audit_manifest_error(str(exc), code="not_found")
+        _log_tool_exception("tg_audit_manifest_verify", exc)
+        return _audit_manifest_error("Manifest file not found", code="not_found")
     except ValueError as exc:
-        return _audit_manifest_error(str(exc), code="invalid_input")
+        _log_tool_exception("tg_audit_manifest_verify", exc)
+        return _audit_manifest_error("Invalid manifest payload", code="invalid_input")
     except Exception as exc:
-        return _audit_manifest_error(str(exc), code="internal_error")
+        _log_tool_exception("tg_audit_manifest_verify", exc)
+        return _audit_manifest_error(
+            "Audit manifest verification failed due to an internal error.",
+            code="internal_error",
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -660,19 +719,28 @@ def tg_audit_history(path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _audit_history_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_audit_history", exc)
+        return _audit_history_error(f"Invalid path: {path}", code="invalid_input")
 
     try:
         return _self._inject_mcp_contract_fields(
             json.dumps(list_audit_history_payload(path), indent=2)
         )
     except FileNotFoundError as exc:
-        return _audit_history_error(str(exc), code="not_found")
+        _log_tool_exception("tg_audit_history", exc)
+        return _audit_history_error("Path not found", code="not_found")
     except ValueError as exc:
-        return _audit_history_error(str(exc), code="invalid_input")
+        _log_tool_exception("tg_audit_history", exc)
+        return _audit_history_error("Invalid audit history request", code="invalid_input")
     except Exception as exc:
-        return _audit_history_error(str(exc), code="internal_error")
+        _log_tool_exception("tg_audit_history", exc)
+        return _audit_history_error(
+            "Audit history failed due to an internal error.",
+            code="internal_error",
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -707,8 +775,11 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
         current_manifest = str(
             _confine_write_path(current_manifest, _mcp_root(), label="current_manifest")
         )
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _audit_diff_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_audit_diff", exc)
+        return _audit_diff_error("Invalid manifest path", code="invalid_input")
 
     try:
         return _self._inject_mcp_contract_fields(
@@ -718,11 +789,17 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
             )
         )
     except FileNotFoundError as exc:
-        return _audit_diff_error(str(exc), code="not_found")
+        _log_tool_exception("tg_audit_diff", exc)
+        return _audit_diff_error("Manifest file not found", code="not_found")
     except (json.JSONDecodeError, ValueError) as exc:
-        return _audit_diff_error(str(exc), code="invalid_json")
+        _log_tool_exception("tg_audit_diff", exc)
+        return _audit_diff_error("Invalid JSON in manifest", code="invalid_json")
     except Exception as exc:
-        return _audit_diff_error(str(exc), code="internal_error")
+        _log_tool_exception("tg_audit_diff", exc)
+        return _audit_diff_error(
+            "Audit diff failed due to an internal error.",
+            code="internal_error",
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -771,9 +848,16 @@ def tg_review_bundle_create(
             previous_manifest = str(
                 _confine_write_path(previous_manifest, _mcp_root(), label="previous_manifest")
             )
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _review_bundle_error(
             str(exc),
+            code="invalid_input",
+            routing_reason="review-bundle-create",
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_review_bundle_create", exc)
+        return _review_bundle_error(
+            "Invalid bundle input path",
             code="invalid_input",
             routing_reason="review-bundle-create",
         )
@@ -786,9 +870,16 @@ def tg_review_bundle_create(
     if output_path is not None:
         try:
             output_path = str(_confine_write_path(output_path, _mcp_root(), label="output_path"))
-        except ValueError as exc:
+        except PathConfinementError as exc:
             return _review_bundle_error(
                 str(exc),
+                code="invalid_input",
+                routing_reason="review-bundle-create",
+            )
+        except ValueError as exc:
+            _log_tool_exception("tg_review_bundle_create", exc)
+            return _review_bundle_error(
+                "Invalid output path",
                 code="invalid_input",
                 routing_reason="review-bundle-create",
             )
@@ -807,20 +898,23 @@ def tg_review_bundle_create(
             )
         )
     except FileNotFoundError as exc:
+        _log_tool_exception("tg_review_bundle_create", exc)
         return _review_bundle_error(
-            str(exc),
+            "Bundle input file not found",
             code="not_found",
             routing_reason="review-bundle-create",
         )
     except (json.JSONDecodeError, ValueError) as exc:
+        _log_tool_exception("tg_review_bundle_create", exc)
         return _review_bundle_error(
-            str(exc),
+            "Invalid JSON in bundle inputs",
             code="invalid_json",
             routing_reason="review-bundle-create",
         )
     except Exception as exc:
+        _log_tool_exception("tg_review_bundle_create", exc)
         return _review_bundle_error(
-            str(exc),
+            "Review bundle creation failed due to an internal error.",
             code="internal_error",
             routing_reason="review-bundle-create",
         )
@@ -850,9 +944,16 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
     # tg_review_bundle_create above / _confine_write_path docstring).
     try:
         bundle_path = str(_confine_write_path(bundle_path, _mcp_root(), label="bundle_path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _review_bundle_error(
             str(exc),
+            code="invalid_input",
+            routing_reason="review-bundle-verify",
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_review_bundle_verify", exc)
+        return _review_bundle_error(
+            "Invalid bundle path",
             code="invalid_input",
             routing_reason="review-bundle-verify",
         )
@@ -863,20 +964,23 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
         # _review_bundle_error).
         return _self._inject_mcp_contract_fields(verify_review_bundle_json(bundle_path))
     except FileNotFoundError as exc:
+        _log_tool_exception("tg_review_bundle_verify", exc)
         return _review_bundle_error(
-            str(exc),
+            "Bundle file not found",
             code="not_found",
             routing_reason="review-bundle-verify",
         )
     except (json.JSONDecodeError, ValueError) as exc:
+        _log_tool_exception("tg_review_bundle_verify", exc)
         return _review_bundle_error(
-            str(exc),
+            "Invalid JSON in review bundle",
             code="invalid_json",
             routing_reason="review-bundle-verify",
         )
     except Exception as exc:
+        _log_tool_exception("tg_review_bundle_verify", exc)
         return _review_bundle_error(
-            str(exc),
+            "Review bundle verification failed due to an internal error.",
             code="internal_error",
             routing_reason="review-bundle-verify",
         )
@@ -896,12 +1000,23 @@ def tg_checkpoint_create(path: str = ".") -> str:
     # arbitrary-directory-WRITE primitive, not just a read.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return json.dumps(
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
                 "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+            },
+            indent=2,
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_checkpoint_create", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
                 "path": path,
             },
             indent=2,
@@ -916,7 +1031,7 @@ def tg_checkpoint_create(path: str = ".") -> str:
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "error": {"code": "invalid_input", "message": str(exc)},
+                "error": _sanitized_tool_error("tg_checkpoint_create", exc),
                 "path": str(Path(path).expanduser()),
             },
             indent=2,
@@ -945,12 +1060,23 @@ def tg_checkpoint_list(path: str = ".") -> str:
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return json.dumps(
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
                 "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+            },
+            indent=2,
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_checkpoint_list", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
                 "path": path,
             },
             indent=2,
@@ -965,7 +1091,7 @@ def tg_checkpoint_list(path: str = ".") -> str:
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "error": {"code": "invalid_input", "message": str(exc)},
+                "error": _sanitized_tool_error("tg_checkpoint_list", exc),
                 "path": str(Path(path).expanduser()),
             },
             indent=2,
@@ -996,12 +1122,24 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
     # arbitrary-directory-WRITE primitive, not just a read.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return json.dumps(
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
                 "error": {"code": "invalid_input", "message": str(exc)},
+                "path": "[refused]",
+                "checkpoint_id": checkpoint_id,
+            },
+            indent=2,
+        )
+    except ValueError as exc:
+        _log_tool_exception("tg_checkpoint_undo", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "error": {"code": "invalid_input", "message": f"Invalid path: {path}"},
                 "path": path,
                 "checkpoint_id": checkpoint_id,
             },
@@ -1017,7 +1155,7 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
             {
                 "version": _json_output_version(),
                 "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "error": {"code": "invalid_input", "message": str(exc)},
+                "error": _sanitized_tool_error("tg_checkpoint_undo", exc),
                 "path": str(Path(path).expanduser()),
                 "checkpoint_id": checkpoint_id,
             },
@@ -1050,8 +1188,11 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         return _rewrite_error(str(exc), code="invalid_input")
+    except ValueError as exc:
+        _log_tool_exception("tg_rewrite_diff", exc)
+        return _rewrite_error("Invalid path", code="invalid_input")
 
     validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
     if validation_error:

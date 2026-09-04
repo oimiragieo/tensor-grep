@@ -22,6 +22,9 @@ from tensor_grep.cli.mcp_server import (
     _DEFAULT_MCP_REPO_SCAN_LIMIT as _DEFAULT_MCP_REPO_SCAN_LIMIT,
 )
 from tensor_grep.cli.mcp_server import (
+    PathConfinementError as PathConfinementError,
+)
+from tensor_grep.cli.mcp_server import (
     _confine_mcp_path as _confine_mcp_path,
 )
 from tensor_grep.cli.mcp_server import (
@@ -29,6 +32,9 @@ from tensor_grep.cli.mcp_server import (
 )
 from tensor_grep.cli.mcp_server import (
     _envelope_base as _envelope_base,
+)
+from tensor_grep.cli.mcp_server import (
+    _log_tool_exception as _log_tool_exception,
 )
 from tensor_grep.cli.mcp_server import (
     _mcp_root as _mcp_root,
@@ -68,7 +74,7 @@ def tg_symbol_blast_radius_plan(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius-plan",
@@ -76,7 +82,7 @@ def tg_symbol_blast_radius_plan(
         )
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
@@ -97,7 +103,8 @@ def tg_symbol_blast_radius_plan(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_blast_radius_plan", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius-plan",
@@ -108,7 +115,7 @@ def tg_symbol_blast_radius_plan(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -120,11 +127,7 @@ def tg_symbol_blast_radius_plan(
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_blast_radius_plan", exc)
         return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
@@ -147,14 +150,14 @@ def tg_symbol_defs(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-defs",
             include_schema_version=False,
         )
         payload["symbol"] = symbol
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -167,7 +170,8 @@ def tg_symbol_defs(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_defs", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-defs",
@@ -177,7 +181,7 @@ def tg_symbol_defs(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # C4: propagate as structured error, never a raw exception
@@ -188,11 +192,7 @@ def tg_symbol_defs(
         )
         payload["symbol"] = symbol
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_defs", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -215,14 +215,14 @@ def tg_symbol_source(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-source",
             include_schema_version=False,
         )
         payload["symbol"] = symbol
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -235,7 +235,8 @@ def tg_symbol_source(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_source", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-source",
@@ -245,7 +246,7 @@ def tg_symbol_source(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # C4: propagate as structured error, never a raw exception
@@ -256,11 +257,7 @@ def tg_symbol_source(
         )
         payload["symbol"] = symbol
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_source", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -282,14 +279,14 @@ def tg_symbol_impact(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-impact",
             include_schema_version=False,
         )
         payload["symbol"] = symbol
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -306,7 +303,8 @@ def tg_symbol_impact(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_impact", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-impact",
@@ -316,7 +314,7 @@ def tg_symbol_impact(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # C4: propagate as structured error, never a raw exception
@@ -327,11 +325,7 @@ def tg_symbol_impact(
         )
         payload["symbol"] = symbol
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_impact", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -358,14 +352,14 @@ def tg_symbol_refs(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-refs",
             include_schema_version=False,
         )
         payload["symbol"] = symbol
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -382,7 +376,8 @@ def tg_symbol_refs(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_refs", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-refs",
@@ -392,7 +387,7 @@ def tg_symbol_refs(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # C4: propagate as structured error, never a raw exception
@@ -403,11 +398,7 @@ def tg_symbol_refs(
         )
         payload["symbol"] = symbol
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_refs", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -434,14 +425,14 @@ def tg_symbol_callers(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-callers",
             include_schema_version=False,
         )
         payload["symbol"] = symbol
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -458,7 +449,8 @@ def tg_symbol_callers(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_callers", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-callers",
@@ -468,7 +460,7 @@ def tg_symbol_callers(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # C4: propagate as structured error, never a raw exception
@@ -479,11 +471,7 @@ def tg_symbol_callers(
         )
         payload["symbol"] = symbol
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_callers", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -508,18 +496,19 @@ def tg_file_imports(file: str) -> str:
     # the same anchor-validated location this check validated.
     try:
         file = str(_confine_read_path(file, _mcp_root(), label="file"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="file-imports",
             include_schema_version=False,
         )
-        payload["file"] = file
+        payload["file"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
     try:
         return _self._inject_mcp_contract_fields(json.dumps(build_file_imports(file), indent=2))
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_file_imports", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="file-imports",
@@ -528,7 +517,7 @@ def tg_file_imports(file: str) -> str:
         payload["file"] = str(Path(file).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"File not found: {Path(file).expanduser().resolve()}",
+            "message": f"File not found: {file}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # propagate as structured error, never a raw exception
@@ -565,33 +554,33 @@ def tg_file_importers(
             exceeded, the scan stops and returns a flagged partial result instead of running
             unbounded.
     """
-    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
-    # (cwd) before any read, same class/rationale as tg_file_imports above.
-    try:
-        file = str(_confine_read_path(file, _mcp_root(), label="file"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="file-importers",
-            include_schema_version=False,
-        )
-        payload["file"] = file
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-
     # round-8 security (audit #95 gate): confine the secondary root param to the MCP root too
     # -- unconfined it is an arbitrary-directory-read primitive over the MCP protocol (the
     # design's proven example: `path` here resolved raw).
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="file-importers",
             include_schema_version=False,
         )
-        payload["file"] = file
+        payload["file"] = "[refused]"
+        payload["path"] = "[refused]"
+        payload["error"] = {"code": "invalid_input", "message": str(exc)}
+        return json.dumps(payload, indent=2)
+
+    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
+    # (cwd) before any read, same class/rationale as tg_file_imports above.
+    try:
+        file = str(_confine_read_path(file, _mcp_root(), label="file"))
+    except PathConfinementError as exc:
+        payload = _envelope_base(
+            routing_backend="RepoMap",
+            routing_reason="file-importers",
+            include_schema_version=False,
+        )
+        payload["file"] = "[refused]"
         payload["path"] = path
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
@@ -606,6 +595,7 @@ def tg_file_importers(
             )
         )
     except FileNotFoundError as exc:
+        _log_tool_exception("tg_file_importers", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="file-importers",
@@ -615,7 +605,7 @@ def tg_file_importers(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": str(exc),
+            "message": f"File not found: {file}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # propagate as structured error, never a raw exception
@@ -655,7 +645,7 @@ def tg_symbol_blast_radius(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius",
@@ -663,7 +653,7 @@ def tg_symbol_blast_radius(
         )
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -681,7 +671,8 @@ def tg_symbol_blast_radius(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_blast_radius", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius",
@@ -692,7 +683,7 @@ def tg_symbol_blast_radius(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -704,11 +695,7 @@ def tg_symbol_blast_radius(
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_blast_radius", exc)
         return json.dumps(payload, indent=2)
 
 
@@ -746,7 +733,7 @@ def tg_symbol_blast_radius_render(
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
         path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
+    except PathConfinementError as exc:
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius-render",
@@ -754,7 +741,7 @@ def tg_symbol_blast_radius_render(
         )
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
-        payload["path"] = path
+        payload["path"] = "[refused]"
         payload["error"] = {"code": "invalid_input", "message": str(exc)}
         return json.dumps(payload, indent=2)
 
@@ -778,7 +765,8 @@ def tg_symbol_blast_radius_render(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_symbol_blast_radius_render", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="symbol-blast-radius-render",
@@ -789,7 +777,7 @@ def tg_symbol_blast_radius_render(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {
             "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
+            "message": f"Path not found: {path}",
         }
         return json.dumps(payload, indent=2)
     except Exception as exc:  # M11: propagate as structured error, never a raw exception
@@ -801,9 +789,5 @@ def tg_symbol_blast_radius_render(
         payload["symbol"] = symbol
         payload["max_depth"] = max(0, int(max_depth))
         payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
+        payload["error"] = _sanitized_tool_error("tg_symbol_blast_radius_render", exc)
         return json.dumps(payload, indent=2)

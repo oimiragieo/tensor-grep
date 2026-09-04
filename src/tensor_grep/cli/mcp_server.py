@@ -1376,25 +1376,27 @@ def _mcp_root() -> Path:
       which `_confine_read_path`'s `.resolve()` would still do without erroring) is not.
     """
     raw = os.environ.get("TG_MCP_ROOT", "").strip()
-    if not raw:
-        return Path.cwd()
+    if raw:
+        try:
+            resolved = Path(raw).expanduser().resolve()
+            if resolved.is_dir():
+                return resolved
+            print(
+                f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} is not an existing directory "
+                f"(resolved: {resolved}); falling back to the current working directory.",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            print(
+                f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved: {exc}; "
+                "falling back to the current working directory.",
+                file=sys.stderr,
+            )
     try:
-        resolved = Path(raw).expanduser().resolve()
-    except Exception:
-        print(
-            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved; "
-            "falling back to the current working directory.",
-            file=sys.stderr,
-        )
-        return Path.cwd()
-    if not resolved.is_dir():
-        print(
-            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} is not an existing directory "
-            f"(resolved: {resolved}); falling back to the current working directory.",
-            file=sys.stderr,
-        )
-        return Path.cwd()
-    return resolved
+        return Path.cwd().resolve()
+    except Exception as exc:
+        print(f"[tensor-grep-mcp] root resolution failure for root: {exc}", file=sys.stderr)
+        raise PathConfinementError("root") from exc
 
 
 def _confine_mcp_path(candidate: str, *, label: str) -> Path:

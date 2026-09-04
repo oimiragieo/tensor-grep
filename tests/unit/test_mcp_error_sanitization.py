@@ -240,14 +240,8 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
     import ast
     from pathlib import Path
 
-    src_path = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "mcp_server.py"
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    lines = source.splitlines()
-
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            child.parent = parent
+    target_files = ["mcp_server.py", "mcp_symbol_tools.py", "mcp_audit_tools.py"]
+    cli_dir = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
 
     def is_stderr_call(node):
         curr = node
@@ -269,6 +263,7 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                 if isinstance(curr.func, ast.Name) and curr.func.id in {
                     "_sanitized_tool_error",
                     "_sanitized_tool_error_text",
+                    "_log_tool_exception",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -280,6 +275,14 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
             if isinstance(curr, ast.Raise) and curr.cause == node:
                 return True
             curr = getattr(curr, "parent", None)
+        return False
+
+    def is_safe_class_name_attr(node, var_name):
+        # e.g. exc.__class__.__name__
+        if isinstance(node, ast.Attribute) and node.attr == "__name__":
+            if isinstance(node.value, ast.Attribute) and node.value.attr == "__class__":
+                if isinstance(node.value.value, ast.Name) and node.value.value.id == var_name:
+                    return True
         return False
 
     def find_broad_offenders(ast_tree, source_lines):
@@ -332,6 +335,8 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                 elif isinstance(child, ast.JoinedStr):
                     for val in child.values:
                         if isinstance(val, ast.FormattedValue):
+                            if is_safe_class_name_attr(val.value, name):
+                                continue
                             for sub in ast.walk(val.value):
                                 if isinstance(sub, ast.Name) and sub.id == name:
                                     offenders.append((lineno, "f-string", line))
@@ -344,11 +349,21 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
 
         return offenders
 
-    real_offenders = find_broad_offenders(tree, lines)
-    assert real_offenders == [], (
-        "broad except Exception/bare-except arms must not echo exception formatting "
-        f"on the MCP wire (SEC-007); offenders: {real_offenders}"
-    )
+    for filename in target_files:
+        src_path = cli_dir / filename
+        source = src_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        lines = source.splitlines()
+
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                child.parent = parent
+
+        real_offenders = find_broad_offenders(tree, lines)
+        assert real_offenders == [], (
+            f"broad except Exception/bare-except arms in {filename} must not echo exception formatting "
+            f"on the MCP wire (SEC-007); offenders: {real_offenders}"
+        )
 
     # Negative controls: assert that all 6 banned exception stringification forms are detected
     test_snippets = [
@@ -379,14 +394,8 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
     import ast
     from pathlib import Path
 
-    src_path = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "mcp_server.py"
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    lines = source.splitlines()
-
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            child.parent = parent
+    target_files = ["mcp_server.py", "mcp_symbol_tools.py", "mcp_audit_tools.py"]
+    cli_dir = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
 
     def is_stderr_call(node):
         curr = node
@@ -506,11 +515,21 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
 
         return offenders
 
-    real_offenders = find_narrow_offenders(tree, lines)
-    assert real_offenders == [], (
-        "narrow except arms must not echo exception formatting "
-        f"on the MCP wire (SEC-007); offenders: {real_offenders}"
-    )
+    for filename in target_files:
+        src_path = cli_dir / filename
+        source = src_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        lines = source.splitlines()
+
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                child.parent = parent
+
+        real_offenders = find_narrow_offenders(tree, lines)
+        assert real_offenders == [], (
+            f"narrow except arms in {filename} must not echo exception formatting "
+            f"on the MCP wire (SEC-007); offenders: {real_offenders}"
+        )
 
     # Negative controls: assert that all 6 banned exception stringification forms in narrow handlers are detected
     narrow_test_snippets = [
@@ -769,9 +788,12 @@ def test_write_path_confinement_resolution_failure_sanitizes_and_logs(tmp_path, 
 
 
 def test_mcp_wire_str_exc_closed_world_ast_ratchet():
-    """SEC-007: Closed-world ratchet enforcing that across src/tensor_grep/cli/mcp_server.py,
-    exactly 27 authorized str(exc) callsites exist, mapped to:
-    - 26 PathConfinementError sites (25 tool handlers + 1 _meta_confinement_error helper)
+    """SEC-007: Closed-world ratchet enforcing that across all 3 MCP tool modules:
+    - src/tensor_grep/cli/mcp_server.py (27 sites)
+    - src/tensor_grep/cli/mcp_symbol_tools.py (11 sites)
+    - src/tensor_grep/cli/mcp_audit_tools.py (15 sites)
+    exactly 53 authorized str(exc) callsites exist, mapped to:
+    - 52 PathConfinementError sites (51 tool handlers + 1 _meta_confinement_error helper)
     - 1 W1-a tracked_file_count_error detail key in tg_session_open
     Zero un-allowlisted sites permitted, verified by exact function identity and handler type,
     matching the enclosing handler's bound exception variable name regardless of spelling.
@@ -780,45 +802,66 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
     from collections import Counter
     from pathlib import Path
 
-    src_path = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "mcp_server.py"
-    source = src_path.read_text(encoding="utf-8")
-    tree = ast.parse(source)
-    lines = source.splitlines()
+    cli_dir = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
 
-    for parent in ast.walk(tree):
-        for child in ast.iter_child_nodes(parent):
-            child.parent = parent
-
-    authorized_str_exc_sites = {
-        ("_meta_confinement_error", None): 1,
-        ("tg_repo_map", "PathConfinementError"): 1,
-        ("tg_orient", "PathConfinementError"): 1,
-        ("tg_doctor", "PathConfinementError"): 2,
-        ("tg_context_pack", "PathConfinementError"): 1,
-        ("tg_edit_plan", "PathConfinementError"): 1,
-        ("tg_context_render", "PathConfinementError"): 1,
-        ("tg_agent_capsule", "PathConfinementError"): 1,
-        ("tg_session_edit_plan", "PathConfinementError"): 1,
-        ("tg_session_context_render", "PathConfinementError"): 1,
-        ("tg_session_blast_radius", "PathConfinementError"): 1,
-        ("tg_session_file_importers", "PathConfinementError"): 2,
-        ("tg_session_blast_radius_render", "PathConfinementError"): 1,
-        ("tg_session_blast_radius_plan", "PathConfinementError"): 1,
-        ("tg_find", "PathConfinementError"): 1,
-        ("tg_search", "PathConfinementError"): 2,
-        ("tg_ast_search", "PathConfinementError"): 1,
-        ("tg_classify_logs", "PathConfinementError"): 1,
-        ("tg_session_open", "PathConfinementError"): 1,
-        ("tg_session_open", "Exception"): 1,
-        ("tg_session_list", "PathConfinementError"): 1,
-        ("tg_session_show", "PathConfinementError"): 1,
-        ("tg_session_refresh", "PathConfinementError"): 1,
-        ("tg_session_context", "PathConfinementError"): 1,
+    authorized_str_exc_sites: dict[str, dict[tuple[str, str | None], int]] = {
+        "mcp_server.py": {
+            ("_meta_confinement_error", None): 1,
+            ("tg_repo_map", "PathConfinementError"): 1,
+            ("tg_orient", "PathConfinementError"): 1,
+            ("tg_doctor", "PathConfinementError"): 2,
+            ("tg_context_pack", "PathConfinementError"): 1,
+            ("tg_edit_plan", "PathConfinementError"): 1,
+            ("tg_context_render", "PathConfinementError"): 1,
+            ("tg_agent_capsule", "PathConfinementError"): 1,
+            ("tg_session_edit_plan", "PathConfinementError"): 1,
+            ("tg_session_context_render", "PathConfinementError"): 1,
+            ("tg_session_blast_radius", "PathConfinementError"): 1,
+            ("tg_session_file_importers", "PathConfinementError"): 2,
+            ("tg_session_blast_radius_render", "PathConfinementError"): 1,
+            ("tg_session_blast_radius_plan", "PathConfinementError"): 1,
+            ("tg_find", "PathConfinementError"): 1,
+            ("tg_search", "PathConfinementError"): 2,
+            ("tg_ast_search", "PathConfinementError"): 1,
+            ("tg_classify_logs", "PathConfinementError"): 1,
+            ("tg_session_open", "PathConfinementError"): 1,
+            ("tg_session_open", "Exception"): 1,
+            ("tg_session_list", "PathConfinementError"): 1,
+            ("tg_session_show", "PathConfinementError"): 1,
+            ("tg_session_refresh", "PathConfinementError"): 1,
+            ("tg_session_context", "PathConfinementError"): 1,
+        },
+        "mcp_symbol_tools.py": {
+            ("tg_symbol_defs", "PathConfinementError"): 1,
+            ("tg_symbol_source", "PathConfinementError"): 1,
+            ("tg_symbol_impact", "PathConfinementError"): 1,
+            ("tg_symbol_refs", "PathConfinementError"): 1,
+            ("tg_symbol_callers", "PathConfinementError"): 1,
+            ("tg_symbol_blast_radius", "PathConfinementError"): 1,
+            ("tg_symbol_blast_radius_render", "PathConfinementError"): 1,
+            ("tg_symbol_blast_radius_plan", "PathConfinementError"): 1,
+            ("tg_file_imports", "PathConfinementError"): 1,
+            ("tg_file_importers", "PathConfinementError"): 2,
+        },
+        "mcp_audit_tools.py": {
+            ("tg_ruleset_scan", "PathConfinementError"): 2,
+            ("tg_index_search", "PathConfinementError"): 1,
+            ("tg_rewrite_plan", "PathConfinementError"): 1,
+            ("tg_rewrite_apply", "PathConfinementError"): 1,
+            ("tg_audit_manifest_verify", "PathConfinementError"): 1,
+            ("tg_audit_history", "PathConfinementError"): 1,
+            ("tg_audit_diff", "PathConfinementError"): 1,
+            ("tg_review_bundle_create", "PathConfinementError"): 2,
+            ("tg_review_bundle_verify", "PathConfinementError"): 1,
+            ("tg_checkpoint_create", "PathConfinementError"): 1,
+            ("tg_checkpoint_list", "PathConfinementError"): 1,
+            ("tg_checkpoint_undo", "PathConfinementError"): 1,
+            ("tg_rewrite_diff", "PathConfinementError"): 1,
+        },
     }
 
     def _collect_str_exc_sites(ast_tree, source_lines):
         sites: list[tuple[int, tuple[str, str | None], str]] = []
-        unauthorized: list[tuple[int, tuple[str, str | None], str]] = []
         counts: Counter[tuple[str, str | None]] = Counter()
 
         for node in ast.walk(ast_tree):
@@ -857,21 +900,38 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
             sites.append((lineno, key, line))
             counts[key] += 1
 
-            if key not in authorized_str_exc_sites:
-                unauthorized.append((lineno, key, line))
-            elif key == ("tg_session_open", "Exception"):
-                assert "tracked_file_count_error" in line, f"W1-a site line mismatch: {line}"
+        return sites, counts
 
-        return sites, unauthorized, counts
+    total_sites_count = 0
+    for mod_name, expected_sites in authorized_str_exc_sites.items():
+        src_path = cli_dir / mod_name
+        source = src_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        lines = source.splitlines()
 
-    actual_sites, unauthorized_sites, actual_counts = _collect_str_exc_sites(tree, lines)
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                child.parent = parent
 
-    assert len(actual_sites) == 27, (
-        f"Expected exactly 27 closed-world str(exc) sites, found {len(actual_sites)}"
-    )
-    assert unauthorized_sites == [], f"Found unauthorized str(exc) sites: {unauthorized_sites}"
-    assert actual_counts == authorized_str_exc_sites, (
-        f"Counts mismatch: {actual_counts} vs {authorized_str_exc_sites}"
+        actual_sites, actual_counts = _collect_str_exc_sites(tree, lines)
+        total_sites_count += len(actual_sites)
+
+        unauthorized = [site for site in actual_sites if site[1] not in expected_sites]
+        assert unauthorized == [], (
+            f"Found unauthorized str(exc) sites in {mod_name}: {unauthorized}"
+        )
+        assert actual_counts == expected_sites, (
+            f"Counts mismatch in {mod_name}: {actual_counts} vs {expected_sites}"
+        )
+        if mod_name == "mcp_server.py":
+            w1a_line = [
+                site[2] for site in actual_sites if site[1] == ("tg_session_open", "Exception")
+            ]
+            assert len(w1a_line) == 1
+            assert "tracked_file_count_error" in w1a_line[0], f"W1-a site mismatch: {w1a_line[0]}"
+
+    assert total_sites_count == 53, (
+        f"Expected exactly 53 closed-world str(exc) sites across all 3 modules, found {total_sites_count}"
     )
 
     # Negative control: assert that mutation with a different exception variable name (e.g. 'err') is caught
@@ -886,11 +946,9 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
     for p in ast.walk(mutation_tree):
         for c in ast.iter_child_nodes(p):
             c.parent = p
-    _, mutation_unauth, _ = _collect_str_exc_sites(mutation_tree, mutation_source.splitlines())
-    assert len(mutation_unauth) == 1, (
-        f"Expected 1 unauthorized mutation site, got {mutation_unauth}"
-    )
-    assert mutation_unauth[0][1] == ("bad_tool", "ValueError")
+    mutation_sites, _ = _collect_str_exc_sites(mutation_tree, mutation_source.splitlines())
+    assert len(mutation_sites) == 1, f"Expected 1 unauthorized mutation site, got {mutation_sites}"
+    assert mutation_sites[0][1] == ("bad_tool", "ValueError")
 
 
 def test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path(tmp_path, monkeypatch, capsys):
@@ -1053,7 +1111,7 @@ def test_tg_ast_search_configuration_error_does_not_leak_poison(tmp_path, capsys
 
 
 def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, monkeypatch, capsys):
-    """SEC-007: All 35 path confinement entrypoints redact candidate paths to '[refused]'
+    """SEC-007: All 39 path confinement entrypoints redact candidate paths to '[refused]'
     in wire error envelopes and never leak candidate external paths to callers.
     """
     from tensor_grep.cli import mcp_server
@@ -1154,6 +1212,19 @@ def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, mon
                 action="diff", pattern="x", replacement="y", lang="python", path=poison_path
             ),
         ),
+        ("tg_file_imports", lambda: mcp_server.tg_file_imports(poison_file)),
+        (
+            "tg_file_importers_path",
+            lambda: mcp_server.tg_file_importers("marker.py", path=poison_path),
+        ),
+        (
+            "tg_file_importers_file",
+            lambda: mcp_server.tg_file_importers(poison_file, path=str(root)),
+        ),
+        (
+            "tg_file_importers_both",
+            lambda: mcp_server.tg_file_importers(poison_file, path=poison_path),
+        ),
     )
 
     for name, invoke in cases:
@@ -1166,11 +1237,22 @@ def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, mon
         )
         if name == "tg_doctor_config":
             assert payload["config"] == "[refused]", f"Config not refused in {name}: {payload}"
-        elif name in {"tg_session_file_importers_file", "tg_session_file_importers_both"}:
+        elif name in {
+            "tg_session_file_importers_file",
+            "tg_session_file_importers_both",
+            "tg_file_importers_file",
+            "tg_file_importers_both",
+        }:
             assert payload["file"] == "[refused]", f"File not refused in {name}: {payload}"
-            if name == "tg_session_file_importers_both":
+            if name in {"tg_session_file_importers_both", "tg_file_importers_both"}:
                 assert payload["path"] == "[refused]", f"Path not refused in {name}: {payload}"
-                assert payload["error"]["detail"]["file"] == "[refused]"
+                if name == "tg_session_file_importers_both":
+                    assert payload["error"]["detail"]["file"] == "[refused]"
+        elif name == "tg_file_importers_path":
+            assert payload["path"] == "[refused]", f"Path not refused in {name}: {payload}"
+            assert payload["file"] == "[refused]", f"File not refused in {name}: {payload}"
+        elif name == "tg_file_imports":
+            assert payload["file"] == "[refused]", f"File not refused in {name}: {payload}"
         elif name == "tg_classify_logs":
             assert payload["file_path"] == "[refused]", (
                 f"File path not refused in {name}: {payload}"
@@ -1178,5 +1260,90 @@ def test_confinement_refusal_envelope_never_contains_external_path(tmp_path, mon
         elif "path" in payload:
             assert payload["path"] == "[refused]", f"Path not refused in {name}: {payload['path']}"
 
+    captured = capsys.readouterr()
+    assert "path confinement refusal" in captured.err
+
+
+def test_direct_call_tool_broad_poison_sanitized(capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool handles broad exceptions without leaking poison on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_BROAD_SECRET at C:\private\trace.py"
+    with patch.object(mcp_server, "build_symbol_defs", side_effect=RuntimeError(poison)):
+        content, _data = asyncio.run(
+            mcp_server.mcp.call_tool("tg_symbol_defs", {"symbol": "foo", "path": "."})
+        )
+        text = content[0].text
+        assert poison not in text
+        assert "RuntimeError" in text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "internal_error"
+        captured = capsys.readouterr()
+        assert poison in captured.err
+
+
+def test_direct_call_tool_narrow_poison_sanitized(capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool handles narrow exceptions without leaking poison on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_NARROW_SECRET at C:\private\missing.py"
+    with patch.object(mcp_server, "build_file_importers", side_effect=FileNotFoundError(poison)):
+        content, _data = asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_file_importers",
+                {"file": "src/tensor_grep/cli/mcp_server.py", "path": "."},
+            )
+        )
+        text = content[0].text
+        assert poison not in text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "invalid_input"
+        assert (
+            "File not found" in payload["error"]["message"]
+            or "Path not found" in payload["error"]["message"]
+        )
+        captured = capsys.readouterr()
+        assert poison in captured.err
+
+
+def test_direct_call_tool_cwd_failure_sanitized(capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool handles Path.cwd() failure without escaping as ToolError."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_CWD_SECRET"
+    with patch("pathlib.Path.cwd", side_effect=RuntimeError(poison)):
+        content, _data = asyncio.run(
+            mcp_server.mcp.call_tool("tg_classify_logs", {"file_path": "a.log"})
+        )
+        text = content[0].text
+        assert poison not in text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "invalid_input"
+        assert payload["file_path"] == "[refused]"
+        captured = capsys.readouterr()
+        assert "root resolution failure for root" in captured.err
+        assert poison in captured.err
+
+
+def test_direct_call_tool_external_path_redacted(capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool redacts external paths to [refused] on the wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison_file = r"C:\outside\secret.py"
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_file_imports", {"file": poison_file}))
+    text = content[0].text
+    assert "outside" not in text
+    assert "secret.py" not in text
+    payload = json.loads(text)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["file"] == "[refused]"
     captured = capsys.readouterr()
     assert "path confinement refusal" in captured.err
