@@ -47,6 +47,52 @@
 
 
 
+## STRATEGIC (2026-09-04): 2026 Competitive Analysis & Strategic Updates Roadmap
+
+Competitive landscape audit against mid-2026 codebase intelligence and agent context tooling (`Gortex`, `GitNexus`, `Serena`, `GrepAI`, `ripgrep`, `ast-grep`, `Claude Code` native agentic search).
+
+### 1. Landscape Diagnosis & Positioning
+- **The Market Shift:** Industry consensus in 2026 has moved away from pure vector RAG (high token tax, stale vector indices, hallucinated relevance) and away from raw iterative CLI tool loops (agents calling grep/cat 10+ times) toward **Agent-Native Structural & Codebase Intelligence Layers**.
+- **Where `tg` Leads:**
+  - **4-in-1 Edit Readiness Capsule (`tg prepare`):** Bundles primary target, confidence score, blast-radius floor with graph provenance, detected validation commands, and machine-branchable human escalation flag (`ask_user_before_editing`). No surveyed competitor (`Gortex`, `GitNexus`, `CodeGraph`, `Aider`) bundles all four in a single call.
+  - **Section 0 Completeness Contract:** Exit codes 0/1/2 strictly agree with payload; closed vocabulary (`scan_limit`, `deadline`, `timeout`, `unreadable_path`); fail-closed `budget_remediable` verdict. No other tool provides this contract to protect agents from deleting code on empty truncated scans.
+  - **Zero-Setup Local Density:** Local CPU BM25 and lightweight ~65MB model2vec (`potion-code-16M`) via `tg find` without external vector DB dependencies.
+- **Where `tg` Lags:**
+  - **Language Depth:** `tg` has 5 deep parser-backed languages (Python, Go, JS, TS, Rust) and 5 defs-only foundational languages (C, C++, C#, Java, PHP). Gortex claims ~30 bespoke languages with resolved call edges, and Serena wraps 40+ via LSP.
+  - **Semantic Disconnect in Agent Capsules:** `tg prepare` and `tg agent` do not leverage `retrieval_dense` or `retrieval_fusion`, leaving them vulnerable to natural language vocabulary mismatch.
+  - **Git Diff / PR Impact Analysis:** Gortex (`pr_risk`, `get_pr_impact`) and GitNexus offer diff-level blast radius; `tg` currently has symbol-level blast radius only.
+
+---
+
+### 2. Prioritized Strategic Updates (P0 – P4)
+
+- **[ ] P0 — Fuse Semantic Dense Retrieval into `tg prepare` / `tg agent`**
+  - **Objective:** Eliminate task-description vocabulary mismatch without mandatory GPU or network dependencies.
+  - **Scope:** Wire `retrieval_dense` / `retrieval_fusion` from `tg find` as an optional fallback or hybrid signal in `build_agent_capsule` / `prepare` when lexical term matching yields low confidence (<0.6).
+  - **Acceptance:** Natural-language queries with mismatched vocabulary (e.g. "sales surcharge calculation" for `compute_tax`) successfully locate target symbol; exits 0 with high confidence; falls back cleanly to lexical-only if dense extra is not installed.
+
+- **[ ] P1 — Git Diff-Aware Blast Radius (`tg diff-impact` / `tg pr-risk`)**
+  - **Objective:** Compete directly with Gortex `pr_risk` and GitNexus impact analysis in automated CI/PR gates.
+  - **Scope:** Add `tg diff-impact [REF]` (e.g., `HEAD~1`, `--staged`) that parses modified symbols across the diff, computes union blast-radius floor, identifies affected downstream tests, and outputs a structured review readiness risk score.
+  - **Acceptance:** Outputs JSON with `changed_symbols`, `affected_callers`, `impacted_tests`, `risk_tier`; adheres to Section 0 completeness contract with deadline/token bounds.
+
+- **[ ] P2 — Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages)**
+  - **Objective:** Close the language depth gap against Gortex (~30) and Serena (40+).
+  - **Scope:** Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics (`_regex_references_and_calls`) to full tree-sitter AST-verified references and callers.
+  - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
+
+- **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
+  - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
+  - **Scope:** Add a unified, additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing surface-specific fields.
+  - **Acceptance:** Validated across all 58 MCP tool endpoints; client agents in Cursor, Windsurf, and Claude Code can inspect one consistent object to decide whether to retry with increased budget.
+
+- **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
+  - **Objective:** Position `tg` as the AI agent edit-readiness layer rather than a cold grep speed comparator.
+  - **Scope:** Update `README.md` and `docs/tool_comparison.md` to lead with `tg prepare` and the 4-element comparison table; demote cold grep speed benchmarks to an engine appendix; generate the published language tier table dynamically from `LANGUAGE_REGISTRY` to prevent documentation rot.
+  - **Acceptance:** `README.md` hero section features `tg prepare`; zero hardcoded language count drift against `LANGUAGE_REGISTRY`.
+
+
+
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
 
 Measured at the end of a session that appended heavily to both:
