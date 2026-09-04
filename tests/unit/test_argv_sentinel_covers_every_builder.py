@@ -130,12 +130,17 @@ def _bootstrap_native_search() -> list[str]:
 
 
 def _mcp_index_search() -> list[str]:
-    return _build_index_search_command(pattern=_PATTERN, path=_PATH)
+    return _build_index_search_command(pattern=_PATTERN, path=_PATH, native_binary="tg.exe")
 
 
 def _mcp_rewrite() -> list[str]:
     return _build_rewrite_command(
-        pattern=_PATTERN, replacement="x", lang="python", path=_PATH, mode="plan"
+        pattern=_PATTERN,
+        replacement="x",
+        lang="python",
+        path=_PATH,
+        mode="plan",
+        native_binary="tg.exe",
     )
 
 

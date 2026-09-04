@@ -1607,72 +1607,94 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         }
 
         for h in broad_handlers:
-            # 1. Must directly call _log_tool_exception at top level of handler body
-            has_direct_log = any(
-                isinstance(s, ast.Expr)
+            # Rule 1: Direct logging statement MUST appear before any control flow / transfer statements
+            log_indices = [
+                i
+                for i, s in enumerate(h.body)
+                if isinstance(s, ast.Expr)
                 and isinstance(s.value, ast.Call)
                 and isinstance(s.value.func, ast.Name)
                 and s.value.func.id == "_log_tool_exception"
-                for s in h.body
-            )
-            if not has_direct_log:
+            ]
+            if not log_indices:
                 return False
+            first_log_idx = log_indices[0]
 
-            # 2. Must end with a terminal return statement
+            # Prior to first_log_idx, there must be NO control-transfer statements (Return, Raise, Break, Continue)
+            for s in h.body[:first_log_idx]:
+                if isinstance(s, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                    return False
+
+            # Rule 2: Handler must terminate with a Return statement
             if not (h.body and isinstance(h.body[-1], ast.Return)):
                 return False
 
-            # 3. Taint analysis: track the bound exception and any derived variables
+            # Rule 3: Forbid any 'raise' inside the handler
+            for n in ast.walk(h):
+                if isinstance(n, ast.Raise):
+                    return False
+
+            # Rule 4: Comprehensive taint analysis
             tainted = set()
             if h.name:
                 tainted.add(h.name)
 
-            # Propagate taint through assignments
-            for stmt in h.body:
-                if isinstance(stmt, ast.Assign):
-                    rhs_tainted = any(
-                        isinstance(n, ast.Name) and n.id in tainted for n in ast.walk(stmt.value)
-                    )
-                    if rhs_tainted:
-                        for target in stmt.targets:
-                            if isinstance(target, ast.Name):
-                                tainted.add(target.id)
-                elif isinstance(stmt, ast.AnnAssign) and stmt.value:
-                    if any(
-                        isinstance(n, ast.Name) and n.id in tainted for n in ast.walk(stmt.value)
-                    ):
-                        if isinstance(stmt.target, ast.Name):
-                            tainted.add(stmt.target.id)
+            # Fixed-point taint propagation across assignments, walrus expressions, and destructuring
+            for _ in range(5):
+                for n in ast.walk(h):
+                    if isinstance(n, ast.NamedExpr):
+                        if any(
+                            isinstance(sub, ast.Name) and sub.id in tainted
+                            for sub in ast.walk(n.value)
+                        ):
+                            if isinstance(n.target, ast.Name):
+                                tainted.add(n.target.id)
+                    elif isinstance(n, ast.Assign):
+                        if any(
+                            isinstance(sub, ast.Name) and sub.id in tainted
+                            for sub in ast.walk(n.value)
+                        ):
+                            for t in n.targets:
+                                for tn in ast.walk(t):
+                                    if isinstance(tn, ast.Name):
+                                        tainted.add(tn.id)
+                    elif isinstance(n, ast.AnnAssign) and n.value:
+                        if any(
+                            isinstance(sub, ast.Name) and sub.id in tainted
+                            for sub in ast.walk(n.value)
+                        ):
+                            for tn in ast.walk(n.target):
+                                if isinstance(tn, ast.Name):
+                                    tainted.add(tn.id)
 
-            # Walk all nodes and ensure tainted variables are only used in approved contexts
+            # Ensure parent pointers are populated
             for parent in ast.walk(h):
                 for child in ast.iter_child_nodes(parent):
                     child.parent = parent
 
+            # Reject-by-default for any tainted load (fail-closed)
             for sub in ast.walk(h):
-                if (
-                    isinstance(sub, ast.Name)
-                    and sub.id in tainted
-                    and isinstance(sub.ctx, ast.Load)
-                ):
-                    p = getattr(sub, "parent", None)
-                    # Direct return of exc or alias (e.g. return exc / return leaked)
-                    if isinstance(p, ast.Return):
-                        return False
-                    # Safe attribute access: only exc.__class__.__name__
-                    if isinstance(p, ast.Attribute):
-                        if p.attr != "__class__":
-                            return False
+                if isinstance(sub, ast.Name) and sub.id in tainted:
+                    if isinstance(sub.ctx, (ast.Store, ast.Del)):
                         continue
-                    # Approved call sink
-                    if isinstance(p, ast.Call):
-                        func_name = getattr(p.func, "id", None) or getattr(p.func, "attr", None)
-                        if func_name in allowed_sinks:
+                    p = getattr(sub, "parent", None)
+                    if p is None:
+                        return False
+
+                    # Safe attribute: exc.__class__
+                    if isinstance(p, ast.Attribute) and p.value is sub:
+                        if p.attr == "__class__":
                             continue
                         return False
-                    # Passed into dict, tuple, list, etc. (e.g. {"error": exc})
-                    if isinstance(p, (ast.Dict, ast.List, ast.Tuple, ast.Set, ast.keyword)):
+
+                    # Safe sink call: sub must be an argument to a direct unshadowed ast.Name call in allowed_sinks
+                    if isinstance(p, ast.Call):
+                        if isinstance(p.func, ast.Name) and p.func.id in allowed_sinks:
+                            continue
                         return False
+
+                    # Any other parent (Return, BinOp, FormattedValue/JoinedStr, Dict, List, Tuple, etc.) is REJECTED
+                    return False
 
         return True
 
@@ -1792,6 +1814,52 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     assert not _check_encompassing_boundary(t12), (
         "Mutation control: non-terminal return in handler must fail"
     )
+
+    # 13. Hostile mutation control: f-string leak `return f"{exc}"`
+    t13 = ast.parse(
+        "@mcp.tool()\ndef t13():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t13', exc)\n        return f'{exc}'\n"
+    ).body[0]
+    assert isinstance(t13, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t13), (
+        "Mutation control: f-string formatting leak must fail"
+    )
+
+    # 14. Hostile mutation control: nested alias assignment inside `if True:`
+    t14 = ast.parse(
+        "@mcp.tool()\ndef t14():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t14', exc)\n        if True:\n            leaked = exc\n            return leaked\n"
+    ).body[0]
+    assert isinstance(t14, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t14), "Mutation control: nested alias return must fail"
+
+    # 15. Hostile mutation control: unreachable log after early return
+    t15 = ast.parse(
+        "@mcp.tool()\ndef t15():\n    try:\n        return 1\n    except Exception as exc:\n        return 'fail'\n        _log_tool_exception('t15', exc)\n"
+    ).body[0]
+    assert isinstance(t15, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t15), (
+        "Mutation control: log after early return must fail"
+    )
+
+    # 16. Hostile mutation control: raise then return
+    t16 = ast.parse(
+        "@mcp.tool()\ndef t16():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t16', exc)\n        raise exc\n        return 'safe'\n"
+    ).body[0]
+    assert isinstance(t16, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t16), "Mutation control: raise in handler must fail"
+
+    # 17. Hostile mutation control: attribute sink spoof `attacker._sanitized_tool_error(exc)`
+    t17 = ast.parse(
+        "@mcp.tool()\ndef t17():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t17', exc)\n        return attacker._sanitized_tool_error(exc)\n"
+    ).body[0]
+    assert isinstance(t17, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t17), "Mutation control: attribute sink spoof must fail"
+
+    # 18. Hostile mutation control: walrus return `return (leaked := exc)`
+    t18 = ast.parse(
+        "@mcp.tool()\ndef t18():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t18', exc)\n        return (leaked := exc)\n"
+    ).body[0]
+    assert isinstance(t18, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t18), "Mutation control: walrus return must fail"
 
 
 def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):

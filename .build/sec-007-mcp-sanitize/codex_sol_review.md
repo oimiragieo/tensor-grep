@@ -1,45 +1,55 @@
-# SEC-007 Round 11 — FIX-FIRST
+# SEC-007 Round 12 — FIX-FIRST
 
-Audited `f0af1253a31906c02e80d3c4d3846cdb5fff0efc` against `c7a515d794ff84d677f9426222828a0fbad5096a`. Read-only audit; no files changed.
+Audited `c7a515d794ff84d677f9426222828a0fbad5096a..ba8d3a44fae297797284238ceae3be46387563dd` read-only using the `codebase-audit` skill.
 
 ## Findings
 
-- [MEDIUM] The “taint-aware” boundary ratchet remains bypassable. At [test_mcp_error_sanitization.py:1625](</C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1625>), only the immediate parent of each `exc` load is examined. Assignments and most attribute accesses fall through without rejection. At [test_mcp_error_sanitization.py:1610](</C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1610>), any syntactic logging call satisfies the gate, including unreachable calls.
+- [MEDIUM] The outer-boundary AST ratchet remains fail-open for unrecognized taint contexts and unreachable top-level logging. In [test_mcp_error_sanitization.py](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1610), logging only needs to appear somewhere in `h.body`; it may occur after an unconditional return. At [lines 1652–1675](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1652), tainted loads are rejected only for several enumerated parent types, while every other AST shape implicitly passes.
 
-  Reproduced in memory with these mutations:
+  Running the exact committed `_check_encompassing_boundary` returned `True` for all six hostile mutations:
 
-  ```python
-  leaked = exc
-  return leaked
-
-  return exc.__dict__
-
-  if False:
-      _log_tool_exception("tool", exc)
-  return "safe"
+  ```text
+  f_string True                    # return f"{exc}"
+  nested_alias True                # if True: leaked = exc; return leaked
+  early_return_unreachable_log True
+  raise_then_return True           # raise exc; return "safe"
+  attribute_sink_spoof True        # attacker._sanitized_tool_error(exc)
+  walrus_return True               # return (leaked := exc)
   ```
 
-  The first mutation produced `FALSE-GREEN` from all four relevant AST ratchets, including `test_all_mcp_registered_tools_have_outer_fail_closed_boundary`. Direct probes of `_check_encompassing_boundary` returned `True` for all three bypass classes.
+  Minimal fix: make unknown taint contexts reject by default; propagate taint recursively through nested statements, destructuring and `NamedExpr`; accept sinks only when `Call.func` is an exact unshadowed `ast.Name`; and require the direct log before any control-transfer statement. Add the six mutations above as controls.
 
-  Minimal fix: propagate taint through assignments, containers, attributes, formatting, and calls; require `_log_tool_exception` as an unconditional direct handler statement; require a direct terminal return whose exception-derived values reach only explicitly approved sanitizers. Add mutation controls for alias-return, arbitrary attributes, and unreachable/nested logging.
+- [MEDIUM] Resolver failure now fails open to executable lookup through `PATH`. Both [mcp_rewrite_tools.py:523](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:523) and [mcp_rewrite_tools.py:571](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:571) catch resolution failures and substitute `binary_str = "tg"`. This behavior was not present at the base revision.
 
-- [MEDIUM] The handler ceiling is synchronized, but the claimed audited disposition population is not. [test_silent_failure_hardening.py:162](</C:/dev/projects/tensor-grep/tests/unit/test_silent_failure_hardening.py:162>) raises the ceiling with an aggregate classification, while the file says the complete per-handler table lives in [2026-08-20-handler-dispositions.json](</C:/dev/projects/tensor-grep/docs/audits/2026-08-20-handler-dispositions.json:1>). That ledger is unchanged and contains only the original MCP population:
+  Reproduction with `resolve_native_tg_binary()` forced to raise:
 
-  - Ledger: `35 + 10 + 8 + 4 = 57`
-  - Current source: `74 + 20 + 27 + 10 = 131`
-  - Missing dispositions: exactly `74`
+  ```text
+  rewrite_argv0 tg
+  index_argv0 tg
+  ```
 
-  Minimal fix: add the 74 current handlers to the canonical disposition ledger with enclosing-function/site evidence, then ratchet ledger/source set equality—not only `total <= 340`.
+  All current production callers pass an explicitly resolved `native_binary`, which limits immediate external reachability, but the security-sensitive builders themselves are now fail-open and can select an unintended executable.
 
-## Verified clean
+  Minimal fix: make `native_binary` required and remove both internal resolver/`"tg"` fallback branches. Propagate resolver failure into the existing sanitized error path.
 
-- `_log_tool_exception` is non-throwing around traceback formatting and stderr output at [mcp_server.py:769](</C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:769>).
-- Broken-stderr FastMCP regression passed.
-- Exact census verified: repository `266 → 340`; module deltas `+39/+10/+19/+6`.
-- Exactly 58 registered tools remain; all current outer handlers have direct logging and terminal returns.
-- 54 `str(exc)` sites remain; current allowed confinement behavior passed.
-- `96 passed in 25.55s`; collection counts independently confirmed as 39 and 94.
-- Ruff check and format check passed; mypy passed for 123 source files.
+- [MEDIUM] The ledger is structurally synchronized but several new disposition claims are factually incorrect. For example:
+
+  - [ledger:1783](C:/dev/projects/tensor-grep/docs/audits/2026-08-20-handler-dispositions.json:1783) calls `_mcp_root` an outer fail-closed boundary using `_log_tool_exception` and returning a sanitized wire payload. The implementation directly prints and falls back to the current directory at [mcp_server.py:1407](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:1407).
+  - [ledger:2453](C:/dev/projects/tensor-grep/docs/audits/2026-08-20-handler-dispositions.json:2453) and [ledger:2463](C:/dev/projects/tensor-grep/docs/audits/2026-08-20-handler-dispositions.json:2463) describe the command builders as fail-closed boundaries returning sanitized payloads. They instead continue with `binary_str = "tg"`.
+  - The `_confine_write_path` and `_confine_mcp_path` records similarly claim `_log_tool_exception` and direct sanitized wire returns, while their handlers use direct stderr output and rethrow `PathConfinementError`.
+
+  The ledger test only requires evidence and reason to be non-empty and unequal at [test_handler_dispositions.py:287](C:/dev/projects/tensor-grep/tests/unit/test_handler_dispositions.py:287), so copied but false evidence passes.
+
+  Minimal fix: rederive those records from actual behavior; classify the `_mcp_root` fallback as `LOGGED-DEGRADE`, accurately describe confinement exception translation, and remove or correctly disposition the command-builder fallbacks.
+
+## Verified clean portions
+
+- `_log_tool_exception` is non-throwing through `except BaseException` at [mcp_server.py:769](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:769).
+- Ledger structure: 131/131 four-module handlers represented, zero missing, zero extra, zero exact-line mismatches. SEC-007 contributes exactly 74 rows: 39/10/19/6 by module.
+- `test_mcp_error_sanitization.py`: 39 passed.
+- Joint security suite: 96 passed.
+- Ledger suite: 10 passed, 1 expensive locatability test deselected; an independent exact-line reconciliation covered all 131 records more strictly.
+- Focused Ruff checks, format check, MyPy over 123 source files, and `git diff --check`: clean.
 - Worktree remained clean.
 
-Final verdict: **FIX-FIRST**. Round 10 finding 1 is resolved; finding 2 is only partially resolved; finding 3 remains unresolved.
+**Final verdict: FIX-FIRST.** Round 11 findings 1 and 2 are not fully resolved, and the new `PATH` fallback should be removed before clearance.

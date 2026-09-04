@@ -509,22 +509,15 @@ def _build_rewrite_command(
     lang: str,
     path: str,
     mode: str,
+    native_binary: str | Path,
     verify: bool = False,
     checkpoint: bool = False,
     audit_manifest: str | None = None,
     audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
-    native_binary: str | Path | None = None,
 ) -> list[str]:
-    if native_binary is not None:
-        binary_str = str(native_binary)
-    else:
-        try:
-            binary_str = str(_self.resolve_native_tg_binary())
-        except Exception as exc:
-            _log_tool_exception("resolve_native_tg_binary", exc)
-            binary_str = "tg"
+    binary_str = str(native_binary)
     command = [
         binary_str,
         "run",
@@ -562,17 +555,8 @@ def _build_rewrite_command(
     return command
 
 
-def _build_index_search_command(
-    *, pattern: str, path: str, native_binary: str | Path | None = None
-) -> list[str]:
-    if native_binary is not None:
-        binary_str = str(native_binary)
-    else:
-        try:
-            binary_str = str(_self.resolve_native_tg_binary())
-        except Exception as exc:
-            _log_tool_exception("resolve_native_tg_binary", exc)
-            binary_str = "tg"
+def _build_index_search_command(*, pattern: str, path: str, native_binary: str | Path) -> list[str]:
+    binary_str = str(native_binary)
     return [
         binary_str,
         "search",

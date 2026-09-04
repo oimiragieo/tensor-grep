@@ -561,7 +561,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 666,
+    "lineno": 652,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -571,7 +571,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 685,
+    "lineno": 671,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -581,7 +581,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1077,
+    "lineno": 1063,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1775,8 +1775,8 @@
     "enclosing_symbol": "_confine_write_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_server.py:_confine_write_path outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _confine_write_path preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "evidence": "SEC-007: cli/mcp_server.py:_confine_write_path handler catches candidate path resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError without wire traceback.",
+    "reason": "Fail-closed translation boundary for _confine_write_path converting resolution exceptions into PathConfinementError to prevent wire disclosure.",
     "hardened_in": "SEC-007"
   },
   {
@@ -1784,9 +1784,9 @@
     "lineno": 1407,
     "enclosing_symbol": "_mcp_root",
     "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _mcp_root preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "category": "LOGGED-DEGRADE",
+    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root handler catches directory resolution failure on TG_MCP_ROOT, logs diagnostic warning to sys.stderr, and gracefully degrades to current working directory.",
+    "reason": "Graceful fallback boundary for TG_MCP_ROOT override degradation to current directory when custom path cannot be resolved or is invalid.",
     "hardened_in": "SEC-007"
   },
   {
@@ -1795,8 +1795,8 @@
     "enclosing_symbol": "_mcp_root",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _mcp_root preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root handler catches cwd resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError('root').",
+    "reason": "Fail-closed translation boundary for current working directory resolution failure into PathConfinementError.",
     "hardened_in": "SEC-007"
   },
   {
@@ -1805,8 +1805,8 @@
     "enclosing_symbol": "_confine_mcp_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_server.py:_confine_mcp_path outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _confine_mcp_path preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "evidence": "SEC-007: cli/mcp_server.py:_confine_mcp_path handler catches candidate path resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError without wire traceback.",
+    "reason": "Fail-closed translation boundary for _confine_mcp_path converting resolution exceptions into PathConfinementError to prevent wire disclosure.",
     "hardened_in": "SEC-007"
   },
   {
@@ -2445,33 +2445,13 @@
     "enclosing_symbol": "_resolve_native_tg_binary_for_mcp",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:_resolve_native_tg_binary_for_mcp outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _resolve_native_tg_binary_for_mcp preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:_resolve_native_tg_binary_for_mcp handler catches native binary resolution failure, logs to sys.stderr via _log_tool_exception, and returns (None, sanitized_error) to caller.",
+    "reason": "Fail-closed outer boundary for native binary resolution returning sanitized error tuple.",
     "hardened_in": "SEC-007"
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 525,
-    "enclosing_symbol": "_build_rewrite_command",
-    "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:_build_rewrite_command outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _build_rewrite_command preventing internal exceptions and tracebacks from crossing MCP wire to client.",
-    "hardened_in": "SEC-007"
-  },
-  {
-    "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 573,
-    "enclosing_symbol": "_build_index_search_command",
-    "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:_build_index_search_command outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
-    "reason": "Fail-closed outer containment boundary for _build_index_search_command preventing internal exceptions and tracebacks from crossing MCP wire to client.",
-    "hardened_in": "SEC-007"
-  },
-  {
-    "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 828,
+    "lineno": 814,
     "enclosing_symbol": "execute_rewrite_plan_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2481,7 +2461,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1131,
+    "lineno": 1117,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2491,7 +2471,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1181,
+    "lineno": 1167,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",

@@ -1343,8 +1343,9 @@ def test_tg_index_search_returns_structured_error_for_missing_path():
 def test_index_search_command_ends_options_before_user_positionals() -> None:
     from tensor_grep.cli import mcp_server
 
-    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
-        cmd = mcp_server._build_index_search_command(pattern="--weird", path="/tmp/x")
+    cmd = mcp_server._build_index_search_command(
+        pattern="--weird", path="/tmp/x", native_binary="/fake/tg"
+    )
 
     assert "--" in cmd, "user positionals must follow an end-of-options sentinel"
     sentinel = cmd.index("--")
@@ -1355,14 +1356,14 @@ def test_index_search_command_ends_options_before_user_positionals() -> None:
 def test_rewrite_command_ends_options_before_user_positionals() -> None:
     from tensor_grep.cli import mcp_server
 
-    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
-        cmd = mcp_server._build_rewrite_command(
-            pattern="-x",
-            replacement="bar",
-            lang="python",
-            path="/tmp/x",
-            mode="plan",
-        )
+    cmd = mcp_server._build_rewrite_command(
+        pattern="-x",
+        replacement="bar",
+        lang="python",
+        path="/tmp/x",
+        mode="plan",
+        native_binary="/fake/tg",
+    )
 
     assert "--" in cmd, "user positionals must follow an end-of-options sentinel"
     sentinel = cmd.index("--")
@@ -1375,15 +1376,15 @@ def test_rewrite_apply_command_still_sentinels_positionals() -> None:
     # positionals cannot be re-interpreted as flags.
     from tensor_grep.cli import mcp_server
 
-    with patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("/fake/tg")):
-        cmd = mcp_server._build_rewrite_command(
-            pattern="-rf",
-            replacement="bar",
-            lang="python",
-            path="/tmp/x",
-            mode="apply",
-            verify=True,
-        )
+    cmd = mcp_server._build_rewrite_command(
+        pattern="-rf",
+        replacement="bar",
+        lang="python",
+        path="/tmp/x",
+        mode="apply",
+        verify=True,
+        native_binary="/fake/tg",
+    )
 
     assert cmd[-3:] == ["--", "-rf", "/tmp/x"]
     assert "--apply" in cmd and "--json" in cmd
