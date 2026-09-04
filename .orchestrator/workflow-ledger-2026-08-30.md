@@ -36,11 +36,12 @@ python -c "import json; print(json.load(open('docs/audits/2026-08-30-handler-cen
 
 | Step | Status | Evidence |
 |---|---|---|
-| PR #1125 (SEC-007) | IN_FLIGHT (CI running) | Run `33899472111`; 54/54 AST ratchets green; bare-call ratchet green |
+| PR #1125 (SEC-007) | IN_FLIGHT (CI running) | Commit `58036b6`; Run `33909866974`; 54/54 AST ratchets, file-size ratchet & handler locatability green |
 | Worktree harvest | CLEAN | 0 stale worktrees; 1 root workspace only |
 | Branch harvest | CLEAN | Ahead 0; all work pushed to `fix/sec-007-mcp-sanitize` |
 | Strategic backlog | UPDATED | P0-P8 strategic & architectural backlog added to `docs/BACKLOG.md` |
 | Rules & Skills | UPDATED | Rules A156-A159 added to `AGENTS.md`; `tensor-grep-enterprise-agent` skill synced |
 | Public hygiene plan | STAGED | Untracking `.build/`, `.wayfinder/`, `.orchestrator/`, `MEMORY.md` upon PR merge |
 | Seat cost ledger | $0.00 | Free local & runner tiers only; zero spend |
+
 

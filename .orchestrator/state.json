@@ -5,7 +5,7 @@
   "session_mode": "CLOSEOUT",
   "git": {
     "branch": "fix/sec-007-mcp-sanitize",
-    "head_sha": "51eb89cff6bbfaa5ad2bc8b444e7fa6affb14c84",
+    "head_sha": "58036b68f17b8f8ecebcca64e084b13bb6ece76f",
     "base_sha": "f88d2c1f798ab2e91a1778a1ba59b0f18eecc4af",
     "open_prs": [
       {
@@ -13,11 +13,12 @@
         "title": "fix(mcp): sanitize raw exceptions on wire, enforce fail-closed boundaries, and harden AST ratchet",
         "branch": "fix/sec-007-mcp-sanitize",
         "status": "OPEN",
-        "ci_run_id": 33899472111
+        "ci_run_id": 33909866974
       }
     ],
     "dirty": false,
-    "pin_meaning": "Committed tip 51eb89c: SEC-007 MCP error wire sanitization, Route A collect_device_inventory late lookup, AST ratchets, backlog P0-P8 roadmap, and A156-A159 rules."
+    "pin_meaning": "Committed tip 58036b6: SEC-007 MCP error wire sanitization, Route A collect_device_inventory late lookup, AST ratchets, file-size allowlist alignment, handler locatability sync, and backlog formatting."
+
   },
   "last_shipped_slice": {
     "id": "SEC-007-MCP-SANITIZE",
