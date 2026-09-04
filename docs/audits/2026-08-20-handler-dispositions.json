@@ -211,7 +211,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3990,
+    "lineno": 4033,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -341,7 +341,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5381,
+    "lineno": 5424,
     "enclosing_symbol": "tg_checkpoint",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1791,7 +1791,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1482,
+    "lineno": 1525,
     "enclosing_symbol": "_mcp_root",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2131,7 +2131,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5385,
+    "lineno": 5428,
     "enclosing_symbol": "tg_checkpoint",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
