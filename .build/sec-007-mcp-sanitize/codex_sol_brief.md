@@ -1,57 +1,58 @@
-# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 13
+# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 14
 
 You are the Codex Sol security auditor. Perform a rigorous, adversarial security audit of the changes in branch `fix/sec-007-mcp-sanitize` against base `c7a515d`.
 
-## Target Contracts & Round 12 Finding Resolutions:
+## Target Contracts & Round 13 Finding Resolutions:
 
-1. **AST Ratchet Taint Fail-Closed & Hostile Mutation Controls (Resolving Round 12 Finding 1 - MEDIUM)**:
-   - In `tests/unit/test_mcp_error_sanitization.py`, `_check_encompassing_boundary` has been updated with fail-closed semantics:
-     - Direct logging requirement: `_log_tool_exception` call must appear before ANY control-transfer statements (`Return`, `Raise`, `Break`, `Continue`). Logs appearing after early returns are strictly rejected.
-     - Terminal return requirement: handler must terminate with an `ast.Return`.
-     - Explicitly forbids any `ast.Raise` in the handler body.
-     - Fixed-point taint propagation: recursively tracks taint through `ast.NamedExpr` (walrus `:=`), `ast.Assign` (with destructuring), and `ast.AnnAssign`.
-     - Fail-closed / reject-by-default for tainted variables: any load of a tainted variable that is NOT in an explicitly whitelisted safe context is immediately rejected. Allowed contexts are strictly:
-       - safe attribute: `exc.__class__` (for `exc.__class__.__name__`).
-       - direct call sink: direct argument to an unshadowed `ast.Name` call in `allowed_sinks`.
-     - All other parent types (e.g. `FormattedValue`/`JoinedStr` f-strings, `Return`, `BinOp`, `Dict`, `List`, `Tuple`, kwargs, arbitrary attribute accesses like `exc.__dict__`, etc.) are REJECTED.
-     - Validated against 18 comprehensive mutation controls (including all 6 hostile mutations highlighted by Codex Sol):
-       - Control 13: f-string formatting leak `return f"{exc}"` -> rejected.
-       - Control 14: nested alias assignment `if True: leaked = exc; return leaked` -> rejected.
-       - Control 15: unreachable log after early return -> rejected.
-       - Control 16: `raise exc; return "safe"` -> rejected.
-       - Control 17: attribute sink spoof `attacker._sanitized_tool_error(exc)` -> rejected.
-       - Control 18: walrus return `return (leaked := exc)` -> rejected.
+1. **AST Ratchet Bypasses Closed & Hostile Mutation Controls (Resolving Round 13 Finding 1 - MEDIUM)**:
+   - In `tests/unit/test_mcp_error_sanitization.py`:
+     - `_is_broad_handler` now recognizes both simple broad exceptions and tuple-form broad handlers (`except (Exception,):` or `except (..., Exception, ...):`).
+     - Pre-log checks recursively inspect statements prior to `first_log_idx` for any control transfers (`ast.Return`, `ast.Raise`, `ast.Break`, `ast.Continue`), catching nested transfers such as `if True: return "unlogged"`.
+     - Lexical shadow check forbids rebinding, assigning, or deleting approved logger or sanitizer sink names (`_log_tool_exception`, `_sanitized_tool_error`, `_sanitized_tool_error_text`, etc.).
+     - Approved sink set includes `_safe_exception_class_name`.
+     - Added hostile mutation controls 19 through 22 (22 total mutation controls, all verified failing on bypass and passing on hardened implementation):
+       - Control 19: nested early return before log (`if True: return 'unlogged'`) -> rejected.
+       - Control 20: shadowed sanitizer sink (`_sanitized_tool_error = lambda ...`) -> rejected.
+       - Control 21: shadowed logger (`_log_tool_exception = lambda ...`) -> rejected.
+       - Control 22: tuple broad handler (`except (Exception,):`) -> detected and checked.
 
-2. **Removal of Fail-Open PATH Fallbacks in Command Builders (Resolving Round 12 Finding 2 - MEDIUM)**:
-   - In `src/tensor_grep/cli/mcp_rewrite_tools.py`, removed internal resolver calls and `"tg"` PATH fallbacks from `_build_rewrite_command` and `_build_index_search_command`.
-   - `native_binary: str | Path` is now a mandatory keyword parameter.
-   - Callers (`tg_index_search`, `tg_rewrite_plan`, `tg_rewrite_diff`, `execute_rewrite_apply_json`) resolve `native_tg` up-front via `_resolve_native_tg_binary_for_mcp()`; if resolution fails, they return `_native_unavailable_error` on the sanitized error path without ever attempting to invoke an unverified binary from `PATH`.
+2. **Strictly Non-Throwing Exception Class Wire Classification (Resolving Round 13 Finding 2 - MEDIUM)**:
+   - Created centralized helper `_safe_exception_class_name(exc: BaseException) -> str` in `src/tensor_grep/cli/mcp_server.py`.
+   - Never accesses user-controlled properties or `exc.__class__`; uses `type(exc)` to inspect the type descriptor safely at the C level.
+   - Validates the type name against a strict allowlist of standard Python builtins and known framework error classes (`_TRUSTED_EXCEPTION_CLASSES`), plus modules in `tensor_grep` and standard library modules (`builtins`, `json`, `subprocess`, `os`, `pathlib`).
+   - Any dynamic, synthesized, or hostile type name (e.g. `type("SEC007_DYNAMIC_TYPE_SECRET", (Exception,), {})`) degrades safely to `"InternalError"` on the wire.
+   - Replaced all direct wire interpolations of `exc.__class__.__name__` across `mcp_server.py`, `mcp_audit_tools.py`, and `mcp_rewrite_tools.py` with `_safe_exception_class_name(exc)`.
+   - Hardened server-side `_log_tool_exception` with non-throwing fallback handling in case `traceback.format_exception` encounters an exception with a throwing property.
+   - Added transport-level FastMCP direct tool call tests in `tests/unit/test_mcp_error_sanitization.py`:
+     - `test_direct_call_tool_dynamic_exception_type_sanitized`: verifies dynamic class names degrade safely to `InternalError` on the wire while logging full details to stderr.
+     - `test_direct_call_tool_hostile_class_property_sanitized`: verifies hostile `@property def __class__` accessors do not escape the boundary or leak secrets on the wire.
 
-3. **Accurate Classification and Evidence in Dispositions Ledger (Resolving Round 12 Finding 3 - MEDIUM)**:
-   - All 72 net additions to `docs/audits/2026-08-20-handler-dispositions.json` have been re-derived from actual code behavior:
-     - `_mcp_root` line 1407 is correctly classified as `LOGGED-DEGRADE` (fallback to current working directory with diagnostic log to `sys.stderr`).
-     - `_mcp_root` line 1415 is classified as `INTENTIONAL-BOUNDARY` translating current working directory resolution failure to `PathConfinementError("root")`.
-     - `_confine_write_path` and `_confine_mcp_path` accurately describe path resolution failure logging to `sys.stderr` and translation into `PathConfinementError` to prevent wire disclosure.
-     - `_resolve_native_tg_binary_for_mcp` accurately describes logging and returning `(None, sanitized_error)` tuple.
-     - Tool endpoints are accurately documented as `INTENTIONAL-BOUNDARY` logging via `_log_tool_exception` and returning sanitized error payloads.
-     - Ledger test suite passes 11/11 tests green in `test_handler_dispositions.py`.
+3. **Handler Dispositions Ledger Factually Accurate (Resolving Round 13 Finding 3 - MEDIUM)**:
+   - In `docs/audits/2026-08-20-handler-dispositions.json`:
+     - Corrected `_confine_mcp_path` entry: handler catches `_mcp_root()` anchor resolution failure (not candidate path resolution).
+     - Corrected 8 entries that were inaccurately labeled "outer" boundaries when they were nested/inner handlers (`tg_ruleset_scan`, `tg_index_search`, rewrite endpoints, `tg_devices`, and `execute_rewrite_apply_json`).
+     - Synchronized advisory line numbers (`_record_generated_audit_manifest`, `stdin_reader`, `tg_mcp_capabilities`).
+     - Verified all 338 ledger records against their AST symbol spans.
+   - In `tests/unit/test_silent_failure_hardening.py`:
+     - Updated ceiling comment at line 164 to document the actual 71 `INTENTIONAL-BOUNDARY` and 1 `LOGGED-DEGRADE` split.
+   - Dispositions test suite passes 11/11 tests green.
 
 4. **Synchronized Census & Ceiling**:
-   - `TOTAL_BROAD_HANDLERS_CEILING = 338` in `tests/unit/test_silent_failure_hardening.py` (+72 delta: +39 mcp_server, +10 mcp_symbol_tools, +19 mcp_audit_tools, +4 mcp_rewrite_tools).
-   - Broad handler census passes 2/2 green.
+   - `TOTAL_BROAD_HANDLERS_CEILING = 338` in `tests/unit/test_silent_failure_hardening.py`.
+   - All 58 FastMCP tools verified to have fail-closed outer encompassing boundaries.
 
 5. **Static Analysis & Whitespace Verification**:
    - `ruff check .`: clean.
    - `ruff format --preview --check .`: clean.
    - `mypy src/tensor_grep`: clean (0 issues in 123 source files).
-   - `git diff --check`: clean (0 whitespace warnings/errors).
+   - `git diff --check`: clean.
 
 ## Review Instructions:
 1. Inspect the git diff against base `c7a515d`.
-2. Verify that all Round 12 findings are fully resolved:
-   - Fail-closed AST ratchet rejecting unknown taint contexts, walrus, nested alias, attribute spofs, f-strings, early return logging.
-   - Strict `native_binary` requirement in command builders with zero fallback to `"tg"` or `PATH`.
-   - Factually accurate evidence, reasons, and categories (`LOGGED-DEGRADE`, `INTENTIONAL-BOUNDARY`) in `docs/audits/2026-08-20-handler-dispositions.json`.
+2. Verify that all Round 13 findings are fully resolved:
+   - AST ratchet recognizes tuple broad handlers, rejects pre-log control transfers, rejects shadowing of sink/logger names.
+   - Exception class rendering is centralized, non-throwing, never accesses `exc.__class__`, validates against trusted classes, and degrades dynamic/hostile types to `InternalError`.
+   - Dispositions ledger factually accurate (inner vs outer boundaries, root vs candidate confinement, 71/1 split).
 3. Try to BREAK it: search for any bypass, unintended leak, unhandled exception, or regression.
 4. Output your findings and final verdict:
    - If clean: `AUDIT_CLEAR / VERIFIED: GO` or `SHIP`.

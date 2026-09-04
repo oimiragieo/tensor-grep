@@ -83,6 +83,9 @@ from tensor_grep.cli.mcp_server import (
 from tensor_grep.cli.mcp_server import (
     _record_generated_audit_manifest as _record_generated_audit_manifest,
 )
+from tensor_grep.cli.mcp_server import (
+    _safe_exception_class_name as _safe_exception_class_name,
+)
 
 
 def _rewrite_envelope() -> dict[str, Any]:
@@ -177,10 +180,10 @@ def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
         return _self.resolve_native_tg_binary(), None
     except FileNotFoundError as exc:
         _log_tool_exception("resolve_native_tg_binary", exc)
-        return None, f"Native binary not found: {exc.__class__.__name__}"
+        return None, f"Native binary not found: {_safe_exception_class_name(exc)}"
     except Exception as exc:
         _log_tool_exception("resolve_native_tg_binary", exc)
-        return None, f"Native binary resolution failed: {exc.__class__.__name__}"
+        return None, f"Native binary resolution failed: {_safe_exception_class_name(exc)}"
 
 
 _ALLOWED_POLICY_FIELDS = {
@@ -600,7 +603,7 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
     except OSError as exc:
         _log_tool_exception("rewrite_subprocess", exc)
         return _rewrite_error(
-            f"Failed to execute rewrite command: {exc.__class__.__name__}",
+            f"Failed to execute rewrite command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             retryable=True,
         )
@@ -650,7 +653,7 @@ def _execute_embedded_rewrite_json(
     except Exception as exc:
         _log_tool_exception("embedded_rewrite_import", exc)
         return _rewrite_error(
-            f"Embedded native rewrite support unavailable: {exc.__class__.__name__}",
+            f"Embedded native rewrite support unavailable: {_safe_exception_class_name(exc)}",
             code="unavailable",
             retryable=True,
         )
@@ -672,7 +675,7 @@ def _execute_embedded_rewrite_json(
         _log_tool_exception("embedded_rewrite_execution", exc)
         code, retryable = _classify_native_rewrite_failure(exc, returncode=1)
         return _rewrite_error(
-            f"Embedded rewrite {mode} failed: {exc.__class__.__name__}",
+            f"Embedded rewrite {mode} failed: {_safe_exception_class_name(exc)}",
             code=code,
             retryable=retryable,
         )
@@ -813,7 +816,7 @@ def execute_rewrite_plan_json(
         _log_tool_exception("execute_rewrite_plan_json", exc)
         return (
             _rewrite_error(
-                f"Rewrite plan failed: {exc.__class__.__name__}",
+                f"Rewrite plan failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
             ),
             1,
@@ -1116,7 +1119,7 @@ def execute_rewrite_apply_json(
                 _log_tool_exception("create_checkpoint", exc)
                 return (
                     _rewrite_error(
-                        f"Failed to create checkpoint: {exc.__class__.__name__}",
+                        f"Failed to create checkpoint: {_safe_exception_class_name(exc)}",
                         code="checkpoint",
                     ),
                     1,
@@ -1165,7 +1168,9 @@ def execute_rewrite_apply_json(
     except Exception as exc:
         _log_tool_exception("evaluate_apply_policy", exc)
         payload = dict(rewrite_payload)
-        payload["policy_evaluation_error"] = f"Policy evaluation failed: {exc.__class__.__name__}"
+        payload["policy_evaluation_error"] = (
+            f"Policy evaluation failed: {_safe_exception_class_name(exc)}"
+        )
         payload["error"] = {
             "code": "policy_evaluation_failed",
             "message": (
@@ -1187,7 +1192,7 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
     except OSError as exc:
         _log_tool_exception("rewrite_diff_subprocess", exc)
         return _rewrite_error(
-            f"Failed to execute rewrite diff command: {exc.__class__.__name__}",
+            f"Failed to execute rewrite diff command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             retryable=True,
         )
@@ -1234,7 +1239,7 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
     except OSError as exc:
         _log_tool_exception("index_search_subprocess", exc)
         return _index_search_error(
-            f"Failed to execute index search command: {exc.__class__.__name__}",
+            f"Failed to execute index search command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             pattern=pattern,
             path=path,

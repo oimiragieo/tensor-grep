@@ -130,6 +130,9 @@ from tensor_grep.cli.mcp_server import (
     _register_legacy_tool as _register_legacy_tool,
 )
 from tensor_grep.cli.mcp_server import (
+    _safe_exception_class_name as _safe_exception_class_name,
+)
+from tensor_grep.cli.mcp_server import (
     _sanitized_tool_error as _sanitized_tool_error,
 )
 from tensor_grep.cli.mcp_server import (
@@ -149,7 +152,7 @@ def tg_rulesets() -> str:
                 "version": _json_output_version(),
                 "error": {
                     "code": "internal_error",
-                    "message": f"Rulesets lookup failed: {exc.__class__.__name__}",
+                    "message": f"Rulesets lookup failed: {_safe_exception_class_name(exc)}",
                 },
             },
             indent=2,
@@ -463,7 +466,7 @@ def tg_ruleset_scan(
         except Exception as exc:
             _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
-                f"Ruleset scan failed: {exc.__class__.__name__}",
+                f"Ruleset scan failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
                 ruleset=ruleset,
                 path=path,
@@ -473,7 +476,7 @@ def tg_ruleset_scan(
     except Exception as exc:
         _log_tool_exception("tg_ruleset_scan", exc)
         return _ruleset_scan_error(
-            f"Ruleset scan failed: {exc.__class__.__name__}",
+            f"Ruleset scan failed: {_safe_exception_class_name(exc)}",
             code="internal_error",
             ruleset=ruleset,
             path=".",
@@ -528,7 +531,7 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
         except Exception as exc:
             _log_tool_exception("tg_index_search", exc)
             return _index_search_error(
-                f"Index search failed: {exc.__class__.__name__}",
+                f"Index search failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
                 pattern=pattern,
                 path=path,
@@ -536,7 +539,7 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
     except Exception as exc:
         _log_tool_exception("tg_index_search", exc)
         return _index_search_error(
-            f"Index search failed: {exc.__class__.__name__}",
+            f"Index search failed: {_safe_exception_class_name(exc)}",
             code="internal_error",
             pattern=pattern,
             path=".",
@@ -582,13 +585,13 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
         except Exception as exc:
             _log_tool_exception("tg_rewrite_plan", exc)
             return _rewrite_error(
-                f"Rewrite plan failed: {exc.__class__.__name__}",
+                f"Rewrite plan failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
             )
     except Exception as exc:
         _log_tool_exception("tg_rewrite_plan", exc)
         return _rewrite_error(
-            f"Rewrite plan failed: {exc.__class__.__name__}", code="internal_error"
+            f"Rewrite plan failed: {_safe_exception_class_name(exc)}", code="internal_error"
         )
 
 
@@ -696,13 +699,13 @@ def tg_rewrite_apply(
         except Exception as exc:
             _log_tool_exception("tg_rewrite_apply", exc)
             return _rewrite_error(
-                f"Rewrite apply failed: {exc.__class__.__name__}",
+                f"Rewrite apply failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
             )
     except Exception as exc:
         _log_tool_exception("tg_rewrite_apply", exc)
         return _rewrite_error(
-            f"Rewrite apply failed: {exc.__class__.__name__}", code="internal_error"
+            f"Rewrite apply failed: {_safe_exception_class_name(exc)}", code="internal_error"
         )
 
 
@@ -1340,11 +1343,11 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
         except Exception as exc:
             _log_tool_exception("tg_rewrite_diff", exc)
             return _rewrite_error(
-                f"Rewrite diff failed: {exc.__class__.__name__}",
+                f"Rewrite diff failed: {_safe_exception_class_name(exc)}",
                 code="internal_error",
             )
     except Exception as exc:
         _log_tool_exception("tg_rewrite_diff", exc)
         return _rewrite_error(
-            f"Rewrite diff failed: {exc.__class__.__name__}", code="internal_error"
+            f"Rewrite diff failed: {_safe_exception_class_name(exc)}", code="internal_error"
         )

@@ -269,6 +269,7 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                     "_sanitized_tool_error_text",
                     "_log_tool_exception",
                     "_classify_native_rewrite_failure",
+                    "_safe_exception_class_name",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -283,11 +284,14 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
         return False
 
     def is_safe_class_name_attr(node, var_name):
-        # e.g. exc.__class__.__name__
-        if isinstance(node, ast.Attribute) and node.attr == "__name__":
-            if isinstance(node.value, ast.Attribute) and node.value.attr == "__class__":
-                if isinstance(node.value.value, ast.Name) and node.value.value.id == var_name:
-                    return True
+        # Allow _safe_exception_class_name(exc) call
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_safe_exception_class_name"
+        ):
+            if any(isinstance(a, ast.Name) and a.id == var_name for a in node.args):
+                return True
         return False
 
     def find_broad_offenders(ast_tree, source_lines):
@@ -432,6 +436,7 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                     "_log_tool_exception",
                     "_classify_native_rewrite_failure",
                     "_sanitize_policy_validation_details",
+                    "_safe_exception_class_name",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -446,11 +451,14 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
         return False
 
     def is_safe_class_name_attr(node, var_name):
-        # e.g. exc.__class__.__name__
-        if isinstance(node, ast.Attribute) and node.attr == "__name__":
-            if isinstance(node.value, ast.Attribute) and node.value.attr == "__class__":
-                if isinstance(node.value.value, ast.Name) and node.value.value.id == var_name:
-                    return True
+        # Allow _safe_exception_class_name(exc) call
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_safe_exception_class_name"
+        ):
+            if any(isinstance(a, ast.Name) and a.id == var_name for a in node.args):
+                return True
         return False
 
     def find_narrow_offenders(ast_tree, source_lines):
@@ -1576,6 +1584,18 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         "mcp_rewrite_tools.py",
     ]
 
+    def _is_broad_handler(h: ast.ExceptHandler) -> bool:
+        if h.type is None:
+            return True
+        if isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException"):
+            return True
+        if isinstance(h.type, ast.Tuple):
+            return any(
+                isinstance(e, ast.Name) and e.id in ("Exception", "BaseException")
+                for e in h.type.elts
+            )
+        return False
+
     def _check_encompassing_boundary(fn_node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         docstring = (
             bool(fn_node.body)
@@ -1587,12 +1607,7 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         if len(stmts) != 1 or not isinstance(stmts[0], ast.Try):
             return False
         try_node = stmts[0]
-        broad_handlers = [
-            h
-            for h in try_node.handlers
-            if h.type is None
-            or (isinstance(h.type, ast.Name) and h.type.id in ("Exception", "BaseException"))
-        ]
+        broad_handlers = [h for h in try_node.handlers if _is_broad_handler(h)]
         if not broad_handlers:
             return False
 
@@ -1604,10 +1619,12 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
             "_index_search_error",
             "_rewrite_error",
             "_classify_native_rewrite_failure",
+            "_safe_exception_class_name",
         }
+        protected_names = allowed_sinks | {"_log_tool_exception"}
 
         for h in broad_handlers:
-            # Rule 1: Direct logging statement MUST appear before any control flow / transfer statements
+            # Rule 1: Find direct top-level _log_tool_exception call statement
             log_indices = [
                 i
                 for i, s in enumerate(h.body)
@@ -1620,21 +1637,34 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                 return False
             first_log_idx = log_indices[0]
 
-            # Prior to first_log_idx, there must be NO control-transfer statements (Return, Raise, Break, Continue)
+            # Prior to first_log_idx, RECURSIVELY check for any control-transfer statements
             for s in h.body[:first_log_idx]:
-                if isinstance(s, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
-                    return False
+                for subnode in ast.walk(s):
+                    if isinstance(subnode, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                        return False
 
             # Rule 2: Handler must terminate with a Return statement
             if not (h.body and isinstance(h.body[-1], ast.Return)):
                 return False
 
-            # Rule 3: Forbid any 'raise' inside the handler
+            # Rule 3: Forbid any 'raise' anywhere inside the handler
             for n in ast.walk(h):
                 if isinstance(n, ast.Raise):
                     return False
 
-            # Rule 4: Comprehensive taint analysis
+            # Rule 4: Reject any shadowing/rebinding of allowed sinks or logger names
+            shadowed_names = set()
+            for n in ast.walk(h):
+                if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                    if n.id in protected_names:
+                        return False
+                    shadowed_names.add(n.id)
+                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    if n.name in protected_names:
+                        return False
+                    shadowed_names.add(n.name)
+
+            # Rule 5: Comprehensive taint analysis
             tainted = set()
             if h.name:
                 tainted.add(h.name)
@@ -1681,19 +1711,17 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                     if p is None:
                         return False
 
-                    # Safe attribute: exc.__class__
-                    if isinstance(p, ast.Attribute) and p.value is sub:
-                        if p.attr == "__class__":
-                            continue
-                        return False
-
                     # Safe sink call: sub must be an argument to a direct unshadowed ast.Name call in allowed_sinks
                     if isinstance(p, ast.Call):
-                        if isinstance(p.func, ast.Name) and p.func.id in allowed_sinks:
+                        if (
+                            isinstance(p.func, ast.Name)
+                            and p.func.id in allowed_sinks
+                            and p.func.id not in shadowed_names
+                        ):
                             continue
                         return False
 
-                    # Any other parent (Return, BinOp, FormattedValue/JoinedStr, Dict, List, Tuple, etc.) is REJECTED
+                    # Any other parent is REJECTED
                     return False
 
         return True
@@ -1860,6 +1888,40 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     ).body[0]
     assert isinstance(t18, ast.FunctionDef)
     assert not _check_encompassing_boundary(t18), "Mutation control: walrus return must fail"
+
+    # 19. Round 13 Hostile mutation control: nested early return before log
+    t19 = ast.parse(
+        "@mcp.tool()\ndef t19():\n    try:\n        return 1\n    except Exception as exc:\n        if True:\n            return 'unlogged'\n        _log_tool_exception('t19', exc)\n        return 'safe'\n"
+    ).body[0]
+    assert isinstance(t19, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t19), (
+        "Mutation control: nested early return before log must fail"
+    )
+
+    # 20. Round 13 Hostile mutation control: shadowed sanitizer sink
+    t20 = ast.parse(
+        "@mcp.tool()\ndef t20():\n    try:\n        return 1\n    except Exception as exc:\n        _sanitized_tool_error = lambda t, e: 'fake'\n        _log_tool_exception('t20', exc)\n        return _sanitized_tool_error('t20', exc)\n"
+    ).body[0]
+    assert isinstance(t20, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t20), (
+        "Mutation control: shadowed sanitizer sink must fail"
+    )
+
+    # 21. Round 13 Hostile mutation control: shadowed logger
+    t21 = ast.parse(
+        "@mcp.tool()\ndef t21():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception = lambda t, e: None\n        _log_tool_exception('t21', exc)\n        return 'safe'\n"
+    ).body[0]
+    assert isinstance(t21, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t21), "Mutation control: shadowed logger must fail"
+
+    # 22. Round 13 Hostile mutation control: tuple broad handler leaking before compliant handler
+    t22 = ast.parse(
+        "@mcp.tool()\ndef t22():\n    try:\n        return 1\n    except (Exception,):\n        return str(exc)\n"
+    ).body[0]
+    assert isinstance(t22, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t22), (
+        "Mutation control: tuple broad handler must be checked and fail"
+    )
 
 
 def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):
@@ -2165,3 +2227,58 @@ def test_direct_call_tool_broken_stderr_poison_sanitized(monkeypatch):
     assert stderr_poison not in wire, f"Stderr write poison leaked to wire: {wire}"
     assert device_poison not in wire, f"Device poison leaked to wire: {wire}"
     assert "tg_devices failed: internal error (RuntimeError)" in wire
+
+
+def test_direct_call_tool_dynamic_exception_type_sanitized(monkeypatch, capsys):
+    """SEC-007: Attacker-controlled dynamic exception type name degrades safely to InternalError on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    DynamicSecretError = type("SEC007_DYNAMIC_TYPE_SECRET", (Exception,), {})
+    poison_msg = "some private failure at C:/private/rulesets.py"
+
+    def _raise_dynamic_error():
+        raise DynamicSecretError(poison_msg)
+
+    monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_dynamic_error)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    wire = content[0].text
+    assert "SEC007_DYNAMIC_TYPE_SECRET" not in wire, (
+        f"Dynamic exception class name leaked to wire: {wire}"
+    )
+    assert poison_msg not in wire, f"Poison message leaked to wire: {wire}"
+    assert "Rulesets lookup failed: InternalError" in wire
+    captured = capsys.readouterr()
+    assert "SEC007_DYNAMIC_TYPE_SECRET" in captured.err, (
+        "Dynamic exception class name not logged to stderr"
+    )
+    assert poison_msg in captured.err, "Poison message not logged to stderr"
+
+
+def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
+    """SEC-007: Hostile __class__ property accessor does not escape boundary or leak secret on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    class HostileClassException(Exception):
+        @property
+        def __class__(self):
+            raise RuntimeError("SEC007_CLASS_ACCESS_SECRET")
+
+    def _raise_hostile_error():
+        raise HostileClassException("underlying secret")
+
+    monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_hostile_error)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    wire = content[0].text
+    assert "SEC007_CLASS_ACCESS_SECRET" not in wire, (
+        f"Hostile __class__ accessor secret leaked to wire: {wire}"
+    )
+    assert "underlying secret" not in wire, f"Underlying secret leaked to wire: {wire}"
+    assert "Rulesets lookup failed: InternalError" in wire
+    captured = capsys.readouterr()
+    assert "underlying secret" in captured.err, "Underlying secret not logged to stderr"

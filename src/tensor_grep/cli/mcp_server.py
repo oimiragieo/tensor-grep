@@ -780,10 +780,87 @@ def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
     try:
         import traceback
 
-        detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        try:
+            detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        except BaseException:
+            try:
+                msg = str(exc)
+            except BaseException:
+                msg = "<unprintable>"
+            type_name = getattr(type(exc), "__name__", "Exception")
+            detail = f"{type_name}: {msg}\n"
         print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
     except BaseException:
         pass
+
+
+_TRUSTED_EXCEPTION_CLASSES = {
+    "Exception",
+    "BaseException",
+    "RuntimeError",
+    "ValueError",
+    "TypeError",
+    "KeyError",
+    "IndexError",
+    "FileNotFoundError",
+    "PermissionError",
+    "OSError",
+    "TimeoutError",
+    "MemoryError",
+    "AttributeError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "NotImplementedError",
+    "OverflowError",
+    "ZeroDivisionError",
+    "LookupError",
+    "ArithmeticError",
+    "BufferError",
+    "EOFError",
+    "EnvironmentError",
+    "IOError",
+    "WindowsError",
+    "RecursionError",
+    "ReferenceError",
+    "StopIteration",
+    "SystemError",
+    "UnboundLocalError",
+    "UnicodeError",
+    "UnicodeEncodeError",
+    "UnicodeDecodeError",
+    "JSONDecodeError",
+    "CalledProcessError",
+    "SubprocessError",
+    "PathConfinementError",
+    "PolicyValidationError",
+    "PolicyConfigError",
+    "PolicyViolation",
+}
+
+
+def _safe_exception_class_name(exc: BaseException) -> str:
+    """Strictly non-throwing classification of exception type for MCP wire transmission.
+
+    Never invokes user-controlled properties or `__class__` accessors; uses `type(exc)`
+    and validates against a strict allowlist of standard builtins and known framework errors.
+    Any dynamic, synthesized, or hostile type name degrades safely to 'InternalError'.
+    """
+    try:
+        raw_type = type(exc)
+        name = getattr(raw_type, "__name__", "")
+        if isinstance(name, str) and name in _TRUSTED_EXCEPTION_CLASSES:
+            return name
+        if isinstance(name, str) and name.isidentifier() and len(name) <= 64:
+            mod = getattr(raw_type, "__module__", "")
+            if isinstance(mod, str) and (
+                mod in ("builtins", "json", "subprocess", "os", "pathlib")
+                or mod == "tensor_grep"
+                or mod.startswith("tensor_grep.")
+            ):
+                return name
+    except BaseException:
+        pass
+    return "InternalError"
 
 
 def _sanitized_tool_error(
@@ -802,9 +879,10 @@ def _sanitized_tool_error(
     internals from what crosses the wire.
     """
     _log_tool_exception(tool_name, exc)
+    cls_name = _safe_exception_class_name(exc)
     return {
         "code": code,
-        "message": f"{tool_name} failed due to an internal error ({exc.__class__.__name__}).",
+        "message": f"{tool_name} failed due to an internal error ({cls_name}).",
         "retryable": retryable,
     }
 
@@ -814,10 +892,8 @@ def _sanitized_tool_error_text(tool_name: str, exc: BaseException) -> str:
     modes that return free text instead of a JSON envelope.
     """
     _log_tool_exception(tool_name, exc)
-    return (
-        f"{tool_name} failed: internal error ({exc.__class__.__name__}). "
-        "See server logs for detail."
-    )
+    cls_name = _safe_exception_class_name(exc)
+    return f"{tool_name} failed: internal error ({cls_name}). See server logs for detail."
 
 
 # #98 (MCP consolidation Phase-1): shared envelope/error helpers for the 10 task-shaped
@@ -1079,7 +1155,7 @@ def tg_mcp_capabilities() -> str:
                 "version": _json_output_version(),
                 "error": {
                     "code": "internal_error",
-                    "message": f"Capabilities failed: {exc.__class__.__name__}",
+                    "message": f"Capabilities failed: {_safe_exception_class_name(exc)}",
                 },
             },
             indent=2,
@@ -3146,8 +3222,9 @@ def tg_search(
                                 json.dumps(error_payload, indent=2)
                             )
                         _log_tool_exception("tg_search", exc)
+                        cls_name = _safe_exception_class_name(exc)
                         return (
-                            f"Search failed: semantic backend error ({exc.__class__.__name__}). "
+                            f"Search failed: semantic backend error ({cls_name}). "
                             "See server logs for detail."
                         )
                 else:
@@ -3875,7 +3952,7 @@ def tg_devices(json_output: bool = True) -> str:
             _log_tool_exception("tg_devices", exc)
             if json_output:
                 return _sanitized_tool_error_text("tg_devices", exc)
-            return f"Error collecting device inventory: {exc.__class__.__name__}"
+            return f"Error collecting device inventory: {_safe_exception_class_name(exc)}"
     except Exception as exc:
         _log_tool_exception("tg_devices", exc)
         return _sanitized_tool_error_text("tg_devices", exc)

@@ -159,11 +159,11 @@ _EXCLUDED_MODULES = frozenset({
 # finding. Raised because the handler is classified, not to make an unreviewed one pass.
 #     266 + 1 (ast_scan.py ruleset-backend availability probe, INTENTIONAL-BOUNDARY)   267
 # - 2026-09-03 (HANDLER-CENSUS-W2-b): 267 -> 266 (-1: cybert_backend.py deobfuscate_payload narrowed to ValueError, binascii.Error)
-# - 2026-09-03 (HANDLER-CENSUS-W2-b): 267 -> 266 (-1: cybert_backend.py deobfuscate_payload narrowed to ValueError, binascii.Error)
 # - 2026-09-04 (SEC-007 MCP error sanitization): 266 -> 338 (+72: +39 mcp_server.py, +10 mcp_symbol_tools.py,
-#   +19 mcp_audit_tools.py, +4 mcp_rewrite_tools.py). All 72 additions are INTENTIONAL-BOUNDARY handlers
-#   providing fail-closed outer error containment across all 58 registered MCP tools and engine helpers,
-#   ensuring internal exceptions and path confinement errors are logged server-side to stderr and never leaked on wire.
+#   +19 mcp_audit_tools.py, +4 mcp_rewrite_tools.py). The 72 additions comprise 71 INTENTIONAL-BOUNDARY handlers
+#   providing fail-closed error containment across all 58 registered MCP tools and engine helpers,
+#   plus 1 LOGGED-DEGRADE handler in _mcp_root gracefully falling back to cwd when custom TG_MCP_ROOT is invalid.
+#   All handlers ensure internal exceptions and path confinement errors are logged server-side to stderr and never leaked on wire.
 #   (Command builders _build_rewrite_command and _build_index_search_command require native_binary with no PATH fallback).
 TOTAL_BROAD_HANDLERS_CEILING = 338
 
