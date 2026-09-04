@@ -90,7 +90,9 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary as resolve_native_tg_binary,
 )
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.hardware.device_inventory import collect_device_inventory
+from tensor_grep.core.hardware.device_inventory import (
+    collect_device_inventory as collect_device_inventory,
+)
 from tensor_grep.core.pipeline import (
     ConfigurationError,
 )
@@ -3968,7 +3970,7 @@ def tg_devices(json_output: bool = True) -> str:
         import json
 
         try:
-            inventory = collect_device_inventory()
+            inventory = _self.collect_device_inventory()
             payload = inventory.to_dict()
             if json_output:
                 # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
