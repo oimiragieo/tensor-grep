@@ -7,7 +7,7 @@ import re
 # "tensor_grep.cli.mcp_server.subprocess.run")` -- used by several tests that predate the
 # Route A split -- still resolves. subprocess.run is a single shared function object, so
 # patching it via THIS path also patches the callable mcp_rewrite_tools.py actually invokes.
-import subprocess  # noqa: F401
+import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -794,47 +794,79 @@ def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
         pass
 
 
-_TRUSTED_EXCEPTION_CLASSES = {
-    "Exception",
-    "BaseException",
-    "RuntimeError",
-    "ValueError",
-    "TypeError",
-    "KeyError",
-    "IndexError",
-    "FileNotFoundError",
-    "PermissionError",
-    "OSError",
-    "TimeoutError",
-    "MemoryError",
-    "AttributeError",
-    "ImportError",
-    "ModuleNotFoundError",
-    "NotImplementedError",
-    "OverflowError",
-    "ZeroDivisionError",
-    "LookupError",
-    "ArithmeticError",
-    "BufferError",
-    "EOFError",
-    "EnvironmentError",
-    "IOError",
-    "WindowsError",
-    "RecursionError",
-    "ReferenceError",
-    "StopIteration",
-    "SystemError",
-    "UnboundLocalError",
-    "UnicodeError",
-    "UnicodeEncodeError",
-    "UnicodeDecodeError",
-    "JSONDecodeError",
-    "CalledProcessError",
-    "SubprocessError",
-    "PathConfinementError",
-    "PolicyValidationError",
-    "PolicyConfigError",
-    "PolicyViolation",
+_TRUSTED_EXCEPTION_CLASSES: dict[type, str] = {
+    # Standard Python built-in exceptions
+    ArithmeticError: "ArithmeticError",
+    AssertionError: "AssertionError",
+    AttributeError: "AttributeError",
+    BaseException: "BaseException",
+    BufferError: "BufferError",
+    BytesWarning: "BytesWarning",
+    DeprecationWarning: "DeprecationWarning",
+    EOFError: "EOFError",
+    EnvironmentError: "EnvironmentError",
+    Exception: "Exception",
+    FloatingPointError: "FloatingPointError",
+    FutureWarning: "FutureWarning",
+    GeneratorExit: "GeneratorExit",
+    ImportError: "ImportError",
+    ImportWarning: "ImportWarning",
+    IndexError: "IndexError",
+    IOError: "IOError",
+    KeyError: "KeyError",
+    KeyboardInterrupt: "KeyboardInterrupt",
+    LookupError: "LookupError",
+    MemoryError: "MemoryError",
+    ModuleNotFoundError: "ModuleNotFoundError",
+    NameError: "NameError",
+    NotImplementedError: "NotImplementedError",
+    OSError: "OSError",
+    OverflowError: "OverflowError",
+    PendingDeprecationWarning: "PendingDeprecationWarning",
+    PermissionError: "PermissionError",
+    ProcessLookupError: "ProcessLookupError",
+    RecursionError: "RecursionError",
+    ReferenceError: "ReferenceError",
+    ResourceWarning: "ResourceWarning",
+    RuntimeError: "RuntimeError",
+    RuntimeWarning: "RuntimeWarning",
+    StopAsyncIteration: "StopAsyncIteration",
+    StopIteration: "StopIteration",
+    SyntaxError: "SyntaxError",
+    SyntaxWarning: "SyntaxWarning",
+    SystemError: "SystemError",
+    SystemExit: "SystemExit",
+    TabError: "TabError",
+    TimeoutError: "TimeoutError",
+    TypeError: "TypeError",
+    UnboundLocalError: "UnboundLocalError",
+    UnicodeDecodeError: "UnicodeDecodeError",
+    UnicodeEncodeError: "UnicodeEncodeError",
+    UnicodeError: "UnicodeError",
+    UnicodeTranslateError: "UnicodeTranslateError",
+    UserWarning: "UserWarning",
+    ValueError: "ValueError",
+    Warning: "Warning",
+    ZeroDivisionError: "ZeroDivisionError",
+    FileNotFoundError: "FileNotFoundError",
+    IsADirectoryError: "IsADirectoryError",
+    NotADirectoryError: "NotADirectoryError",
+    ConnectionError: "ConnectionError",
+    BrokenPipeError: "BrokenPipeError",
+    ConnectionAbortedError: "ConnectionAbortedError",
+    ConnectionRefusedError: "ConnectionRefusedError",
+    ConnectionResetError: "ConnectionResetError",
+    FileExistsError: "FileExistsError",
+    InterruptedError: "InterruptedError",
+    ChildProcessError: "ChildProcessError",
+    # Standard library exceptions
+    json.JSONDecodeError: "JSONDecodeError",
+    subprocess.CalledProcessError: "CalledProcessError",
+    subprocess.SubprocessError: "SubprocessError",
+    subprocess.TimeoutExpired: "TimeoutExpired",
+    # Framework exceptions
+    BackendExecutionError: "BackendExecutionError",
+    ConfigurationError: "ConfigurationError",
 }
 
 
@@ -842,25 +874,14 @@ def _safe_exception_class_name(exc: BaseException) -> str:
     """Strictly non-throwing classification of exception type for MCP wire transmission.
 
     Never invokes user-controlled properties or `__class__` accessors; uses `type(exc)`
-    and validates against a strict allowlist of standard builtins and known framework errors.
-    Any dynamic, synthesized, or hostile type name degrades safely to 'InternalError'.
+    and validates strictly by exact type-object identity against `_TRUSTED_EXCEPTION_CLASSES`.
+    Any synthesized, spoofed, dynamic, or untrusted class identity degrades safely to 'InternalError'.
     """
     try:
         raw_type = type(exc)
-        name = getattr(raw_type, "__name__", "")
-        if isinstance(name, str) and name in _TRUSTED_EXCEPTION_CLASSES:
-            return name
-        if isinstance(name, str) and name.isidentifier() and len(name) <= 64:
-            mod = getattr(raw_type, "__module__", "")
-            if isinstance(mod, str) and (
-                mod in ("builtins", "json", "subprocess", "os", "pathlib")
-                or mod == "tensor_grep"
-                or mod.startswith("tensor_grep.")
-            ):
-                return name
+        return _TRUSTED_EXCEPTION_CLASSES.get(raw_type, "InternalError")
     except BaseException:
-        pass
-    return "InternalError"
+        return "InternalError"
 
 
 def _sanitized_tool_error(
@@ -943,9 +964,13 @@ class PathConfinementError(ValueError):
         super().__init__(f"{label} must stay within the MCP root (refused)")
 
 
+_TRUSTED_EXCEPTION_CLASSES[PathConfinementError] = "PathConfinementError"
+
+
 def _meta_confinement_error(tool: str, action: str, exc: PathConfinementError) -> str:
     payload = _meta_envelope(tool=tool, action=action)
     payload["error"] = {"code": "invalid_input", "message": str(exc)}
+
     return json.dumps(payload, indent=2)
 
 
@@ -1175,7 +1200,7 @@ def _record_generated_audit_manifest(payload: object) -> None:
         record_audit_manifest(manifest_path)
     except Exception as exc:  # W1-a: was a bare `return` = fail-open on the audit trail
         _log_tool_exception("record_audit_manifest", exc)  # raw reason, server-side only
-        audit_manifest.update(recorded=False, record_error=type(exc).__name__)
+        audit_manifest.update(recorded=False, record_error=_safe_exception_class_name(exc))
         return
 
 

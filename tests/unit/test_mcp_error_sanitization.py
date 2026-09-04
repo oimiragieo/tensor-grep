@@ -1623,6 +1623,37 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
         }
         protected_names = allowed_sinks | {"_log_tool_exception"}
 
+        # Scope-wide shadow analysis: inspect all parameters, definitions, imports, and stores
+        # anywhere in fn_node (not just inside except handler) to guarantee protected sinks/loggers are unshadowed.
+        for param in fn_node.args.posonlyargs + fn_node.args.args + fn_node.args.kwonlyargs:
+            if param.arg in protected_names:
+                return False
+        if fn_node.args.vararg and fn_node.args.vararg.arg in protected_names:
+            return False
+        if fn_node.args.kwarg and fn_node.args.kwarg.arg in protected_names:
+            return False
+
+        for n in ast.walk(fn_node):
+            if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
+                if n.id in protected_names:
+                    return False
+            elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                if n.name in protected_names:
+                    return False
+            elif isinstance(n, ast.ExceptHandler):
+                if n.name and n.name in protected_names:
+                    return False
+            elif isinstance(n, ast.Import):
+                for alias in n.names:
+                    bound = alias.asname or alias.name
+                    if bound in protected_names:
+                        return False
+            elif isinstance(n, ast.ImportFrom):
+                for alias in n.names:
+                    bound = alias.asname or alias.name
+                    if bound in protected_names:
+                        return False
+
         for h in broad_handlers:
             # Rule 1: Find direct top-level _log_tool_exception call statement
             log_indices = [
@@ -1652,19 +1683,7 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                 if isinstance(n, ast.Raise):
                     return False
 
-            # Rule 4: Reject any shadowing/rebinding of allowed sinks or logger names
-            shadowed_names = set()
-            for n in ast.walk(h):
-                if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del)):
-                    if n.id in protected_names:
-                        return False
-                    shadowed_names.add(n.id)
-                elif isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    if n.name in protected_names:
-                        return False
-                    shadowed_names.add(n.name)
-
-            # Rule 5: Comprehensive taint analysis
+            # Rule 4: Comprehensive taint analysis
             tainted = set()
             if h.name:
                 tainted.add(h.name)
@@ -1713,11 +1732,7 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
 
                     # Safe sink call: sub must be an argument to a direct unshadowed ast.Name call in allowed_sinks
                     if isinstance(p, ast.Call):
-                        if (
-                            isinstance(p.func, ast.Name)
-                            and p.func.id in allowed_sinks
-                            and p.func.id not in shadowed_names
-                        ):
+                        if isinstance(p.func, ast.Name) and p.func.id in allowed_sinks:
                             continue
                         return False
 
@@ -1921,6 +1936,33 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     assert isinstance(t22, ast.FunctionDef)
     assert not _check_encompassing_boundary(t22), (
         "Mutation control: tuple broad handler must be checked and fail"
+    )
+
+    # 23. Round 15 Hostile mutation control: shadowed logger via except target
+    t23 = ast.parse(
+        "@mcp.tool()\ndef t23():\n    try:\n        return 1\n    except Exception as _log_tool_exception:\n        _log_tool_exception('t23', _log_tool_exception)\n        return _sanitized_tool_error_text('t23', _log_tool_exception)\n"
+    ).body[0]
+    assert isinstance(t23, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t23), (
+        "Mutation control: shadowed logger via except target must fail"
+    )
+
+    # 24. Round 15 Hostile mutation control: shadowed sanitizer in try body
+    t24 = ast.parse(
+        "@mcp.tool()\ndef t24():\n    try:\n        _sanitized_tool_error_text = lambda t, e: 'fake'\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t24', exc)\n        return _sanitized_tool_error_text('t24', exc)\n"
+    ).body[0]
+    assert isinstance(t24, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t24), (
+        "Mutation control: shadowed sanitizer in try body must fail"
+    )
+
+    # 25. Round 15 Hostile mutation control: shadowed sanitizer via parameter
+    t25 = ast.parse(
+        "@mcp.tool()\ndef t25(_sanitized_tool_error_text=None):\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t25', exc)\n        return _sanitized_tool_error_text('t25', exc)\n"
+    ).body[0]
+    assert isinstance(t25, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t25), (
+        "Mutation control: shadowed sanitizer via parameter must fail"
     )
 
 
@@ -2282,3 +2324,121 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
     assert "Rulesets lookup failed: InternalError" in wire
     captured = capsys.readouterr()
     assert "underlying secret" in captured.err, "Underlying secret not logged to stderr"
+
+
+def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, capsys):
+    """SEC-007: Exception with forged __module__ matching tensor_grep degrades safely to InternalError on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    SpoofedModuleError = type(
+        "SEC007_SPOOFED_MODULE_SECRET",
+        (Exception,),
+        {"__module__": "tensor_grep.cli.mcp_server"},
+    )
+    poison_msg = "some spoofed private failure at C:/private/rulesets.py"
+
+    def _raise_spoofed_error():
+        raise SpoofedModuleError(poison_msg)
+
+    monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_spoofed_error)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    wire = content[0].text
+    assert "SEC007_SPOOFED_MODULE_SECRET" not in wire, (
+        f"Spoofed module exception class name leaked to wire: {wire}"
+    )
+    assert poison_msg not in wire, f"Poison message leaked to wire: {wire}"
+    assert "Rulesets lookup failed: InternalError" in wire
+    captured = capsys.readouterr()
+    assert "SEC007_SPOOFED_MODULE_SECRET" in captured.err, (
+        "Spoofed exception class name not logged to stderr"
+    )
+    assert poison_msg in captured.err, "Poison message not logged to stderr"
+
+
+def test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized(monkeypatch, capsys):
+    """SEC-007: Dynamic synthetic exception claiming trusted name (e.g. ValueError) degrades safely to InternalError."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    SyntheticValueError = type("ValueError", (Exception,), {})
+    poison_msg = "synthetic value error secret at C:/private/rulesets.py"
+
+    def _raise_synthetic_value_error():
+        raise SyntheticValueError(poison_msg)
+
+    monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_synthetic_value_error)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    wire = content[0].text
+    # Exact type identity does not match builtins.ValueError -> must be InternalError
+    assert "ValueError" not in wire, f"Synthetic ValueError leaked on wire: {wire}"
+    assert "Rulesets lookup failed: InternalError" in wire
+    captured = capsys.readouterr()
+    assert "ValueError" in captured.err, "Synthetic ValueError not logged to stderr"
+    assert poison_msg in captured.err, "Poison message not logged to stderr"
+
+
+def test_direct_call_tool_rewrite_apply_audit_manifest_record_failure_sanitized(
+    tmp_path, monkeypatch, capsys
+):
+    """SEC-007: Dynamic exception during audit manifest recording degrades safely to InternalError in wire record_error."""
+    import asyncio
+    import subprocess
+    from pathlib import Path
+
+    from tensor_grep.cli import mcp_server
+
+    (tmp_path / "sample.py").write_text("def f(a): return a\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+
+    AuditRecordSecretError = type("SEC007_AUDIT_RECORD_SECRET", (Exception,), {})
+
+    def _raise_record_error(*_args, **_kwargs):
+        raise AuditRecordSecretError("failed to record manifest")
+
+    native_payload = {
+        "applied": True,
+        "audit_manifest": {"path": str(tmp_path / "audit.json"), "file_count": 1},
+    }
+    monkeypatch.setattr(
+        "tensor_grep.cli.mcp_server.resolve_native_tg_binary", lambda *a, **k: Path("tg.exe")
+    )
+    monkeypatch.setattr(
+        "tensor_grep.cli.mcp_rewrite_tools.subprocess.run",
+        lambda *a, **k: subprocess.CompletedProcess(
+            args=["tg.exe"], returncode=0, stdout=json.dumps(native_payload), stderr=""
+        ),
+    )
+    monkeypatch.setattr("tensor_grep.cli.audit_manifest.record_audit_manifest", _raise_record_error)
+
+    content, _data = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "tg_rewrite_apply",
+            {
+                "pattern": "def $F($A): return $A",
+                "replacement": "def $F($A): return $A",
+                "lang": "python",
+                "path": str(tmp_path),
+                "audit_manifest": "audit.json",
+            },
+        )
+    )
+    wire = content[0].text
+    parsed = json.loads(wire)
+    manifest = parsed.get("audit_manifest", {})
+    assert manifest.get("recorded") is False
+    assert "SEC007_AUDIT_RECORD_SECRET" not in wire, (
+        f"Dynamic audit record exception class leaked to wire: {wire}"
+    )
+    assert manifest.get("record_error") == "InternalError", (
+        f"Expected InternalError for dynamic class, got: {manifest.get('record_error')}"
+    )
+    captured = capsys.readouterr()
+    assert "SEC007_AUDIT_RECORD_SECRET" in captured.err, (
+        "Dynamic audit record exception class not logged to stderr"
+    )
