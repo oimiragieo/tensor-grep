@@ -2,8 +2,8 @@
 
 ## Gate Receipts
 - G1: Scope verification — 54 AST str(exc) sites mapped across 4 modules post-sanitization (PASS)
-- G2: Sanitization architecture — 28/28 tests pass in test_mcp_error_sanitization.py (PASS)
-- G3: Confinement & fail-closed preservation — 83/83 tests pass across error sanitization and w1a fail closed suites (PASS)
+- G2: Sanitization architecture — 33/33 tests pass in test_mcp_error_sanitization.py (PASS)
+- G3: Confinement & fail-closed preservation — 88/88 tests pass across error sanitization and w1a fail closed suites (PASS)
 
 ## Model Audits
 - Fable 5.1 Plan Audit: CHANGES_REQUIRED (reconciled Class C preservation, session tool message shapes, poison fixture)

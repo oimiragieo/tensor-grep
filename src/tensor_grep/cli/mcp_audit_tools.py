@@ -137,7 +137,20 @@ from tensor_grep.cli.mcp_server import (
 @_register_legacy_tool  # type: ignore
 def tg_rulesets() -> str:
     """Return metadata for built-in security and compliance rulesets."""
-    return _self._inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
+    try:
+        return _self._inject_mcp_contract_fields(json.dumps(_build_rulesets_payload(), indent=2))
+    except Exception as exc:
+        _log_tool_exception("tg_rulesets", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {
+                    "code": "internal_error",
+                    "message": f"Rulesets lookup failed: {exc.__class__.__name__}",
+                },
+            },
+            indent=2,
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -441,6 +454,14 @@ def tg_ruleset_scan(
             ruleset=ruleset,
             path=path,
         )
+    except Exception as exc:
+        _log_tool_exception("tg_ruleset_scan", exc)
+        return _ruleset_scan_error(
+            f"Ruleset scan failed: {exc.__class__.__name__}",
+            code="internal_error",
+            ruleset=ruleset,
+            path=path,
+        )
     # M14: the scan success payload is assembled inline and crossed the wire un-stamped.
     return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
@@ -477,15 +498,24 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
             path=path,
         )
 
-    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
-    if native_tg is None:
-        payload = _index_search_envelope()
-        payload["query"] = pattern
-        payload["path"] = path
-        return _native_unavailable_error(tool="tg_index_search", payload=payload)
+    try:
+        native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
+        if native_tg is None:
+            payload = _index_search_envelope()
+            payload["query"] = pattern
+            payload["path"] = path
+            return _native_unavailable_error(tool="tg_index_search", payload=payload)
 
-    command = _build_index_search_command(pattern=pattern, path=path)
-    return _execute_index_search_command(command, pattern=pattern, path=path)
+        command = _build_index_search_command(pattern=pattern, path=path, native_binary=native_tg)
+        return _execute_index_search_command(command, pattern=pattern, path=path)
+    except Exception as exc:
+        _log_tool_exception("tg_index_search", exc)
+        return _index_search_error(
+            f"Index search failed: {exc.__class__.__name__}",
+            code="internal_error",
+            pattern=pattern,
+            path=path,
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -515,13 +545,20 @@ def tg_rewrite_plan(pattern: str, replacement: str, lang: str, path: str = ".") 
 
     # Route via `_self` (bound to mcp_server) rather than a bare call: this name is
     # re-exported into mcp_server.py and `ast_workflows.py` patches it there too.
-    payload, _exit_code = _self.execute_rewrite_plan_json(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-    )
-    return payload
+    try:
+        payload, _exit_code = _self.execute_rewrite_plan_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+        )
+        return payload
+    except Exception as exc:
+        _log_tool_exception("tg_rewrite_plan", exc)
+        return _rewrite_error(
+            f"Rewrite plan failed: {exc.__class__.__name__}",
+            code="internal_error",
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -601,26 +638,33 @@ def tg_rewrite_apply(
         )
     # Route via `_self` (bound to mcp_server): tests patch
     # "tensor_grep.cli.mcp_server.execute_rewrite_apply_json" directly.
-    payload, _exit_code = _self.execute_rewrite_apply_json(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-        verify=verify,
-        checkpoint=checkpoint,
-        audit_manifest=audit_manifest,
-        audit_signing_key=audit_signing_key,
-        lint_cmd=lint_cmd,
-        test_cmd=test_cmd,
-        policy=policy,
-        expected_plan_digest=expected_plan_digest,
-        expected_match_count=expected_match_count,
-        # Audit HIGH (RCE): a policy file's lint_cmd/test_cmd is a shell-exec sink on
-        # the (agent-steerable) MCP boundary; gate it on the same operator opt-in as
-        # the direct lint_cmd/test_cmd params above.
-        allow_validation_commands=_mcp_validation_commands_allowed(),
-    )
-    return payload
+    try:
+        payload, _exit_code = _self.execute_rewrite_apply_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            verify=verify,
+            checkpoint=checkpoint,
+            audit_manifest=audit_manifest,
+            audit_signing_key=audit_signing_key,
+            lint_cmd=lint_cmd,
+            test_cmd=test_cmd,
+            policy=policy,
+            expected_plan_digest=expected_plan_digest,
+            expected_match_count=expected_match_count,
+            # Audit HIGH (RCE): a policy file's lint_cmd/test_cmd is a shell-exec sink on
+            # the (agent-steerable) MCP boundary; gate it on the same operator opt-in as
+            # the direct lint_cmd/test_cmd params above.
+            allow_validation_commands=_mcp_validation_commands_allowed(),
+        )
+        return payload
+    except Exception as exc:
+        _log_tool_exception("tg_rewrite_apply", exc)
+        return _rewrite_error(
+            f"Rewrite apply failed: {exc.__class__.__name__}",
+            code="internal_error",
+        )
 
 
 @_register_legacy_tool  # type: ignore
@@ -1198,18 +1242,26 @@ def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") 
     if validation_error:
         return _rewrite_error(validation_error, code="invalid_input")
 
-    native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
-    if native_tg is None:
-        return _native_unavailable_error(
-            tool="tg_rewrite_diff",
-            payload=_rewrite_envelope(),
-        )
+    try:
+        native_tg, _native_error = _self._resolve_native_tg_binary_for_mcp()
+        if native_tg is None:
+            return _native_unavailable_error(
+                tool="tg_rewrite_diff",
+                payload=_rewrite_envelope(),
+            )
 
-    command = _build_rewrite_command(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-        mode="diff",
-    )
-    return _execute_rewrite_diff_command(command)
+        command = _build_rewrite_command(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+            mode="diff",
+            native_binary=native_tg,
+        )
+        return _execute_rewrite_diff_command(command)
+    except Exception as exc:
+        _log_tool_exception("tg_rewrite_diff", exc)
+        return _rewrite_error(
+            f"Rewrite diff failed: {exc.__class__.__name__}",
+            code="internal_error",
+        )

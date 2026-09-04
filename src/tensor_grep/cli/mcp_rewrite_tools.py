@@ -178,6 +178,67 @@ def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
     except FileNotFoundError as exc:
         _log_tool_exception("resolve_native_tg_binary", exc)
         return None, f"Native binary not found: {exc.__class__.__name__}"
+    except Exception as exc:
+        _log_tool_exception("resolve_native_tg_binary", exc)
+        return None, f"Native binary resolution failed: {exc.__class__.__name__}"
+
+
+_ALLOWED_POLICY_FIELDS = {
+    "$",
+    "version",
+    "lint_cmd",
+    "test_cmd",
+    "ruleset_scan",
+    "ruleset_scan.enabled",
+    "ruleset_scan.pack",
+    "ruleset_scan.language",
+    "ruleset_scan.baseline",
+    "on_failure",
+    "timeout",
+}
+
+
+def _sanitize_policy_validation_details(details: object) -> list[dict[str, str]]:
+    """Sanitize PolicyValidationError details to prevent path or secret leaks on MCP wire."""
+    if not isinstance(details, list):
+        return []
+    sanitized: list[dict[str, str]] = []
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field", ""))
+        safe_field = field if field in _ALLOWED_POLICY_FIELDS else "policy"
+        raw_msg = str(item.get("message", ""))
+
+        if "is required" in raw_msg:
+            safe_msg = f"{safe_field} is required"
+        elif "must be a boolean" in raw_msg:
+            safe_msg = f"{safe_field} must be a boolean"
+        elif "must be a string" in raw_msg:
+            safe_msg = f"{safe_field} must be a string or null"
+        elif "must not be empty" in raw_msg:
+            safe_msg = f"{safe_field} must not be empty"
+        elif "must be a positive integer" in raw_msg:
+            safe_msg = f"{safe_field} must be a positive integer"
+        elif "must be valid JSON" in raw_msg:
+            safe_msg = f"{safe_field} must be valid JSON"
+        elif "must be a JSON object" in raw_msg or "must be an object" in raw_msg:
+            safe_msg = f"{safe_field} must be a JSON object"
+        elif "must equal 1" in raw_msg:
+            safe_msg = f"{safe_field} must equal 1"
+        elif "must be one of" in raw_msg:
+            safe_msg = f"{safe_field} must be one of rollback, warn, or fail"
+        elif "must be provided when enabled" in raw_msg:
+            safe_msg = f"{safe_field} must be provided when enabled"
+        elif "within the policy directory" in raw_msg:
+            safe_msg = f"{safe_field} path must be within the policy directory"
+        elif "does not exist" in raw_msg:
+            safe_msg = f"{safe_field} path does not exist"
+        else:
+            safe_msg = f"Invalid {safe_field} specification"
+
+        sanitized.append({"field": safe_field, "message": safe_msg})
+    return sanitized
 
 
 def _audit_manifest_error(message: str, *, code: str) -> str:
@@ -454,9 +515,18 @@ def _build_rewrite_command(
     audit_signing_key: str | None = None,
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
+    native_binary: str | Path | None = None,
 ) -> list[str]:
+    if native_binary is not None:
+        binary_str = str(native_binary)
+    else:
+        try:
+            binary_str = str(_self.resolve_native_tg_binary())
+        except Exception as exc:
+            _log_tool_exception("resolve_native_tg_binary", exc)
+            binary_str = "tg"
     command = [
-        str(_self.resolve_native_tg_binary()),
+        binary_str,
         "run",
         "--lang",
         lang,
@@ -492,9 +562,19 @@ def _build_rewrite_command(
     return command
 
 
-def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
+def _build_index_search_command(
+    *, pattern: str, path: str, native_binary: str | Path | None = None
+) -> list[str]:
+    if native_binary is not None:
+        binary_str = str(native_binary)
+    else:
+        try:
+            binary_str = str(_self.resolve_native_tg_binary())
+        except Exception as exc:
+            _log_tool_exception("resolve_native_tg_binary", exc)
+            binary_str = "tg"
     return [
-        str(_self.resolve_native_tg_binary()),
+        binary_str,
         "search",
         "--index",
         "--json",
@@ -563,7 +643,8 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("rewrite_subprocess_json", exc)
         return _rewrite_error(
             "Rewrite command produced invalid JSON output.", code="invalid_output"
         )
@@ -614,7 +695,8 @@ def _execute_embedded_rewrite_json(
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("embedded_rewrite_json", exc)
         return _rewrite_error(
             "Embedded rewrite command produced invalid JSON output.",
             code="invalid_output",
@@ -710,6 +792,7 @@ def _produce_rewrite_plan_json(
         lang=lang,
         path=path,
         mode="plan",
+        native_binary=native_tg,
     )
     return _execute_rewrite_json_command(command)
 
@@ -721,26 +804,36 @@ def execute_rewrite_plan_json(
     lang: str,
     path: str = ".",
 ) -> tuple[str, int]:
-    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
-    if validation_error:
-        return _rewrite_error(validation_error, code="invalid_input"), 1
-    pattern = _restore_variadic_metavar_escaping(pattern)
-    replacement = _restore_variadic_metavar_escaping(replacement)
+    try:
+        validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
+        if validation_error:
+            return _rewrite_error(validation_error, code="invalid_input"), 1
+        pattern = _restore_variadic_metavar_escaping(pattern)
+        replacement = _restore_variadic_metavar_escaping(replacement)
 
-    rewrite_json = _self._produce_rewrite_plan_json(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-    )
+        rewrite_json = _self._produce_rewrite_plan_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+        )
 
-    rewrite_payload = json.loads(rewrite_json)
-    if rewrite_payload.get("error"):
-        return rewrite_json, 1
-    # audit A1: stamp a stable plan_digest so callers can pin this preview and pass
-    # it back to tg_rewrite_apply as expected_plan_digest for an apply-iff-unchanged
-    # edit loop.
-    return _stamp_plan_digest(rewrite_json), 0
+        rewrite_payload = json.loads(rewrite_json)
+        if rewrite_payload.get("error"):
+            return rewrite_json, 1
+        # audit A1: stamp a stable plan_digest so callers can pin this preview and pass
+        # it back to tg_rewrite_apply as expected_plan_digest for an apply-iff-unchanged
+        # edit loop.
+        return _stamp_plan_digest(rewrite_json), 0
+    except Exception as exc:
+        _log_tool_exception("execute_rewrite_plan_json", exc)
+        return (
+            _rewrite_error(
+                f"Rewrite plan failed: {exc.__class__.__name__}",
+                code="internal_error",
+            ),
+            1,
+        )
 
 
 def _check_apply_plan_drift(
@@ -976,12 +1069,19 @@ def execute_rewrite_apply_json(
             return _rewrite_error("Policy file not found.", code="not_found"), 1
         except PolicyValidationError as exc:
             _log_tool_exception("load_apply_policy", exc)
+            try:
+                print(
+                    f"[tensor-grep-mcp] load_apply_policy details: {json.dumps(exc.details)}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
             return (
                 json.dumps(
                     _rewrite_error_payload(
                         "Policy validation failed.",
                         code="invalid_policy",
-                        details=exc.details,
+                        details=_sanitize_policy_validation_details(exc.details),
                     ),
                     indent=2,
                 ),
@@ -1057,6 +1157,7 @@ def execute_rewrite_apply_json(
             audit_signing_key=audit_signing_key,
             lint_cmd=None if loaded_policy is not None else lint_cmd,
             test_cmd=None if loaded_policy is not None else test_cmd,
+            native_binary=native_tg,
         )
         rewrite_json = _execute_rewrite_json_command(command)
     rewrite_payload = json.loads(rewrite_json)
@@ -1070,12 +1171,25 @@ def execute_rewrite_apply_json(
     if loaded_policy is None:
         return rewrite_json, 0
 
-    policy_payload, exit_code = evaluate_apply_policy(
-        rewrite_payload,
-        loaded_policy,
-        path=path,
-    )
-    return json.dumps(policy_payload, indent=2), exit_code
+    try:
+        policy_payload, exit_code = evaluate_apply_policy(
+            rewrite_payload,
+            loaded_policy,
+            path=path,
+        )
+        return json.dumps(policy_payload, indent=2), exit_code
+    except Exception as exc:
+        _log_tool_exception("evaluate_apply_policy", exc)
+        payload = dict(rewrite_payload)
+        payload["policy_evaluation_error"] = f"Policy evaluation failed: {exc.__class__.__name__}"
+        payload["error"] = {
+            "code": "policy_evaluation_failed",
+            "message": (
+                "Policy evaluation failed after rewrite application. "
+                "Edits may have already been applied."
+            ),
+        }
+        return json.dumps(payload, indent=2), 1
 
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
@@ -1172,7 +1286,8 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("index_search_subprocess_json", exc)
         return _index_search_error(
             "Index search command produced invalid JSON output.",
             code="invalid_output",

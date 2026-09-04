@@ -1065,7 +1065,20 @@ def tg_mcp_capabilities() -> str:
     The response lets clients distinguish tools that work without a standalone native
     tg binary from tools that require one.
     """
-    return json.dumps(_mcp_capabilities_payload(), indent=2)
+    try:
+        return json.dumps(_mcp_capabilities_payload(), indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_mcp_capabilities", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {
+                    "code": "internal_error",
+                    "message": f"Capabilities failed: {exc.__class__.__name__}",
+                },
+            },
+            indent=2,
+        )
 
 
 def _record_generated_audit_manifest(payload: object) -> None:
@@ -3743,20 +3756,26 @@ def tg_devices(json_output: bool = True) -> str:
     """
     import json
 
-    inventory = collect_device_inventory()
-    payload = inventory.to_dict()
-    if json_output:
-        # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
-        # through the injector like every other tool envelope.
-        return _self._inject_mcp_contract_fields(json.dumps(payload))
+    try:
+        inventory = collect_device_inventory()
+        payload = inventory.to_dict()
+        if json_output:
+            # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
+            # through the injector like every other tool envelope.
+            return _self._inject_mcp_contract_fields(json.dumps(payload))
 
-    if not inventory.devices:
-        return "No routable GPUs detected."
+        if not inventory.devices:
+            return "No routable GPUs detected."
 
-    lines = [f"Detected {inventory.device_count} routable GPU(s):"]
-    for device in inventory.devices:
-        lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
-    return "\n".join(lines)
+        lines = [f"Detected {inventory.device_count} routable GPU(s):"]
+        for device in inventory.devices:
+            lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
+        return "\n".join(lines)
+    except Exception as exc:
+        _log_tool_exception("tg_devices", exc)
+        if json_output:
+            return _sanitized_tool_error_text("tg_devices", exc)
+        return f"Error collecting device inventory: {exc.__class__.__name__}"
 
 
 @_register_legacy_tool  # type: ignore

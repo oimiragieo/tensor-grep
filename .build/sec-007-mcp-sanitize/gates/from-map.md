@@ -10,11 +10,11 @@ Scope: every answer-key check, as a gate
 - [x] G2: Q2: What is the sanitization architecture for each class? — uv run --no-sync python -m pytest tests/unit/test_mcp_error_sanitization.py -q
   CHECK: uv run --no-sync python -m pytest tests/unit/test_mcp_error_sanitization.py -q
   EXPECT: passed
-  EVIDENCE: ............................                                                        [100%] | 28 passed
+  EVIDENCE: .................................                                                        [100%] | 33 passed
 
 - [x] G3: Q3: How is zero wire leakage verified deterministically without breaking preexisting gates? — uv run --no-sync python -m pytest tests/unit/test_mcp_error_sanitization.py tests/unit/test_w1a_mcp_handler_fail_closed.py -q
   CHECK: uv run --no-sync python -m pytest tests/unit/test_mcp_error_sanitization.py tests/unit/test_w1a_mcp_handler_fail_closed.py -q
   EXPECT: passed
-  EVIDENCE: ................................................................................... [100%] | 83 passed
+  EVIDENCE: ........................................................................................ [100%] | 88 passed
 
 <!-- seeded by build_state.py --seed-gates; edit CHECK/EXPECT, never delete a G<n> — ABANDON it -->

@@ -431,6 +431,7 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                     "_sanitized_tool_error_text",
                     "_log_tool_exception",
                     "_classify_native_rewrite_failure",
+                    "_sanitize_policy_validation_details",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -462,10 +463,6 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
             )
             if is_broad:
                 continue
-
-            name = node.name
-            if not name:
-                continue
             h_type = (
                 node.type.id
                 if isinstance(node.type, ast.Name)
@@ -478,11 +475,42 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
             if h_type == "PathConfinementError":
                 continue
 
+            name = node.name
+            lineno = getattr(node, "lineno", 0)
+            line = source_lines[lineno - 1].strip() if source_lines and lineno > 0 else ""
+
+            calls_error = any(
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and (n.func.id.endswith("_error") or n.func.id.startswith("_sanitized_"))
+                for n in ast.walk(node)
+            )
+
+            if not name:
+                if calls_error:
+                    offenders.append((lineno, h_type, "unbound_narrow_handler", line))
+                continue
+
+            has_log = any(
+                (
+                    isinstance(c, ast.Call)
+                    and isinstance(c.func, ast.Name)
+                    and c.func.id
+                    in {
+                        "_log_tool_exception",
+                        "_sanitized_tool_error",
+                        "_sanitized_tool_error_text",
+                    }
+                )
+                or is_stderr_call(c)
+                for c in ast.walk(node)
+            )
+            if calls_error and not has_log:
+                offenders.append((lineno, h_type, "missing_stderr_log", line))
+
             for child in ast.walk(node):
-                lineno = getattr(child, "lineno", None)
-                if lineno is None:
-                    continue
-                line = source_lines[lineno - 1].strip() if source_lines else ""
+                c_lineno = getattr(child, "lineno", lineno)
+                c_line = source_lines[c_lineno - 1].strip() if source_lines and c_lineno > 0 else ""
 
                 if (
                     is_stderr_call(child)
@@ -499,10 +527,10 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                         "format",
                     }:
                         if any(isinstance(a, ast.Name) and a.id == name for a in child.args):
-                            offenders.append((lineno, h_type, "call", line))
+                            offenders.append((c_lineno, h_type, "call", c_line))
                     elif isinstance(child.func, ast.Attribute) and child.func.attr == "format":
                         if any(isinstance(a, ast.Name) and a.id == name for a in child.args):
-                            offenders.append((lineno, h_type, "format_call", line))
+                            offenders.append((c_lineno, h_type, "format_call", c_line))
 
                 # 2. JoinedStr f"...{exc}..."
                 elif isinstance(child, ast.JoinedStr):
@@ -512,13 +540,17 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                                 continue
                             for sub in ast.walk(val.value):
                                 if isinstance(sub, ast.Name) and sub.id == name:
-                                    offenders.append((lineno, h_type, "f-string", line))
+                                    offenders.append((c_lineno, h_type, "f-string", c_line))
                                     break
 
-                # 3. Attribute exc.args
-                elif isinstance(child, ast.Attribute) and child.attr == "args":
+                # 3. Attribute exc.args, exc.details, exc.message
+                elif isinstance(child, ast.Attribute) and child.attr in {
+                    "args",
+                    "details",
+                    "message",
+                }:
                     if isinstance(child.value, ast.Name) and child.value.id == name:
-                        offenders.append((lineno, h_type, "args", line))
+                        offenders.append((c_lineno, h_type, child.attr, c_line))
 
         return offenders
 
@@ -538,7 +570,7 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
             f"on the MCP wire (SEC-007); offenders: {real_offenders}"
         )
 
-    # Negative controls: assert that all 6 banned exception stringification forms in narrow handlers are detected
+    # Negative controls: assert that all 9 banned exception leak/omission forms in narrow handlers are detected
     narrow_test_snippets = [
         'try:\n    pass\nexcept ConfigurationError as exc:\n    return f"fail: {exc}"',
         'try:\n    pass\nexcept ValueError as err:\n    return f"bad: {err}"',
@@ -546,6 +578,9 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
         "try:\n    pass\nexcept KeyError as k:\n    return repr(k)",
         'try:\n    pass\nexcept IOError as io_err:\n    return "failed: {}".format(io_err)',
         "try:\n    pass\nexcept TypeError as t:\n    return t.args[0]",
+        'try:\n    pass\nexcept PolicyValidationError as exc:\n    return json.dumps({"details": exc.details})',
+        'try:\n    pass\nexcept ValueError:\n    return _rewrite_error("fail")',
+        'try:\n    pass\nexcept ValueError as exc:\n    return _rewrite_error("fail")',
     ]
     for i, snippet in enumerate(narrow_test_snippets):
         dummy_tree = ast.parse(snippet)
@@ -1526,3 +1561,214 @@ def test_direct_call_tool_index_search_subprocess_poison_sanitized(tmp_path, mon
         assert "OSError" in payload["error"]["message"]
         captured = capsys.readouterr()
         assert token in captured.err
+
+
+def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
+    """SEC-007: Every registered MCP tool has a top-level try/except Exception boundary."""
+    import ast
+    from pathlib import Path
+
+    cli_dir = Path("src/tensor_grep/cli")
+    target_files = [
+        "mcp_server.py",
+        "mcp_symbol_tools.py",
+        "mcp_audit_tools.py",
+        "mcp_rewrite_tools.py",
+    ]
+
+    missing_boundary: list[tuple[str, str]] = []
+    total_tools = 0
+    for filename in target_files:
+        src = (cli_dir / filename).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                is_tool = any(
+                    (
+                        isinstance(d, ast.Call)
+                        and isinstance(d.func, ast.Attribute)
+                        and d.func.attr == "tool"
+                    )
+                    or (isinstance(d, ast.Name) and d.id == "_register_legacy_tool")
+                    for d in node.decorator_list
+                )
+                if is_tool:
+                    total_tools += 1
+                    has_broad_try = any(
+                        isinstance(stmt, ast.Try)
+                        and any(
+                            h.type is None
+                            or (isinstance(h.type, ast.Name) and h.type.id == "Exception")
+                            for h in stmt.handlers
+                        )
+                        for stmt in node.body
+                    )
+                    if not has_broad_try:
+                        missing_boundary.append((filename, node.name))
+
+    assert total_tools >= 50, f"Expected at least 50 MCP tools, found {total_tools}"
+    assert missing_boundary == [], f"Tools missing outer exception boundaries: {missing_boundary}"
+
+    # Negative control / mutation control: a tool function lacking try/except Exception must fail
+    dummy_code = "@mcp.tool()\ndef dummy_tool():\n    return 'no try except'\n"
+    dummy_tree = ast.parse(dummy_code)
+    fn_node = dummy_tree.body[0]
+    assert isinstance(fn_node, ast.FunctionDef)
+    has_boundary = any(
+        isinstance(stmt, ast.Try)
+        and any(
+            h.type is None or (isinstance(h.type, ast.Name) and h.type.id == "Exception")
+            for h in stmt.handlers
+        )
+        for stmt in fn_node.body
+    )
+    assert not has_boundary, "Mutation control should have detected missing boundary"
+
+
+def test_direct_call_tool_rewrite_plan_resolver_poison_sanitized(tmp_path, monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles resolver failure without leaking poison."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_RESOLVER_SECRET at C:\private\tg.exe"
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+
+    def _raise_resolver_poison():
+        raise OSError(poison)
+
+    monkeypatch.setattr(mcp_server, "resolve_native_tg_binary", _raise_resolver_poison)
+
+    content, data = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "tg_rewrite_plan",
+            {
+                "pattern": "$A",
+                "replacement": "$A",
+                "lang": "python",
+                "path": ".",
+            },
+        )
+    )
+    wire = content[0].text + "\n" + json.dumps(data, default=str)
+    assert poison not in wire, f"Resolver poison leaked to wire: {wire}"
+    captured = capsys.readouterr()
+    assert poison in captured.err, "Resolver poison not logged to stderr"
+
+
+def test_direct_call_tool_rewrite_apply_policy_validation_details_poison_sanitized(
+    tmp_path, monkeypatch, capsys
+):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply sanitizes PolicyValidationError details."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+    from tensor_grep.cli.apply_policy import PolicyValidationError
+
+    token = "SEC007_DETAILS_SECRET"
+    poison = f"{token} at C:\\private\\policy.json"
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "policy.json").write_text("{}", encoding="utf-8")
+
+    def _fake_load_policy(*_args, **_kwargs):
+        raise PolicyValidationError(
+            "Invalid apply policy.",
+            details=[{"field": "ruleset_scan.baseline", "message": poison}],
+        )
+
+    monkeypatch.setattr("tensor_grep.cli.apply_policy.load_apply_policy", _fake_load_policy)
+
+    content, data = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "tg_rewrite_apply",
+            {
+                "pattern": "$A",
+                "replacement": "$A",
+                "lang": "python",
+                "path": ".",
+                "policy": "policy.json",
+            },
+        )
+    )
+    wire = content[0].text + "\n" + json.dumps(data, default=str)
+    assert token not in wire, f"Policy validation details poison leaked to wire: {wire}"
+    captured = capsys.readouterr()
+    assert token in captured.err, "Policy validation details poison not logged to stderr"
+    wire_payload = json.loads(content[0].text)
+    assert wire_payload["error"]["code"] == "invalid_policy"
+    details = wire_payload["error"]["details"]
+    assert len(details) == 1
+    assert details[0]["field"] == "ruleset_scan.baseline"
+    assert (
+        "within the policy directory" in details[0]["message"] or "Invalid" in details[0]["message"]
+    )
+
+
+def test_direct_call_tool_rewrite_apply_policy_evaluation_poison_sanitized(
+    tmp_path, monkeypatch, capsys
+):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_apply handles evaluate_apply_policy failure with edit disclosure."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_POLICY_EVAL_SECRET at C:\private\eval.py"
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "foo.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "policy.json").write_text(
+        json.dumps({
+            "version": 1,
+            "lint_cmd": None,
+            "test_cmd": None,
+            "ruleset_scan": None,
+            "on_failure": "warn",
+        }),
+        encoding="utf-8",
+    )
+
+    def _raise_eval_poison(*_args, **_kwargs):
+        raise RuntimeError(poison)
+
+    monkeypatch.setattr("tensor_grep.cli.apply_policy.evaluate_apply_policy", _raise_eval_poison)
+    monkeypatch.setattr(mcp_server, "_embedded_rewrite_available", lambda: True)
+
+    fake_result = json.dumps({"applied_edits": 1, "edits": [{"path": "foo.py"}]})
+    monkeypatch.setattr(mcp_server, "_execute_embedded_rewrite_json", lambda **_kwargs: fake_result)
+
+    content, _data = asyncio.run(
+        mcp_server.mcp.call_tool(
+            "tg_rewrite_apply",
+            {
+                "pattern": "x = 1",
+                "replacement": "x = 2",
+                "lang": "python",
+                "path": ".",
+                "policy": "policy.json",
+            },
+        )
+    )
+    wire = content[0].text
+    assert poison not in wire, f"Policy eval poison leaked to wire: {wire}"
+    captured = capsys.readouterr()
+    assert poison in captured.err, "Policy eval poison not logged to stderr"
+    assert "Edits may have already been applied" in wire
+
+
+def test_direct_call_tool_devices_poison_sanitized(monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_devices handles inventory failure without leaking poison."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    poison = r"SEC007_DEVICES_SECRET at C:\private\cuda.py"
+
+    def _raise_devices_poison(*_args, **_kwargs):
+        raise RuntimeError(poison)
+
+    monkeypatch.setattr(mcp_server, "collect_device_inventory", _raise_devices_poison)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_devices", {}))
+    wire = content[0].text
+    assert poison not in wire, f"Devices poison leaked to wire: {wire}"
+    captured = capsys.readouterr()
+    assert poison in captured.err, "Devices poison not logged to stderr"
