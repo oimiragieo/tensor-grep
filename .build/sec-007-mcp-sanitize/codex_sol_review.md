@@ -1,21 +1,63 @@
 # FIX-FIRST
 
-Audited `68654220` against base `c7a515d7`. Two blocking findings remain.
+Audited `f108cb3` against `c7a515d`. One blocking finding remains.
 
-- **[HIGH] Broad exception text still leaks directly over FastMCP.** [`mcp_server.py:3779`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3779) serializes `str(exc)` into `tracked_file_count_error`. A direct `mcp.call_tool("tg_session_open", ...)` poison test returned:
+## [HIGH] MCP rewrite engine bypasses the three-module sanitization ratchet
 
-  ```json
-  "tracked_file_count_error": "SEC007_SESSION_SECRET at C:\\private\\session.db"
-  ```
+The claimed 52-site closed world excludes [`mcp_rewrite_tools.py`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1), even though it produces responses forwarded directly by registered MCP tools at [`mcp_audit_tools.py:518`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_audit_tools.py:518).
 
-  The secret appeared in both FastMCP text content and structured result data. The ratchet deliberately skips this leak at [`test_mcp_error_sanitization.py:309`](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:309) and authorizes it at line 828, producing a false green.
+Multiple paths still serialize raw exception text:
 
-  Minimal fix: use `_sanitized_tool_error_text("get_session", exc)` or log plus a constant message; add a direct poison test for the second `get_session` stage; remove the exception from the allowlist; update the documented count from 53 to 52.
+- Embedded rewrite exceptions: [`mcp_rewrite_tools.py:558`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:558) and [`mcp_rewrite_tools.py:578`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:578)
+- Rewrite subprocess failures: [`mcp_rewrite_tools.py:508`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:508)
+- Diff subprocess failures: [`mcp_rewrite_tools.py:1027`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1027)
+- Index-search subprocess failures: [`mcp_rewrite_tools.py:1066`](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_rewrite_tools.py:1066)
 
-- **[MEDIUM] The narrow-handler stderr logging contract is unimplemented and untested.** Twenty-two tool-level `SessionStaleError`, `FileNotFoundError`, and `ValueError` handlers in `mcp_server.py` do not bind or log the exception, including [`mcp_server.py:1556`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:1556), [`mcp_server.py:2111`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:2111), and [`mcp_server.py:3948`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3948). A direct poisoned `SessionStaleError` produced a sanitized wire response but empty stderr. The AST ratchet skips unbound handlers at [`test_mcp_error_sanitization.py:459`](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:459), while the dynamic test captures stderr only after several cases, allowing one logged case to mask the others.
+The ratchets explicitly inspect only three files at [`test_mcp_error_sanitization.py:242`](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:242) and [`test_mcp_error_sanitization.py:392`](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:392).
 
-  Minimal fix: bind each narrow exception with `as exc`, call `_log_tool_exception`, and assert stderr independently for every poisoned case.
+Direct FastMCP repros:
 
-The legacy path redaction and `_mcp_root()` cwd-failure paths verified clean. Existing checks passed—23/23 sanitization tests, 74/74 related tests, Ruff, formatting, mypy, and `git diff --check`—but the first finding demonstrates those gates are currently false-green. `MAP.md`, `from-map.md`, and `RECEIPTS.md` are numerically synchronized, not aligned with the zero-leak contract.
+```text
+tg_rewrite_plan + poisoned embedded RuntimeError:
+TOKEN_IN_TEXT True
+TOKEN_IN_DATA True
+ERROR_MESSAGE SEC007_REWRITE_SECRET at C:\private\native_model.bin
 
-Audit was read-only, following [codebase-audit](C:/Users/oimir/.codex/skills/codebase-audit/SKILL.md) and bounded-test guidance from [anti-hang-test-protocol](C:/Users/oimir/.codex/skills/anti-hang-test-protocol/SKILL.md).
+tg_rewrite_diff + poisoned OSError:
+TOKEN_IN_TEXT True
+TOKEN_IN_DATA True
+ERROR_MESSAGE Failed to execute rewrite diff command:
+              SEC007_SUBPROCESS_SECRET at C:\private\runner.exe
+```
+
+Thus secrets and internal paths reach both FastMCP text content and structured result data.
+
+Minimal fix:
+
+- Include `mcp_rewrite_tools.py` in the broad, narrow, and closed-world ratchets.
+- Log raw exception/subprocess diagnostics server-side and return stable messages containing at most the safe exception class and curated error code.
+- Treat native stderr as untrusted diagnostic material; classify it internally rather than returning it verbatim.
+- Add direct `mcp.call_tool` poison tests for `tg_rewrite_plan` and `tg_rewrite_diff`, asserting absence from both `content` and structured data.
+- Recalculate the documented population and receipts.
+
+## Round 6 verification
+
+The requested Round 6 corrections themselves are effective:
+
+- `tracked_file_count_error` is sanitized; poison was absent from both FastMCP outputs and present in stderr.
+- All 22 newly changed narrow handlers are bound and logged. The current module contains 23 relevant handlers total, including the pre-existing logged `tg_find` handler.
+- Per-case stderr assertions execute independently.
+- The 52-site count is accurate for the three selected files—but is not a closed-world count of the complete MCP wire-producing surface.
+
+Verification completed:
+
+- Dedicated sanitization suite: **24 passed**
+- Sanitization + fail-closed suites: **79 passed**
+- Path-confinement suite: **175 passed**
+- Ruff check and format: passed
+- Mypy on all three changed production modules: passed
+- `git diff --check`: passed
+
+No files were modified. Audit followed the [codebase-audit skill](/C:/Users/oimir/.codex/skills/codebase-audit/SKILL.md).
+
+**Final verdict: FIX-FIRST**

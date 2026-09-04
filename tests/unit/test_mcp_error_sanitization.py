@@ -239,7 +239,12 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
     import ast
     from pathlib import Path
 
-    target_files = ["mcp_server.py", "mcp_symbol_tools.py", "mcp_audit_tools.py"]
+    target_files = [
+        "mcp_server.py",
+        "mcp_symbol_tools.py",
+        "mcp_audit_tools.py",
+        "mcp_rewrite_tools.py",
+    ]
     cli_dir = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
 
     def is_stderr_call(node):
@@ -263,6 +268,7 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                     "_sanitized_tool_error",
                     "_sanitized_tool_error_text",
                     "_log_tool_exception",
+                    "_classify_native_rewrite_failure",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -389,7 +395,12 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
     import ast
     from pathlib import Path
 
-    target_files = ["mcp_server.py", "mcp_symbol_tools.py", "mcp_audit_tools.py"]
+    target_files = [
+        "mcp_server.py",
+        "mcp_symbol_tools.py",
+        "mcp_audit_tools.py",
+        "mcp_rewrite_tools.py",
+    ]
     cli_dir = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli"
 
     def is_stderr_call(node):
@@ -419,6 +430,7 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                     "_sanitized_tool_error",
                     "_sanitized_tool_error_text",
                     "_log_tool_exception",
+                    "_classify_native_rewrite_failure",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -787,8 +799,9 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
     - src/tensor_grep/cli/mcp_server.py (26 sites)
     - src/tensor_grep/cli/mcp_symbol_tools.py (11 sites)
     - src/tensor_grep/cli/mcp_audit_tools.py (15 sites)
-    exactly 52 authorized str(exc) callsites exist, and ALL 52 are PathConfinementError sites
-    (51 tool handlers + 1 _meta_confinement_error helper).
+    - src/tensor_grep/cli/mcp_rewrite_tools.py (2 sites)
+    exactly 54 authorized str(exc) callsites exist, and ALL 54 are PathConfinementError sites
+    (53 tool handlers + 1 _meta_confinement_error helper).
     Zero un-allowlisted sites permitted, verified by exact function identity and handler type,
     matching the enclosing handler's bound exception variable name regardless of spelling.
     """
@@ -850,6 +863,9 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
             ("tg_checkpoint_list", "PathConfinementError"): 1,
             ("tg_checkpoint_undo", "PathConfinementError"): 1,
             ("tg_rewrite_diff", "PathConfinementError"): 1,
+        },
+        "mcp_rewrite_tools.py": {
+            ("execute_rewrite_apply_json", "PathConfinementError"): 2,
         },
     }
 
@@ -916,8 +932,8 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
         assert actual_counts == expected_sites, (
             f"Counts mismatch in {mod_name}: {actual_counts} vs {expected_sites}"
         )
-    assert total_sites_count == 52, (
-        f"Expected exactly 52 closed-world str(exc) sites across all 3 modules, found {total_sites_count}"
+    assert total_sites_count == 54, (
+        f"Expected exactly 54 closed-world str(exc) sites across all 4 modules, found {total_sites_count}"
     )
 
     # Negative control: assert that mutation with a different exception variable name (e.g. 'err') is caught
@@ -1365,3 +1381,148 @@ def test_direct_call_tool_session_open_get_session_poison_sanitized(tmp_path, mo
         assert poison not in payload["tracked_file_count_error"]
         captured = capsys.readouterr()
         assert poison in captured.err
+
+
+def test_direct_call_tool_rewrite_diff_subprocess_poison_sanitized(tmp_path, monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff handles subprocess failure without leaking poison."""
+    import asyncio
+    from pathlib import Path
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    token = "SEC007_DIFF_SUBPROCESS_SECRET"
+    poison = OSError(token + r" at C:\private\runner.exe")
+    with (
+        patch.object(
+            mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(Path("tg"), None)
+        ),
+        patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
+        patch.object(mcp_server, "_run_rewrite_subprocess", side_effect=poison),
+    ):
+        content, data = asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_rewrite_diff",
+                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
+            )
+        )
+        text = content[0].text
+        assert token not in text
+        data_text = json.dumps(data, default=str)
+        assert token not in data_text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "execution_failed"
+        assert "OSError" in payload["error"]["message"]
+        captured = capsys.readouterr()
+        assert token in captured.err
+
+
+def test_direct_call_tool_rewrite_plan_embedded_poison_sanitized(tmp_path, monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_plan handles embedded rewrite failure without leaking poison."""
+    import asyncio
+    import sys
+    import types
+    from unittest.mock import MagicMock
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    token = "SEC007_REWRITE_PLAN_SECRET"
+    poison = RuntimeError(token + r" at C:\private\native_model.bin")
+
+    fake_rust = types.ModuleType("tensor_grep.rust_core")
+    fake_rust.ast_rewrite_plan_json = MagicMock(side_effect=poison)
+    fake_rust.ast_rewrite_apply_json = MagicMock(side_effect=poison)
+    monkeypatch.setitem(sys.modules, "tensor_grep.rust_core", fake_rust)
+
+    with patch.object(mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(None, None)):
+        content, data = asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_rewrite_plan",
+                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
+            )
+        )
+        text = content[0].text
+        assert token not in text
+        data_text = json.dumps(data, default=str)
+        assert token not in data_text
+        payload = json.loads(text)
+        assert "RuntimeError" in payload["error"]["message"]
+        captured = capsys.readouterr()
+        assert token in captured.err
+
+
+def test_direct_call_tool_rewrite_diff_native_stderr_poison_sanitized(
+    tmp_path, monkeypatch, capsys
+):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_rewrite_diff sanitizes native stderr on wire."""
+    import asyncio
+    from pathlib import Path
+    from subprocess import CompletedProcess
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    token = "SEC007_NATIVE_STDERR_SECRET"
+    completed = CompletedProcess(
+        args=["tg.exe"],
+        returncode=2,
+        stdout="",
+        stderr=f"error: invalid pattern with secret {token} at C:\\private\\db.rs",
+    )
+    with (
+        patch.object(
+            mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(Path("tg"), None)
+        ),
+        patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
+        patch.object(mcp_server, "_run_rewrite_subprocess", return_value=completed),
+    ):
+        content, data = asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_rewrite_diff",
+                {"pattern": "$A", "replacement": "$A", "lang": "python", "path": str(tmp_path)},
+            )
+        )
+        text = content[0].text
+        assert token not in text
+        data_text = json.dumps(data, default=str)
+        assert token not in data_text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "pattern_error"
+        assert token not in payload["error"]["message"]
+        captured = capsys.readouterr()
+        assert token in captured.err
+
+
+def test_direct_call_tool_index_search_subprocess_poison_sanitized(tmp_path, monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_index_search handles subprocess failure without leaking poison."""
+    import asyncio
+    from pathlib import Path
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    token = "SEC007_INDEX_SEARCH_SUBPROCESS_SECRET"
+    poison = OSError(token + r" at C:\private\runner.exe")
+    with (
+        patch.object(
+            mcp_server, "_resolve_native_tg_binary_for_mcp", return_value=(Path("tg"), None)
+        ),
+        patch.object(mcp_server, "resolve_native_tg_binary", return_value=Path("tg")),
+        patch.object(mcp_server, "_run_rewrite_subprocess", side_effect=poison),
+    ):
+        content, data = asyncio.run(
+            mcp_server.mcp.call_tool(
+                "tg_index_search",
+                {"pattern": "def foo", "path": str(tmp_path)},
+            )
+        )
+        text = content[0].text
+        assert token not in text
+        data_text = json.dumps(data, default=str)
+        assert token not in data_text
+        payload = json.loads(text)
+        assert payload["error"]["code"] == "execution_failed"
+        assert "OSError" in payload["error"]["message"]
+        captured = capsys.readouterr()
+        assert token in captured.err

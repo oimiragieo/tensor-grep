@@ -1,33 +1,48 @@
-# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 7
+# Adversarial Security Audit & Verification Gate: SEC-007 (MCP Wire Error Sanitization) - Round 8
 
 You are the Codex Sol security auditor. Perform a rigorous, adversarial security audit of the changes in branch `fix/sec-007-mcp-sanitize` against base `c7a515d`.
 
 ## Goal & Target Contracts:
-1. **Zero Secret / Path / Traceback Leaks to JSON-RPC Wire Across All Tool Modules (Resolving Round 6 High Finding)**:
-   - Sanitized `tracked_file_count_error` in `tg_session_open` (`src/tensor_grep/cli/mcp_server.py:3780`) using `_sanitized_tool_error_text("get_session", exc)`: logs full traceback server-side to `stderr` via `_log_tool_exception` and returns safe class-name disclosure `f"get_session failed: {exc.__class__.__name__}"` on the wire without echoing raw `str(exc)` or internal secrets.
-   - Added direct FastMCP poison test `test_direct_call_tool_session_open_get_session_poison_sanitized`: proves secrets do not leak into `tracked_file_count_error` or text content on the wire, while confirming the secret is properly captured in `stderr`.
-   - Removed W1-a pin from broad AST ratchet and removed `("tg_session_open", "Exception"): 1` from the closed-world allowlist.
-   - Closed-world population across all 3 modules (`mcp_server.py`: 26, `mcp_symbol_tools.py`: 11, `mcp_audit_tools.py`: 15) is now exactly **52 sites**, and **100% of the 52 sites are `PathConfinementError`** (zero broad or narrow unauthorized exception formatting leaks anywhere).
+1. **Sanitization and AST Ratchet Enrollment of `mcp_rewrite_tools.py` (Resolving Round 7 Finding)**:
+   - Identified that `mcp_audit_tools.py` delegates `tg_rewrite_plan`, `tg_rewrite_apply`, `tg_rewrite_diff`, and `tg_index_search` to `src/tensor_grep/cli/mcp_rewrite_tools.py`.
+   - In `mcp_rewrite_tools.py`:
+     - Imported `PathConfinementError` and `_log_tool_exception` from `mcp_server`.
+     - Subprocess native stderr is classified into safe curated error strings via `_extract_rewrite_error_message(stderr, code=...)`; raw stderr is emitted server-side to `sys.stderr.write` and never leaks to the client wire.
+     - `_classify_native_rewrite_failure` inspects `stderr: str | BaseException` and maps to safe categories (`pattern_error`, `io_error`, `native_internal_error`, `invalid_input`) without stringifying arbitrary exception text on wire.
+     - `_execute_rewrite_json_command`: catches `FileNotFoundError` and `OSError`, logs to `_log_tool_exception`, and returns safe class-name message.
+     - `_execute_embedded_rewrite_json`: catches `ImportError`, `RuntimeError`, `Exception`, logs to `_log_tool_exception`, and returns `f"Embedded rewrite {mode} failed: {exc.__class__.__name__}"`.
+     - `_execute_rewrite_diff_command`: catches `FileNotFoundError` and `OSError`, logs to `_log_tool_exception`, and returns safe messages.
+     - `_execute_index_search_command`: catches `FileNotFoundError` and `OSError`, logs to `_log_tool_exception`, and returns safe messages.
+     - `execute_rewrite_apply_json`: catches `PathConfinementError` for `audit_manifest` and `policy`, logs `ValueError` and checkpoint exceptions to `_log_tool_exception`.
+   - In `mcp_audit_tools.py`:
+     - Redacted candidate paths in `tg_index_search` and `tg_audit_history` `ValueError` handlers (`path="[refused]"`).
+   - In `tests/unit/test_mcp_error_sanitization.py`:
+     - Added `"mcp_rewrite_tools.py"` to broad and narrow AST ratchets (now 4 modules total).
+     - Added `("execute_rewrite_apply_json", "PathConfinementError"): 2` to the closed-world allowlist.
+     - Closed-world population across all 4 modules (`mcp_server.py`: 26, `mcp_symbol_tools.py`: 11, `mcp_audit_tools.py`: 15, `mcp_rewrite_tools.py`: 2) is now exactly **54 sites**, and **100% of the 54 sites are `PathConfinementError`**.
+     - Added 4 direct FastMCP tests covering rewrite diff subprocess failure, embedded rewrite failure, native stderr classified diagnostic isolation, and index search subprocess failure.
+     - Total tests in `test_mcp_error_sanitization.py`: 28 (all passing).
 
-2. **Narrow Handler Server-Side Logging Contract Enforced and Tested (Resolving Round 6 Medium Finding)**:
-   - Bound `as exc:` and added `_log_tool_exception` to all 22 tool-level narrow exception handlers (`SessionStaleError`, `FileNotFoundError`, `ValueError`) across `src/tensor_grep/cli/mcp_server.py`.
-   - Updated `test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path` to assert `captured = capsys.readouterr(); assert poison in captured.err` independently after *each* individual test case (1. `SessionStaleError`, 2. `FileNotFoundError` in session store, 3. `ValueError` in `tg_orient`, 4. `ValueError` in `tg_agent_capsule`, 5. `FileNotFoundError` in `tg_find`).
+2. **Narrow Handler Server-Side Logging Contract Enforced and Tested**:
+   - All 22 narrow exception handlers across `src/tensor_grep/cli/mcp_server.py` bind `as exc:` and log to `_log_tool_exception`.
+   - Dynamic tests in `test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path` assert `captured.err` independently for every case.
 
-3. **Multi-Module Ratchet & FastMCP Coverage**:
-   - Broad and narrow AST ratchets inspect all 3 modules (`mcp_server.py`, `mcp_symbol_tools.py`, `mcp_audit_tools.py`), with zero broad or narrow unauthorized exception formatting and 6 negative controls each.
-   - 5 direct FastMCP `mcp.call_tool` tests cover broad exceptions, narrow exceptions, cwd resolution failure, external path redaction (`[refused]`), and session-open degradation.
+3. **Complete Confinement & Redaction**:
    - All 39 path confinement entrypoints redact candidate paths (`payload["path"] = "[refused]"`, `payload["file"] = "[refused]"`).
+   - `_mcp_root()` fallback to `Path.cwd()` raises `PathConfinementError("root")`.
 
 4. **Synchronized Documentation & Receipts**:
-   - `MAP.md`, `gates/from-map.md`, and `RECEIPTS.md` are synchronized to exactly 52 sites and 24 passed tests in `test_mcp_error_sanitization.py`.
+   - `MAP.md`, `gates/from-map.md`, and `RECEIPTS.md` are synchronized to exactly 54 sites across 4 modules, 28 passed tests in `test_mcp_error_sanitization.py`, and 83 passed tests in the joint fail-closed suite.
 
 ## Review Instructions:
 1. Inspect the git diff against `c7a515d`.
-2. Evaluate resolutions to Round 6 findings:
-   - `tracked_file_count_error` sanitization and direct FastMCP poison test.
-   - All 22 narrow handlers bound and logged to stderr, with per-case independent stderr assertions.
-   - Closed-world count reduction to exactly 52 sites (100% `PathConfinementError`).
+2. Evaluate resolutions to Round 7 findings:
+   - `mcp_rewrite_tools.py` inclusion in AST ratchets and sanitization of subprocess/embedded execution.
+   - Native stderr diagnostic classification and server-side logging.
+   - 4 direct FastMCP poison tests for rewrite engine operations.
+   - Closed-world verification: exactly 54 sites across 4 modules, 100% `PathConfinementError`.
 3. Try to BREAK it: search for any bypass, unintended leak, unhandled exception, or regression.
 4. Output your findings and final verdict:
    - If clean: `AUDIT_CLEAR / VERIFIED: GO` or `SHIP`.
    - If broken: `FIX-FIRST` with `file:line`, repro, and minimal fix.
+

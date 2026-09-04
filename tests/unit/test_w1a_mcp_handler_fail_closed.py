@@ -606,10 +606,11 @@ def test_embedded_rewrite_availability_probe_degrades_and_its_consumer_discloses
 
 
 def test_embedded_rewrite_engine_failure_is_classified_not_swallowed(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The second broad handler in ``_execute_embedded_rewrite_json`` (engine raised): the tool
-    must return a classified error carrying the engine's own message, never a clean result."""
+    must return a classified error carrying the engine's exception class, never a clean result,
+    and log the full exception to stderr."""
 
     _stub_rust_core(monkeypatch, with_symbols=True)
     payload = json.loads(
@@ -617,8 +618,10 @@ def test_embedded_rewrite_engine_failure_is_classified_not_swallowed(
             pattern="a", replacement="b", lang="python", path=".", mode="plan"
         )
     )
-    assert _MARKER in payload["error"]["message"]
+    assert "RuntimeError" in payload["error"]["message"]
     assert payload["error"]["code"]
+    captured = capsys.readouterr()
+    assert _MARKER in captured.err
 
 
 def test_embedded_rewrite_unsupported_mode_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -465,7 +465,7 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
     except ValueError as exc:
         _log_tool_exception("tg_index_search", exc)
         return _index_search_error(
-            f"Invalid path: {path}", code="invalid_input", pattern=pattern, path=path
+            "Invalid path", code="invalid_input", pattern=pattern, path="[refused]"
         )
 
     validation_error = _validate_index_search_inputs(pattern, path)
@@ -723,7 +723,7 @@ def tg_audit_history(path: str = ".") -> str:
         return _audit_history_error(str(exc), code="invalid_input")
     except ValueError as exc:
         _log_tool_exception("tg_audit_history", exc)
-        return _audit_history_error(f"Invalid path: {path}", code="invalid_input")
+        return _audit_history_error("Invalid path", code="invalid_input")
 
     try:
         return _self._inject_mcp_contract_fields(
