@@ -234,8 +234,7 @@ def test_tg_search_success_path_is_unaffected_by_sanitization(capsys):
 def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
     """SEC-007: every broad ``except Exception`` / bare ``except`` arm must not
     echo exception contents (via str(exc), repr(exc), format(exc), f"{exc}", exc.args, etc.)
-    on the wire. The sole pinned exception is the W1-a ``tracked_file_count_error`` disclosure
-    (detail field, not a client error envelope).
+    on the wire. Zero exceptions permitted across all 3 tool modules.
     """
     import ast
     from pathlib import Path
@@ -305,10 +304,6 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                 if lineno is None:
                     continue
                 line = source_lines[lineno - 1].strip() if source_lines else ""
-
-                # W1-a pin: tracked_file_count_error keeps str(exc) by design
-                if "tracked_file_count_error" in line:
-                    continue
 
                 if (
                     is_stderr_call(child)
@@ -789,12 +784,11 @@ def test_write_path_confinement_resolution_failure_sanitizes_and_logs(tmp_path, 
 
 def test_mcp_wire_str_exc_closed_world_ast_ratchet():
     """SEC-007: Closed-world ratchet enforcing that across all 3 MCP tool modules:
-    - src/tensor_grep/cli/mcp_server.py (27 sites)
+    - src/tensor_grep/cli/mcp_server.py (26 sites)
     - src/tensor_grep/cli/mcp_symbol_tools.py (11 sites)
     - src/tensor_grep/cli/mcp_audit_tools.py (15 sites)
-    exactly 53 authorized str(exc) callsites exist, mapped to:
-    - 52 PathConfinementError sites (51 tool handlers + 1 _meta_confinement_error helper)
-    - 1 W1-a tracked_file_count_error detail key in tg_session_open
+    exactly 52 authorized str(exc) callsites exist, and ALL 52 are PathConfinementError sites
+    (51 tool handlers + 1 _meta_confinement_error helper).
     Zero un-allowlisted sites permitted, verified by exact function identity and handler type,
     matching the enclosing handler's bound exception variable name regardless of spelling.
     """
@@ -825,7 +819,6 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
             ("tg_ast_search", "PathConfinementError"): 1,
             ("tg_classify_logs", "PathConfinementError"): 1,
             ("tg_session_open", "PathConfinementError"): 1,
-            ("tg_session_open", "Exception"): 1,
             ("tg_session_list", "PathConfinementError"): 1,
             ("tg_session_show", "PathConfinementError"): 1,
             ("tg_session_refresh", "PathConfinementError"): 1,
@@ -923,15 +916,8 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
         assert actual_counts == expected_sites, (
             f"Counts mismatch in {mod_name}: {actual_counts} vs {expected_sites}"
         )
-        if mod_name == "mcp_server.py":
-            w1a_line = [
-                site[2] for site in actual_sites if site[1] == ("tg_session_open", "Exception")
-            ]
-            assert len(w1a_line) == 1
-            assert "tracked_file_count_error" in w1a_line[0], f"W1-a site mismatch: {w1a_line[0]}"
-
-    assert total_sites_count == 53, (
-        f"Expected exactly 53 closed-world str(exc) sites across all 3 modules, found {total_sites_count}"
+    assert total_sites_count == 52, (
+        f"Expected exactly 52 closed-world str(exc) sites across all 3 modules, found {total_sites_count}"
     )
 
     # Negative control: assert that mutation with a different exception variable name (e.g. 'err') is caught
@@ -971,6 +957,8 @@ def test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path(tmp_path, monk
         assert "Session cache is stale" in out
         payload = json.loads(out)
         assert payload["error"]["code"] == "invalid_input"
+        captured = capsys.readouterr()
+        assert poison in captured.err
 
     # 2. FileNotFoundError in tg_session_file_importers
     with patch(
@@ -982,6 +970,8 @@ def test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path(tmp_path, monk
         assert "File not found" in out
         payload = json.loads(out)
         assert payload["error"]["code"] == "invalid_input"
+        captured = capsys.readouterr()
+        assert poison in captured.err
 
     # 3. ValueError in tg_orient
     with patch(
@@ -992,6 +982,8 @@ def test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path(tmp_path, monk
         assert "Invalid orient parameter" in out
         payload = json.loads(out)
         assert payload["error"]["code"] == "invalid_input"
+        captured = capsys.readouterr()
+        assert poison in captured.err
 
     # 4. ValueError in tg_agent_capsule
     with patch("tensor_grep.cli.agent_capsule.build_agent_capsule", side_effect=ValueError(poison)):
@@ -1000,6 +992,8 @@ def test_class_b_narrow_handlers_do_not_leak_poison_trace_or_path(tmp_path, monk
         assert "Invalid input parameter for tg_agent_capsule" in out
         payload = json.loads(out)
         assert payload["error"]["code"] == "invalid_input"
+        captured = capsys.readouterr()
+        assert poison in captured.err
 
     # 5. FileNotFoundError in tg_find
     with patch("tensor_grep.cli.mcp_server._execute_find", side_effect=FileNotFoundError(poison)):
@@ -1347,3 +1341,27 @@ def test_direct_call_tool_external_path_redacted(capsys):
     assert payload["file"] == "[refused]"
     captured = capsys.readouterr()
     assert "path confinement refusal" in captured.err
+
+
+def test_direct_call_tool_session_open_get_session_poison_sanitized(tmp_path, monkeypatch, capsys):
+    """SEC-007: Direct FastMCP mcp.call_tool tg_session_open sanitizes get_session exception on wire."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+    (tmp_path / "sample.py").write_text("def f(): pass\n", encoding="utf-8")
+
+    poison = r"SEC007_GET_SESSION_POISON_SECRET"
+    with patch("tensor_grep.cli.session_store.get_session", side_effect=RuntimeError(poison)):
+        content, _data = asyncio.run(
+            mcp_server.mcp.call_tool("tg_session_open", {"path": str(tmp_path)})
+        )
+        text = content[0].text
+        assert poison not in text
+        payload = json.loads(text)
+        assert "tracked_file_count_error" in payload
+        assert "RuntimeError" in payload["tracked_file_count_error"]
+        assert poison not in payload["tracked_file_count_error"]
+        captured = capsys.readouterr()
+        assert poison in captured.err

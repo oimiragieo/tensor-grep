@@ -169,7 +169,7 @@ def test_session_open_tracked_file_count_degradation_is_disclosed(
         "tracked_file_count fell back to file_count with no disclosure -- "
         f"payload keys={sorted(payload)}"
     )
-    assert "W1A_RED2_INJECTED" in payload["tracked_file_count_error"], (
+    assert "RuntimeError" in payload["tracked_file_count_error"], (
         f"degradation reason absent: {payload!r}"
     )
     # The fallback value itself is still returned (the session IS open) -- assert it, so a

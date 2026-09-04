@@ -1,43 +1,21 @@
-## FIX-FIRST
+# FIX-FIRST
 
-The Round 4 `tg_ast_search` finding is fixed, but SEC-007 is not closed across the actual MCP wire surface.
+Audited `68654220` against base `c7a515d7`. Two blocking findings remain.
 
-### Findings
+- **[HIGH] Broad exception text still leaks directly over FastMCP.** [`mcp_server.py:3779`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3779) serializes `str(exc)` into `tracked_file_count_error`. A direct `mcp.call_tool("tg_session_open", ...)` poison test returned:
 
-- [HIGH] The “closed-world” ratchets exclude independently registered MCP tools in the split modules. `mcp_server.py` explicitly imports and re-exports these tools ([mcp_server.py:1454](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:1454)), while all three ratchets inspect only `mcp_server.py` ([test_mcp_error_sanitization.py:243](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:243), [line 382](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:382), [line 783](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:783)).
+  ```json
+  "tracked_file_count_error": "SEC007_SESSION_SECRET at C:\\private\\session.db"
+  ```
 
-  An independent AST census found 16 broad `except Exception` handlers in registered sibling tools that still return `str(exc)`: eight in `mcp_symbol_tools.py` and eight in `mcp_audit_tools.py`. Examples include [mcp_symbol_tools.py:183](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_symbol_tools.py:183) and [mcp_audit_tools.py:642](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_audit_tools.py:642).
+  The secret appeared in both FastMCP text content and structured result data. The ratchet deliberately skips this leak at [`test_mcp_error_sanitization.py:309`](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:309) and authorizes it at line 828, producing a false green.
 
-  Repro: patching `build_symbol_defs` to raise `RuntimeError("SEC007_BROAD_SECRET C:\\private\\trace.py")`, then calling `await mcp.call_tool("tg_symbol_defs", ...)`, returned the complete poison string in the FastMCP `TextContent` wire payload.
+  Minimal fix: use `_sanitized_tool_error_text("get_session", exc)` or log plus a constant message; add a direct poison test for the second `get_session` stage; remove the exception from the allowlist; update the documented count from 53 to 52.
 
-  Narrow handlers are also outside the ratchet. [mcp_symbol_tools.py:608](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_symbol_tools.py:608) returns raw `str(exc)` for `FileNotFoundError`; the same FastMCP probe returned `SEC007_NARROW_SECRET C:\\private\\missing.py`.
+- **[MEDIUM] The narrow-handler stderr logging contract is unimplemented and untested.** Twenty-two tool-level `SessionStaleError`, `FileNotFoundError`, and `ValueError` handlers in `mcp_server.py` do not bind or log the exception, including [`mcp_server.py:1556`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:1556), [`mcp_server.py:2111`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:2111), and [`mcp_server.py:3948`](C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3948). A direct poisoned `SessionStaleError` produced a sanitized wire response but empty stderr. The AST ratchet skips unbound handlers at [`test_mcp_error_sanitization.py:459`](C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:459), while the dynamic test captures stderr only after several cases, allowing one logged case to mask the others.
 
-  Minimal fix: expand the source population to every module contributing registered tools—at least `mcp_server.py`, `mcp_symbol_tools.py`, `mcp_audit_tools.py`, and the reachable rewrite helpers—then sanitize every broad handler and non-curated narrow handler. Add direct `mcp.call_tool` poison tests, rather than testing only meta wrappers.
+  Minimal fix: bind each narrow exception with `as exc`, call `_log_tool_exception`, and assert stderr independently for every poisoned case.
 
-- [MEDIUM] Two direct legacy tools still echo refused external candidate paths. [mcp_symbol_tools.py:510](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_symbol_tools.py:510) and [line 571](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_symbol_tools.py:571) catch `ValueError` and retain the raw `file` field instead of `"[refused]"`.
+The legacy path redaction and `_mcp_root()` cwd-failure paths verified clean. Existing checks passed—23/23 sanitization tests, 74/74 related tests, Ruff, formatting, mypy, and `git diff --check`—but the first finding demonstrates those gates are currently false-green. `MAP.md`, `from-map.md`, and `RECEIPTS.md` are numerically synchronized, not aligned with the zero-leak contract.
 
-  Repro: invoking `tg_file_imports` and `tg_file_importers` through `mcp.call_tool` with an outside-root `SEC007_WIRE_SECRET.py` returned that absolute path in `payload["file"]`.
-
-  Minimal fix: catch `PathConfinementError`, emit `file: "[refused]"`, and enroll both direct tools in the confinement behavior matrix. The current “all 35” matrix starts at [test_mcp_error_sanitization.py:1055](/C:/dev/projects/tensor-grep/tests/unit/test_mcp_error_sanitization.py:1055) but omits these public tools.
-
-- [MEDIUM] `_mcp_root()` does not enclose its default `Path.cwd()` call ([mcp_server.py:1378](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:1378)), and direct consumers evaluate `_mcp_root()` before entering `_confine_read_path` ([mcp_server.py:3601](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3601)). A cwd-resolution failure therefore bypasses `PathConfinementError`.
-
-  Repro: forcing `Path.cwd()` to raise `RuntimeError("SEC007_CWD_SECRET")` made `mcp.call_tool("tg_classify_logs", ...)` raise `ToolError("Error executing tool tg_classify_logs: SEC007_CWD_SECRET")`.
-
-  Minimal fix: enclose every `_mcp_root()` branch, including fallback `Path.cwd()`, and ensure all direct-root consumers translate failures to `PathConfinementError` before FastMCP sees them.
-
-- [LOW] The committed verification artifacts contradict the exact commit. [MAP.md:13](/C:/dev/projects/tensor-grep/.build/sec-007-mcp-sanitize/MAP.md:13) and [from-map.md:5](/C:/dev/projects/tensor-grep/.build/sec-007-mcp-sanitize/gates/from-map.md:5) claim/check 30 sites, but the source and ratchet contain 27; that recorded check now fails. [RECEIPTS.md:5](/C:/dev/projects/tensor-grep/.build/sec-007-mcp-sanitize/RECEIPTS.md:5) records 15 tests, while the committed file runs 19.
-
-### Confirmed working
-
-Round 4 Finding 1 is resolved: `tg_ast_search` logs `ConfigurationError` to stderr and returns constant `"unavailable"` messages in both modes ([mcp_server.py:3285](/C:/dev/projects/tensor-grep/src/tensor_grep/cli/mcp_server.py:3285)). The in-file Class A/Class B/Class C behavior, 27-site ratchet, W1-a exception, meta tools, and 35 enumerated confinement cases pass.
-
-Verification performed:
-
-- SEC-007 suite: `19 passed`
-- Confinement/search/find/W1-a suites: `231 passed`
-- Ruff lint and preview-format: passed
-- Mypy on `mcp_server.py`: passed
-- Diff whitespace check: passed
-
-Read-only `codebase-audit` workflow used; no files changed.
+Audit was read-only, following [codebase-audit](C:/Users/oimir/.codex/skills/codebase-audit/SKILL.md) and bounded-test guidance from [anti-hang-test-protocol](C:/Users/oimir/.codex/skills/anti-hang-test-protocol/SKILL.md).

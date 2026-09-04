@@ -1553,7 +1553,8 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_repo_map", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="repo-map",
@@ -1624,7 +1625,8 @@ def tg_orient(
                 ignore=tuple(ignore or ()),
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_orient", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="orient",
@@ -1633,7 +1635,8 @@ def tg_orient(
         payload["path"] = str(Path(path).expanduser())
         payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
         return json.dumps(payload, indent=2)
-    except ValueError:
+    except ValueError as exc:
+        _log_tool_exception("tg_orient", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="orient",
@@ -1762,7 +1765,8 @@ def tg_context_pack(
         return _self._inject_mcp_contract_fields(
             json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_context_pack", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-pack",
@@ -1844,7 +1848,8 @@ def tg_edit_plan(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_edit_plan", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-edit-plan",
@@ -1930,7 +1935,8 @@ def tg_context_render(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_context_render", exc)
         payload = _envelope_base(
             routing_backend="RepoMap",
             routing_reason="context-render",
@@ -2024,14 +2030,16 @@ def tg_agent_capsule(
                 indent=2,
             )
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_agent_capsule", exc)
         return _agent_capsule_error(
             f"Path not found: {path}",
             code="invalid_input",
             query=query,
             path=path,
         )
-    except ValueError:
+    except ValueError as exc:
+        _log_tool_exception("tg_agent_capsule", exc)
         return _agent_capsule_error(
             "Invalid input parameter for tg_agent_capsule",
             code="invalid_input",
@@ -2108,7 +2116,8 @@ def tg_session_edit_plan(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_edit_plan", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2117,7 +2126,8 @@ def tg_session_edit_plan(
             detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
             query=query,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_edit_plan", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2210,7 +2220,8 @@ def tg_session_context_render(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_context_render", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2219,7 +2230,8 @@ def tg_session_context_render(
             detail={"query": query, "render_profile": render_profile},
             query=query,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_context_render", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2289,7 +2301,8 @@ def tg_session_blast_radius(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_blast_radius", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2299,7 +2312,8 @@ def tg_session_blast_radius(
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_blast_radius", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2396,7 +2410,8 @@ def tg_session_file_importers(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_file_importers", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2405,7 +2420,8 @@ def tg_session_file_importers(
             detail={"file": file},
             file=file,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_file_importers", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2500,7 +2516,8 @@ def tg_session_blast_radius_render(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_blast_radius_render", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2514,7 +2531,8 @@ def tg_session_blast_radius_render(
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_blast_radius_render", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2605,7 +2623,8 @@ def tg_session_blast_radius_plan(
                 indent=2,
             )
         )
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_blast_radius_plan", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -2620,7 +2639,8 @@ def tg_session_blast_radius_plan(
             symbol=symbol,
             max_depth=max(0, int(max_depth)),
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_blast_radius_plan", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -3777,7 +3797,10 @@ def tg_session_open(
         related_paths = repo_map.get("related_paths") or []
         tracked_file_count, degraded = len(related_paths), {}
     except Exception as exc:  # W1-a: was a SILENT-SWALLOW (see the disposition ledger)
-        tracked_file_count, degraded = result.file_count, {"tracked_file_count_error": str(exc)}
+        tracked_file_count, degraded = (
+            result.file_count,
+            {"tracked_file_count_error": _sanitized_tool_error_text("get_session", exc)},
+        )
 
     return json.dumps(
         {
@@ -3945,7 +3968,8 @@ def tg_session_context(
         # here (imported from repo_map.py, not reimplemented) since `session_store.py` is out
         # of scope for this fix.
         payload = _apply_context_token_budget(payload, max_tokens)
-    except SessionStaleError:
+    except SessionStaleError as exc:
+        _log_tool_exception("tg_session_context", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,
@@ -3954,7 +3978,8 @@ def tg_session_context(
             detail={"query": query},
             query=query,
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
+        _log_tool_exception("tg_session_context", exc)
         return _session_error_payload(
             session_id=session_id,
             path=path,

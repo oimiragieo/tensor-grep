@@ -10,18 +10,19 @@ Eliminate all un-sanitized raw `str(exc)` exposures on the MCP JSON-RPC wire in 
 ## Answers
 
 ### Q1: What is the exact scope and classification of raw str(exc) sites on the MCP wire?
-**Answer:** Across all three registered MCP tool modules (`src/tensor_grep/cli/mcp_server.py`, `src/tensor_grep/cli/mcp_symbol_tools.py`, `src/tensor_grep/cli/mcp_audit_tools.py`), an audited population was reduced to exactly 53 closed-world authorized sites:
+**Answer:** Across all three registered MCP tool modules (`src/tensor_grep/cli/mcp_server.py`, `src/tensor_grep/cli/mcp_symbol_tools.py`, `src/tensor_grep/cli/mcp_audit_tools.py`), an audited population was reduced to exactly 52 closed-world authorized sites:
 1. **Eliminated across 3 modules:**
    - 32 Class A broad `except Exception` internal error arms routed to `_sanitized_tool_error` / constant sanitized payloads, with full traceback and path details sent exclusively to `stderr`.
-   - All narrow exception arms (`SessionStaleError`, `FileNotFoundError`, `ValueError`, `ConfigurationError`) sanitized to return safe client messages while logging full details to `stderr`.
-2. **Authorized Closed-World Remaining (53 sites):**
-   - `mcp_server.py`: 27 sites (26 `PathConfinementError` + 1 W1-a `tracked_file_count_error` detail key in `tg_session_open`).
+   - All narrow exception arms (`SessionStaleError`, `FileNotFoundError`, `ValueError`, `ConfigurationError`) sanitized to return safe client messages while logging full details to `stderr` (all 22 tool-level narrow handlers in `mcp_server.py` explicitly bind `as exc` and call `_log_tool_exception`).
+   - W1-a `tracked_file_count_error` in `tg_session_open` sanitized with `_sanitized_tool_error_text("get_session", exc)` to prevent raw exception leakage while preserving failure disclosure.
+2. **Authorized Closed-World Remaining (52 sites):**
+   - `mcp_server.py`: 26 sites (all `PathConfinementError`).
    - `mcp_symbol_tools.py`: 11 sites (all `PathConfinementError`).
    - `mcp_audit_tools.py`: 15 sites (all `PathConfinementError`).
-   - Total = 53 sites (52 `PathConfinementError` + 1 W1-a detail key).
+   - Total = 52 sites (100% `PathConfinementError`).
    - Exactly 0 unauthorized sites across all 3 modules.
 **Why:** Eliminates raw `str(exc)` tracebacks, local paths, and secret leaks while strictly preserving structured error envelope keys, codes, and fail-closed contracts.
-**Check:** python -c "import ast; from pathlib import Path; d = Path('src/tensor_grep/cli'); mods = ['mcp_server.py', 'mcp_symbol_tools.py', 'mcp_audit_tools.py']; total = sum(len([n for n in ast.walk(ast.parse((d/m).read_text(encoding='utf-8'))) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'str' and len(n.args) == 1 and isinstance(n.args[0], ast.Name) and n.args[0].id in ('exc', 'e')]) for m in mods); assert total == 53; print('53 AST str(exc) sites mapped across 3 modules')"
+**Check:** python -c "import ast; from pathlib import Path; d = Path('src/tensor_grep/cli'); mods = ['mcp_server.py', 'mcp_symbol_tools.py', 'mcp_audit_tools.py']; total = sum(len([n for n in ast.walk(ast.parse((d/m).read_text(encoding='utf-8'))) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == 'str' and len(n.args) == 1 and isinstance(n.args[0], ast.Name) and n.args[0].id in ('exc', 'e')]) for m in mods); assert total == 52; print('52 AST str(exc) sites mapped across 3 modules')"
 **Judged by:** run it
 **Reference:** docs/plans/HANDLER-CENSUS-W2.md:64
 
@@ -38,7 +39,7 @@ Eliminate all un-sanitized raw `str(exc)` exposures on the MCP JSON-RPC wire in 
 ### Q3: How is zero wire leakage verified deterministically without breaking preexisting gates?
 **Answer:**
 1. **Poison Exception Fixtures & Direct FastMCP Tests:** Inject poison exceptions containing secret paths and tokens across broad and narrow handlers, cwd resolution failure, and external candidate path refusals. Direct `mcp.call_tool` tests verify that poison strings appear in `stderr` (logging control) but are 100% absent from wire JSON payloads.
-2. **Closed-World Structural AST Ratchet:** `test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet` and `test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet` scan `mcp_server.py`, `mcp_symbol_tools.py`, and `mcp_audit_tools.py`; `test_mcp_wire_str_exc_closed_world_ast_ratchet` enforces exactly 53 authorized sites and 0 un-allowlisted sites across all 3 modules.
+2. **Closed-World Structural AST Ratchet:** `test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet` and `test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet` scan `mcp_server.py`, `mcp_symbol_tools.py`, and `mcp_audit_tools.py`; `test_mcp_wire_str_exc_closed_world_ast_ratchet` enforces exactly 52 authorized sites and 0 un-allowlisted sites across all 3 modules.
 3. **Regression Suite:** All existing MCP suites (`test_mcp_server_path_confinement.py` [175 tests], `test_w1a_mcp_handler_fail_closed.py` [55 tests]) pass 100% clean.
 **Why:** Combines behavioral poison injection and direct FastMCP invocation with multi-module structural AST ratchets and existing envelope contract tests.
 **Check:** uv run --no-sync python -m pytest tests/unit/test_mcp_error_sanitization.py tests/unit/test_w1a_mcp_handler_fail_closed.py -q
