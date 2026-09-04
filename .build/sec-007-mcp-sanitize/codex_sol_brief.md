@@ -7,13 +7,14 @@ You are the Codex Sol security auditor. Perform a rigorous, adversarial security
 1. **Strict Exact Type Identity Classification (Resolving Round 14 Finding 1 - MEDIUM)**:
    - In `src/tensor_grep/cli/mcp_server.py`:
      - Replaced heuristic `__module__` and `__name__` string checks with a strict exact type-object identity dictionary `_TRUSTED_EXCEPTION_CLASSES: dict[type, str]` mapping Python built-ins, standard library exceptions (`json.JSONDecodeError`, `subprocess.CalledProcessError`, `subprocess.SubprocessError`, `subprocess.TimeoutExpired`), and framework exceptions (`BackendExecutionError`, `ConfigurationError`, `PathConfinementError`) directly to their wire string representations.
-     - `_safe_exception_class_name(exc)` performs exact type-object lookup via `_TRUSTED_EXCEPTION_CLASSES.get(type(exc), "InternalError")`.
+     - `_safe_exception_class_name(exc)` verifies `type(type(exc)) is type` (rejecting custom metaclasses) and performs a strict object identity loop `raw_type is trusted_cls` across `_TRUSTED_EXCEPTION_CLASSES`, completely defeating metaclass `__eq__` / `__hash__` spoofing.
      - Forgeable type metadata (`__module__`, `__name__`, `__class__`) is completely ignored.
      - Dynamic classes spoofing `__module__ = "tensor_grep.cli.mcp_server"` safely degrade to `"InternalError"`.
      - Synthetic classes named `"ValueError"` whose type identity does not match `builtins.ValueError` safely degrade to `"InternalError"`.
    - Added transport-level test controls in `tests/unit/test_mcp_error_sanitization.py`:
      - `test_direct_call_tool_spoofed_module_exception_type_sanitized`: verifies spoofed `__module__` results in `InternalError` on wire while logging full details to stderr.
      - `test_direct_call_tool_colliding_name_dynamic_exception_type_sanitized`: verifies synthetic class named `ValueError` results in `InternalError` on wire due to mismatched type identity.
+     - `test_direct_call_tool_metaclass_equality_spoof_sanitized`: verifies hostile metaclass spoofing `__eq__` and `__hash__` degrades safely to `InternalError`.
 
 2. **Audit Manifest Recording Error Wire Sanitization (Resolving Round 14 Finding 2 - MEDIUM)**:
    - In `src/tensor_grep/cli/mcp_server.py`:
@@ -25,12 +26,15 @@ You are the Codex Sol security auditor. Perform a rigorous, adversarial security
    - In `tests/unit/test_mcp_error_sanitization.py`:
      - Expanded shadow analysis in `_check_encompassing_boundary` from handler-local walk to entire `fn_node` function scope.
      - Inspects all function parameters (`posonlyargs`, `args`, `kwonlyargs`, `vararg`, `kwarg`).
-     - Inspects all definitions and scopes across `fn_node`: `ast.Name` with `Store`/`Del`, `ast.FunctionDef`, `ast.AsyncFunctionDef`, `ast.ClassDef`, `ast.ExceptHandler.name`, `ast.Import`, and `ast.ImportFrom`.
-     - Any parameter, variable, function, class, import, or except-target that shadows `protected_names` (`_log_tool_exception`, `_sanitized_tool_error`, `_sanitized_tool_error_text`, etc.) is immediately rejected (`return False`).
-   - Added 3 hostile mutation controls (Controls 23, 24, 25; 25 total mutation controls, all verified):
+     - Inspects all definitions and scopes across `fn_node`: `ast.Name` with `Store`/`Del`, `ast.FunctionDef`, `ast.AsyncFunctionDef`, `ast.ClassDef`, `ast.ExceptHandler.name`, `ast.Import`, `ast.ImportFrom`, and pattern matching bindings (`ast.MatchAs`, `ast.MatchStar`, `ast.MatchMapping`).
+     - Strictly validates taint sinks by exact positional argument index (e.g. `exc` must only appear in sanctioned exception argument position, preventing parameter-swapping leaks).
+     - Any parameter, variable, function, class, import, pattern match, or except-target that shadows `protected_names` (`_log_tool_exception`, `_sanitized_tool_error`, `_sanitized_tool_error_text`, etc.) is immediately rejected (`return False`).
+   - Added hostile mutation controls 23 through 27 (27 total mutation controls, all verified):
      - Control 23 (`except Exception as _log_tool_exception:`): fails.
      - Control 24 (`_sanitized_tool_error_text = lambda ...` in try body): fails.
      - Control 25 (`def tool(_sanitized_tool_error_text=None):` in parameter): fails.
+     - Control 26 (pattern matching `case [_sanitized_tool_error_text]:`): fails.
+     - Control 27 (sink positional swapping `_sanitized_tool_error_text(exc, exc)`): fails.
 
 4. **Handler Dispositions Ledger Locatability & Synchronization (Resolving Round 14 Finding 4 - MEDIUM)**:
    - In `docs/audits/2026-08-20-handler-dispositions.json`:

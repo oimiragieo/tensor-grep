@@ -879,7 +879,14 @@ def _safe_exception_class_name(exc: BaseException) -> str:
     """
     try:
         raw_type = type(exc)
-        return _TRUSTED_EXCEPTION_CLASSES.get(raw_type, "InternalError")
+        # Verify raw_type is a standard class, not an object with a spoofed metaclass
+        if type(raw_type) is not type:
+            return "InternalError"
+        # Strict object identity check (prevents metaclass __eq__ / __hash__ spoofing)
+        for trusted_cls, name in _TRUSTED_EXCEPTION_CLASSES.items():
+            if raw_type is trusted_cls:
+                return name
+        return "InternalError"
     except BaseException:
         return "InternalError"
 
@@ -899,11 +906,12 @@ def _sanitized_tool_error(
     keeps the call's error/non-empty-result contract); this only strips the
     internals from what crosses the wire.
     """
-    _log_tool_exception(tool_name, exc)
+    _log_tool_exception(str(tool_name) if isinstance(tool_name, str) else "mcp_tool", exc)
     cls_name = _safe_exception_class_name(exc)
+    safe_name = tool_name if isinstance(tool_name, str) else "mcp_tool"
     return {
         "code": code,
-        "message": f"{tool_name} failed due to an internal error ({cls_name}).",
+        "message": f"{safe_name} failed due to an internal error ({cls_name}).",
         "retryable": retryable,
     }
 
@@ -912,9 +920,10 @@ def _sanitized_tool_error_text(tool_name: str, exc: BaseException) -> str:
     """Plain-text counterpart of `_sanitized_tool_error` for tool response
     modes that return free text instead of a JSON envelope.
     """
-    _log_tool_exception(tool_name, exc)
+    safe_name = tool_name if isinstance(tool_name, str) else "mcp_tool"
+    _log_tool_exception(safe_name, exc)
     cls_name = _safe_exception_class_name(exc)
-    return f"{tool_name} failed: internal error ({cls_name}). See server logs for detail."
+    return f"{safe_name} failed: internal error ({cls_name}). See server logs for detail."
 
 
 # #98 (MCP consolidation Phase-1): shared envelope/error helpers for the 10 task-shaped

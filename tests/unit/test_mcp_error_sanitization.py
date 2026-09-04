@@ -1653,6 +1653,12 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                     bound = alias.asname or alias.name
                     if bound in protected_names:
                         return False
+            elif isinstance(n, (ast.MatchAs, ast.MatchStar)):
+                if n.name and n.name in protected_names:
+                    return False
+            elif isinstance(n, ast.MatchMapping):
+                if n.rest and n.rest in protected_names:
+                    return False
 
         for h in broad_handlers:
             # Rule 1: Find direct top-level _log_tool_exception call statement
@@ -1730,10 +1736,24 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
                     if p is None:
                         return False
 
-                    # Safe sink call: sub must be an argument to a direct unshadowed ast.Name call in allowed_sinks
+                    # Safe sink call: sub must be a direct argument to an unshadowed ast.Name call in allowed_sinks
+                    # at the exact sanctioned argument position (e.g. exc position, never tool_name or other position).
+                    allowed_sink_positions = {
+                        "_log_tool_exception": {1},
+                        "_sanitized_tool_error": {1},
+                        "_sanitized_tool_error_text": {1},
+                        "_ruleset_scan_error": {0},
+                        "_index_search_error": {0},
+                        "_rewrite_error": {0},
+                        "_classify_native_rewrite_failure": {0},
+                        "_safe_exception_class_name": {0},
+                    }
                     if isinstance(p, ast.Call):
-                        if isinstance(p.func, ast.Name) and p.func.id in allowed_sinks:
-                            continue
+                        if isinstance(p.func, ast.Name) and p.func.id in allowed_sink_positions:
+                            # Ensure sub is passed as a direct positional arg at sanctioned index
+                            sanctioned = allowed_sink_positions[p.func.id]
+                            if any(p.args[idx] is sub for idx in sanctioned if idx < len(p.args)):
+                                continue
                         return False
 
                     # Any other parent is REJECTED
@@ -1963,6 +1983,24 @@ def test_all_mcp_registered_tools_have_outer_fail_closed_boundary():
     assert isinstance(t25, ast.FunctionDef)
     assert not _check_encompassing_boundary(t25), (
         "Mutation control: shadowed sanitizer via parameter must fail"
+    )
+
+    # 26. Round 15 Hostile mutation control: shadowed sanitizer via pattern matching
+    t26 = ast.parse(
+        "@mcp.tool()\ndef t26(val):\n    try:\n        match val:\n            case [_sanitized_tool_error_text]:\n                pass\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t26', exc)\n        return _sanitized_tool_error_text('t26', exc)\n"
+    ).body[0]
+    assert isinstance(t26, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t26), (
+        "Mutation control: shadowed sanitizer via pattern matching must fail"
+    )
+
+    # 27. Round 15 Hostile mutation control: poisoned exc passed as tool_name to sanitizer
+    t27 = ast.parse(
+        "@mcp.tool()\ndef t27():\n    try:\n        return 1\n    except Exception as exc:\n        _log_tool_exception('t27', exc)\n        return _sanitized_tool_error_text(exc, exc)\n"
+    ).body[0]
+    assert isinstance(t27, ast.FunctionDef)
+    assert not _check_encompassing_boundary(t27), (
+        "Mutation control: exc in wrong sink position must fail"
     )
 
 
@@ -2442,3 +2480,39 @@ def test_direct_call_tool_rewrite_apply_audit_manifest_record_failure_sanitized(
     assert "SEC007_AUDIT_RECORD_SECRET" in captured.err, (
         "Dynamic audit record exception class not logged to stderr"
     )
+
+
+def test_direct_call_tool_metaclass_equality_spoof_sanitized(monkeypatch, capsys):
+    """SEC-007: Exception with hostile metaclass spoofing __eq__ and __hash__ degrades to InternalError."""
+    import asyncio
+
+    from tensor_grep.cli import mcp_audit_tools, mcp_server
+
+    Trusted = ValueError
+    Meta = type(
+        "Meta",
+        (type,),
+        {"__hash__": lambda cls: hash(Trusted), "__eq__": lambda cls, other: other is Trusted},
+    )
+    HostileMetaError = Meta("SEC007_METACLASS_SPOOF_SECRET", (Exception,), {})
+    poison_msg = "some private metaclass spoof failure at C:/private/rulesets.py"
+
+    def _raise_meta_error():
+        raise HostileMetaError(poison_msg)
+
+    monkeypatch.setattr(mcp_audit_tools, "_build_rulesets_payload", _raise_meta_error)
+
+    content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
+    wire = content[0].text
+    assert "SEC007_METACLASS_SPOOF_SECRET" not in wire, (
+        f"Metaclass spoof secret leaked to wire: {wire}"
+    )
+    assert "ValueError" not in wire, (
+        f"Metaclass equality spoof allowed class to masquerade as ValueError: {wire}"
+    )
+    assert "Rulesets lookup failed: InternalError" in wire
+    captured = capsys.readouterr()
+    assert "SEC007_METACLASS_SPOOF_SECRET" in captured.err, (
+        "Metaclass spoof exception class not logged to stderr"
+    )
+    assert poison_msg in captured.err, "Poison message not logged to stderr"
