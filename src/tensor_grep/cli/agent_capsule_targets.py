@@ -637,3 +637,82 @@ def _best_effort_primary_target_from_map(rm: dict[str, Any], query: str) -> dict
 def _target_symbol_was_explicitly_requested(query: str, target: dict[str, Any]) -> bool:
     symbol = str(target.get("symbol") or "")
     return bool(symbol and repo_map._symbol_name_matches_query_exactly(symbol, query))
+
+
+def _maybe_fuse_semantic_dense_target(
+    query: str,
+    target: dict[str, Any],
+    alternatives: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """P0: Fuse semantic dense retrieval when lexical primary target confidence is below 0.60.
+
+    If lexical confidence is already >= 0.60, or if alternatives are empty, or if dense
+    extras/models are unavailable, cleanly bypasses or fails open to existing lexical targets.
+    When dense ranking is available and an alternative ranks highest semantically, promotes
+    that alternative to primary with reciprocal-rank-fused confidence.
+    """
+    primary_conf = _numeric_confidence(target.get("confidence"), 0.0)
+    if primary_conf >= 0.60 or not alternatives:
+        return target, alternatives
+
+    try:
+        from tensor_grep.core.retrieval_chunker import Chunk
+        from tensor_grep.core.retrieval_dense import (
+            DenseIndex,
+            DenseUnavailableError,
+            default_model_dir,
+            dense_available,
+            load_dense_model,
+        )
+        from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion
+
+        available, _ = dense_available()
+        if not available:
+            return target, alternatives
+
+        model = load_dense_model(default_model_dir())
+        candidates = [target, *alternatives]
+        chunks: list[Chunk] = []
+        for _idx, cand in enumerate(candidates):
+            sym = str(cand.get("symbol") or "")
+            fpath = str(cand.get("file") or "")
+            text = f"{sym} {fpath}" if sym else fpath
+            chunks.append(Chunk(file_path=fpath, start_line=1, end_line=1, text=text))
+
+        dense_idx = DenseIndex(chunks, model)
+        dense_results = dense_idx.query(query, top_k=len(candidates))
+        if not dense_results:
+            return target, alternatives
+
+        dense_order = [idx for idx, _ in dense_results]
+        bm25_order = list(range(len(candidates)))
+        # Confidence-calibrated fusion weights: when primary lexical confidence is low (<0.6),
+        # weight the dense leg higher (1.0 vs primary_conf) so clear semantic alignment wins ties.
+        lexical_weight = max(0.2, min(0.9, primary_conf))
+        fused_order = reciprocal_rank_fusion(
+            [bm25_order, dense_order],
+            weights=[lexical_weight, 1.0],
+            combine="max",
+        )
+        best_candidate_idx = fused_order[0] if fused_order else 0
+
+        if best_candidate_idx != 0:
+            promoted = dict(candidates[best_candidate_idx])
+            promoted["semantic_fused"] = True
+            promoted["confidence"] = round(max(0.72, primary_conf + 0.35), 3)
+            promoted_evidence = list(promoted.get("evidence") or [])
+            if "semantic-dense-fusion" not in promoted_evidence:
+                promoted_evidence.append("semantic-dense-fusion")
+            promoted["evidence"] = promoted_evidence
+
+            new_alternatives = [target]
+            for idx, cand in enumerate(candidates[1:], start=1):
+                if idx != best_candidate_idx:
+                    new_alternatives.append(cand)
+            return promoted, new_alternatives
+
+    except (DenseUnavailableError, ImportError, RuntimeError, ValueError, OSError):
+        # Fail-closed / fail-safe: never crash agent capsule on optional dense model faults
+        return target, alternatives
+
+    return target, alternatives

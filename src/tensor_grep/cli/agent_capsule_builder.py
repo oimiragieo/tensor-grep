@@ -99,6 +99,9 @@ from tensor_grep.cli.agent_capsule_targets import (
     _lsp_tie_resolution_evidence as _lsp_tie_resolution_evidence,
 )
 from tensor_grep.cli.agent_capsule_targets import (
+    _maybe_fuse_semantic_dense_target as _maybe_fuse_semantic_dense_target,
+)
+from tensor_grep.cli.agent_capsule_targets import (
     _numeric_confidence as _numeric_confidence,
 )
 from tensor_grep.cli.agent_capsule_targets import (
@@ -351,6 +354,7 @@ def build_agent_capsule_from_map(
     target, alternatives = _prefer_public_implementation_over_private_helper(
         query, target, alternatives
     )
+    target, alternatives = _maybe_fuse_semantic_dense_target(query, target, alternatives)
 
     # T2: capture the RAW pre-cap seed confidence now, before any of this function's own trust/
     # tie/budget caps mutate `target["confidence"]` in place -- `_collect_capsule_call_site_evidence`
