@@ -551,7 +551,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 313,
+    "lineno": 332,
     "enclosing_symbol": "_embedded_rewrite_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -561,7 +561,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 651,
+    "lineno": 670,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2479,4 +2479,4 @@
     "reason": "Fail-closed boundary for policy evaluation failure after rewrite edits applied.",
     "hardened_in": "SEC-007"
   }
-]
+]
