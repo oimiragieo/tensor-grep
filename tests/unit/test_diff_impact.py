@@ -115,6 +115,28 @@ def test_map_changed_lines_to_symbols(tmp_path: Path) -> None:
     assert "Worker" not in sym_names_2
 
 
+def test_map_changed_lines_to_symbols_polyglot(tmp_path: Path) -> None:
+    # 1. Go file
+    go_file = tmp_path / "service.go"
+    go_file.write_text(
+        "package main\n\nfunc ProcessPayment(amount int) bool {\n    return amount > 0\n}\n",
+        encoding="utf-8",
+    )
+    changed_go = {Path("service.go"): [(3, 4)]}
+    symbols_go = map_changed_lines_to_symbols(changed_go, root=tmp_path)
+    assert any(s["name"] == "ProcessPayment" for s in symbols_go)
+
+    # 2. Rust file
+    rs_file = tmp_path / "lib.rs"
+    rs_file.write_text(
+        "pub fn calculate_tax(subtotal: f64) -> f64 {\n    subtotal * 0.08\n}\n",
+        encoding="utf-8",
+    )
+    changed_rs = {Path("lib.rs"): [(1, 2)]}
+    symbols_rs = map_changed_lines_to_symbols(changed_rs, root=tmp_path)
+    assert any(s["name"] == "calculate_tax" for s in symbols_rs)
+
+
 def test_is_test_path() -> None:
     assert _is_test_path("tests/unit/test_app.py") is True
     assert _is_test_path("src/tests/helper.py") is True
