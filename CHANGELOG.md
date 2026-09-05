@@ -1,6 +1,77 @@
 # CHANGELOG
 
 
+## v1.114.3 (2026-09-05)
+
+### Bug Fixes
+
+- **mcp**: Sanitize raw exceptions on wire, enforce fail-closed boundaries, and harden AST ratchet
+  ([#1125](https://github.com/oimiragieo/tensor-grep/pull/1125),
+  [`b470750`](https://github.com/oimiragieo/tensor-grep/commit/b4707500c70e0886b1142d5dcfdf0b1e8aa2ea9c))
+
+* fix(mcp): sanitize raw exception messages on MCP wire
+
+* docs: add 2026 competitive analysis and strategic roadmap to backlog and task board
+
+* fix(mcp): sanitize raw exceptions across all mcp tool modules and close wire ratchets
+
+* fix(mcp): sanitize tracked_file_count_error and log all narrow exception handlers to stderr
+
+* fix(mcp): sanitize rewrite engine subprocesses and enroll mcp_rewrite_tools in ast ratchets
+
+* fix(mcp): add outer error boundaries, sanitize policy details, and harden ratchets
+
+* fix(mcp): wrap all 58 tool bodies in encompassing try/except and strengthen ratchet
+
+* fix(mcp): non-throwing exception logging, synchronized handler ceiling, and taint-aware AST
+  ratchet
+
+* fix(mcp): propagate taint in boundary ratchet and ledger 74 mcp handler dispositions
+
+* fix(mcp): fail-closed boundary ratchet, require native_binary, and factualize handler dispositions
+
+* fix(mcp): sanitize exception class rendering, harden AST ratchet against tuple/shadowing/early
+  return, and factualize ledger
+
+* fix(mcp): enforce exact type identity classification, audit manifest error sanitization, and
+  function-wide shadow detection
+
+* fix(mcp): harden exception identity classification against metaclass spoofing and enforce
+  pattern-binding & argument-position ratchet rules
+
+* fix(mcp): sync shifted advisory line numbers in handler dispositions ledger
+
+* fix(mcp): convert collect_device_inventory to Route A late lookup to satisfy bare-call ratchet
+
+* docs: record session lessons (A156-A159), strategic updates (P5-P8), and enterprise skills
+
+* docs(orchestrator): record SEC-007 state, verified status, and closeout ledger
+
+* fix(governance): pin SEC-007 file-size allowlist, sync handler locatability, and format backlog
+
+* docs(orchestrator): record run 33909866974 and tip 58036b6 in state and ledger
+
+* fix(tests): align legacy symbol error assertions with SEC-007 sanitized wire contract
+
+* fix(mcp,tests): make direct call path redaction cross-platform and format markdown snippets
+
+* docs(backlog): add P9 memory-resident watcher and P10 evidence enclave enhancements
+
+* fix(tests): align bad native override assertion with SEC-007 sanitized error contract
+
+* fix(mcp): propagate rule loading validation error in tg_ruleset_scan
+
+* fix(mcp): sanitize inline rules error messages across wire boundary
+
+* fix(audits): update handler disposition linenos for mcp_rewrite_tools
+
+### Chores
+
+- Clean public repository tree and ignore agent scratch
+  ([#1126](https://github.com/oimiragieo/tensor-grep/pull/1126),
+  [`bfc7ecb`](https://github.com/oimiragieo/tensor-grep/commit/bfc7ecb7c2d136ac072f9430f60106d329304591))
+
+
 ## v1.114.2 (2026-09-03)
 
 ### Bug Fixes
