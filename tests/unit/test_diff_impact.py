@@ -92,12 +92,12 @@ def test_parse_git_diff_hunks_merges_adjacent() -> None:
 def test_map_changed_lines_to_symbols(tmp_path: Path) -> None:
     file_path = tmp_path / "module.py"
     file_path.write_text(
-        "class Worker:\n"       # Line 1
+        "class Worker:\n"  # Line 1
         "    def run(self):\n"  # Line 2
-        "        pass\n"        # Line 3
-        "\n"                    # Line 4
-        "def helper():\n"       # Line 5
-        "    return 42\n",      # Line 6
+        "        pass\n"  # Line 3
+        "\n"  # Line 4
+        "def helper():\n"  # Line 5
+        "    return 42\n",  # Line 6
         encoding="utf-8",
     )
 

@@ -8657,17 +8657,27 @@ def blast_radius_plan(
 
 @app.command(name="diff-impact")
 def diff_impact(
-    ref: str | None = typer.Argument(None, help="Git revision or commit range to diff against (e.g. HEAD~1, main)."),
-    staged: bool = typer.Option(False, "--staged", help="Compare staged changes instead of unstaged working tree."),
+    ref: str | None = typer.Argument(
+        None, help="Git revision or commit range to diff against (e.g. HEAD~1, main)."
+    ),
+    staged: bool = typer.Option(
+        False, "--staged", help="Compare staged changes instead of unstaged working tree."
+    ),
     deadline: float | None = _deadline_option(
         "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     fail_threshold: float | None = typer.Option(
-        None, "--fail-threshold", min=0.0, max=1.0, help="Fail (exit 2) if blast_radius_score exceeds this threshold."
+        None,
+        "--fail-threshold",
+        min=0.0,
+        max=1.0,
+        help="Fail (exit 2) if blast_radius_score exceeds this threshold.",
     ),
     fail_on_risk: str | None = typer.Option(
-        None, "--fail-on-risk", help="Fail (exit 2) if risk_tier is at or above this level (low, medium, high, critical)."
+        None,
+        "--fail-on-risk",
+        help="Fail (exit 2) if risk_tier is at or above this level (low, medium, high, critical).",
     ),
 ) -> None:
     """Analyze blast radius, affected callers, and test impact of git diff changes."""
@@ -8691,7 +8701,10 @@ def diff_impact(
 
     # Threshold gate check
     breached = False
-    if fail_threshold is not None and float(payload.get("blast_radius_score", 0.0)) > fail_threshold:
+    if (
+        fail_threshold is not None
+        and float(payload.get("blast_radius_score", 0.0)) > fail_threshold
+    ):
         breached = True
     if fail_on_risk is not None:
         risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
