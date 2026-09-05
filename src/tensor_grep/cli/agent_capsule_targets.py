@@ -659,6 +659,7 @@ def _maybe_fuse_semantic_dense_target(
         from tensor_grep.core.retrieval_chunker import Chunk
         from tensor_grep.core.retrieval_dense import (
             DenseIndex,
+            DenseUnavailableError,
             default_model_dir,
             dense_available,
             load_dense_model,
@@ -710,7 +711,7 @@ def _maybe_fuse_semantic_dense_target(
                     new_alternatives.append(cand)
             return promoted, new_alternatives
 
-    except Exception:
+    except (DenseUnavailableError, ImportError, RuntimeError, ValueError, OSError):
         # Fail-closed / fail-safe: never crash agent capsule on optional dense model faults
         return target, alternatives
 
