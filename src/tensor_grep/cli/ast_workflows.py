@@ -1440,3 +1440,19 @@ def main_entry(argv: list[str] | None = None) -> None:
 
         full_main_entry()
     raise SystemExit(2)
+
+
+def ast_info_command(*, json_output: bool = False) -> None:
+    """List supported AST language identifiers."""
+    import typer
+
+    from tensor_grep.backends.ast_backend import get_supported_languages
+
+    languages = get_supported_languages()
+    if json_output:
+        typer.echo(json.dumps({"languages": languages}))
+        return
+
+    typer.echo("Supported AST Languages:")
+    for lang in languages:
+        typer.echo(f"- {lang}")

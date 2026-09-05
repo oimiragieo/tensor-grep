@@ -7,7 +7,9 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 
 from __future__ import annotations
 
+import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -307,7 +309,7 @@ def build_diff_blast_radius(
             continue
 
         # Check deadline before building symbol blast radius
-        if deadline_monotonic is not None and repo_map.time.monotonic() >= deadline_monotonic:
+        if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
             partial = True
             if "deadline_exceeded" not in downgrade_reasons:
                 downgrade_reasons.append("deadline_exceeded")
@@ -389,8 +391,61 @@ def build_diff_blast_radius(
     }
 
 
+def diff_impact_command(
+    *,
+    ref: str | None = None,
+    staged: bool = False,
+    deadline: float | None = None,
+    json_output: bool = False,
+    fail_threshold: float | None = None,
+    fail_on_risk: str | None = None,
+) -> None:
+    """CLI implementation for diff-impact command."""
+    import typer
+
+    payload = build_diff_blast_radius(
+        ref=ref,
+        staged=staged,
+        deadline_seconds=deadline,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        from tensor_grep.cli import main as cli_main
+
+        cli_main._emit_scan_incompleteness_banner(payload)
+        typer.echo(
+            f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
+            f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
+            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
+        )
+
+    breached = False
+    if (
+        fail_threshold is not None
+        and float(payload.get("blast_radius_score", 0.0)) > fail_threshold
+    ):
+        breached = True
+    if fail_on_risk is not None:
+        risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        current_rank = risk_rank.get(str(payload.get("risk_tier", "low")).lower(), 1)
+        target_rank = risk_rank.get(fail_on_risk.lower(), 1)
+        if current_rank >= target_rank:
+            breached = True
+
+    if payload.get("partial") or repo_map._scan_did_not_finish(payload) or breached:
+        raise typer.Exit(2)
+
+    if not payload.get("changed_files"):
+        raise typer.Exit(1)
+
+    raise typer.Exit(0)
+
+
 __all__ = [
     "build_diff_blast_radius",
+    "diff_impact_command",
     "extract_diff_hunks_from_git",
     "map_changed_lines_to_symbols",
     "parse_git_diff_hunks",

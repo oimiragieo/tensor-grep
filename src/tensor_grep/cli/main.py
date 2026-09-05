@@ -8658,13 +8658,13 @@ def blast_radius_plan(
 @app.command(name="diff-impact")
 def diff_impact(
     ref: str | None = typer.Argument(
-        None, help="Git revision or commit range to diff against (e.g. HEAD~1, main)."
+        None, help="Git revision or commit range (e.g. HEAD~1, main)."
     ),
     staged: bool = typer.Option(
-        False, "--staged", help="Compare staged changes instead of unstaged working tree."
+        False, "--staged", help="Compare staged changes instead of working tree."
     ),
     deadline: float | None = _deadline_option(
-        "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
+        "Stop repo scan after N seconds and return partial:true JSON."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     fail_threshold: float | None = typer.Option(
@@ -8681,49 +8681,16 @@ def diff_impact(
     ),
 ) -> None:
     """Analyze blast radius, affected callers, and test impact of git diff changes."""
-    from tensor_grep.cli.diff_impact import build_diff_blast_radius
+    from tensor_grep.cli.diff_impact import diff_impact_command
 
-    payload = build_diff_blast_radius(
+    diff_impact_command(
         ref=ref,
         staged=staged,
-        deadline_seconds=deadline,
+        deadline=deadline,
+        json_output=json_output,
+        fail_threshold=fail_threshold,
+        fail_on_risk=fail_on_risk,
     )
-
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        _emit_scan_incompleteness_banner(payload)
-        typer.echo(
-            f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
-            f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
-            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
-        )
-
-    # Threshold gate check
-    breached = False
-    if (
-        fail_threshold is not None
-        and float(payload.get("blast_radius_score", 0.0)) > fail_threshold
-    ):
-        breached = True
-    if fail_on_risk is not None:
-        risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
-        current_rank = risk_rank.get(str(payload.get("risk_tier", "low")).lower(), 1)
-        target_rank = risk_rank.get(fail_on_risk.lower(), 1)
-        if current_rank >= target_rank:
-            breached = True
-
-    # Exit code contract:
-    # Exit 2 on partial/deadline or threshold breached
-    if payload.get("partial") or _scan_incomplete(payload) or breached:
-        raise typer.Exit(2)
-
-    # Exit 1 on 0 matches / clean diff
-    if not payload.get("changed_files"):
-        raise typer.Exit(1)
-
-    # Exit 0 on success with matches
-    raise typer.Exit(0)
 
 
 @session_app.command("open")
@@ -13323,16 +13290,9 @@ def ast_info(
     ),
 ) -> None:
     """List supported AST language identifiers."""
-    from tensor_grep.backends.ast_backend import get_supported_languages
+    from tensor_grep.cli.ast_workflows import ast_info_command
 
-    languages = get_supported_languages()
-    if json_output:
-        typer.echo(json.dumps({"languages": languages}))
-        return
-
-    typer.echo("Supported AST Languages:")
-    for lang in languages:
-        typer.echo(f"- {lang}")
+    ast_info_command(json_output=json_output)
 
 
 @app.command(

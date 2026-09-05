@@ -14906,24 +14906,10 @@ fn emit_gpu_native_verbose(stats: &GpuNativeSearchStats) {
         );
         return;
     }
-
-    let device_ids = stats
-        .selected_devices
-        .iter()
-        .map(|device| device.device_id.to_string())
-        .collect::<Vec<_>>()
-        .join(",");
-    let device_names = stats
-        .selected_devices
-        .iter()
-        .map(|device| device.name.as_str())
-        .collect::<Vec<_>>()
-        .join(" | ");
-
     eprintln!(
         "[gpu-native] selected_gpu_device_ids={} selected_gpu_device_names={} gpu_batch_files={} gpu_transfer_bytes={} gpu_streams={} gpu_double_buffered={} pinned_host_buffers={} gpu_batch_count={} gpu_overlap_batches={} gpu_pattern_count={} gpu_pattern_batches={} gpu_single_dispatch={} gpu_transfer_time_ms={:.3} gpu_kernel_time_ms={:.3} gpu_host_file_read_time_ms={:.3} gpu_host_preprocess_time_ms={:.3} gpu_host_to_pinned_copy_time_ms={:.3} gpu_cpu_staging_bytes={} gpu_pageable_host_staging_bytes={} gpu_transfer_throughput_gbps={:.2}",
-        device_ids,
-        device_names,
+        stats.selected_devices.iter().map(|d| d.device_id.to_string()).collect::<Vec<_>>().join(","),
+        stats.selected_devices.iter().map(|d| d.name.as_str()).collect::<Vec<_>>().join(" | "),
         stats.searched_files,
         stats.transfer_bytes,
         stats.pipeline.stream_count,
