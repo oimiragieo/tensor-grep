@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.116.0 (2026-09-05)
+
+### Features
+
+- **diff-impact**: Add diff blast-radius analysis and review risk gating (P1)
+  ([#1128](https://github.com/oimiragieo/tensor-grep/pull/1128),
+  [`7d2baa5`](https://github.com/oimiragieo/tensor-grep/commit/7d2baa52b0433ca015661ed76f561a81b946456d))
+
+* feat(diff-impact): add diff blast-radius analysis and risk gating (P1)
+
+* style: apply ruff format --preview to diff-impact files
+
+* fix(diff-impact): satisfy file-size budget ratchet and fix banner import
+
+* fix(cli): relocate diff-impact to preserve handler disposition spans
+
+* docs: refresh task board reconcile stamp to v1.115.0
+
+
 ## v1.115.0 (2026-09-05)
 
 ### Documentation
