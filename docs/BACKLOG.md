@@ -66,7 +66,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 
 ### 2. Prioritized Strategic Updates (P0 – P4)
 
-- **[ ] P0 — Fuse Semantic Dense Retrieval into `tg prepare` / `tg agent`**
+- **[x] P0 — Fuse Semantic Dense Retrieval into `tg prepare` / `tg agent`**
   - **Objective:** Eliminate task-description vocabulary mismatch without mandatory GPU or network dependencies.
   - **Scope:** Wire `retrieval_dense` / `retrieval_fusion` from `tg find` as an optional fallback or hybrid signal in `build_agent_capsule` / `prepare` when lexical term matching yields low confidence (<0.6).
   - **Acceptance:** Natural-language queries with mismatched vocabulary (e.g. "sales surcharge calculation" for `compute_tax`) successfully locate target symbol; exits 0 with high confidence; falls back cleanly to lexical-only if dense extra is not installed.
