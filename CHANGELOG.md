@@ -1,6 +1,24 @@
 # CHANGELOG
 
 
+## v1.115.0 (2026-09-05)
+
+### Documentation
+
+- Sync P11 and P12 research-backed strategic roadmap items
+  ([`ea30db5`](https://github.com/oimiragieo/tensor-grep/commit/ea30db5a51b95f55c4b248bbd1d4d9c0ebf1970f))
+
+### Features
+
+- **agent**: Fuse semantic dense retrieval into agent capsule on low lexical confidence
+  ([#1127](https://github.com/oimiragieo/tensor-grep/pull/1127),
+  [`2542c7b`](https://github.com/oimiragieo/tensor-grep/commit/2542c7b596cc51a25ad8d7a0b317979bcf6bcced))
+
+* feat(agent): fuse semantic dense retrieval into agent capsule on low lexical confidence
+
+* fix(agent): narrow dense fusion exception types and sync task board
+
+
 ## v1.114.3 (2026-09-05)
 
 ### Bug Fixes
