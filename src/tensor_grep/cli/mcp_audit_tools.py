@@ -85,6 +85,9 @@ from tensor_grep.cli.mcp_rewrite_tools import (
     _ruleset_scan_error as _ruleset_scan_error,
 )
 from tensor_grep.cli.mcp_rewrite_tools import (
+    _sanitize_inline_rules_error as _sanitize_inline_rules_error,
+)
+from tensor_grep.cli.mcp_rewrite_tools import (
     _validate_index_search_inputs as _validate_index_search_inputs,
 )
 from tensor_grep.cli.mcp_rewrite_tools import (
@@ -285,7 +288,10 @@ def tg_ruleset_scan(
             except ValueError as exc:
                 _log_tool_exception("tg_ruleset_scan", exc)
                 return _ruleset_scan_error(
-                    str(exc), code="invalid_input", ruleset=ruleset, path=path
+                    _sanitize_inline_rules_error(exc),
+                    code="invalid_input",
+                    ruleset=ruleset,
+                    path=path,
                 )
             if not rules:
                 return _ruleset_scan_error(
@@ -418,7 +424,7 @@ def tg_ruleset_scan(
         except ValueError as exc:
             _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
-                "Invalid scan parameter",
+                _sanitize_inline_rules_error(exc),
                 code="invalid_input",
                 ruleset=ruleset,
                 path=path,

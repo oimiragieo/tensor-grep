@@ -270,6 +270,7 @@ def test_broad_mcp_handlers_never_echo_raw_str_exc_ast_ratchet():
                     "_log_tool_exception",
                     "_classify_native_rewrite_failure",
                     "_safe_exception_class_name",
+                    "_sanitize_inline_rules_error",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -437,6 +438,7 @@ def test_narrow_mcp_handlers_never_echo_raw_exception_formatting_ast_ratchet():
                     "_classify_native_rewrite_failure",
                     "_sanitize_policy_validation_details",
                     "_safe_exception_class_name",
+                    "_sanitize_inline_rules_error",
                 }:
                     return True
             curr = getattr(curr, "parent", None)
@@ -2355,9 +2357,7 @@ def test_direct_call_tool_hostile_class_property_sanitized(monkeypatch, capsys):
 
     content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
-    assert "SEC007_CLASS_ACCESS_SECRET" not in wire, (
-        f"Hostile __class__ accessor secret leaked to wire: {wire}"
-    )
+    assert "SEC007_CLASS_ACCESS_SECRET" not in wire, f"Hostile class secret leaked: {wire}"
     assert "underlying secret" not in wire, f"Underlying secret leaked to wire: {wire}"
     assert "Rulesets lookup failed: InternalError" in wire
     captured = capsys.readouterr()
@@ -2384,9 +2384,7 @@ def test_direct_call_tool_spoofed_module_exception_type_sanitized(monkeypatch, c
 
     content, _data = asyncio.run(mcp_server.mcp.call_tool("tg_rulesets", {}))
     wire = content[0].text
-    assert "SEC007_SPOOFED_MODULE_SECRET" not in wire, (
-        f"Spoofed module exception class name leaked to wire: {wire}"
-    )
+    assert "SEC007_SPOOFED_MODULE_SECRET" not in wire, f"Spoofed leaked: {wire}"
     assert poison_msg not in wire, f"Poison message leaked to wire: {wire}"
     assert "Rulesets lookup failed: InternalError" in wire
     captured = capsys.readouterr()

@@ -244,6 +244,23 @@ def _sanitize_policy_validation_details(details: object) -> list[dict[str, str]]
     return sanitized
 
 
+def _sanitize_inline_rules_error(exc: BaseException) -> str:
+    """Sanitize inline rules loading exceptions for safe MCP wire transmission (SEC-007)."""
+    raw_msg = str(exc)
+    if "Unsupported AST language" in raw_msg:
+        prefix = "Unsupported AST language "
+        part = raw_msg.split(prefix, 1)[1]
+        lang = part.split(".")[0].split()[0].strip()
+        return f"Unsupported AST language {lang}"
+    if "Invalid inline rules YAML" in raw_msg:
+        return "Invalid inline rules YAML"
+    if "Inline rules YAML must contain mapping documents" in raw_msg:
+        return "Inline rules YAML must contain mapping documents."
+    if "justification" in raw_msg:
+        return "--write-suppressions requires a non-empty --justification value."
+    return "Invalid inline rules specification"
+
+
 def _audit_manifest_error(message: str, *, code: str) -> str:
     payload = _envelope_base(
         routing_backend="AuditManifest",
