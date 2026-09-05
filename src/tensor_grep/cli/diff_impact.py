@@ -117,9 +117,7 @@ def extract_diff_hunks_from_git(
         cmd.append(ref)
 
     base_timeout = configured_git_timeout_seconds()
-    timeout = deadline_capped_timeout_seconds(
-        base_timeout, deadline_monotonic=deadline_monotonic
-    )
+    timeout = deadline_capped_timeout_seconds(base_timeout, deadline_monotonic=deadline_monotonic)
     if timeout is None:
         # Deadline already expired
         return {}
@@ -176,8 +174,7 @@ def map_changed_lines_to_symbols(
 
             # Check overlap between [s_start, s_end] and any [r_start, r_end]
             overlaps = any(
-                max(s_start, r_start) <= min(s_end, r_end)
-                for r_start, r_end in line_ranges
+                max(s_start, r_start) <= min(s_end, r_end) for r_start, r_end in line_ranges
             )
             if overlaps:
                 sym_copy = dict(sym)
@@ -185,7 +182,9 @@ def map_changed_lines_to_symbols(
                 changed_symbols.append(sym_copy)
 
     # Sort deterministically
-    changed_symbols.sort(key=lambda item: (item.get("file", ""), item.get("line", 0), item.get("name", "")))
+    changed_symbols.sort(
+        key=lambda item: (item.get("file", ""), item.get("line", 0), item.get("name", ""))
+    )
     return changed_symbols
 
 
@@ -196,10 +195,22 @@ def _is_test_path(path_str: str) -> bool:
     if any(part in ("tests", "test", "__tests__") for part in parts):
         return True
     name = p.name.lower()
-    return name.startswith("test_") or name.endswith(("_test.py", "_test.go", "_test.rs", "_test.js", "_test.ts", ".test.js", ".test.ts", ".spec.js", ".spec.ts"))
+    return name.startswith("test_") or name.endswith((
+        "_test.py",
+        "_test.go",
+        "_test.rs",
+        "_test.js",
+        "_test.ts",
+        ".test.js",
+        ".test.ts",
+        ".spec.js",
+        ".spec.ts",
+    ))
 
 
-def _calculate_risk_tier(blast_radius_score: float, affected_files_count: int, callers_count: int) -> str:
+def _calculate_risk_tier(
+    blast_radius_score: float, affected_files_count: int, callers_count: int
+) -> str:
     """Calculate risk tier based on blast radius score, affected file count, and callers count.
 
     Tiers:
@@ -345,7 +356,9 @@ def build_diff_blast_radius(
     # Sort results
     sorted_affected_files = sorted(union_affected_files)
     sorted_tests = sorted(union_tests)
-    union_callers.sort(key=lambda c: (str(c.get("file", "")), int(c.get("line", 0)), str(c.get("caller", ""))))
+    union_callers.sort(
+        key=lambda c: (str(c.get("file", "")), int(c.get("line", 0)), str(c.get("caller", "")))
+    )
 
     # Compute overall blast radius score
     if per_symbol_scores:
