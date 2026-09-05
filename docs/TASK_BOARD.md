@@ -229,15 +229,18 @@ post-**v1.111.0**, PyPI-verified 2026-08-20 (`tensor-grep 1.111.0`, installed fr
 
 post-**v1.110.12**, PyPI-verified 2026-08-10 (`tensor-grep 1.110.12`).
 
-## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-08-13)
+## IN FLIGHT (PRs open right now — derived from `gh pr list`, 2026-09-05)
 
 | PR | Title | Type | State |
 |---|---|---|---|
-| #966 | `test: Task 2A FIX-FIRST Sol R3 (not GREEN)` | test | CLOSED 2026-08-20 as a stale PR; branch `task2a-round60-red` RETAINED on origin. RED by design, never merged. Task 2A remains BLOCKED. |
-| #1010 | `fix: replace_in_place refuses to follow a symlinked target` | fix | DRAFT → OPEN when CI green (RUST-REPLACE-SYMLINK implementation; RED proven, A3 opus gate 13 rounds SHIP, codex AUDIT-clear pending final re-check) |
+| #1129 | `feat(repo_map): wire extract_imports_and_symbols across all 10 registered languages (P2)` | feat | OPEN (rebased on main `fbc5397`, 24 unit tests passing, CI running) |
+| #1130 | `feat(diff-impact): add registration-aware polyglot symbol mapping test (S2)` | feat | OPEN (rebased on main `3ece043`, unit tests passing) |
+| #1131 | `feat(session): add warm session prepare and resume contracts (S4)` | feat | OPEN (rebased on main `ec8ad83`, unit tests passing) |
+| #1132 | `feat(prepare): add next_action machine protocol and budget envelope to prepare payload (S3)` | feat | OPEN (rebased on main `75f2e63`, unit tests passing) |
+| #1133 | `feat(edit-ticket): implement EditReadyTicketV1 and fail-closed verify-edit contract service (S1)` | feat | OPEN (rebased on main `222683d`, unit tests passing) |
+| #1134 | `feat(find): add --why-ranked match explanations and explicit install_state envelope (S6)` | feat | OPEN (rebased on main `ae822a6`, unit tests passing) |
 
-*(Derive live `gh pr list` before treating this table as current. #997 (A90 → v1.110.13) and #1000
-(doctor → v1.110.14) MERGED; #992/#993/#994/#995/#999/#1001/#1002 docs merged. Open PRs 2026-08-20 post-fan-out: NONE (#1040–#1053 all merged). #966 CLOSED (branch retained; Task 2A still BLOCKED, not GREEN); #1010 (RUST-REPLACE-SYMLINK) MERGED, v1.110.16.)*
+*(PR #1128 `feat(diff-impact)` MERGED at `7d2baa5` and released to PyPI as `v1.116.0` via run `33995069360`.)*
 
 *(#872, #871 and #868 all MERGED — #871 on 2026-07-31, #872 and #868 on 2026-08-01. They sat in
 this table as "CI running" / "BLOCKED — do not merge" after landing, which is the exact failure mode

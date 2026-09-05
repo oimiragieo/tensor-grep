@@ -71,15 +71,42 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Wire `retrieval_dense` / `retrieval_fusion` from `tg find` as an optional fallback or hybrid signal in `build_agent_capsule` / `prepare` when lexical term matching yields low confidence (<0.6).
   - **Acceptance:** Natural-language queries with mismatched vocabulary (e.g. "sales surcharge calculation" for `compute_tax`) successfully locate target symbol; exits 0 with high confidence; falls back cleanly to lexical-only if dense extra is not installed.
 
-- **[ ] P1 — Git Diff-Aware Blast Radius (`tg diff-impact` / `tg pr-risk`)**
+- **[x] P1 — Git Diff-Aware Blast Radius (`tg diff-impact` / `tg pr-risk`)**
   - **Objective:** Compete directly with Gortex `pr_risk` and GitNexus impact analysis in automated CI/PR gates.
   - **Scope:** Add `tg diff-impact [REF]` (e.g., `HEAD~1`, `--staged`) that parses modified symbols across the diff, computes union blast-radius floor, identifies affected downstream tests, and outputs a structured review readiness risk score.
   - **Acceptance:** Outputs JSON with `changed_symbols`, `affected_callers`, `impacted_tests`, `risk_tier`; adheres to Section 0 completeness contract with deadline/token bounds.
+  - **Receipt:** Shipped in PR #1128, merged SHA `7d2baa5`, released in `v1.116.0` (run `33995069360`).
 
 - **[ ] P2 — Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages)**
   - **Objective:** Close the language depth gap against Gortex (~30) and Serena (40+).
   - **Scope:** Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics (`_regex_references_and_calls`) to full tree-sitter AST-verified references and callers.
   - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
+  - **Status:** PR #1129 open, rebased on main (`fbc5397`), 24 unit tests passing, CI run `33999546662` in progress.
+
+- **[ ] S1/S5 — Fail-Closed Edit Tickets & Verify-Edit Service (`EditReadyTicketV1`)**
+  - **Objective:** Contract-driven workspace edit validation preventing silent hallucinated agent edits.
+  - **Scope:** Working tree fingerprinting, sha256 pre/post assertions, bounded hunk verification.
+  - **Status:** PR #1133 open (`222683d`), unit tests passing, CI run `33999572693`.
+
+- **[ ] S2 — Registration-Aware Polyglot Diff Impact**
+  - **Objective:** Extend `diff-impact` symbol mapping to polyglot Go and Rust source trees.
+  - **Scope:** AST symbol resolution on modified diff hunks.
+  - **Status:** PR #1130 open (`3ece043`), unit tests passing.
+
+- **[ ] S3 — Machine Protocol `next_action` & Budget Envelopes**
+  - **Objective:** Structured branch advice in `tg prepare` output payload for agent runtimes.
+  - **Scope:** Explicit remediation instructions, token and time budget ceiling envelopes.
+  - **Status:** PR #1132 open (`75f2e63`), unit tests passing.
+
+- **[ ] S4 — Warm Session Prepare & Resume Contracts**
+  - **Objective:** Rapid cached agent context restoration across sequential edit turns.
+  - **Scope:** `tg session-prepare` and `tg session-resume` CLI bindings with decoupled service architecture (`main.py` <= 13,523 ratchet).
+  - **Status:** PR #1131 open (`ec8ad83`), unit tests passing.
+
+- **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
+  - **Objective:** Match scoring transparency and explicit installation capability envelopes.
+  - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
+  - **Status:** PR #1134 open (`ae822a6`), unit tests passing.
 
 - **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.

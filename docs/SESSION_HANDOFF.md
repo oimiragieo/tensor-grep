@@ -1,6 +1,6 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-08-30
+Last updated: 2026-09-05
 
 ## Current Release State
 
@@ -11,7 +11,19 @@ release_docs_current_tag: v1.116.0
 - GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.116.0>
 
 ## Current Backlog Closeout
-Canonical status index version: 2026-08-30.1
+Canonical status index version: 2026-09-05.1
+
+### 2026-09-05 — P1 diff-impact ship (v1.116.0) + S1-S6 worktree PRs
+
+- **P1 SHIPPED:** PR #1128 / `7d2baa5` — add `diff-impact` CLI command, transitive blast-radius calculation, risk tiers, and failure thresholds. Published to PyPI and GitHub release assets as `v1.116.0` (run `33995069360`).
+- **IN-FLIGHT PRs:**
+  - #1129 (`feat(repo_map)` - P2, commit `fbc5397`): language registry deepening across all 10 registered languages.
+  - #1130 (`feat(diff-impact)` - S2, commit `3ece043`): polyglot Go and Rust diff blast-radius mapping.
+  - #1131 (`feat(session)` - S4, commit `ec8ad83`): warm session prepare and resume contracts (`main.py` <= 13,523).
+  - #1132 (`feat(prepare)` - S3, commit `75f2e63`): machine protocol `next_action` and budget envelope.
+  - #1133 (`feat(edit-ticket)` - S1, commit `222683d`): `EditReadyTicketV1` and fail-closed verify-edit service.
+  - #1134 (`feat(find)` - S6, commit `ae822a6`): semantic defaults and `--why-ranked` match explanations.
+- **Tree status:** main branch clean, ahead=0, behind=0 at `5149212` (`chore(release): v1.116.0 [skip ci]`).
 
 ### 2026-08-30 — SEC-001 ship + ENV-SYNC close + docs reconcile
 
