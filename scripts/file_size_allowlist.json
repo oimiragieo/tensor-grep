@@ -22,7 +22,7 @@
     "rust_core/tests/test_schema_compat.rs": 4412,
     "src/tensor_grep/cli/bootstrap.py": 1703,
     "src/tensor_grep/cli/main.py": 13523,
-    "src/tensor_grep/cli/mcp_server.py": 5341,
+    "src/tensor_grep/cli/mcp_server.py": 5701,
     "src/tensor_grep/cli/repo_map.py": 15243,
     "src/tensor_grep/cli/session_daemon.py": 2139,
     "src/tensor_grep/cli/session_store.py": 1828,
@@ -31,6 +31,7 @@
     "tests/unit/test_file_deps.py": 2901,
     "tests/unit/test_gpu_benchmark_scale_contracts.py": 2244,
     "tests/unit/test_semantic_provider_navigation.py": 2251,
-    "tests/unit/test_session_cli.py": 3337
+    "tests/unit/test_session_cli.py": 3337,
+    "tests/unit/test_mcp_error_sanitization.py": 2518
   }
-}
+}

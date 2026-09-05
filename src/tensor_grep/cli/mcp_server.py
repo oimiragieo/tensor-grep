@@ -7,7 +7,7 @@ import re
 # "tensor_grep.cli.mcp_server.subprocess.run")` -- used by several tests that predate the
 # Route A split -- still resolves. subprocess.run is a single shared function object, so
 # patching it via THIS path also patches the callable mcp_rewrite_tools.py actually invokes.
-import subprocess  # noqa: F401
+import subprocess
 import sys
 import time
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -90,7 +90,9 @@ from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary as resolve_native_tg_binary,
 )
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.hardware.device_inventory import collect_device_inventory
+from tensor_grep.core.hardware.device_inventory import (
+    collect_device_inventory as collect_device_inventory,
+)
 from tensor_grep.core.pipeline import (
     ConfigurationError,
 )
@@ -774,14 +776,130 @@ def _log_tool_exception(tool_name: str, exc: BaseException) -> None:
     paths, internal module structure, or a full stack trace and must never
     be shipped there. The full detail is written to stderr instead, which
     carries server-side diagnostics, not the MCP JSON-RPC channel.
+    Strictly non-throwing: even if stderr write/flush raises, this must
+    never raise and allow exceptions to escape to the MCP transport.
     """
-    import traceback
+    try:
+        import traceback
 
-    detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
-    print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
+        try:
+            detail = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        except BaseException:
+            try:
+                msg = str(exc)
+            except BaseException:
+                msg = "<unprintable>"
+            type_name = getattr(type(exc), "__name__", "Exception")
+            detail = f"{type_name}: {msg}\n"
+        print(f"[tensor-grep-mcp] {tool_name} failed: {detail}", file=sys.stderr, end="")
+    except BaseException:
+        pass
 
 
-def _sanitized_tool_error(tool_name: str, exc: BaseException) -> dict[str, Any]:
+_TRUSTED_EXCEPTION_CLASSES: dict[type, str] = {
+    # Standard Python built-in exceptions
+    ArithmeticError: "ArithmeticError",
+    AssertionError: "AssertionError",
+    AttributeError: "AttributeError",
+    BaseException: "BaseException",
+    BufferError: "BufferError",
+    BytesWarning: "BytesWarning",
+    DeprecationWarning: "DeprecationWarning",
+    EOFError: "EOFError",
+    EnvironmentError: "EnvironmentError",
+    Exception: "Exception",
+    FloatingPointError: "FloatingPointError",
+    FutureWarning: "FutureWarning",
+    GeneratorExit: "GeneratorExit",
+    ImportError: "ImportError",
+    ImportWarning: "ImportWarning",
+    IndexError: "IndexError",
+    IOError: "IOError",
+    KeyError: "KeyError",
+    KeyboardInterrupt: "KeyboardInterrupt",
+    LookupError: "LookupError",
+    MemoryError: "MemoryError",
+    ModuleNotFoundError: "ModuleNotFoundError",
+    NameError: "NameError",
+    NotImplementedError: "NotImplementedError",
+    OSError: "OSError",
+    OverflowError: "OverflowError",
+    PendingDeprecationWarning: "PendingDeprecationWarning",
+    PermissionError: "PermissionError",
+    ProcessLookupError: "ProcessLookupError",
+    RecursionError: "RecursionError",
+    ReferenceError: "ReferenceError",
+    ResourceWarning: "ResourceWarning",
+    RuntimeError: "RuntimeError",
+    RuntimeWarning: "RuntimeWarning",
+    StopAsyncIteration: "StopAsyncIteration",
+    StopIteration: "StopIteration",
+    SyntaxError: "SyntaxError",
+    SyntaxWarning: "SyntaxWarning",
+    SystemError: "SystemError",
+    SystemExit: "SystemExit",
+    TabError: "TabError",
+    TimeoutError: "TimeoutError",
+    TypeError: "TypeError",
+    UnboundLocalError: "UnboundLocalError",
+    UnicodeDecodeError: "UnicodeDecodeError",
+    UnicodeEncodeError: "UnicodeEncodeError",
+    UnicodeError: "UnicodeError",
+    UnicodeTranslateError: "UnicodeTranslateError",
+    UserWarning: "UserWarning",
+    ValueError: "ValueError",
+    Warning: "Warning",
+    ZeroDivisionError: "ZeroDivisionError",
+    FileNotFoundError: "FileNotFoundError",
+    IsADirectoryError: "IsADirectoryError",
+    NotADirectoryError: "NotADirectoryError",
+    ConnectionError: "ConnectionError",
+    BrokenPipeError: "BrokenPipeError",
+    ConnectionAbortedError: "ConnectionAbortedError",
+    ConnectionRefusedError: "ConnectionRefusedError",
+    ConnectionResetError: "ConnectionResetError",
+    FileExistsError: "FileExistsError",
+    InterruptedError: "InterruptedError",
+    ChildProcessError: "ChildProcessError",
+    # Standard library exceptions
+    json.JSONDecodeError: "JSONDecodeError",
+    subprocess.CalledProcessError: "CalledProcessError",
+    subprocess.SubprocessError: "SubprocessError",
+    subprocess.TimeoutExpired: "TimeoutExpired",
+    # Framework exceptions
+    BackendExecutionError: "BackendExecutionError",
+    ConfigurationError: "ConfigurationError",
+}
+
+
+def _safe_exception_class_name(exc: BaseException) -> str:
+    """Strictly non-throwing classification of exception type for MCP wire transmission.
+
+    Never invokes user-controlled properties or `__class__` accessors; uses `type(exc)`
+    and validates strictly by exact type-object identity against `_TRUSTED_EXCEPTION_CLASSES`.
+    Any synthesized, spoofed, dynamic, or untrusted class identity degrades safely to 'InternalError'.
+    """
+    try:
+        raw_type = type(exc)
+        # Verify raw_type is a standard class, not an object with a spoofed metaclass
+        if type(raw_type) is not type:
+            return "InternalError"
+        # Strict object identity check (prevents metaclass __eq__ / __hash__ spoofing)
+        for trusted_cls, name in _TRUSTED_EXCEPTION_CLASSES.items():
+            if raw_type is trusted_cls:
+                return name
+        return "InternalError"
+    except BaseException:
+        return "InternalError"
+
+
+def _sanitized_tool_error(
+    tool_name: str,
+    exc: BaseException,
+    *,
+    code: str = "internal_error",
+    retryable: bool = False,
+) -> dict[str, Any]:
     """Build a stable, sanitized error object for an MCP tool JSON response.
 
     Logs the full exception server-side (see `_log_tool_exception`) and
@@ -790,11 +908,13 @@ def _sanitized_tool_error(tool_name: str, exc: BaseException) -> dict[str, Any]:
     keeps the call's error/non-empty-result contract); this only strips the
     internals from what crosses the wire.
     """
-    _log_tool_exception(tool_name, exc)
+    _log_tool_exception(str(tool_name) if isinstance(tool_name, str) else "mcp_tool", exc)
+    cls_name = _safe_exception_class_name(exc)
+    safe_name = tool_name if isinstance(tool_name, str) else "mcp_tool"
     return {
-        "code": "internal_error",
-        "message": f"{tool_name} failed due to an internal error ({exc.__class__.__name__}).",
-        "retryable": False,
+        "code": code,
+        "message": f"{safe_name} failed due to an internal error ({cls_name}).",
+        "retryable": retryable,
     }
 
 
@@ -802,11 +922,10 @@ def _sanitized_tool_error_text(tool_name: str, exc: BaseException) -> str:
     """Plain-text counterpart of `_sanitized_tool_error` for tool response
     modes that return free text instead of a JSON envelope.
     """
-    _log_tool_exception(tool_name, exc)
-    return (
-        f"{tool_name} failed: internal error ({exc.__class__.__name__}). "
-        "See server logs for detail."
-    )
+    safe_name = tool_name if isinstance(tool_name, str) else "mcp_tool"
+    _log_tool_exception(safe_name, exc)
+    cls_name = _safe_exception_class_name(exc)
+    return f"{safe_name} failed: internal error ({cls_name}). See server logs for detail."
 
 
 # #98 (MCP consolidation Phase-1): shared envelope/error helpers for the 10 task-shaped
@@ -849,9 +968,20 @@ def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
     return json.dumps(payload, indent=2)
 
 
-def _meta_confinement_error(tool: str, action: str, exc: ValueError) -> str:
+class PathConfinementError(ValueError):
+    """Raised when a path escapes the allowed MCP root anchor."""
+
+    def __init__(self, label: str):
+        super().__init__(f"{label} must stay within the MCP root (refused)")
+
+
+_TRUSTED_EXCEPTION_CLASSES[PathConfinementError] = "PathConfinementError"
+
+
+def _meta_confinement_error(tool: str, action: str, exc: PathConfinementError) -> str:
     payload = _meta_envelope(tool=tool, action=action)
     payload["error"] = {"code": "invalid_input", "message": str(exc)}
+
     return json.dumps(payload, indent=2)
 
 
@@ -1052,7 +1182,20 @@ def tg_mcp_capabilities() -> str:
     The response lets clients distinguish tools that work without a standalone native
     tg binary from tools that require one.
     """
-    return json.dumps(_mcp_capabilities_payload(), indent=2)
+    try:
+        return json.dumps(_mcp_capabilities_payload(), indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_mcp_capabilities", exc)
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "error": {
+                    "code": "internal_error",
+                    "message": f"Capabilities failed: {_safe_exception_class_name(exc)}",
+                },
+            },
+            indent=2,
+        )
 
 
 def _record_generated_audit_manifest(payload: object) -> None:
@@ -1068,7 +1211,7 @@ def _record_generated_audit_manifest(payload: object) -> None:
         record_audit_manifest(manifest_path)
     except Exception as exc:  # W1-a: was a bare `return` = fail-open on the audit trail
         _log_tool_exception("record_audit_manifest", exc)  # raw reason, server-side only
-        audit_manifest.update(recorded=False, record_error=type(exc).__name__)
+        audit_manifest.update(recorded=False, record_error=_safe_exception_class_name(exc))
         return
 
 
@@ -1291,18 +1434,34 @@ def _confine_write_path(candidate: str, anchor: Path, *, label: str) -> Path:
     its bytes disclosed. Resolve the candidate (relative paths join the anchor), which also
     follows symlinks -- correct for confinement, since a symlink planted inside the anchor
     that points outside it must resolve to its real (outside) target to be caught -- and
-    require the result to be the anchor itself or a descendant; raise ``ValueError``
+    require the result to be the anchor itself or a descendant; raise ``PathConfinementError``
     otherwise (fail closed). Callers MUST forward the resolved ``Path`` this returns, not the
     raw candidate string, so the downstream read/write sees the same anchor-validated
     location this check validated (closes the discard/TOCTOU class).
+
+    SEC-007: the client-facing message is a constant refusal (no absolute paths). The
+    resolved escape target is logged to stderr for server-side debugging only.
     """
-    anchor_resolved = anchor.expanduser().resolve()
-    raw = Path(candidate).expanduser()
-    target = raw if raw.is_absolute() else (anchor_resolved / raw)
-    resolved = target.resolve()
-    if resolved != anchor_resolved and anchor_resolved not in resolved.parents:
-        raise ValueError(f"{label} must stay within {anchor_resolved} (refused: {resolved})")
-    return resolved
+    try:
+        anchor_resolved = anchor.expanduser().resolve()
+        raw = Path(candidate).expanduser()
+        target = raw if raw.is_absolute() else (anchor_resolved / raw)
+        resolved = target.resolve()
+        if resolved != anchor_resolved and anchor_resolved not in resolved.parents:
+            print(
+                f"[tensor-grep-mcp] path confinement refusal: {label} {resolved} escapes {anchor_resolved}",
+                file=sys.stderr,
+            )
+            raise PathConfinementError(label)
+        return resolved
+    except PathConfinementError:
+        raise
+    except Exception as exc:
+        print(
+            f"[tensor-grep-mcp] path confinement resolution failure: {label} {candidate}: {exc}",
+            file=sys.stderr,
+        )
+        raise PathConfinementError(label) from exc
 
 
 def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
@@ -1317,7 +1476,8 @@ def _confine_read_path(candidate: str, anchor: Path, *, label: str) -> Path:
     chokepoint to route through -- so this class (an unconfined read-path param forwarded raw
     to a loader/reader = arbitrary-file-read/exfil primitive) can't recur one tool at a time.
     See ``_confine_write_path``'s docstring for the confinement semantics (symlink-following
-    resolve, fail-closed ValueError, callers MUST forward the resolved ``Path`` this returns).
+    resolve, fail-closed PathConfinementError, callers MUST forward the resolved ``Path``
+    this returns).
     """
     return _confine_write_path(candidate, anchor, label=label)
 
@@ -1346,25 +1506,27 @@ def _mcp_root() -> Path:
       which `_confine_read_path`'s `.resolve()` would still do without erroring) is not.
     """
     raw = os.environ.get("TG_MCP_ROOT", "").strip()
-    if not raw:
-        return Path.cwd()
+    if raw:
+        try:
+            resolved = Path(raw).expanduser().resolve()
+            if resolved.is_dir():
+                return resolved
+            print(
+                f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} is not an existing directory "
+                f"(resolved: {resolved}); falling back to the current working directory.",
+                file=sys.stderr,
+            )
+        except Exception as exc:
+            print(
+                f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved: {exc}; "
+                "falling back to the current working directory.",
+                file=sys.stderr,
+            )
     try:
-        resolved = Path(raw).expanduser().resolve()
-    except OSError:
-        print(
-            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} could not be resolved; "
-            "falling back to the current working directory.",
-            file=sys.stderr,
-        )
-        return Path.cwd()
-    if not resolved.is_dir():
-        print(
-            f"[tensor-grep-mcp] TG_MCP_ROOT={raw!r} is not an existing directory "
-            f"(resolved: {resolved}); falling back to the current working directory.",
-            file=sys.stderr,
-        )
-        return Path.cwd()
-    return resolved
+        return Path.cwd().resolve()
+    except Exception as exc:
+        print(f"[tensor-grep-mcp] root resolution failure for root: {exc}", file=sys.stderr)
+        raise PathConfinementError("root") from exc
 
 
 def _confine_mcp_path(candidate: str, *, label: str) -> Path:
@@ -1391,7 +1553,12 @@ def _confine_mcp_path(candidate: str, *, label: str) -> Path:
     confined param in this file now moves uniformly with `TG_MCP_ROOT`. See
     test_round8_residual_cwd_params_move_with_tg_mcp_root for the regression coverage.
     """
-    return _confine_read_path(candidate, _mcp_root(), label=label)
+    try:
+        root = _mcp_root()
+    except Exception as exc:
+        print(f"[tensor-grep-mcp] root resolution failure for {label}: {exc}", file=sys.stderr)
+        raise PathConfinementError(label) from exc
+    return _confine_read_path(candidate, root, label=label)
 
 
 # [SEC] audit #95 Part 2: bound the raw `inline_rules` string BEFORE it ever reaches
@@ -1495,52 +1662,53 @@ def tg_repo_map(path: str = ".", max_repo_files: int | None = _DEFAULT_MCP_REPO_
     # protocol (systemic finding: every path/root-taking tool except the file-scoped
     # tg_file_imports/tg_classify_logs lacked this).
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="repo-map",
-            include_schema_version=False,
-        )
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-
-    try:
-        from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
-
-        effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                _self.build_repo_map(path, max_repo_files=effective_max_repo_files),
-                indent=2,
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="repo-map",
+                include_schema_version=False,
             )
-        )
-    except FileNotFoundError:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="repo-map",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
-        }
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="repo-map",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
-        return json.dumps(payload, indent=2)
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+
+        try:
+            from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT
+
+            effective_max_repo_files = max_repo_files or DEFAULT_AGENT_REPO_MAP_LIMIT
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    _self.build_repo_map(path, max_repo_files=effective_max_repo_files),
+                    indent=2,
+                )
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_repo_map", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="repo-map",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": f"Path not found: {path}",
+            }
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="repo-map",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_repo_map", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_repo_map", exc)
+        return _sanitized_tool_error_text("tg_repo_map", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1571,46 +1739,59 @@ def tg_orient(
     # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
     # root before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="orient",
-            include_schema_version=False,
-        )
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-
-    try:
-        return _self._inject_mcp_contract_fields(
-            _self.build_orient_capsule_json(
-                path,
-                max_tokens=max_tokens,
-                max_central_files=max_central_files,
-                ignore=tuple(ignore or ()),
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="orient",
+                include_schema_version=False,
             )
-        )
-    except (FileNotFoundError, ValueError) as exc:
-        # Mirrors the CLI `orient` command's except clause (main.py) -- a bad path or
-        # unresolvable root must return a clean structured error, never a raw traceback.
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="orient",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="orient",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = _sanitized_tool_error("tg_orient", exc)
-        return json.dumps(payload, indent=2)
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+
+        try:
+            return _self._inject_mcp_contract_fields(
+                _self.build_orient_capsule_json(
+                    path,
+                    max_tokens=max_tokens,
+                    max_central_files=max_central_files,
+                    ignore=tuple(ignore or ()),
+                )
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_orient", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="orient",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
+            return json.dumps(payload, indent=2)
+        except ValueError as exc:
+            _log_tool_exception("tg_orient", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="orient",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {"code": "invalid_input", "message": "Invalid orient parameter"}
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="orient",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_orient", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_orient", exc)
+        return _sanitized_tool_error_text("tg_orient", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1638,56 +1819,61 @@ def tg_doctor(
     # round-9 security (audit #95 Part 2): confine the primary path/root param to the MCP
     # root before any probe -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="Doctor",
-            routing_reason="doctor",
-            include_schema_version=False,
-        )
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-
-    # New hardening (beyond the design's literal "wrap it" ask): `config` is a SECONDARY
-    # param that `_build_doctor_payload` uses to relocate its own `root` (config's resolved
-    # parent directory) for every downstream diagnostic probe -- unconfined, a caller could
-    # point every probe at an arbitrary directory via `config=/some/other/place/x.yml`, the
-    # same "secondary anchor derived from an unconfined param" class the #95 gate's MUST-FIX
-    # #3 closed for tg_session_file_importers. Confine to the already-confined `path`,
-    # mirroring tg_ruleset_scan's baseline_path/suppressions_path anchor-to-scan-root
-    # pattern. `if config:` (not `is not None`) matches _build_doctor_payload's OWN
-    # truthiness check so an empty string is treated identically to "not provided" on both
-    # sides -- confining "" would otherwise turn a no-op default into a real (and wrong)
-    # root-parent relocation.
-    if config:
         try:
-            config = str(_confine_read_path(config, Path(path), label="config"))
-        except ValueError as exc:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
             payload = _envelope_base(
                 routing_backend="Doctor",
                 routing_reason="doctor",
                 include_schema_version=False,
             )
-            payload["path"] = path
+            payload["path"] = "[refused]"
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
             return json.dumps(payload, indent=2)
 
-    try:
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                _self._build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2
+        # New hardening (beyond the design's literal "wrap it" ask): `config` is a SECONDARY
+        # param that `_build_doctor_payload` uses to relocate its own `root` (config's resolved
+        # parent directory) for every downstream diagnostic probe -- unconfined, a caller could
+        # point every probe at an arbitrary directory via `config=/some/other/place/x.yml`, the
+        # same "secondary anchor derived from an unconfined param" class the #95 gate's MUST-FIX
+        # #3 closed for tg_session_file_importers. Confine to the already-confined `path`,
+        # mirroring tg_ruleset_scan's baseline_path/suppressions_path anchor-to-scan-root
+        # pattern. `if config:` (not `is not None`) matches _build_doctor_payload's OWN
+        # truthiness check so an empty string is treated identically to "not provided" on both
+        # sides -- confining "" would otherwise turn a no-op default into a real (and wrong)
+        # root-parent relocation.
+        if config:
+            try:
+                config = str(_confine_read_path(config, Path(path), label="config"))
+            except PathConfinementError as exc:
+                payload = _envelope_base(
+                    routing_backend="Doctor",
+                    routing_reason="doctor",
+                    include_schema_version=False,
+                )
+                payload["path"] = path
+                payload["config"] = "[refused]"
+                payload["error"] = {"code": "invalid_input", "message": str(exc)}
+                return json.dumps(payload, indent=2)
+
+        try:
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    _self._build_doctor_payload(path, config=config, with_lsp=with_lsp), indent=2
+                )
             )
-        )
-    except Exception as exc:  # propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="Doctor",
-            routing_reason="doctor",
-            include_schema_version=False,
-        )
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = _sanitized_tool_error("tg_doctor", exc)
-        return json.dumps(payload, indent=2)
+        except Exception as exc:  # propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="Doctor",
+                routing_reason="doctor",
+                include_schema_version=False,
+            )
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_doctor", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_doctor", exc)
+        return _sanitized_tool_error_text("tg_doctor", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1705,49 +1891,50 @@ def tg_context_pack(
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-pack",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-pack",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
 
-    try:
-        return _self._inject_mcp_contract_fields(
-            json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
-        )
-    except FileNotFoundError:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-pack",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
-        }
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-pack",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
-        return json.dumps(payload, indent=2)
+        try:
+            return _self._inject_mcp_contract_fields(
+                json.dumps(build_context_pack(query, path, max_tokens=max_tokens), indent=2)
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_context_pack", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-pack",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": f"Path not found: {path}",
+            }
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-pack",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_context_pack", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_context_pack", exc)
+        return _sanitized_tool_error_text("tg_context_pack", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1774,66 +1961,67 @@ def tg_edit_plan(
         max_symbols: Maximum ranked symbols to retain.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
     """
-    from tensor_grep.cli.repo_map import build_context_edit_plan
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-edit-plan",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
+        from tensor_grep.cli.repo_map import build_context_edit_plan
 
-    try:
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                build_context_edit_plan(
-                    query,
-                    path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_tokens=max_tokens,
-                    max_symbols=max_symbols,
-                    semantic_provider=provider,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-edit-plan",
+                include_schema_version=False,
             )
-        )
-    except FileNotFoundError:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-edit-plan",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
-        }
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-edit-plan",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
-        return json.dumps(payload, indent=2)
+            payload["query"] = query
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+
+        try:
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    build_context_edit_plan(
+                        query,
+                        path,
+                        max_files=max_files,
+                        max_repo_files=max_repo_files,
+                        max_sources=max_sources,
+                        max_tokens=max_tokens,
+                        max_symbols=max_symbols,
+                        semantic_provider=provider,
+                    ),
+                    indent=2,
+                )
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_edit_plan", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-edit-plan",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": f"Path not found: {path}",
+            }
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-edit-plan",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_edit_plan", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_edit_plan", exc)
+        return _sanitized_tool_error_text("tg_edit_plan", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1864,66 +2052,67 @@ def tg_context_render(
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-render",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-
-    try:
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                _self.build_context_render(
-                    query,
-                    path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_symbols_per_file=max_symbols_per_file,
-                    max_render_chars=max_render_chars,
-                    max_tokens=max_tokens,
-                    model=model,
-                    optimize_context=optimize_context,
-                    render_profile=render_profile,
-                    semantic_provider=provider,
-                    profile=profile,
-                ),
-                indent=2,
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-render",
+                include_schema_version=False,
             )
-        )
-    except FileNotFoundError:
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-render",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "invalid_input",
-            "message": f"Path not found: {Path(path).expanduser().resolve()}",
-        }
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        payload = _envelope_base(
-            routing_backend="RepoMap",
-            routing_reason="context-render",
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = str(Path(path).expanduser())
-        payload["error"] = {
-            "code": "internal_error",
-            "message": str(exc),
-            "retryable": False,
-        }
-        return json.dumps(payload, indent=2)
+            payload["query"] = query
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
+
+        try:
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    _self.build_context_render(
+                        query,
+                        path,
+                        max_files=max_files,
+                        max_repo_files=max_repo_files,
+                        max_sources=max_sources,
+                        max_symbols_per_file=max_symbols_per_file,
+                        max_render_chars=max_render_chars,
+                        max_tokens=max_tokens,
+                        model=model,
+                        optimize_context=optimize_context,
+                        render_profile=render_profile,
+                        semantic_provider=provider,
+                        profile=profile,
+                    ),
+                    indent=2,
+                )
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_context_render", exc)
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-render",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": f"Path not found: {path}",
+            }
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            payload = _envelope_base(
+                routing_backend="RepoMap",
+                routing_reason="context-render",
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = str(Path(path).expanduser())
+            payload["error"] = _sanitized_tool_error("tg_context_render", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_context_render", exc)
+        return _sanitized_tool_error_text("tg_context_render", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -1962,60 +2151,68 @@ def tg_agent_capsule(
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _agent_capsule_error(str(exc), code="invalid_input", query=query, path=path)
-
-    if not Path(path).expanduser().exists():
-        return _agent_capsule_error(
-            f"Path not found: {Path(path).expanduser().resolve()}",
-            code="invalid_input",
-            query=query,
-            path=path,
-        )
-
-    try:
-        from tensor_grep.cli.agent_capsule import build_agent_capsule
-
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                build_agent_capsule(
-                    query,
-                    path,
-                    max_files=max_files,
-                    max_sources=max_sources,
-                    max_tokens=max_tokens,
-                    max_repo_files=max_repo_files,
-                    model=model,
-                    semantic_provider=provider,
-                    gpu_device_ids=gpu_device_ids,
-                    gpu_timeout_s=gpu_timeout_s,
-                    deadline_seconds=deadline,
-                ),
-                indent=2,
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _agent_capsule_error(
+                str(exc), code="invalid_input", query=query, path="[refused]"
             )
-        )
-    except FileNotFoundError:
-        return _agent_capsule_error(
-            f"Path not found: {Path(path).expanduser().resolve()}",
-            code="invalid_input",
-            query=query,
-            path=path,
-        )
-    except ValueError as exc:
-        return _agent_capsule_error(
-            str(exc),
-            code="invalid_input",
-            query=query,
-            path=path,
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _agent_capsule_error(
-            str(exc),
-            code="internal_error",
-            query=query,
-            path=path,
-        )
+
+        if not Path(path).expanduser().exists():
+            return _agent_capsule_error(
+                f"Path not found: {path}",
+                code="invalid_input",
+                query=query,
+                path=path,
+            )
+
+        try:
+            from tensor_grep.cli.agent_capsule import build_agent_capsule
+
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    build_agent_capsule(
+                        query,
+                        path,
+                        max_files=max_files,
+                        max_sources=max_sources,
+                        max_tokens=max_tokens,
+                        max_repo_files=max_repo_files,
+                        model=model,
+                        semantic_provider=provider,
+                        gpu_device_ids=gpu_device_ids,
+                        gpu_timeout_s=gpu_timeout_s,
+                        deadline_seconds=deadline,
+                    ),
+                    indent=2,
+                )
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_agent_capsule", exc)
+            return _agent_capsule_error(
+                f"Path not found: {path}",
+                code="invalid_input",
+                query=query,
+                path=path,
+            )
+        except ValueError as exc:
+            _log_tool_exception("tg_agent_capsule", exc)
+            return _agent_capsule_error(
+                "Invalid input parameter for tg_agent_capsule",
+                code="invalid_input",
+                query=query,
+                path=path,
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _agent_capsule_error(
+                _sanitized_tool_error("tg_agent_capsule", exc)["message"],
+                code="internal_error",
+                query=query,
+                path=path,
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_agent_capsule", exc)
+        return _sanitized_tool_error_text("tg_agent_capsule", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2044,68 +2241,74 @@ def tg_session_edit_plan(
         max_tokens: Accepted for command-surface parity; no rendered source text is emitted.
         max_symbols: Maximum ranked symbols to retain.
     """
-    from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
-            query=query,
-        )
+        from tensor_grep.cli.session_store import SessionStaleError, session_context_edit_plan
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_context_edit_plan(
-                    session_id,
-                    query,
-                    path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_tokens=max_tokens,
-                    max_symbols=max_symbols,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+                query=query,
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
-            query=query,
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
-            query=query,
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
-            query=query,
-        )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_context_edit_plan(
+                        session_id,
+                        query,
+                        path,
+                        max_files=max_files,
+                        max_repo_files=max_repo_files,
+                        max_sources=max_sources,
+                        max_tokens=max_tokens,
+                        max_symbols=max_symbols,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_edit_plan", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+                query=query,
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_edit_plan", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+                query=query,
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_edit_plan", exc),
+                detail={"query": query, "max_files": max_files, "max_symbols": max_symbols},
+                query=query,
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_edit_plan", exc)
+        return _sanitized_tool_error_text("tg_session_edit_plan", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2141,73 +2344,79 @@ def tg_session_context_render(
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
         render_profile: Render profile to use: full, compact, or llm.
     """
-    from tensor_grep.cli.session_store import SessionStaleError, session_context_render
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query, "render_profile": render_profile},
-            query=query,
-        )
+        from tensor_grep.cli.session_store import SessionStaleError, session_context_render
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_context_render(
-                    session_id,
-                    query,
-                    path,
-                    max_files=max_files,
-                    max_repo_files=max_repo_files,
-                    max_sources=max_sources,
-                    max_symbols_per_file=max_symbols_per_file,
-                    max_render_chars=max_render_chars,
-                    max_tokens=max_tokens,
-                    model=model,
-                    optimize_context=optimize_context,
-                    render_profile=render_profile,
-                    profile=profile,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={"query": query, "render_profile": render_profile},
+                query=query,
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query, "render_profile": render_profile},
-            query=query,
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"query": query, "render_profile": render_profile},
-            query=query,
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={"query": query, "render_profile": render_profile},
-            query=query,
-        )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_context_render(
+                        session_id,
+                        query,
+                        path,
+                        max_files=max_files,
+                        max_repo_files=max_repo_files,
+                        max_sources=max_sources,
+                        max_symbols_per_file=max_symbols_per_file,
+                        max_render_chars=max_render_chars,
+                        max_tokens=max_tokens,
+                        model=model,
+                        optimize_context=optimize_context,
+                        render_profile=render_profile,
+                        profile=profile,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_context_render", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={"query": query, "render_profile": render_profile},
+                query=query,
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_context_render", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={"query": query, "render_profile": render_profile},
+                query=query,
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_context_render", exc),
+                detail={"query": query, "render_profile": render_profile},
+                query=query,
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_context_render", exc)
+        return _sanitized_tool_error_text("tg_session_context_render", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2228,68 +2437,74 @@ def tg_session_blast_radius(
         path: File or directory rooted at the session scope.
         max_depth: Maximum reverse-import depth to include.
     """
-    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
+        from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_blast_radius(
-                    session_id,
-                    symbol,
-                    path,
-                    max_depth=max_depth,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_blast_radius(
+                        session_id,
+                        symbol,
+                        path,
+                        max_depth=max_depth,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_blast_radius", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_blast_radius", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_blast_radius", exc),
+                detail={"symbol": symbol, "max_depth": max(0, int(max_depth))},
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_blast_radius", exc)
+        return _sanitized_tool_error_text("tg_session_blast_radius", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2310,90 +2525,96 @@ def tg_session_file_importers(
             silent drop).
         path: File or directory rooted at the session scope.
     """
-    from tensor_grep.cli.session_store import SessionStaleError, session_file_importers
-
-    # round-8 security (audit #95 gate must-fix #3, LIVE VULN): confine path to the MCP root
-    # BEFORE session_root below derives from it. Previously session_root = Path(path).resolve()
-    # used the RAW caller-supplied path with NO confinement at all, so path="/etc" made
-    # session_root="/etc" and the "confine file to session_root" check just below then let
-    # file="/etc/passwd" straight through -- an arbitrary-directory-read primitive reachable
-    # from any MCP client today. Confining path here (rather than re-anchoring file's
-    # confinement below to cwd) is deliberate: it keeps a legitimate relative `file` working
-    # when session_root != cwd -- see the comment on the file confinement immediately below.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"file": file},
-            file=file,
-        )
+        from tensor_grep.cli.session_store import SessionStaleError, session_file_importers
 
-    # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
-    # (path) before any read, same class/rationale as tg_file_imports/tg_file_importers above.
-    # Anchored to the session root rather than cwd because that is what session_file_importers
-    # itself resolves a relative `file` against (build_file_importers_from_map joins it onto
-    # the session's own repo_map root, not the MCP server process cwd) -- confining to cwd
-    # here would refuse a legitimate relative `file` whenever the session root differs from cwd.
-    session_root = Path(path).expanduser().resolve()
-    if not session_root.is_dir():
-        session_root = session_root.parent
-    try:
-        file = str(_confine_read_path(file, session_root, label="file"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"file": file},
-            file=file,
-        )
-
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_file_importers(
-                    session_id,
-                    file,
-                    path,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate must-fix #3, LIVE VULN): confine path to the MCP root
+        # BEFORE session_root below derives from it. Previously session_root = Path(path).resolve()
+        # used the RAW caller-supplied path with NO confinement at all, so path="/etc" made
+        # session_root="/etc" and the "confine file to session_root" check just below then let
+        # file="/etc/passwd" straight through -- an arbitrary-directory-read primitive reachable
+        # from any MCP client today. Confining path here (rather than re-anchoring file's
+        # confinement below to cwd) is deliberate: it keeps a legitimate relative `file` working
+        # when session_root != cwd -- see the comment on the file confinement immediately below.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={"file": "[refused]"},
+                file="[refused]",
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"file": file},
-            file=file,
-        )
-    except FileNotFoundError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"file": file},
-            file=file,
-        )
-    except Exception as exc:  # propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={"file": file},
-            file=file,
-        )
+
+        # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
+        # (path) before any read, same class/rationale as tg_file_imports/tg_file_importers above.
+        # Anchored to the session root rather than cwd because that is what session_file_importers
+        # itself resolves a relative `file` against (build_file_importers_from_map joins it onto
+        # the session's own repo_map root, not the MCP server process cwd) -- confining to cwd
+        # here would refuse a legitimate relative `file` whenever the session root differs from cwd.
+        session_root = Path(path).expanduser().resolve()
+        if not session_root.is_dir():
+            session_root = session_root.parent
+        try:
+            file = str(_confine_read_path(file, session_root, label="file"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=str(exc),
+                detail={"file": "[refused]"},
+                file="[refused]",
+            )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_file_importers(
+                        session_id,
+                        file,
+                        path,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_file_importers", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={"file": file},
+                file=file,
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_file_importers", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"File not found: {file}",
+                detail={"file": file},
+                file=file,
+            )
+        except Exception as exc:  # propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_file_importers", exc),
+                detail={"file": file},
+                file=file,
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_file_importers", exc)
+        return _sanitized_tool_error_text("tg_session_file_importers", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2426,93 +2647,99 @@ def tg_session_blast_radius_render(
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
         render_profile: Render profile to use: full, compact, or llm.
     """
-    from tensor_grep.cli.session_store import (
-        SessionStaleError,
-        session_blast_radius_render,
-    )
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "render_profile": render_profile,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
+        from tensor_grep.cli.session_store import (
+            SessionStaleError,
+            session_blast_radius_render,
         )
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_blast_radius_render(
-                    session_id,
-                    symbol,
-                    path,
-                    max_depth=max_depth,
-                    max_files=max_files,
-                    max_sources=max_sources,
-                    max_symbols_per_file=max_symbols_per_file,
-                    max_render_chars=max_render_chars,
-                    optimize_context=optimize_context,
-                    render_profile=render_profile,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "render_profile": render_profile,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "render_profile": render_profile,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "render_profile": render_profile,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "render_profile": render_profile,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_blast_radius_render(
+                        session_id,
+                        symbol,
+                        path,
+                        max_depth=max_depth,
+                        max_files=max_files,
+                        max_sources=max_sources,
+                        max_symbols_per_file=max_symbols_per_file,
+                        max_render_chars=max_render_chars,
+                        optimize_context=optimize_context,
+                        render_profile=render_profile,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_blast_radius_render", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "render_profile": render_profile,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_blast_radius_render", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "render_profile": render_profile,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_blast_radius_render", exc),
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "render_profile": render_profile,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_blast_radius_render", exc)
+        return _sanitized_tool_error_text("tg_session_blast_radius_render", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2537,90 +2764,96 @@ def tg_session_blast_radius_plan(
         max_files: Maximum files to include in the plan.
         max_symbols: Maximum ranked symbols to retain.
     """
-    from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "max_files": max_files,
-                "max_symbols": max_symbols,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
+        from tensor_grep.cli.session_store import SessionStaleError, session_blast_radius_plan
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
-        return _self._inject_mcp_contract_fields(
-            json.dumps(
-                session_blast_radius_plan(
-                    session_id,
-                    symbol,
-                    path,
-                    max_depth=max_depth,
-                    max_files=max_files,
-                    max_symbols=max_symbols,
-                    refresh_on_stale=effective_refresh,
-                ),
-                indent=2,
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
             )
-        )
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "max_files": max_files,
-                "max_symbols": max_symbols,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "max_files": max_files,
-                "max_symbols": max_symbols,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
-    except Exception as exc:  # M11: propagate as structured error, never a raw exception
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="internal_error",
-            message=str(exc),
-            detail={
-                "symbol": symbol,
-                "max_depth": max(0, int(max_depth)),
-                "max_files": max_files,
-                "max_symbols": max_symbols,
-            },
-            symbol=symbol,
-            max_depth=max(0, int(max_depth)),
-        )
+
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            # M14: session_store's helper dicts carry no MCP envelope -- stamp at the tool seam.
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    session_blast_radius_plan(
+                        session_id,
+                        symbol,
+                        path,
+                        max_depth=max_depth,
+                        max_files=max_files,
+                        max_symbols=max_symbols,
+                        refresh_on_stale=effective_refresh,
+                    ),
+                    indent=2,
+                )
+            )
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_blast_radius_plan", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_blast_radius_plan", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+        except Exception as exc:  # M11: propagate as structured error, never a raw exception
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="internal_error",
+                message=_sanitized_tool_error_text("tg_session_blast_radius_plan", exc),
+                detail={
+                    "symbol": symbol,
+                    "max_depth": max(0, int(max_depth)),
+                    "max_files": max_files,
+                    "max_symbols": max_symbols,
+                },
+                symbol=symbol,
+                max_depth=max(0, int(max_depth)),
+            )
+    except Exception as exc:
+        _log_tool_exception("tg_session_blast_radius_plan", exc)
+        return _sanitized_tool_error_text("tg_session_blast_radius_plan", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2668,95 +2901,91 @@ def tg_find(
     # run, and its RESOLVED result must be forwarded, before `_execute_find` (which derives its
     # whole-repo walk root from `path`) is ever invoked.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        payload = _envelope_base(
-            routing_backend=_FIND_ROUTING_BACKEND,
-            routing_reason=_FIND_ROUTING_REASON,
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            payload = _envelope_base(
+                routing_backend=_FIND_ROUTING_BACKEND,
+                routing_reason=_FIND_ROUTING_REASON,
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = "[refused]"
+            payload["error"] = {"code": "invalid_input", "message": str(exc)}
+            return json.dumps(payload, indent=2)
 
-    try:
-        result = _execute_find(
-            query,
-            path,
-            limit=limit,
-            max_repo_files=max_repo_files,
-            max_tokens=max_tokens,
-            deadline=deadline,
-        )
-    except FileNotFoundError as exc:
-        # S2: this branch (like the confinement ValueError branch above) deliberately echoes
-        # str(exc) -- it already resolves to the WITHIN-ROOT path `_execute_find` refused
-        # (mirrors tg_file_importers's FileNotFoundError branch, mcp_server.py). Never widen this
-        # raw echo to the generic Exception branch below.
-        payload = _envelope_base(
-            routing_backend=_FIND_ROUTING_BACKEND,
-            routing_reason=_FIND_ROUTING_REASON,
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {"code": "invalid_input", "message": str(exc)}
-        return json.dumps(payload, indent=2)
-    except BackendExecutionError as exc:
-        # C1 mirror (main.py's find command boundary): a genuine backend fault (corrupt dense
-        # model directory, encode-time crash) propagates out of `_execute_find` by design -- it is
-        # never silently degraded. `BackendExecutionError` messages are curated single-line text
-        # under the Backend Fail-Closed Contract (never a raw traceback), so echoing str(exc) here
-        # mirrors the choice already shipped for tg_search's own `_apply_semantic_rerank`
-        # BackendExecutionError branch below (code "semantic_backend_error"); this one gets its
-        # own distinguishable code matching the CLI's own --json error code (main.py's
-        # `find_backend_error`) so an agent caller can tell "the backend broke" apart from an
-        # ordinary internal_error.
-        payload = _envelope_base(
-            routing_backend=_FIND_ROUTING_BACKEND,
-            routing_reason=_FIND_ROUTING_REASON,
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = {
-            "code": "find_backend_error",
-            "message": str(exc),
-            "retryable": False,
-        }
-        return json.dumps(payload, indent=2)
-    except Exception as exc:  # S2: propagate as a structured, SANITIZED error -- never raw
-        payload = _envelope_base(
-            routing_backend=_FIND_ROUTING_BACKEND,
-            routing_reason=_FIND_ROUTING_REASON,
-            include_schema_version=False,
-        )
-        payload["query"] = query
-        payload["path"] = path
-        payload["error"] = _sanitized_tool_error("tg_find", exc)
-        return json.dumps(payload, indent=2)
+        try:
+            result = _execute_find(
+                query,
+                path,
+                limit=limit,
+                max_repo_files=max_repo_files,
+                max_tokens=max_tokens,
+                deadline=deadline,
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_find", exc)
+            payload = _envelope_base(
+                routing_backend=_FIND_ROUTING_BACKEND,
+                routing_reason=_FIND_ROUTING_REASON,
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = path
+            payload["error"] = {"code": "invalid_input", "message": f"Path not found: {path}"}
+            return json.dumps(payload, indent=2)
+        except BackendExecutionError as exc:
+            # C1 mirror (main.py's find command boundary): a genuine backend fault (corrupt dense
+            # model directory, encode-time crash) propagates out of `_execute_find` by design -- it is
+            # never silently degraded. SEC-007 sanitization strips raw model paths and third-party
+            # messages on the wire while preserving the distinct code and logging full trace to stderr.
+            payload = _envelope_base(
+                routing_backend=_FIND_ROUTING_BACKEND,
+                routing_reason=_FIND_ROUTING_REASON,
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = path
+            payload["error"] = _sanitized_tool_error(
+                "tg_find",
+                exc,
+                code="find_backend_error",
+            )
+            return json.dumps(payload, indent=2)
+        except Exception as exc:  # S2: propagate as a structured, SANITIZED error -- never raw
+            payload = _envelope_base(
+                routing_backend=_FIND_ROUTING_BACKEND,
+                routing_reason=_FIND_ROUTING_REASON,
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = path
+            payload["error"] = _sanitized_tool_error("tg_find", exc)
+            return json.dumps(payload, indent=2)
 
-    # Stamp the MCP routing metadata on the success path so it matches the error envelopes above
-    # (which set _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON) -- `_execute_find` returns a bare
-    # SearchResult (routing_backend/reason=None), so without this the success response would carry
-    # `"routing_backend": null` while its own error responses carry "HybridRank", an odd
-    # within-tool inconsistency. Set on the handler's local SearchResult only, NOT inside
-    # `_execute_find`: the CLI's `tg find --json` output stays unchanged (the CLI has its own
-    # `_execute_find` call and its own SearchResult).
-    result.routing_backend = _FIND_ROUTING_BACKEND
-    result.routing_reason = _FIND_ROUTING_REASON
+        # Stamp the MCP routing metadata on the success path so it matches the error envelopes above
+        # (which set _FIND_ROUTING_BACKEND/_FIND_ROUTING_REASON) -- `_execute_find` returns a bare
+        # SearchResult (routing_backend/reason=None), so without this the success response would carry
+        # `"routing_backend": null` while its own error responses carry "HybridRank", an odd
+        # within-tool inconsistency. Set on the handler's local SearchResult only, NOT inside
+        # `_execute_find`: the CLI's `tg find --json` output stays unchanged (the CLI has its own
+        # `_execute_find` call and its own SearchResult).
+        result.routing_backend = _FIND_ROUTING_BACKEND
+        result.routing_reason = _FIND_ROUTING_REASON
 
-    # D2 (reuse, not duplicate): `_execute_find` already returns a `SearchResult`; serialize it
-    # with the SAME `JsonFormatter` the CLI's `tg find --json` uses instead of hand-rolling a
-    # second match-payload builder, so `rank_fallback_reason` / `result_incomplete` /
-    # `incomplete_reason` / `matches[].file,line,line_number,text` land at the top level for free
-    # and cannot drift from the CLI's own envelope shape.
-    from tensor_grep.cli.formatters.json_fmt import JsonFormatter
+        # D2 (reuse, not duplicate): `_execute_find` already returns a `SearchResult`; serialize it
+        # with the SAME `JsonFormatter` the CLI's `tg find --json` uses instead of hand-rolling a
+        # second match-payload builder, so `rank_fallback_reason` / `result_incomplete` /
+        # `incomplete_reason` / `matches[].file,line,line_number,text` land at the top level for free
+        # and cannot drift from the CLI's own envelope shape.
+        from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
-    envelope = json.loads(JsonFormatter().format(result))
-    envelope = {"query": query, "path": path, **envelope}
-    return _self._inject_mcp_contract_fields(json.dumps(envelope, indent=2))
+        envelope = json.loads(JsonFormatter().format(result))
+        envelope = {"query": query, "path": path, **envelope}
+        return _self._inject_mcp_contract_fields(json.dumps(envelope, indent=2))
+    except Exception as exc:
+        _log_tool_exception("tg_find", exc)
+        return _sanitized_tool_error_text("tg_find", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -2812,246 +3041,356 @@ def tg_search(
             `rank_fallback_reason`) when either is missing. Takes priority over `rank` when
             both are set.
     """
-    search_pattern = pattern or query
-    if not search_pattern:
-        return "Search failed: either pattern or query is required."
-
-    # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
-    # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
-    # reassigned, `path == "."` would always read False and silently defeat the large-root/
-    # vendored-root refusal guard's paths_defaulted logic for every default-path call.
-    paths_defaulted = path == "."
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        if structured_json:
-            payload = {
-                "pattern": search_pattern,
-                "path": path,
-                "total_matches": 0,
-                "total_files": 0,
-                "rendered_match_count": 0,
-                "rendered_file_count": 0,
-                "matches": [],
-                "truncated": False,
-                "result_incomplete": True,
-                "incomplete_reason": str(exc),
-                # Routed through the helper for STRUCTURAL coverage: every serialized
-                # `result_incomplete` payload passes through one place, so a future auditor can
-                # verify the seam mechanically. This site legitimately contributes {} -- nothing
-                # was walked, so no completeness class applies. `error.code` carries the signal.
-                **_incomplete_class_fragment(None),
-                "error": {"code": "invalid_input", "message": str(exc)},
-            }
-            # M14: this no-scan error envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-        return f"Search failed: {exc}"
+        search_pattern = pattern or query
+        if not search_pattern:
+            return "Search failed: either pattern or query is required."
 
-    rendered_file_limit = max(0, max_files if max_files is not None else 15)
-    rendered_result_limit = max(0, max_results if max_results is not None else 150)
-    normalized_max_repo_files = max(1, int(max_repo_files))
-    config = SearchConfig(
-        case_sensitive=case_sensitive,
-        ignore_case=ignore_case,
-        fixed_strings=fixed_strings,
-        word_regexp=word_regexp,
-        context=context,
-        max_count=max_count,
-        count=count_matches,
-        glob=[glob] if glob else None,
-        file_type=[type_filter] if type_filter else None,
-        no_messages=True,
-    )
+        # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
+        # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
+        # reassigned, `path == "."` would always read False and silently defeat the large-root/
+        # vendored-root refusal guard's paths_defaulted logic for every default-path call.
+        paths_defaulted = path == "."
 
-    pipeline = _self.Pipeline(config=config)
-    backend = pipeline.get_backend()
-    selected_backend_name = getattr(pipeline, "selected_backend_name", backend.__class__.__name__)
-    selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
-
-    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-    all_results.routing_backend = selected_backend_name
-    all_results.routing_reason = selected_backend_reason
-    all_results.routing_gpu_device_ids = list(
-        getattr(pipeline, "selected_gpu_device_ids", []) or []
-    )
-    all_results.routing_gpu_chunk_plan_mb = list(
-        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
-    )
-    all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
-    scan_limit_payload: dict[str, Any] | None = None
-    try:
-        if isinstance(backend, RipgrepBackend):
-            all_results = backend.search(path, search_pattern, config=config)
-            all_results.routing_backend = all_results.routing_backend or selected_backend_name
-            all_results.routing_reason = all_results.routing_reason or selected_backend_reason
-        else:
-            # H3 (Fable MCP-surface audit): before PR #400's fix landed here, this walk had
-            # NO per-file wall-clock deadline, no BackendExecutionError fallback, and no
-            # broad/vendored/large-root refusal -- an unscoped root could hang, and a mid-walk
-            # backend fault fell through to the outer `except Exception` below and discarded
-            # every match already collected. All three are now ported from the CLI (imported,
-            # not reimplemented) so the two surfaces can't drift again.
-            refusal_message, scanner, walker = _mcp_broad_root_scan_refusal(
-                path,
-                config,
-                normalized_max_repo_files=normalized_max_repo_files,
-                check_large_root=True,
-                paths_defaulted=paths_defaulted,
-            )
-            if refusal_message is not None:
-                return _broad_root_scan_refusal_result(
-                    refusal_message,
-                    pattern=search_pattern,
-                    path=path,
-                    structured_json=structured_json,
-                )
-            files_scanned = 0
-            scan_capped = False
-            native_walk_deadline = compute_native_walk_deadline()
-            for current_file in walker:
-                if files_scanned >= normalized_max_repo_files:
-                    scan_capped = True
-                    break
-                if native_walk_deadline_exceeded(native_walk_deadline):
-                    scan_capped = True
-                    all_results.result_incomplete = True
-                    all_results.incomplete_reason = (
-                        "native search exceeded the wall-clock deadline and was stopped; "
-                        "returning partial results. Scope the search to a smaller path, or "
-                        "lower max_repo_files."
-                    )
-                    all_results.incomplete_reason_class = "deadline"
-                    break
-                try:
-                    result = backend.search(current_file, search_pattern, config=config)
-                except BackendExecutionError as exc:
-                    # A native backend failed at runtime; retry on the always-available CPU
-                    # backend so the search returns correct partial results instead of
-                    # silently discarding everything collected so far (audit B2/I1, ported).
-                    result = _search_with_cpu_fallback(current_file, search_pattern, config, exc)
-                files_scanned += 1
-                all_results.matches.extend(result.matches)
-                all_results.matched_file_paths.extend(result.matched_file_paths)
-                _merge_count_metadata(all_results, result)
-                all_results.total_matches += result.total_matches
-                if result.total_files > 0 or result.total_matches > 0:
-                    all_results.total_files += 1
-                _merge_runtime_routing(all_results, result)
-            # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
-            # coarser defensive cap than max_repo_files -- it can trip first and
-            # truncate the walk below max_repo_files without ever hitting the
-            # per-file counter above, so OR it into possibly_truncated too. Coerce to a
-            # real bool: a mocked scanner in a test can auto-vivify a truthy non-bool.
-            scanner_truncated = bool(getattr(scanner, "scan_truncated", False))
-            scan_capped = scan_capped or scanner_truncated
-            scan_limit_payload = {
-                "max_repo_files": normalized_max_repo_files,
-                "scanned_files": files_scanned,
-                "possibly_truncated": scan_capped,
-            }
-            if scanner_truncated:
-                # Task #283. The comment above was written when `scan_truncated` could ONLY mean
-                # a BUDGET cap, which is what made folding it into a `max_repo_files`-shaped
-                # payload correct. #276 slice 1 (c0c3404) widened it to ALSO mean "the walk hit
-                # an unreadable path" -- a cause no budget increase can fix. Without the fields
-                # below, a single permission-denied directory surfaces to an MCP client as
-                # `scan_limit.possibly_truncated` next to a `max_repo_files` number, i.e. exactly
-                # the WRONG-KNOB advice that #276 exists to eliminate on the CLI surface,
-                # recreated one surface over.
-                #
-                # `possibly_truncated` stays honest either way (the scan really was truncated);
-                # these say WHY, and whether spending more budget can help.
-                cause = getattr(scanner, "scan_truncation_cause", None)
-                # Fail CLOSED on an unrecognised cause: report it as unknown and do NOT claim it
-                # is budget-remediable. A new cause the client cannot interpret must never
-                # default to "raise the limit" -- that is the allow-list rule (AGENTS.md).
-                if cause == "max-scan-entries":
-                    scan_limit_payload["truncation_cause"] = "scan_limit"
-                    scan_limit_payload["budget_remediable"] = True
-                elif cause == "unreadable_path":
-                    scan_limit_payload["truncation_cause"] = "unreadable_path"
-                    scan_limit_payload["budget_remediable"] = False
-                else:
-                    scan_limit_payload["truncation_cause"] = "unknown"
-                    scan_limit_payload["budget_remediable"] = False
-                unreadable_count = int(getattr(scanner, "unreadable_path_count", 0) or 0)
-                if unreadable_count:
-                    # Reported even when the cause is the budget cap: the cap can fire AFTER a
-                    # separate unreadable-path truncation, and the count must not go unmentioned
-                    # just because the cap also tripped. Mirrors `search_command`'s CLI clarifier.
-                    scan_limit_payload["unreadable_path_count"] = unreadable_count
-
-        _apply_selected_gpu_defaults(
-            all_results=all_results,
-            selected_backend_name=selected_backend_name,
-            selected_backend_reason=selected_backend_reason,
-        )
-        _finalize_aggregate_result(all_results)
-
-        # audit #95 Part 2: mirror main.py search_command's --rank/--semantic post-processing
-        # (`if config.semantic_rank: ... elif config.rank_bm25 and all_results.matches:`) so an
-        # MCP agent caller gets the same BM25/hybrid-semantic relevance reordering as the CLI.
-        # Applied once here, before the empty/count/full-result branches below, so every render
-        # path sees the same reranked all_results -- matches main.py's ordering (rerank runs
-        # before any output-mode branching, not duplicated per branch).
-        if semantic:
-            if all_results.matches:
-                try:
-                    all_results = _apply_semantic_rerank(all_results, search_pattern)
-                except BackendExecutionError as exc:
-                    # Backend Fail-Closed Contract boundary (mirrors main.py's search_command):
-                    # _apply_semantic_rerank deliberately does NOT catch a genuine dense-backend
-                    # fault (e.g. a corrupt model directory) -- it must surface here as a
-                    # distinguishable structured error, never fall through to the generic
-                    # internal_error catch-all at the bottom of this tool, which would lose the
-                    # fail-closed signal (an agent needs to tell "the backend broke" apart from
-                    # an ordinary internal_error).
-                    if structured_json:
-                        error_payload = {
-                            "pattern": search_pattern,
-                            "path": path,
-                            "error": {
-                                "code": "semantic_backend_error",
-                                "message": str(exc),
-                                "retryable": False,
-                            },
-                        }
-                        # M14: error envelope crossed the wire un-stamped.
-                        return _self._inject_mcp_contract_fields(
-                            json.dumps(error_payload, indent=2)
-                        )
-                    return f"Search failed: semantic backend error: {exc}"
-            else:
-                # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
-                # availability even on a 0-match search so rank_fallback_reason is set whenever
-                # the leg is unavailable, regardless of match count.
-                _set_semantic_rank_fallback_reason(all_results)
-        elif rank and all_results.matches:
-            from tensor_grep.core.reranker import rerank_by_bm25
-
-            all_results = rerank_by_bm25(
-                all_results, search_pattern, all_results.matched_file_paths
-            )
-
-        empty_scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
-        if all_results.is_empty:
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
             if structured_json:
                 payload = {
                     "pattern": search_pattern,
-                    "path": path,
+                    "path": "[refused]",
                     "total_matches": 0,
-                    "total_files": all_results.total_files,
+                    "total_files": 0,
                     "rendered_match_count": 0,
                     "rendered_file_count": 0,
                     "matches": [],
-                    "truncated": empty_scan_capped,
-                    "omitted_matches": 0,
-                    "omitted_files": 0,
-                    # Partial results (rg exit 2 soft error, or a mid-walk deadline/fault) --
-                    # top-level so an agent caller can't read a truncated result as complete.
+                    "truncated": False,
+                    "result_incomplete": True,
+                    "incomplete_reason": str(exc),
+                    # Routed through the helper for STRUCTURAL coverage: every serialized
+                    # `result_incomplete` payload passes through one place, so a future auditor can
+                    # verify the seam mechanically. This site legitimately contributes {} -- nothing
+                    # was walked, so no completeness class applies. `error.code` carries the signal.
+                    **_incomplete_class_fragment(None),
+                    "error": {"code": "invalid_input", "message": str(exc)},
+                }
+                # M14: this no-scan error envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+            return f"Search failed: {exc}"
+
+        rendered_file_limit = max(0, max_files if max_files is not None else 15)
+        rendered_result_limit = max(0, max_results if max_results is not None else 150)
+        normalized_max_repo_files = max(1, int(max_repo_files))
+        config = SearchConfig(
+            case_sensitive=case_sensitive,
+            ignore_case=ignore_case,
+            fixed_strings=fixed_strings,
+            word_regexp=word_regexp,
+            context=context,
+            max_count=max_count,
+            count=count_matches,
+            glob=[glob] if glob else None,
+            file_type=[type_filter] if type_filter else None,
+            no_messages=True,
+        )
+
+        pipeline = _self.Pipeline(config=config)
+        backend = pipeline.get_backend()
+        selected_backend_name = getattr(
+            pipeline, "selected_backend_name", backend.__class__.__name__
+        )
+        selected_backend_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+
+        all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+        all_results.routing_backend = selected_backend_name
+        all_results.routing_reason = selected_backend_reason
+        all_results.routing_gpu_device_ids = list(
+            getattr(pipeline, "selected_gpu_device_ids", []) or []
+        )
+        all_results.routing_gpu_chunk_plan_mb = list(
+            getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
+        )
+        all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
+        scan_limit_payload: dict[str, Any] | None = None
+        try:
+            if isinstance(backend, RipgrepBackend):
+                all_results = backend.search(path, search_pattern, config=config)
+                all_results.routing_backend = all_results.routing_backend or selected_backend_name
+                all_results.routing_reason = all_results.routing_reason or selected_backend_reason
+            else:
+                # H3 (Fable MCP-surface audit): before PR #400's fix landed here, this walk had
+                # NO per-file wall-clock deadline, no BackendExecutionError fallback, and no
+                # broad/vendored/large-root refusal -- an unscoped root could hang, and a mid-walk
+                # backend fault fell through to the outer `except Exception` below and discarded
+                # every match already collected. All three are now ported from the CLI (imported,
+                # not reimplemented) so the two surfaces can't drift again.
+                refusal_message, scanner, walker = _mcp_broad_root_scan_refusal(
+                    path,
+                    config,
+                    normalized_max_repo_files=normalized_max_repo_files,
+                    check_large_root=True,
+                    paths_defaulted=paths_defaulted,
+                )
+                if refusal_message is not None:
+                    return _broad_root_scan_refusal_result(
+                        refusal_message,
+                        pattern=search_pattern,
+                        path=path,
+                        structured_json=structured_json,
+                    )
+                files_scanned = 0
+                scan_capped = False
+                native_walk_deadline = compute_native_walk_deadline()
+                for current_file in walker:
+                    if files_scanned >= normalized_max_repo_files:
+                        scan_capped = True
+                        break
+                    if native_walk_deadline_exceeded(native_walk_deadline):
+                        scan_capped = True
+                        all_results.result_incomplete = True
+                        all_results.incomplete_reason = (
+                            "native search exceeded the wall-clock deadline and was stopped; "
+                            "returning partial results. Scope the search to a smaller path, or "
+                            "lower max_repo_files."
+                        )
+                        all_results.incomplete_reason_class = "deadline"
+                        break
+                    try:
+                        result = backend.search(current_file, search_pattern, config=config)
+                    except BackendExecutionError as exc:
+                        # A native backend failed at runtime; retry on the always-available CPU
+                        # backend so the search returns correct partial results instead of
+                        # silently discarding everything collected so far (audit B2/I1, ported).
+                        result = _search_with_cpu_fallback(
+                            current_file, search_pattern, config, exc
+                        )
+                    files_scanned += 1
+                    all_results.matches.extend(result.matches)
+                    all_results.matched_file_paths.extend(result.matched_file_paths)
+                    _merge_count_metadata(all_results, result)
+                    all_results.total_matches += result.total_matches
+                    if result.total_files > 0 or result.total_matches > 0:
+                        all_results.total_files += 1
+                    _merge_runtime_routing(all_results, result)
+                # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
+                # coarser defensive cap than max_repo_files -- it can trip first and
+                # truncate the walk below max_repo_files without ever hitting the
+                # per-file counter above, so OR it into possibly_truncated too. Coerce to a
+                # real bool: a mocked scanner in a test can auto-vivify a truthy non-bool.
+                scanner_truncated = bool(getattr(scanner, "scan_truncated", False))
+                scan_capped = scan_capped or scanner_truncated
+                scan_limit_payload = {
+                    "max_repo_files": normalized_max_repo_files,
+                    "scanned_files": files_scanned,
+                    "possibly_truncated": scan_capped,
+                }
+                if scanner_truncated:
+                    # Task #283. The comment above was written when `scan_truncated` could ONLY mean
+                    # a BUDGET cap, which is what made folding it into a `max_repo_files`-shaped
+                    # payload correct. #276 slice 1 (c0c3404) widened it to ALSO mean "the walk hit
+                    # an unreadable path" -- a cause no budget increase can fix. Without the fields
+                    # below, a single permission-denied directory surfaces to an MCP client as
+                    # `scan_limit.possibly_truncated` next to a `max_repo_files` number, i.e. exactly
+                    # the WRONG-KNOB advice that #276 exists to eliminate on the CLI surface,
+                    # recreated one surface over.
+                    #
+                    # `possibly_truncated` stays honest either way (the scan really was truncated);
+                    # these say WHY, and whether spending more budget can help.
+                    cause = getattr(scanner, "scan_truncation_cause", None)
+                    # Fail CLOSED on an unrecognised cause: report it as unknown and do NOT claim it
+                    # is budget-remediable. A new cause the client cannot interpret must never
+                    # default to "raise the limit" -- that is the allow-list rule (AGENTS.md).
+                    if cause == "max-scan-entries":
+                        scan_limit_payload["truncation_cause"] = "scan_limit"
+                        scan_limit_payload["budget_remediable"] = True
+                    elif cause == "unreadable_path":
+                        scan_limit_payload["truncation_cause"] = "unreadable_path"
+                        scan_limit_payload["budget_remediable"] = False
+                    else:
+                        scan_limit_payload["truncation_cause"] = "unknown"
+                        scan_limit_payload["budget_remediable"] = False
+                    unreadable_count = int(getattr(scanner, "unreadable_path_count", 0) or 0)
+                    if unreadable_count:
+                        # Reported even when the cause is the budget cap: the cap can fire AFTER a
+                        # separate unreadable-path truncation, and the count must not go unmentioned
+                        # just because the cap also tripped. Mirrors `search_command`'s CLI clarifier.
+                        scan_limit_payload["unreadable_path_count"] = unreadable_count
+
+            _apply_selected_gpu_defaults(
+                all_results=all_results,
+                selected_backend_name=selected_backend_name,
+                selected_backend_reason=selected_backend_reason,
+            )
+            _finalize_aggregate_result(all_results)
+
+            # audit #95 Part 2: mirror main.py search_command's --rank/--semantic post-processing
+            # (`if config.semantic_rank: ... elif config.rank_bm25 and all_results.matches:`) so an
+            # MCP agent caller gets the same BM25/hybrid-semantic relevance reordering as the CLI.
+            # Applied once here, before the empty/count/full-result branches below, so every render
+            # path sees the same reranked all_results -- matches main.py's ordering (rerank runs
+            # before any output-mode branching, not duplicated per branch).
+            if semantic:
+                if all_results.matches:
+                    try:
+                        all_results = _apply_semantic_rerank(all_results, search_pattern)
+                    except BackendExecutionError as exc:
+                        # Backend Fail-Closed Contract boundary (mirrors main.py's search_command):
+                        # _apply_semantic_rerank deliberately does NOT catch a genuine dense-backend
+                        # fault (e.g. a corrupt model directory) -- it must surface here as a
+                        # distinguishable structured error, never fall through to the generic
+                        # internal_error catch-all at the bottom of this tool, which would lose the
+                        # fail-closed signal (an agent needs to tell "the backend broke" apart from
+                        # an ordinary internal_error).
+                        if structured_json:
+                            error_payload = {
+                                "pattern": search_pattern,
+                                "path": path,
+                                "error": _sanitized_tool_error(
+                                    "tg_search",
+                                    exc,
+                                    code="semantic_backend_error",
+                                ),
+                            }
+                            # M14: error envelope crossed the wire un-stamped.
+                            return _self._inject_mcp_contract_fields(
+                                json.dumps(error_payload, indent=2)
+                            )
+                        _log_tool_exception("tg_search", exc)
+                        cls_name = _safe_exception_class_name(exc)
+                        return (
+                            f"Search failed: semantic backend error ({cls_name}). "
+                            "See server logs for detail."
+                        )
+                else:
+                    # F16 parity (main.py _set_semantic_rank_fallback_reason): probe dense-leg
+                    # availability even on a 0-match search so rank_fallback_reason is set whenever
+                    # the leg is unavailable, regardless of match count.
+                    _set_semantic_rank_fallback_reason(all_results)
+            elif rank and all_results.matches:
+                from tensor_grep.core.reranker import rerank_by_bm25
+
+                all_results = rerank_by_bm25(
+                    all_results, search_pattern, all_results.matched_file_paths
+                )
+
+            empty_scan_capped = bool(
+                scan_limit_payload and scan_limit_payload["possibly_truncated"]
+            )
+            if all_results.is_empty:
+                if structured_json:
+                    payload = {
+                        "pattern": search_pattern,
+                        "path": path,
+                        "total_matches": 0,
+                        "total_files": all_results.total_files,
+                        "rendered_match_count": 0,
+                        "rendered_file_count": 0,
+                        "matches": [],
+                        "truncated": empty_scan_capped,
+                        "omitted_matches": 0,
+                        "omitted_files": 0,
+                        # Partial results (rg exit 2 soft error, or a mid-walk deadline/fault) --
+                        # top-level so an agent caller can't read a truncated result as complete.
+                        "result_incomplete": all_results.result_incomplete,
+                        "incomplete_reason": all_results.incomplete_reason,
+                        **_incomplete_class_fragment(all_results),
+                        "routing": _routing_payload(all_results),
+                    }
+                    if scan_limit_payload is not None:
+                        payload["scan_limit"] = scan_limit_payload
+                    # `--semantic` fail-closed degrade signal (audit #95 Part 2): emitted ONLY when
+                    # set, mirroring json_fmt.py's own "omitted entirely, not null" rule so every
+                    # OTHER (non-rank/non-semantic) search's envelope shape stays byte-identical.
+                    if all_results.rank_fallback_reason:
+                        payload["rank_fallback_reason"] = all_results.rank_fallback_reason
+                    # M14: the no-match structured envelope crossed the wire un-stamped.
+                    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+                capped_note = (
+                    f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                    if empty_scan_capped
+                    else ""
+                )
+                return (
+                    f"No matches found for '{search_pattern}' in {path}.\n{_routing_summary(all_results)}"
+                    f"{capped_note}"
+                )
+
+            if count_matches:
+                # M10 (Fable MCP-surface audit): this branch used to ALWAYS return plain text,
+                # ignoring `structured_json` (default True) -- a default caller doing
+                # `json.loads()` on the response would fail. Honor the flag like every other
+                # branch of this tool.
+                if structured_json:
+                    count_payload = {
+                        "pattern": search_pattern,
+                        "path": path,
+                        "total_matches": all_results.total_matches,
+                        "total_files": all_results.total_files,
+                        "result_incomplete": all_results.result_incomplete,
+                        "incomplete_reason": all_results.incomplete_reason,
+                        **_incomplete_class_fragment(all_results),
+                        "routing": _routing_payload(all_results),
+                    }
+                    if scan_limit_payload is not None:
+                        count_payload["scan_limit"] = scan_limit_payload
+                    if all_results.rank_fallback_reason:
+                        count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
+                    # M14: the count envelope crossed the wire un-stamped.
+                    return _self._inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
+                return (
+                    f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
+                    f"{_routing_summary(all_results)}"
+                )
+
+            by_file: dict[str, list[Any]] = {}
+            for match in all_results.matches:
+                if match.file not in by_file:
+                    by_file[match.file] = []
+                by_file[match.file].append(match)
+
+            rendered_by_file: dict[str, list[Any]] = {}
+            rendered_match_count = 0
+            if by_file:
+                for filepath, matches in by_file.items():
+                    if filepath not in rendered_by_file:
+                        if len(rendered_by_file) >= rendered_file_limit:
+                            continue
+                        rendered_by_file[filepath] = []
+                    for match in matches:
+                        if rendered_match_count >= rendered_result_limit:
+                            break
+                        rendered_by_file[filepath].append(match)
+                        rendered_match_count += 1
+                    if rendered_match_count >= rendered_result_limit:
+                        break
+
+            rendered_file_count = len(rendered_by_file)
+            omitted_matches = max(0, all_results.total_matches - rendered_match_count)
+            omitted_files = max(0, all_results.total_files - rendered_file_count)
+            scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
+            truncated = omitted_matches > 0 or omitted_files > 0 or scan_capped
+
+            if structured_json:
+                payload_matches = [
+                    {"file": filepath, "line_number": match.line_number, "text": match.text.strip()}
+                    for filepath, matches in rendered_by_file.items()
+                    for match in matches
+                ]
+                payload = {
+                    "pattern": search_pattern,
+                    "path": path,
+                    "total_matches": all_results.total_matches,
+                    "total_files": all_results.total_files,
+                    "rendered_match_count": len(payload_matches),
+                    "rendered_file_count": rendered_file_count,
+                    "matches": payload_matches,
+                    "truncated": truncated,
+                    "omitted_matches": omitted_matches,
+                    "omitted_files": omitted_files,
+                    # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
+                    # read a truncated result as complete (suppression != absence).
                     "result_incomplete": all_results.result_incomplete,
                     "incomplete_reason": all_results.incomplete_reason,
                     **_incomplete_class_fragment(all_results),
@@ -3059,153 +3398,62 @@ def tg_search(
                 }
                 if scan_limit_payload is not None:
                     payload["scan_limit"] = scan_limit_payload
-                # `--semantic` fail-closed degrade signal (audit #95 Part 2): emitted ONLY when
-                # set, mirroring json_fmt.py's own "omitted entirely, not null" rule so every
-                # OTHER (non-rank/non-semantic) search's envelope shape stays byte-identical.
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-                # M14: the no-match structured envelope crossed the wire un-stamped.
+                # M14: the results envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-            capped_note = (
-                f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
-                if empty_scan_capped
-                else ""
-            )
-            return (
-                f"No matches found for '{search_pattern}' in {path}.\n{_routing_summary(all_results)}"
-                f"{capped_note}"
-            )
 
-        if count_matches:
-            # M10 (Fable MCP-surface audit): this branch used to ALWAYS return plain text,
-            # ignoring `structured_json` (default True) -- a default caller doing
-            # `json.loads()` on the response would fail. Honor the flag like every other
-            # branch of this tool.
-            if structured_json:
-                count_payload = {
-                    "pattern": search_pattern,
-                    "path": path,
-                    "total_matches": all_results.total_matches,
-                    "total_files": all_results.total_files,
-                    "result_incomplete": all_results.result_incomplete,
-                    "incomplete_reason": all_results.incomplete_reason,
-                    **_incomplete_class_fragment(all_results),
-                    "routing": _routing_payload(all_results),
-                }
-                if scan_limit_payload is not None:
-                    count_payload["scan_limit"] = scan_limit_payload
-                if all_results.rank_fallback_reason:
-                    count_payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-                # M14: the count envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(json.dumps(count_payload, indent=2))
-            return (
-                f"Found a total of {all_results.total_matches} matches across {all_results.total_files} files in {path}.\n"
-                f"{_routing_summary(all_results)}"
-            )
-
-        by_file: dict[str, list[Any]] = {}
-        for match in all_results.matches:
-            if match.file not in by_file:
-                by_file[match.file] = []
-            by_file[match.file].append(match)
-
-        rendered_by_file: dict[str, list[Any]] = {}
-        rendered_match_count = 0
-        if by_file:
-            for filepath, matches in by_file.items():
-                if filepath not in rendered_by_file:
-                    if len(rendered_by_file) >= rendered_file_limit:
-                        continue
-                    rendered_by_file[filepath] = []
-                for match in matches:
-                    if rendered_match_count >= rendered_result_limit:
-                        break
-                    rendered_by_file[filepath].append(match)
-                    rendered_match_count += 1
-                if rendered_match_count >= rendered_result_limit:
-                    break
-
-        rendered_file_count = len(rendered_by_file)
-        omitted_matches = max(0, all_results.total_matches - rendered_match_count)
-        omitted_files = max(0, all_results.total_files - rendered_file_count)
-        scan_capped = bool(scan_limit_payload and scan_limit_payload["possibly_truncated"])
-        truncated = omitted_matches > 0 or omitted_files > 0 or scan_capped
-
-        if structured_json:
-            payload_matches = [
-                {"file": filepath, "line_number": match.line_number, "text": match.text.strip()}
-                for filepath, matches in rendered_by_file.items()
-                for match in matches
+            # Format the results into a readable string for the LLM
+            output = [
+                f"Found {all_results.total_matches} matches across {all_results.total_files} files:",
+                _routing_summary(all_results),
             ]
-            payload = {
-                "pattern": search_pattern,
-                "path": path,
-                "total_matches": all_results.total_matches,
-                "total_files": all_results.total_files,
-                "rendered_match_count": len(payload_matches),
-                "rendered_file_count": rendered_file_count,
-                "matches": payload_matches,
-                "truncated": truncated,
-                "omitted_matches": omitted_matches,
-                "omitted_files": omitted_files,
-                # Partial results (rg exit 2 soft error) — top-level so an agent caller can't
-                # read a truncated result as complete (suppression != absence).
-                "result_incomplete": all_results.result_incomplete,
-                "incomplete_reason": all_results.incomplete_reason,
-                **_incomplete_class_fragment(all_results),
-                "routing": _routing_payload(all_results),
-            }
-            if scan_limit_payload is not None:
-                payload["scan_limit"] = scan_limit_payload
-            if all_results.rank_fallback_reason:
-                payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-            # M14: the results envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
-        # Format the results into a readable string for the LLM
-        output = [
-            f"Found {all_results.total_matches} matches across {all_results.total_files} files:",
-            _routing_summary(all_results),
-        ]
+            if rendered_by_file:
+                for filepath, matches in rendered_by_file.items():
+                    output.append(f"\n{filepath}:")
+                    for m in matches:
+                        output.append(f"  {m.line_number}: {m.text.strip()}")
 
-        if rendered_by_file:
-            for filepath, matches in rendered_by_file.items():
-                output.append(f"\n{filepath}:")
-                for m in matches:
-                    output.append(f"  {m.line_number}: {m.text.strip()}")
-
-            if truncated:
-                output.append(
-                    f"\n... output truncated to {rendered_match_count} results across "
-                    f"{rendered_file_count} files; omitted {omitted_matches} matches "
-                    f"across {omitted_files} files."
+                if truncated:
+                    output.append(
+                        f"\n... output truncated to {rendered_match_count} results across "
+                        f"{rendered_file_count} files; omitted {omitted_matches} matches "
+                        f"across {omitted_files} files."
+                    )
+                if scan_capped:
+                    output.append(
+                        f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                    )
+            elif all_results.match_counts_by_file:
+                rendered_counts = list(all_results.match_counts_by_file.items())[
+                    :rendered_file_limit
+                ]
+                for filepath, count in rendered_counts:
+                    output.append(f"\n{filepath}:")
+                    output.append(f"  count={count}")
+                omitted_count_files = max(
+                    0, len(all_results.match_counts_by_file) - len(rendered_counts)
                 )
-            if scan_capped:
-                output.append(
-                    f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                if omitted_count_files:
+                    output.append(f"\n... and {omitted_count_files} more files.")
+            elif all_results.matched_file_paths:
+                rendered_paths = all_results.matched_file_paths[:rendered_file_limit]
+                for filepath in rendered_paths:
+                    output.append(f"\n{filepath}:")
+                omitted_path_files = max(
+                    0, len(all_results.matched_file_paths) - len(rendered_paths)
                 )
-        elif all_results.match_counts_by_file:
-            rendered_counts = list(all_results.match_counts_by_file.items())[:rendered_file_limit]
-            for filepath, count in rendered_counts:
-                output.append(f"\n{filepath}:")
-                output.append(f"  count={count}")
-            omitted_count_files = max(
-                0, len(all_results.match_counts_by_file) - len(rendered_counts)
-            )
-            if omitted_count_files:
-                output.append(f"\n... and {omitted_count_files} more files.")
-        elif all_results.matched_file_paths:
-            rendered_paths = all_results.matched_file_paths[:rendered_file_limit]
-            for filepath in rendered_paths:
-                output.append(f"\n{filepath}:")
-            omitted_path_files = max(0, len(all_results.matched_file_paths) - len(rendered_paths))
-            if omitted_path_files:
-                output.append(f"\n... and {omitted_path_files} more files.")
+                if omitted_path_files:
+                    output.append(f"\n... and {omitted_path_files} more files.")
 
-        return "\n".join(output)
+            return "\n".join(output)
 
-    except Exception as e:
-        return _sanitized_tool_error_text("tg_search", e)
+        except Exception as e:
+            return _sanitized_tool_error_text("tg_search", e)
+    except Exception as exc:
+        _log_tool_exception("tg_search", exc)
+        return _sanitized_tool_error_text("tg_search", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3232,205 +3480,278 @@ def tg_ast_search(
     # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
     # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- see
     # tg_search's identical comment for the full rationale.
-    paths_defaulted = path == "."
-
-    # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
-    # before any scan -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        if structured_json:
-            # M14: confinement-refusal envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "error": {"code": "invalid_input", "message": str(exc)},
-                    },
-                    indent=2,
-                )
-            )
-        return f"AST search failed: {exc}"
+        paths_defaulted = path == "."
 
-    normalized_max_repo_files = max(1, int(max_repo_files))
-    config = SearchConfig(ast=True, lang=lang, no_messages=True)
-    try:
-        pipeline = _self.Pipeline(config=config)
-        backend = pipeline.get_backend()
-    except ConfigurationError as exc:
-        # Fail closed with a STRUCTURED "unavailable" error instead of letting the
-        # ConfigurationError escape as an unwrapped FastMCP ToolError (Backend Fail-Closed
-        # Contract). `Pipeline(ast=True)` construction itself raises when the ast-grep /
-        # tree-sitter deps are absent for this pattern (e.g. a Linux runner without ast-grep),
-        # which is EARLIER than the backend-type check below -- mirror that branch's response
-        # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
-        if structured_json:
-            # M14: unavailable envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "error": {
-                            "code": "unavailable",
-                            "message": f"AstBackend is not available on this system: {exc}",
-                        },
-                    },
-                    indent=2,
-                )
-            )
-        return f"Error: AstBackend is not available on this system: {exc}"
-
-    backend_name = type(backend).__name__
-    if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
-        if structured_json:
-            # M14: unavailable envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "error": {
-                            "code": "unavailable",
-                            "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
-                        },
-                    },
-                    indent=2,
-                )
-            )
-        return "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
-
-    all_results = SearchResult(matches=[], total_files=0, total_matches=0)
-    all_results.routing_backend = getattr(
-        pipeline, "selected_backend_name", backend.__class__.__name__
-    )
-    all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
-    all_results.routing_gpu_device_ids = list(
-        getattr(pipeline, "selected_gpu_device_ids", []) or []
-    )
-    all_results.routing_gpu_chunk_plan_mb = list(
-        getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
-    )
-    all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
-    try:
-        # H3 (Fable MCP-surface audit): same PR #400 walk-deadline/fallback/broad-root-refusal
-        # port as `tg_search` -- the AST walk had the identical unbounded-hang and
-        # discard-partial-results-on-fault gaps (this backend is NEVER `RipgrepBackend`, so
-        # the large-root probe always applies).
-        refusal_message, _scanner, walker = _mcp_broad_root_scan_refusal(
-            path,
-            config,
-            normalized_max_repo_files=normalized_max_repo_files,
-            check_large_root=True,
-            paths_defaulted=paths_defaulted,
-        )
-        if refusal_message is not None:
-            return _broad_root_scan_refusal_result(
-                refusal_message,
-                pattern=pattern,
-                path=path,
-                lang=lang,
-                structured_json=structured_json,
-            )
-        files_scanned = 0
-        scan_capped = False
-        native_walk_deadline = compute_native_walk_deadline()
-        for current_file in walker:
-            if files_scanned >= normalized_max_repo_files:
-                scan_capped = True
-                break
-            if native_walk_deadline_exceeded(native_walk_deadline):
-                scan_capped = True
-                all_results.result_incomplete = True
-                all_results.incomplete_reason = (
-                    "native AST search exceeded the wall-clock deadline and was stopped; "
-                    "returning partial results. Scope the search to a smaller path, or "
-                    "lower max_repo_files."
-                )
-                all_results.incomplete_reason_class = "deadline"
-                break
-            try:
-                result = backend.search(current_file, pattern, config=config)
-            except BackendExecutionError as exc:
-                # Unlike `tg_search`'s regex CPU-fallback, there is no equivalent
-                # same-contract fallback engine for an AST query (CPUBackend does not
-                # understand `config.ast`/`config.lang` and would silently degrade to a
-                # nonsensical plain-text match on the AST pattern string -- exactly the
-                # "silently swap engines for a contract flag" failure the Backend
-                # Fail-Closed Contract forbids). Skip just this file, keep every match
-                # already collected, and mark the result explicitly incomplete instead.
-                sys.stderr.write(
-                    f"tensor-grep-mcp: tg_ast_search backend failed on {current_file} "
-                    f"({exc}); skipping file, keeping partial AST results.\n"
-                )
-                all_results.result_incomplete = True
-                if not all_results.incomplete_reason:
-                    all_results.incomplete_reason = (
-                        f"AST backend failed on one or more files (first: {current_file}); "
-                        "returning partial results."
-                    )
-                # `incomplete_reason_class` is DELIBERATELY NOT SET here. The closed vocabulary is
-                # exactly {unreadable_path, scan_limit, deadline, timeout} (docs/CONTRACTS.md), and
-                # a backend parse/exec failure is none of them. Labelling it with the nearest-
-                # looking member -- `unreadable_path` is the tempting one -- would tell an agent the
-                # PATH was the problem and send it to fix file permissions for a backend bug.
-                #
-                # The vocabulary is an allow-list, so "cannot classify" means EMIT NOTHING, not
-                # "invent a member". `result_incomplete` is still true, so the caller still knows
-                # the answer is partial; it just cannot branch on remediability, which is the
-                # honest state of affairs. A consumer must therefore treat an ABSENT class as
-                # "unclassified", never as "complete" -- see the contract note added with this
-                # change.
-                files_scanned += 1
-                continue
-            files_scanned += 1
-            all_results.matches.extend(result.matches)
-            all_results.matched_file_paths.extend(result.matched_file_paths)
-            _merge_count_metadata(all_results, result)
-            all_results.total_matches += result.total_matches
-            if result.total_files > 0 or result.total_matches > 0:
-                all_results.total_files += 1
-            _merge_runtime_routing(all_results, result)
-        # NOTE: unlike `tg_search`, this does NOT OR in `scanner.scan_truncated` -- doing so
-        # was tried and reverted (it broke `test_mcp_ast_search_reports_no_cap_hit_when_under_the_limit`:
-        # a bare `MagicMock()` scanner auto-vivifies a truthy `.scan_truncated` attribute unless a
-        # test explicitly stubs it False, which is out of scope for this fix).
-        scan_limit_payload = {
-            "max_repo_files": normalized_max_repo_files,
-            "scanned_files": files_scanned,
-            "possibly_truncated": scan_capped,
-        }
-
-        _apply_selected_gpu_defaults(
-            all_results=all_results,
-            selected_backend_name=getattr(
-                pipeline, "selected_backend_name", backend.__class__.__name__
-            ),
-            selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
-        )
-        _finalize_aggregate_result(all_results)
-
-        if all_results.is_empty:
+        # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
+        # before any scan -- see tg_repo_map for the systemic-finding rationale.
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
             if structured_json:
-                # M14: no-match envelope crossed the wire un-stamped.
+                # M14: confinement-refusal envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "pattern": pattern,
+                            "lang": lang,
+                            "path": "[refused]",
+                            "error": {"code": "invalid_input", "message": str(exc)},
+                        },
+                        indent=2,
+                    )
+                )
+            return f"AST search failed: {exc}"
+
+        normalized_max_repo_files = max(1, int(max_repo_files))
+        config = SearchConfig(ast=True, lang=lang, no_messages=True)
+        try:
+            pipeline = _self.Pipeline(config=config)
+            backend = pipeline.get_backend()
+        except ConfigurationError as exc:
+            _log_tool_exception("tg_ast_search", exc)
+            # Fail closed with a STRUCTURED "unavailable" error instead of letting the
+            # ConfigurationError escape as an unwrapped FastMCP ToolError (Backend Fail-Closed
+            # Contract). `Pipeline(ast=True)` construction itself raises when the ast-grep /
+            # tree-sitter deps are absent for this pattern (e.g. a Linux runner without ast-grep),
+            # which is EARLIER than the backend-type check below -- mirror that branch's response
+            # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
+            if structured_json:
+                # M14: unavailable envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(
                     json.dumps(
                         {
                             "pattern": pattern,
                             "lang": lang,
                             "path": path,
-                            "total_matches": 0,
+                            "error": {
+                                "code": "unavailable",
+                                "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
+                            },
+                        },
+                        indent=2,
+                    )
+                )
+            return (
+                "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
+            )
+
+        backend_name = type(backend).__name__
+        if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
+            if structured_json:
+                # M14: unavailable envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "pattern": pattern,
+                            "lang": lang,
+                            "path": path,
+                            "error": {
+                                "code": "unavailable",
+                                "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
+                            },
+                        },
+                        indent=2,
+                    )
+                )
+            return (
+                "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
+            )
+
+        all_results = SearchResult(matches=[], total_files=0, total_matches=0)
+        all_results.routing_backend = getattr(
+            pipeline, "selected_backend_name", backend.__class__.__name__
+        )
+        all_results.routing_reason = getattr(pipeline, "selected_backend_reason", "unknown")
+        all_results.routing_gpu_device_ids = list(
+            getattr(pipeline, "selected_gpu_device_ids", []) or []
+        )
+        all_results.routing_gpu_chunk_plan_mb = list(
+            getattr(pipeline, "selected_gpu_chunk_plan_mb", []) or []
+        )
+        all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
+        try:
+            # H3 (Fable MCP-surface audit): same PR #400 walk-deadline/fallback/broad-root-refusal
+            # port as `tg_search` -- the AST walk had the identical unbounded-hang and
+            # discard-partial-results-on-fault gaps (this backend is NEVER `RipgrepBackend`, so
+            # the large-root probe always applies).
+            refusal_message, _scanner, walker = _mcp_broad_root_scan_refusal(
+                path,
+                config,
+                normalized_max_repo_files=normalized_max_repo_files,
+                check_large_root=True,
+                paths_defaulted=paths_defaulted,
+            )
+            if refusal_message is not None:
+                return _broad_root_scan_refusal_result(
+                    refusal_message,
+                    pattern=pattern,
+                    path=path,
+                    lang=lang,
+                    structured_json=structured_json,
+                )
+            files_scanned = 0
+            scan_capped = False
+            native_walk_deadline = compute_native_walk_deadline()
+            for current_file in walker:
+                if files_scanned >= normalized_max_repo_files:
+                    scan_capped = True
+                    break
+                if native_walk_deadline_exceeded(native_walk_deadline):
+                    scan_capped = True
+                    all_results.result_incomplete = True
+                    all_results.incomplete_reason = (
+                        "native AST search exceeded the wall-clock deadline and was stopped; "
+                        "returning partial results. Scope the search to a smaller path, or "
+                        "lower max_repo_files."
+                    )
+                    all_results.incomplete_reason_class = "deadline"
+                    break
+                try:
+                    result = backend.search(current_file, pattern, config=config)
+                except BackendExecutionError as exc:
+                    # Unlike `tg_search`'s regex CPU-fallback, there is no equivalent
+                    # same-contract fallback engine for an AST query (CPUBackend does not
+                    # understand `config.ast`/`config.lang` and would silently degrade to a
+                    # nonsensical plain-text match on the AST pattern string -- exactly the
+                    # "silently swap engines for a contract flag" failure the Backend
+                    # Fail-Closed Contract forbids). Skip just this file, keep every match
+                    # already collected, and mark the result explicitly incomplete instead.
+                    sys.stderr.write(
+                        f"tensor-grep-mcp: tg_ast_search backend failed on {current_file} "
+                        f"({exc}); skipping file, keeping partial AST results.\n"
+                    )
+                    all_results.result_incomplete = True
+                    if not all_results.incomplete_reason:
+                        all_results.incomplete_reason = (
+                            f"AST backend failed on one or more files (first: {current_file}); "
+                            "returning partial results."
+                        )
+                    # `incomplete_reason_class` is DELIBERATELY NOT SET here. The closed vocabulary is
+                    # exactly {unreadable_path, scan_limit, deadline, timeout} (docs/CONTRACTS.md), and
+                    # a backend parse/exec failure is none of them. Labelling it with the nearest-
+                    # looking member -- `unreadable_path` is the tempting one -- would tell an agent the
+                    # PATH was the problem and send it to fix file permissions for a backend bug.
+                    #
+                    # The vocabulary is an allow-list, so "cannot classify" means EMIT NOTHING, not
+                    # "invent a member". `result_incomplete` is still true, so the caller still knows
+                    # the answer is partial; it just cannot branch on remediability, which is the
+                    # honest state of affairs. A consumer must therefore treat an ABSENT class as
+                    # "unclassified", never as "complete" -- see the contract note added with this
+                    # change.
+                    files_scanned += 1
+                    continue
+                files_scanned += 1
+                all_results.matches.extend(result.matches)
+                all_results.matched_file_paths.extend(result.matched_file_paths)
+                _merge_count_metadata(all_results, result)
+                all_results.total_matches += result.total_matches
+                if result.total_files > 0 or result.total_matches > 0:
+                    all_results.total_files += 1
+                _merge_runtime_routing(all_results, result)
+            # NOTE: unlike `tg_search`, this does NOT OR in `scanner.scan_truncated` -- doing so
+            # was tried and reverted (it broke `test_mcp_ast_search_reports_no_cap_hit_when_under_the_limit`:
+            # a bare `MagicMock()` scanner auto-vivifies a truthy `.scan_truncated` attribute unless a
+            # test explicitly stubs it False, which is out of scope for this fix).
+            scan_limit_payload = {
+                "max_repo_files": normalized_max_repo_files,
+                "scanned_files": files_scanned,
+                "possibly_truncated": scan_capped,
+            }
+
+            _apply_selected_gpu_defaults(
+                all_results=all_results,
+                selected_backend_name=getattr(
+                    pipeline, "selected_backend_name", backend.__class__.__name__
+                ),
+                selected_backend_reason=getattr(pipeline, "selected_backend_reason", "unknown"),
+            )
+            _finalize_aggregate_result(all_results)
+
+            if all_results.is_empty:
+                if structured_json:
+                    # M14: no-match envelope crossed the wire un-stamped.
+                    return _self._inject_mcp_contract_fields(
+                        json.dumps(
+                            {
+                                "pattern": pattern,
+                                "lang": lang,
+                                "path": path,
+                                "total_matches": 0,
+                                "total_files": all_results.total_files,
+                                "rendered_match_count": 0,
+                                "rendered_file_count": 0,
+                                "matches": [],
+                                "truncated": scan_capped,
+                                "omitted_matches": 0,
+                                "omitted_files": 0,
+                                "result_incomplete": all_results.result_incomplete,
+                                "incomplete_reason": all_results.incomplete_reason,
+                                **_incomplete_class_fragment(all_results),
+                                "scan_limit": scan_limit_payload,
+                                "routing": _routing_payload(all_results),
+                            },
+                            indent=2,
+                        )
+                    )
+                capped_note = (
+                    f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
+                    if scan_capped
+                    else ""
+                )
+                return (
+                    f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
+                    f"{capped_note}"
+                )
+
+            # Group by file
+            by_file: dict[str, list[Any]] = {}
+            for match in all_results.matches:
+                if match.file not in by_file:
+                    by_file[match.file] = []
+                by_file[match.file].append(match)
+
+            if structured_json:
+                rendered_file_limit = 15
+                rendered_result_limit = 150
+                rendered_by_file: dict[str, list[Any]] = {}
+                rendered_match_count = 0
+                for filepath, matches in by_file.items():
+                    if len(rendered_by_file) >= rendered_file_limit:
+                        break
+                    rendered_by_file[filepath] = []
+                    for match in matches:
+                        if rendered_match_count >= rendered_result_limit:
+                            break
+                        rendered_by_file[filepath].append(match)
+                        rendered_match_count += 1
+                rendered_file_count = len(rendered_by_file)
+                omitted_matches = max(0, all_results.total_matches - rendered_match_count)
+                omitted_files = max(0, all_results.total_files - rendered_file_count)
+                payload_matches = [
+                    {
+                        "file": filepath,
+                        "line_number": m.line_number,
+                        "text": m.text.strip(),
+                    }
+                    for filepath, matches in rendered_by_file.items()
+                    for m in matches
+                ]
+                # M14: results envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "pattern": pattern,
+                            "lang": lang,
+                            "path": path,
+                            "total_matches": all_results.total_matches,
                             "total_files": all_results.total_files,
-                            "rendered_match_count": 0,
-                            "rendered_file_count": 0,
-                            "matches": [],
-                            "truncated": scan_capped,
-                            "omitted_matches": 0,
-                            "omitted_files": 0,
+                            "rendered_match_count": len(payload_matches),
+                            "rendered_file_count": rendered_file_count,
+                            "matches": payload_matches,
+                            "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
+                            "omitted_matches": omitted_matches,
+                            "omitted_files": omitted_files,
                             "result_incomplete": all_results.result_incomplete,
                             "incomplete_reason": all_results.incomplete_reason,
                             **_incomplete_class_fragment(all_results),
@@ -3440,119 +3761,59 @@ def tg_ast_search(
                         indent=2,
                     )
                 )
-            capped_note = (
-                f"\nScan capped at {normalized_max_repo_files} files; results may be incomplete."
-                if scan_capped
-                else ""
-            )
-            return (
-                f"No AST matches found for pattern in {path}.\n{_routing_summary(all_results)}"
-                f"{capped_note}"
-            )
 
-        # Group by file
-        by_file: dict[str, list[Any]] = {}
-        for match in all_results.matches:
-            if match.file not in by_file:
-                by_file[match.file] = []
-            by_file[match.file].append(match)
-
-        if structured_json:
-            rendered_file_limit = 15
-            rendered_result_limit = 150
-            rendered_by_file: dict[str, list[Any]] = {}
-            rendered_match_count = 0
-            for filepath, matches in by_file.items():
-                if len(rendered_by_file) >= rendered_file_limit:
-                    break
-                rendered_by_file[filepath] = []
-                for match in matches:
-                    if rendered_match_count >= rendered_result_limit:
-                        break
-                    rendered_by_file[filepath].append(match)
-                    rendered_match_count += 1
-            rendered_file_count = len(rendered_by_file)
-            omitted_matches = max(0, all_results.total_matches - rendered_match_count)
-            omitted_files = max(0, all_results.total_files - rendered_file_count)
-            payload_matches = [
-                {
-                    "file": filepath,
-                    "line_number": m.line_number,
-                    "text": m.text.strip(),
-                }
-                for filepath, matches in rendered_by_file.items()
-                for m in matches
+            output = [
+                f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
+                _routing_summary(all_results),
             ]
-            # M14: results envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "total_matches": all_results.total_matches,
-                        "total_files": all_results.total_files,
-                        "rendered_match_count": len(payload_matches),
-                        "rendered_file_count": rendered_file_count,
-                        "matches": payload_matches,
-                        "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
-                        "omitted_matches": omitted_matches,
-                        "omitted_files": omitted_files,
-                        "result_incomplete": all_results.result_incomplete,
-                        "incomplete_reason": all_results.incomplete_reason,
-                        **_incomplete_class_fragment(all_results),
-                        "scan_limit": scan_limit_payload,
-                        "routing": _routing_payload(all_results),
-                    },
-                    indent=2,
+            if scan_capped:
+                output.append(
+                    f"Scan capped at {normalized_max_repo_files} files; results may be incomplete."
                 )
-            )
 
-        output = [
-            f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
-            _routing_summary(all_results),
-        ]
-        if scan_capped:
-            output.append(
-                f"Scan capped at {normalized_max_repo_files} files; results may be incomplete."
-            )
+            if by_file:
+                for filepath, matches in list(by_file.items())[:15]:
+                    output.append(f"\n{filepath}:")
+                    for m in matches[:10]:
+                        output.append(f"  {m.line_number}: {m.text.strip()}")
+                if len(by_file) > 15:
+                    output.append(f"\n... and {len(by_file) - 15} more files.")
+            elif all_results.match_counts_by_file:
+                for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
+                    output.append(f"\n{filepath}:")
+                    output.append(f"  count={count}")
+                if len(all_results.match_counts_by_file) > 15:
+                    output.append(
+                        f"\n... and {len(all_results.match_counts_by_file) - 15} more files."
+                    )
+            elif all_results.matched_file_paths:
+                for filepath in all_results.matched_file_paths[:15]:
+                    output.append(f"\n{filepath}:")
+                if len(all_results.matched_file_paths) > 15:
+                    output.append(
+                        f"\n... and {len(all_results.matched_file_paths) - 15} more files."
+                    )
 
-        if by_file:
-            for filepath, matches in list(by_file.items())[:15]:
-                output.append(f"\n{filepath}:")
-                for m in matches[:10]:
-                    output.append(f"  {m.line_number}: {m.text.strip()}")
-            if len(by_file) > 15:
-                output.append(f"\n... and {len(by_file) - 15} more files.")
-        elif all_results.match_counts_by_file:
-            for filepath, count in list(all_results.match_counts_by_file.items())[:15]:
-                output.append(f"\n{filepath}:")
-                output.append(f"  count={count}")
-            if len(all_results.match_counts_by_file) > 15:
-                output.append(f"\n... and {len(all_results.match_counts_by_file) - 15} more files.")
-        elif all_results.matched_file_paths:
-            for filepath in all_results.matched_file_paths[:15]:
-                output.append(f"\n{filepath}:")
-            if len(all_results.matched_file_paths) > 15:
-                output.append(f"\n... and {len(all_results.matched_file_paths) - 15} more files.")
+            return "\n".join(output)
 
-        return "\n".join(output)
-
-    except Exception as e:
-        if structured_json:
-            # M14: exception envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "pattern": pattern,
-                        "lang": lang,
-                        "path": path,
-                        "error": _sanitized_tool_error("tg_ast_search", e),
-                    },
-                    indent=2,
+        except Exception as e:
+            if structured_json:
+                # M14: exception envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "pattern": pattern,
+                            "lang": lang,
+                            "path": path,
+                            "error": _sanitized_tool_error("tg_ast_search", e),
+                        },
+                        indent=2,
+                    )
                 )
-            )
-        return _sanitized_tool_error_text("tg_ast_search", e)
+            return _sanitized_tool_error_text("tg_ast_search", e)
+    except Exception as exc:
+        _log_tool_exception("tg_ast_search", exc)
+        return _sanitized_tool_error_text("tg_ast_search", exc)
 
 
 @mcp.tool()  # type: ignore
@@ -3574,116 +3835,126 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
     # are echoed back verbatim in anomalies[].text below). Forward the RESOLVED path so the
     # downstream read below sees the same anchor-validated location this check validated.
     try:
-        file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
-    except ValueError as exc:
-        if structured_json:
-            # M14: confinement-refusal envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "file_path": file_path,
-                        "error": {"code": "invalid_input", "message": str(exc)},
-                    },
-                    indent=2,
-                )
-            )
-        return f"Error: {exc}"
-
-    try:
-        from tensor_grep.io.reader_fallback import FallbackReader
-        from tensor_grep.sidecar import (
-            DEFAULT_CLASSIFY_MAX_LINES,
-            _apply_classify_line_budget,
-            _classify_lines_with_metadata,
-        )
-
-        reader = FallbackReader()
-        # round-7 security (audit #81 #1): bound the read BEFORE materializing. read_lines()
-        # is a generator; previously `list(reader.read_lines(file_path))` fully materialized
-        # the entire file into memory before the DEFAULT_CLASSIFY_MAX_LINES budget was applied
-        # below -- an unbounded-memory DoS on a large (or attacker-influenceable) file. Cap the
-        # read one line past the budget via itertools.islice so `_apply_classify_line_budget`
-        # can still report `truncated=True` accurately without reading the rest of the file.
-        lines = list(itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1))
-        if not lines:
+        try:
+            file_path = str(_confine_read_path(file_path, _mcp_root(), label="file_path"))
+        except PathConfinementError as exc:
             if structured_json:
-                # M14: empty/unreadable envelope crossed the wire un-stamped.
+                # M14: confinement-refusal envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(
                     json.dumps(
                         {
-                            "file_path": file_path,
-                            "error": {
-                                "code": "invalid_input",
-                                "message": f"File {file_path} is empty or unreadable.",
-                            },
+                            "file_path": "[refused]",
+                            "error": {"code": "invalid_input", "message": str(exc)},
                         },
                         indent=2,
                     )
                 )
-            return f"Error: File {file_path} is empty or unreadable."
+            return f"Error: {exc}"
 
-        budgeted_lines, line_budget = _apply_classify_line_budget(
-            lines,
-            DEFAULT_CLASSIFY_MAX_LINES,
-        )
-        results, backend_metadata = _classify_lines_with_metadata(budgeted_lines)
-        provider_used = backend_metadata.get("provider_used", "heuristic")
-        provider_status = backend_metadata.get("provider_status", "local")
+        try:
+            from tensor_grep.io.reader_fallback import FallbackReader
+            from tensor_grep.sidecar import (
+                DEFAULT_CLASSIFY_MAX_LINES,
+                _apply_classify_line_budget,
+                _classify_lines_with_metadata,
+            )
 
-        warnings_or_errors = []
-        for i, r in enumerate(results):
-            if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
-                warnings_or_errors.append((budgeted_lines[i].strip(), r["label"], r["confidence"]))
+            reader = FallbackReader()
+            # round-7 security (audit #81 #1): bound the read BEFORE materializing. read_lines()
+            # is a generator; previously `list(reader.read_lines(file_path))` fully materialized
+            # the entire file into memory before the DEFAULT_CLASSIFY_MAX_LINES budget was applied
+            # below -- an unbounded-memory DoS on a large (or attacker-influenceable) file. Cap the
+            # read one line past the budget via itertools.islice so `_apply_classify_line_budget`
+            # can still report `truncated=True` accurately without reading the rest of the file.
+            lines = list(
+                itertools.islice(reader.read_lines(file_path), DEFAULT_CLASSIFY_MAX_LINES + 1)
+            )
+            if not lines:
+                if structured_json:
+                    # M14: empty/unreadable envelope crossed the wire un-stamped.
+                    return _self._inject_mcp_contract_fields(
+                        json.dumps(
+                            {
+                                "file_path": file_path,
+                                "error": {
+                                    "code": "invalid_input",
+                                    "message": f"File {file_path} is empty or unreadable.",
+                                },
+                            },
+                            indent=2,
+                        )
+                    )
+                return f"Error: File {file_path} is empty or unreadable."
 
-        if structured_json:
-            # M14: the success envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "file_path": file_path,
-                        "provider": provider_used,
-                        "provider_status": provider_status,
-                        "sample_lines": line_budget["emitted_lines"],
-                        "total_lines": line_budget["total_lines"],
-                        "anomaly_count": len(warnings_or_errors),
-                        "anomalies": [
-                            {"label": label, "confidence": conf, "text": text}
-                            for text, label, conf in warnings_or_errors[:20]
-                        ],
-                    },
-                    indent=2,
+            budgeted_lines, line_budget = _apply_classify_line_budget(
+                lines,
+                DEFAULT_CLASSIFY_MAX_LINES,
+            )
+            results, backend_metadata = _classify_lines_with_metadata(budgeted_lines)
+            provider_used = backend_metadata.get("provider_used", "heuristic")
+            provider_status = backend_metadata.get("provider_status", "local")
+
+            warnings_or_errors = []
+            for i, r in enumerate(results):
+                if r["label"] in ("warn", "error") and r["confidence"] > 0.8:
+                    warnings_or_errors.append((
+                        budgeted_lines[i].strip(),
+                        r["label"],
+                        r["confidence"],
+                    ))
+
+            if structured_json:
+                # M14: the success envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "file_path": file_path,
+                            "provider": provider_used,
+                            "provider_status": provider_status,
+                            "sample_lines": line_budget["emitted_lines"],
+                            "total_lines": line_budget["total_lines"],
+                            "anomaly_count": len(warnings_or_errors),
+                            "anomalies": [
+                                {"label": label, "confidence": conf, "text": text}
+                                for text, label, conf in warnings_or_errors[:20]
+                            ],
+                        },
+                        indent=2,
+                    )
                 )
-            )
 
-        if not warnings_or_errors:
-            return f"No severe anomalies detected in {file_path}. All logs appear nominal."
+            if not warnings_or_errors:
+                return f"No severe anomalies detected in {file_path}. All logs appear nominal."
 
-        output = [
-            (
-                f"Log Classification for {file_path} "
-                f"(provider={provider_used}, status={provider_status}, "
-                f"sample={line_budget['emitted_lines']}/{line_budget['total_lines']} lines):"
-            )
-        ]
-        output.append(f"\nDetected {len(warnings_or_errors)} High-Confidence Anomalies:")
-        for text, label, conf in warnings_or_errors[:20]:  # Limit output
-            output.append(f"[{label.upper()}] ({conf:.2f}) {text}")
-
-        return "\n".join(output)
-
-    except Exception as e:
-        if structured_json:
-            # M14: exception envelope crossed the wire un-stamped.
-            return _self._inject_mcp_contract_fields(
-                json.dumps(
-                    {
-                        "file_path": file_path,
-                        "error": _sanitized_tool_error("tg_classify_logs", e),
-                    },
-                    indent=2,
+            output = [
+                (
+                    f"Log Classification for {file_path} "
+                    f"(provider={provider_used}, status={provider_status}, "
+                    f"sample={line_budget['emitted_lines']}/{line_budget['total_lines']} lines):"
                 )
-            )
-        return _sanitized_tool_error_text("tg_classify_logs", e)
+            ]
+            output.append(f"\nDetected {len(warnings_or_errors)} High-Confidence Anomalies:")
+            for text, label, conf in warnings_or_errors[:20]:  # Limit output
+                output.append(f"[{label.upper()}] ({conf:.2f}) {text}")
+
+            return "\n".join(output)
+
+        except Exception as e:
+            if structured_json:
+                # M14: exception envelope crossed the wire un-stamped.
+                return _self._inject_mcp_contract_fields(
+                    json.dumps(
+                        {
+                            "file_path": file_path,
+                            "error": _sanitized_tool_error("tg_classify_logs", e),
+                        },
+                        indent=2,
+                    )
+                )
+            return _sanitized_tool_error_text("tg_classify_logs", e)
+    except Exception as exc:
+        _log_tool_exception("tg_classify_logs", exc)
+        return _sanitized_tool_error_text("tg_classify_logs", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3695,22 +3966,32 @@ def tg_devices(json_output: bool = True) -> str:
         json_output: Emit machine-readable JSON output (default true). Set to false for
             plain-text output.
     """
-    import json
+    try:
+        import json
 
-    inventory = collect_device_inventory()
-    payload = inventory.to_dict()
-    if json_output:
-        # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
-        # through the injector like every other tool envelope.
-        return _self._inject_mcp_contract_fields(json.dumps(payload))
+        try:
+            inventory = _self.collect_device_inventory()
+            payload = inventory.to_dict()
+            if json_output:
+                # M14: tg_devices' JSON arrived un-stamped (compact dumps, no envelope); route it
+                # through the injector like every other tool envelope.
+                return _self._inject_mcp_contract_fields(json.dumps(payload))
 
-    if not inventory.devices:
-        return "No routable GPUs detected."
+            if not inventory.devices:
+                return "No routable GPUs detected."
 
-    lines = [f"Detected {inventory.device_count} routable GPU(s):"]
-    for device in inventory.devices:
-        lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
-    return "\n".join(lines)
+            lines = [f"Detected {inventory.device_count} routable GPU(s):"]
+            for device in inventory.devices:
+                lines.append(f"- gpu:{device.device_id} vram_mb={device.vram_capacity_mb}")
+            return "\n".join(lines)
+        except Exception as exc:
+            _log_tool_exception("tg_devices", exc)
+            if json_output:
+                return _sanitized_tool_error_text("tg_devices", exc)
+            return f"Error collecting device inventory: {_safe_exception_class_name(exc)}"
+    except Exception as exc:
+        _log_tool_exception("tg_devices", exc)
+        return _sanitized_tool_error_text("tg_devices", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3731,37 +4012,46 @@ def tg_session_open(
     # also an arbitrary-directory-read primitive (the cached repo_map content is later
     # returned verbatim by tg_session_show/tg_session_context/etc.).
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
-    from tensor_grep.cli.session_store import get_session, open_session
+        from tensor_grep.cli.session_store import get_session, open_session
 
-    try:
-        result = open_session(path, max_repo_files=max_repo_files)
+        try:
+            result = open_session(path, max_repo_files=max_repo_files)
+        except Exception as exc:
+            return _session_exception_payload(
+                path=path, message=_sanitized_tool_error_text("open_session", exc), detail={}
+            )
+
+        degraded: dict[str, object]  # M13: tracked_file_count counts source + TEST files
+        try:
+            session_payload = get_session(result.session_id, path)
+            repo_map = session_payload.get("repo_map") or {}
+            related_paths = repo_map.get("related_paths") or []
+            tracked_file_count, degraded = len(related_paths), {}
+        except Exception as exc:  # W1-a: was a SILENT-SWALLOW (see the disposition ledger)
+            tracked_file_count, degraded = (
+                result.file_count,
+                {"tracked_file_count_error": _sanitized_tool_error_text("get_session", exc)},
+            )
+
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "schema_version": _json_output_version(),
+                **result.__dict__,
+                "tracked_file_count": tracked_file_count,
+                **degraded,
+            },
+            indent=2,
+        )
     except Exception as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
-
-    degraded: dict[str, object]  # M13: tracked_file_count counts source + TEST files
-    try:
-        session_payload = get_session(result.session_id, path)
-        repo_map = session_payload.get("repo_map") or {}
-        related_paths = repo_map.get("related_paths") or []
-        tracked_file_count, degraded = len(related_paths), {}
-    except Exception as exc:  # W1-a: was a SILENT-SWALLOW (see the disposition ledger)
-        tracked_file_count, degraded = result.file_count, {"tracked_file_count_error": str(exc)}
-
-    return json.dumps(
-        {
-            "version": _json_output_version(),
-            "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-            "schema_version": _json_output_version(),
-            **result.__dict__,
-            "tracked_file_count": tracked_file_count,
-            **degraded,
-        },
-        indent=2,
-    )
+        _log_tool_exception("tg_session_open", exc)
+        return _sanitized_tool_error_text("tg_session_open", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3775,25 +4065,31 @@ def tg_session_list(path: str = ".") -> str:
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_exception_payload(path="[refused]", message=str(exc), detail={})
 
-    from tensor_grep.cli.session_store import list_sessions
+        from tensor_grep.cli.session_store import list_sessions
 
-    try:
-        sessions = [record.__dict__ for record in list_sessions(path)]
+        try:
+            sessions = [record.__dict__ for record in list_sessions(path)]
+        except Exception as exc:
+            return _session_exception_payload(
+                path=path, message=_sanitized_tool_error_text("list_sessions", exc), detail={}
+            )
+
+        return json.dumps(
+            {
+                "version": _json_output_version(),
+                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                "sessions": sessions,
+            },
+            indent=2,
+        )
     except Exception as exc:
-        return _session_exception_payload(path=path, message=str(exc), detail={})
-
-    return json.dumps(
-        {
-            "version": _json_output_version(),
-            "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-            "sessions": sessions,
-        },
-        indent=2,
-    )
+        _log_tool_exception("tg_session_list", exc)
+        return _sanitized_tool_error_text("tg_session_list", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3808,28 +4104,32 @@ def tg_session_show(session_id: str, path: str = ".") -> str:
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(
-            session_id=session_id,
-            path=path,
-            message=str(exc),
-            detail={},
-        )
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_exception_payload(
+                session_id=session_id,
+                path="[refused]",
+                message=str(exc),
+                detail={},
+            )
 
-    from tensor_grep.cli.session_store import get_session
+        from tensor_grep.cli.session_store import get_session
 
-    try:
-        payload = get_session(session_id, path)
+        try:
+            payload = get_session(session_id, path)
+        except Exception as exc:
+            return _session_exception_payload(
+                session_id=session_id,
+                path=path,
+                message=_sanitized_tool_error_text("get_session", exc),
+                detail={},
+            )
+
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:
-        return _session_exception_payload(
-            session_id=session_id,
-            path=path,
-            message=str(exc),
-            detail={},
-        )
-
-    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        _log_tool_exception("tg_session_show", exc)
+        return _sanitized_tool_error_text("tg_session_show", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3844,29 +4144,33 @@ def tg_session_refresh(session_id: str, path: str = ".") -> str:
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_exception_payload(
-            session_id=session_id,
-            path=path,
-            message=str(exc),
-            detail={},
-        )
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_exception_payload(
+                session_id=session_id,
+                path="[refused]",
+                message=str(exc),
+                detail={},
+            )
 
-    from tensor_grep.cli.session_store import refresh_session
+        from tensor_grep.cli.session_store import refresh_session
 
-    try:
-        payload = refresh_session(session_id, path)
+        try:
+            payload = refresh_session(session_id, path)
+        except Exception as exc:
+            return _session_exception_payload(
+                session_id=session_id,
+                path=path,
+                message=_sanitized_tool_error_text("refresh_session", exc),
+                detail={},
+            )
+
+        # M14: the refreshed-session payload crossed the wire un-stamped.
+        return _self._inject_mcp_contract_fields(json.dumps(payload.__dict__, indent=2))
     except Exception as exc:
-        return _session_exception_payload(
-            session_id=session_id,
-            path=path,
-            message=str(exc),
-            detail={},
-        )
-
-    # M14: the refreshed-session payload crossed the wire un-stamped.
-    return _self._inject_mcp_contract_fields(json.dumps(payload.__dict__, indent=2))
+        _log_tool_exception("tg_session_refresh", exc)
+        return _sanitized_tool_error_text("tg_session_refresh", exc)
 
 
 @_register_legacy_tool  # type: ignore
@@ -3890,59 +4194,65 @@ def tg_session_context(
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any read -- see tg_repo_map for the systemic-finding rationale.
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query},
-            query=query,
-        )
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _session_error_payload(
+                session_id=session_id,
+                path="[refused]",
+                code="invalid_input",
+                message=str(exc),
+                detail={"query": query},
+                query=query,
+            )
 
-    from tensor_grep.cli.session_store import SessionStaleError, session_context
+        from tensor_grep.cli.session_store import SessionStaleError, session_context
 
-    effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
-    try:
-        payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
-        # H4 (Fable MCP-surface audit): every sibling context tool (`tg_context_pack`,
-        # `tg_context_render`, `tg_agent_capsule`, the session render/edit-plan family) bounds
-        # its output by `max_tokens`; this tool called `session_context` ->
-        # `build_context_pack_from_map` with NO bound at all (dogfood 1.27.0: unbounded at
-        # ~557KB/384 files -- the exact regression `session context --daemon` hit on the CLI,
-        # main.py's `_apply_context_token_budget` call). Port the same post-processing step
-        # here (imported from repo_map.py, not reimplemented) since `session_store.py` is out
-        # of scope for this fix.
-        payload = _apply_context_token_budget(payload, max_tokens)
-    except SessionStaleError as exc:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=str(exc),
-            detail={"query": query},
-            query=query,
-        )
-    except FileNotFoundError:
-        return _session_error_payload(
-            session_id=session_id,
-            path=path,
-            code="invalid_input",
-            message=f"Path not found: {Path(path).expanduser().resolve()}",
-            detail={"query": query},
-            query=query,
-        )
+        effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
+        try:
+            payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
+            # H4 (Fable MCP-surface audit): every sibling context tool (`tg_context_pack`,
+            # `tg_context_render`, `tg_agent_capsule`, the session render/edit-plan family) bounds
+            # its output by `max_tokens`; this tool called `session_context` ->
+            # `build_context_pack_from_map` with NO bound at all (dogfood 1.27.0: unbounded at
+            # ~557KB/384 files -- the exact regression `session context --daemon` hit on the CLI,
+            # main.py's `_apply_context_token_budget` call). Port the same post-processing step
+            # here (imported from repo_map.py, not reimplemented) since `session_store.py` is out
+            # of scope for this fix.
+            payload = _apply_context_token_budget(payload, max_tokens)
+        except SessionStaleError as exc:
+            _log_tool_exception("tg_session_context", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Session cache is stale (cached session files changed on disk) for session '{session_id}'. Refresh session with tg_session_refresh.",
+                detail={"query": query},
+                query=query,
+            )
+        except FileNotFoundError as exc:
+            _log_tool_exception("tg_session_context", exc)
+            return _session_error_payload(
+                session_id=session_id,
+                path=path,
+                code="invalid_input",
+                message=f"Path not found: {path}",
+                detail={"query": query},
+                query=query,
+            )
+        except Exception as exc:
+            return _session_exception_payload(
+                session_id=session_id,
+                path=path,
+                message=_sanitized_tool_error_text("session_context", exc),
+                detail={"query": query},
+                query=query,
+            )
+
+        return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
     except Exception as exc:
-        return _session_exception_payload(
-            session_id=session_id,
-            path=path,
-            message=str(exc),
-            detail={"query": query},
-            query=query,
-        )
-
-    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+        _log_tool_exception("tg_session_context", exc)
+        return _sanitized_tool_error_text("tg_session_context", exc)
 
 
 # ================================================================================================
@@ -4016,60 +4326,64 @@ def tg_navigate(
             callers/importers only). Partial results are flagged, never silently truncated.
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-        if file is not None:
-            file = str(_confine_mcp_path(file, label="file"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_navigate", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+            if file is not None:
+                file = str(_confine_mcp_path(file, label="file"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_navigate", action, exc)
 
-    try:
-        if action == "defs":
-            if symbol is None:
-                return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return _self.tg_symbol_defs(
-                symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
-            )
-        if action == "source":
-            if symbol is None:
-                return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return _self.tg_symbol_source(
-                symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
-            )
-        if action == "refs":
-            if symbol is None:
-                return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return _self.tg_symbol_refs(
-                symbol=symbol,
-                path=path,
-                provider=provider,
-                max_repo_files=max_repo_files,
-                deadline=deadline,
-            )
-        if action == "callers":
-            if symbol is None:
-                return _meta_missing_param_error("tg_navigate", action, "symbol")
-            return _self.tg_symbol_callers(
-                symbol=symbol,
-                path=path,
-                provider=provider,
-                max_repo_files=max_repo_files,
-                deadline=deadline,
-            )
-        if action == "imports":
-            if file is None:
-                return _meta_missing_param_error("tg_navigate", action, "file")
-            return _self.tg_file_imports(file=file)
-        if action == "importers":
-            if file is None:
-                return _meta_missing_param_error("tg_navigate", action, "file")
-            return _self.tg_file_importers(
-                file=file, path=path, max_repo_files=max_repo_files, deadline=deadline
-            )
-        return _meta_unknown_action_error("tg_navigate", action, _TG_NAVIGATE_ACTIONS)
-    except Exception as exc:  # never a raw exception across the MCP boundary
-        payload = _meta_envelope(tool="tg_navigate", action=action)
-        payload["error"] = _sanitized_tool_error("tg_navigate", exc)
-        return json.dumps(payload, indent=2)
+        try:
+            if action == "defs":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_navigate", action, "symbol")
+                return _self.tg_symbol_defs(
+                    symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
+                )
+            if action == "source":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_navigate", action, "symbol")
+                return _self.tg_symbol_source(
+                    symbol=symbol, path=path, provider=provider, max_repo_files=max_repo_files
+                )
+            if action == "refs":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_navigate", action, "symbol")
+                return _self.tg_symbol_refs(
+                    symbol=symbol,
+                    path=path,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline=deadline,
+                )
+            if action == "callers":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_navigate", action, "symbol")
+                return _self.tg_symbol_callers(
+                    symbol=symbol,
+                    path=path,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline=deadline,
+                )
+            if action == "imports":
+                if file is None:
+                    return _meta_missing_param_error("tg_navigate", action, "file")
+                return _self.tg_file_imports(file=file)
+            if action == "importers":
+                if file is None:
+                    return _meta_missing_param_error("tg_navigate", action, "file")
+                return _self.tg_file_importers(
+                    file=file, path=path, max_repo_files=max_repo_files, deadline=deadline
+                )
+            return _meta_unknown_action_error("tg_navigate", action, _TG_NAVIGATE_ACTIONS)
+        except Exception as exc:  # never a raw exception across the MCP boundary
+            payload = _meta_envelope(tool="tg_navigate", action=action)
+            payload["error"] = _sanitized_tool_error("tg_navigate", exc)
+            return json.dumps(payload, indent=2)
+    except Exception as exc:
+        _log_tool_exception("tg_navigate", exc)
+        return _sanitized_tool_error_text("tg_navigate", exc)
 
 
 _TG_IMPACT_ACTIONS = ("impact", "blast_radius", "blast_radius_plan", "blast_radius_render")
@@ -4124,57 +4438,61 @@ def tg_impact(
             results are flagged, never silently truncated.
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_impact", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_impact", action, exc)
 
-    if symbol is None:
-        return _meta_missing_param_error("tg_impact", action, "symbol")
+        if symbol is None:
+            return _meta_missing_param_error("tg_impact", action, "symbol")
 
-    try:
-        if action == "impact":
-            return _self.tg_symbol_impact(
-                symbol=symbol, path=path, provider=provider, deadline=deadline
-            )
-        if action == "blast_radius":
-            return _self.tg_symbol_blast_radius(
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                provider=provider,
-                max_repo_files=max_repo_files,
-                deadline=deadline,
-            )
-        if action == "blast_radius_plan":
-            return _self.tg_symbol_blast_radius_plan(
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_symbols=max_symbols,
-                provider=provider,
-                max_repo_files=max_repo_files,
-            )
-        if action == "blast_radius_render":
-            return _self.tg_symbol_blast_radius_render(
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                profile=profile,
-                provider=provider,
-                max_repo_files=max_repo_files,
-            )
-        return _meta_unknown_action_error("tg_impact", action, _TG_IMPACT_ACTIONS)
+        try:
+            if action == "impact":
+                return _self.tg_symbol_impact(
+                    symbol=symbol, path=path, provider=provider, deadline=deadline
+                )
+            if action == "blast_radius":
+                return _self.tg_symbol_blast_radius(
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                    deadline=deadline,
+                )
+            if action == "blast_radius_plan":
+                return _self.tg_symbol_blast_radius_plan(
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            if action == "blast_radius_render":
+                return _self.tg_symbol_blast_radius_render(
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                    provider=provider,
+                    max_repo_files=max_repo_files,
+                )
+            return _meta_unknown_action_error("tg_impact", action, _TG_IMPACT_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_impact", action=action)
+            payload["error"] = _sanitized_tool_error("tg_impact", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_impact", action=action)
-        payload["error"] = _sanitized_tool_error("tg_impact", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_impact", exc)
+        return _sanitized_tool_error_text("tg_impact", exc)
 
 
 # [SEC] Cap the NUMBER of workspace_roots tg_query fans out across in one call, and (below)
@@ -4345,127 +4663,135 @@ def tg_query(
             top-level `omitted_roots` list plus `partial: true`, never silently dropped.
     """
     try:
-        confined_path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_query", action, exc)
-
-    confined_roots: list[str] | None = None
-    if workspace_roots:
-        if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
-            return _meta_workspace_roots_cap_error(
-                "tg_query",
-                action,
-                count=len(workspace_roots),
-                cap=_MAX_WORKSPACE_ROOTS,
-            )
         try:
-            confined_roots = [
-                str(_confine_mcp_path(root, label="workspace_roots")) for root in workspace_roots
-            ]
-        except ValueError as exc:
+            confined_path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
             return _meta_confinement_error("tg_query", action, exc)
 
-    try:
-        if confined_roots is None:
-            return _self._tg_query_dispatch(
-                action,
-                pattern=pattern,
-                query=query,
-                lang=lang,
-                path=confined_path,
-                case_sensitive=case_sensitive,
-                ignore_case=ignore_case,
-                fixed_strings=fixed_strings,
-                word_regexp=word_regexp,
-                context=context,
-                max_count=max_count,
-                max_results=max_results,
-                max_files=max_files,
-                count_matches=count_matches,
-                glob=glob,
-                type_filter=type_filter,
-                structured_json=structured_json,
-                max_repo_files=max_repo_files,
-                rank=rank,
-                semantic=semantic,
-                limit=limit,
-                max_tokens=max_tokens,
-                deadline=deadline,
-            )
-
-        results_by_root: dict[str, Any] = {}
-        omitted_roots: list[str] = []
-        # Share ONE absolute wall-clock deadline across every root in this loop, mirroring the
-        # deadline_monotonic -> remaining-deadline_seconds pattern agent_capsule.py's call-site
-        # evidence rescue scan already uses (agent_capsule.py:565-567) -- computed ONCE, outside
-        # the loop, so root 2 does not get a fresh copy of `deadline` just because root 1 already
-        # consumed the budget (audit C3: previously EVERY root got the full `deadline`
-        # unchanged, so N roots could cost up to N x deadline wall-clock time instead of one
-        # shared `deadline` for the whole call).
-        loop_deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
-        for root in confined_roots:
-            if loop_deadline_monotonic is not None and time.monotonic() >= loop_deadline_monotonic:
-                # The shared budget is already spent -- skip (never dispatch) rather than
-                # silently granting this root its own fresh deadline or silently dropping it
-                # from the response with no signal (reported via omitted_roots/partial below).
-                omitted_roots.append(root)
-                continue
-            root_deadline = (
-                None
-                if loop_deadline_monotonic is None
-                else max(0.1, loop_deadline_monotonic - time.monotonic())
-            )
-            single_text = _self._tg_query_dispatch(
-                action,
-                pattern=pattern,
-                query=query,
-                lang=lang,
-                path=root,
-                case_sensitive=case_sensitive,
-                ignore_case=ignore_case,
-                fixed_strings=fixed_strings,
-                word_regexp=word_regexp,
-                context=context,
-                max_count=max_count,
-                max_results=max_results,
-                max_files=max_files,
-                count_matches=count_matches,
-                glob=glob,
-                type_filter=type_filter,
-                structured_json=structured_json,
-                max_repo_files=max_repo_files,
-                rank=rank,
-                semantic=semantic,
-                limit=limit,
-                max_tokens=max_tokens,
-                deadline=root_deadline,
-            )
+        confined_roots: list[str] | None = None
+        if workspace_roots:
+            if len(workspace_roots) > _MAX_WORKSPACE_ROOTS:
+                return _meta_workspace_roots_cap_error(
+                    "tg_query",
+                    action,
+                    count=len(workspace_roots),
+                    cap=_MAX_WORKSPACE_ROOTS,
+                )
             try:
-                results_by_root[root] = json.loads(single_text)
-            except json.JSONDecodeError:
-                results_by_root[root] = single_text
+                confined_roots = [
+                    str(_confine_mcp_path(root, label="workspace_roots"))
+                    for root in workspace_roots
+                ]
+            except PathConfinementError as exc:
+                return _meta_confinement_error("tg_query", action, exc)
 
-        extra: dict[str, Any] = {
-            "path": confined_path,
-            "workspace_roots": confined_roots,
-            "results_by_root": results_by_root,
-        }
-        if omitted_roots:
-            # Schema-additive: only present when the shared deadline actually truncated the
-            # root fan-out, so a call that never hits the budget keeps the exact pre-existing
-            # response shape.
-            extra["omitted_roots"] = omitted_roots
-            extra["partial"] = True
-        payload = _meta_envelope(
-            tool="tg_query",
-            action=action,
-            extra=extra,
-        )
-        return json.dumps(payload, indent=2)
+        try:
+            if confined_roots is None:
+                return _self._tg_query_dispatch(
+                    action,
+                    pattern=pattern,
+                    query=query,
+                    lang=lang,
+                    path=confined_path,
+                    case_sensitive=case_sensitive,
+                    ignore_case=ignore_case,
+                    fixed_strings=fixed_strings,
+                    word_regexp=word_regexp,
+                    context=context,
+                    max_count=max_count,
+                    max_results=max_results,
+                    max_files=max_files,
+                    count_matches=count_matches,
+                    glob=glob,
+                    type_filter=type_filter,
+                    structured_json=structured_json,
+                    max_repo_files=max_repo_files,
+                    rank=rank,
+                    semantic=semantic,
+                    limit=limit,
+                    max_tokens=max_tokens,
+                    deadline=deadline,
+                )
+
+            results_by_root: dict[str, Any] = {}
+            omitted_roots: list[str] = []
+            # Share ONE absolute wall-clock deadline across every root in this loop, mirroring the
+            # deadline_monotonic -> remaining-deadline_seconds pattern agent_capsule.py's call-site
+            # evidence rescue scan already uses (agent_capsule.py:565-567) -- computed ONCE, outside
+            # the loop, so root 2 does not get a fresh copy of `deadline` just because root 1 already
+            # consumed the budget (audit C3: previously EVERY root got the full `deadline`
+            # unchanged, so N roots could cost up to N x deadline wall-clock time instead of one
+            # shared `deadline` for the whole call).
+            loop_deadline_monotonic = _deadline_monotonic_from_seconds(deadline)
+            for root in confined_roots:
+                if (
+                    loop_deadline_monotonic is not None
+                    and time.monotonic() >= loop_deadline_monotonic
+                ):
+                    # The shared budget is already spent -- skip (never dispatch) rather than
+                    # silently granting this root its own fresh deadline or silently dropping it
+                    # from the response with no signal (reported via omitted_roots/partial below).
+                    omitted_roots.append(root)
+                    continue
+                root_deadline = (
+                    None
+                    if loop_deadline_monotonic is None
+                    else max(0.1, loop_deadline_monotonic - time.monotonic())
+                )
+                single_text = _self._tg_query_dispatch(
+                    action,
+                    pattern=pattern,
+                    query=query,
+                    lang=lang,
+                    path=root,
+                    case_sensitive=case_sensitive,
+                    ignore_case=ignore_case,
+                    fixed_strings=fixed_strings,
+                    word_regexp=word_regexp,
+                    context=context,
+                    max_count=max_count,
+                    max_results=max_results,
+                    max_files=max_files,
+                    count_matches=count_matches,
+                    glob=glob,
+                    type_filter=type_filter,
+                    structured_json=structured_json,
+                    max_repo_files=max_repo_files,
+                    rank=rank,
+                    semantic=semantic,
+                    limit=limit,
+                    max_tokens=max_tokens,
+                    deadline=root_deadline,
+                )
+                try:
+                    results_by_root[root] = json.loads(single_text)
+                except json.JSONDecodeError:
+                    results_by_root[root] = single_text
+
+            extra: dict[str, Any] = {
+                "path": confined_path,
+                "workspace_roots": confined_roots,
+                "results_by_root": results_by_root,
+            }
+            if omitted_roots:
+                # Schema-additive: only present when the shared deadline actually truncated the
+                # root fan-out, so a call that never hits the budget keeps the exact pre-existing
+                # response shape.
+                extra["omitted_roots"] = omitted_roots
+                extra["partial"] = True
+            payload = _meta_envelope(
+                tool="tg_query",
+                action=action,
+                extra=extra,
+            )
+            return json.dumps(payload, indent=2)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_query", action=action)
+            payload["error"] = _sanitized_tool_error("tg_query", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_query", action=action)
-        payload["error"] = _sanitized_tool_error("tg_query", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_query", exc)
+        return _sanitized_tool_error_text("tg_query", exc)
 
 
 _TG_CONTEXT_ACTIONS = ("pack", "edit_plan", "render", "capsule")
@@ -4526,63 +4852,69 @@ def tg_context(
             `tg agent --deadline` / `tg codemap --deadline`).
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_context", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_context", action, exc)
 
-    if query is None:
-        return _meta_missing_param_error("tg_context", action, "query")
+        if query is None:
+            return _meta_missing_param_error("tg_context", action, "query")
 
-    try:
-        max_tokens_kwargs: dict[str, Any] = {} if max_tokens is None else {"max_tokens": max_tokens}
-        if action == "pack":
-            return _self.tg_context_pack(query=query, path=path, **max_tokens_kwargs)
-        if action == "edit_plan":
-            return _self.tg_edit_plan(
-                query=query,
-                path=path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_tokens=max_tokens,
-                max_symbols=max_symbols,
-                provider=provider,
+        try:
+            max_tokens_kwargs: dict[str, Any] = (
+                {} if max_tokens is None else {"max_tokens": max_tokens}
             )
-        if action == "render":
-            return _self.tg_context_render(
-                query=query,
-                path=path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                model=model,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                provider=provider,
-                profile=profile,
-                **max_tokens_kwargs,
-            )
-        if action == "capsule":
-            return _self.tg_agent_capsule(
-                query=query,
-                path=path,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_repo_files=max_repo_files,
-                model=model,
-                provider=provider,
-                gpu_device_ids=gpu_device_ids,
-                gpu_timeout_s=gpu_timeout_s,
-                deadline=deadline,
-                **max_tokens_kwargs,
-            )
-        return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
+            if action == "pack":
+                return _self.tg_context_pack(query=query, path=path, **max_tokens_kwargs)
+            if action == "edit_plan":
+                return _self.tg_edit_plan(
+                    query=query,
+                    path=path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_symbols=max_symbols,
+                    provider=provider,
+                )
+            if action == "render":
+                return _self.tg_context_render(
+                    query=query,
+                    path=path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    model=model,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    provider=provider,
+                    profile=profile,
+                    **max_tokens_kwargs,
+                )
+            if action == "capsule":
+                return _self.tg_agent_capsule(
+                    query=query,
+                    path=path,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_repo_files=max_repo_files,
+                    model=model,
+                    provider=provider,
+                    gpu_device_ids=gpu_device_ids,
+                    gpu_timeout_s=gpu_timeout_s,
+                    deadline=deadline,
+                    **max_tokens_kwargs,
+                )
+            return _meta_unknown_action_error("tg_context", action, _TG_CONTEXT_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_context", action=action)
+            payload["error"] = _sanitized_tool_error("tg_context", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_context", action=action)
-        payload["error"] = _sanitized_tool_error("tg_context", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_context", exc)
+        return _sanitized_tool_error_text("tg_context", exc)
 
 
 _TG_EXPLORE_ACTIONS = ("orient", "repo_map", "doctor", "devices")
@@ -4623,31 +4955,35 @@ def tg_explore(
         json_output: Emit machine-readable JSON output (devices).
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-        if config:
-            config = str(_confine_read_path(config, Path(path), label="config"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_explore", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+            if config:
+                config = str(_confine_read_path(config, Path(path), label="config"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_explore", action, exc)
 
-    try:
-        if action == "orient":
-            return _self.tg_orient(
-                path=path,
-                max_tokens=max_tokens,
-                max_central_files=max_central_files,
-                ignore=ignore,
-            )
-        if action == "repo_map":
-            return _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
-        if action == "doctor":
-            return _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
-        if action == "devices":
-            return _self.tg_devices(json_output=json_output)
-        return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
+        try:
+            if action == "orient":
+                return _self.tg_orient(
+                    path=path,
+                    max_tokens=max_tokens,
+                    max_central_files=max_central_files,
+                    ignore=ignore,
+                )
+            if action == "repo_map":
+                return _self.tg_repo_map(path=path, max_repo_files=max_repo_files)
+            if action == "doctor":
+                return _self.tg_doctor(path=path, config=config, with_lsp=with_lsp)
+            if action == "devices":
+                return _self.tg_devices(json_output=json_output)
+            return _meta_unknown_action_error("tg_explore", action, _TG_EXPLORE_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_explore", action=action)
+            payload["error"] = _sanitized_tool_error("tg_explore", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_explore", action=action)
-        payload["error"] = _sanitized_tool_error("tg_explore", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_explore", exc)
+        return _sanitized_tool_error_text("tg_explore", exc)
 
 
 _TG_SESSION_ACTIONS = (
@@ -4732,130 +5068,134 @@ def tg_session(
         auto_refresh: Alias for refresh_on_stale accepted for command-surface parity.
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-        if file is not None:
-            file = str(_confine_mcp_path(file, label="file"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_session", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+            if file is not None:
+                file = str(_confine_mcp_path(file, label="file"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_session", action, exc)
 
-    if action in _TG_SESSION_ACTIONS_NEEDING_ID and session_id is None:
-        return _meta_missing_param_error("tg_session", action, "session_id")
+        if action in _TG_SESSION_ACTIONS_NEEDING_ID and session_id is None:
+            return _meta_missing_param_error("tg_session", action, "session_id")
 
-    try:
-        if action == "open":
-            return _self.tg_session_open(path=path, max_repo_files=max_repo_files)
-        if action == "list":
-            return _self.tg_session_list(path=path)
-        if action == "show":
-            return _self.tg_session_show(session_id=cast(str, session_id), path=path)
-        if action == "refresh":
-            return _self.tg_session_refresh(session_id=cast(str, session_id), path=path)
-        if action == "context":
-            if query is None:
-                return _meta_missing_param_error("tg_session", action, "query")
-            max_tokens_kwargs: dict[str, Any] = (
-                {} if max_tokens is None else {"max_tokens": max_tokens}
-            )
-            return _self.tg_session_context(
-                session_id=cast(str, session_id),
-                query=query,
-                path=path,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-                **max_tokens_kwargs,
-            )
-        if action == "edit_plan":
-            if query is None:
-                return _meta_missing_param_error("tg_session", action, "query")
-            return _self.tg_session_edit_plan(
-                session_id=cast(str, session_id),
-                query=query,
-                path=path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_tokens=max_tokens,
-                max_symbols=max_symbols,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-            )
-        if action == "context_render":
-            if query is None:
-                return _meta_missing_param_error("tg_session", action, "query")
-            max_tokens_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
-            return _self.tg_session_context_render(
-                session_id=cast(str, session_id),
-                query=query,
-                path=path,
-                max_files=max_files,
-                max_repo_files=max_repo_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                model=model,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                profile=profile,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-                **max_tokens_kwargs,
-            )
-        if action == "blast_radius":
-            if symbol is None:
-                return _meta_missing_param_error("tg_session", action, "symbol")
-            return _self.tg_session_blast_radius(
-                session_id=cast(str, session_id),
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-            )
-        if action == "blast_radius_plan":
-            if symbol is None:
-                return _meta_missing_param_error("tg_session", action, "symbol")
-            return _self.tg_session_blast_radius_plan(
-                session_id=cast(str, session_id),
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_symbols=max_symbols,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-            )
-        if action == "blast_radius_render":
-            if symbol is None:
-                return _meta_missing_param_error("tg_session", action, "symbol")
-            return _self.tg_session_blast_radius_render(
-                session_id=cast(str, session_id),
-                symbol=symbol,
-                path=path,
-                max_depth=max_depth,
-                max_files=max_files,
-                max_sources=max_sources,
-                max_symbols_per_file=max_symbols_per_file,
-                max_render_chars=max_render_chars,
-                optimize_context=optimize_context,
-                render_profile=render_profile,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-            )
-        if action == "file_importers":
-            if file is None:
-                return _meta_missing_param_error("tg_session", action, "file")
-            return _self.tg_session_file_importers(
-                session_id=cast(str, session_id),
-                file=file,
-                path=path,
-                refresh_on_stale=refresh_on_stale,
-                auto_refresh=auto_refresh,
-            )
-        return _meta_unknown_action_error("tg_session", action, _TG_SESSION_ACTIONS)
+        try:
+            if action == "open":
+                return _self.tg_session_open(path=path, max_repo_files=max_repo_files)
+            if action == "list":
+                return _self.tg_session_list(path=path)
+            if action == "show":
+                return _self.tg_session_show(session_id=cast(str, session_id), path=path)
+            if action == "refresh":
+                return _self.tg_session_refresh(session_id=cast(str, session_id), path=path)
+            if action == "context":
+                if query is None:
+                    return _meta_missing_param_error("tg_session", action, "query")
+                max_tokens_kwargs: dict[str, Any] = (
+                    {} if max_tokens is None else {"max_tokens": max_tokens}
+                )
+                return _self.tg_session_context(
+                    session_id=cast(str, session_id),
+                    query=query,
+                    path=path,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                    **max_tokens_kwargs,
+                )
+            if action == "edit_plan":
+                if query is None:
+                    return _meta_missing_param_error("tg_session", action, "query")
+                return _self.tg_session_edit_plan(
+                    session_id=cast(str, session_id),
+                    query=query,
+                    path=path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_tokens=max_tokens,
+                    max_symbols=max_symbols,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                )
+            if action == "context_render":
+                if query is None:
+                    return _meta_missing_param_error("tg_session", action, "query")
+                max_tokens_kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
+                return _self.tg_session_context_render(
+                    session_id=cast(str, session_id),
+                    query=query,
+                    path=path,
+                    max_files=max_files,
+                    max_repo_files=max_repo_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    model=model,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    profile=profile,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                    **max_tokens_kwargs,
+                )
+            if action == "blast_radius":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_session", action, "symbol")
+                return _self.tg_session_blast_radius(
+                    session_id=cast(str, session_id),
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                )
+            if action == "blast_radius_plan":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_session", action, "symbol")
+                return _self.tg_session_blast_radius_plan(
+                    session_id=cast(str, session_id),
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_symbols=max_symbols,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                )
+            if action == "blast_radius_render":
+                if symbol is None:
+                    return _meta_missing_param_error("tg_session", action, "symbol")
+                return _self.tg_session_blast_radius_render(
+                    session_id=cast(str, session_id),
+                    symbol=symbol,
+                    path=path,
+                    max_depth=max_depth,
+                    max_files=max_files,
+                    max_sources=max_sources,
+                    max_symbols_per_file=max_symbols_per_file,
+                    max_render_chars=max_render_chars,
+                    optimize_context=optimize_context,
+                    render_profile=render_profile,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                )
+            if action == "file_importers":
+                if file is None:
+                    return _meta_missing_param_error("tg_session", action, "file")
+                return _self.tg_session_file_importers(
+                    session_id=cast(str, session_id),
+                    file=file,
+                    path=path,
+                    refresh_on_stale=refresh_on_stale,
+                    auto_refresh=auto_refresh,
+                )
+            return _meta_unknown_action_error("tg_session", action, _TG_SESSION_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_session", action=action)
+            payload["error"] = _sanitized_tool_error("tg_session", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_session", action=action)
-        payload["error"] = _sanitized_tool_error("tg_session", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_session", exc)
+        return _sanitized_tool_error_text("tg_session", exc)
 
 
 _TG_SCAN_ACTIONS = ("scan", "rulesets")
@@ -4899,37 +5239,41 @@ def tg_scan(
             ruleset/inline_rules is required for action="scan". Unused by action="rulesets".
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_scan", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_scan", action, exc)
 
-    try:
-        if action == "scan":
-            return _self.tg_ruleset_scan(
-                ruleset=ruleset,
-                inline_rules=inline_rules,
-                path=path,
-                language=language,
-                glob=glob,
-                file_type=file_type,
-                max_depth=max_depth,
-                allow_broad_generated_scan=allow_broad_generated_scan,
-                baseline_path=baseline_path,
-                write_baseline=write_baseline,
-                suppressions_path=suppressions_path,
-                write_suppressions=write_suppressions,
-                justification=justification,
-                include_evidence_snippets=include_evidence_snippets,
-                max_evidence_snippets_per_file=max_evidence_snippets_per_file,
-                max_evidence_snippet_chars=max_evidence_snippet_chars,
-            )
-        if action == "rulesets":
-            return _self.tg_rulesets()
-        return _meta_unknown_action_error("tg_scan", action, _TG_SCAN_ACTIONS)
+        try:
+            if action == "scan":
+                return _self.tg_ruleset_scan(
+                    ruleset=ruleset,
+                    inline_rules=inline_rules,
+                    path=path,
+                    language=language,
+                    glob=glob,
+                    file_type=file_type,
+                    max_depth=max_depth,
+                    allow_broad_generated_scan=allow_broad_generated_scan,
+                    baseline_path=baseline_path,
+                    write_baseline=write_baseline,
+                    suppressions_path=suppressions_path,
+                    write_suppressions=write_suppressions,
+                    justification=justification,
+                    include_evidence_snippets=include_evidence_snippets,
+                    max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+                    max_evidence_snippet_chars=max_evidence_snippet_chars,
+                )
+            if action == "rulesets":
+                return _self.tg_rulesets()
+            return _meta_unknown_action_error("tg_scan", action, _TG_SCAN_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_scan", action=action)
+            payload["error"] = _sanitized_tool_error("tg_scan", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_scan", action=action)
-        payload["error"] = _sanitized_tool_error("tg_scan", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_scan", exc)
+        return _sanitized_tool_error_text("tg_scan", exc)
 
 
 _TG_AUDIT_ACTIONS = ("manifest_verify", "history", "diff", "bundle_create", "bundle_verify")
@@ -4975,60 +5319,68 @@ def tg_audit(
         bundle_path: Review bundle path. Required for bundle_verify.
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-        if manifest_path is not None:
-            manifest_path = str(_confine_mcp_path(manifest_path, label="manifest_path"))
-        if previous_manifest is not None:
-            previous_manifest = str(_confine_mcp_path(previous_manifest, label="previous_manifest"))
-        if current_manifest is not None:
-            current_manifest = str(_confine_mcp_path(current_manifest, label="current_manifest"))
-        if scan_path is not None:
-            scan_path = str(_confine_mcp_path(scan_path, label="scan_path"))
-        if output_path is not None:
-            output_path = str(_confine_mcp_path(output_path, label="output_path"))
-        if bundle_path is not None:
-            bundle_path = str(_confine_mcp_path(bundle_path, label="bundle_path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_audit", action, exc)
-
-    try:
-        if action == "manifest_verify":
-            if manifest_path is None:
-                return _meta_missing_param_error("tg_audit", action, "manifest_path")
-            return _self.tg_audit_manifest_verify(
-                manifest_path=manifest_path,
-                signing_key=signing_key,
-                previous_manifest=previous_manifest,
-            )
-        if action == "history":
-            return _self.tg_audit_history(path=path)
-        if action == "diff":
-            if previous_manifest is None or current_manifest is None:
-                return _meta_missing_param_error(
-                    "tg_audit", action, "previous_manifest and current_manifest"
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+            if manifest_path is not None:
+                manifest_path = str(_confine_mcp_path(manifest_path, label="manifest_path"))
+            if previous_manifest is not None:
+                previous_manifest = str(
+                    _confine_mcp_path(previous_manifest, label="previous_manifest")
                 )
-            return _self.tg_audit_diff(
-                previous_manifest=previous_manifest, current_manifest=current_manifest
-            )
-        if action == "bundle_create":
-            if manifest_path is None:
-                return _meta_missing_param_error("tg_audit", action, "manifest_path")
-            return _self.tg_review_bundle_create(
-                manifest_path=manifest_path,
-                scan_path=scan_path,
-                checkpoint_id=checkpoint_id,
-                previous_manifest=previous_manifest,
-                output_path=output_path,
-            )
-        if action == "bundle_verify":
-            if bundle_path is None:
-                return _meta_missing_param_error("tg_audit", action, "bundle_path")
-            return _self.tg_review_bundle_verify(bundle_path=bundle_path)
-        return _meta_unknown_action_error("tg_audit", action, _TG_AUDIT_ACTIONS)
+            if current_manifest is not None:
+                current_manifest = str(
+                    _confine_mcp_path(current_manifest, label="current_manifest")
+                )
+            if scan_path is not None:
+                scan_path = str(_confine_mcp_path(scan_path, label="scan_path"))
+            if output_path is not None:
+                output_path = str(_confine_mcp_path(output_path, label="output_path"))
+            if bundle_path is not None:
+                bundle_path = str(_confine_mcp_path(bundle_path, label="bundle_path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_audit", action, exc)
+
+        try:
+            if action == "manifest_verify":
+                if manifest_path is None:
+                    return _meta_missing_param_error("tg_audit", action, "manifest_path")
+                return _self.tg_audit_manifest_verify(
+                    manifest_path=manifest_path,
+                    signing_key=signing_key,
+                    previous_manifest=previous_manifest,
+                )
+            if action == "history":
+                return _self.tg_audit_history(path=path)
+            if action == "diff":
+                if previous_manifest is None or current_manifest is None:
+                    return _meta_missing_param_error(
+                        "tg_audit", action, "previous_manifest and current_manifest"
+                    )
+                return _self.tg_audit_diff(
+                    previous_manifest=previous_manifest, current_manifest=current_manifest
+                )
+            if action == "bundle_create":
+                if manifest_path is None:
+                    return _meta_missing_param_error("tg_audit", action, "manifest_path")
+                return _self.tg_review_bundle_create(
+                    manifest_path=manifest_path,
+                    scan_path=scan_path,
+                    checkpoint_id=checkpoint_id,
+                    previous_manifest=previous_manifest,
+                    output_path=output_path,
+                )
+            if action == "bundle_verify":
+                if bundle_path is None:
+                    return _meta_missing_param_error("tg_audit", action, "bundle_path")
+                return _self.tg_review_bundle_verify(bundle_path=bundle_path)
+            return _meta_unknown_action_error("tg_audit", action, _TG_AUDIT_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_audit", action=action)
+            payload["error"] = _sanitized_tool_error("tg_audit", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_audit", action=action)
-        payload["error"] = _sanitized_tool_error("tg_audit", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_audit", exc)
+        return _sanitized_tool_error_text("tg_audit", exc)
 
 
 _TG_CHECKPOINT_ACTIONS = ("create", "list", "undo")
@@ -5056,24 +5408,28 @@ def tg_checkpoint(
             root.
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_checkpoint", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_checkpoint", action, exc)
 
-    try:
-        if action == "create":
-            return _self.tg_checkpoint_create(path=path)
-        if action == "list":
-            return _self.tg_checkpoint_list(path=path)
-        if action == "undo":
-            if checkpoint_id is None:
-                return _meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
-            return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
-        return _meta_unknown_action_error("tg_checkpoint", action, _TG_CHECKPOINT_ACTIONS)
+        try:
+            if action == "create":
+                return _self.tg_checkpoint_create(path=path)
+            if action == "list":
+                return _self.tg_checkpoint_list(path=path)
+            if action == "undo":
+                if checkpoint_id is None:
+                    return _meta_missing_param_error("tg_checkpoint", action, "checkpoint_id")
+                return _self.tg_checkpoint_undo(checkpoint_id=checkpoint_id, path=path)
+            return _meta_unknown_action_error("tg_checkpoint", action, _TG_CHECKPOINT_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_checkpoint", action=action)
+            payload["error"] = _sanitized_tool_error("tg_checkpoint", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_checkpoint", action=action)
-        payload["error"] = _sanitized_tool_error("tg_checkpoint", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_checkpoint", exc)
+        return _sanitized_tool_error_text("tg_checkpoint", exc)
 
 
 _TG_REWRITE_ACTIONS = ("plan", "apply", "diff")
@@ -5126,43 +5482,47 @@ def tg_rewrite(
         expected_match_count: Optional expected edit-site count from a prior plan (apply).
     """
     try:
-        path = str(_confine_mcp_path(path, label="path"))
-    except ValueError as exc:
-        return _meta_confinement_error("tg_rewrite", action, exc)
+        try:
+            path = str(_confine_mcp_path(path, label="path"))
+        except PathConfinementError as exc:
+            return _meta_confinement_error("tg_rewrite", action, exc)
 
-    if pattern is None or replacement is None or lang is None:
-        return _meta_missing_param_error("tg_rewrite", action, "pattern, replacement, and lang")
+        if pattern is None or replacement is None or lang is None:
+            return _meta_missing_param_error("tg_rewrite", action, "pattern, replacement, and lang")
 
-    try:
-        if action == "plan":
-            return _self.tg_rewrite_plan(
-                pattern=pattern, replacement=replacement, lang=lang, path=path
-            )
-        if action == "apply":
-            return _self.tg_rewrite_apply(
-                pattern=pattern,
-                replacement=replacement,
-                lang=lang,
-                path=path,
-                verify=verify,
-                checkpoint=checkpoint,
-                audit_manifest=audit_manifest,
-                audit_signing_key=audit_signing_key,
-                lint_cmd=lint_cmd,
-                test_cmd=test_cmd,
-                policy=policy,
-                expected_plan_digest=expected_plan_digest,
-                expected_match_count=expected_match_count,
-            )
-        if action == "diff":
-            return _self.tg_rewrite_diff(
-                pattern=pattern, replacement=replacement, lang=lang, path=path
-            )
-        return _meta_unknown_action_error("tg_rewrite", action, _TG_REWRITE_ACTIONS)
+        try:
+            if action == "plan":
+                return _self.tg_rewrite_plan(
+                    pattern=pattern, replacement=replacement, lang=lang, path=path
+                )
+            if action == "apply":
+                return _self.tg_rewrite_apply(
+                    pattern=pattern,
+                    replacement=replacement,
+                    lang=lang,
+                    path=path,
+                    verify=verify,
+                    checkpoint=checkpoint,
+                    audit_manifest=audit_manifest,
+                    audit_signing_key=audit_signing_key,
+                    lint_cmd=lint_cmd,
+                    test_cmd=test_cmd,
+                    policy=policy,
+                    expected_plan_digest=expected_plan_digest,
+                    expected_match_count=expected_match_count,
+                )
+            if action == "diff":
+                return _self.tg_rewrite_diff(
+                    pattern=pattern, replacement=replacement, lang=lang, path=path
+                )
+            return _meta_unknown_action_error("tg_rewrite", action, _TG_REWRITE_ACTIONS)
+        except Exception as exc:
+            payload = _meta_envelope(tool="tg_rewrite", action=action)
+            payload["error"] = _sanitized_tool_error("tg_rewrite", exc)
+            return json.dumps(payload, indent=2)
     except Exception as exc:
-        payload = _meta_envelope(tool="tg_rewrite", action=action)
-        payload["error"] = _sanitized_tool_error("tg_rewrite", exc)
-        return json.dumps(payload, indent=2)
+        _log_tool_exception("tg_rewrite", exc)
+        return _sanitized_tool_error_text("tg_rewrite", exc)
 
 
 # Bound the Content-Length compatibility read. Official MCP stdio is newline-delimited; this framed

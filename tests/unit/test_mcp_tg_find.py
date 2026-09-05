@@ -195,14 +195,15 @@ def test_tg_find_backend_execution_error_is_distinguishable_not_a_traceback(tmp_
 
     payload = json.loads(out)
     assert payload["error"]["code"] == "find_backend_error"
-    assert "boom" in payload["error"]["message"]
+    assert "BackendExecutionError" in payload["error"]["message"]
+    assert "boom" not in payload["error"]["message"]
     assert payload["error"]["retryable"] is False
 
 
 def test_tg_find_missing_path_is_invalid_input_with_within_root_echo(tmp_path, monkeypatch):
     """An in-root but nonexistent path passes confinement (confinement is pure path resolution,
     never an existence check) and is refused downstream by `_execute_find`'s own
-    FileNotFoundError -- that branch also deliberately echoes the within-root path (S2)."""
+    FileNotFoundError -- that branch returns a sanitized missing-path message."""
     monkeypatch.chdir(tmp_path)
 
     out = mcp_server.tg_find("invoice", path="does-not-exist")
@@ -210,8 +211,7 @@ def test_tg_find_missing_path_is_invalid_input_with_within_root_echo(tmp_path, m
     payload = json.loads(out)
     assert payload["error"]["code"] == "invalid_input"
     assert "Path not found" in payload["error"]["message"]
-    expected_missing_path = (tmp_path / "does-not-exist").resolve()
-    assert str(expected_missing_path) in payload["error"]["message"]
+    assert "does-not-exist" in payload["error"]["message"]
 
 
 # ---------------------------------------------------------------------------------------------

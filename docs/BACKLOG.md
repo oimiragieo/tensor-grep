@@ -47,6 +47,84 @@
 
 
 
+## STRATEGIC (2026-09-04): 2026 Competitive Analysis & Strategic Updates Roadmap
+
+Competitive landscape audit against mid-2026 codebase intelligence and agent context tooling (`Gortex`, `GitNexus`, `Serena`, `GrepAI`, `ripgrep`, `ast-grep`, `Claude Code` native agentic search).
+
+### 1. Landscape Diagnosis & Positioning
+- **The Market Shift:** Industry consensus in 2026 has moved away from pure vector RAG (high token tax, stale vector indices, hallucinated relevance) and away from raw iterative CLI tool loops (agents calling grep/cat 10+ times) toward **Agent-Native Structural & Codebase Intelligence Layers**.
+- **Where `tg` Leads:**
+  - **4-in-1 Edit Readiness Capsule (`tg prepare`):** Bundles primary target, confidence score, blast-radius floor with graph provenance, detected validation commands, and machine-branchable human escalation flag (`ask_user_before_editing`). No surveyed competitor (`Gortex`, `GitNexus`, `CodeGraph`, `Aider`) bundles all four in a single call.
+  - **Section 0 Completeness Contract:** Exit codes 0/1/2 strictly agree with payload; closed vocabulary (`scan_limit`, `deadline`, `timeout`, `unreadable_path`); fail-closed `budget_remediable` verdict. No other tool provides this contract to protect agents from deleting code on empty truncated scans.
+  - **Zero-Setup Local Density:** Local CPU BM25 and lightweight ~65MB model2vec (`potion-code-16M`) via `tg find` without external vector DB dependencies.
+- **Where `tg` Lags:**
+  - **Language Depth:** `tg` has 5 deep parser-backed languages (Python, Go, JS, TS, Rust) and 5 defs-only foundational languages (C, C++, C#, Java, PHP). Gortex claims ~30 bespoke languages with resolved call edges, and Serena wraps 40+ via LSP.
+  - **Semantic Disconnect in Agent Capsules:** `tg prepare` and `tg agent` do not leverage `retrieval_dense` or `retrieval_fusion`, leaving them vulnerable to natural language vocabulary mismatch.
+  - **Git Diff / PR Impact Analysis:** Gortex (`pr_risk`, `get_pr_impact`) and GitNexus offer diff-level blast radius; `tg` currently has symbol-level blast radius only.
+
+---
+
+### 2. Prioritized Strategic Updates (P0 – P4)
+
+- **[ ] P0 — Fuse Semantic Dense Retrieval into `tg prepare` / `tg agent`**
+  - **Objective:** Eliminate task-description vocabulary mismatch without mandatory GPU or network dependencies.
+  - **Scope:** Wire `retrieval_dense` / `retrieval_fusion` from `tg find` as an optional fallback or hybrid signal in `build_agent_capsule` / `prepare` when lexical term matching yields low confidence (<0.6).
+  - **Acceptance:** Natural-language queries with mismatched vocabulary (e.g. "sales surcharge calculation" for `compute_tax`) successfully locate target symbol; exits 0 with high confidence; falls back cleanly to lexical-only if dense extra is not installed.
+
+- **[ ] P1 — Git Diff-Aware Blast Radius (`tg diff-impact` / `tg pr-risk`)**
+  - **Objective:** Compete directly with Gortex `pr_risk` and GitNexus impact analysis in automated CI/PR gates.
+  - **Scope:** Add `tg diff-impact [REF]` (e.g., `HEAD~1`, `--staged`) that parses modified symbols across the diff, computes union blast-radius floor, identifies affected downstream tests, and outputs a structured review readiness risk score.
+  - **Acceptance:** Outputs JSON with `changed_symbols`, `affected_callers`, `impacted_tests`, `risk_tier`; adheres to Section 0 completeness contract with deadline/token bounds.
+
+- **[ ] P2 — Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages)**
+  - **Objective:** Close the language depth gap against Gortex (~30) and Serena (40+).
+  - **Scope:** Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics (`_regex_references_and_calls`) to full tree-sitter AST-verified references and callers.
+  - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
+
+- **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
+  - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
+  - **Scope:** Add a unified, additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing surface-specific fields.
+  - **Acceptance:** Validated across all 58 MCP tool endpoints; client agents in Cursor, Windsurf, and Claude Code can inspect one consistent object to decide whether to retry with increased budget.
+
+- **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
+  - **Objective:** Position `tg` as the AI agent edit-readiness layer rather than a cold grep speed comparator.
+  - **Scope:** Update `README.md` and `docs/tool_comparison.md` to lead with `tg prepare` and the 4-element comparison table; demote cold grep speed benchmarks to an engine appendix; generate the published language tier table dynamically from `LANGUAGE_REGISTRY` to prevent documentation rot.
+  - **Acceptance:** `README.md` hero section features `tg prepare`; zero hardcoded language count drift against `LANGUAGE_REGISTRY`.
+
+- **[ ] P5 — Public Repository Cleanliness & Agent Scratch Partitioning (Enterprise OS Parity)**
+  - **Objective:** Match top-tier enterprise open-source repositories (e.g. Alibaba `open-code-review`, `zvec`) by untracking and ignoring internal agent orchestration files from public view.
+  - **Scope:** Add `.build/`, `.wayfinder/`, `.orchestrator/`, and `MEMORY.md` to `.gitignore`. Untrack them from the git tree (`git rm -r --cached`). Maintain all standard open-source collaboration infrastructure (`.github/` issue templates, actions, workflows, `docs/`, `src/`, `tests/`).
+  - **Acceptance:** Public GitHub root displays only production-grade code, tests, docs, and standard `.github/` directories; `git status` clean.
+
+- **[ ] P6 — Merge PR #1125 & Drain Pipeline (SEC-007 Wire Error Sanitization)**
+  - **Objective:** Close out SEC-007 vulnerability by sanitizing raw exceptions across all 58 MCP tool endpoints and hardening AST ratchets.
+  - **Scope:** Await completion of CI run `33898390695` (which addresses the Route A `collect_device_inventory` bare-call ratchet fix), squash-merge PR #1125 into `main`, and verify published release pipeline.
+  - **Acceptance:** Zero raw tracebacks or secret paths leak over MCP JSON-RPC; AST closed-world ratchet passes on all 54 authorized sites.
+
+- **[ ] P7 — Pre-computed Persistent AstGrep Structural Rule Cache**
+  - **Objective:** Accelerate repeated AST pattern queries across large multi-language repos.
+  - **Scope:** Cache parsed AST rule representations and structural fingerprints in `.tensor-grep/ast_cache/` with mtime/hash validation, eliminating redundant tree-sitter parse overhead during multi-step agent edit loops.
+  - **Acceptance:** Second invocation of identical AST query executes in <5ms; zero cache invalidation desyncs on modified files.
+
+- **[ ] P8 — Cross-File Import-Graph Cycle & Dead-Code Detector (`tg graph --dead-code`)**
+  - **Objective:** Enable agents to find dead code and cyclic imports during refactoring without external linters.
+  - **Scope:** Traverse the symbol dependency and importer graphs constructed by `repo_map.py` to identify unreferenced symbols and circular dependencies across all 10 parser-backed languages.
+  - **Acceptance:** Returns structured JSON with `unreferenced_symbols` and `import_cycles` within Section 0 bounded budgets.
+
+- **[ ] P9 — Memory-Resident Watcher & Cache Daemon for Agent Multi-Turn Loops (`tg daemon --watch`)**
+  - **Objective:** Eliminate repetitive cold-scan and AST parse latency across consecutive agent edit rounds.
+  - **Scope:** Provide a lightweight background watcher service holding parsed AST and symbol tables in memory, invalidating only touched files on filesystem events.
+  - **Seat & Cost:** Opus 5 design pass (Claude Max $200/mo flat plan) -> Sonnet 5 build (Droid Plus $100/mo flat plan); $0.00 marginal overage.
+  - **Acceptance:** Turnaround time for `tg prepare` drops from ~2.5s to <150ms on warm multi-turn agent turns; fail-closed fallback if daemon crashes.
+
+- **[ ] P10 — Verified Test-Execution Evidence Enclave (`tg verify --enforce-evidence`)**
+  - **Objective:** Guarantee that agent claims of passing tests are backed by cryptographically verifiable execution hashes before git commit.
+  - **Scope:** Extend `tg evidence` to execute designated test commands in an isolated subprocess, capture signed execution metadata, and output a tamper-evident `.evidence.json` receipt.
+  - **Seat & Cost:** Codex Pro $200/mo flat plan; deterministic subshell harness; $0.00 marginal overage.
+  - **Acceptance:** Deterministic verification gate; prevents "false-green" agent completion claims.
+
+
+
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
 
 Measured at the end of a session that appended heavily to both:

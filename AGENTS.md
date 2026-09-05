@@ -925,6 +925,31 @@ concrete failure observed this session.
   `(FileNotFoundError, KeyError, PermissionError, ValueError, json.JSONDecodeError)` or
   `(UnicodeDecodeError, OSError, ValueError)`). Never push until both `test_silent_failure_hardening.py`
   and repo-wide `ruff format --preview --check .` exit 0.
+- **A156 — Route A Late Lookup and Explicit Re-export for Monkeypatched Symbols (2026-09-04).** When
+  a symbol is patched in tests (e.g. `collect_device_inventory`), any internal caller in the module
+  must invoke it via the late attribute lookup `_self.SYMBOL(...)` rather than a bare call. Under
+  `implicit_reexport = false` (mypy), the imported symbol must be explicitly re-exported
+  (`from pkg import SYMBOL as SYMBOL`), otherwise `_self.SYMBOL` raises `attr-defined`. A bare call
+  will silently trip `test_bare_call_ratchet.py` (`test_every_target_is_either_pinned_or_converted`)
+  in CI even if the function-level test passes.
+- **A157 — Sanitizing Error Wire Responses Under Hostile Metaclasses & Pattern Bindings (2026-09-04).**
+  In MCP error sanitization (SEC-007), relying on `isinstance(exc, TrustedClass)` or `type(exc) in SET`
+  is vulnerable to hostile metaclasses overriding `__eq__` and `__hash__`. Exact type identity must
+  be checked with `type(type(exc)) is type` and linear iteration `type(exc) is trusted_cls`.
+  Furthermore, AST ratchet enforcement must verify both caller boundaries and positional argument
+  slots in error sinks (e.g. preventing parameter-swapping leaks where raw exception text is passed as
+  the message string).
+- **A158 — Separation of Public Open-Source Tree from Internal Agent Governance (2026-09-04).**
+  Public open-source repositories must present clean, enterprise-grade root layouts (e.g. Alibaba
+  `open-code-review` / `zvec`). Internal agent maps, scratch, and audit trails (`.build/`, `.wayfinder/`,
+  `.orchestrator/`, `MEMORY.md`) belong in `.gitignore` and must never be tracked on public GitHub,
+  while standard open-source collaboration infrastructure (`.github/` workflows/issue templates, `docs/`,
+  `tests/`, `src/`) remains fully public.
+- **A159 — CodeQL Clear-Text Logging Taint on Confinement & Error Diagnostics (2026-09-04).** CodeQL
+  security analysis flags clear-text logging of potential secrets/tokens when logging exception objects
+  or candidate path variables directly (`print(f"...: {candidate}: {exc}", file=sys.stderr)`). Server-side
+  debugging logs must sanitize or label the message type, ensuring raw tainted candidate variables
+  do not trigger secret-leak static alerts while preserving debugging visibility.
 
 ## Current Handoff
 release_docs_current_tag: v1.114.2

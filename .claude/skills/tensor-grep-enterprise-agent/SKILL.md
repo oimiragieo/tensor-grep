@@ -113,9 +113,17 @@ review-bundle → ledger (and plain `tg search`), or install `tensor-grep[semant
 (AGENTS.md **A70**, **A73**).
 
 
-## Retention (2026-08-15)
+## Retention (2026-08-15 / 2026-09-04)
 
 - DD-006: demand proven + design on main (#1015) is still an open row until PERF+HONESTY product
   code ships under deliberate authorization (A122). Do not treat the design packet as CUJ-complete.
 - Skip-Fable waivers do not clear enterprise security gates on daemon acceptor code (A117/A3).
+- **SEC-007 Wire Error Sanitization (2026-09-04):**
+  - Never allow raw tracebacks, internal filepaths, or exception text across MCP tool returns.
+  - Guard against hostile metaclasses spoofing `__eq__` / `__hash__` by enforcing exact type identity (`type(type(exc)) is type` and linear identity `is` checking).
+  - Monkeypatched symbols invoked within a module require Route A late attribute lookup (`_self.SYM(...)`) and explicit PEP 484 re-export (`SYM as SYM`) to satisfy static type checkers and the bare-call ratchet.
+- **Enterprise Open-Source Tree Partitioning (2026-09-04):**
+  - Enterprise repos (e.g. Alibaba `open-code-review`, `zvec`) do not expose internal agent scaffolding (`.build/`, `.wayfinder/`, `.orchestrator/`, `MEMORY.md`) to public GitHub.
+  - Always ignore and untrack these artifacts while preserving `.github/` workflows/templates and public `docs/`.
+
 

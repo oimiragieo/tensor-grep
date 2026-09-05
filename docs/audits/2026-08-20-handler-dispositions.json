@@ -21,7 +21,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1069,
+    "lineno": 1202,
     "enclosing_symbol": "_record_generated_audit_manifest",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -31,7 +31,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1531,
+    "lineno": 1655,
     "enclosing_symbol": "tg_repo_map",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -41,7 +41,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1605,
+    "lineno": 1738,
     "enclosing_symbol": "tg_orient",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -51,7 +51,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1682,
+    "lineno": 1820,
     "enclosing_symbol": "tg_doctor",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -61,7 +61,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1737,
+    "lineno": 1880,
     "enclosing_symbol": "tg_context_pack",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -71,7 +71,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1823,
+    "lineno": 1967,
     "enclosing_symbol": "tg_edit_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -81,7 +81,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1913,
+    "lineno": 2058,
     "enclosing_symbol": "tg_context_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -91,7 +91,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2012,
+    "lineno": 2161,
     "enclosing_symbol": "tg_agent_capsule",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -101,7 +101,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2100,
+    "lineno": 2255,
     "enclosing_symbol": "tg_session_edit_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -111,7 +111,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2202,
+    "lineno": 2363,
     "enclosing_symbol": "tg_session_context_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -121,7 +121,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2283,
+    "lineno": 2450,
     "enclosing_symbol": "tg_session_blast_radius",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -131,7 +131,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2388,
+    "lineno": 2561,
     "enclosing_symbol": "tg_session_file_importers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -141,7 +141,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2502,
+    "lineno": 2681,
     "enclosing_symbol": "tg_session_blast_radius_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -151,7 +151,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2609,
+    "lineno": 2794,
     "enclosing_symbol": "tg_session_blast_radius_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -161,7 +161,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2729,
+    "lineno": 2910,
     "enclosing_symbol": "tg_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -171,7 +171,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3207,
+    "lineno": 3407,
     "enclosing_symbol": "tg_search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -181,7 +181,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3541,
+    "lineno": 3754,
     "enclosing_symbol": "tg_ast_search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -191,7 +191,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3674,
+    "lineno": 3897,
     "enclosing_symbol": "tg_classify_logs",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -201,7 +201,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3742,
+    "lineno": 4015,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -211,7 +211,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3751,
+    "lineno": 4033,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -221,7 +221,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3786,
+    "lineno": 4068,
     "enclosing_symbol": "tg_session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -231,7 +231,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3824,
+    "lineno": 4112,
     "enclosing_symbol": "tg_session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -241,7 +241,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3860,
+    "lineno": 4152,
     "enclosing_symbol": "tg_session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -251,7 +251,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3936,
+    "lineno": 4198,
     "enclosing_symbol": "tg_session_context",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -261,7 +261,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4069,
+    "lineno": 4335,
     "enclosing_symbol": "tg_navigate",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -271,7 +271,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4174,
+    "lineno": 4444,
     "enclosing_symbol": "tg_impact",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -281,7 +281,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4465,
+    "lineno": 4743,
     "enclosing_symbol": "tg_query",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -291,7 +291,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4582,
+    "lineno": 4866,
     "enclosing_symbol": "tg_context",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -301,7 +301,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4647,
+    "lineno": 4935,
     "enclosing_symbol": "tg_explore",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -311,7 +311,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4855,
+    "lineno": 5147,
     "enclosing_symbol": "tg_session",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -321,7 +321,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4929,
+    "lineno": 5225,
     "enclosing_symbol": "tg_scan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -331,7 +331,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5028,
+    "lineno": 5332,
     "enclosing_symbol": "tg_audit",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -341,7 +341,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5073,
+    "lineno": 5424,
     "enclosing_symbol": "tg_checkpoint",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -351,7 +351,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5162,
+    "lineno": 5474,
     "enclosing_symbol": "tg_rewrite",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -361,7 +361,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5303,
+    "lineno": 5654,
     "enclosing_symbol": "stdin_reader",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -371,7 +371,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 114,
+    "lineno": 125,
     "enclosing_symbol": "tg_symbol_blast_radius_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -381,7 +381,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 183,
+    "lineno": 195,
     "enclosing_symbol": "tg_symbol_defs",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -391,7 +391,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 251,
+    "lineno": 264,
     "enclosing_symbol": "tg_symbol_source",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -401,7 +401,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 322,
+    "lineno": 336,
     "enclosing_symbol": "tg_symbol_impact",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -411,7 +411,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 398,
+    "lineno": 413,
     "enclosing_symbol": "tg_symbol_refs",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -421,7 +421,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 474,
+    "lineno": 490,
     "enclosing_symbol": "tg_symbol_callers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -431,7 +431,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 534,
+    "lineno": 551,
     "enclosing_symbol": "tg_file_imports",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -441,7 +441,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 621,
+    "lineno": 643,
     "enclosing_symbol": "tg_file_importers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -451,7 +451,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 698,
+    "lineno": 725,
     "enclosing_symbol": "tg_symbol_blast_radius",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -461,7 +461,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 795,
+    "lineno": 823,
     "enclosing_symbol": "tg_symbol_blast_radius_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -471,7 +471,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 642,
+    "lineno": 786,
     "enclosing_symbol": "tg_audit_manifest_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -481,7 +481,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 674,
+    "lineno": 831,
     "enclosing_symbol": "tg_audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -491,7 +491,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 724,
+    "lineno": 894,
     "enclosing_symbol": "tg_audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -501,7 +501,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 821,
+    "lineno": 1019,
     "enclosing_symbol": "tg_review_bundle_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -511,7 +511,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 877,
+    "lineno": 1089,
     "enclosing_symbol": "tg_review_bundle_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -521,7 +521,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 914,
+    "lineno": 1142,
     "enclosing_symbol": "tg_checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -531,7 +531,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 963,
+    "lineno": 1206,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -541,7 +541,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1015,
+    "lineno": 1274,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -551,7 +551,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 244,
+    "lineno": 332,
     "enclosing_symbol": "_embedded_rewrite_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -561,7 +561,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 560,
+    "lineno": 670,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -571,7 +571,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 578,
+    "lineno": 670,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -581,7 +581,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 984,
+    "lineno": 1062,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1758,5 +1758,725 @@
     "evidence": "src/tensor_grep/backends/cybert_backend.py:386-393 returns fallback_reason if not raise_on_provider_error else raises RuntimeError.",
     "reason": "Triton inference failure returns heuristic classification with fallback_reason or raises RuntimeError.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1187,
+    "enclosing_symbol": "tg_mcp_capabilities",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_mcp_capabilities outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_mcp_capabilities preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1450,
+    "enclosing_symbol": "_confine_write_path",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:_confine_write_path handler catches candidate path resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError without wire traceback.",
+    "reason": "Fail-closed translation boundary for _confine_write_path converting path resolution exceptions into PathConfinementError to prevent wire disclosure.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1510,
+    "enclosing_symbol": "_mcp_root",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root handler catches directory resolution failure on TG_MCP_ROOT, logs diagnostic warning to sys.stderr, and gracefully degrades to current working directory.",
+    "reason": "Graceful fallback boundary for TG_MCP_ROOT override degradation to current directory when custom path cannot be resolved or is invalid.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1525,
+    "enclosing_symbol": "_mcp_root",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:_mcp_root handler catches cwd resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError('root').",
+    "reason": "Fail-closed translation boundary for current working directory resolution failure into PathConfinementError.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1549,
+    "enclosing_symbol": "_confine_mcp_path",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:_confine_mcp_path handler catches _mcp_root() anchor resolution failure, logs failure to sys.stderr, and translates internal exception into PathConfinementError without wire traceback.",
+    "reason": "Fail-closed translation boundary for _confine_mcp_path converting anchor resolution exceptions into PathConfinementError to prevent wire disclosure.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1664,
+    "enclosing_symbol": "tg_repo_map",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_repo_map outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_repo_map preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1747,
+    "enclosing_symbol": "tg_orient",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_orient outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_orient preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1829,
+    "enclosing_symbol": "tg_doctor",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_doctor outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_doctor preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1890,
+    "enclosing_symbol": "tg_context_pack",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_context_pack outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_context_pack preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 1977,
+    "enclosing_symbol": "tg_edit_plan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_edit_plan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_edit_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2068,
+    "enclosing_symbol": "tg_context_render",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_context_render outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_context_render preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2168,
+    "enclosing_symbol": "tg_agent_capsule",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_agent_capsule outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_agent_capsule preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2264,
+    "enclosing_symbol": "tg_session_edit_plan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_edit_plan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_edit_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2372,
+    "enclosing_symbol": "tg_session_context_render",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_context_render outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_context_render preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2460,
+    "enclosing_symbol": "tg_session_blast_radius",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_blast_radius outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_blast_radius preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2570,
+    "enclosing_symbol": "tg_session_file_importers",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_file_importers outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_file_importers preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2695,
+    "enclosing_symbol": "tg_session_blast_radius_render",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_blast_radius_render outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_blast_radius_render preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2809,
+    "enclosing_symbol": "tg_session_blast_radius_plan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_blast_radius_plan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_blast_radius_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 2941,
+    "enclosing_symbol": "tg_find",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_find outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_find preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3409,
+    "enclosing_symbol": "tg_search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_search outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_search preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3769,
+    "enclosing_symbol": "tg_ast_search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_ast_search outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_ast_search preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3910,
+    "enclosing_symbol": "tg_classify_logs",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_classify_logs outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_classify_logs preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3978,
+    "enclosing_symbol": "tg_devices",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_devices inner inventory collection handler catches Exception, logs to stderr via _log_tool_exception, and returns sanitized device error string or text payload.",
+    "reason": "Fail-closed inner boundary for device inventory collection preventing internal leak.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 3983,
+    "enclosing_symbol": "tg_devices",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_devices outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_devices preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4007,
+    "enclosing_symbol": "tg_session_open",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_open outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_open preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4081,
+    "enclosing_symbol": "tg_session_list",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_list outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_list preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4121,
+    "enclosing_symbol": "tg_session_show",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_show outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_show preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4162,
+    "enclosing_symbol": "tg_session_refresh",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_refresh outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_refresh preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4208,
+    "enclosing_symbol": "tg_session_context",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session_context outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session_context preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4339,
+    "enclosing_symbol": "tg_navigate",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_navigate outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_navigate preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4448,
+    "enclosing_symbol": "tg_impact",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_impact outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_impact preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4747,
+    "enclosing_symbol": "tg_query",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_query outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_query preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4870,
+    "enclosing_symbol": "tg_context",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_context outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_context preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 4939,
+    "enclosing_symbol": "tg_explore",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_explore outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_explore preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5151,
+    "enclosing_symbol": "tg_session",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_session outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_session preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5229,
+    "enclosing_symbol": "tg_scan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_scan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_scan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5336,
+    "enclosing_symbol": "tg_audit",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_audit outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_audit preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5428,
+    "enclosing_symbol": "tg_checkpoint",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_checkpoint outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_checkpoint preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_server.py",
+    "lineno": 5478,
+    "enclosing_symbol": "tg_rewrite",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_server.py:tg_rewrite outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_rewrite preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 136,
+    "enclosing_symbol": "tg_symbol_blast_radius_plan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_blast_radius_plan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_blast_radius_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 205,
+    "enclosing_symbol": "tg_symbol_defs",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_defs outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_defs preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 274,
+    "enclosing_symbol": "tg_symbol_source",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_source outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_source preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 346,
+    "enclosing_symbol": "tg_symbol_impact",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_impact outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_impact preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 423,
+    "enclosing_symbol": "tg_symbol_refs",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_refs outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_refs preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 500,
+    "enclosing_symbol": "tg_symbol_callers",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_callers outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_callers preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 560,
+    "enclosing_symbol": "tg_file_imports",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_file_imports outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_file_imports preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 653,
+    "enclosing_symbol": "tg_file_importers",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_file_importers outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_file_importers preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 736,
+    "enclosing_symbol": "tg_symbol_blast_radius",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_blast_radius outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_blast_radius preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_symbol_tools.py",
+    "lineno": 834,
+    "enclosing_symbol": "tg_symbol_blast_radius_render",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_symbol_tools.py:tg_symbol_blast_radius_render outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_symbol_blast_radius_render preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 148,
+    "enclosing_symbol": "tg_rulesets",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rulesets outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_rulesets preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 466,
+    "enclosing_symbol": "tg_ruleset_scan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_ruleset_scan inner exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized structured error payload on MCP wire.",
+    "reason": "Fail-closed inner containment boundary for tg_ruleset_scan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 476,
+    "enclosing_symbol": "tg_ruleset_scan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_ruleset_scan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_ruleset_scan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 531,
+    "enclosing_symbol": "tg_index_search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_index_search inner exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized structured error payload on MCP wire.",
+    "reason": "Fail-closed inner containment boundary for tg_index_search preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 539,
+    "enclosing_symbol": "tg_index_search",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_index_search outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_index_search preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 585,
+    "enclosing_symbol": "tg_rewrite_plan",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_plan inner exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized structured error payload on MCP wire.",
+    "reason": "Fail-closed inner containment boundary for tg_rewrite_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 591,
+    "enclosing_symbol": "tg_rewrite_plan",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_plan outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_rewrite_plan preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 699,
+    "enclosing_symbol": "tg_rewrite_apply",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_apply inner exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized structured error payload on MCP wire.",
+    "reason": "Fail-closed inner containment boundary for tg_rewrite_apply preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 705,
+    "enclosing_symbol": "tg_rewrite_apply",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_apply outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_rewrite_apply preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 792,
+    "enclosing_symbol": "tg_audit_manifest_verify",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_audit_manifest_verify outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_audit_manifest_verify preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 837,
+    "enclosing_symbol": "tg_audit_history",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_audit_history outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_audit_history preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 900,
+    "enclosing_symbol": "tg_audit_diff",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_audit_diff outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_audit_diff preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1026,
+    "enclosing_symbol": "tg_review_bundle_create",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_review_bundle_create outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_review_bundle_create preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1096,
+    "enclosing_symbol": "tg_review_bundle_verify",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_review_bundle_verify outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_review_bundle_verify preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1162,
+    "enclosing_symbol": "tg_checkpoint_create",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_checkpoint_create outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_checkpoint_create preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1225,
+    "enclosing_symbol": "tg_checkpoint_list",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_checkpoint_list outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_checkpoint_list preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1295,
+    "enclosing_symbol": "tg_checkpoint_undo",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_checkpoint_undo outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_checkpoint_undo preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1343,
+    "enclosing_symbol": "tg_rewrite_diff",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_diff inner exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized structured error payload on MCP wire.",
+    "reason": "Fail-closed inner containment boundary for tg_rewrite_diff preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_audit_tools.py",
+    "lineno": 1349,
+    "enclosing_symbol": "tg_rewrite_diff",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_audit_tools.py:tg_rewrite_diff outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for tg_rewrite_diff preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 182,
+    "enclosing_symbol": "_resolve_native_tg_binary_for_mcp",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:_resolve_native_tg_binary_for_mcp handler catches native binary resolution failure, logs to sys.stderr via _log_tool_exception, and returns (None, sanitized_error) to caller.",
+    "reason": "Fail-closed boundary for native binary resolution returning sanitized error tuple.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 813,
+    "enclosing_symbol": "execute_rewrite_plan_json",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:execute_rewrite_plan_json outer fail-closed exception boundary catches Exception, logs to stderr via _log_tool_exception, and returns sanitized error payload on MCP wire.",
+    "reason": "Fail-closed outer containment boundary for execute_rewrite_plan_json preventing internal exceptions and tracebacks from crossing MCP wire to client.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 1116,
+    "enclosing_symbol": "execute_rewrite_apply_json",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:execute_rewrite_apply_json inner checkpoint creation handler catches Exception, logs to sys.stderr via _log_tool_exception, and returns sanitized checkpoint error payload.",
+    "reason": "Fail-closed inner boundary for checkpoint creation failure during rewrite apply.",
+    "hardened_in": "SEC-007"
+  },
+  {
+    "module": "cli/mcp_rewrite_tools.py",
+    "lineno": 1166,
+    "enclosing_symbol": "execute_rewrite_apply_json",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "SEC-007: cli/mcp_rewrite_tools.py:execute_rewrite_apply_json post-rewrite policy evaluation handler catches Exception, logs to sys.stderr via _log_tool_exception, and returns sanitized policy evaluation error payload.",
+    "reason": "Fail-closed boundary for policy evaluation failure after rewrite edits applied.",
+    "hardened_in": "SEC-007"
   }
 ]

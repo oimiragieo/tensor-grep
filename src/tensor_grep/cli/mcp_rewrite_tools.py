@@ -63,6 +63,9 @@ from tensor_grep.cli.mcp_server import (
     _WINDOWS_VARIADIC_METAVAR_RE as _WINDOWS_VARIADIC_METAVAR_RE,
 )
 from tensor_grep.cli.mcp_server import (
+    PathConfinementError as PathConfinementError,
+)
+from tensor_grep.cli.mcp_server import (
     _confine_read_path as _confine_read_path,
 )
 from tensor_grep.cli.mcp_server import (
@@ -72,10 +75,16 @@ from tensor_grep.cli.mcp_server import (
     _envelope_base as _envelope_base,
 )
 from tensor_grep.cli.mcp_server import (
+    _log_tool_exception as _log_tool_exception,
+)
+from tensor_grep.cli.mcp_server import (
     _mcp_root as _mcp_root,
 )
 from tensor_grep.cli.mcp_server import (
     _record_generated_audit_manifest as _record_generated_audit_manifest,
+)
+from tensor_grep.cli.mcp_server import (
+    _safe_exception_class_name as _safe_exception_class_name,
 )
 
 
@@ -124,7 +133,7 @@ def _mcp_validation_commands_allowed() -> bool:
 
 
 def _classify_native_rewrite_failure(
-    stderr: str,
+    stderr: str | BaseException,
     *,
     returncode: int,
 ) -> tuple[str, bool]:
@@ -139,7 +148,7 @@ def _classify_native_rewrite_failure(
     - ``invalid_input``: preserved historical fallback for unrecognized
       non-zero exits (treated as a request problem, not retryable).
     """
-    haystack = stderr.casefold()
+    haystack = str(stderr).casefold()
     if any(token in haystack for token in _REWRITE_INTERNAL_ERROR_SIGNATURES):
         return "native_internal_error", True
     if any(token in haystack for token in _REWRITE_IO_ERROR_SIGNATURES):
@@ -170,7 +179,86 @@ def _resolve_native_tg_binary_for_mcp() -> tuple[Path | None, str | None]:
     try:
         return _self.resolve_native_tg_binary(), None
     except FileNotFoundError as exc:
-        return None, str(exc)
+        _log_tool_exception("resolve_native_tg_binary", exc)
+        return None, f"Native binary not found: {_safe_exception_class_name(exc)}"
+    except Exception as exc:
+        _log_tool_exception("resolve_native_tg_binary", exc)
+        return None, f"Native binary resolution failed: {_safe_exception_class_name(exc)}"
+
+
+_ALLOWED_POLICY_FIELDS = {
+    "$",
+    "version",
+    "lint_cmd",
+    "test_cmd",
+    "ruleset_scan",
+    "ruleset_scan.enabled",
+    "ruleset_scan.pack",
+    "ruleset_scan.language",
+    "ruleset_scan.baseline",
+    "on_failure",
+    "timeout",
+}
+
+
+def _sanitize_policy_validation_details(details: object) -> list[dict[str, str]]:
+    """Sanitize PolicyValidationError details to prevent path or secret leaks on MCP wire."""
+    if not isinstance(details, list):
+        return []
+    sanitized: list[dict[str, str]] = []
+    for item in details:
+        if not isinstance(item, dict):
+            continue
+        field = str(item.get("field", ""))
+        safe_field = field if field in _ALLOWED_POLICY_FIELDS else "policy"
+        raw_msg = str(item.get("message", ""))
+
+        if "is required" in raw_msg:
+            safe_msg = f"{safe_field} is required"
+        elif "must be a boolean" in raw_msg:
+            safe_msg = f"{safe_field} must be a boolean"
+        elif "must be a string" in raw_msg:
+            safe_msg = f"{safe_field} must be a string or null"
+        elif "must not be empty" in raw_msg:
+            safe_msg = f"{safe_field} must not be empty"
+        elif "must be a positive integer" in raw_msg:
+            safe_msg = f"{safe_field} must be a positive integer"
+        elif "must be valid JSON" in raw_msg:
+            safe_msg = f"{safe_field} must be valid JSON"
+        elif "must be a JSON object" in raw_msg or "must be an object" in raw_msg:
+            safe_msg = f"{safe_field} must be a JSON object"
+        elif "must equal 1" in raw_msg:
+            safe_msg = f"{safe_field} must equal 1"
+        elif "must be one of" in raw_msg:
+            safe_msg = f"{safe_field} must be one of rollback, warn, or fail"
+        elif "must be provided when enabled" in raw_msg:
+            safe_msg = f"{safe_field} must be provided when enabled"
+        elif "within the policy directory" in raw_msg:
+            safe_msg = f"{safe_field} path must be within the policy directory"
+        elif "does not exist" in raw_msg:
+            safe_msg = f"{safe_field} path does not exist"
+        else:
+            safe_msg = f"Invalid {safe_field} specification"
+
+        sanitized.append({"field": safe_field, "message": safe_msg})
+    return sanitized
+
+
+def _sanitize_inline_rules_error(exc: BaseException) -> str:
+    """Sanitize inline rules loading exceptions for safe MCP wire transmission (SEC-007)."""
+    raw_msg = str(exc)
+    if "Unsupported AST language" in raw_msg:
+        prefix = "Unsupported AST language "
+        part = raw_msg.split(prefix, 1)[1]
+        lang = part.split(".")[0].split()[0].strip()
+        return f"Unsupported AST language {lang}"
+    if "Invalid inline rules YAML" in raw_msg:
+        return "Invalid inline rules YAML"
+    if "Inline rules YAML must contain mapping documents" in raw_msg:
+        return "Inline rules YAML must contain mapping documents."
+    if "justification" in raw_msg:
+        return "--write-suppressions requires a non-empty --justification value."
+    return "Invalid inline rules specification"
 
 
 def _audit_manifest_error(message: str, *, code: str) -> str:
@@ -386,12 +474,25 @@ def _plan_drift_detail(
     return [detail]
 
 
-def _extract_rewrite_error_message(stderr: str, fallback: str) -> str:
-    for raw_line in stderr.splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("Traceback"):
-            continue
-        return line
+def _extract_rewrite_error_message(
+    stderr: str,
+    fallback: str,
+    *,
+    code: str | None = None,
+) -> str:
+    if stderr:
+        sys.stderr.write(f"[mcp] native rewrite stderr: {stderr}\n")
+        sys.stderr.flush()
+    if code is None and stderr:
+        code, _ = _classify_native_rewrite_failure(stderr, returncode=1)
+    if code == "pattern_error":
+        return "Invalid rewrite pattern or syntax."
+    if code == "io_error":
+        return "Filesystem I/O or permission error during rewrite."
+    if code == "native_internal_error":
+        return "Native rewrite engine internal error."
+    if code == "invalid_input":
+        return "Invalid rewrite input or options."
     return fallback
 
 
@@ -428,6 +529,7 @@ def _build_rewrite_command(
     lang: str,
     path: str,
     mode: str,
+    native_binary: str | Path,
     verify: bool = False,
     checkpoint: bool = False,
     audit_manifest: str | None = None,
@@ -435,8 +537,9 @@ def _build_rewrite_command(
     lint_cmd: str | None = None,
     test_cmd: str | None = None,
 ) -> list[str]:
+    binary_str = str(native_binary)
     command = [
-        str(_self.resolve_native_tg_binary()),
+        binary_str,
         "run",
         "--lang",
         lang,
@@ -472,9 +575,10 @@ def _build_rewrite_command(
     return command
 
 
-def _build_index_search_command(*, pattern: str, path: str) -> list[str]:
+def _build_index_search_command(*, pattern: str, path: str, native_binary: str | Path) -> list[str]:
+    binary_str = str(native_binary)
     return [
-        str(_self.resolve_native_tg_binary()),
+        binary_str,
         "search",
         "--index",
         "--json",
@@ -509,10 +613,14 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
     try:
         completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
-        return _rewrite_error(str(exc), code="unavailable", retryable=True)
-    except OSError as exc:
+        _log_tool_exception("rewrite_subprocess", exc)
         return _rewrite_error(
-            f"Failed to execute rewrite command: {exc}",
+            "Rewrite command binary not found.", code="unavailable", retryable=True
+        )
+    except OSError as exc:
+        _log_tool_exception("rewrite_subprocess", exc)
+        return _rewrite_error(
+            f"Failed to execute rewrite command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             retryable=True,
         )
@@ -527,6 +635,7 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
             _extract_rewrite_error_message(
                 stderr,
                 f"Rewrite command failed with exit code {completed.returncode}.",
+                code=code,
             ),
             code=code,
             retryable=retryable,
@@ -538,7 +647,8 @@ def _execute_rewrite_json_command(command: list[str]) -> str:
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("rewrite_subprocess_json", exc)
         return _rewrite_error(
             "Rewrite command produced invalid JSON output.", code="invalid_output"
         )
@@ -558,8 +668,9 @@ def _execute_embedded_rewrite_json(
     try:
         from tensor_grep.rust_core import ast_rewrite_apply_json, ast_rewrite_plan_json
     except Exception as exc:
+        _log_tool_exception("embedded_rewrite_import", exc)
         return _rewrite_error(
-            f"Embedded native rewrite support unavailable: {exc}",
+            f"Embedded native rewrite support unavailable: {_safe_exception_class_name(exc)}",
             code="unavailable",
             retryable=True,
         )
@@ -578,12 +689,18 @@ def _execute_embedded_rewrite_json(
     except Exception as exc:
         # audit A2: classify the embedded engine exception so callers can tell a
         # malformed pattern (not retryable) from an IO/internal failure (retryable).
-        code, retryable = _classify_native_rewrite_failure(str(exc), returncode=1)
-        return _rewrite_error(str(exc), code=code, retryable=retryable)
+        _log_tool_exception("embedded_rewrite_execution", exc)
+        code, retryable = _classify_native_rewrite_failure(exc, returncode=1)
+        return _rewrite_error(
+            f"Embedded rewrite {mode} failed: {_safe_exception_class_name(exc)}",
+            code=code,
+            retryable=retryable,
+        )
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("embedded_rewrite_json", exc)
         return _rewrite_error(
             "Embedded rewrite command produced invalid JSON output.",
             code="invalid_output",
@@ -679,6 +796,7 @@ def _produce_rewrite_plan_json(
         lang=lang,
         path=path,
         mode="plan",
+        native_binary=native_tg,
     )
     return _execute_rewrite_json_command(command)
 
@@ -690,26 +808,36 @@ def execute_rewrite_plan_json(
     lang: str,
     path: str = ".",
 ) -> tuple[str, int]:
-    validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
-    if validation_error:
-        return _rewrite_error(validation_error, code="invalid_input"), 1
-    pattern = _restore_variadic_metavar_escaping(pattern)
-    replacement = _restore_variadic_metavar_escaping(replacement)
+    try:
+        validation_error = _self._validate_rewrite_inputs(pattern, lang, path)
+        if validation_error:
+            return _rewrite_error(validation_error, code="invalid_input"), 1
+        pattern = _restore_variadic_metavar_escaping(pattern)
+        replacement = _restore_variadic_metavar_escaping(replacement)
 
-    rewrite_json = _self._produce_rewrite_plan_json(
-        pattern=pattern,
-        replacement=replacement,
-        lang=lang,
-        path=path,
-    )
+        rewrite_json = _self._produce_rewrite_plan_json(
+            pattern=pattern,
+            replacement=replacement,
+            lang=lang,
+            path=path,
+        )
 
-    rewrite_payload = json.loads(rewrite_json)
-    if rewrite_payload.get("error"):
-        return rewrite_json, 1
-    # audit A1: stamp a stable plan_digest so callers can pin this preview and pass
-    # it back to tg_rewrite_apply as expected_plan_digest for an apply-iff-unchanged
-    # edit loop.
-    return _stamp_plan_digest(rewrite_json), 0
+        rewrite_payload = json.loads(rewrite_json)
+        if rewrite_payload.get("error"):
+            return rewrite_json, 1
+        # audit A1: stamp a stable plan_digest so callers can pin this preview and pass
+        # it back to tg_rewrite_apply as expected_plan_digest for an apply-iff-unchanged
+        # edit loop.
+        return _stamp_plan_digest(rewrite_json), 0
+    except Exception as exc:
+        _log_tool_exception("execute_rewrite_plan_json", exc)
+        return (
+            _rewrite_error(
+                f"Rewrite plan failed: {_safe_exception_class_name(exc)}",
+                code="internal_error",
+            ),
+            1,
+        )
 
 
 def _check_apply_plan_drift(
@@ -851,8 +979,11 @@ def execute_rewrite_apply_json(
             audit_manifest = str(
                 _confine_write_path(audit_manifest, _mcp_root(), label="audit_manifest")
             )
-        except ValueError as exc:
+        except PathConfinementError as exc:
             return _rewrite_error(str(exc), code="invalid_input"), 1
+        except ValueError as exc:
+            _log_tool_exception("execute_rewrite_apply_json", exc)
+            return _rewrite_error("Invalid audit_manifest path", code="invalid_input"), 1
 
     # round-5 security: audit_signing_key is a READ of secret HMAC material that operators
     # legitimately keep OUTSIDE the repo (~/.config, CI-injected) — confining it to cwd would
@@ -912,8 +1043,11 @@ def execute_rewrite_apply_json(
             policy_anchor = policy_anchor.parent
         try:
             policy = str(_confine_read_path(policy, policy_anchor, label="policy"))
-        except ValueError as exc:
+        except PathConfinementError as exc:
             return _rewrite_error(str(exc), code="invalid_input"), 1
+        except ValueError as exc:
+            _log_tool_exception("execute_rewrite_apply_json", exc)
+            return _rewrite_error("Invalid policy path", code="invalid_input"), 1
         try:
             loaded_policy = load_apply_policy(
                 policy,
@@ -925,16 +1059,33 @@ def execute_rewrite_apply_json(
             # Audit HIGH (RCE): a policy file that carries lint_cmd/test_cmd is refused
             # on the gate-off surface with the same code as the direct-param rejection,
             # BEFORE any native binary or subprocess is reached.
-            return _rewrite_error(str(exc), code="unsupported_option", retryable=False), 1
+            _log_tool_exception("load_apply_policy", exc)
+            return (
+                _rewrite_error(
+                    "Policy validation commands are not allowed.",
+                    code="unsupported_option",
+                    retryable=False,
+                ),
+                1,
+            )
         except FileNotFoundError as exc:
-            return _rewrite_error(str(exc), code="not_found"), 1
+            _log_tool_exception("load_apply_policy", exc)
+            return _rewrite_error("Policy file not found.", code="not_found"), 1
         except PolicyValidationError as exc:
+            _log_tool_exception("load_apply_policy", exc)
+            try:
+                print(
+                    f"[tensor-grep-mcp] load_apply_policy details: {json.dumps(exc.details)}",
+                    file=sys.stderr,
+                )
+            except Exception:
+                pass
             return (
                 json.dumps(
                     _rewrite_error_payload(
-                        str(exc),
+                        "Policy validation failed.",
                         code="invalid_policy",
-                        details=exc.details,
+                        details=_sanitize_policy_validation_details(exc.details),
                     ),
                     indent=2,
                 ),
@@ -982,7 +1133,14 @@ def execute_rewrite_apply_json(
 
                 checkpoint_payload = create_checkpoint(path).__dict__
             except Exception as exc:
-                return _rewrite_error(f"Failed to create checkpoint: {exc}", code="checkpoint"), 1
+                _log_tool_exception("create_checkpoint", exc)
+                return (
+                    _rewrite_error(
+                        f"Failed to create checkpoint: {_safe_exception_class_name(exc)}",
+                        code="checkpoint",
+                    ),
+                    1,
+                )
         rewrite_json = _self._execute_embedded_rewrite_json(
             pattern=pattern,
             replacement=replacement,
@@ -1003,6 +1161,7 @@ def execute_rewrite_apply_json(
             audit_signing_key=audit_signing_key,
             lint_cmd=None if loaded_policy is not None else lint_cmd,
             test_cmd=None if loaded_policy is not None else test_cmd,
+            native_binary=native_tg,
         )
         rewrite_json = _execute_rewrite_json_command(command)
     rewrite_payload = json.loads(rewrite_json)
@@ -1016,22 +1175,41 @@ def execute_rewrite_apply_json(
     if loaded_policy is None:
         return rewrite_json, 0
 
-    policy_payload, exit_code = evaluate_apply_policy(
-        rewrite_payload,
-        loaded_policy,
-        path=path,
-    )
-    return json.dumps(policy_payload, indent=2), exit_code
+    try:
+        policy_payload, exit_code = evaluate_apply_policy(
+            rewrite_payload,
+            loaded_policy,
+            path=path,
+        )
+        return json.dumps(policy_payload, indent=2), exit_code
+    except Exception as exc:
+        _log_tool_exception("evaluate_apply_policy", exc)
+        payload = dict(rewrite_payload)
+        payload["policy_evaluation_error"] = (
+            f"Policy evaluation failed: {_safe_exception_class_name(exc)}"
+        )
+        payload["error"] = {
+            "code": "policy_evaluation_failed",
+            "message": (
+                "Policy evaluation failed after rewrite application. "
+                "Edits may have already been applied."
+            ),
+        }
+        return json.dumps(payload, indent=2), 1
 
 
 def _execute_rewrite_diff_command(command: list[str]) -> str:
     try:
         completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
-        return _rewrite_error(str(exc), code="unavailable", retryable=True)
-    except OSError as exc:
+        _log_tool_exception("rewrite_diff_subprocess", exc)
         return _rewrite_error(
-            f"Failed to execute rewrite diff command: {exc}",
+            "Rewrite diff command binary not found.", code="unavailable", retryable=True
+        )
+    except OSError as exc:
+        _log_tool_exception("rewrite_diff_subprocess", exc)
+        return _rewrite_error(
+            f"Failed to execute rewrite diff command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             retryable=True,
         )
@@ -1046,6 +1224,7 @@ def _execute_rewrite_diff_command(command: list[str]) -> str:
             _extract_rewrite_error_message(
                 stderr,
                 f"Rewrite diff command failed with exit code {completed.returncode}.",
+                code=code,
             ),
             code=code,
             retryable=retryable,
@@ -1067,10 +1246,17 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
     try:
         completed = _self._run_rewrite_subprocess(command)
     except FileNotFoundError as exc:
-        return _index_search_error(str(exc), code="unavailable", pattern=pattern, path=path)
-    except OSError as exc:
+        _log_tool_exception("index_search_subprocess", exc)
         return _index_search_error(
-            f"Failed to execute index search command: {exc}",
+            "Index search command binary not found.",
+            code="unavailable",
+            pattern=pattern,
+            path=path,
+        )
+    except OSError as exc:
+        _log_tool_exception("index_search_subprocess", exc)
+        return _index_search_error(
+            f"Failed to execute index search command: {_safe_exception_class_name(exc)}",
             code="execution_failed",
             pattern=pattern,
             path=path,
@@ -1088,6 +1274,7 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
             _extract_rewrite_error_message(
                 completed.stderr or "",
                 f"Index search command failed with exit code {completed.returncode}.",
+                code="invalid_input",
             ),
             code="invalid_input",
             pattern=pattern,
@@ -1105,7 +1292,8 @@ def _execute_index_search_command(command: list[str], *, pattern: str, path: str
 
     try:
         payload = json.loads(stdout)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
+        _log_tool_exception("index_search_subprocess_json", exc)
         return _index_search_error(
             "Index search command produced invalid JSON output.",
             code="invalid_output",

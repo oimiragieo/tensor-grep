@@ -32,16 +32,16 @@ python -c "import json; print(json.load(open('docs/audits/2026-08-30-handler-cen
 
 1. Push `docs/handler-census-w2-2026-08-30` + open `docs:` PR
 2. Wave 2: backend ledger append (3 PR slices) + MCP sanitize (A3)
-## Session closeout (2026-08-30)
+## Session closeout (2026-09-04)
 
 | Step | Status | Evidence |
 |---|---|---|
-| Harvest `.tmp-fmt-check` | REMOVED | detached `e6ba187`; AGENTS.md dirty was CRLF-only; unique log empty |
-| Local `main` | RESET to origin | `e6ba187`; unique `7b73e92` parked `docs/docs-reconcile-local-closeout` |
-| HYGIENE branch | DELETED working name | SHA parked `archive/hygiene-format-retired-2026-08-30` (`c8a978b`) |
-| PR #1124 | OPEN leave | expanded test-python SUCCESS; prior state.json ghost pin `27a956` |
-| Wave 2 | NOT STARTED | research-council-defer; cap-off-path |
-| New optimization skill | FOLD | CRLF-md false-RED folded into validation-and-qa |
-| Sol/Fable seats | FAILED A78 | quota; not pending |
-| Adversarial money/security | N/A | no product money/security path this closeout |
-| agent --yolo MAP probe | PARKED | hung empty output; cap-off-path; do not pkill -f agent |
+| PR #1125 (SEC-007) | IN_FLIGHT (CI running) | Commit `58036b6`; Run `33909866974`; 54/54 AST ratchets, file-size ratchet & handler locatability green |
+| Worktree harvest | CLEAN | 0 stale worktrees; 1 root workspace only |
+| Branch harvest | CLEAN | Ahead 0; all work pushed to `fix/sec-007-mcp-sanitize` |
+| Strategic backlog | UPDATED | P0-P8 strategic & architectural backlog added to `docs/BACKLOG.md` |
+| Rules & Skills | UPDATED | Rules A156-A159 added to `AGENTS.md`; `tensor-grep-enterprise-agent` skill synced |
+| Public hygiene plan | STAGED | Untracking `.build/`, `.wayfinder/`, `.orchestrator/`, `MEMORY.md` upon PR merge |
+| Seat cost ledger | $0.00 | Free local & runner tiers only; zero spend |
+
+
