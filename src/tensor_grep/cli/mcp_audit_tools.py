@@ -285,7 +285,7 @@ def tg_ruleset_scan(
             except ValueError as exc:
                 _log_tool_exception("tg_ruleset_scan", exc)
                 return _ruleset_scan_error(
-                    "Invalid inline rules YAML", code="invalid_input", ruleset=ruleset, path=path
+                    str(exc), code="invalid_input", ruleset=ruleset, path=path
                 )
             if not rules:
                 return _ruleset_scan_error(
