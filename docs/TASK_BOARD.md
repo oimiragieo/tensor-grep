@@ -184,7 +184,7 @@ Canonical status index version: 2026-08-30.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-08-30** (DOCS-RECONCILE slice: stamp `post-**v1.113.5**`, correct F8/MCP-SURFACE triggers, record SEC-001 #1122 / `a77a150` and ENV-SYNC closeout). canonical index `2026-08-30.1`. Task 2A RED remains correctly blocked (advanced, not GREEN). Open PRs derived live 2026-08-30: **NONE**. CEO packet: `docs/audits/2026-08-13-ceo-backlog-update.md` (historical closeout; newer dated audits exist but this file remains the governance pin).
+Last reconciled: **2026-09-05** (DOCS-RECONCILE slice: stamp `post-**v1.115.0**`, correct F8/MCP-SURFACE triggers, record SEC-001 #1122 / `a77a150` and ENV-SYNC closeout). canonical index `2026-08-30.1`. Task 2A RED remains correctly blocked (advanced, not GREEN). Open PRs derived live 2026-08-30: **NONE**. CEO packet: `docs/audits/2026-08-13-ceo-backlog-update.md` (historical closeout; newer dated audits exist but this file remains the governance pin).
 
 Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md`
 (#997 → v1.110.13) and `docs/plans/2026-08-08-backlog-completion-plan.md` (M16/M17 wave).
