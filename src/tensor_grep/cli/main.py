@@ -838,10 +838,12 @@ def _build_native_tg_search_command(
     if config.force_cpu:
         command.append("--cpu")
     elif config.gpu_device_ids:
-        command.extend([
-            "--gpu-device-ids",
-            ",".join(str(device_id) for device_id in config.gpu_device_ids),
-        ])
+        command.extend(
+            [
+                "--gpu-device-ids",
+                ",".join(str(device_id) for device_id in config.gpu_device_ids),
+            ]
+        )
 
     if config.ignore_case:
         command.append("-i")
@@ -7201,33 +7203,39 @@ def _attach_symbol_omissions(
 
     output_limit = payload.get("output_limit")
     if isinstance(output_limit, dict) and output_limit.get("tests_truncated"):
-        omitted_sections.append({
-            "section": "tests",
-            "omitted_count": int(output_limit.get("omitted_tests", 0)),
-            "reason": "max-tests cap",
-        })
+        omitted_sections.append(
+            {
+                "section": "tests",
+                "omitted_count": int(output_limit.get("omitted_tests", 0)),
+                "reason": "max-tests cap",
+            }
+        )
         retry_argv.extend(["--max-tests", str(output_limit.get("total_tests", 0))])
         retry_needed = True
 
     token_budget = payload.get("token_budget")
     if isinstance(token_budget, dict) and token_budget.get("primary_truncated"):
-        omitted_sections.append({
-            "section": primary_field,
-            "omitted_count": int(token_budget.get("primary_omitted", 0)),
-            "reason": "max-tokens budget",
-        })
+        omitted_sections.append(
+            {
+                "section": primary_field,
+                "omitted_count": int(token_budget.get("primary_omitted", 0)),
+                "reason": "max-tokens budget",
+            }
+        )
         retry_argv.extend(["--max-tokens", "0"])
         retry_needed = True
 
     follow_up_reads: list[dict[str, Any]] = []
     if retry_needed:
-        follow_up_reads.append({
-            "file": None,
-            "symbol": symbol,
-            "role": "retry-bigger-budget",
-            "command": subprocess.list2cmdline(retry_argv),
-            "argv": retry_argv,
-        })
+        follow_up_reads.append(
+            {
+                "file": None,
+                "symbol": symbol,
+                "role": "retry-bigger-budget",
+                "command": subprocess.list2cmdline(retry_argv),
+                "argv": retry_argv,
+            }
+        )
 
     payload["omissions"] = {
         "token_budget": max_tokens,
@@ -9562,6 +9570,29 @@ def session_serve(
         raise typer.Exit(1) from exc
 
 
+@session_app.command("prepare")
+def session_prepare_cmd(
+    session_id: str = typer.Argument(..., help="Session ID."),
+    query: str = typer.Argument(..., help="Query."),
+    path: str = typer.Argument(".", help="Root."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    from tensor_grep.cli.session_resume_service import dispatch_session_prepare_cli
+
+    dispatch_session_prepare_cli(session_id, query, path, json_output)
+
+
+@session_app.command("resume")
+def session_resume_cmd(
+    session_id: str = typer.Argument(..., help="Session ID."),
+    path: str = typer.Argument(".", help="Root."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    from tensor_grep.cli.session_resume_service import dispatch_session_resume_cli
+
+    dispatch_session_resume_cli(session_id, path, json_output)
+
+
 @checkpoint_app.command("create")
 def checkpoint_create(
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
@@ -11610,12 +11641,14 @@ def upgrade() -> None:
                     _sha256 = _self._expected_asset_sha256(_native_checksums, _cand.asset_name)
                     if _sha256 is None:
                         continue
-                    native_assets.append({
-                        "url": _url,
-                        "flavor": _cand.flavor,
-                        "asset_name": _cand.asset_name,
-                        "sha256": _sha256,
-                    })
+                    native_assets.append(
+                        {
+                            "url": _url,
+                            "flavor": _cand.flavor,
+                            "asset_name": _cand.asset_name,
+                            "sha256": _sha256,
+                        }
+                    )
                 if not native_assets:
                     raise RuntimeError(
                         "no release-native front-door asset is available for this platform"
