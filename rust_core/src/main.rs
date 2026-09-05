@@ -1084,6 +1084,12 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Analyze blast radius and risk of git diff changes
+    #[command(name = "diff-impact", disable_help_flag = true)]
+    DiffImpact {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
     /// Build a machine-readable edit plan without rendered source
     #[command(name = "edit-plan", disable_help_flag = true)]
     EditPlan {
@@ -7572,6 +7578,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
             handle_python_passthrough("blast-radius-render", args)
         }
         Commands::BlastRadiusPlan { args } => handle_python_passthrough("blast-radius-plan", args),
+        Commands::DiffImpact { args } => handle_python_passthrough("diff-impact", args),
         Commands::EditPlan { args } => handle_python_passthrough("edit-plan", args),
         Commands::Agent { args } => handle_python_passthrough("agent", args),
         Commands::ContextRender { args } => handle_python_passthrough("context-render", args),

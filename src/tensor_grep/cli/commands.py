@@ -34,6 +34,7 @@ KNOWN_COMMANDS = {
     "blast-radius",
     "blast-radius-render",
     "blast-radius-plan",
+    "diff-impact",
     "edit-plan",
     "context-render",
     "route-test",

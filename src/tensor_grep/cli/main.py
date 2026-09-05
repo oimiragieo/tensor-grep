@@ -8655,6 +8655,64 @@ def blast_radius_plan(
         raise typer.Exit(2)
 
 
+@app.command(name="diff-impact")
+def diff_impact(
+    ref: str | None = typer.Argument(None, help="Git revision or commit range to diff against (e.g. HEAD~1, main)."),
+    staged: bool = typer.Option(False, "--staged", help="Compare staged changes instead of unstaged working tree."),
+    deadline: float | None = _deadline_option(
+        "Stop the underlying repo scan after N seconds and return partial:true JSON with whatever was found so far, instead of running unbounded."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+    fail_threshold: float | None = typer.Option(
+        None, "--fail-threshold", min=0.0, max=1.0, help="Fail (exit 2) if blast_radius_score exceeds this threshold."
+    ),
+    fail_on_risk: str | None = typer.Option(
+        None, "--fail-on-risk", help="Fail (exit 2) if risk_tier is at or above this level (low, medium, high, critical)."
+    ),
+) -> None:
+    """Analyze blast radius, affected callers, and test impact of git diff changes."""
+    from tensor_grep.cli.diff_impact import build_diff_blast_radius
+
+    payload = build_diff_blast_radius(
+        ref=ref,
+        staged=staged,
+        deadline_seconds=deadline,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        _emit_scan_incompleteness_banner(payload)
+        typer.echo(
+            f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
+            f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
+            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
+        )
+
+    # Threshold gate check
+    breached = False
+    if fail_threshold is not None and float(payload.get("blast_radius_score", 0.0)) > fail_threshold:
+        breached = True
+    if fail_on_risk is not None:
+        risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+        current_rank = risk_rank.get(str(payload.get("risk_tier", "low")).lower(), 1)
+        target_rank = risk_rank.get(fail_on_risk.lower(), 1)
+        if current_rank >= target_rank:
+            breached = True
+
+    # Exit code contract:
+    # Exit 2 on partial/deadline or threshold breached
+    if payload.get("partial") or _scan_incomplete(payload) or breached:
+        raise typer.Exit(2)
+
+    # Exit 1 on 0 matches / clean diff
+    if not payload.get("changed_files"):
+        raise typer.Exit(1)
+
+    # Exit 0 on success with matches
+    raise typer.Exit(0)
+
+
 @session_app.command("open")
 def session_open(
     path: str = typer.Argument(".", help="File or directory rooted at the session scope."),
