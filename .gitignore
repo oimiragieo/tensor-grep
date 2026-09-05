@@ -127,3 +127,9 @@ src/tensor_grep/core/profile_stats
 # via a PR whose actual deliverable was a docs page. Ignoring the pattern is the structural fix;
 # deleting the three was only the cleanup.
 .claude/cursor_task_*.md
+
+# Internal agent orchestration scratch & memory
+.build/
+.orchestrator/
+.wayfinder/
+MEMORY.md
