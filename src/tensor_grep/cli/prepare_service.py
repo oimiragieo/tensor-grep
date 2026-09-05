@@ -24,6 +24,7 @@ untyped dict shape by hand.
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -258,6 +259,7 @@ def _build_prepare_payload(
     query: str,
     claim: bool,
     deadline_monotonic: float | None = None,
+    include_next_action: bool = False,
 ) -> dict[str, Any]:
     """Thin composition (CEO #5): ONE repo-map build supplies primary target, confidence,
     ask-user, and validation verbatim; the only NEW scan is the blast-radius floor (see
@@ -444,6 +446,33 @@ def _build_prepare_payload(
     }
     _copy_scan_limit(result, capsule)
 
+    if include_next_action:
+        target_path = str(target.get("file") or path)
+        result["next_action"] = {
+            "action": {
+                "type": "edit_file",
+                "path": target_path,
+                "span": {
+                    "start_line": target.get("line"),
+                    "end_line": target.get("end_line", target.get("line")),
+                },
+                "instruction": f"Edit {target.get('symbol') or target_path} to address: {query}",
+                "stop_if": ["ask_user_before_editing.required", "result_incomplete"],
+            },
+            "on_success": {
+                "type": "run",
+                "argv": ["uv", "run", "pytest", "-q"],
+                "deadline_seconds": 300,
+                "max_output_bytes": 1000000,
+                "allow_network": False,
+                "fail_closed_on_timeout": True,
+            },
+            "on_failure": {
+                "type": "narrow_scope",
+                "suggested_path": str(Path(target_path).parent).replace("\\", "/"),
+            },
+        }
+
     capsule_partial = bool(capsule.get("partial"))
     if capsule_partial or floor_deadline_partial:
         result["partial"] = True
@@ -490,6 +519,7 @@ def build_prepare_snapshot(
     query: str,
     claim: bool = False,
     deadline_monotonic: float | None = None,
+    include_next_action: bool = False,
 ) -> PrepareSnapshotV1:
     """Build a `PrepareSnapshotV1` by calling the existing `_build_prepare_payload` and
     projecting its result onto typed fields. Delegates every computation to that function --
@@ -498,7 +528,11 @@ def build_prepare_snapshot(
     when `claim=True`, the same advisory ledger claim submission `_build_prepare_payload`
     already performs)."""
     payload = _build_prepare_payload(
-        path=path, query=query, claim=claim, deadline_monotonic=deadline_monotonic
+        path=path,
+        query=query,
+        claim=claim,
+        deadline_monotonic=deadline_monotonic,
+        include_next_action=include_next_action,
     )
     return PrepareSnapshotV1(
         version=int(payload.get("version") or 1),
