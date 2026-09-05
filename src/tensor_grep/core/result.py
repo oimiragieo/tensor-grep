@@ -90,6 +90,7 @@ class MatchLine:
     # so two matches equal on those fields are equal here too.
     submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)
     container: dict[str, object] | None = field(default=None, compare=False)
+    why_ranked: list[str] | None = field(default=None, compare=False)
 
 
 @dataclass
@@ -159,6 +160,7 @@ class SearchResult:
     # (reserved for a full engine swap) and from `incomplete_reason` (partial results). Emitted
     # to stderr + this field so a BM25-only result is never mislabeled "semantic" output.
     rank_fallback_reason: str | None = None
+    install_state: str | None = None
 
     @property
     def is_empty(self) -> bool:
