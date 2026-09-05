@@ -124,6 +124,16 @@ def test_language_registry_has_exactly_the_stage2_languages() -> None:
     }
 
 
+def test_every_registered_language_has_extract_imports_and_symbols() -> None:
+    """All 10 registered languages must carry a non-None extract_imports_and_symbols callable."""
+    missing = [
+        lang_id
+        for lang_id, spec in lang_registry.LANGUAGE_REGISTRY.items()
+        if spec.extract_imports_and_symbols is None
+    ]
+    assert missing == [], f"Languages missing extract_imports_and_symbols: {missing}"
+
+
 def test_target_and_provider_language_agree_with_registry() -> None:
     """F22 (audit #63 LOW tail): `_target_language_for_path` (repo_map.py:6475-6494) and
     `_provider_language_for_path` (repo_map.py:13018+) each still carry their OWN hardcoded
