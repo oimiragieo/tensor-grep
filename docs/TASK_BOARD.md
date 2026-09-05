@@ -405,6 +405,8 @@ review, each verified against the real code (a finding without a `file:line` was
 - [ ] **Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages) (P2)** — Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics to full tree-sitter AST-verified references and callers to defend against Gortex's ~30-language deep tier.
 - [ ] **Standardize MCP Incompleteness Protocol Envelope (P3)** — Expose a unified additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing fields, establishing `tg`'s fail-closed incompleteness contract as the standard for MCP client agents.
 - [ ] **Front-Door Positioning & Dynamic Language Table Realignment (P4)** — Realign `docs/tool_comparison.md` and `README.md` to lead with `tg prepare` and the 4-element edit readiness comparison table, demote cold grep speed benchmarks to an engine appendix, and dynamically generate the language tier table from `LANGUAGE_REGISTRY`.
+- [ ] **CI PR Blast-Radius & Risk Gate GitHub Action (`tg action pr-gate`) (P11)** — Package an official GitHub Action and pre-commit hook runner wrapping `tg diff-impact` that evaluates PR diffs against configurable risk thresholds (e.g. `--fail-threshold 50`, `--fail-on-risk risky`), posting an automated Mermaid caller-graph summary comment on PRs.
+- [ ] **Zero-Shot Semantic Re-ranking with Model2Vec Onnx Quantization (`tg find --dense-fast`) (P12)** — Cut semantic embedding latency from ~80ms to <10ms by exporting `potion-code-16M` to ONNX-runtime int8 format integrated with native SIMD/AVX-512 extensions in `rust_core`.
 
 
 ## P4 — carried backlog (from `docs/BACKLOG.md`, still open)

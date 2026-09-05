@@ -123,6 +123,18 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Seat & Cost:** Codex Pro $200/mo flat plan; deterministic subshell harness; $0.00 marginal overage.
   - **Acceptance:** Deterministic verification gate; prevents "false-green" agent completion claims.
 
+- **[ ] P11 — CI PR Blast-Radius & Risk Gate GitHub Action (`tg action pr-gate`)**
+  - **Objective:** Gate pull requests and pre-commit hooks on transitive downstream impact and review risk, competing directly with `ehermanson/blast-radius` and Gortex `pr_risk`.
+  - **Scope:** Package an official GitHub Action and pre-commit hook runner wrapping `tg diff-impact` that evaluates PR diffs against configurable risk thresholds (e.g. `--fail-threshold 50`, `--fail-on-risk risky`), posting an automated Mermaid caller-graph summary comment on PRs.
+  - **Seat & Cost:** Sonnet 5 build (Droid Plus $100/mo flat plan) -> Opus 5 review (Claude Max $200/mo); $0.00 marginal overage.
+  - **Acceptance:** Exits 0 on acceptable changes, exit 2 on exceeded blast-radius threshold; renders interactive Markdown/Mermaid dependency trees on GitHub PR comments.
+
+- **[ ] P12 — Zero-Shot Semantic Re-ranking with Model2Vec Onnx Quantization (`tg find --dense-fast`)**
+  - **Objective:** Cut semantic embedding latency from ~80ms to <10ms for multi-symbol queries on CPU.
+  - **Scope:** Distill and export the default `potion-code-16M` model into an ONNX-runtime int8 format integrated with native SIMD/AVX-512 extensions in `rust_core`, bypassing Python interpreter overhead during dense fusion passes.
+  - **Seat & Cost:** Sonnet 5 build (Droid Plus $100/mo) -> Fable 5.1 audit; $0.00 marginal overage.
+  - **Acceptance:** 8x faster embedding vector inference; zero quality degradation on `find_realquery_golden.jsonl` benchmark suite.
+
 
 
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
