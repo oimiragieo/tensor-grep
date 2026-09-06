@@ -137,10 +137,10 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
     - "file-size branch is stale against `main`; rebasing should exceed the 13,523-line pin." — **CONFIRMED REAL AND FIXED (`03cd8c2`).** Rebase onto current `main` measured `main.py` at 13526, exactly as predicted. Fixed by condensing 3 near-duplicate `deadline_monotonic` front-door comments (repeated verbatim across `orient`/`codemap`/`edit-plan`) without losing content. Verified: real import, 152 session/ratchet tests pass, dogfooded the 3 touched commands' real `--help` output.
   - **Acceptance:** each bullet above gets a direct code read (same discipline as the 3 CRITICALs — cite real file:line, reproduce with a test before fixing, don't fix based on the claim alone) before #1131 merges or in a fast-follow PR if S3/S6 findings on `main` prove real.
 
-- **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
+- **[x] P4 — Front-Door Positioning & Dynamic Language Table Realignment (acceptance criteria met; residual scope split off)**
   - **Objective:** Position `tg` as the AI agent edit-readiness layer rather than a cold grep speed comparator.
-  - **Scope:** Update `README.md` and `docs/tool_comparison.md` to lead with `tg prepare` and the 4-element comparison table; demote cold grep speed benchmarks to an engine appendix; generate the published language tier table dynamically from `LANGUAGE_REGISTRY` to prevent documentation rot.
-  - **Acceptance:** `README.md` hero section features `tg prepare`; zero hardcoded language count drift against `LANGUAGE_REGISTRY`.
+  - **Acceptance — CONFIRMED MET, verified live:** `README.md`'s hero code block features `tg prepare` as its second command (`README.md:17`); `docs/tool_comparison.md`'s language-count claims are internally consistent at "10" with zero drift (fixed this session, `8e25c23`).
+  - **Residual scope, NOT done, split into a new item — P15:** the README's opening tagline (`README.md:11`, "Fast text, AST, indexed, and GPU-aware search CLI") still leads with a cold-search framing rather than the edit-readiness positioning the Objective describes, and the language tier table in `docs/tool_comparison.md` is documented as manually re-derivable (a grep one-liner) rather than actually auto-generated from `LANGUAGE_REGISTRY` at doc-build/CI time. Both are real, larger writing/tooling work — not machine-checkable acceptance gaps — so P4 itself is closed on its literal acceptance bar and the rest tracked separately below.
 
 - **[x] P5 — Public Repository Cleanliness & Agent Scratch Partitioning (Enterprise OS Parity)**
   - **Objective:** Match top-tier enterprise open-source repositories (e.g. Alibaba `open-code-review`, `zvec`) by untracking and ignoring internal agent orchestration files from public view.
@@ -198,6 +198,12 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Extend `defs`/`refs`/`callers` (and related symbol-graph) results with a `provenance: {source: "ast"|"regex_fallback"|"cache", confidence: float, index_fingerprint_age_s: int}` field — the natural generalization of the `incomplete{}` envelope pattern P3 just shipped (PR #1135) for MCP tool-level completeness, applied instead at the individual-fact level.
   - **Acceptance:** Every symbol-graph result carries the provenance object; a client can distinguish an AST-verified fact from a regex-fallback guess without re-deriving it from `_symbol_navigation_descriptor()` or reading docs.
   - **Seat & Cost:** Sonnet 5 design + build, additive/non-breaking, no external review needed. $0.00 marginal overage.
+
+- **[ ] P15 — README Tagline Repositioning & Auto-Generated Language Tier Table**
+  - **Objective:** Split off from P4 (2026-09-06) — the residual, larger-scope half of the front-door positioning work that isn't a same-turn writing fix.
+  - **Scope:** (1) Rewrite `README.md`'s opening tagline (currently "Fast text, AST, indexed, and GPU-aware search CLI") to lead with the agent edit-readiness framing (`tg prepare`/`tg agent`) per `docs/tool_comparison.md`'s own "Where tensor-grep Is Stronger" section, demoting cold-search-speed framing to an appendix — a taste/positioning call, route through Exa research + council per this session's standing process, not a unilateral rewrite. (2) Build an actual generation step (script + CI wiring) that emits `docs/tool_comparison.md`'s language tier table from `LANGUAGE_REGISTRY`/`_symbol_navigation_descriptor()` at doc-build or CI time, replacing the current "re-derive via this grep command" manual-refresh convention — this closes the exact drift class that bit this session (`8e25c23`) permanently rather than relying on the next session to remember to re-check it.
+  - **Acceptance:** README tagline reviewed by council/Exa-informed positioning call, not just Claude's own taste; `docs/tool_comparison.md`'s language table is generated (not hand-maintained) and a CI check fails if it drifts from `LANGUAGE_REGISTRY`.
+  - **Seat & Cost:** Positioning half — Exa research + council (per `tensor-grep-release-and-positioning`'s public-positioning checklist). Generation-tooling half — Sonnet 5 build, Codex Sol review (touches CI).
 
 
 
