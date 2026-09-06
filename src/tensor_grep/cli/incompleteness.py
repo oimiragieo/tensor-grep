@@ -163,7 +163,19 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         or bool(payload.get("partial", False))
         or nested_incomplete
     )
+    # scan_limit.truncation_cause/.budget_remediable are the ACTIONABLE signal (a fail-closed
+    # allowlist -- "scan_limit"/"unreadable_path"/"unknown", per AGENTS.md) when a tool sets
+    # them; preferring them over the generic "truncated" fallback keeps a client from losing
+    # the one piece of information that tells it whether raising a budget will even help.
+    scan_limit = payload.get("scan_limit")
+    scan_limit_cause = scan_limit.get("truncation_cause") if isinstance(scan_limit, dict) else None
+    scan_limit_remediable = (
+        scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
+    )
+
     cause = payload.get("incomplete_reason")
+    if cause is None and scan_limit_cause is not None:
+        cause = scan_limit_cause
     if cause is None and payload.get("truncated"):
         cause = "truncated"
     if cause is None and payload.get("partial"):
@@ -172,7 +184,11 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         cause = "nested_incomplete"
     if cause is not None and not isinstance(cause, str):
         cause = str(cause)
-    remediable = bool(payload.get("budget_remediable", False))
+    remediable = bool(
+        scan_limit_remediable
+        if scan_limit_remediable is not None
+        else payload.get("budget_remediable", False)
+    )
     return {
         "status": status,
         "cause": cause,

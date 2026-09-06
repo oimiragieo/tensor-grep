@@ -132,6 +132,47 @@ def test_incomplete_envelope_aggregates_nested_results_by_root() -> None:
     assert stamped["incomplete"]["status"] is True
 
 
+def test_incomplete_envelope_prefers_scan_limit_truncation_cause_over_generic_truncated() -> None:
+    """Codex Sol delta-verification audit 2026-09-06 HIGH finding: scan_limit.truncation_cause
+    (e.g. "scan_limit", "unreadable_path", "unknown" -- a fail-closed allowlist per AGENTS.md)
+    and scan_limit.budget_remediable are the ACTIONABLE cause/remediation signal, but the unified
+    envelope only ever fell back to a generic "truncated" cause and never read them, degrading
+    an actionable cause into a useless one and always reporting non-remediable."""
+    raw = json.dumps({
+        "truncated": True,
+        "scan_limit": {
+            "max_repo_files": 1000,
+            "scanned_files": 1000,
+            "possibly_truncated": True,
+            "truncation_cause": "unreadable_path",
+            "budget_remediable": False,
+        },
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True
+    assert stamped["incomplete"]["cause"] == "unreadable_path"
+    assert stamped["incomplete"]["budget_remediable"] is False
+
+
+def test_incomplete_envelope_surfaces_scan_limit_budget_remediable_true() -> None:
+    """The other half of the same gap: a budget-cap truncation (scan_limit) IS remediable by
+    raising max_repo_files, but the envelope's own budget_remediable never read scan_limit's
+    more specific value -- it only ever checked the top-level (usually-absent) field."""
+    raw = json.dumps({
+        "truncated": True,
+        "scan_limit": {
+            "max_repo_files": 1000,
+            "scanned_files": 1000,
+            "possibly_truncated": True,
+            "truncation_cause": "scan_limit",
+            "budget_remediable": True,
+        },
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["cause"] == "scan_limit"
+    assert stamped["incomplete"]["budget_remediable"] is True
+
+
 def test_incomplete_envelope_derives_budget_remediable() -> None:
     raw = json.dumps({
         "result_incomplete": True,
