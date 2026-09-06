@@ -106,7 +106,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 - **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
   - **Objective:** Match scoring transparency and explicit installation capability envelopes.
   - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
-  - **Status:** PR #1134 open (`ae822a6`); CI RED — real `main.py` size-ratchet regression (grew to 13538 vs pinned 13523 baseline). Fix dispatched to a background developer agent (tighten S6 `--why-ranked` wiring, run 2026-09-05); awaiting its push + green rerun before merge.
+  - **Status:** PR #1134 fixed (`a5b774d`): extracted `build_why_ranked_reasons`/`route_labels` helpers into `src/tensor_grep/core/reranker.py`, `main.py` now exactly 13523 lines (matches baseline). Verified: real import smoke test passes, ratchet + why_ranked/find tests green (163 passed). CI rerun in progress; merge once green.
 
 - **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
