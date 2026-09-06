@@ -157,20 +157,31 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
                 nested_incomplete = True
                 break
 
+    # scan_limit.truncation_cause/.budget_remediable are the ACTIONABLE signal (a fail-closed
+    # allowlist -- "scan_limit"/"unreadable_path"/"unknown", per AGENTS.md) when a tool sets
+    # them; preferring them over the generic "truncated" fallback keeps a client from losing
+    # the one piece of information that tells it whether raising a budget will even help.
+    #
+    # scan_limit.possibly_truncated ITSELF must also drive `status` -- round-3 final-verification
+    # audit finding: `tg_repo_map` injects `build_repo_map`'s raw dict verbatim, and that dict can
+    # carry ONLY a nested scan_limit (possibly_truncated=True + cause + remediable) with no
+    # top-level truncated/partial/result_incomplete sibling. Reading the cause/remediable fields
+    # without also folding possibly_truncated into `status` left that shape reporting complete.
+    scan_limit = payload.get("scan_limit")
+    scan_limit_truncated = (
+        bool(scan_limit.get("possibly_truncated")) if isinstance(scan_limit, dict) else False
+    )
+    scan_limit_cause = scan_limit.get("truncation_cause") if isinstance(scan_limit, dict) else None
+    scan_limit_remediable = (
+        scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
+    )
+
     status = (
         bool(payload.get("result_incomplete", False))
         or bool(payload.get("truncated", False))
         or bool(payload.get("partial", False))
         or nested_incomplete
-    )
-    # scan_limit.truncation_cause/.budget_remediable are the ACTIONABLE signal (a fail-closed
-    # allowlist -- "scan_limit"/"unreadable_path"/"unknown", per AGENTS.md) when a tool sets
-    # them; preferring them over the generic "truncated" fallback keeps a client from losing
-    # the one piece of information that tells it whether raising a budget will even help.
-    scan_limit = payload.get("scan_limit")
-    scan_limit_cause = scan_limit.get("truncation_cause") if isinstance(scan_limit, dict) else None
-    scan_limit_remediable = (
-        scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
+        or scan_limit_truncated
     )
 
     cause = payload.get("incomplete_reason")

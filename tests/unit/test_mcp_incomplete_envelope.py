@@ -132,6 +132,32 @@ def test_incomplete_envelope_aggregates_nested_results_by_root() -> None:
     assert stamped["incomplete"]["status"] is True
 
 
+def test_incomplete_envelope_derives_status_from_scan_limit_possibly_truncated_alone() -> None:
+    """Round-3 Codex Sol final-verification audit finding: status was derived from
+    result_incomplete/truncated/partial/nested children, but NEVER from
+    scan_limit.possibly_truncated itself -- it only read scan_limit's cause/remediable fields
+    AFTER status was already true from something else. tg_repo_map injects build_repo_map's
+    raw dict verbatim (mcp_server.py tg_repo_map), and build_repo_map can emit a payload with
+    ONLY nested scan_limit.possibly_truncated=True and no top-level truncated/partial/
+    result_incomplete sibling -- exactly the production shape this test reproduces without the
+    masking top-level truncated=True the prior (now-fixed) test accidentally included."""
+    raw = json.dumps({
+        "scan_limit": {
+            "max_repo_files": 1000,
+            "scanned_files": 1000,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+            "budget_remediable": True,
+        },
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True, (
+        f"scan_limit.possibly_truncated=True must drive status=True on its own: {stamped}"
+    )
+    assert stamped["incomplete"]["cause"] == "project-files"
+    assert stamped["incomplete"]["budget_remediable"] is True
+
+
 def test_incomplete_envelope_prefers_scan_limit_truncation_cause_over_generic_truncated() -> None:
     """Codex Sol delta-verification audit 2026-09-06 HIGH finding: scan_limit.truncation_cause
     (e.g. "scan_limit", "unreadable_path", "unknown" -- a fail-closed allowlist per AGENTS.md)
