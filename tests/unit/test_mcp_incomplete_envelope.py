@@ -72,6 +72,23 @@ def test_incomplete_envelope_derives_from_result_incomplete_true() -> None:
     assert stamped["incomplete"]["cause"] == "scan hit max_repo_files"
 
 
+def test_incomplete_envelope_derives_from_truncated_when_result_incomplete_absent() -> None:
+    """A tool can signal incompleteness via `truncated: true` (a scan-capped result) WITHOUT
+    also setting `result_incomplete` -- e.g. tg_search's no-match envelope stamps both
+    `truncated` (from a separate scan_capped derivation) and `result_incomplete` from a
+    DIFFERENT source (all_results.result_incomplete), and the two can disagree. Codex Sol audit
+    2026-09-06 CRITICAL finding: keying unified_incomplete_envelope on result_incomplete alone
+    silently reports a genuinely truncated/capped response as incomplete.status=False."""
+    raw = json.dumps({
+        "result_incomplete": False,
+        "truncated": True,
+        "omitted_matches": 12,
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True
+    assert stamped["truncated"] is True  # legacy field untouched
+
+
 def test_incomplete_envelope_derives_budget_remediable() -> None:
     raw = json.dumps({
         "result_incomplete": True,

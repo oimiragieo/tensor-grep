@@ -138,8 +138,14 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     Falls back to ``{"status": False, "cause": None, "budget_remediable": False}``
     for a tool with no incompleteness concept at all.
     """
-    status = bool(payload.get("result_incomplete", False))
+    # A tool can signal incompleteness via `result_incomplete` OR a separate `truncated` flag
+    # (e.g. tg_search's scan-capped no-match envelope stamps `truncated` from a distinct
+    # scan_capped derivation that is not routed through all_results.result_incomplete). Keying
+    # on `result_incomplete` alone silently reports a genuinely truncated response as complete.
+    status = bool(payload.get("result_incomplete", False)) or bool(payload.get("truncated", False))
     cause = payload.get("incomplete_reason")
+    if cause is None and payload.get("truncated"):
+        cause = "truncated"
     if cause is not None and not isinstance(cause, str):
         cause = str(cause)
     remediable = bool(payload.get("budget_remediable", False))
