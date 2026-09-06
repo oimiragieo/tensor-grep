@@ -182,6 +182,37 @@ def test_h8_tg_classify_logs_returns_json_on_missing_file() -> None:
         pass  # text output acceptable on unreadable-file edge
 
 
+def test_tg_classify_logs_stamps_truncated_when_sample_lines_below_total(tmp_path) -> None:
+    """Round-3 Codex Sol final-verification audit finding: tg_classify_logs exposes only
+    sample_lines/total_lines (numeric fields a client must compare itself), no explicit
+    truncated boolean -- so a file exceeding DEFAULT_CLASSIFY_MAX_LINES (500) was injected as
+    complete by unified_incomplete_envelope, which has no generic way to compare two arbitrary
+    numeric field names. Fix at the source: stamp the same top-level `truncated` field every
+    other tool's capped response already carries."""
+    import os
+
+    from tensor_grep.cli.mcp_server import tg_classify_logs
+
+    log_file = tmp_path / "big.log"
+    log_file.write_text("\n".join(f"line {i}: nominal" for i in range(600)), encoding="utf-8")
+
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        result = tg_classify_logs(str(log_file), structured_json=True)
+    finally:
+        os.chdir(old_cwd)
+
+    payload = json.loads(result)
+    assert payload["sample_lines"] < payload["total_lines"], (
+        "test setup must actually exceed the classify line budget"
+    )
+    assert payload["truncated"] is True, (
+        f"classify payload missing top-level truncated field: {payload}"
+    )
+    assert payload["incomplete"]["status"] is True
+
+
 # ---------------------------------------------------------------------------
 # H9 -mcp_contract_version in every tool envelope
 # ---------------------------------------------------------------------------

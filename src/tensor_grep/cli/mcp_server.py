@@ -3882,6 +3882,11 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
                             "provider_status": provider_status,
                             "sample_lines": line_budget["emitted_lines"],
                             "total_lines": line_budget["total_lines"],
+                            # Round-3 audit finding: sample_lines/total_lines are numeric
+                            # fields a client must compare itself; stamp the same explicit
+                            # top-level truncated boolean every other capped tool already
+                            # carries, so unified_incomplete_envelope's generic check works.
+                            "truncated": line_budget["emitted_lines"] < line_budget["total_lines"],
                             "anomaly_count": len(warnings_or_errors),
                             "anomalies": [
                                 {"label": label, "confidence": conf, "text": text}
