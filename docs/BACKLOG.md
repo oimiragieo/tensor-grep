@@ -163,6 +163,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Extend `tg evidence` to execute designated test commands in an isolated subprocess, capture signed execution metadata, and output a tamper-evident `.evidence.json` receipt.
   - **Seat & Cost:** Codex Pro $200/mo flat plan; deterministic subshell harness; $0.00 marginal overage.
   - **Acceptance:** Deterministic verification gate; prevents "false-green" agent completion claims.
+  - **Competitive research (Exa, 2026-09-05):** `getprusik/prusik` (Apache-2.0, 1,300+ tests, GitHub Action) already ships almost exactly this — deterministic "prove tests executed not just discovered," SARIF output, git-tracked findings that reopen on regression. Building P10 from scratch would reinvent a mature free tool. **Prusik's real gap**: its evidence extraction is "Python/JS-deep" only (pytest, vitest, mypy, tsc, ruff, eslint) with NO symbol/blast-radius awareness — it can prove a test ran, but not which symbols that test's pass/fail result actually covers. Differentiation angle: tie a verified-execution receipt to the AST blast-radius of the diff it verifies (`tg verify --enforce-evidence` outputs "these N tests executed AND covered these M affected symbols from the diff"), across all 10 parser-backed languages, not just Python/JS. **Before scoping new work: audit `tensor-grep-enterprise-review-bundle`'s existing `audit-history`/review-bundle surface — it may already partially exist.**
 
 - **[ ] P11 — CI PR Blast-Radius & Risk Gate GitHub Action (`tg action pr-gate`)**
   - **Objective:** Gate pull requests and pre-commit hooks on transitive downstream impact and review risk, competing directly with `ehermanson/blast-radius` and Gortex `pr_risk`.
@@ -181,6 +182,12 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Add `import-linter` (or `pytestarch`), generate a baseline file capturing every CURRENT violation (freeze, do not fix in this PR), wire it into CI so only NEW violations fail the build, then burn the baseline down incrementally in follow-up PRs.
   - **Acceptance:** CI fails on any new cross-layer import that isn't in the frozen baseline; baseline file is reviewed like code with stable per-entry identities.
   - **Seat & Cost:** Sonnet 5 build (baseline generation is mechanical) -> Codex Sol review (CI-gating change). $0.00 marginal overage.
+
+- **[ ] P14 — Fact-Level Confidence/Freshness/Provenance Envelope on Symbol-Graph Results**
+  - **Objective:** Be first-to-market on a named, unsolved gap across the ENTIRE code-intelligence MCP market as of mid-2026 (Exa research, Anthony West, "Code Intelligence & Code-Graph Indexing for AI Agents," 2026-06-03): *"MCP creates composability before it creates trust. The protocol lets agents call tools consistently, but it does not expose a universal confidence model, freshness model, or provenance contract for code facts."* Serena, claude-context, GitNexus, and CodeGraph all lack this.
+  - **Scope:** Extend `defs`/`refs`/`callers` (and related symbol-graph) results with a `provenance: {source: "ast"|"regex_fallback"|"cache", confidence: float, index_fingerprint_age_s: int}` field — the natural generalization of the `incomplete{}` envelope pattern P3 just shipped (PR #1135) for MCP tool-level completeness, applied instead at the individual-fact level.
+  - **Acceptance:** Every symbol-graph result carries the provenance object; a client can distinguish an AST-verified fact from a regex-fallback guess without re-deriving it from `_symbol_navigation_descriptor()` or reading docs.
+  - **Seat & Cost:** Sonnet 5 design + build, additive/non-breaking, no external review needed. $0.00 marginal overage.
 
 
 
