@@ -101,18 +101,18 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 - **[ ] S4 — Warm Session Prepare & Resume Contracts**
   - **Objective:** Rapid cached agent context restoration across sequential edit turns.
   - **Scope:** `tg session-prepare` and `tg session-resume` CLI bindings with decoupled service architecture (`main.py` <= 13,523 ratchet).
-  - **Status:** PR #1131 fixed (`b317bff`): extracted `session_prepare_cmd`/`session_resume_cmd` into new `src/tensor_grep/cli/session_resume_service.py`, `main.py` now 13522 lines. `gh run rerun --failed` was re-checking-out the SAME stale merge-ref snapshot (pre-`5397bac` docs fix) instead of remerging against current `main` — rebased the branch onto `origin/main` directly (`2216a43`) to force a fresh `pull_request` sync; re-verified import + ratchet hold post-rebase. Awaiting fresh CI.
+  - **Status:** PR #1131 fixed (`b317bff`, `2216a43`), then a fresh rebase-triggered CI run surfaced a real second defect: `session_resume_service.py`'s two CLI dispatch functions push the repo's broad-exception-handler population from 338→340. Classified as INTENTIONAL-BOUNDARY (both disclose via stderr + non-zero exit, matching main.py's existing pattern) and the ceiling raised accordingly (`cd3f8fd`). Verified: `test_silent_failure_hardening.py` + `test_file_size_budget.py` green (30 passed). Awaiting fresh CI.
 
-- **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
+- **[x] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
   - **Objective:** Match scoring transparency and explicit installation capability envelopes.
   - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
-  - **Status:** PR #1134 fixed (`a5b774d`): extracted `build_why_ranked_reasons`/`route_labels` helpers into `src/tensor_grep/core/reranker.py`, `main.py` now exactly 13523 lines. Same stale-merge-ref issue as #1131 (`gh run rerun` doesn't remerge against current `main`) — rebased onto `origin/main` (`6c73e2e`), re-verified import + line count post-rebase. Awaiting fresh CI.
+  - **Receipt:** Merged PR #1134, squash SHA `d5c9354`, all CI green. Worktree + branch cleaned up.
 
 - **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
   - **Scope:** Add a unified, additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing surface-specific fields.
   - **Acceptance:** Validated across all 58 MCP tool endpoints; client agents in Cursor, Windsurf, and Claude Code can inspect one consistent object to decide whether to retry with increased budget.
-  - **Status:** PR #1135 open (`a7ad30e`). New `incompleteness.py` with `unified_incomplete_envelope()`, routed through the existing `_inject_mcp_contract_fields` choke point (~40+ return sites, effectively the full 58-tool surface); `_TG_MCP_SERVER_CONTRACT_VERSION` bumped 1.7.0→1.8.0. Verified independently (not just self-report): real import test passes, `mcp_server.py` shrunk to 5665 lines (ratchet-compliant), spot-check tests green (36 passed on the new envelope + file-size-budget suites). Full `-k mcp` suite reported 823 passed by the build agent; not independently re-run in full (939s). CI fresh (`34006309430`/`34006310601`), just started — awaiting green before merge.
+  - **Status:** PR #1135 open (`a7ad30e`, `5e67ade`). New `incompleteness.py` with `unified_incomplete_envelope()`, routed through the existing `_inject_mcp_contract_fields` choke point (~40+ return sites, effectively the full 58-tool surface); `_TG_MCP_SERVER_CONTRACT_VERSION` bumped 1.7.0→1.8.0. Fresh CI surfaced two real defects: (1) `tg_mcp_capabilities` called `_inject_mcp_contract_fields` as a bare name, reopening a module (`mcp_server.py`) that was RETIRED at 0 bare-calls-to-patched-symbols in a prior Route A split-floor conversion — fixed by using the module's established `_self.` late-binding pattern; (2) `test_mcp_stdio_protocol.py` had two stale `"1.7.0"` version-pin assertions — bumped to `"1.8.0"`. Verified: real import, `bare_call_ratchet.py` reports 0 regressions, stdio protocol suite green (3 passed), ratchet holds (28 passed). Awaiting fresh CI.
 
 - **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
   - **Objective:** Position `tg` as the AI agent edit-readiness layer rather than a cold grep speed comparator.
