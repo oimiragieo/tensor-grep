@@ -125,7 +125,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
     - "refresh discards `last_prepare`, while resume still returns `resumed: true`; its test accepts a null value." Cited `session_store.py:850`, `session_resume_service.py:48`, `test_session_resume.py:38`.
     - "unlocked prepare/refresh read-modify-write race." Cited `session_resume_service.py:25`, `session_store.py:875`.
     - "'warm' prepare rescans instead of using the session map." Cited `session_resume_service.py:27`, `prepare_service.py:287`.
-    - "file-size branch is stale against `main`; rebasing should exceed the 13,523-line pin." Cited `main.py:71`, `scripts/file_size_allowlist.json:24` — this specific claim should be mechanically re-checked first (cheap: rebase + `wc -l`) since branch staleness was the root cause of two earlier real CI failures this session and may already be moot by the time #1131 next merges.
+    - "file-size branch is stale against `main`; rebasing should exceed the 13,523-line pin." — **CONFIRMED REAL AND FIXED (`03cd8c2`).** Rebase onto current `main` measured `main.py` at 13526, exactly as predicted. Fixed by condensing 3 near-duplicate `deadline_monotonic` front-door comments (repeated verbatim across `orient`/`codemap`/`edit-plan`) without losing content. Verified: real import, 152 session/ratchet tests pass, dogfooded the 3 touched commands' real `--help` output.
   - **Acceptance:** each bullet above gets a direct code read (same discipline as the 3 CRITICALs — cite real file:line, reproduce with a test before fixing, don't fix based on the claim alone) before #1131 merges or in a fast-follow PR if S3/S6 findings on `main` prove real.
 
 - **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
