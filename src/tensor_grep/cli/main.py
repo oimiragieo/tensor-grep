@@ -5044,9 +5044,8 @@ def orient(
     json_output: bool = typer.Option(False, "--json", help="Emit the capsule as JSON"),
 ) -> None:
     """Emit a one-call codebase orientation capsule (central files, entry points, AST snippets)."""
-    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
-    # computed here, BEFORE the lazy orient_capsule import and the daemon gate below, so front-door
-    # time counts against an explicit --deadline the same way the underlying scan already does.
+    # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
+    # orient_capsule import and the daemon gate, so front-door time counts against --deadline.
     # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on `tg orient`
     # (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
@@ -5195,10 +5194,9 @@ def codemap(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)."""
-    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
-    # computed here, BEFORE the lazy codemap import, so import cost counts against the budget for
-    # the (non-`--check`) scanning path below. --check is a read-only freshness check with no scan/
-    # deadline of its own; computing this unconditionally here is a cheap no-op for that branch.
+    # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
+    # codemap import, so import cost counts against the (non-`--check`) scanning path's budget.
+    # --check is a read-only freshness check with no scan/deadline; this is a cheap no-op there.
     effective_deadline = None if no_deadline else deadline
     deadline_monotonic = _cli_deadline_monotonic(effective_deadline)
 
@@ -5716,9 +5714,8 @@ def context_render(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Return a prompt-ready repository context bundle for edit planning."""
-    # Anchor deadline_monotonic at CLI command entry (closes the #197/#200 front-door residual):
-    # computed here, BEFORE the lazy repo_map import, path resolution, and the daemon gate below,
-    # so front-door time counts against an explicit --deadline the same way the scan already does.
+    # Anchor deadline_monotonic at CLI command entry (closes #197/#200): computed BEFORE the lazy
+    # repo_map import, path resolution, and daemon gate, so front-door time counts against --deadline.
     # CLI consistency fix (CEO v1.71.3 dogfood): `--deadline` used to be undefined on
     # `tg context-render` (Click "No such option" exit-2).
     effective_deadline = None if no_deadline else deadline
