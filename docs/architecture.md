@@ -187,7 +187,7 @@ dispatches them straight to the Python passthrough (`Commands::Session`, `main.r
 ## MCP server
 
 `cli/mcp_server.py` runs a `FastMCP("tensor-grep")` server (`mcp_server.py:189`) at a pinned
-contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"`, `mcp_server.py:138`) exposing 58
+contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.8.0"`, `mcp_server.py:138`) exposing 58
 tools. Note the count is NOT the number of `@mcp.tool()` decorators (12) -- most tools register
 through `_register_legacy_tool`, which calls `mcp.tool()` only when legacy tools are enabled, so
 grepping the decorator undercounts by ~46. The authoritative number is
