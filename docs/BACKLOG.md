@@ -81,32 +81,32 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Objective:** Close the language depth gap against Gortex (~30) and Serena (40+).
   - **Scope:** Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics (`_regex_references_and_calls`) to full tree-sitter AST-verified references and callers.
   - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
-  - **Status:** PR #1129 open, rebased on main (`fbc5397`), 24 unit tests passing, CI run `33999546662` in progress.
+  - **Status:** PR #1129 open, rebased on main (`fbc5397`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention (2026-09-05, 6 PRs pushed within minutes) — rerun dispatched, run `33999546662` (job `101404365799`) in progress.
 
 - **[ ] S1/S5 — Fail-Closed Edit Tickets & Verify-Edit Service (`EditReadyTicketV1`)**
   - **Objective:** Contract-driven workspace edit validation preventing silent hallucinated agent edits.
   - **Scope:** Working tree fingerprinting, sha256 pre/post assertions, bounded hunk verification.
-  - **Status:** PR #1133 open (`222683d`), unit tests passing, CI run `33999572693`.
+  - **Status:** PR #1133 open (`222683d`); CI green except one `test-python (windows-latest, py3.12)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999572693` (job `101403039109`) in progress.
 
 - **[ ] S2 — Registration-Aware Polyglot Diff Impact**
   - **Objective:** Extend `diff-impact` symbol mapping to polyglot Go and Rust source trees.
   - **Scope:** AST symbol resolution on modified diff hunks.
-  - **Status:** PR #1130 open (`3ece043`), unit tests passing.
+  - **Status:** PR #1130 open (`3ece043`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999557841` (job `101403039873`) in progress.
 
 - **[ ] S3 — Machine Protocol `next_action` & Budget Envelopes**
   - **Objective:** Structured branch advice in `tg prepare` output payload for agent runtimes.
   - **Scope:** Explicit remediation instructions, token and time budget ceiling envelopes.
-  - **Status:** PR #1132 open (`75f2e63`), unit tests passing.
+  - **Status:** PR #1132 open (`75f2e63`); CI green except one `test-python (windows-latest, py3.12)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999562495` (job `101404366820`) in progress.
 
 - **[ ] S4 — Warm Session Prepare & Resume Contracts**
   - **Objective:** Rapid cached agent context restoration across sequential edit turns.
   - **Scope:** `tg session-prepare` and `tg session-resume` CLI bindings with decoupled service architecture (`main.py` <= 13,523 ratchet).
-  - **Status:** PR #1131 open (`ec8ad83`), unit tests passing.
+  - **Status:** PR #1131 open (`ec8ad83`); CI RED — real `main.py` size-ratchet regression (grew to 13552 vs pinned 13523 baseline) + `ruff format --preview` break. Fix dispatched to a background developer agent (extract S4 CLI wiring out of `main.py`, run 2026-09-05); awaiting its push + green rerun before merge.
 
 - **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
   - **Objective:** Match scoring transparency and explicit installation capability envelopes.
   - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
-  - **Status:** PR #1134 open (`ae822a6`), unit tests passing.
+  - **Status:** PR #1134 open (`ae822a6`); CI RED — real `main.py` size-ratchet regression (grew to 13538 vs pinned 13523 baseline). Fix dispatched to a background developer agent (tighten S6 `--why-ranked` wiring, run 2026-09-05); awaiting its push + green rerun before merge.
 
 - **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
