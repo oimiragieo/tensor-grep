@@ -1,6 +1,296 @@
 # CHANGELOG
 
 
+## v1.118.0 (2026-09-06)
+
+### Bug Fixes
+
+- **session**: Refresh no longer discards last_prepare; prepare/refresh now share one lock key
+  ([`28584f4`](https://github.com/oimiragieo/tensor-grep/commit/28584f4e07b58238a60b91c5f8dd59fb3b612b1f))
+
+Independent Codex Sol audit HIGH finding on merged S4 code (#1131), confirmed by direct read of two
+  real bugs, not one:
+
+1. refresh_session (session_store.py) built its replacement payload dict from scratch and never
+  carried last_prepare forward from the existing payload -- a DETERMINISTIC data-loss bug on every
+  `tg session refresh`, not merely a race. `tg session resume` afterward still reported `resumed:
+  true` with last_prepare silently gone.
+
+2. session_prepare (session_resume_service.py) locked on `root` itself via index_lock(root) -- a key
+  nothing else in the session subsystem locks on -- while refresh_session's payload write to the
+  SAME session_path file happened with NO lock at all (only the separate index.json update was
+  locked, on _index_path(root)). Zero mutual exclusion existed between concurrent prepare/refresh
+  calls.
+
+Fix: refresh_session carries last_prepare forward when present. session_prepare now locks on
+  _index_path(root), matching the key refresh_session's write is now ALSO covered by -- merged into
+  one index_lock acquisition per refresh (index_lock is not reentrant, so the prior two separate
+  `with` blocks on the same key would have deadlocked had they shared a key).
+
+TDD: 1 new RED test (real CliRunner prepare -> refresh -> resume, matching this file's own
+  established convention) confirmed last_prepare was None post-refresh pre-fix, not-None after. Full
+  session suite (74) + ratchet (28) pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+### Documentation
+
+- **backlog**: Confirm and resolve 2 of 3 remaining S4 AUDIT-FOLLOWUP findings
+  ([`14c0812`](https://github.com/oimiragieo/tensor-grep/commit/14c0812a4670c90ea4b028f949677f6b5e6cc942))
+
+Both confirmed real and fixed on merged main (28584f4): the guaranteed last_prepare data-loss on
+  refresh, and the lock-key mismatch that meant zero mutual exclusion existed between prepare and
+  refresh. The "warm prepare rescans" claim remains unverified.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Confirm the last S4 AUDIT-FOLLOWUP finding (warm-prepare rescan), deferred with
+  reasoning
+  ([`f0cb622`](https://github.com/oimiragieo/tensor-grep/commit/f0cb622899a05f0d997347dc8c40832ebaf984cb))
+
+Direct read confirms session_prepare always triggers a full repo-map rebuild regardless of a warm
+  session's cached one -- a real performance defect, correctly deferred since fixing it touches the
+  shared _build_prepare_payload pipeline tg prepare's public CLI also depends on. All 5
+  originally-unverified S4/S3/S6 AUDIT-FOLLOWUP findings are now either fixed or explicitly deferred
+  with reasoning -- none left as bare unverified claims.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: P3 shipped — PR #1135 merged, release pipeline verification pending
+  ([`ecd9994`](https://github.com/oimiragieo/tensor-grep/commit/ecd9994101f63ddcc0b988598bc44540777f282e))
+
+Merged after 3 rounds of independent audit, all findings fixed. Not claiming published yet --
+  v1.117.0 already visible is from the earlier S4 merge, not this one; this merge's own release run
+  is still queued.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Pr #1135 is CI-green, ready for operator merge decision
+  ([`ad1383d`](https://github.com/oimiragieo/tensor-grep/commit/ad1383d14c45358d7ee355f06394441cfdde52e5))
+
+Confirmed exhaustively via gh pr checks 1135 (40 pass, 10 skipping, 0 fail, 0 pending). CI green is
+  necessary but not sufficient given the 3-rounds-of-real-findings pattern -- flagging for operator
+  go-ahead or a 4th independent check, not merging unilaterally.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+### Features
+
+- **mcp**: Standardize incompleteness envelope across MCP tools (P3)
+  ([#1135](https://github.com/oimiragieo/tensor-grep/pull/1135),
+  [`5b8c85e`](https://github.com/oimiragieo/tensor-grep/commit/5b8c85eb1dbec56907cffdc157f43e41c38fc8ed))
+
+* feat(mcp): add unified incomplete envelope across all MCP tool responses (P3)
+
+Adds an additive top-level `incomplete: {status, cause, budget_remediable}` object to every MCP tool
+  JSON response via the existing single choke point (`_inject_mcp_contract_fields`), derived from
+  each tool's own surface-specific incompleteness signals (`result_incomplete` / `incomplete_reason`
+  / `budget_remediable`) where present, defaulting to all-false otherwise. A client can now check
+  ONE consistent field regardless of which of the 58 MCP tools it called, instead of learning each
+  tool's own vocabulary. Purely additive: every pre-existing field (`result_incomplete`,
+  `incomplete_reason`, `incomplete_reason_class`, `truncation_cause`, ...) is left byte-identical,
+  and a tool that already sets its own `incomplete` key is never overwritten (`setdefault`).
+
+Bumps `_TG_MCP_SERVER_CONTRACT_VERSION` 1.7.0 -> 1.8.0 and re-reviews the two version-pinned
+  tests/docs that gate on it (`test_mcp_passthrough_wire_surface.py`'s wire-review pin,
+  `test_mcp_server_meta_dispatch.py`'s snapshot, and the two docs guarded by
+  `test_mcp_contract_version_docs_are_pinned.py`).
+
+Relocates `_incomplete_class_fragment` from `mcp_server.py` into `cli/incompleteness.py` (alongside
+  the new `unified_incomplete_envelope`) to keep `mcp_server.py` under its pinned file-size ratchet
+  baseline while adding the new logic.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+* fix(mcp): convert tg_mcp_capabilities to the module's late-binding call pattern; resync stale
+  version pins
+
+Two real gate failures surfaced on fresh CI (not the earlier docs-drift issue, which is fixed):
+
+1. bare-call ratchet: routing tg_mcp_capabilities through _inject_mcp_contract_fields used a
+  bare-name call, but mcp_server.py was RETIRED at 0 bare calls to patched symbols in a prior Route
+  A conversion (docs/design/2026-08-19-split-floor-escape.md) -- reopening it would regress that.
+  Fixed by calling via the module's established `_self.` late-attribute pattern used at every other
+  call site.
+
+2. tests/integration/test_mcp_stdio_protocol.py pinned the pre-P3 contract version ("1.7.0") in two
+  assertions; P3 legitimately bumped it to 1.8.0 and this test wasn't updated.
+
+Verified: real import, bare_call_ratchet.py reports 0 regressions, the stdio protocol test suite (3
+  tests) passes, ruff clean, file-size ratchet holds (28 passed).
+
+* fix(mcp): unified_incomplete_envelope now honors the truncated signal, not just result_incomplete
+
+Codex Sol audit CRITICAL finding: tg_search's scan-capped no-match envelope stamps `truncated` from
+  a separate scan_capped derivation that is independent of all_results.result_incomplete -- the two
+  signals can disagree (mcp_server.py:3649-3654 sets both fields from different sources).
+  unified_incomplete_envelope keyed only on result_incomplete, so a genuinely truncated response
+  could report incomplete.status=False.
+
+Fix: status is now `result_incomplete OR truncated`; cause falls back to
+
+"truncated" when only the truncated signal is present. TDD: new RED test confirmed the pre-fix bug
+  (status=False on {result_incomplete: false, truncated: true}), all 9 envelope tests green after.
+
+* fix(mcp): route remaining session-tool responses through the incomplete-envelope injector
+
+tg_session_open, tg_session_list, and the tg_query multi-root fan-out success path built their JSON
+  responses with a bare json.dumps(...) instead of
+  _self._inject_mcp_contract_fields(json.dumps(...)), so the unified `incomplete` envelope (P3)
+  never reached those three responses. Wrap all three in the injector, matching the pattern already
+  used at the other ~35 call sites in this file. Audited the remaining bare json.dumps sites and
+  confirmed they are legitimate error/meta helper payloads (_meta_unknown_action_error,
+  _meta_missing_param_error, _meta_confinement_error, _session_exception_payload callers, the
+  per-exception-handler branches under tg_repo_map/tg_orient/tg_doctor/
+  tg_context_pack/tg_edit_plan/tg_context_render/tg_find/tg_navigate/
+  tg_impact/tg_context/tg_explore/tg_session/tg_scan/tg_audit/ tg_checkpoint/tg_rewrite, and
+  _inject_mcp_contract_fields's own implementation) that intentionally do not need the envelope.
+
+* fix(docs): resync mcp_server.py handler-disposition line numbers after P3's net line additions
+
+P3's feature work shifted 17 pinned advisory linenos in the handler dispositions ledger out of their
+  enclosing symbol's span (plus one fixed in an earlier commit this session,
+  _record_generated_audit_manifest: 1202->1176). The identity triple (module, enclosing_symbol,
+  handler_index_within_symbol) is unaffected -- only the advisory lineno field drifted. Re-derived
+  via _real_handlers_for_module (the same resolution logic tests/unit/test_handler_dispositions.py
+  itself uses), not guessed.
+
+Verified: tests/unit/test_handler_dispositions.py 11 passed in 334s (this suite is genuinely slow,
+  not stuck -- three prior foreground attempts hit the 120s tool timeout before completing).
+
+* fix(mcp): unified_incomplete_envelope also honors partial and nested results_by_root
+
+Codex Sol delta-verification audit found the truncated-signal fix (7cf88d4) was incomplete:
+  tg_query's multi-root aggregate signals incompleteness via `partial: true`/`omitted_roots` (a
+  third, distinct signal), and a non-partial aggregate can still carry a CHILD root whose own
+  results_by_root[root].incomplete.status is true -- neither was checked, so a genuinely partial or
+  child-incomplete aggregate could report incomplete.status=False at the top level.
+
+Fix: status now also derives from `partial` and from any child in results_by_root carrying
+  incomplete.status=true.
+
+TDD: 2 new RED tests (partial flag, nested child aggregation) confirmed failing pre-fix, all 13
+  envelope tests green after.
+
+* fix(mcp): tg_search count-mode now stamps top-level truncated on a max_repo_files cap
+
+Codex Sol delta-verification audit CRITICAL finding: the count_matches branch omitted the top-level
+  `truncated` field the is_empty branch a few lines up already stamps from the same
+  scan_limit_payload value, so a genuinely capped count-mode scan (max_repo_files hit) reported
+  incomplete.status=False -- all_results.result_incomplete only gets set on the deadline path, never
+  on the max_repo_files cap.
+
+Fix: count_payload now carries the same top-level `truncated` field, matching the established
+  pattern instead of teaching the envelope another nested-field shape.
+
+TDD: new RED test (mocked 2-file walk, max_repo_files=1) confirmed
+
+failing pre-fix (KeyError: 'truncated'), green after. Full search suite (39) and file-size ratchet
+  (28) still pass.
+
+* fix(mcp): unified_incomplete_envelope surfaces scan_limit.truncation_cause/budget_remediable
+
+Codex Sol delta-verification audit HIGH finding: scan_limit.truncation_cause (a fail-closed
+  allowlist -- "scan_limit"/"unreadable_path"/"unknown" per AGENTS.md) and
+  scan_limit.budget_remediable are the actionable cause/remediation signal a tool already computes,
+  but the unified envelope never read them -- it always fell back to the generic "truncated" cause
+  and the top-level (usually-absent) budget_remediable field, silently discarding a more specific,
+  already-correct answer.
+
+Fix: prefer scan_limit.truncation_cause over the generic fallback when present, and prefer
+  scan_limit.budget_remediable over the top-level field when present.
+
+TDD: 2 new RED tests (cause precision, remediable precision) confirmed failing pre-fix, all 15
+  envelope tests green after. Full search suite (39) + ratchet (28) unaffected.
+
+This closes the last known-real gap on this PR from the 2026-09-06 audit-and-fix campaign (round 1:
+  injector routing + truncated signal; round 2: partial/nested aggregation, count-mode scan-cap,
+  this fix).
+
+* fix(mcp): unified_incomplete_envelope derives status from scan_limit.possibly_truncated itself
+
+Round-3 Codex Sol final-verification audit HIGH finding: status was derived from
+  result_incomplete/truncated/partial/nested-children, but never from scan_limit.possibly_truncated
+  directly -- the previous fix only read scan_limit's cause/remediable fields AFTER status was
+  already true from something else. tg_repo_map injects build_repo_map's raw dict verbatim, and that
+  dict can carry ONLY a nested scan_limit (possibly_truncated=True + cause + remediable) with no
+  top-level truncated/partial/result_incomplete sibling -- exactly the shape that reported
+  incomplete.status=False despite being genuinely truncated. The prior round's own test masked this
+  by including a top-level truncated=True alongside the nested signal.
+
+Fix: fold scan_limit.possibly_truncated into the status OR-chain.
+
+TDD: new RED test reproduces the exact unmasked production shape (scan_limit-only payload),
+  confirmed status=False/budget_remediable=False pre-fix despite budget_remediable=True in
+  scan_limit, both correct post-fix. All 16 envelope tests + 67 broader regression tests green.
+
+* fix(mcp): unified_incomplete_envelope also derives status from unreadable_paths
+
+Round-3 audit's second finding: build_repo_map stamps a top-level unreadable_paths: {count, sample}
+  key (deliberately separate from scan_limit -- "raise the budget" is the wrong remedy for a
+  permission-denied path), with no result_incomplete/truncated/partial sibling. tg_repo_map injects
+  that dict verbatim, so a repo walk that hit an unreadable path reported incomplete.status=False.
+
+Fix: fold unreadable_paths (when count > 0) into the status OR-chain, with cause falling back to
+  "unreadable_path" and NOT budget-remediable (matches the existing scan_limit "unreadable_path"
+  cause semantics).
+
+Not addressed this pass, deferred with reasoning: the audit's third finding (tg_classify_logs's
+  sample_lines < total_lines is an implicit numeric comparison, not a boolean flag) needs a
+  source-side fix (stamping an explicit truncated field at that call site, matching the established
+  pattern) rather than teaching the generic envelope a bespoke per-tool field-pair comparison.
+
+TDD: new RED test confirmed status=False pre-fix on an unreadable_paths-only payload, green after.
+  17 envelope tests + 67 broader regression tests pass.
+
+* fix(mcp): tg_classify_logs stamps top-level truncated when the line budget caps the file
+
+Round-3 audit's third finding: tg_classify_logs exposed only sample_lines/total_lines (numeric
+  fields a client must compare itself), with no explicit truncated boolean --
+  unified_incomplete_envelope has no generic way to compare two arbitrary numeric field names, so a
+  file exceeding DEFAULT_CLASSIFY_MAX_LINES (500) was injected as complete.
+
+Fix at the source (not the envelope): stamp the same top-level `truncated` field every other capped
+  tool response already carries.
+
+TDD: new RED test writes a real 600-line log file (confined inside the project root, since the
+  path-confinement guard refuses OS temp paths), confirmed KeyError pre-fix, green after. Full
+  contract-fixes suite (61 passed) and file-size ratchet unaffected.
+
+This closes the last of 3 real gaps found by the round-3 final-verification audit -- 9 real defects
+  total across 3 audit rounds on this one PR. Not declaring merge-ready: per this session's own
+  banked lesson, each of the first 2 rounds also looked complete until the next independent check
+  found something. A 4th check (or an explicit operator risk-accept) is the right next step, not
+  another self-directed audit round.
+
+* fix(docs): resync stdin_reader handler-disposition lineno after round-3 fixes
+
+The three round-3 fixes (scan_limit.possibly_truncated, unreadable_paths, tg_classify_logs) added
+  lines to mcp_server.py, shifting the pinned stdin_reader[0] citation out of its span again (5627
+  -> real 5641) -- this was the actual CI failure (test-python failed on all platforms,
+  conclusion=failure), not one of the 9 tracked audit findings. Same drift class as f00f4aa earlier
+  this session; re-derived via _real_handlers_for_module, not guessed.
+
+Verified: tests/unit/test_handler_dispositions.py, 11 passed in 303s (this suite is genuinely slow,
+  not stuck).
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.117.0 (2026-09-06)
 
 ### Bug Fixes
