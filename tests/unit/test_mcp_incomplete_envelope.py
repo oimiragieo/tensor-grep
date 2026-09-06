@@ -21,6 +21,8 @@ from tensor_grep.cli.mcp_server import (
     _inject_mcp_contract_fields,
     tg_mcp_capabilities,
     tg_repo_map,
+    tg_session_list,
+    tg_session_open,
 )
 
 
@@ -51,6 +53,18 @@ def test_incomplete_envelope_present_on_normally_complete_tool() -> None:
 
 def test_incomplete_envelope_present_on_repo_map() -> None:
     _assert_incomplete_envelope(tg_repo_map("."), "tg_repo_map")
+
+
+def test_incomplete_envelope_present_on_session_open() -> None:
+    """P3 gap-fix: tg_session_open previously bypassed the injector entirely
+    (bare `json.dumps`), so `incomplete` was absent from its success response."""
+    _assert_incomplete_envelope(tg_session_open("."), "tg_session_open")
+
+
+def test_incomplete_envelope_present_on_session_list() -> None:
+    """P3 gap-fix: tg_session_list previously bypassed the injector entirely
+    (bare `json.dumps`), so `incomplete` was absent from its success response."""
+    _assert_incomplete_envelope(tg_session_list("."), "tg_session_list")
 
 
 def test_incomplete_envelope_derives_from_result_incomplete_true() -> None:

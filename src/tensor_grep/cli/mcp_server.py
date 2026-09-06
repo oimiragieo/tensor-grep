@@ -4002,16 +4002,18 @@ def tg_session_open(
                 {"tracked_file_count_error": _sanitized_tool_error_text("get_session", exc)},
             )
 
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "schema_version": _json_output_version(),
-                **result.__dict__,
-                "tracked_file_count": tracked_file_count,
-                **degraded,
-            },
-            indent=2,
+        return _self._inject_mcp_contract_fields(
+            json.dumps(
+                {
+                    "version": _json_output_version(),
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "schema_version": _json_output_version(),
+                    **result.__dict__,
+                    "tracked_file_count": tracked_file_count,
+                    **degraded,
+                },
+                indent=2,
+            )
         )
     except Exception as exc:
         _log_tool_exception("tg_session_open", exc)
@@ -4043,13 +4045,15 @@ def tg_session_list(path: str = ".") -> str:
                 path=path, message=_sanitized_tool_error_text("list_sessions", exc), detail={}
             )
 
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "sessions": sessions,
-            },
-            indent=2,
+        return _self._inject_mcp_contract_fields(
+            json.dumps(
+                {
+                    "version": _json_output_version(),
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "sessions": sessions,
+                },
+                indent=2,
+            )
         )
     except Exception as exc:
         _log_tool_exception("tg_session_list", exc)
@@ -4748,7 +4752,7 @@ def tg_query(
                 action=action,
                 extra=extra,
             )
-            return json.dumps(payload, indent=2)
+            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
         except Exception as exc:
             payload = _meta_envelope(tool="tg_query", action=action)
             payload["error"] = _sanitized_tool_error("tg_query", exc)
