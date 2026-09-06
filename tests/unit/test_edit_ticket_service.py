@@ -73,6 +73,63 @@ def test_verify_edit_contract_violation_on_unallowed_file(tmp_path: Path) -> Non
     assert "other.py" in result["violations"]
 
 
+def test_verify_edit_fails_on_undeclared_out_of_scope_modification(tmp_path: Path) -> None:
+    """The whole point of a fingerprinted ticket: catch a file that changed on disk but was
+    never DECLARED in modified_files -- e.g. an agent that silently touched a file outside its
+    ticket's scope and only reported the files it wants credit for. A verifier that trusts the
+    caller-supplied modified_files list alone can be defeated by simply omitting the
+    out-of-scope file from that list."""
+    allowed = tmp_path / "allowed.py"
+    allowed.write_text("a = 1\n", encoding="utf-8")
+    other = tmp_path / "other.py"
+    other.write_text("b = 1\n", encoding="utf-8")
+
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(allowed),
+        query="a = 1",
+        allowed_files=["allowed.py"],
+    )
+
+    # Agent edits allowed.py (declared) AND silently edits other.py (undeclared, out of scope).
+    allowed.write_text("a = 2\n", encoding="utf-8")
+    other.write_text("b = 2\n", encoding="utf-8")
+
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path),
+        ticket=ticket,
+        modified_files=["allowed.py"],  # other.py NOT declared -- this is the attack
+    )
+
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "edit_contract_violated"
+    assert "other.py" in result["violations"]
+
+
+def test_verify_edit_fails_when_declared_file_was_not_actually_modified(tmp_path: Path) -> None:
+    """A hallucinated edit: the agent CLAIMS to have modified allowed.py but the file's
+    fingerprint is unchanged from the ticket's pre-edit snapshot."""
+    allowed = tmp_path / "allowed.py"
+    allowed.write_text("a = 1\n", encoding="utf-8")
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(allowed),
+        query="a = 1",
+        allowed_files=["allowed.py"],
+    )
+
+    # allowed.py is NOT actually touched, but the agent claims it modified it.
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path),
+        ticket=ticket,
+        modified_files=["allowed.py"],
+    )
+
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "declared_edit_not_applied"
+    assert "allowed.py" in result["violations"]
+
+
 def test_verify_edit_pass_when_matching_allowed_files_and_fingerprint(tmp_path: Path) -> None:
     allowed = tmp_path / "allowed.py"
     allowed.write_text("a = 1\n", encoding="utf-8")

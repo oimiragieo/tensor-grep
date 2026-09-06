@@ -49,15 +49,23 @@ def compute_file_fingerprint(path: str | Path) -> str:
     return hasher.hexdigest()
 
 
-def compute_working_tree_fingerprint(repo_root: str | Path) -> str:
+def _walk_tracked_files(repo_root: str | Path) -> dict[str, str]:
+    """Per-file fingerprints for every file under repo_root, keyed by POSIX-normalized relative
+    path. Shared by compute_working_tree_fingerprint (aggregate) and build/verify_edit_ticket
+    (per-file, so a single drifted file can be named rather than only detected in aggregate)."""
     root = Path(repo_root)
-    entries: list[str] = []
+    result: dict[str, str] = {}
     for item in sorted(root.rglob("*")):
         if item.is_file() and not any(
             part.startswith(".") or part == "__pycache__" for part in item.parts
         ):
             rel = str(item.relative_to(root)).replace("\\", "/")
-            entries.append(f"{rel}:{compute_file_fingerprint(item)}")
+            result[rel] = compute_file_fingerprint(item)
+    return result
+
+
+def compute_working_tree_fingerprint(repo_root: str | Path) -> str:
+    entries = [f"{rel}:{fp}" for rel, fp in sorted(_walk_tracked_files(repo_root).items())]
     content = "\n".join(entries).encode("utf-8")
     return hashlib.sha256(content).hexdigest()
 
@@ -69,13 +77,14 @@ def build_edit_ready_ticket(
     query: str,
     allowed_files: list[str],
 ) -> EditReadyTicketV1:
-    root = Path(repo_root)
-    pre_fps: dict[str, str] = {}
-    for f in allowed_files:
-        full_path = root / f
-        pre_fps[f] = compute_file_fingerprint(full_path)
-
-    tree_fp = compute_working_tree_fingerprint(repo_root)
+    # Whole-tree, not just allowed_files: verify_edit_ticket needs a pre-edit fingerprint for
+    # every file to name which one drifted outside the declared scope, not just detect that
+    # SOME file did via the aggregate working_tree_fingerprint.
+    pre_fps = _walk_tracked_files(repo_root)
+    tree_fp_content = "\n".join(f"{rel}:{fp}" for rel, fp in sorted(pre_fps.items())).encode(
+        "utf-8"
+    )
+    tree_fp = hashlib.sha256(tree_fp_content).hexdigest()
     ticket_id = f"ticket_{uuid.uuid4().hex[:12]}"
 
     return EditReadyTicketV1(
@@ -97,17 +106,57 @@ def verify_edit_ticket(
     ticket: EditReadyTicketV1,
     modified_files: list[str],
 ) -> dict[str, Any]:
-    violations: list[str] = []
-    for m in modified_files:
-        norm_m = m.replace("\\", "/")
-        if norm_m not in [f.replace("\\", "/") for f in ticket.allowed_files]:
-            violations.append(norm_m)
+    norm_declared = {m.replace("\\", "/") for m in modified_files}
+    norm_allowed = {f.replace("\\", "/") for f in ticket.allowed_files}
 
-    if violations:
+    # Scope check: every file the caller CLAIMS to have modified must be in the ticket's
+    # allowed scope. (Preserved from the original implementation.)
+    out_of_allowlist = sorted(norm_declared - norm_allowed)
+    if out_of_allowlist:
         return {
             "verdict": "FAIL",
             "reason": "edit_contract_violated",
-            "violations": violations,
+            "violations": out_of_allowlist,
+            "ticket_id": ticket.ticket_id,
+        }
+
+    # Real fingerprint re-check: recompute the CURRENT tree state and compare against the
+    # ticket's pre-edit snapshot. Without this, verify_edit_ticket only trusts the caller's
+    # self-reported modified_files list -- an agent could silently touch a file outside its
+    # ticket's scope and simply omit it, and this function would never know. Re-hashing the
+    # tree closes that gap; the fail-closed contract is "prove the tree matches the declared
+    # change set," not "trust the declared change set."
+    current_fps = _walk_tracked_files(repo_root)
+    all_paths = set(ticket.pre_edit_fingerprints) | set(current_fps)
+
+    undeclared_drift: list[str] = []
+    for path in sorted(all_paths):
+        pre_fp = ticket.pre_edit_fingerprints.get(path, "")
+        cur_fp = current_fps.get(path, "")
+        if pre_fp != cur_fp and path not in norm_declared:
+            undeclared_drift.append(path)
+
+    if undeclared_drift:
+        return {
+            "verdict": "FAIL",
+            "reason": "edit_contract_violated",
+            "violations": undeclared_drift,
+            "ticket_id": ticket.ticket_id,
+        }
+
+    # Hallucination check: a file the caller CLAIMS to have modified must actually differ from
+    # its pre-edit fingerprint. A declared-but-unchanged file means the agent reported an edit
+    # that never happened.
+    not_actually_modified = sorted(
+        path
+        for path in norm_declared
+        if ticket.pre_edit_fingerprints.get(path, "") == current_fps.get(path, "")
+    )
+    if not_actually_modified:
+        return {
+            "verdict": "FAIL",
+            "reason": "declared_edit_not_applied",
+            "violations": not_actually_modified,
             "ticket_id": ticket.ticket_id,
         }
 
