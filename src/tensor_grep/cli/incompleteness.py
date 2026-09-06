@@ -20,6 +20,8 @@ cannot fail.
 
 from __future__ import annotations
 
+from typing import Any
+
 # Two homes, because the marker's location differs by route and BOTH are load-bearing:
 #   * the JSON envelope's keys, written only when the result is genuinely incomplete
 #     (`formatters/json_fmt.py:127`, `:140`) -- so a complete envelope never carries them;
@@ -75,3 +77,142 @@ def disclosed_incomplete(stdout: str | None, stderr: str | None) -> bool:
     """
     haystack = f"{stdout or ''} {stderr or ''}"
     return any(marker in haystack for marker in INCOMPLETENESS_MARKERS)
+
+
+def incomplete_class_fragment(results: Any) -> dict[str, str]:
+    """`incomplete_reason_class` as a splat-able fragment, emitted ONLY when classified.
+
+    MCP carried `result_incomplete` (14 sites) and the free-text `incomplete_reason`, but never
+    the closed-vocabulary CLASS the CLI has emitted since task #276 slice 1 -- so an agent on the
+    most machine-facing surface tg has could learn THAT a result was partial but had to
+    string-sniff prose to learn WHY. `docs/CONTRACTS.md` introduced the class precisely so callers
+    would not have to do that.
+
+    Returns an EMPTY dict when unclassified, so `**` contributes nothing and a payload without a
+    classified cause stays byte-identical to contract 1.5.0. Emitting `null` instead would teach
+    readers to skip the key, which is how a disclosure field quietly becomes decoration.
+
+    NOTE the asymmetry, because it is deliberate and a caller must not get it backwards: an
+    ABSENT class means "cause not classifiable", NOT "scan complete". Completeness is carried by
+    `result_incomplete` alone. See the AST-backend-failure site, which sets `result_incomplete`
+    and deliberately emits no class rather than mislabelling a backend bug as `unreadable_path`.
+
+    Distinct from MCP's own `truncation_cause` on the `scan_limit` object, which has an explicit
+    `"unknown"` member and its own hyphenated vocabulary. Task #293 settled that these two must
+    NOT be unified; this helper only ever emits the CLI-family value it is handed.
+
+    THE TWO ERROR ENVELOPES ARE NOT ALIKE, and an audit corrected me on this. Both set
+    `result_incomplete: True` as a literal rather than from the aggregate:
+
+    * `broad_scan_refused` DOES classify, as `"scan_limit"`. I first argued it should not --
+      "it already has `error.code`, so the class adds nothing" -- but that reasoning was wrong.
+      The site reports `truncated: true` AND `result_incomplete: true`, which is a scan-policy
+      ceiling: precisely what `scan_limit` denotes. My objection was that "raise the limit" and
+      "narrow the scope" are different remedies, but the class encodes BUDGET-REMEDIABILITY, and
+      both of those are budget-remediable. `error.code` is a sibling signal, not a substitute.
+    * `invalid_input` does NOT classify. Nothing was walked and the request never became a scan,
+      so no member of a completeness vocabulary applies. It still routes through this helper so
+      the coverage is structural: every serialized `result_incomplete` payload goes through one
+      place, and this one legitimately contributes `{}`.
+
+    Recorded because "already has an error code" is a seductive reason to skip a disclosure, and
+    it was wrong once here already.
+
+    Relocated from `mcp_server.py` (P3, MCP incompleteness envelope standardization) alongside
+    `unified_incomplete_envelope` below, since both derive the MCP incompleteness vocabulary and
+    belong in the module that owns that vocabulary rather than in the MCP tool-registration file.
+    """
+    value = getattr(results, "incomplete_reason_class", None)
+    return {"incomplete_reason_class": value} if value else {}
+
+
+def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
+    """P3: derive the unified MCP `incomplete` envelope from a tool's existing,
+    surface-specific incompleteness signals (`result_incomplete`,
+    `incomplete_reason`, `budget_remediable`), so every MCP tool response gains
+    ONE consistent field a client can check regardless of which tool it called --
+    without touching any of those legacy fields (purely additive; the caller uses
+    ``setdefault`` so a tool that already sets its own ``incomplete`` key wins
+    outright).
+
+    Falls back to ``{"status": False, "cause": None, "budget_remediable": False}``
+    for a tool with no incompleteness concept at all.
+    """
+    # A tool can signal incompleteness via `result_incomplete` OR a separate `truncated` flag
+    # (e.g. tg_search's scan-capped no-match envelope stamps `truncated` from a distinct
+    # scan_capped derivation that is not routed through all_results.result_incomplete). Keying
+    # on `result_incomplete` alone silently reports a genuinely truncated response as complete.
+    #
+    # A multi-root aggregate (tg_query) signals incompleteness a THIRD way: `partial: true` when
+    # the shared deadline truncated the root fan-out. And even a NON-partial aggregate can carry
+    # an incomplete CHILD: results_by_root[*] holds each root's own already-stamped `incomplete`
+    # object (stamped when that root's single-root response was built), so the parent must check
+    # those too rather than only its own top-level fields (Codex Sol delta-verification audit,
+    # 2026-09-06).
+    nested_incomplete = False
+    results_by_root = payload.get("results_by_root")
+    if isinstance(results_by_root, dict):
+        for child in results_by_root.values():
+            if isinstance(child, dict) and bool(child.get("incomplete", {}).get("status", False)):
+                nested_incomplete = True
+                break
+
+    # scan_limit.truncation_cause/.budget_remediable are the ACTIONABLE signal (a fail-closed
+    # allowlist -- "scan_limit"/"unreadable_path"/"unknown", per AGENTS.md) when a tool sets
+    # them; preferring them over the generic "truncated" fallback keeps a client from losing
+    # the one piece of information that tells it whether raising a budget will even help.
+    #
+    # scan_limit.possibly_truncated ITSELF must also drive `status` -- round-3 final-verification
+    # audit finding: `tg_repo_map` injects `build_repo_map`'s raw dict verbatim, and that dict can
+    # carry ONLY a nested scan_limit (possibly_truncated=True + cause + remediable) with no
+    # top-level truncated/partial/result_incomplete sibling. Reading the cause/remediable fields
+    # without also folding possibly_truncated into `status` left that shape reporting complete.
+    scan_limit = payload.get("scan_limit")
+    scan_limit_truncated = (
+        bool(scan_limit.get("possibly_truncated")) if isinstance(scan_limit, dict) else False
+    )
+    scan_limit_cause = scan_limit.get("truncation_cause") if isinstance(scan_limit, dict) else None
+    scan_limit_remediable = (
+        scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
+    )
+
+    # unreadable_paths is `build_repo_map`'s own top-level signal, deliberately kept separate
+    # from scan_limit (a permission-denied path is never fixed by raising a budget), with no
+    # result_incomplete/truncated/partial sibling of its own -- another shape status must check.
+    unreadable_paths = payload.get("unreadable_paths")
+    has_unreadable_paths = bool(
+        isinstance(unreadable_paths, dict) and unreadable_paths.get("count")
+    )
+
+    status = (
+        bool(payload.get("result_incomplete", False))
+        or bool(payload.get("truncated", False))
+        or bool(payload.get("partial", False))
+        or nested_incomplete
+        or scan_limit_truncated
+        or has_unreadable_paths
+    )
+
+    cause = payload.get("incomplete_reason")
+    if cause is None and scan_limit_cause is not None:
+        cause = scan_limit_cause
+    if cause is None and has_unreadable_paths:
+        cause = "unreadable_path"
+    if cause is None and payload.get("truncated"):
+        cause = "truncated"
+    if cause is None and payload.get("partial"):
+        cause = "partial"
+    if cause is None and nested_incomplete:
+        cause = "nested_incomplete"
+    if cause is not None and not isinstance(cause, str):
+        cause = str(cause)
+    remediable = bool(
+        scan_limit_remediable
+        if scan_limit_remediable is not None
+        else payload.get("budget_remediable", False)
+    )
+    return {
+        "status": status,
+        "cause": cause,
+        "budget_remediable": remediable if status else False,
+    }

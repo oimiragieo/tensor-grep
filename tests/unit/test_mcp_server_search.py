@@ -399,6 +399,44 @@ def test_tg_search_count_matches_should_respect_total_files_without_materialized
     assert "workers=0" in out
 
 
+def test_tg_search_count_matches_sets_truncated_when_max_repo_files_caps_the_scan():
+    """Codex Sol delta-verification audit 2026-09-06 CRITICAL finding: hitting max_repo_files
+    sets scan_capped=True (surfaced only as nested scan_limit.possibly_truncated) but never
+    sets all_results.result_incomplete, and unlike the is_empty branch a few lines up (which
+    stamps a top-level `truncated` field from the same scan_limit_payload value), the
+    count_matches branch omitted that field entirely -- so a genuinely capped count-mode scan
+    reported unified_incomplete_envelope's incomplete.status=False. Fix: count_payload must
+    carry the same top-level `truncated` field the is_empty branch already does."""
+    from tensor_grep.cli import mcp_server
+
+    fake_backend = MagicMock()
+    fake_backend.search.side_effect = [
+        SearchResult(matches=[], total_files=1, total_matches=3),
+        SearchResult(matches=[], total_files=1, total_matches=2),
+    ]
+
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as mock_scanner,
+    ):
+        pipeline = mock_pipeline.return_value
+        pipeline.get_backend.return_value = fake_backend
+        pipeline.selected_backend_name = "RustCoreBackend"
+        pipeline.selected_backend_reason = "rust_count"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        # Two files on disk, max_repo_files=1 -- the walk is capped before the second file.
+        mock_scanner.return_value.walk.return_value = ["a.log", "b.log"]
+
+        out = mcp_server.tg_search("ERROR", ".", count_matches=True, max_repo_files=1)
+
+    payload = json.loads(out)
+    assert payload["scan_limit"]["possibly_truncated"] is True
+    assert payload["truncated"] is True, (
+        f"count_matches payload missing top-level truncated field: {payload}"
+    )
+
+
 def test_tg_search_count_matches_defaults_to_parseable_structured_json():
     # M10 (Fable MCP-surface audit): `count_matches=True` used to ALWAYS return plain text
     # regardless of `structured_json` (default True) -- a default caller's `json.loads()`

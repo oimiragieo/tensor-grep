@@ -61,8 +61,8 @@ def test_mcp_server_initialization_version_tracks_mcp_contract() -> None:
 
     assert options.server_name == "tensor-grep"
     assert (
-        options.server_version == "1.7.0"
-    )  # task 336: budget_remediable on the repo_map-backed wire
+        options.server_version == "1.8.0"
+    )  # P3: unified `incomplete` envelope on every tool response
     assert options.server_version == mcp_server._TG_MCP_SERVER_CONTRACT_VERSION
     assert mcp_server._mcp_server_version() == version("tensor-grep")
 

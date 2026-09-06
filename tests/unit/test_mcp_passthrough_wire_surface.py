@@ -47,7 +47,7 @@ _DECLARED_SCAN_LIMIT_KEYS = {
 # The version in force when the key set above was last reviewed. This is not a "bump me every
 # release" pin -- it moves only when the wire shape changes, which is exactly when a reviewer
 # should be looking.
-_CONTRACT_AT_LAST_WIRE_REVIEW = "1.7.0"
+_CONTRACT_AT_LAST_WIRE_REVIEW = "1.8.0"
 
 
 def _capped_scan_limit(tmp_path: Path) -> dict:

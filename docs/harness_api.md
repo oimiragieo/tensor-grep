@@ -1494,8 +1494,8 @@ The MCP server exposes stable tool contracts layered on top of the native CLI ou
 
 `serverInfo.name` is `tensor-grep` and `serverInfo.version` is the stable tg MCP
 server contract version (`_TG_MCP_SERVER_CONTRACT_VERSION` in `mcp_server.py`, currently
-`1.7.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
-has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.7.0) and this line has been stale twice), not the installed CLI/package version and not
+`1.8.0` -- ALWAYS re-grep `_TG_MCP_SERVER_CONTRACT_VERSION` before citing a version number; it
+has moved repeatedly (1.0.0 -> 1.2.0 -> ... -> 1.8.0) and this line has been stale three times now), not the installed CLI/package version and not
 the bundled MCP SDK protocol version. The initialize response top-level
 `protocolVersion` is the authoritative negotiated MCP protocol for that session.
 `tg_mcp_capabilities()` also exposes `mcp_protocol_version`,

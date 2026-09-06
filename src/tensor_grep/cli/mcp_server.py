@@ -31,6 +31,12 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli.incompleteness import (
+    incomplete_class_fragment as _incomplete_class_fragment,
+)
+from tensor_grep.cli.incompleteness import (
+    unified_incomplete_envelope,
+)
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
@@ -187,50 +193,7 @@ def _mcp_server_version() -> str:
 #
 # Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
 # existing caller breaks; bumped so a version-pinning client can discover the field.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.7.0"
-
-
-def _incomplete_class_fragment(results: Any) -> dict[str, str]:
-    """`incomplete_reason_class` as a splat-able fragment, emitted ONLY when classified.
-
-    MCP carried `result_incomplete` (14 sites) and the free-text `incomplete_reason`, but never
-    the closed-vocabulary CLASS the CLI has emitted since task #276 slice 1 -- so an agent on the
-    most machine-facing surface tg has could learn THAT a result was partial but had to
-    string-sniff prose to learn WHY. `docs/CONTRACTS.md` introduced the class precisely so callers
-    would not have to do that.
-
-    Returns an EMPTY dict when unclassified, so `**` contributes nothing and a payload without a
-    classified cause stays byte-identical to contract 1.5.0. Emitting `null` instead would teach
-    readers to skip the key, which is how a disclosure field quietly becomes decoration.
-
-    NOTE the asymmetry, because it is deliberate and a caller must not get it backwards: an
-    ABSENT class means "cause not classifiable", NOT "scan complete". Completeness is carried by
-    `result_incomplete` alone. See the AST-backend-failure site, which sets `result_incomplete`
-    and deliberately emits no class rather than mislabelling a backend bug as `unreadable_path`.
-
-    Distinct from MCP's own `truncation_cause` on the `scan_limit` object, which has an explicit
-    `"unknown"` member and its own hyphenated vocabulary. Task #293 settled that these two must
-    NOT be unified; this helper only ever emits the CLI-family value it is handed.
-
-    THE TWO ERROR ENVELOPES ARE NOT ALIKE, and an audit corrected me on this. Both set
-    `result_incomplete: True` as a literal rather than from the aggregate:
-
-    * `broad_scan_refused` DOES classify, as `"scan_limit"`. I first argued it should not --
-      "it already has `error.code`, so the class adds nothing" -- but that reasoning was wrong.
-      The site reports `truncated: true` AND `result_incomplete: true`, which is a scan-policy
-      ceiling: precisely what `scan_limit` denotes. My objection was that "raise the limit" and
-      "narrow the scope" are different remedies, but the class encodes BUDGET-REMEDIABILITY, and
-      both of those are budget-remediable. `error.code` is a sibling signal, not a substitute.
-    * `invalid_input` does NOT classify. Nothing was walked and the request never became a scan,
-      so no member of a completeness vocabulary applies. It still routes through this helper so
-      the coverage is structural: every serialized `result_incomplete` payload goes through one
-      place, and this one legitimately contributes `{}`.
-
-    Recorded because "already has an error code" is a seductive reason to skip a disclosure, and
-    it was wrong once here already.
-    """
-    value = getattr(results, "incomplete_reason_class", None)
-    return {"incomplete_reason_class": value} if value else {}
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.8.0"  # P3: + unified `incomplete` envelope, incompleteness.py
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -1161,6 +1124,7 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
         return result_json
     payload["mcp_contract_version"] = _TG_MCP_SERVER_CONTRACT_VERSION
     payload.setdefault("schema_version", _json_output_version())
+    payload.setdefault("incomplete", unified_incomplete_envelope(payload))
     return json.dumps(payload, indent=2)
 
 
@@ -1183,7 +1147,7 @@ def tg_mcp_capabilities() -> str:
     tg binary from tools that require one.
     """
     try:
-        return json.dumps(_mcp_capabilities_payload(), indent=2)
+        return _self._inject_mcp_contract_fields(json.dumps(_mcp_capabilities_payload(), indent=2))
     except Exception as exc:
         _log_tool_exception("tg_mcp_capabilities", exc)
         return json.dumps(
@@ -3328,6 +3292,11 @@ def tg_search(
                         "path": path,
                         "total_matches": all_results.total_matches,
                         "total_files": all_results.total_files,
+                        # Same top-level truncated field the is_empty branch above already
+                        # stamps from this exact value -- omitting it here (pre-fix) let a
+                        # genuinely capped count-mode scan report incomplete.status=False,
+                        # since result_incomplete alone stays False on a max_repo_files cap.
+                        "truncated": empty_scan_capped,
                         "result_incomplete": all_results.result_incomplete,
                         "incomplete_reason": all_results.incomplete_reason,
                         **_incomplete_class_fragment(all_results),
@@ -3913,6 +3882,11 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
                             "provider_status": provider_status,
                             "sample_lines": line_budget["emitted_lines"],
                             "total_lines": line_budget["total_lines"],
+                            # Round-3 audit finding: sample_lines/total_lines are numeric
+                            # fields a client must compare itself; stamp the same explicit
+                            # top-level truncated boolean every other capped tool already
+                            # carries, so unified_incomplete_envelope's generic check works.
+                            "truncated": line_budget["emitted_lines"] < line_budget["total_lines"],
                             "anomaly_count": len(warnings_or_errors),
                             "anomalies": [
                                 {"label": label, "confidence": conf, "text": text}
@@ -4038,16 +4012,18 @@ def tg_session_open(
                 {"tracked_file_count_error": _sanitized_tool_error_text("get_session", exc)},
             )
 
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "schema_version": _json_output_version(),
-                **result.__dict__,
-                "tracked_file_count": tracked_file_count,
-                **degraded,
-            },
-            indent=2,
+        return _self._inject_mcp_contract_fields(
+            json.dumps(
+                {
+                    "version": _json_output_version(),
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "schema_version": _json_output_version(),
+                    **result.__dict__,
+                    "tracked_file_count": tracked_file_count,
+                    **degraded,
+                },
+                indent=2,
+            )
         )
     except Exception as exc:
         _log_tool_exception("tg_session_open", exc)
@@ -4079,13 +4055,15 @@ def tg_session_list(path: str = ".") -> str:
                 path=path, message=_sanitized_tool_error_text("list_sessions", exc), detail={}
             )
 
-        return json.dumps(
-            {
-                "version": _json_output_version(),
-                "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
-                "sessions": sessions,
-            },
-            indent=2,
+        return _self._inject_mcp_contract_fields(
+            json.dumps(
+                {
+                    "version": _json_output_version(),
+                    "mcp_contract_version": _TG_MCP_SERVER_CONTRACT_VERSION,
+                    "sessions": sessions,
+                },
+                indent=2,
+            )
         )
     except Exception as exc:
         _log_tool_exception("tg_session_list", exc)
@@ -4784,7 +4762,7 @@ def tg_query(
                 action=action,
                 extra=extra,
             )
-            return json.dumps(payload, indent=2)
+            return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
         except Exception as exc:
             payload = _meta_envelope(tool="tg_query", action=action)
             payload["error"] = _sanitized_tool_error("tg_query", exc)
