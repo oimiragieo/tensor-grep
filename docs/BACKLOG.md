@@ -112,7 +112,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
   - **Scope:** Add a unified, additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing surface-specific fields.
   - **Acceptance:** Validated across all 58 MCP tool endpoints; client agents in Cursor, Windsurf, and Claude Code can inspect one consistent object to decide whether to retry with increased budget.
-  - **Status:** Dispatched to background developer agent in new worktree `tensor-grep-p3-mcp-envelope` (branch `feat/p3-mcp-incompleteness-envelope`, off `main@203c591`), TDD-first, no PR yet — 2026-09-05.
+  - **Status:** PR #1135 open (`a7ad30e`). New `incompleteness.py` with `unified_incomplete_envelope()`, routed through the existing `_inject_mcp_contract_fields` choke point (~40+ return sites, effectively the full 58-tool surface); `_TG_MCP_SERVER_CONTRACT_VERSION` bumped 1.7.0→1.8.0. Verified independently (not just self-report): real import test passes, `mcp_server.py` shrunk to 5665 lines (ratchet-compliant), spot-check tests green (36 passed on the new envelope + file-size-budget suites). Full `-k mcp` suite reported 823 passed by the build agent; not independently re-run in full (939s). CI fresh (`34006309430`/`34006310601`), just started — awaiting green before merge.
 
 - **[ ] P4 — Front-Door Positioning & Dynamic Language Table Realignment**
   - **Objective:** Position `tg` as the AI agent edit-readiness layer rather than a cold grep speed comparator.
