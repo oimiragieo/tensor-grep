@@ -1147,7 +1147,7 @@ def tg_mcp_capabilities() -> str:
     tg binary from tools that require one.
     """
     try:
-        return _inject_mcp_contract_fields(json.dumps(_mcp_capabilities_payload(), indent=2))
+        return _self._inject_mcp_contract_fields(json.dumps(_mcp_capabilities_payload(), indent=2))
     except Exception as exc:
         _log_tool_exception("tg_mcp_capabilities", exc)
         return json.dumps(

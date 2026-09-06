@@ -54,9 +54,10 @@ async def _stdio_protocol_roundtrip() -> None:
             assert initialized.serverInfo.name == "tensor-grep"
             # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
             # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
-            # fields on tg_search). Keep this comment in step with the assert below.
+            # fields on tg_search); 1.7.0 -> 1.8.0 (P3, unified `incomplete` envelope via
+            # incompleteness.py). Keep this comment in step with the assert below.
             assert (
-                initialized.serverInfo.version == "1.7.0"
+                initialized.serverInfo.version == "1.8.0"
             )  # task 336: budget_remediable on the repo_map-backed wire
 
             listed = await session.list_tools()
@@ -135,9 +136,10 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         assert server_info["name"] == "tensor-grep"
         # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
         # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
-        # fields on tg_search). Keep this comment in step with the assert below.
+        # fields on tg_search); 1.7.0 -> 1.8.0 (P3, unified `incomplete` envelope via
+        # incompleteness.py). Keep this comment in step with the assert below.
         assert (
-            server_info["version"] == "1.7.0"
+            server_info["version"] == "1.8.0"
         )  # task 336: budget_remediable on the repo_map-backed wire
     finally:
         if process.stdin is not None:
