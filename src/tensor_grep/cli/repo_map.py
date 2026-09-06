@@ -3634,6 +3634,32 @@ def _extract_braced_block(lines: list[str], start_index: int) -> tuple[int, str]
 # ---------------------------------------------------------------------------
 
 
+def _javascript_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    current_imports, regex_symbols = _regex_imports_and_symbols(path)
+    current_symbols = _dedupe_symbol_records([
+        *_js_ts_parser_symbols(path),
+        *regex_symbols,
+    ])
+    return current_imports, current_symbols
+
+
+def _typescript_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    current_imports, regex_symbols = _regex_imports_and_symbols(path)
+    current_symbols = _dedupe_symbol_records([
+        *_js_ts_parser_symbols(path),
+        *regex_symbols,
+    ])
+    return current_imports, current_symbols
+
+
+def _rust_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
+    current_imports, _ = _regex_imports_and_symbols(path)
+    current_symbols = _rust_parser_symbols(path)
+    if not current_symbols:
+        _, current_symbols = _regex_imports_and_symbols(path)
+    return current_imports, current_symbols
+
+
 def _go_references_and_calls_for_registry(
     path: Path,
     symbol: str,
@@ -3780,7 +3806,6 @@ _JS_TS_REGISTRY_SHARED_KWARGS: dict[str, Any] = {
     "provenance_when_missing": "regex-heuristic",
     "import_markers": (b"import ", b"from ", b"require("),
     "def_node_kinds": ("function_declaration", "class_declaration", "method_definition"),
-    "extract_imports_and_symbols": None,
     "references_and_calls": _js_ts_references_and_calls_for_registry,
     "provider_alias_calls": _js_ts_provider_alias_calls,
     "file_imports_symbol_from_definition": _js_ts_file_imports_symbol_from_definition,
@@ -3794,6 +3819,7 @@ lang_registry.register_language(
         language_id="javascript",
         suffixes=frozenset({".js", ".jsx", ".mjs", ".cjs"}),
         parser_for_path=lambda path: _self._javascript_parser(),
+        extract_imports_and_symbols=_javascript_imports_and_symbols,
         **_JS_TS_REGISTRY_SHARED_KWARGS,
     )
 )
@@ -3803,6 +3829,7 @@ lang_registry.register_language(
         language_id="typescript",
         suffixes=frozenset({".ts", ".tsx"}),
         parser_for_path=lambda path: _self._typescript_parser(tsx=path.suffix == ".tsx"),
+        extract_imports_and_symbols=_typescript_imports_and_symbols,
         **_JS_TS_REGISTRY_SHARED_KWARGS,
     )
 )
@@ -3817,7 +3844,7 @@ lang_registry.register_language(
         provenance_when_missing="regex-heuristic",
         import_markers=(b"use ",),
         def_node_kinds=("function_item", "struct_item", "enum_item", "trait_item"),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=_rust_imports_and_symbols,
         references_and_calls=_rust_references_and_calls_for_registry,
         provider_alias_calls=_rust_provider_alias_calls,
         file_imports_symbol_from_definition=_rust_file_imports_symbol_from_definition,
@@ -3849,7 +3876,7 @@ lang_registry.register_language(
             "const_spec",
             "var_spec",
         ),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=lang_go.go_imports_and_symbols,
         references_and_calls=_go_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=lang_go.go_file_imports_symbol_from_definition,
@@ -3938,7 +3965,7 @@ lang_registry.register_language(
             "function_definition",
             "method_declaration",
         ),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=lang_php.php_imports_and_symbols,
         references_and_calls=_php_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=lang_php.php_file_imports_symbol_from_definition,
@@ -3981,7 +4008,7 @@ lang_registry.register_language(
             "method_declaration",
             "constructor_declaration",
         ),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=lang_csharp.csharp_imports_and_symbols,
         references_and_calls=_csharp_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=lang_csharp.csharp_file_imports_symbol_from_definition,
@@ -4030,7 +4057,7 @@ lang_registry.register_language(
             "enum_specifier",
             "type_definition",
         ),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=lang_c.c_imports_and_symbols,
         references_and_calls=_c_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=lang_c.c_file_imports_symbol_from_definition,
@@ -4086,7 +4113,7 @@ lang_registry.register_language(
             "type_definition",
             "alias_declaration",
         ),
-        extract_imports_and_symbols=None,
+        extract_imports_and_symbols=lang_cpp.cpp_imports_and_symbols,
         references_and_calls=_cpp_references_and_calls_for_registry,
         provider_alias_calls=None,
         file_imports_symbol_from_definition=lang_cpp.cpp_file_imports_symbol_from_definition,
@@ -4132,46 +4159,13 @@ def _imports_and_symbols_for_path(
     if file_size > _max_parse_bytes():
         return [], []
     with _profiling_phase(_profiling_collector, "file_parse"):
-        current_imports, current_symbols = _python_imports_and_symbols(path)
         spec = lang_registry.spec_for_path(path)
-        if spec is not None and spec.language_id in ("javascript", "typescript"):
-            current_imports, regex_symbols = _regex_imports_and_symbols(path)
-            current_symbols = _dedupe_symbol_records([
-                *_js_ts_parser_symbols(path),
-                *regex_symbols,
-            ])
-        elif spec is not None and spec.language_id == "rust":
-            current_imports, _ = _regex_imports_and_symbols(path)
-            current_symbols = _rust_parser_symbols(path)
-            if not current_symbols:
-                _, current_symbols = _regex_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "go":
-            # Fail-closed (Stage 1 trap): NO regex fallback for Go. A grammar-missing Go file
-            # returns ([], []) here -- surfaced honestly via `resolution_gaps`, never silently
-            # degraded to a text heuristic the way JS/TS/Rust are.
-            current_imports, current_symbols = lang_go.go_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "java":
-            # Fail-closed (same Stage 1 trap as Go): NO regex fallback for Java either.
-            current_imports, current_symbols = _java_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "php":
-            # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for PHP either -- see
-            # lang_php.py's module docstring.
-            current_imports, current_symbols = lang_php.php_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "csharp":
-            # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for C#. A grammar-missing
-            # .cs file returns ([], []) here -- surfaced honestly via `resolution_gaps`.
-            current_imports, current_symbols = lang_csharp.csharp_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "c":
-            # Fail-closed (Stage 1 trap, same as Go): NO regex fallback for C. A grammar-missing
-            # .c file returns ([], []) here -- surfaced honestly via `resolution_gaps`.
-            current_imports, current_symbols = lang_c.c_imports_and_symbols(path)
-        elif spec is not None and spec.language_id == "cpp":
-            # Fail-closed (Stage 1 trap, same as Go/C): NO regex fallback for C++ either. A
-            # grammar-missing C++ file returns ([], []) here -- surfaced honestly via
-            # `resolution_gaps`.
-            current_imports, current_symbols = lang_cpp.cpp_imports_and_symbols(path)
-        elif not current_imports and not current_symbols:
-            current_imports, current_symbols = _regex_imports_and_symbols(path)
+        if spec is not None and spec.extract_imports_and_symbols is not None:
+            current_imports, current_symbols = spec.extract_imports_and_symbols(path)
+        else:
+            current_imports, current_symbols = _python_imports_and_symbols(path)
+            if not current_imports and not current_symbols:
+                current_imports, current_symbols = _regex_imports_and_symbols(path)
         return current_imports, current_symbols
 
 
