@@ -142,10 +142,34 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     # (e.g. tg_search's scan-capped no-match envelope stamps `truncated` from a distinct
     # scan_capped derivation that is not routed through all_results.result_incomplete). Keying
     # on `result_incomplete` alone silently reports a genuinely truncated response as complete.
-    status = bool(payload.get("result_incomplete", False)) or bool(payload.get("truncated", False))
+    #
+    # A multi-root aggregate (tg_query) signals incompleteness a THIRD way: `partial: true` when
+    # the shared deadline truncated the root fan-out. And even a NON-partial aggregate can carry
+    # an incomplete CHILD: results_by_root[*] holds each root's own already-stamped `incomplete`
+    # object (stamped when that root's single-root response was built), so the parent must check
+    # those too rather than only its own top-level fields (Codex Sol delta-verification audit,
+    # 2026-09-06).
+    nested_incomplete = False
+    results_by_root = payload.get("results_by_root")
+    if isinstance(results_by_root, dict):
+        for child in results_by_root.values():
+            if isinstance(child, dict) and bool(child.get("incomplete", {}).get("status", False)):
+                nested_incomplete = True
+                break
+
+    status = (
+        bool(payload.get("result_incomplete", False))
+        or bool(payload.get("truncated", False))
+        or bool(payload.get("partial", False))
+        or nested_incomplete
+    )
     cause = payload.get("incomplete_reason")
     if cause is None and payload.get("truncated"):
         cause = "truncated"
+    if cause is None and payload.get("partial"):
+        cause = "partial"
+    if cause is None and nested_incomplete:
+        cause = "nested_incomplete"
     if cause is not None and not isinstance(cause, str):
         cause = str(cause)
     remediable = bool(payload.get("budget_remediable", False))

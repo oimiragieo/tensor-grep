@@ -103,6 +103,35 @@ def test_incomplete_envelope_derives_from_truncated_when_result_incomplete_absen
     assert stamped["truncated"] is True  # legacy field untouched
 
 
+def test_incomplete_envelope_derives_from_partial_flag() -> None:
+    """tg_query's multi-root aggregate stamps `partial: true` + `omitted_roots` (not
+    `result_incomplete` or `truncated`) when the shared deadline truncates the root fan-out.
+    Codex Sol delta-verification audit 2026-09-06 CRITICAL finding: unified_incomplete_envelope
+    ignored both fields, so a genuinely partial multi-root response reported incomplete.status=False."""
+    raw = json.dumps({
+        "results_by_root": {"a": {}, "b": {}},
+        "omitted_roots": ["c"],
+        "partial": True,
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True
+    assert stamped["partial"] is True  # legacy field untouched
+
+
+def test_incomplete_envelope_aggregates_nested_results_by_root() -> None:
+    """A tg_query aggregate can have NO top-level partial/omitted_roots (every root answered
+    within budget) while one CHILD root's own response is itself incomplete (e.g. that root hit
+    its own scan cap). The parent envelope must surface that, not just its own top-level fields."""
+    raw = json.dumps({
+        "results_by_root": {
+            "a": {"incomplete": {"status": False, "cause": None, "budget_remediable": False}},
+            "b": {"incomplete": {"status": True, "cause": "scan_limit", "budget_remediable": True}},
+        },
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True
+
+
 def test_incomplete_envelope_derives_budget_remediable() -> None:
     raw = json.dumps({
         "result_incomplete": True,
