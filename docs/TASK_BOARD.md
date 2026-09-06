@@ -151,7 +151,7 @@ unchanged: Task 2A not GREEN (#966 drafted, RED by design), W3 rust/e2e shared-b
 
 ## Canonical status index
 
-Canonical status index version: 2026-08-30.1
+Canonical status index version: 2026-09-05.1
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
