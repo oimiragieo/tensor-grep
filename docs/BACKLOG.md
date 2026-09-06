@@ -88,10 +88,10 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Working tree fingerprinting, sha256 pre/post assertions, bounded hunk verification.
   - **Receipt:** Merged PR #1133, squash SHA `a4e2d71`, all CI green. Worktree + branch cleaned up.
 
-- **[ ] S2 — Registration-Aware Polyglot Diff Impact**
+- **[x] S2 — Registration-Aware Polyglot Diff Impact**
   - **Objective:** Extend `diff-impact` symbol mapping to polyglot Go and Rust source trees.
   - **Scope:** AST symbol resolution on modified diff hunks.
-  - **Status:** PR #1130 open (`3ece043`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999557841` (job `101403039873`) in progress.
+  - **Receipt:** Merged PR #1130, squash SHA `6b39ce2`, all CI green. Worktree + branch cleaned up.
 
 - **[x] S3 — Machine Protocol `next_action` & Budget Envelopes**
   - **Objective:** Structured branch advice in `tg prepare` output payload for agent runtimes.
@@ -101,12 +101,12 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 - **[ ] S4 — Warm Session Prepare & Resume Contracts**
   - **Objective:** Rapid cached agent context restoration across sequential edit turns.
   - **Scope:** `tg session-prepare` and `tg session-resume` CLI bindings with decoupled service architecture (`main.py` <= 13,523 ratchet).
-  - **Status:** PR #1131 fixed (`b317bff`): extracted `session_prepare_cmd`/`session_resume_cmd` into new `src/tensor_grep/cli/session_resume_service.py`, `main.py` now 13522 lines (1 under 13523 baseline). Verified: real import smoke test passes, `test_file_size_budget.py` + session test suite green (152 passed, 1 skipped). CI rerun in progress on the new push; merge once green.
+  - **Status:** PR #1131 fixed (`b317bff`): extracted `session_prepare_cmd`/`session_resume_cmd` into new `src/tensor_grep/cli/session_resume_service.py`, `main.py` now 13522 lines. `gh run rerun --failed` was re-checking-out the SAME stale merge-ref snapshot (pre-`5397bac` docs fix) instead of remerging against current `main` — rebased the branch onto `origin/main` directly (`2216a43`) to force a fresh `pull_request` sync; re-verified import + ratchet hold post-rebase. Awaiting fresh CI.
 
 - **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
   - **Objective:** Match scoring transparency and explicit installation capability envelopes.
   - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
-  - **Status:** PR #1134 fixed (`a5b774d`): extracted `build_why_ranked_reasons`/`route_labels` helpers into `src/tensor_grep/core/reranker.py`, `main.py` now exactly 13523 lines (matches baseline). Verified: real import smoke test passes, ratchet + why_ranked/find tests green (163 passed). CI rerun in progress; merge once green.
+  - **Status:** PR #1134 fixed (`a5b774d`): extracted `build_why_ranked_reasons`/`route_labels` helpers into `src/tensor_grep/core/reranker.py`, `main.py` now exactly 13523 lines. Same stale-merge-ref issue as #1131 (`gh run rerun` doesn't remerge against current `main`) — rebased onto `origin/main` (`6c73e2e`), re-verified import + line count post-rebase. Awaiting fresh CI.
 
 - **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
