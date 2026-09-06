@@ -165,7 +165,13 @@ _EXCLUDED_MODULES = frozenset({
 #   plus 1 LOGGED-DEGRADE handler in _mcp_root gracefully falling back to cwd when custom TG_MCP_ROOT is invalid.
 #   All handlers ensure internal exceptions and path confinement errors are logged server-side to stderr and never leaked on wire.
 #   (Command builders _build_rewrite_command and _build_index_search_command require native_binary with no PATH fallback).
-TOTAL_BROAD_HANDLERS_CEILING = 338
+# - 2026-09-05 (S4 warm session prepare/resume, PR #1131): 338 -> 340 (+2: session_resume_service.py
+#   dispatch_session_prepare_cli/dispatch_session_resume_cli). Both are INTENTIONAL-BOUNDARY CLI
+#   error handlers -- each discloses via `typer.echo(str(exc), err=True)` to stderr and exits
+#   non-zero (`raise typer.Exit(1) from exc`), the same top-level command-boundary disclosure
+#   pattern already used throughout main.py's existing Typer commands. Neither swallows the
+#   error or returns a normal-looking success value on failure.
+TOTAL_BROAD_HANDLERS_CEILING = 340
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
