@@ -111,11 +111,11 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Expose breakdown of BM25 + dense fusion scores in find CLI payload.
   - **Receipt:** Merged PR #1134, squash SHA `d5c9354`, all CI green. Worktree + branch cleaned up.
 
-- **[ ] P3 — Standardize MCP Incompleteness Protocol Envelope**
+- **[x] P3 — Standardize MCP Incompleteness Protocol Envelope**
   - **Objective:** Establish `tg`'s fail-closed incompleteness contract as the gold standard across all MCP clients.
   - **Scope:** Add a unified, additive JSON field `incomplete: {"status": bool, "cause": str, "budget_remediable": bool}` across all tool responses in `mcp_server.py` alongside existing surface-specific fields.
   - **Acceptance:** Validated across all 58 MCP tool endpoints; client agents in Cursor, Windsurf, and Claude Code can inspect one consistent object to decide whether to retry with increased budget.
-  - **Status:** PR #1135 open (`a7ad30e`..`8e1ab06`), **CI FULLY GREEN as of 2026-09-06 07:05 UTC** (40 pass, 10 skipping [release-pipeline jobs gated on merge], 0 fail, 0 pending — confirmed via `gh pr checks 1135` tallied exhaustively, not eyeballed). **10 real defects found and fixed across 3 independent Codex Sol audit rounds**, every one with a RED-test-first reproduction, not a self-report:
+  - **Receipt:** Merged PR #1135, squash SHA `5b8c85e`, CI was fully green pre-merge (40 pass, 0 fail, 0 pending). **Release pipeline for this merge commit is genuinely still in progress as of 2026-09-06 07:23 UTC** (confirmed via `gh run list` — "Push on main" queued, "CI" pending on `5b8c85e`; the `v1.117.0` tag already visible belongs to the EARLIER #1131/S4 merge, not this one — committed is not shipped, verifying the actual publish before claiming done). Worktree + branch cleaned up. **10 real defects found and fixed across 3 independent Codex Sol audit rounds** before merge, every one with a RED-test-first reproduction, not a self-report:
     - Round 1: 3 injector-routing bypasses (`tg_session_open`, `tg_session_list`, `tg_query` aggregate) + `truncated`-signal blind spot.
     - Round 2 (delta-verification): `partial`/nested-`results_by_root` aggregation gap, `tg_search` count-mode scan-cap gap, `scan_limit.truncation_cause`/`.budget_remediable` precision gap.
     - Round 3 (final-verification): `scan_limit.possibly_truncated` itself never drove `status`, `unreadable_paths` had no completeness signal at all, `tg_classify_logs` exposed only numeric `sample_lines`/`total_lines` with no boolean the envelope could generically check.
