@@ -9,7 +9,11 @@ import typer
 
 from tensor_grep.cli._index_lock import index_lock
 from tensor_grep.cli.prepare_service import build_prepare_snapshot
-from tensor_grep.cli.session_root import _session_payload_path, _session_root_for_payload
+from tensor_grep.cli.session_root import (
+    _index_path,
+    _session_payload_path,
+    _session_root_for_payload,
+)
 from tensor_grep.cli.session_store import _load_session_payload, _write_json_atomic
 
 
@@ -22,7 +26,12 @@ def session_prepare(
     root = _session_root_for_payload(session_id, path)
     session_path = _session_payload_path(root, session_id)
 
-    with index_lock(root):
+    # Lock on the SAME key refresh_session uses for its own payload critical section
+    # (session_store.py) -- this previously locked on `root` itself, a key nothing else in the
+    # session subsystem locks on, so it provided zero mutual exclusion against a concurrent
+    # `tg session refresh` writing the same session_path (Codex Sol delta-verification audit
+    # HIGH finding: "unlocked prepare/refresh read-modify-write race").
+    with index_lock(_index_path(root)):
         payload = _load_session_payload(session_id, path)
         snapshot = build_prepare_snapshot(
             path=path,

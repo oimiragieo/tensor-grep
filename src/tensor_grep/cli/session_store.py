@@ -871,14 +871,25 @@ def refresh_session(
         }
     if refresh_fallback_reason is not None:
         payload["refresh_fallback_reason"] = refresh_fallback_reason
+    # A refresh rebuilds the repo_map/snapshot; it does not invalidate a prior `tg session
+    # prepare` decision, so carry it forward rather than silently discarding it (Codex Sol
+    # delta-verification audit HIGH finding: this payload dict is built from scratch and
+    # previously dropped `last_prepare` unconditionally on every refresh, not just under a race).
+    if "last_prepare" in existing:
+        payload["last_prepare"] = existing["last_prepare"]
     session_path = _session_payload_path(root, session_id)
-    _write_json_atomic(session_path, payload)
-    if payload_cache is not None:
-        payload_cache.put(session_id, str(root), payload)
 
     # q10 RMW race: same load->mutate->write hazard as open_session; serialize against every
-    # other writer of this index.json before mutating the in-memory record list.
+    # other writer of this index.json before mutating the in-memory record list. Widened to also
+    # cover the session_path payload write itself (Codex Sol delta-verification audit HIGH
+    # finding: that write used to happen OUTSIDE any lock, racing session_prepare's own
+    # read-modify-write of the same file -- index_lock is not reentrant, so this must be ONE
+    # acquisition covering both critical sections, not two separate `with` blocks on the same key).
     with index_lock(_index_path(root)):
+        _write_json_atomic(session_path, payload)
+        if payload_cache is not None:
+            payload_cache.put(session_id, str(root), payload)
+
         records = _load_index(root)
         for index, record in enumerate(records):
             if record.session_id == session_id:
