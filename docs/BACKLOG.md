@@ -77,11 +77,11 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Acceptance:** Outputs JSON with `changed_symbols`, `affected_callers`, `impacted_tests`, `risk_tier`; adheres to Section 0 completeness contract with deadline/token bounds.
   - **Receipt:** Shipped in PR #1128, merged SHA `7d2baa5`, released in `v1.116.0` (run `33995069360`).
 
-- **[ ] P2 — Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages)**
+- **[x] P2 — Deepen Language Coverage in `LANGUAGE_REGISTRY` (5 -> 10 Deep Languages)**
   - **Objective:** Close the language depth gap against Gortex (~30) and Serena (40+).
   - **Scope:** Upgrade the 5 foundational languages (Java, C#, C, C++, PHP) from regex caller heuristics (`_regex_references_and_calls`) to full tree-sitter AST-verified references and callers.
   - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
-  - **Status:** PR #1129 open, rebased on main (`fbc5397`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention (2026-09-05, 6 PRs pushed within minutes) — rerun dispatched, run `33999546662` (job `101404365799`) in progress.
+  - **Receipt:** Merged PR #1129, squash SHA `c762b1c`, all CI green. Worktree + branch cleaned up.
 
 - **[x] S1/S5 — Fail-Closed Edit Tickets & Verify-Edit Service (`EditReadyTicketV1`)**
   - **Objective:** Contract-driven workspace edit validation preventing silent hallucinated agent edits.
@@ -93,10 +93,10 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** AST symbol resolution on modified diff hunks.
   - **Status:** PR #1130 open (`3ece043`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999557841` (job `101403039873`) in progress.
 
-- **[ ] S3 — Machine Protocol `next_action` & Budget Envelopes**
+- **[x] S3 — Machine Protocol `next_action` & Budget Envelopes**
   - **Objective:** Structured branch advice in `tg prepare` output payload for agent runtimes.
   - **Scope:** Explicit remediation instructions, token and time budget ceiling envelopes.
-  - **Status:** PR #1132 open (`75f2e63`); CI green except one `test-python (windows-latest, py3.12)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999562495` (job `101404366820`) in progress.
+  - **Receipt:** Merged PR #1132, squash SHA `3e56c22`, all CI green. Worktree + branch cleaned up.
 
 - **[ ] S4 — Warm Session Prepare & Resume Contracts**
   - **Objective:** Rapid cached agent context restoration across sequential edit turns.
