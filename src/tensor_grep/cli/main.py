@@ -6716,8 +6716,7 @@ def prepare(
     to replace the orient -> search -> agent -> route-test -> callers -> evidence -> ledger loop.
     """
     # Anchor deadline_monotonic at CLI command entry (mirrors route-test/agent's #197/#200 fix):
-    # computed BEFORE path/query resolution so front-door time counts against the bound the same
-    # way the underlying capsule build + blast-radius floor scan already do.
+    # computed BEFORE path/query resolution so front-door time counts against the same bound.
     from tensor_grep.cli.agent_capsule import DEFAULT_AGENT_CLI_DEADLINE_SECONDS
 
     effective_deadline = (
@@ -6739,6 +6738,7 @@ def prepare(
             query=resolved_query,
             claim=claim,
             deadline_monotonic=deadline_monotonic,
+            include_next_action=True,
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)

@@ -188,6 +188,27 @@ def test_prepare_complete_run_has_all_five_outputs(
         assert key not in payload, f"{key} unexpectedly present on a complete run: {payload}"
 
 
+def test_prepare_real_cli_includes_next_action(
+    prepare_named_symbol_payload: dict[str, object],
+) -> None:
+    """S3 (PR #1132) shipped next_action machine-protocol advice in _build_prepare_payload,
+    gated behind include_next_action=True -- but the real `tg prepare` CLI command in main.py
+    never passed that flag, so the feature was unreachable from any real caller and only
+    exercised directly in tests/unit/test_prepare_next_action.py. Codex Sol audit 2026-09-06
+    HIGH finding, confirmed by direct read (grep for include_next_action=True across src/ and
+    tests/ found only the unit test). This is the real-binary regression test proving the
+    fix actually wires it through the front door, per AGENTS.md's dogfood-the-real-binary rule."""
+    payload = prepare_named_symbol_payload
+    assert "next_action" in payload, (
+        "tg prepare's real CLI output is missing next_action -- the feature is unreachable"
+    )
+    next_action = payload["next_action"]
+    assert isinstance(next_action, dict)
+    assert "action" in next_action
+    assert "on_success" in next_action
+    assert "on_failure" in next_action
+
+
 def test_prepare_validation_commands_are_python_shaped(
     prepare_named_symbol_payload: dict[str, object],
 ) -> None:
