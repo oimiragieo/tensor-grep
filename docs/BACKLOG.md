@@ -83,10 +83,10 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Acceptance:** `_symbol_navigation_descriptor()` reports 10 parser-backed languages; zero regex fallback regressions on cross-file caller queries in test matrix.
   - **Status:** PR #1129 open, rebased on main (`fbc5397`); CI green except one `test-python (windows-latest, py3.11)` job cancelled by cross-PR concurrency contention (2026-09-05, 6 PRs pushed within minutes) — rerun dispatched, run `33999546662` (job `101404365799`) in progress.
 
-- **[ ] S1/S5 — Fail-Closed Edit Tickets & Verify-Edit Service (`EditReadyTicketV1`)**
+- **[x] S1/S5 — Fail-Closed Edit Tickets & Verify-Edit Service (`EditReadyTicketV1`)**
   - **Objective:** Contract-driven workspace edit validation preventing silent hallucinated agent edits.
   - **Scope:** Working tree fingerprinting, sha256 pre/post assertions, bounded hunk verification.
-  - **Status:** PR #1133 open (`222683d`); CI green except one `test-python (windows-latest, py3.12)` job cancelled by cross-PR concurrency contention — rerun dispatched, run `33999572693` (job `101403039109`) in progress.
+  - **Receipt:** Merged PR #1133, squash SHA `a4e2d71`, all CI green. Worktree + branch cleaned up.
 
 - **[ ] S2 — Registration-Aware Polyglot Diff Impact**
   - **Objective:** Extend `diff-impact` symbol mapping to polyglot Go and Rust source trees.
