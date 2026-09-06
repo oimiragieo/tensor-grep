@@ -101,7 +101,7 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
 - **[ ] S4 — Warm Session Prepare & Resume Contracts**
   - **Objective:** Rapid cached agent context restoration across sequential edit turns.
   - **Scope:** `tg session-prepare` and `tg session-resume` CLI bindings with decoupled service architecture (`main.py` <= 13,523 ratchet).
-  - **Status:** PR #1131 open (`ec8ad83`); CI RED — real `main.py` size-ratchet regression (grew to 13552 vs pinned 13523 baseline) + `ruff format --preview` break. Fix dispatched to a background developer agent (extract S4 CLI wiring out of `main.py`, run 2026-09-05); awaiting its push + green rerun before merge.
+  - **Status:** PR #1131 fixed (`b317bff`): extracted `session_prepare_cmd`/`session_resume_cmd` into new `src/tensor_grep/cli/session_resume_service.py`, `main.py` now 13522 lines (1 under 13523 baseline). Verified: real import smoke test passes, `test_file_size_budget.py` + session test suite green (152 passed, 1 skipped). CI rerun in progress on the new push; merge once green.
 
 - **[ ] S6 — Semantic Defaults & `--why-ranked` Explanations in `tg find`**
   - **Objective:** Match scoring transparency and explicit installation capability envelopes.
