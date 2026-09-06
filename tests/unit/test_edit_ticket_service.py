@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from tensor_grep.cli.edit_ticket_service import (
+    EditReadyTicketV1,
+    build_edit_ready_ticket,
+    compute_working_tree_fingerprint,
+    verify_edit_ticket,
+)
+
+
+def test_compute_working_tree_fingerprint_deterministic(tmp_path: Path) -> None:
+    f1 = tmp_path / "foo.py"
+    f1.write_text("print('hello')\n", encoding="utf-8")
+    fp1 = compute_working_tree_fingerprint(str(tmp_path))
+    fp2 = compute_working_tree_fingerprint(str(tmp_path))
+    assert fp1 == fp2
+    assert len(fp1) == 64
+
+    f1.write_text("print('hello world')\n", encoding="utf-8")
+    fp3 = compute_working_tree_fingerprint(str(tmp_path))
+    assert fp3 != fp1
+
+
+def test_build_edit_ready_ticket_contract(tmp_path: Path) -> None:
+    src_file = tmp_path / "module.py"
+    src_file.write_text("def hello():\n    return 42\n", encoding="utf-8")
+
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(src_file),
+        query="return 42",
+        allowed_files=["module.py"],
+    )
+
+    assert isinstance(ticket, EditReadyTicketV1)
+    assert ticket.ticket_id.startswith("ticket_")
+    assert ticket.version == 1
+    assert "module.py" in ticket.allowed_files
+    assert ticket.working_tree_fingerprint != ""
+    assert isinstance(ticket.pre_edit_fingerprints, dict)
+    assert "module.py" in ticket.pre_edit_fingerprints
+
+    d = ticket.to_dict()
+    assert d["version"] == 1
+    assert d["ticket_id"] == ticket.ticket_id
+    ticket2 = EditReadyTicketV1.from_dict(d)
+    assert ticket2.ticket_id == ticket.ticket_id
+
+
+def test_verify_edit_contract_violation_on_unallowed_file(tmp_path: Path) -> None:
+    allowed = tmp_path / "allowed.py"
+    allowed.write_text("a = 1\n", encoding="utf-8")
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(allowed),
+        query="a = 1",
+        allowed_files=["allowed.py"],
+    )
+
+    unallowed = tmp_path / "other.py"
+    unallowed.write_text("b = 2\n", encoding="utf-8")
+
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path),
+        ticket=ticket,
+        modified_files=["allowed.py", "other.py"],
+    )
+
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "edit_contract_violated"
+    assert "other.py" in result["violations"]
+
+
+def test_verify_edit_pass_when_matching_allowed_files_and_fingerprint(tmp_path: Path) -> None:
+    allowed = tmp_path / "allowed.py"
+    allowed.write_text("a = 1\n", encoding="utf-8")
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(allowed),
+        query="a = 1",
+        allowed_files=["allowed.py"],
+    )
+
+    allowed.write_text("a = 2\n", encoding="utf-8")
+
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path),
+        ticket=ticket,
+        modified_files=["allowed.py"],
+    )
+
+    assert result["verdict"] == "PASS"
+    assert result["reason"] is None
