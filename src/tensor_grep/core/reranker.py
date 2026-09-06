@@ -459,3 +459,30 @@ def rerank_hybrid(
             result, matches=reranked, rank_fallback_reason="; ".join(combined_parts)
         )
     return dataclasses.replace(result, matches=reranked)
+
+
+def route_labels(dense_index: object | None) -> tuple[str, str, str]:
+    """(routing_backend, routing_reason, install_state) for `_execute_find`'s envelope, keyed on
+    whether the dense leg is present. Both `routing_backend`/`routing_reason` are `required`/
+    minLength-1 in the shared envelope `tg find` reuses; `install_state` is the S6 explicit-state
+    field so a caller never has to infer readiness from the other two.
+    """
+    if dense_index:
+        return "HybridFindBackend", "find_bm25_dense_rrf", "dense_ready"
+    return "Bm25FindBackend", "find_bm25_only", "bm25_only (run tg install-dense)"
+
+
+def build_why_ranked_reasons(
+    chunk: Chunk, query_terms: set[str], enabled: bool
+) -> list[str] | None:
+    """Human-readable reasons a chunk's representative line was ranked/matched, for the `tg find
+    --why-ranked` explanation column: which query terms matched (if any) and the chunk's source
+    line span. `enabled` folds the `--why-ranked` gate in here so callers stay a one-liner and
+    `main.py`'s file-size ratchet holds.
+    """
+    if not enabled:
+        return None
+    matched_terms = [t for t in query_terms if t.lower() in chunk.text.lower()]
+    reasons = [f"terms: {', '.join(sorted(matched_terms))}"] if matched_terms else []
+    reasons.append(f"lines {chunk.start_line}-{chunk.end_line}")
+    return reasons
