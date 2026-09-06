@@ -132,6 +132,22 @@ def test_incomplete_envelope_aggregates_nested_results_by_root() -> None:
     assert stamped["incomplete"]["status"] is True
 
 
+def test_incomplete_envelope_derives_status_from_unreadable_paths() -> None:
+    """Round-3 Codex Sol final-verification audit finding: build_repo_map stamps a top-level
+    `unreadable_paths: {count, sample}` key (repo_map.py, deliberately separate from scan_limit
+    since "raise the budget" is the wrong remedy for a permission-denied directory) with NO
+    accompanying result_incomplete/truncated/partial sibling. tg_repo_map injects that dict
+    verbatim, so a repo walk that hit an unreadable path reported incomplete.status=False."""
+    raw = json.dumps({
+        "unreadable_paths": {"count": 2, "sample": ["/root/locked"]},
+    })
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    assert stamped["incomplete"]["status"] is True
+    assert stamped["incomplete"]["cause"] == "unreadable_path"
+    # Not budget-remediable -- raising a scan cap does not fix a permission-denied path.
+    assert stamped["incomplete"]["budget_remediable"] is False
+
+
 def test_incomplete_envelope_derives_status_from_scan_limit_possibly_truncated_alone() -> None:
     """Round-3 Codex Sol final-verification audit finding: status was derived from
     result_incomplete/truncated/partial/nested children, but NEVER from

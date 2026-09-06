@@ -176,17 +176,28 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
     )
 
+    # unreadable_paths is `build_repo_map`'s own top-level signal, deliberately kept separate
+    # from scan_limit (a permission-denied path is never fixed by raising a budget), with no
+    # result_incomplete/truncated/partial sibling of its own -- another shape status must check.
+    unreadable_paths = payload.get("unreadable_paths")
+    has_unreadable_paths = bool(
+        isinstance(unreadable_paths, dict) and unreadable_paths.get("count")
+    )
+
     status = (
         bool(payload.get("result_incomplete", False))
         or bool(payload.get("truncated", False))
         or bool(payload.get("partial", False))
         or nested_incomplete
         or scan_limit_truncated
+        or has_unreadable_paths
     )
 
     cause = payload.get("incomplete_reason")
     if cause is None and scan_limit_cause is not None:
         cause = scan_limit_cause
+    if cause is None and has_unreadable_paths:
+        cause = "unreadable_path"
     if cause is None and payload.get("truncated"):
         cause = "truncated"
     if cause is None and payload.get("partial"):
