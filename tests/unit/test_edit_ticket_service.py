@@ -130,6 +130,44 @@ def test_verify_edit_fails_when_declared_file_was_not_actually_modified(tmp_path
     assert "allowed.py" in result["violations"]
 
 
+def test_verify_edit_catches_undeclared_change_to_a_dotfile(tmp_path: Path) -> None:
+    """Codex Sol delta-verification audit 2026-09-06 CRITICAL finding: _walk_tracked_files
+    excluded every path with ANY dot-prefixed component, not just VCS/cache internals -- so a
+    legitimate tracked dotfile (.github/workflows/ci.yml, .gitignore) could be silently modified
+    outside a ticket's allowed_files and escape both the pre-edit snapshot and the verify-time
+    re-walk entirely. Only .git (the VCS internals directory) and __pycache__ should be excluded;
+    ordinary tracked dotfiles must be fingerprinted like any other file."""
+    allowed = tmp_path / "allowed.py"
+    allowed.write_text("a = 1\n", encoding="utf-8")
+    workflow_dir = tmp_path / ".github" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    workflow_file = workflow_dir / "ci.yml"
+    workflow_file.write_text("name: CI\n", encoding="utf-8")
+
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path=str(allowed),
+        query="a = 1",
+        allowed_files=["allowed.py"],
+    )
+
+    # Agent edits allowed.py (declared) AND silently tampers with a CI workflow (undeclared,
+    # security-sensitive, and NOT in allowed_files).
+    allowed.write_text("a = 2\n", encoding="utf-8")
+    workflow_file.write_text(
+        "name: CI\non: [push]\njobs: {pwn: {runs-on: self-hosted}}\n", encoding="utf-8"
+    )
+
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path),
+        ticket=ticket,
+        modified_files=["allowed.py"],
+    )
+
+    assert result["verdict"] == "FAIL"
+    assert ".github/workflows/ci.yml" in result["violations"]
+
+
 def test_verify_edit_pass_when_matching_allowed_files_and_fingerprint(tmp_path: Path) -> None:
     allowed = tmp_path / "allowed.py"
     allowed.write_text("a = 1\n", encoding="utf-8")

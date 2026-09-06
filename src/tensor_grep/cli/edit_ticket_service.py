@@ -56,10 +56,15 @@ def _walk_tracked_files(repo_root: str | Path) -> dict[str, str]:
     root = Path(repo_root)
     result: dict[str, str] = {}
     for item in sorted(root.rglob("*")):
-        if item.is_file() and not any(
-            part.startswith(".") or part == "__pycache__" for part in item.parts
-        ):
-            rel = str(item.relative_to(root)).replace("\\", "/")
+        if item.is_file():
+            rel_parts = item.relative_to(root).parts
+            # Only exclude VCS/cache internals, not ordinary tracked dotfiles -- a blanket
+            # `part.startswith(".")` silently let a security-sensitive tracked dotfile (e.g.
+            # .github/workflows/*, .gitignore) escape fingerprinting entirely, so tampering with
+            # one outside a ticket's allowed_files was undetectable (Codex Sol audit, 2026-09-06).
+            if any(part == ".git" or part == "__pycache__" for part in rel_parts):
+                continue
+            rel = "/".join(rel_parts)
             result[rel] = compute_file_fingerprint(item)
     return result
 
