@@ -83,3 +83,20 @@ def dispatch_session_resume_cli(
         if json_output
         else f"Resumed session {session_id}"
     )
+
+
+def session_prepare_cmd(
+    session_id: str = typer.Argument(..., help="Session ID."),
+    query: str = typer.Argument(..., help="Query."),
+    path: str = typer.Argument(".", help="Root."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    dispatch_session_prepare_cli(session_id, query, path, json_output)
+
+
+def session_resume_cmd(
+    session_id: str = typer.Argument(..., help="Session ID."),
+    path: str = typer.Argument(".", help="Root."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    dispatch_session_resume_cli(session_id, path, json_output)
