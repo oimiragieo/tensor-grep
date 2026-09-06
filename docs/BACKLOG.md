@@ -163,6 +163,12 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Seat & Cost:** Sonnet 5 build (Droid Plus $100/mo) -> Fable 5.1 audit; $0.00 marginal overage.
   - **Acceptance:** 8x faster embedding vector inference; zero quality degradation on `find_realquery_golden.jsonl` benchmark suite.
 
+- **[ ] P13 — Adopt `import-linter` with a Frozen Baseline for Module Boundaries**
+  - **Objective:** Turn `src/tensor_grep`'s `cli`/`core`/`backends`/`io` split from a naming convention into an enforced dependency-direction boundary (baseline-dev-architecture audit, 2026-09-06 — see `docs/audits/2026-09-06-baseline-architecture-audit.md`). Python's `_private`/`__all__` conventions enforce nothing at runtime; without a linter, nothing stops a lower layer from importing a higher one.
+  - **Scope:** Add `import-linter` (or `pytestarch`), generate a baseline file capturing every CURRENT violation (freeze, do not fix in this PR), wire it into CI so only NEW violations fail the build, then burn the baseline down incrementally in follow-up PRs.
+  - **Acceptance:** CI fails on any new cross-layer import that isn't in the frozen baseline; baseline file is reviewed like code with stable per-entry identities.
+  - **Seat & Cost:** Sonnet 5 build (baseline generation is mechanical) -> Codex Sol review (CI-gating change). $0.00 marginal overage.
+
 
 
 ## OPEN (2026-08-23): the two governance docs have no size gate, and both are now very large
