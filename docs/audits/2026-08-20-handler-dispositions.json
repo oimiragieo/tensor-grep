@@ -361,7 +361,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5627,
+    "lineno": 5641,
     "enclosing_symbol": "stdin_reader",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
