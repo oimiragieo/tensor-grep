@@ -70,6 +70,7 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core.observability import nvtx_range
+from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
 
 # perf (+10% campaign #6 / F2.4): import the 5 broad-scan-guard constants from the
@@ -1464,6 +1465,7 @@ def _execute_find(
     max_repo_files: int,
     max_tokens: int,
     deadline: float | None,
+    why_ranked: bool = False,
 ) -> "SearchResult":
     """The `tg find` pipeline: whole-repo walk -> chunk -> BM25 [+ dense] [+ late MaxSim] rank via
     the shared `rank_chunks` core (`core/reranker.py`) -> `--limit` -> token-budget fit -> a
@@ -1655,8 +1657,7 @@ def _execute_find(
 
     # Name WHAT RAN: both fields are `required`/minLength-1 in the envelope `tg find` reuses and
     # were emitted null. `rank_fallback_reason` says WHY the dense leg is absent; these say which.
-    result.routing_backend = "HybridFindBackend" if dense_index else "Bm25FindBackend"
-    result.routing_reason = "find_bm25_dense_rrf" if dense_index else "find_bm25_only"
+    result.routing_backend, result.routing_reason, result.install_state = route_labels(dense_index)
 
     late_reranker = None
     if os.environ.get("TG_LATE_RERANK") == "1":
@@ -1726,7 +1727,8 @@ def _execute_find(
     for chunk_index in selected:
         chunk = chunks[chunk_index]
         line_number, line_text = _find_representative_line(chunk, query_terms)
-        matches.append(MatchLine(line_number=line_number, text=line_text, file=chunk.file_path))
+        why = build_why_ranked_reasons(chunk, query_terms, why_ranked)
+        matches.append(MatchLine(line_number, line_text, chunk.file_path, why_ranked=why))
 
     # Output-only budget fit (never touches result_incomplete -- see docstring): truncate the
     # LOWEST-ranked matches first (the tail of the already best-first `matches` list), floored at 1
@@ -1797,6 +1799,7 @@ def find(
     deadline: float | None = _deadline_option(
         "Stop the repo walk/chunk phase after N seconds and return ranked results over the partial corpus scanned so far (result_incomplete=true, exit 2) instead of running unbounded."
     ),
+    why_ranked: bool = typer.Option(False, "--why-ranked", help="Explain why matches were ranked."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
     ndjson: bool = typer.Option(
         False, "--ndjson", help="Emit newline-delimited JSON, one object per match."
@@ -1839,6 +1842,7 @@ def find(
             max_repo_files=max_repo_files,
             max_tokens=max_tokens,
             deadline=deadline,
+            why_ranked=why_ranked,
         )
     except FileNotFoundError as exc:
         typer.echo(str(exc), err=True)

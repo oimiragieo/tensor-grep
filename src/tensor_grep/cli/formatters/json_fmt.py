@@ -88,6 +88,8 @@ def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict
             payload["submatches"] = subs
     if getattr(match, "container", None) is not None:
         payload["container"] = match.container
+    if getattr(match, "why_ranked", None) is not None:
+        payload["why_ranked"] = match.why_ranked
     return payload
 
 
@@ -142,6 +144,8 @@ def _routing_envelope(result: SearchResult) -> dict[str, object]:
             envelope["incomplete_reason_class"] = result.incomplete_reason_class
     if getattr(result, "ast_enrichment_truncated", False):
         envelope["ast_enrichment_truncated"] = True
+    if getattr(result, "install_state", None) is not None:
+        envelope["install_state"] = result.install_state
     return envelope
 
 
@@ -231,6 +235,7 @@ class JsonFormatter(OutputFormatter):
             "incomplete_reason",
             "incomplete_reason_class",
             "ast_enrichment_truncated",
+            "install_state",
         ):
             if key in envelope:
                 data[key] = envelope[key]
