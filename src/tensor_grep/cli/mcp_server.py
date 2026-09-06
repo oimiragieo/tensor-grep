@@ -3292,6 +3292,11 @@ def tg_search(
                         "path": path,
                         "total_matches": all_results.total_matches,
                         "total_files": all_results.total_files,
+                        # Same top-level truncated field the is_empty branch above already
+                        # stamps from this exact value -- omitting it here (pre-fix) let a
+                        # genuinely capped count-mode scan report incomplete.status=False,
+                        # since result_incomplete alone stays False on a max_repo_files cap.
+                        "truncated": empty_scan_capped,
                         "result_incomplete": all_results.result_incomplete,
                         "incomplete_reason": all_results.incomplete_reason,
                         **_incomplete_class_fragment(all_results),
