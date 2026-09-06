@@ -1,6 +1,443 @@
 # CHANGELOG
 
 
+## v1.117.0 (2026-09-06)
+
+### Bug Fixes
+
+- **docs**: Resync TASK_BOARD.md canonical version stamp with SESSION_HANDOFF.md
+  ([`5397bac`](https://github.com/oimiragieo/tensor-grep/commit/5397bace02688507e0d60c44b3b89d7d669dfee8))
+
+bf72bbf updated TASK_BOARD.md's IN FLIGHT table content and bumped SESSION_HANDOFF.md's version to
+  2026-09-05.1, but left TASK_BOARD.md's own stamp at 2026-08-30.1 — a cross-doc version drift that
+  test_handoff_version_and_current_prose enforces. This was breaking CI on every open PR that
+  rebases onto/merges with current main (surfaced first on #1131 and #1134 after their ratchet-fix
+  pushes triggered fresh runs against latest main).
+
+Verified: tests/unit/test_backlog_tracker_truth.py (43 tests) all pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **docs**: Resync tool_comparison.md's own internal language-count claim
+  ([`8e25c23`](https://github.com/oimiragieo/tensor-grep/commit/8e25c23ce2aae0608f13bdc80f2a7db1c6fc4c95))
+
+Line 232 said tg has "5" deep-tier languages while line 176 of the SAME document correctly says "10"
+  -- a self-contradiction the file's own skill-index memory warns has happened four times before. P2
+  (merged this session, c762b1c) upgraded all 5 foundational languages to parser-backed, closing the
+  gap this line described. Re-derived live via _symbol_navigation_descriptor() before editing (10
+  parser-backed, 0 foundational) rather than trusting either stale number.
+
+Verified: 303 docs/language-tagged tests pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **edit-ticket**: Only exclude .git/__pycache__ from tracked-file walk, not every dotfile
+  ([`178a0aa`](https://github.com/oimiragieo/tensor-grep/commit/178a0aaf7da9d5e2c71dcb4d3982f8de41f0426d))
+
+A second-order Codex Sol delta-verification audit found my earlier fix (86caffc) incomplete:
+  _walk_tracked_files excluded ANY path with a dot-prefixed component (`part.startswith(".")`),
+  which silently dropped legitimate tracked dotfiles -- .github/workflows/*, .gitignore, etc. --
+  from both the ticket's pre-edit snapshot and the verify-time re-walk. An agent could tamper with a
+  CI workflow file outside its ticket's allowed_files and verify_edit_ticket would return PASS,
+  since the file never appeared in either fingerprint map.
+
+Fix: exclude only the literal .git directory and __pycache__, matching what the function's own
+  docstring already claimed ("VCS/cache internals"), not every dotted path component.
+
+TDD: new RED test simulates exactly this attack (undeclared CI-workflow tampering), confirmed
+  failing pre-fix (PASS instead of FAIL), green after. Full suite: 7/7 passed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **edit-ticket**: Verify_edit_ticket now recomputes fingerprints instead of trusting the caller's
+  modified_files list
+  ([`86caffc`](https://github.com/oimiragieo/tensor-grep/commit/86caffc13077781eae33206933c7319c80b8a234))
+
+Independent Codex Sol audit (docs/audits/codex-specs/2026-09-06-session-fanout-audit.md) found
+  CRITICAL: verify_edit_ticket only checked that the caller-supplied modified_files list was a
+  subset of allowed_files -- it never read back the ticket's own pre_edit_fingerprints or
+  working_tree_fingerprint. An agent could silently touch a file outside its ticket's scope and
+  simply omit it from modified_files, and the verifier would return PASS every time; a hallucinated
+  edit (claiming to have modified a file that was never touched) would also pass undetected. This
+  defeated the item's entire stated purpose (S1: "preventing silent hallucinated agent edits").
+
+The service is currently unwired (no caller anywhere in src/), so there was no live blast radius yet
+  -- but the backlog had this marked shipped with a broken core contract.
+
+Fix: build_edit_ready_ticket now captures a per-file fingerprint for the WHOLE tree (reusing the
+  same walk compute_working_tree_fingerprint already did, just keeping the per-file map instead of
+  discarding it into one aggregate hash) instead of only allowed_files. verify_edit_ticket
+  recomputes current fingerprints and: (1) flags any file that drifted without being declared in
+  modified_files (edit_contract_violated), and (2) flags any declared file whose fingerprint didn't
+  actually change (declared_edit_not_applied).
+
+TDD: two new RED tests reproduce both gaps against the pre-fix code (confirmed failing before the
+  fix), all 6 tests green after.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **prepare**: Wire include_next_action=True into the real tg prepare CLI command
+  ([`3829775`](https://github.com/oimiragieo/tensor-grep/commit/3829775621727cf97d9a5fc4b78993332dbc3bb8))
+
+Independent Codex Sol audit (docs/audits/codex-specs/2026-09-06-session-fanout-audit.md) HIGH
+  finding, confirmed by direct read: S3's next_action machine-protocol advice (PR #1132, merged
+  3e56c22) was gated behind _build_prepare_payload's include_next_action=True parameter, but the
+  actual `tg prepare` CLI command in main.py never passed it -- a repo-wide grep found
+  include_next_action=True used ONLY in tests/unit/test_prepare_next_action.py, never from any real
+  caller. The entire feature was unreachable from the shipped binary.
+
+Fix: pass include_next_action=True at the real call site. Trimmed one adjacent comment line to hold
+  the main.py size ratchet (13523).
+
+TDD: new real-subprocess integration test (test_prepare_real_cli_includes_next_action, dogfooding
+  the actual `tg` binary per AGENTS.md's dogfood-the-real-binary rule, not CliRunner) confirmed RED
+  against the pre-fix binary, GREEN after.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+### Chores
+
+- **architecture**: Baseline-dev-architecture audit + root scratch cleanup, dispatch session
+  validator
+  ([`6b2cbff`](https://github.com/oimiragieo/tensor-grep/commit/6b2cbffa5ee4179abb0314c4e90267fe587ff259))
+
+Audit against the baseline-dev-architecture skill found: (1) root scratch sprawl (7 stale April
+  repro dirs + 2 stray files, all confirmed untracked and unreferenced) -- deleted; (2) the cli/
+  god-directory pattern (repo_map.py 15.2k, main.py 13.5k lines) -- already an actively-managed,
+  ratcheted campaign in motion, not blind-fixed; (3) no Python import-boundary linter -- added as
+  new backlog item P13 (freeze-then-burn-down baseline, not a same-turn retrofit).
+
+Also committed the tracked spec for a Codex Sol read-only audit of this session's 6 merged PRs + 2
+  open PRs, dispatched in the background.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **audit**: Dispatch Codex Sol delta-verification of the 3 CRITICAL fixes
+  ([`8161a97`](https://github.com/oimiragieo/tensor-grep/commit/8161a974d6252ae4022cd34b5c773ad9e608f372))
+
+Independent re-check of whether the fixes to the prior session audit's 3 CRITICAL findings actually
+  close the gaps, plus a spot-check of the P3 injector-routing scope claim (38 routed / 42
+  raw-remaining, all judged legitimate by the fixing agent -- Sol re-checks 10+ independently).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **audit**: Dispatch round-3 final verification audit for PR #1135
+  ([`7f54cba`](https://github.com/oimiragieo/tensor-grep/commit/7f54cba792faa4fde8e52bae4e16f6d5014e3257))
+
+Per this session's own recommendation: two prior audit rounds each found a real gap the previous
+  round's fix missed, so declaring "all known findings fixed" merge-ready without a third
+  independent check would repeat that exact pattern.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+### Documentation
+
+- **backlog**: All known #1135 audit findings fixed and TDD-verified
+  ([`7676e77`](https://github.com/oimiragieo/tensor-grep/commit/7676e770daf2256fd53d7b5f662e0c016de8c468))
+
+Last remaining gap (scan_limit.truncation_cause/budget_remediable precision) fixed (0b949f0). 7 real
+  defects total across 2 audit rounds on this one PR, each independently RED-then-GREEN verified.
+  Not declaring merge-ready outright -- recommend a third audit pass or an explicit risk-accept
+  given the two-rounds-were-each-insufficient lesson banked earlier this session.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Confirm and resolve S3 AUDIT-FOLLOWUP finding, confirm S6 (deferred)
+  ([`2ed5e84`](https://github.com/oimiragieo/tensor-grep/commit/2ed5e84c361491138ff21e0ea49de2e334932dc8))
+
+S3's next_action-unreachable finding confirmed real and fixed (3829775). S6's explanation-quality
+  finding confirmed real by direct read (both halves: implementation only exposes matched terms,
+  test only checks list type) but deliberately deferred as real feature-scope work rather than a
+  rushed same-turn fix that could get score-contribution semantics wrong.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Confirm and resolve S4's file-size-branch-stale AUDIT-FOLLOWUP finding
+  ([`be78702`](https://github.com/oimiragieo/tensor-grep/commit/be78702122daf774f9b1062b8043872f85698baa))
+
+Rebased PR #1131 onto current main, confirmed the predicted overage (13526 vs 13523), fixed by
+  condensing 3 redundant comments (03cd8c2).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Confirm and resolve the tg_search count-mode scan-cap CRITICAL
+  ([`a085ee1`](https://github.com/oimiragieo/tensor-grep/commit/a085ee1f5f52d5129167666b0fb672422a41411f))
+
+One of two remaining #1135 blockers fixed (15cb8b4). The nested
+  scan_limit.truncation_cause/budget_remediable discard remains open -- PR stays BLOCKED.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Dispatch P3 MCP incompleteness envelope to background agent
+  ([`13f18f6`](https://github.com/oimiragieo/tensor-grep/commit/13f18f6c82d626c6e8cfc2a498ba36b0fcfd27ad))
+
+Opened a new worktree/branch off main and dispatched a TDD-first developer agent to implement the
+  unified incomplete{} envelope across MCP tool responses, bumping the MCP contract version per the
+  5th registration site.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: P2 and S3 shipped — PRs #1129 and #1132 merged
+  ([`85c97fc`](https://github.com/oimiragieo/tensor-grep/commit/85c97fc985d12a3127c5f78d7d73be21518223ab))
+
+Both went fully green after the docs-governance drift fix (5397bac). Squash-merged and cleaned up
+  worktrees/branches.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: P3 MCP incompleteness envelope shipped as PR #1135
+  ([`cebc883`](https://github.com/oimiragieo/tensor-grep/commit/cebc883f09d68cb0ae4a19fa937bb49a4ba61d35))
+
+Independently verified the background agent's self-report: real import test, ratchet-compliant line
+  count, spot-checked new envelope tests (36 passed). Full mcp-tagged suite (823 passed) taken from
+  the agent's report, not independently re-run in full due to its 15min runtime.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Persist competitive-research feature ideas (P14, P10 differentiation)
+  ([`4d1e3e9`](https://github.com/oimiragieo/tensor-grep/commit/4d1e3e9d547172e8eb7f1942db4dd950425dc50e))
+
+These were reported in a prior CEO update's prose but never actually written to backlog.md --
+  correcting that. Adds P14 (fact-level confidence/provenance envelope, a named market-wide gap per
+  Exa research) and updates P10 with the Prusik competitive-differentiation angle.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Pr #1131 ratchet fix landed and verified
+  ([`88de7b1`](https://github.com/oimiragieo/tensor-grep/commit/88de7b165e5f120ed44fa2e1a69b54f426f19668))
+
+session_resume_service.py extraction confirmed real via import smoke test and local test run (152
+  passed), not just agent self-report. CI rerun in progress on b317bff.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Pr #1134 ratchet fix landed and verified
+  ([`684888d`](https://github.com/oimiragieo/tensor-grep/commit/684888d9a6a70e5aad27f46e54028da6c5db74b3))
+
+reranker.py extraction confirmed real via import smoke test and local test run (163 passed), not
+  just agent self-report. CI rerun in progress on a5b774d.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Reconcile P1 release v1.116.0 receipt and live PR in-flight index
+  ([`bf72bbf`](https://github.com/oimiragieo/tensor-grep/commit/bf72bbf5a91aa1a16c8bd629a9894e032b382afb))
+
+- **backlog**: Record Codex Sol audit findings, block PR #1135, track unverified HIGHs
+  ([`31c8e0d`](https://github.com/oimiragieo/tensor-grep/commit/31c8e0d9af7c5b9baf2cd684a717de2ceb2efcce))
+
+3 CRITICALs confirmed real and fixed this session (S1's unwired but broken verify_edit_ticket on
+  main; P3's injector-bypass scope claim; P3's truncated-signal blind spot). PR #1135 explicitly
+  blocked from merge until the remaining injector-bypass sites are fixed and re-verified -- its own
+  completeness claim has now been wrong twice. Remaining HIGH findings on S3/S6 (merged) and S4
+  (open) recorded as an honest unverified-audit-followup item rather than silently dropped or
+  assumed true.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Record round-2 delta-verification audit findings, 2 more fixed, 4 deferred
+  ([`38b6b84`](https://github.com/oimiragieo/tensor-grep/commit/38b6b840946dc582d206a07169805743a3247036))
+
+S1: dotfile-exclusion CRITICAL confirmed and fixed (178a0aa); ticket-identity/atomicity HIGHs
+  deferred as real design work, not a same-turn
+
+patch. P3: partial/nested-aggregation CRITICAL confirmed and fixed (0e5e66b); tg_search count-mode
+  scan-cap gap and nested cause/remediation discard remain, PR stays BLOCKED. Two full audit rounds
+  on this campaign now -- the pattern is worth naming: don't trust a single "fixed" pass on a
+  security-shaped contract.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Refresh PR receipts with concurrency-contention reruns and ratchet-fix dispatches
+  ([`203c591`](https://github.com/oimiragieo/tensor-grep/commit/203c59146797867ae9c8fa8105e8f1a644895e74))
+
+Six in-flight PRs (#1129-1134) reconciled against live CI state: four had a single windows
+  test-python job cancelled by cross-PR concurrency contention (reruns dispatched with run/job IDs);
+  two (#1131, #1134) have a real main.py file-size-ratchet regression, fix dispatched to background
+  developer agents per-worktree. Also removed the dead task2a-round60-red branch (PR #966, closed
+  unmerged, explicitly "not GREEN, do not merge").
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Round-3 #1135 findings fixed; 9 real defects across 3 audit rounds, not declaring
+  merge-ready
+  ([`4c73cc2`](https://github.com/oimiragieo/tensor-grep/commit/4c73cc2866890afa85bbb9a244e9f67103cbc50a))
+
+Third fix of round 3 landed (4007527). Explicitly deferring the merge decision to a 4th independent
+  check or an operator risk-accept, per the now-3x-repeated pattern of each round finding what the
+  prior one missed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: S1/s5 shipped — PR #1133 merged
+  ([`621a605`](https://github.com/oimiragieo/tensor-grep/commit/621a6052e2e39cffdba02098a827939d90c90274))
+
+CI went fully green after the concurrency-contention rerun cleared. Squash-merged and cleaned up
+  worktree/branch.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: S2 shipped (PR #1130), S4/S6 rebased to fix stale-merge-ref CI
+  ([`952fbe7`](https://github.com/oimiragieo/tensor-grep/commit/952fbe78b2d7377fcc1f040046124a13cadfcd11))
+
+S2 merged clean. S4/S6 were repeatedly failing the docs-governance version check on rerun because
+  `gh run rerun --failed` re-checks-out the ORIGINAL pull_request merge-ref snapshot rather than
+  remerging against current main -- so it kept resurfacing the pre-5397bac drift even after that fix
+  landed. Rebased both branches directly onto origin/main to force a fresh sync event; re-verified
+  real import + ratchet line counts post-rebase.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: S6 shipped (PR #1134); S4/P3 hit real gates, fixed and verified
+  ([`f6dd543`](https://github.com/oimiragieo/tensor-grep/commit/f6dd543df672534bc3c35add140a10d7c74f734c))
+
+S6 merged clean. S4 (#1131) and P3 (#1135) each surfaced a genuine, previously-hidden gate failure
+  once fresh CI ran against current main -- a silent-failure-hardening ceiling and a
+  bare-call-ratchet regression respectively -- both root-caused and fixed at the source,
+  independently verified, not just re-run blindly.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+### Features
+
+- **diff-impact**: Add registration-aware polyglot symbol mapping test (S2)
+  ([#1130](https://github.com/oimiragieo/tensor-grep/pull/1130),
+  [`6b39ce2`](https://github.com/oimiragieo/tensor-grep/commit/6b39ce2487a1918cb9c070441e2019b0210b600d))
+
+- **edit-ticket**: Implement EditReadyTicketV1 and fail-closed verify-edit contract service (S1)
+  ([#1133](https://github.com/oimiragieo/tensor-grep/pull/1133),
+  [`a4e2d71`](https://github.com/oimiragieo/tensor-grep/commit/a4e2d71d80d65c824244ba690ba4aaac24dc439a))
+
+- **find**: Add --why-ranked match explanations and explicit install_state envelope (S6)
+  ([#1134](https://github.com/oimiragieo/tensor-grep/pull/1134),
+  [`d5c9354`](https://github.com/oimiragieo/tensor-grep/commit/d5c9354f048ffe5bc6540670b8c4d8eb9fd0408e))
+
+* feat(find): add --why-ranked match explanations and explicit install_state envelope (S6)
+
+* refactor(find): tighten S6 --why-ranked wiring to hold the main.py size ratchet
+
+Moves the --why-ranked reason-building and routing-label logic out of `_execute_find` into two small
+  `core/reranker.py` helpers (`build_why_ranked_reasons`, `route_labels`), tightening the call sites
+  to one-liners. Net effect on `src/tensor_grep/cli/main.py` is +4 lines (13519 -> 13523), holding
+  it at the pinned file-size ratchet baseline instead of the +19 the inline version produced. No
+  behavior change.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- **prepare**: Add next_action machine protocol and budget envelope to prepare payload (S3)
+  ([#1132](https://github.com/oimiragieo/tensor-grep/pull/1132),
+  [`3e56c22`](https://github.com/oimiragieo/tensor-grep/commit/3e56c224db935ff7466b3358b7b4c432e95936e9))
+
+- **repo_map**: Wire extract_imports_and_symbols across all 10 registered languages
+  ([#1129](https://github.com/oimiragieo/tensor-grep/pull/1129),
+  [`c762b1c`](https://github.com/oimiragieo/tensor-grep/commit/c762b1c0e67977c205f74ffae966e44330bef792))
+
+- **session**: Add warm session prepare and resume contracts (S4)
+  ([#1131](https://github.com/oimiragieo/tensor-grep/pull/1131),
+  [`4fc9b6b`](https://github.com/oimiragieo/tensor-grep/commit/4fc9b6b39b1a1ee3edc2abc0373d7dbbe00474b8))
+
+* feat(session): add warm session prepare and resume contracts (S4)
+
+* refactor(session): extract S4 CLI wiring out of main.py to hold the size ratchet
+
+Move the `session prepare`/`session resume` typer command functions out of main.py into
+  session_resume_service.py (registered onto `session_app` via `.command()` next to the existing
+  `session_app.add_typer(session_daemon_app, ...)` wiring, following the same out-of-main.py pattern
+  the daemon sub-commands already use). Also applies `ruff format --preview` to main.py, which
+  collapses several dict/list literals this PR had left in the wrong (pre-preview) multi-line style
+  back to the compact form ruff --preview actually wants.
+
+Brings main.py from 13552 lines back to 13522, under the pinned file-size-budget ratchet of 13523,
+  and clears the `ruff format --check --preview` failure at the `--gpu-device-ids` block.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+* fix(tests): raise silent-failure-hardening ceiling for S4's two disclosed CLI error boundaries
+
+Fresh CI (post-rebase onto current main) surfaced a real, previously hidden gate:
+  session_resume_service.py's dispatch_session_prepare_cli/ dispatch_session_resume_cli each carry a
+  top-level `except Exception` that discloses via stderr + non-zero exit, pushing the repo's broad
+  exception-handler population from 338 to 340. Classified per the test's own documented remediation
+  path (both are INTENTIONAL-BOUNDARY CLI error handlers, matching the existing pattern throughout
+  main.py's other Typer commands -- neither swallows the error).
+
+Verified: tests/unit/test_silent_failure_hardening.py and test_file_size_budget.py both pass (30
+  passed).
+
+* fix(main): hold the file-size ratchet after rebasing onto current main
+
+Rebase onto origin/main (6 commits behind, confirming the Codex Sol audit's "file-size branch is
+  stale against main; rebasing should exceed the 13,523-line pin" claim -- verified real:
+  post-rebase main.py measured 13526, 3 over baseline) pulled in intervening main.py growth. Trimmed
+  3 lines from redundant/verbose deadline_monotonic front-door comments (the same pattern repeated
+  near-verbatim at orient/codemap/edit-plan/ agent/repo_map/prepare -- condensed without losing the
+  substantive content) to hold the ratchet at exactly 13523.
+
+Verified: real import, ruff clean, 152 session/ratchet tests pass, and dogfooded the three touched
+  commands' real --help output (orient, codemap, edit-plan) on the shipped binary.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.116.0 (2026-09-05)
 
 ### Features
