@@ -1096,9 +1096,9 @@ def test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed() 
     # Pin the prose count against the live "vs `tg`'s N" comparator wording specifically (not a
     # bare `str(N) in doc` substring check -- that passes trivially since 10 already appears in
     # unrelated competitor-language counts elsewhere in this doc, per Codex Luna audit round 1).
-    from tensor_grep.cli import lang_registry
-
     import re
+
+    from tensor_grep.cli import lang_registry
 
     live_count = len(lang_registry.LANGUAGE_REGISTRY)
     # \b after the digits guards against a shrunk registry (e.g. 10 -> 1) still matching a

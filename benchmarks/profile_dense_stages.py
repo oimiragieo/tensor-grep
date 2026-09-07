@@ -100,13 +100,11 @@ def profile(*, corpus_size: int, queries: int, repeats: int) -> dict[str, object
     for i in range(queries):
         query_text = _SAMPLE_QUERIES[i % len(_SAMPLE_QUERIES)]
         _ranked, timings = index.query_with_timings(query_text, top_k=10)
-        per_query_samples.append(
-            {
-                "query_encode_s": timings.query_encode_s or 0.0,
-                "score_s": timings.score_s or 0.0,
-                "sort_s": timings.sort_s or 0.0,
-            }
-        )
+        per_query_samples.append({
+            "query_encode_s": timings.query_encode_s or 0.0,
+            "score_s": timings.score_s or 0.0,
+            "sort_s": timings.sort_s or 0.0,
+        })
 
     query_encode_vals = [s["query_encode_s"] for s in per_query_samples]
     score_vals = [s["score_s"] for s in per_query_samples]

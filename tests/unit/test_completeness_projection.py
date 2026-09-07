@@ -74,15 +74,13 @@ def test_display_cap_only_stays_complete_distinct_from_scan_cap() -> None:
         retry_kind=RetryKind.NOT_APPLICABLE,
         output_capped=True,
     )
-    scan_cap = project(
-        {
-            "scan_limit": {
-                "possibly_truncated": True,
-                "truncation_cause": "scan_limit",
-                "budget_remediable": True,
-            }
+    scan_cap = project({
+        "scan_limit": {
+            "possibly_truncated": True,
+            "truncation_cause": "scan_limit",
+            "budget_remediable": True,
         }
-    )
+    })
     assert display_cap.scan_state is ScanState.COMPLETE
     assert display_cap.output_capped is True
     assert scan_cap.scan_state is ScanState.INCOMPLETE
@@ -103,9 +101,10 @@ def test_mixed_roots_one_partial_cannot_claim_complete() -> None:
 
 
 def test_unknown_legacy_evidence_preserves_unknown_never_manufactures_complete() -> None:
-    evidence = project(
-        {"result_incomplete": True, "incomplete_reason": "brand_new_unclassified_cause"}
-    )
+    evidence = project({
+        "result_incomplete": True,
+        "incomplete_reason": "brand_new_unclassified_cause",
+    })
     assert evidence.scan_state is ScanState.INCOMPLETE
     assert evidence.cause is Cause.UNKNOWN
 

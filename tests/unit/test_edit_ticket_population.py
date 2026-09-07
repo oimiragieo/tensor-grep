@@ -69,7 +69,7 @@ def test_aggregate_byte_budget_reports_incomplete(tmp_path: Path) -> None:
     for i in range(4):
         (tmp_path / f"f{i}.bin").write_bytes(b"x" * 1000)
 
-    files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=1500)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=1500)
 
     assert population["status"] == "incomplete"
     assert population["reason"] == "aggregate_byte_limit"

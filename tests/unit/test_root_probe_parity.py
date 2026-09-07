@@ -54,7 +54,9 @@ def test_nonexistent_root(tmp_path: Path) -> None:
     assert _root_top_level_vendored_dir_names([missing]) == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="chmod-based unreadable dirs are not enforced on Windows")
+@pytest.mark.skipif(
+    os.name == "nt", reason="chmod-based unreadable dirs are not enforced on Windows"
+)
 def test_unreadable_root_swallows_oserror(tmp_path: Path) -> None:
     root = _make_root(tmp_path, _A_VENDORED_NAME)
     root.chmod(0)

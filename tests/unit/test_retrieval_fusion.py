@@ -265,7 +265,9 @@ def test_explain_never_reorders_results_vs_plain_fusion() -> None:
         for combine in ("sum", "max"):
             plain = reciprocal_rank_fusion([leg_a, leg_b], combine=combine)  # type: ignore[arg-type]
             order, _explanations = reciprocal_rank_fusion_explained(
-                [leg_a, leg_b], combine=combine, leg_names=["a", "b"]  # type: ignore[arg-type]
+                [leg_a, leg_b],
+                combine=combine,
+                leg_names=["a", "b"],  # type: ignore[arg-type]
             )
             assert order == plain, (
                 f"explanation changed result order: plain={plain} explained={order} "
@@ -308,7 +310,10 @@ def test_explain_duplicate_chunk_in_one_leg_matches_plain_accumulation() -> None
     for combine in ("sum", "max"):
         plain = reciprocal_rank_fusion([leg], k=k, combine=combine)  # type: ignore[arg-type]
         order, explanations = reciprocal_rank_fusion_explained(
-            [leg], k=k, combine=combine, leg_names=["a"]  # type: ignore[arg-type]
+            [leg],
+            k=k,
+            combine=combine,
+            leg_names=["a"],  # type: ignore[arg-type]
         )
         assert order == plain
         term = explanations[0].per_leg_terms["a"]

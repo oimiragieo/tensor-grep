@@ -13,22 +13,20 @@ from typing import Any
 # not filter after a full walk. This is deliberately narrow (well-known package-manager and
 # build-tool output dirs only) -- it never matches an ordinary tracked dotfile like .github or
 # .gitignore, so those remain hashed (see test_tracked_dotfile_survives_pruning).
-_IGNORED_DEPENDENCY_DIRS = frozenset(
-    {
-        "node_modules",
-        ".venv",
-        "venv",
-        "target",
-        "dist",
-        "build",
-        ".git",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        "site-packages",
-    }
-)
+_IGNORED_DEPENDENCY_DIRS = frozenset({
+    "node_modules",
+    ".venv",
+    "venv",
+    "target",
+    "dist",
+    "build",
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    "site-packages",
+})
 
 _DEFAULT_MAX_FILES = 20_000
 _DEFAULT_MAX_FILE_BYTES = 10_000_000

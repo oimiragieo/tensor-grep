@@ -736,9 +736,7 @@ def _build_confidence_calibration(target_rows: list[dict[str, object]]) -> dict[
     thresholds = [round(i * 0.2, 1) for i in range(6)]
     selective_accuracy_curve = []
     for threshold in thresholds:
-        answered = [
-            row for row in scored_rows if float(row["confidence_overall"]) >= threshold
-        ]
+        answered = [row for row in scored_rows if float(row["confidence_overall"]) >= threshold]
         correct = sum(1 for row in answered if bool(row.get("hit_at_1")))
         selective_accuracy_curve.append({
             "threshold": threshold,
