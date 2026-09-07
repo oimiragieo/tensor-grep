@@ -17,6 +17,22 @@ Canonical status index version: 2026-09-07.1
 
 Audited main `5d67210`; no production code changes or release claimed. [Audit and Exa research](audits/2026-09-07-agentic-quality-audit.md) and [detailed plan](plans/2026-09-07-agentic-quality-simplification.md) define 16 packages: eight new AGT findings, eight existing-owner extensions. The backlog and canonical task board record every owner and dependency. Start AGT-01 outcome metrics and AGT-02 residual session race; AGT-04 ticket population begins with security design. Safe refactors are separate from behavioral fixes. Existing publication/spend/platform gates remain; formal Fable/Opus approval is not claimed. The CLI interruption preceded file writes; this packet was recovered from retained findings, not a repeated audit.
 
+**2026-09-07 closeout: all 16 items now have at least one bounded slice shipped to `main`.**
+Every slice ran RED->GREEN TDD, real `uv run pytest` verification (never trusted from a
+subagent's self-report), and a Codex Luna adversarial audit where a code change was involved.
+**Only AGT-06 is fully closed.** AGT-01/02/03/04/05/07/08 and every extension (P9/P13/
+MCP-SURFACE/P12/P14/P10/P15) are honest PARTIAL slices with real, itemized remaining scope
+left open under each entry in `docs/BACKLOG.md`/`docs/TASK_BOARD.md` — do not read this as
+"the audit is resolved." P7 was correctly closed as research-with-no-code-change (its own
+premise — persistent parser/query/source caches already existed) rather than manufacturing an
+unneeded cache to have something to ship. P15's slice added a machine-checked drift test
+(`tests/unit/test_public_docs_governance.py::test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed`)
+but left the README tagline positioning (an Exa+council taste call) and CI wiring open.
+Shipped commit range: `dd3c594`..`a075264`. Each fork also caught and corrected its own tooling
+false alarms this session — IDE/pyright diagnostics were repeatedly stale on just-created files,
+and a bare `python` (vs `uv run python`) resolved a stale installed site-packages copy instead
+of `src/` — neither was a real defect once verified against the real test suite.
+
 ### 2026-09-05 — P1 diff-impact ship (v1.116.0) + S1-S6 worktree PRs
 
 - **P1 SHIPPED:** PR #1128 / `7d2baa5` — add `diff-impact` CLI command, transitive blast-radius calculation, risk tiers, and failure thresholds. Published to PyPI and GitHub release assets as `v1.116.0` (run `33995069360`).
