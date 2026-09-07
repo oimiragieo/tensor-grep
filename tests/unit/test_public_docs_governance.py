@@ -1061,3 +1061,49 @@ def test_continuation_plan_should_not_treat_pr_push_as_release_completion() -> N
     assert "Do not describe a pushed branch or open PR as complete release work" in doc
     assert "only ready for review/merge" in doc
     assert "release completion contract" in doc
+
+
+def test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed() -> None:
+    """P15 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 16): the doc's own
+    "Re-derive this table; do not trust it" section embeds a `coverage` JSON block whose
+    `language_scope`/`symbol_navigation` values must equal the LIVE product output, not a
+    hand-typed snapshot that can drift the moment a language is onboarded -- the exact failure
+    class the doc says already burned four prior documents at four different values.
+
+    This test IS the drift check: it fails the moment `LANGUAGE_REGISTRY` changes without this
+    doc being regenerated, rather than relying on a human remembering to re-run the one-liner.
+    """
+    from tensor_grep.cli.repo_map import (
+        _language_scope_descriptor,
+        _symbol_navigation_descriptor,
+    )
+
+    doc = TOOL_COMPARISON_DOC_PATH.read_text(encoding="utf-8")
+    live_language_scope = _language_scope_descriptor()
+    live_symbol_navigation = _symbol_navigation_descriptor()
+
+    assert f'"language_scope": "{live_language_scope}"' in doc, (
+        "docs/tool_comparison.md's embedded coverage.language_scope has drifted from "
+        "lang_registry.LANGUAGE_REGISTRY -- regenerate the JSON block from "
+        "repo_map._language_scope_descriptor() before merging."
+    )
+    assert f'"symbol_navigation": "{live_symbol_navigation}"' in doc, (
+        "docs/tool_comparison.md's embedded coverage.symbol_navigation has drifted from "
+        "lang_registry.LANGUAGE_REGISTRY -- regenerate the JSON block from "
+        "repo_map._symbol_navigation_descriptor() before merging."
+    )
+
+    # Pin the prose count against the live "vs `tg`'s N" comparator wording specifically (not a
+    # bare `str(N) in doc` substring check -- that passes trivially since 10 already appears in
+    # unrelated competitor-language counts elsewhere in this doc, per Codex Luna audit round 1).
+    from tensor_grep.cli import lang_registry
+
+    import re
+
+    live_count = len(lang_registry.LANGUAGE_REGISTRY)
+    # \b after the digits guards against a shrunk registry (e.g. 10 -> 1) still matching a
+    # stale "against `tg`'s 10" via bare prefix containment (Codex Luna audit round 2).
+    assert re.search(rf"against `tg`'s {live_count}\b", doc), (
+        f"docs/tool_comparison.md's \"against `tg`'s N\" comparator count has drifted from the "
+        f"live registry size ({live_count})."
+    )
