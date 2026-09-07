@@ -871,12 +871,6 @@ def refresh_session(
         }
     if refresh_fallback_reason is not None:
         payload["refresh_fallback_reason"] = refresh_fallback_reason
-    # A refresh rebuilds the repo_map/snapshot; it does not invalidate a prior `tg session
-    # prepare` decision, so carry it forward rather than silently discarding it (Codex Sol
-    # delta-verification audit HIGH finding: this payload dict is built from scratch and
-    # previously dropped `last_prepare` unconditionally on every refresh, not just under a race).
-    if "last_prepare" in existing:
-        payload["last_prepare"] = existing["last_prepare"]
     session_path = _session_payload_path(root, session_id)
 
     # q10 RMW race: same load->mutate->write hazard as open_session; serialize against every
@@ -886,6 +880,24 @@ def refresh_session(
     # read-modify-write of the same file -- index_lock is not reentrant, so this must be ONE
     # acquisition covering both critical sections, not two separate `with` blocks on the same key).
     with index_lock(_index_path(root)):
+        # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): `existing`
+        # above was read BEFORE this lock was acquired. `session_prepare` takes this SAME lock
+        # to publish a new `last_prepare`, so a prepare that races in between our initial read
+        # and this acquisition would be clobbered if we carried forward the stale `existing`
+        # snapshot. Re-read the on-disk payload now, inside the lock, and carry forward
+        # whichever `last_prepare` is actually current -- never the pre-lock snapshot.
+        current_on_disk = existing
+        if session_path.exists():
+            try:
+                current_on_disk = cast(
+                    dict[str, Any], json.loads(session_path.read_text(encoding="utf-8"))
+                )
+            except (OSError, json.JSONDecodeError):
+                # Payload unreadable at this instant (e.g. mid-write elsewhere); fall back to
+                # the pre-lock snapshot rather than failing the refresh outright.
+                current_on_disk = existing
+        if "last_prepare" in current_on_disk:
+            payload["last_prepare"] = current_on_disk["last_prepare"]
         _write_json_atomic(session_path, payload)
         if payload_cache is not None:
             payload_cache.put(session_id, str(root), payload)
