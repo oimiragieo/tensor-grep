@@ -1102,13 +1102,13 @@ def test_validation_test_discovery_clean_tree_is_the_control_arm(tmp_path: Path)
 
 
 def test_rollback_risk_clamp_is_load_bearing_upper_bound() -> None:
-    """A pathological `test_count` (negative) drives the unclamped formula's
-    `-(0.25 * coverage_factor)` term deeply positive -- proving `min(1.0, ...)` is load-bearing,
-    not redundant given the formula's normal-input range."""
+    """A pathological `associated_test_count` (negative) drives the unclamped formula's
+    `-(0.25 * test_association_factor)` term deeply positive -- proving `min(1.0, ...)` is
+    load-bearing, not redundant given the formula's normal-input range."""
     risk = repo_map._rollback_risk_from_blast_radius(
         dependent_matches=[],
         caller_symbol_count=10,
-        test_count=-1000,
+        associated_test_count=-1000,
         max_depth=2,
     )
     assert risk == 1.0
@@ -1120,10 +1120,40 @@ def test_rollback_risk_clamp_is_load_bearing_lower_bound() -> None:
     risk = repo_map._rollback_risk_from_blast_radius(
         dependent_matches=[{"depth": 0}],
         caller_symbol_count=-100,
-        test_count=0,
+        associated_test_count=0,
         max_depth=2,
     )
     assert risk == 0.0
+
+
+def test_rollback_risk_param_is_not_named_coverage() -> None:
+    """P10 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 15): a static count of
+    files that import/reference a symbol is TEST ASSOCIATION, not measured runtime coverage --
+    no test in that count has been observed to execute. The risk-scoring helper's parameter and
+    internal variable must not be named ``test_count``/``coverage_factor``, which read as if the
+    number came from an executed coverage run rather than a repo-map import scan."""
+    import inspect
+    import re
+
+    source = inspect.getsource(repo_map._rollback_risk_from_blast_radius)
+    assert "coverage_factor" not in source
+    # \b won't match inside "associated_test_count" (both neighboring chars are word chars),
+    # so this only catches a BARE "test_count", not the substring inside the renamed param.
+    assert re.search(r"\btest_count\b", source) is None
+    assert "associated_test_count" in source
+    assert "test_association_factor" in source
+
+
+def test_rollback_risk_numeric_behavior_unchanged_by_rename() -> None:
+    """The P10 rename is naming-only -- same inputs must produce the same risk score as before
+    the rename (byte-identical output proof, not just a passing smoke test)."""
+    risk = repo_map._rollback_risk_from_blast_radius(
+        dependent_matches=[{"depth": 1}, {"depth": 2}],
+        caller_symbol_count=3,
+        associated_test_count=2,
+        max_depth=4,
+    )
+    assert risk == 0.283
 
 
 def test_confidence_from_score_clamp_is_load_bearing() -> None:

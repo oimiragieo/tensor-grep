@@ -9131,9 +9131,19 @@ def _rollback_risk_from_blast_radius(
     *,
     dependent_matches: list[dict[str, Any]],
     caller_symbol_count: int,
-    test_count: int,
+    associated_test_count: int,
     max_depth: int,
 ) -> float:
+    """Heuristic rollback-risk score for an edit, from its blast radius.
+
+    P10 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 15):
+    ``associated_test_count`` is a STATIC count of test files the repo map found importing or
+    referencing the edited symbol -- it is test ASSOCIATION, not measured runtime coverage.
+    None of those tests have been observed to execute or pass; this function must never be read
+    as "N% of this change is covered by passing tests." A genuinely execution-verified receipt
+    (a test actually run, at a pinned revision, with its result captured) is a separate,
+    stronger claim -- see ``evidence_receipt.py``/``evidence_signing.py`` for that primitive.
+    """
     if not dependent_matches and caller_symbol_count <= 0:
         return 0.0
 
@@ -9143,13 +9153,13 @@ def _rollback_risk_from_blast_radius(
     depth_factor = min(1.0, observed_depth / normalized_max_depth)
     caller_factor = min(1.0, caller_symbol_count / 5.0)
     dependent_factor = min(1.0, dependent_count / 6.0)
-    coverage_factor = min(1.0, test_count / max(1, dependent_count + 1))
+    test_association_factor = min(1.0, associated_test_count / max(1, dependent_count + 1))
     risk = (
         0.1
         + (0.3 * depth_factor)
         + (0.25 * caller_factor)
         + (0.15 * dependent_factor)
-        - (0.25 * coverage_factor)
+        - (0.25 * test_association_factor)
     )
     return round(min(1.0, max(0.0, risk)), 3)
 
@@ -9415,7 +9425,7 @@ def _build_edit_plan_seed(
         rollback_risk = _rollback_risk_from_blast_radius(
             dependent_matches=dependent_matches,
             caller_symbol_count=caller_symbol_count,
-            test_count=len(radius_payload.get("tests", payload.get("tests", []))),
+            associated_test_count=len(radius_payload.get("tests", payload.get("tests", []))),
             max_depth=max_depth,
         )
     dependency_trust = _dependency_trust(repo_map, dependent_files)
