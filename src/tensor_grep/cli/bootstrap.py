@@ -1082,21 +1082,18 @@ def _search_paths_include_workspace_root(paths: list[str]) -> bool:
 # `io/directory_scanner.py`, which still re-exports it) so this set and cli/main.py's equivalent
 # guard can never drift out of sync.
 def _search_paths_include_vendored_root(paths: list[str]) -> bool:
-    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
+    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep.
+
+    AGT-06 (Task 08): shares its directory-iteration policy with cli/main.py's
+    `_root_top_level_vendored_dir_names` via `io/root_probe.iter_top_level_vendored_dirs` so the
+    two can never drift out of sync. Only stdlib/lightweight I/O policy modules are imported here
+    to preserve bootstrap's import budget (see test_bootstrap_fast_path_imports.py).
+    """
+    from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
     from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
-    for raw_path in paths:
-        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
-            continue
-        path = Path(raw_path)
-        try:
-            if not path.is_dir():
-                continue
-            for child in path.iterdir():
-                if child.is_dir() and child.name.lower() in UNBOUNDED_VENDORED_ROOT_DIR_NAMES:
-                    return True
-        except OSError:
-            continue
+    for _name in iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES):
+        return True
     return False
 
 

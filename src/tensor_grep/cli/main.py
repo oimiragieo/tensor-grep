@@ -2212,21 +2212,15 @@ _UNBOUNDED_VENDORED_ROOT_DIR_NAMES = UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
 
 def _root_top_level_vendored_dir_names(paths: list[str]) -> list[str]:
-    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep."""
-    found: set[str] = set()
-    vendored_names = {name.lower() for name in _UNBOUNDED_VENDORED_ROOT_DIR_NAMES}
-    for raw_path in paths:
-        if not raw_path or raw_path == "-" or raw_path.startswith("-"):
-            continue
-        path = Path(raw_path)
-        try:
-            if not path.is_dir():
-                continue
-            for child in path.iterdir():
-                if child.is_dir() and child.name.lower() in vendored_names:
-                    found.add(child.name)
-        except OSError:
-            continue
+    """O(top-level-entries) probe: never walks -- only `Path.iterdir()` one level deep.
+
+    AGT-06 (Task 08): shares its directory-iteration policy with cli/bootstrap.py's
+    `_search_paths_include_vendored_root` via `io/root_probe.iter_top_level_vendored_dirs` so
+    the two can never drift out of sync.
+    """
+    from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
+
+    found = set(iter_top_level_vendored_dirs(paths, _UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
     return sorted(found, key=lambda item: item.lower())
 
 
