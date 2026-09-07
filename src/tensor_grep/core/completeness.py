@@ -158,7 +158,7 @@ def from_legacy_envelope(envelope: dict[str, Any]) -> CompletenessEvidence:
         # populating any of the cause fallbacks). Cause.NONE round-trips to legacy `None`
         # exactly, unlike Cause.UNKNOWN which round-trips to the literal string "unknown" --
         # collapsing this case into UNKNOWN would fabricate a cause the source never gave.
-        known_cause = Cause.NONE
+        known_cause: Cause | None = Cause.NONE
     else:
         known_cause = _LEGACY_STRING_TO_CAUSE.get(raw_cause)
     cause = known_cause if known_cause is not None else Cause.UNKNOWN
