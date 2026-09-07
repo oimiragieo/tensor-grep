@@ -165,6 +165,43 @@ def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
     return matrix / norms
 
 
+class DenseStageTimings:
+    """Wall-clock seconds for each phase of one dense-retrieval operation.
+
+    P12 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 12): the prior P12 proposal
+    ("cut latency from ~80ms to <10ms via ONNX+AVX-512") had no per-phase measurement backing it --
+    this is the measurement instrument that must exist BEFORE any such optimization is chosen.
+    Fields are ``float | None``: ``None`` means that phase did not run for this call (e.g.
+    ``corpus_encode_s`` is only set on :class:`DenseIndex` construction, never on ``query()``).
+    """
+
+    __slots__ = ("corpus_encode_s", "query_encode_s", "score_s", "sort_s")
+
+    def __init__(
+        self,
+        *,
+        corpus_encode_s: float | None = None,
+        query_encode_s: float | None = None,
+        score_s: float | None = None,
+        sort_s: float | None = None,
+    ) -> None:
+        self.corpus_encode_s = corpus_encode_s
+        self.query_encode_s = query_encode_s
+        self.score_s = score_s
+        self.sort_s = sort_s
+
+    def as_dict(self) -> dict[str, float | None]:
+        return {
+            "corpus_encode_s": self.corpus_encode_s,
+            "query_encode_s": self.query_encode_s,
+            "score_s": self.score_s,
+            "sort_s": self.sort_s,
+        }
+
+    def __repr__(self) -> str:  # pragma: no cover - debug convenience only
+        return f"DenseStageTimings({self.as_dict()!r})"
+
+
 class DenseIndex:
     """In-memory dense (cosine) index over a chunk corpus.
 
@@ -178,11 +215,17 @@ class DenseIndex:
 
         self.chunks = list(chunks)
         self.model = model
+        # P12 (Task 12 checkbox 2): corpus-encode is timed unconditionally -- it is cheap
+        # (one perf_counter pair) and construction-time-only, so there is no reason to gate it
+        # behind an opt-in flag the way a hot per-query path would need.
+        self.corpus_encode_s: float = 0.0
         if not self.chunks:
             self._matrix: np.ndarray = np.zeros((0, 0), dtype=np.float32)
             return
 
+        _start = time.perf_counter()
         vectors = _encode_matrix(model, [c.text for c in self.chunks])
+        self.corpus_encode_s = time.perf_counter() - _start
         self._matrix = _l2_normalize(vectors)
 
     @property
@@ -198,10 +241,22 @@ class DenseIndex:
         defensive shape check so a broken/inconsistent model degrades visibly (BM25-only) instead
         of crashing deep inside a numpy matrix multiply.
         """
-        if not self.chunks or self._matrix.size == 0:
-            return []
+        ranked, _timings = self.query_with_timings(text, top_k=top_k)
+        return ranked
 
+    def query_with_timings(
+        self, text: str, *, top_k: int = 10
+    ) -> tuple[list[tuple[int, float]], DenseStageTimings]:
+        """Identical ranking to :meth:`query`, plus separately-measured query_encode/score/sort
+        phase timings (P12, Task 12 checkbox 2). Never changes ranking or tie-break order --
+        the returned list is byte-for-byte the same object shape as ``query()`` would return.
+        """
+        if not self.chunks or self._matrix.size == 0:
+            return [], DenseStageTimings()
+
+        _encode_start = time.perf_counter()
         query_matrix = _encode_matrix(self.model, [text])
+        query_encode_s = time.perf_counter() - _encode_start
         if query_matrix.shape[1] != self._matrix.shape[1]:
             raise DenseUnavailableError(
                 "semantic ranking unavailable: query embedding dim "
@@ -209,9 +264,23 @@ class DenseIndex:
                 "(dim mismatch)"
             )
         query_vec = _l2_normalize(query_matrix)[0]
+
+        _score_start = time.perf_counter()
         scores = self._matrix @ query_vec
+        score_s = time.perf_counter() - _score_start
+
+        _sort_start = time.perf_counter()
         ranked = sorted(enumerate(scores.tolist()), key=lambda item: (-item[1], item[0]))
-        return ranked[:top_k]
+        ranked = ranked[:top_k]
+        sort_s = time.perf_counter() - _sort_start
+
+        timings = DenseStageTimings(
+            corpus_encode_s=self.corpus_encode_s,
+            query_encode_s=query_encode_s,
+            score_s=score_s,
+            sort_s=sort_s,
+        )
+        return ranked, timings
 
 
 # ---------------------------------------------------------------------------------------------

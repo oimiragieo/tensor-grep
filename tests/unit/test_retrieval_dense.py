@@ -21,6 +21,7 @@ from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.retrieval_chunker import Chunk
 from tensor_grep.core.retrieval_dense import (
     DenseIndex,
+    DenseStageTimings,
     DenseUnavailableError,
     default_model_dir,
     dense_available,
@@ -197,6 +198,73 @@ class TestDenseIndexShapeValidation:
         index = DenseIndex(chunks, _SameVectorModel())
         ranked = index.query("query")
         assert [chunk_idx for chunk_idx, _ in ranked] == [0, 1]
+
+
+class TestDenseStageTimings:
+    """P12 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 12): a benchmark of
+    ONNX/int8 needs real per-phase numbers first. These tests use a tiny fake encoder (Task 12
+    checkbox 3: 'first use a tiny fake encoder in unit tests to count load/encode calls without
+    real models') so they run everywhere, not just where the real model is fetched."""
+
+    def _chunks(self) -> list[Chunk]:
+        return [
+            Chunk(file_path="a.py", start_line=1, end_line=1, text="alpha"),
+            Chunk(file_path="b.py", start_line=1, end_line=1, text="beta"),
+            Chunk(file_path="c.py", start_line=1, end_line=1, text="gamma"),
+        ]
+
+    def test_corpus_encode_s_recorded_on_construction(self) -> None:
+        index = DenseIndex(self._chunks(), _FixedDimModel(dim=4))
+        assert isinstance(index.corpus_encode_s, float)
+        assert index.corpus_encode_s >= 0.0
+
+    def test_empty_corpus_records_zero_corpus_encode_s(self) -> None:
+        index = DenseIndex([], _FixedDimModel(dim=4))
+        assert index.corpus_encode_s == 0.0
+
+    def test_query_with_timings_returns_all_four_phases(self) -> None:
+        index = DenseIndex(self._chunks(), _FixedDimModel(dim=4))
+        _ranked, timings = index.query_with_timings("query")
+        assert isinstance(timings, DenseStageTimings)
+        d = timings.as_dict()
+        for field in ("corpus_encode_s", "query_encode_s", "score_s", "sort_s"):
+            assert d[field] is not None
+            assert d[field] >= 0.0
+        # corpus_encode_s on the per-query timings must be the SAME value recorded at
+        # construction time -- query() does not re-encode the corpus.
+        assert timings.corpus_encode_s == index.corpus_encode_s
+
+    def test_empty_index_returns_empty_timings(self) -> None:
+        index = DenseIndex([], _FixedDimModel(dim=4))
+        ranked, timings = index.query_with_timings("query")
+        assert ranked == []
+        assert timings.as_dict() == {
+            "corpus_encode_s": None,
+            "query_encode_s": None,
+            "score_s": None,
+            "sort_s": None,
+        }
+
+    def test_query_with_timings_ranking_matches_query(self) -> None:
+        chunks = self._chunks()
+        model = _FixedDimModel(dim=4)
+        index = DenseIndex(chunks, model)
+        plain = index.query("query", top_k=2)
+        timed_ranked, _timings = index.query_with_timings("query", top_k=2)
+        assert timed_ranked == plain
+
+    def test_query_with_timings_dim_mismatch_still_raises_dense_unavailable(self) -> None:
+        index = DenseIndex(self._chunks(), _FixedDimModel(dim=4))
+
+        class _WrongDimModel:
+            dim = 8
+
+            def encode(self, texts: list[str]) -> np.ndarray:
+                return np.ones((len(texts), 8), dtype=np.float32)
+
+        index.model = _WrongDimModel()
+        with pytest.raises(DenseUnavailableError):
+            index.query_with_timings("query")
 
 
 def _real_dense_model_dir():
