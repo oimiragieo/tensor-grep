@@ -26,6 +26,7 @@ Two ways to COMBINE those per-leg terms into one fused score are supported (``co
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Literal
 
 DEFAULT_K: int = 60
@@ -82,3 +83,95 @@ def reciprocal_rank_fusion(
 
     ordered = sorted(scores.items(), key=lambda item: (-item[1], item[0]))
     return [chunk_index for chunk_index, _ in ordered]
+
+
+@dataclass(frozen=True)
+class FusionExplanation:
+    """The real per-leg contributions that produced one chunk's fused score.
+
+    ``per_leg_terms`` holds the exact weighted term each leg contributed (the same value
+    ``reciprocal_rank_fusion`` computed internally, never a separately-recomputed or placeholder
+    number) keyed by the caller-supplied leg name. A leg that never ranked this chunk still gets
+    an entry with its documented 0.0 floor -- absence is recorded, not omitted.
+    """
+
+    chunk_index: int
+    fused_score: float
+    combine: Literal["sum", "max"]
+    per_leg_terms: dict[str, float]
+    winning_leg: str | None
+
+
+def reciprocal_rank_fusion_explained(
+    rankings: Sequence[Sequence[int]],
+    *,
+    k: int = DEFAULT_K,
+    weights: Sequence[float] | None = None,
+    combine: Literal["sum", "max"] = "max",
+    leg_names: Sequence[str],
+) -> tuple[list[int], list[FusionExplanation]]:
+    """Fuse ``rankings`` exactly as :func:`reciprocal_rank_fusion` does, and additionally return
+    a real per-chunk, per-leg breakdown of what produced each fused score (AGT-08: "explanations
+    expose actual BM25/dense/path/fusion contributions and fallback").
+
+    The returned ``order`` is REQUIRED to be byte-identical to
+    ``reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)`` for the same
+    inputs -- this function computes the identical scores via the identical algorithm and only
+    adds bookkeeping; it never takes a second, divergent code path that could reorder results
+    merely because explanation was requested (AGT-08's core invariant).
+
+    ``leg_names`` must be parallel to ``rankings`` (same length) and gives each leg a stable
+    label (e.g. ``"bm25"``, ``"dense"``) for the explanation's ``per_leg_terms`` keys and
+    ``winning_leg``. Raises :class:`ValueError` on a length mismatch, mirroring ``weights``.
+
+    ``winning_leg`` is the leg whose (weighted) term equals the chunk's ``fused_score`` under
+    ``combine="max"``; for ``combine="sum"`` every leg contributes, so ``winning_leg`` is the
+    single leg with the largest individual term (informational only -- ``sum`` folds all of
+    them in, it does not pick a winner the way ``max`` does).
+    """
+    if len(leg_names) != len(rankings):
+        raise ValueError(
+            f"leg_names length ({len(leg_names)}) must match rankings length ({len(rankings)})"
+        )
+    if len(set(leg_names)) != len(leg_names):
+        raise ValueError(f"leg_names must be unique, got {list(leg_names)!r}")
+
+    order = reciprocal_rank_fusion(rankings, k=k, weights=weights, combine=combine)
+
+    fused_scores: dict[int, float] = {}
+    per_leg: dict[int, dict[str, float]] = {}
+    for leg_index, ranking in enumerate(rankings):
+        leg_name = leg_names[leg_index]
+        weight = 1.0 if weights is None else weights[leg_index]
+        # Mirror reciprocal_rank_fusion's own accumulation exactly (line-for-line, including its
+        # handling of a repeated chunk index within one leg's ranking) so the explained per-leg
+        # term can never diverge from the plain function's math for ANY input shape.
+        leg_term_total: dict[int, float] = {}
+        for rank, chunk_index in enumerate(ranking, start=1):
+            term = (1.0 / (k + rank)) * weight
+            if combine == "max":
+                leg_term_total[chunk_index] = max(leg_term_total.get(chunk_index, 0.0), term)
+            else:
+                leg_term_total[chunk_index] = leg_term_total.get(chunk_index, 0.0) + term
+        for chunk_index in order:
+            term = leg_term_total.get(chunk_index, 0.0)
+            per_leg.setdefault(chunk_index, {})[leg_name] = term
+            if combine == "max":
+                fused_scores[chunk_index] = max(fused_scores.get(chunk_index, 0.0), term)
+            else:
+                fused_scores[chunk_index] = fused_scores.get(chunk_index, 0.0) + term
+
+    explanations: list[FusionExplanation] = []
+    for chunk_index in order:
+        terms = per_leg[chunk_index]
+        winning_leg = max(terms, key=lambda name: terms[name]) if terms else None
+        explanations.append(
+            FusionExplanation(
+                chunk_index=chunk_index,
+                fused_score=fused_scores[chunk_index],
+                combine=combine,
+                per_leg_terms=terms,
+                winning_leg=winning_leg,
+            )
+        )
+    return order, explanations

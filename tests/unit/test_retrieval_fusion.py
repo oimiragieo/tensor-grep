@@ -224,3 +224,105 @@ def test_max_combine_deterministic_repeated_calls() -> None:
 def test_invalid_combine_raises() -> None:
     with pytest.raises(ValueError):
         reciprocal_rank_fusion([[0, 1]], combine="average")  # type: ignore[arg-type]
+
+
+def test_explain_returns_real_per_leg_terms_not_placeholders() -> None:
+    """AGT-08 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 11): an explanation
+    of a fused result must expose the ACTUAL per-leg term that fed the fusion math, not a
+    placeholder or a recomputed-differently value. leg_a ranks chunk 0 at #1 (term 1/(k+1));
+    leg_b does not rank chunk 0 at all (0.0 floor per the module's documented per-leg floor)."""
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    leg_a = [0, 1]
+    leg_b = [1, 0]
+    k = 10
+    _order, explanations = reciprocal_rank_fusion_explained(
+        [leg_a, leg_b], k=k, combine="max", leg_names=["bm25", "dense"]
+    )
+    exp0 = explanations[0]
+    assert exp0.chunk_index == 0
+    assert exp0.per_leg_terms["bm25"] == pytest.approx(1.0 / (k + 1))
+    assert exp0.per_leg_terms["dense"] == pytest.approx(1.0 / (k + 2))
+    assert exp0.combine == "max"
+    assert exp0.fused_score == pytest.approx(max(exp0.per_leg_terms.values()))
+    assert exp0.winning_leg == "bm25"
+
+
+def test_explain_never_reorders_results_vs_plain_fusion() -> None:
+    """The core AGT-08 invariant: enabling explanation must be provably a no-op on result order.
+    Fuzz several ranking shapes and assert the explained call's chunk order matches the plain
+    (non-explained) call byte-for-byte, for both combine modes."""
+    import random
+
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    rng = random.Random(1234)
+    for _ in range(25):
+        n = rng.randint(1, 12)
+        universe = list(range(n))
+        leg_a = rng.sample(universe, k=rng.randint(1, n))
+        leg_b = rng.sample(universe, k=rng.randint(1, n))
+        for combine in ("sum", "max"):
+            plain = reciprocal_rank_fusion([leg_a, leg_b], combine=combine)  # type: ignore[arg-type]
+            order, _explanations = reciprocal_rank_fusion_explained(
+                [leg_a, leg_b], combine=combine, leg_names=["a", "b"]  # type: ignore[arg-type]
+            )
+            assert order == plain, (
+                f"explanation changed result order: plain={plain} explained={order} "
+                f"(leg_a={leg_a}, leg_b={leg_b}, combine={combine})"
+            )
+
+
+def test_explain_leg_names_length_mismatch_raises() -> None:
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion_explained([[0, 1], [1, 0]], leg_names=["only_one"])
+
+
+def test_explain_fallback_when_chunk_absent_from_all_legs_but_one() -> None:
+    """A chunk present in only one leg still gets a real (non-fabricated) 0.0 floor recorded for
+    the leg(s) it is absent from, and winning_leg names the leg that actually contributed."""
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    leg_a = [5]
+    leg_b: list[int] = []
+    _order, explanations = reciprocal_rank_fusion_explained(
+        [leg_a, leg_b], leg_names=["bm25", "dense"], combine="max"
+    )
+    exp = explanations[0]
+    assert exp.chunk_index == 5
+    assert exp.per_leg_terms["dense"] == 0.0
+    assert exp.winning_leg == "bm25"
+
+
+def test_explain_duplicate_chunk_in_one_leg_matches_plain_accumulation() -> None:
+    """codex_luna audit finding 1: a chunk appearing twice within one leg's ranking must
+    accumulate the SAME way in the explanation as it does in the plain fused score -- summed
+    for combine='sum', max-of-occurrences for combine='max' -- never silently collapsed to only
+    its last occurrence's rank."""
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    k = 10
+    leg = [0, 0]
+    for combine in ("sum", "max"):
+        plain = reciprocal_rank_fusion([leg], k=k, combine=combine)  # type: ignore[arg-type]
+        order, explanations = reciprocal_rank_fusion_explained(
+            [leg], k=k, combine=combine, leg_names=["a"]  # type: ignore[arg-type]
+        )
+        assert order == plain
+        term = explanations[0].per_leg_terms["a"]
+        if combine == "sum":
+            assert term == pytest.approx(1.0 / (k + 1) + 1.0 / (k + 2))
+        else:
+            assert term == pytest.approx(max(1.0 / (k + 1), 1.0 / (k + 2)))
+        assert explanations[0].fused_score == pytest.approx(term)
+
+
+def test_explain_duplicate_leg_names_rejected() -> None:
+    """codex_luna audit finding 2: duplicate leg_names would silently overwrite per-leg
+    explanation entries, hiding a real leg's contribution -- reject up front instead."""
+    from tensor_grep.core.retrieval_fusion import reciprocal_rank_fusion_explained
+
+    with pytest.raises(ValueError):
+        reciprocal_rank_fusion_explained([[0], [1]], leg_names=["bm25", "bm25"])
