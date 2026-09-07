@@ -96,6 +96,7 @@ def test_run_agent_workflow_benchmarks_should_extract_capsule_contract_metrics()
         "false_primary": False,
         "ambiguous_requires_confirmation": False,
         "wrong_confident_miss": False,
+        "wrong_confident_primary": False,
         "safe_ambiguity": False,
         "passed": True,
     }
@@ -215,6 +216,92 @@ def test_run_agent_workflow_benchmarks_should_keep_mrr_at_3_bounded_for_late_hit
     assert metrics["coverage_at_budget"] is True
 
 
+def test_run_agent_workflow_benchmarks_should_flag_wrong_confident_primary_as_autonomous_risk():
+    """AGT-01: wrong-first/correct-second passes hit@3 recall but is an autonomous-risk
+    miss -- an unattended agent acting on primary_target would edit the wrong file even
+    though the correct target ranked second. Distinct from wrong_confident_miss, which
+    only fires when the target is missed entirely within top-3."""
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_wrong_confident_primary",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    payload = {
+        "confidence": {"overall": 0.94},
+        "primary_target": {"file": "src/wrong_primary.py", "symbol": "wrong_primary"},
+        "ask_before_editing": {"ask_required": False},
+        "alternative_targets": [
+            {"file": "src/right.py", "symbol": "target_symbol"},
+        ],
+        "snippets": [{"file": "src/wrong_primary.py", "start_line": 1, "end_line": 4}],
+    }
+
+    metrics = module.extract_capsule_metrics(
+        payload,
+        {
+            "name": "wrong_first_correct_second",
+            "expected_targets": [{"file_suffix": "src/right.py", "symbol": "target_symbol"}],
+        },
+    )
+
+    assert metrics["hit_at_1"] is False
+    assert metrics["hit_at_3"] is True
+    assert metrics["wrong_confident_primary"] is True
+
+
+def test_run_agent_workflow_benchmarks_should_not_flag_wrong_confident_primary_when_low_confidence():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_wrong_confident_primary_low_conf",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    payload = {
+        "confidence": {"overall": 0.5},
+        "primary_target": {"file": "src/wrong_primary.py", "symbol": "wrong_primary"},
+        "ask_before_editing": {"ask_required": False},
+        "alternative_targets": [
+            {"file": "src/right.py", "symbol": "target_symbol"},
+        ],
+        "snippets": [{"file": "src/wrong_primary.py", "start_line": 1, "end_line": 4}],
+    }
+
+    metrics = module.extract_capsule_metrics(
+        payload,
+        {
+            "name": "wrong_first_correct_second_low_confidence",
+            "expected_targets": [{"file_suffix": "src/right.py", "symbol": "target_symbol"}],
+        },
+    )
+
+    assert metrics["hit_at_1"] is False
+    assert metrics["hit_at_3"] is True
+    assert metrics["wrong_confident_primary"] is False
+
+
+def test_run_agent_workflow_benchmarks_should_not_flag_wrong_confident_primary_when_asking():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_wrong_confident_primary_ask",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    payload = {
+        "confidence": {"overall": 0.94},
+        "primary_target": {"file": "src/wrong_primary.py", "symbol": "wrong_primary"},
+        "ask_before_editing": {"ask_required": True},
+        "alternative_targets": [
+            {"file": "src/right.py", "symbol": "target_symbol"},
+        ],
+        "snippets": [{"file": "src/wrong_primary.py", "start_line": 1, "end_line": 4}],
+    }
+
+    metrics = module.extract_capsule_metrics(
+        payload,
+        {
+            "name": "wrong_first_correct_second_ask_required",
+            "expected_targets": [{"file_suffix": "src/right.py", "symbol": "target_symbol"}],
+        },
+    )
+
+    assert metrics["wrong_confident_primary"] is False
+
+
 def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics():
     module = _load_script_module(
         "run_agent_workflow_benchmarks_target_summary",
@@ -284,6 +371,8 @@ def test_run_agent_workflow_benchmarks_should_summarize_target_selection_metrics
         "ambiguous_requires_confirmation_rate": 0.0,
         "wrong_confident_miss_cases": 1,
         "wrong_confident_miss_rate": 0.5,
+        "wrong_confident_primary_cases": 0,
+        "wrong_confident_primary_rate": 0.0,
         "safe_ambiguity_cases": 0,
         "safe_ambiguity_rate": 0.0,
         "wrong_confident_miss_threshold": 0.75,

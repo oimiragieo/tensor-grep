@@ -492,6 +492,14 @@ def extract_capsule_metrics(
         and confidence_overall is not None
         and confidence_overall >= WRONG_CONFIDENT_MISS_THRESHOLD
     )
+    wrong_confident_primary = bool(
+        target_selection_evaluated
+        and not hit_at_1
+        and hit_at_3
+        and not ask_required
+        and confidence_overall is not None
+        and confidence_overall >= WRONG_CONFIDENT_MISS_THRESHOLD
+    )
     safe_ambiguity = bool(target_selection_evaluated and not hit_at_1 and ask_required)
     false_primary = bool(target_selection_evaluated and primary_file and not hit_at_1)
     ambiguous_requires_confirmation = bool(false_primary and ask_required)
@@ -534,6 +542,7 @@ def extract_capsule_metrics(
         "false_primary": false_primary,
         "ambiguous_requires_confirmation": ambiguous_requires_confirmation,
         "wrong_confident_miss": wrong_confident_miss,
+        "wrong_confident_primary": wrong_confident_primary,
         "safe_ambiguity": safe_ambiguity,
         "passed": passed,
     }
@@ -605,6 +614,9 @@ def build_agent_capsule_summary(rows: list[dict[str, object]]) -> dict[str, obje
         1 for row in target_rows if bool(row["ambiguous_requires_confirmation"])
     )
     wrong_confident_miss_cases = sum(1 for row in target_rows if bool(row["wrong_confident_miss"]))
+    wrong_confident_primary_cases = sum(
+        1 for row in target_rows if bool(row.get("wrong_confident_primary", False))
+    )
     safe_ambiguity_cases = sum(1 for row in target_rows if bool(row["safe_ambiguity"]))
     hit_at_1_rate = _rate(hit_at_1_cases, target_count)
     hit_at_3_rate = _rate(hit_at_3_cases, target_count)
@@ -639,6 +651,8 @@ def build_agent_capsule_summary(rows: list[dict[str, object]]) -> dict[str, obje
         ),
         "wrong_confident_miss_cases": wrong_confident_miss_cases,
         "wrong_confident_miss_rate": _rate(wrong_confident_miss_cases, target_count),
+        "wrong_confident_primary_cases": wrong_confident_primary_cases,
+        "wrong_confident_primary_rate": _rate(wrong_confident_primary_cases, target_count),
         "safe_ambiguity_cases": safe_ambiguity_cases,
         "safe_ambiguity_rate": _rate(safe_ambiguity_cases, target_count),
         "wrong_confident_miss_threshold": WRONG_CONFIDENT_MISS_THRESHOLD,
