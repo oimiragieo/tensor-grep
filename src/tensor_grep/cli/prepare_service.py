@@ -27,6 +27,40 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# AGT-03 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 03): exact-string
+# allowlist of validation recipes the repo-map detectors themselves already emit (repo_map.py,
+# repo_map_lang_js.py, repo_map_lang_rust.py). This is deliberately NOT a shlex.split of
+# arbitrary `validation_commands` text -- the audit explicitly forbids converting unreviewed
+# shell strings into trusted argv, since a detector could someday surface a shell-only or
+# unrecognized recipe. Only a string that matches one of these known-safe recipes byte-for-byte
+# is ever turned into an executable argv; anything else falls back to `on_success.unavailable`.
+_KNOWN_VALIDATION_RECIPES: dict[str, tuple[str, ...]] = {
+    "pytest -q": ("pytest", "-q"),
+    "pytest": ("pytest",),
+    "uv run pytest -q": ("uv", "run", "pytest", "-q"),
+    "uv run pytest": ("uv", "run", "pytest"),
+    "cargo test": ("cargo", "test"),
+    "go test ./...": ("go", "test", "./..."),
+    "npm test": ("npm", "test"),
+    "pnpm test": ("pnpm", "test"),
+    "yarn test": ("yarn", "test"),
+}
+
+
+def _select_validation_argv(validation_commands: list[str]) -> tuple[str, ...] | None:
+    """Pick a safe, reviewed argv for the first detected recipe that exactly matches the
+    allowlist above, or ``None`` if nothing in ``validation_commands`` is recognized.
+
+    Exact-match only: a string that merely starts with a known prefix (``"pytest -q; rm -rf /"``)
+    is intentionally rejected rather than truncated or split, so an attacker cannot smuggle
+    extra shell syntax past this gate by prefixing it with an innocuous-looking recipe.
+    """
+    for command in validation_commands:
+        argv = _KNOWN_VALIDATION_RECIPES.get(command)
+        if argv is not None:
+            return argv
+    return None
+
 
 def _build_prepare_blast_radius_floor(
     *,
@@ -448,6 +482,30 @@ def _build_prepare_payload(
 
     if include_next_action:
         target_path = str(target.get("file") or path)
+        detected_argv = _select_validation_argv(result["validation_commands"])
+        if detected_argv is not None:
+            on_success: dict[str, Any] = {
+                "type": "run",
+                "argv": list(detected_argv),
+                "deadline_seconds": 300,
+                "max_output_bytes": 1000000,
+                "allow_network": False,
+                "fail_closed_on_timeout": True,
+            }
+        else:
+            # AGT-03 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 03): this
+            # used to hardcode `uv run pytest -q` for EVERY repository regardless of detected
+            # language, so a Rust-only repo got Python test advice. Only emit a runnable
+            # `on_success` when `validation_commands` (detected by the capsule builder from the
+            # actual repo, never from unreviewed shell text) contains one of the allowlisted
+            # exact recipes; otherwise advise inspection instead of inventing a successful plan.
+            on_success = {
+                "type": "unavailable",
+                "reason": (
+                    "no allowlisted validation recipe detected for this repository "
+                    "-- inspect the change manually before treating it as verified"
+                ),
+            }
         result["next_action"] = {
             "action": {
                 "type": "edit_file",
@@ -459,14 +517,7 @@ def _build_prepare_payload(
                 "instruction": f"Edit {target.get('symbol') or target_path} to address: {query}",
                 "stop_if": ["ask_user_before_editing.required", "result_incomplete"],
             },
-            "on_success": {
-                "type": "run",
-                "argv": ["uv", "run", "pytest", "-q"],
-                "deadline_seconds": 300,
-                "max_output_bytes": 1000000,
-                "allow_network": False,
-                "fail_closed_on_timeout": True,
-            },
+            "on_success": on_success,
             "on_failure": {
                 "type": "narrow_scope",
                 "suggested_path": str(Path(target_path).parent).replace("\\", "/"),
