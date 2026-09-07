@@ -497,3 +497,154 @@ def test_run_agent_workflow_benchmarks_should_emit_capsule_and_edit_loop_section
     assert payload["agent_capsule"]["contract_summary"]["ask_required_cases"] == 1
     assert payload["edit_loop"]["phase_medians_s"]["apply_s"] == 0.2
     assert payload["passed"] is True
+
+
+def _target_row(*, confidence_overall, hit_at_1, target_selection_evaluated=True, **overrides):
+    row = {
+        "scenario": "calibration",
+        "elapsed_s": 0.1,
+        "passed": True,
+        "ask_required": False,
+        "alternative_count": 0,
+        "snippet_count": 1,
+        "validation_command_count": 0,
+        "validation_filtered_count": 0,
+        "rollback_present": True,
+        "omission_count": 0,
+        "target_selection_evaluated": target_selection_evaluated,
+        "confidence_overall": confidence_overall,
+        "hit_at_1": hit_at_1,
+        "hit_at_3": hit_at_1,
+        "mrr_at_3": 1.0 if hit_at_1 else 0.0,
+        "coverage_at_budget": hit_at_1,
+        "wrong_confident_miss": False,
+        "safe_ambiguity": False,
+        "false_primary": not hit_at_1,
+        "ambiguous_requires_confirmation": False,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_build_agent_capsule_summary_should_produce_calibration_bins_with_counts_and_accuracy():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_calibration_bins",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    rows = [
+        _target_row(confidence_overall=0.05, hit_at_1=False),
+        _target_row(confidence_overall=0.55, hit_at_1=True),
+        _target_row(confidence_overall=0.55, hit_at_1=False),
+        _target_row(confidence_overall=0.95, hit_at_1=True),
+    ]
+
+    summary = module.build_agent_capsule_summary(rows)
+    calibration = summary["confidence_calibration"]
+
+    assert calibration["confidence_kind"] == "heuristic"
+    assert calibration["complete_tasks"] == 4
+    assert calibration["incomplete_tasks"] == 0
+
+    bins = {b["bin"]: b for b in calibration["calibration_bins"]}
+    assert bins["[0.0,0.2)"]["count"] == 1
+    assert bins["[0.0,0.2)"]["hit_at_1_correct"] == 0
+    assert bins["[0.0,0.2)"]["hit_at_1_rate"] == 0.0
+    assert bins["[0.4,0.6)"]["count"] == 2
+    assert bins["[0.4,0.6)"]["hit_at_1_correct"] == 1
+    assert bins["[0.4,0.6)"]["hit_at_1_rate"] == 0.5
+    assert bins["[0.8,1.0]"]["count"] == 1
+    assert bins["[0.8,1.0]"]["hit_at_1_correct"] == 1
+    assert bins["[0.8,1.0]"]["hit_at_1_rate"] == 1.0
+
+    # Selective accuracy vs. answer coverage: raising the confidence bar to only "answer"
+    # (act without asking) at or above a threshold must never LOWER accuracy among answered
+    # cases relative to a lower threshold -- that is the entire point of the metric.
+    curve = {c["threshold"]: c for c in calibration["selective_accuracy_curve"]}
+    assert curve[0.0]["answered_coverage"] == 1.0
+    assert curve[0.0]["hit_at_1_rate_when_answered"] == 0.5
+    assert curve[0.8]["answered_coverage"] == 0.25
+    assert curve[0.8]["hit_at_1_rate_when_answered"] == 1.0
+
+
+def test_build_agent_capsule_summary_calibration_reports_zero_tasks_as_insufficient_not_perfect():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_calibration_empty",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    summary = module.build_agent_capsule_summary([])
+    calibration = summary["confidence_calibration"]
+
+    assert calibration["complete_tasks"] == 0
+    assert calibration["calibration_bins"] == []
+    assert calibration["selective_accuracy_curve"] == []
+    # A caller must not read zero bins as 100% accuracy; the field says so explicitly.
+    assert calibration["insufficient_evidence"] is True
+
+
+def test_build_agent_capsule_summary_calibration_excludes_rows_missing_confidence():
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_calibration_missing_confidence",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    rows = [
+        _target_row(confidence_overall=None, hit_at_1=True),
+        _target_row(confidence_overall=0.9, hit_at_1=True),
+    ]
+
+    summary = module.build_agent_capsule_summary(rows)
+    calibration = summary["confidence_calibration"]
+
+    assert calibration["complete_tasks"] == 1
+    assert calibration["incomplete_tasks"] == 1
+    assert sum(b["count"] for b in calibration["calibration_bins"]) == 1
+
+
+def test_build_agent_capsule_summary_calibration_treats_non_finite_confidence_as_incomplete():
+    # codex_luna audit (AGT-05): NaN/inf/out-of-range confidence_overall must never crash
+    # bucketing or be silently scored -- treat exactly like a missing value.
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_calibration_nonfinite",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    rows = [
+        _target_row(confidence_overall=float("nan"), hit_at_1=True),
+        _target_row(confidence_overall=float("inf"), hit_at_1=True),
+        _target_row(confidence_overall=1.5, hit_at_1=True),
+        _target_row(confidence_overall=-0.1, hit_at_1=True),
+        _target_row(confidence_overall=0.5, hit_at_1=True),
+    ]
+
+    summary = module.build_agent_capsule_summary(rows)
+    calibration = summary["confidence_calibration"]
+
+    assert calibration["complete_tasks"] == 1
+    assert calibration["incomplete_tasks"] == 4
+    assert sum(b["count"] for b in calibration["calibration_bins"]) == 1
+
+
+def test_build_agent_capsule_summary_calibration_bin_boundaries_are_exact():
+    # codex_luna audit round 2 (AGT-05): float division put 0.6 in [0.4,0.6) instead of
+    # [0.6,0.8) due to 0.6/0.2 == 2.9999999999999996.
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_calibration_boundaries",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+
+    rows = [
+        _target_row(confidence_overall=0.2, hit_at_1=True),
+        _target_row(confidence_overall=0.4, hit_at_1=True),
+        _target_row(confidence_overall=0.6, hit_at_1=True),
+        _target_row(confidence_overall=0.8, hit_at_1=True),
+    ]
+
+    summary = module.build_agent_capsule_summary(rows)
+    bins = {b["bin"]: b["count"] for b in summary["confidence_calibration"]["calibration_bins"]}
+
+    assert bins.get("[0.2,0.4)") == 1
+    assert bins.get("[0.4,0.6)") == 1
+    assert bins.get("[0.6,0.8)") == 1
+    assert bins.get("[0.8,1.0]") == 1

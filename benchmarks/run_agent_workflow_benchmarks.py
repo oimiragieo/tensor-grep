@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
@@ -662,7 +663,97 @@ def build_agent_capsule_summary(rows: list[dict[str, object]]) -> dict[str, obje
         "scenario_medians_s": scenario_medians_s,
         "contract_summary": contract_summary,
         "target_selection_summary": target_selection_summary,
+        "confidence_calibration": _build_confidence_calibration(target_rows),
         "rows": rows,
+    }
+
+
+# AGT-05 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 05): fixed-width bins
+# over confidence_overall, never learned/tuned -- this is a REPORT, not a recalibration. A row
+# missing confidence_overall (None) is counted as incomplete and excluded from every bin/curve
+# entry rather than silently coerced into a bin, per the plan's "unknown remains unknown" rule.
+_CALIBRATION_BIN_WIDTH = 0.2
+_CALIBRATION_BIN_COUNT = 5
+
+
+def _calibration_bin_label(index: int) -> str:
+    lo = round(index * _CALIBRATION_BIN_WIDTH, 1)
+    hi = round(lo + _CALIBRATION_BIN_WIDTH, 1)
+    closing = "]" if index == _CALIBRATION_BIN_COUNT - 1 else ")"
+    return f"[{lo},{hi}{closing}"
+
+
+def _calibration_bin_index(confidence: float) -> int:
+    # codex_luna audit round 2 (AGT-05): plain float division misclassified exact bin
+    # boundaries (0.6 / 0.2 == 2.9999999999999996, landing 0.6 in [0.4,0.6) instead of
+    # [0.6,0.8)). Round the ratio to kill float noise before truncating.
+    index = int(round(confidence / _CALIBRATION_BIN_WIDTH, 6))
+    return min(index, _CALIBRATION_BIN_COUNT - 1)
+
+
+def _is_valid_confidence(value: object) -> bool:
+    # codex_luna audit (AGT-05): NaN/inf pass `isinstance(x, int | float)` but crash
+    # `int(float("nan"))`/`float("inf") >= threshold` bucketing below, and a value outside
+    # [0, 1] is not a confidence at all -- treat all three as incomplete, not scored.
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    return math.isfinite(value) and 0.0 <= float(value) <= 1.0
+
+
+def _build_confidence_calibration(target_rows: list[dict[str, object]]) -> dict[str, object]:
+    scored_rows = [
+        row for row in target_rows if _is_valid_confidence(row.get("confidence_overall"))
+    ]
+    incomplete_count = len(target_rows) - len(scored_rows)
+
+    if not scored_rows:
+        return {
+            "confidence_kind": "heuristic",
+            "complete_tasks": 0,
+            "incomplete_tasks": incomplete_count,
+            "calibration_bins": [],
+            "selective_accuracy_curve": [],
+            "insufficient_evidence": True,
+        }
+
+    calibration_bins = []
+    for index in range(_CALIBRATION_BIN_COUNT):
+        bucket = [
+            row
+            for row in scored_rows
+            if _calibration_bin_index(float(row["confidence_overall"])) == index
+        ]
+        if not bucket:
+            continue
+        correct = sum(1 for row in bucket if bool(row.get("hit_at_1")))
+        calibration_bins.append({
+            "bin": _calibration_bin_label(index),
+            "count": len(bucket),
+            "hit_at_1_correct": correct,
+            "hit_at_1_rate": _rate(correct, len(bucket)),
+        })
+
+    thresholds = [round(i * 0.2, 1) for i in range(6)]
+    selective_accuracy_curve = []
+    for threshold in thresholds:
+        answered = [
+            row for row in scored_rows if float(row["confidence_overall"]) >= threshold
+        ]
+        correct = sum(1 for row in answered if bool(row.get("hit_at_1")))
+        selective_accuracy_curve.append({
+            "threshold": threshold,
+            "answered_cases": len(answered),
+            "answered_coverage": _rate(len(answered), len(scored_rows)),
+            "hit_at_1_rate_when_answered": _rate(correct, len(answered)) if answered else 0.0,
+        })
+
+    return {
+        "confidence_kind": "heuristic",
+        "complete_tasks": len(scored_rows),
+        "incomplete_tasks": incomplete_count,
+        "calibration_bins": calibration_bins,
+        "selective_accuracy_curve": selective_accuracy_curve,
+        "insufficient_evidence": False,
     }
 
 
