@@ -272,10 +272,21 @@ def _real_dense_model_dir():
     return candidate if candidate.is_dir() else None
 
 
+def _model2vec_importable() -> bool:
+    try:
+        import model2vec  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 @pytest.mark.skipif(
-    _real_dense_model_dir() is None,
-    reason="requires the real fetched minishlab/potion-code-16M model (local dev only, not "
-    "committed; CI does not fetch it -- this test exercises the ACTUAL model when present)",
+    _real_dense_model_dir() is None or not _model2vec_importable(),
+    reason="requires both the real fetched minishlab/potion-code-16M model directory AND the "
+    "optional [semantic] `model2vec` extra installed (local dev only, neither is committed/"
+    "installed by CI's default [dev] extra) -- this test exercises the ACTUAL model when both "
+    "are present. A model directory can exist without the extra installed (e.g. fetched once, "
+    "then the venv was recreated without [semantic]), so both must be checked, not just the dir.",
 )
 class TestRealFetchedModel:
     """Exercises the ACTUAL installed model2vec + fetched potion-code-16M model -- not a mock."""

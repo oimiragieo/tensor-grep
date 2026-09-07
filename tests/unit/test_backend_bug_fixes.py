@@ -108,9 +108,15 @@ def test_ast_to_graph_and_torch_geometric_are_fully_removed() -> None:
     ast_backend_source = Path(ast_backend_module.__file__).read_text(encoding="utf-8")
     assert "torch_geometric" not in ast_backend_source
 
-    import tensor_grep.cli.lsp_server as lsp_server_module
+    # Locate lsp_server.py's source without importing (executing) the module: importing it
+    # requires the optional `[ast]` extra's `pygls`/`lsprotocol` dependency, which is not
+    # installed by CI's default [dev] extra nor guaranteed on every dev box -- this assertion
+    # is a static source-text check, so it must not depend on that extra being present.
+    import importlib.util
 
-    lsp_server_source = Path(lsp_server_module.__file__).read_text(encoding="utf-8")
+    lsp_server_spec = importlib.util.find_spec("tensor_grep.cli.lsp_server")
+    assert lsp_server_spec is not None and lsp_server_spec.origin is not None
+    lsp_server_source = Path(lsp_server_spec.origin).read_text(encoding="utf-8")
     assert "torch_geometric" not in lsp_server_source
     assert "tensor_cache" not in lsp_server_source, "the dead LSP tensor cache must be removed"
     assert "_update_ast_tensor" not in lsp_server_source
