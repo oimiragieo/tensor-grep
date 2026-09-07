@@ -181,10 +181,11 @@ Competitive landscape audit against mid-2026 codebase intelligence and agent con
   - **Scope:** Await completion of CI run `33898390695` (which addresses the Route A `collect_device_inventory` bare-call ratchet fix), squash-merge PR #1125 into `main`, and verify published release pipeline.
   - **Acceptance:** Zero raw tracebacks or secret paths leak over MCP JSON-RPC; AST closed-world ratchet passes on all 54 authorized sites.
 
-- **[ ] P7 — Pre-computed Persistent AstGrep Structural Rule Cache**
+- **[x] P7 — Pre-computed Persistent AstGrep Structural Rule Cache (RETIRED, research-closed 2026-09-07)**
   - **Objective:** Accelerate repeated AST pattern queries across large multi-language repos.
   - **Scope:** Cache parsed AST rule representations and structural fingerprints in `.tensor-grep/ast_cache/` with mtime/hash validation, eliminating redundant tree-sitter parse overhead during multi-step agent edit loops.
   - **Acceptance:** Second invocation of identical AST query executes in <5ms; zero cache invalidation desyncs on modified files.
+  - **Disposition (2026-09-07):** research-closed, no code change. `docs/design/2026-09-07-p7-cache-coverage-research.md` census confirms parser/query/source caching already exists (mtime-aware in-process `_mtime_aware_cache` in `repo_map_cache.py`, per-scan `source_cache` in `ast_scan.py`, plus 11 other cache sites). This item's literal ask — a persistent on-disk `.tensor-grep/ast_cache/` — duplicates P9's already-scoped daemon-based warm cache and reintroduces the exact cross-process invalidation-desync risk this item's own acceptance bar warned against. No measured gap found; none manufactured to justify shipping code. Reopen only under P9's scope if a real gap surfaces once P9 ships.
 
 - **[ ] P8 — Cross-File Import-Graph Cycle & Dead-Code Detector (`tg graph --dead-code`)**
   - **Objective:** Enable agents to find dead code and cyclic imports during refactoring without external linters.
