@@ -50,6 +50,21 @@ STATUSES = {
 TERMINAL = {"SHIPPED", "RETIRED"}
 PR_STATUSES = {"SHIPPED", "IN_FLIGHT"}
 EXPECTED_IDS = {
+    "AGT-01",
+    "AGT-02",
+    "AGT-03",
+    "AGT-04",
+    "AGT-05",
+    "P9",
+    "P13",
+    "AGT-06",
+    "AGT-07",
+    "AGT-08",
+    "P12",
+    "P14",
+    "P7",
+    "P10",
+    "P15",
     "#22",
     "F2",
     "#36",

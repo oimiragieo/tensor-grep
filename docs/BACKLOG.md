@@ -1,5 +1,34 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## Agentic quality audit (2026-09-07)
+
+**New planning snapshot:** audited main `5d67210`; open-PR query returned **0** at inspection. This is not CI/release clearance. Earlier dated counts below are historical; live ownership is in [TASK_BOARD.md](TASK_BOARD.md). No production fixes have shipped from this audit.
+**Deliverables:** [source-cited audit and Exa research](audits/2026-09-07-agentic-quality-audit.md) and [junior-followable implementation plan](plans/2026-09-07-agentic-quality-simplification.md). **16 packages: 8 new AGT owners + 8 extensions to existing owners.** READY means start baseline/design work; BLOCKED names a dependency, not a request for repeated user permission. Formal design/security gates remain.
+
+| Owner ID | Work and acceptance | Plan |
+|---|---|---|
+| **AGT-01** | Outcome/holdout metrics: wrong-first/correct-second remains recall success but fails autonomous-risk metric; actual failed patches cannot win proxy scorecards. | [Task 01](plans/2026-09-07-agentic-quality-simplification.md#task-01) |
+| **AGT-02** | S4 residual refresh race + stale decisions: Event-controlled schedules preserve newest decision; refreshed map never makes old advice current. | [Task 02](plans/2026-09-07-agentic-quality-simplification.md#task-02) |
+| **AGT-03** | S3/S4 action/wire integration: detected ecosystem validator or explicit unavailable; incomplete/history stops edits; legacy snapshots readable without new wire duplication. | [Task 03](plans/2026-09-07-agentic-quality-simplification.md#task-03) |
+| **AGT-04** | S1/S5 ticket population: prune reviewed dependency trees before descent; protect tracked dotfiles and new source; finite budgets never return false PASS. | [Task 04](plans/2026-09-07-agentic-quality-simplification.md#task-04) |
+| **AGT-05** | Intent/confidence quality: pin rankings before changing them; reduce named misses without always-ask gaming or unmeasured probability claims. | [Task 05](plans/2026-09-07-agentic-quality-simplification.md#task-05) |
+| **P9** | Extend existing P9: zero redundant warm map builds, generation-safe publication, and explicit retain/adopt/deprecate decision for dormant BM25 helpers. | [Task 06](plans/2026-09-07-agentic-quality-simplification.md#task-06) |
+| **P13** | Extend existing P13: freeze import edges then extract shared CLI/MCP services; preserve public wrappers and monkeypatch behavior. | [Task 07](plans/2026-09-07-agentic-quality-simplification.md#task-07) |
+| **AGT-06** | Safe deduplication: bootstrap short-circuit and CLI sorted diagnostics share a lightweight root probe with unchanged refusals/import budget. | [Task 08](plans/2026-09-07-agentic-quality-simplification.md#task-08) |
+| **AGT-07** | Safe consolidation: one internal completeness model; scan caps, display caps, unreadable paths, nested roots and exits keep their distinct contracts. | [Task 09](plans/2026-09-07-agentic-quality-simplification.md#task-09) |
+| **MCP-SURFACE** | Extend existing Task 4: opt-in complete-response budgets, snapshot-bound follow-ups and negotiated typed wire; no default catalog/protocol switch. | [Task 10](plans/2026-09-07-agentic-quality-simplification.md#task-10) |
+| **AGT-08** | Existing S6 gap: explanations expose actual BM25/dense/path/fusion contributions and fallback; enabling explanation cannot reorder results. | [Task 11](plans/2026-09-07-agentic-quality-simplification.md#task-11) |
+| **P12** | Extend existing P12: measure load/encode/score/sort separately; reuse first; ONNX/int8 only if quality/portability evidence justifies it. | [Task 12](plans/2026-09-07-agentic-quality-simplification.md#task-12) |
+| **P14** | Extend existing P14: per-fact method/revision/freshness and existing-LSP pilot; unknown remains unknown; no first-to-market assertion. | [Task 13](plans/2026-09-07-agentic-quality-simplification.md#task-13) |
+| **P7** | Extend existing P7: parser/query/source/result caches already exist; add only a measured missing route or close research with no code change. | [Task 14](plans/2026-09-07-agentic-quality-simplification.md#task-14) |
+| **P10** | Extend existing P10: trusted observed execution at exact revision, bounded process/output and replay controls; associated tests are not measured coverage. | [Task 15](plans/2026-09-07-agentic-quality-simplification.md#task-15) |
+| **P15** | Extend existing P15: generated registry/limit facts, route-specific startup/delegation prose, and drift check; P4 remains closed. | [Task 16](plans/2026-09-07-agentic-quality-simplification.md#task-16) |
+
+**Ownership/status:** the canonical board records the owner role and prerequisite for every row above. New AGT rows are open findings, not claims that the source is already fixed. S3/S4/S6 residuals remain linked to their original AUDIT-FOLLOWUP history; AGT IDs provide stable sub-item ownership.
+**Research corrections to older proposals:** P7 has existing caches; P12's ONNX/AVX-512 speed target is unmeasured and not the selected solution; P14's entire-market/first-to-market claim is unsupported; P10 must distinguish test association from runtime coverage. The plan supersedes those premises while retaining the old entries as history. #72 publication, #169 spend, DD-006/CONTINUOUS-REFRESH, MCP-LEAN-DEFAULT and F5/F6 gates are unchanged.
+**Scope:** audit and plan only. Apply behavior-preserving refactors separately from intentional correctness changes; no speedup or world-best claim without matched-task evidence. Detailed steps, source/test paths, controls, dependencies, rollback and Exa links live in the plan/report rather than expanding this size-gated ledger.
+
+
 > **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
 > GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
 > `docs/TASK_BOARD.md` is the live-state view; use the dated

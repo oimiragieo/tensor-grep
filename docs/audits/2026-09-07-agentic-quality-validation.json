@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "source_commit": "5d67210e343f95f2bd4eac31d155f98b29b0c003",
+  "date": "2026-09-07",
+  "scope": "audit/planning/tracker only; no application implementation",
+  "hash_method": "SHA-256 of raw local file bytes; excludes this receipt itself",
+  "files": {
+    "docs/audits/2026-09-07-agentic-quality-audit.md": {
+      "sha256": "e4f6855234b66113feb552cd817d9b1b5279bc908324868cdac7eb6f4c489f34",
+      "bytes": 21012
+    },
+    "docs/BACKLOG.md": {
+      "sha256": "dbded717b496f21ee241dfe168dbf8c04f114a13353c35b94ef885a86ec28460",
+      "bytes": 383473
+    },
+    "docs/TASK_BOARD.md": {
+      "sha256": "2c2493b1ec43523e69d96a1566c526f84c5da7dbf4f97296396ee277541eb67e",
+      "bytes": 70505
+    },
+    "docs/SESSION_HANDOFF.md": {
+      "sha256": "10eb67836c18c47a6edbdd5090b7e692f09424f2b2b16c7037f0f190f62635fd",
+      "bytes": 127409
+    },
+    "tests/unit/test_backlog_tracker_truth.py": {
+      "sha256": "bed32a6cc82101671f6eb5374fcd1639693d955b6ca9c6ea19d252efbc686bdb",
+      "bytes": 33791
+    },
+    "docs/plans/2026-09-07-agentic-quality-simplification.md": {
+      "sha256": "cdd67454fd1830a8cb54fbf40fe14418465cdd8c8c86e263f01fb72711a9d97f",
+      "bytes": 50286
+    }
+  },
+  "work_packages": 16,
+  "new_owners": 8,
+  "extended_owners": 8,
+  "canonical_rows": 44,
+  "canonical_status_counts": {
+    "READY": 7,
+    "BLOCKED": 14,
+    "RETIRED": 5,
+    "SHIPPED": 8,
+    "CEO_GATED": 4,
+    "DEMAND_GATED": 6
+  },
+  "checks": {
+    "task_id_and_anchor_coverage": "pass",
+    "relative_document_links": "pass",
+    "placeholder_scan": "pass",
+    "selected_tracker_governance_tests": {
+      "passed": 6,
+      "deselected": 38,
+      "outer_timeout_seconds": 30,
+      "pytest_timeout_plugin": "unavailable"
+    },
+    "tracker_test_ruff_check": "pass",
+    "tracker_test_ruff_format_check": "pass"
+  },
+  "review": {
+    "kind": "available independent agent, not formal Fable/Opus council",
+    "finding": "Windows watchdog must supervise pytest directly",
+    "resolution": "folded into plan; fixture subprocess cleanup remains explicit"
+  },
+  "implementation_status": "not_started",
+  "plan_location_reason": "docs/superpowers is intentionally ignored; durable plan uses tracked docs/plans convention"
+}

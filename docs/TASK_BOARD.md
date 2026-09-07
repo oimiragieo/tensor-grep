@@ -1,5 +1,11 @@
 # tensor-grep — Task Board
 
+## Audit planning update (2026-09-07)
+
+Current scoped audit: main `5d67210`, open-PR query returned 0; no CI/publish verdict inferred. [Audit](audits/2026-09-07-agentic-quality-audit.md) and [16-package plan](plans/2026-09-07-agentic-quality-simplification.md) cover eight new AGT owners and eight existing-owner extensions. Older dated snapshots below remain historical. Canonical rows include the new work; READY means baseline/design can start, with required artifact review before build. MCP-SURFACE retains its existing gate and additionally owns plan Task 10; no default surface or protocol change is authorized by this planning packet.
+
+Canonical population after this addition: **44 rows / 31 unfinished** = 7 READY (baseline/design), 14 BLOCKED (named dependencies/environment), 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT; terminal dispositions: 8 SHIPPED and 5 RETIRED. The four CEO-gated owners remain #72/#77/#131/#169; #169 retains the spend gate. Mixed historical outcomes in their existing rows are preserved. Counts describe source-controlled tracker dispositions, not freshly verified external release state.
+
 > **The operational one-pager.** `docs/BACKLOG.md` is the historical ledger (long, append-only,
 > release-by-release); THIS file is the live queue a session or subagent works down, one item at a
 > time. Keep it in sync with the CLI task store (`TaskList` / `TaskUpdate`) and with
@@ -151,7 +157,22 @@ unchanged: Task 2A not GREEN (#966 drafted, RED by design), W3 rust/e2e shared-b
 
 ## Canonical status index
 
-Canonical status index version: 2026-09-05.1
+Canonical status index version: 2026-09-07.1
+- [ ] **AGT-01** — Status: READY; PR: none; Trigger: Owner: Evaluation maintainer; Measure correct task outcomes and confident wrong primary targets; prerequisite: none; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-01; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-02** — Status: READY; PR: none; Trigger: Owner: Session maintainer; Reproduce residual S4 refresh race and label decision freshness; prerequisite: none; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-02; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-03** — Status: BLOCKED; PR: none; Trigger: Owner: Agent protocol maintainer; Typed validators, stop conditions and canonical session prepare wire; prerequisite: AGT-02 generation contract; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-03; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-04** — Status: READY; PR: none; Trigger: Owner: Edit verification maintainer; Define protected ticket population and bounded enumeration; prerequisite: none; reconcile S1/S5 identity design before implementation; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-04; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-05** — Status: BLOCKED; PR: none; Trigger: Owner: Ranking maintainer; Intent matching and confidence quality with current-order pins; prerequisite: AGT-01 metrics and holdout; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-05; READY denotes baseline/design work, not implementation clearance
+- [ ] **P9** — Status: BLOCKED; PR: none; Trigger: Owner: Session maintainer; Warm map reuse and dormant index disposition; prerequisite: AGT-02 and AGT-03; existing daemon gates preserved; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-06; READY denotes baseline/design work, not implementation clearance
+- [ ] **P13** — Status: READY; PR: none; Trigger: Owner: Architecture maintainer; Frozen import baseline and shared services preserving patch seams; prerequisite: none; baseline before extraction; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-07; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-06** — Status: READY; PR: none; Trigger: Owner: CLI maintainer; Shared lightweight vendored-root probe; prerequisite: none; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-08; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-07** — Status: READY; PR: none; Trigger: Owner: Result-contract maintainer; Shared completeness evidence with unchanged public projections; prerequisite: none; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-09; READY denotes baseline/design work, not implementation clearance
+- [ ] **AGT-08** — Status: BLOCKED; PR: none; Trigger: Owner: Retrieval maintainer; S6 explanations from actual ranking contributions; prerequisite: AGT-01 measurement controls; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-11; READY denotes baseline/design work, not implementation clearance
+- [ ] **P12** — Status: BLOCKED; PR: none; Trigger: Owner: Retrieval maintainer; Profile static embedding stages before choosing runtime/quantization; prerequisite: AGT-01 and AGT-08; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-12; READY denotes baseline/design work, not implementation clearance
+- [ ] **P14** — Status: BLOCKED; PR: none; Trigger: Owner: Symbol intelligence maintainer; Per-fact provenance and bounded existing-provider pilot; prerequisite: AGT-01/02/07; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-13; READY denotes baseline/design work, not implementation clearance
+- [ ] **P7** — Status: BLOCKED; PR: none; Trigger: Owner: AST maintainer; Census existing caches and measure missing route reuse; prerequisite: AGT-01 baseline controls; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-14; READY denotes baseline/design work, not implementation clearance
+- [ ] **P10** — Status: BLOCKED; PR: none; Trigger: Owner: Evidence maintainer; Bind observed execution to revision; distinguish association from coverage; prerequisite: AGT-02/03/04 and P14; F5/F6 gates preserved; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-15; READY denotes baseline/design work, not implementation clearance
+- [ ] **P15** — Status: READY; PR: none; Trigger: Owner: Documentation maintainer; Generate capability facts and correct unsupported public prose; prerequisite: none for baseline facts; plan: docs/plans/2026-09-07-agentic-quality-simplification.md#task-16; READY denotes baseline/design work, not implementation clearance
 - [x] **#22** — Status: RETIRED; PR: none; Trigger: exit 0 is complete with matches; exit 1 is complete with no match; exit 2 is incomplete; gpu_request_unhonoured stays in-band and does not independently force exit 2
 - [x] **F2** — Status: RETIRED; PR: none; Trigger: legacy anonymous-agent compatibility deliberately retains the sentinel; reopen only with a caller-supplied stable identity contract and migration plan
 - [x] **#36** — Status: SHIPPED; PR: PR #903; Trigger: all 27 topic skills audited and drift corrections merged; reopen on a new failing skill-drift receipt
