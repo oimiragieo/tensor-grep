@@ -8,7 +8,7 @@
 | Owner ID | Work and acceptance | Plan |
 |---|---|---|
 | **AGT-01** | IN PROGRESS (`dd3c594`): `wrong_confident_primary` autonomous-risk metric + additive summary rate shipped. Outcome-identity joins, holdout manifest curation, and cargo-test-fit-vs-verified-success distinction remain open. | [Task 01](plans/2026-09-07-agentic-quality-simplification.md#task-01) |
-| **AGT-02** | S4 residual refresh race + stale decisions: Event-controlled schedules preserve newest decision; refreshed map never makes old advice current. | [Task 02](plans/2026-09-07-agentic-quality-simplification.md#task-02) |
+| **AGT-02** | IN PROGRESS (`611ca8d`): refresh no longer clobbers a decision published mid-race (re-reads on-disk `last_prepare` inside the publication lock instead of a pre-lock snapshot). Versioned `decision_generation`/`decision_freshness` metadata, historical/unknown freshness states, and changed-content-retains-history behavior remain open. | [Task 02](plans/2026-09-07-agentic-quality-simplification.md#task-02) |
 | **AGT-03** | S3/S4 action/wire integration: detected ecosystem validator or explicit unavailable; incomplete/history stops edits; legacy snapshots readable without new wire duplication. | [Task 03](plans/2026-09-07-agentic-quality-simplification.md#task-03) |
 | **AGT-04** | S1/S5 ticket population: prune reviewed dependency trees before descent; protect tracked dotfiles and new source; finite budgets never return false PASS. | [Task 04](plans/2026-09-07-agentic-quality-simplification.md#task-04) |
 | **AGT-05** | Intent/confidence quality: pin rankings before changing them; reduce named misses without always-ask gaming or unmeasured probability claims. | [Task 05](plans/2026-09-07-agentic-quality-simplification.md#task-05) |
