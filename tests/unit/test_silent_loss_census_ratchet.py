@@ -128,7 +128,18 @@ KNOWN_SILENT_LOSS_SITES: dict[str, int] = {
     # `except OSError` sites with it. Measured: main.py 6->4, scan_guardrails.py 5->7,
     # TOTAL 41 -> 41 unchanged. Re-pinned because the sites MOVED, not because any were added --
     # a growing total must be hardened or disposed, never re-pinned.
-    "main.py": 4,
+    #
+    # RELOCATION 2026-09-07 (AGT-06, Task 08): `_root_top_level_vendored_dir_names`'s scan
+    # loop moved out of main.py into the new shared `io/root_probe.py`
+    # (`iter_top_level_vendored_dirs`), deduplicating it against `bootstrap.py`'s independent
+    # copy of the identical scan (bootstrap.py's copy was never counted here -- its OSError
+    # handler short-circuits a boolean return rather than accumulating into a collection, so
+    # the detector never flagged it). Measured: main.py 4->3, root_probe.py 0->1, TOTAL
+    # unchanged. The docstring on `iter_top_level_vendored_dirs` documents this as an
+    # intentional fail-open diagnostic probe (not a completeness-bearing result), matching the
+    # already-accepted FALLBACK-ASSIGN/BROAD-SCAN-GUARDRAIL families above.
+    "main.py": 3,
+    "root_probe.py": 1,
     "doctor_report.py": 5,
     "windows_launcher.py": 4,
     # 10 -> 6 by #297: three real fixes (the undo commit phase destroying a file whose bytes it
