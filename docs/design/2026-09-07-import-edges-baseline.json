@@ -1,0 +1,16 @@
+{
+  "_comment": "P13 extension (Task 07): frozen top-level package import graph for src/tensor_grep. Enforced by tests/unit/test_import_edges_baseline.py. This freezes CURRENT reality, including pre-existing layering violations (core->cli, backends->cli) that P13's still-open import-linter adoption is meant to eventually burn down -- see docs/BACKLOG.md P13. A CLI/MCP shared-service extraction (the rest of Task 07) must update this file in the same change if it legitimately adds an edge, and explain why in the commit message.",
+  "generated": "2026-09-07",
+  "generator": "tensor_grep.core.import_edges.compute_import_edges",
+  "edges": [
+    ["backends", "cli"],
+    ["backends", "core"],
+    ["backends", "io"],
+    ["cli", "backends"],
+    ["cli", "core"],
+    ["cli", "io"],
+    ["core", "backends"],
+    ["core", "cli"],
+    ["io", "core"]
+  ]
+}
