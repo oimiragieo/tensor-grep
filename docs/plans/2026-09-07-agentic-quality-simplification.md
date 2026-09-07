@@ -259,12 +259,13 @@ create tests/unit/test_prepare_protocol.py.
 ~~~python
 from dataclasses import dataclass
 
+
 @dataclass(frozen=True)
 class ValidationAdvice:
-    status: str                 # available or unavailable
-    argv: tuple[str, ...]       # nonempty only for a reviewed structured recipe
+    status: str  # available or unavailable
+    argv: tuple[str, ...]  # nonempty only for a reviewed structured recipe
     cwd: str
-    source: str                # detected recipe identity, not execution authority
+    source: str  # detected recipe identity, not execution authority
     reason: str | None
 ~~~
 - [ ] Convert known detector recipes into this record without shell=True or string splitting.
