@@ -1,6 +1,820 @@
 # CHANGELOG
 
 
+## v1.119.0 (2026-09-08)
+
+### Bug Fixes
+
+- **ci**: Clear CI's Formatting & Linting gate for the audit campaign's files
+  ([`c390110`](https://github.com/oimiragieo/tensor-grep/commit/c39011036664e0bd7adf1c4e992dbb792dd2c757))
+
+CI run 34163164897 (this session's 34-commit push) failed on `Formatting & Linting`: `ruff check`
+  flagged an unused unpacked variable (RUF059) and an unsorted import block, and `ruff format
+  --check --preview` (the repo's mandated preview-mode formatter, per ci.yml:442) flagged
+  non-preview-style hug formatting in 6 files this campaign touched.
+
+- tests/unit/test_edit_ticket_population.py: prefix an intentionally-unused unpacked tuple element
+  with `_` (RUF059). - tests/unit/test_public_docs_governance.py: sort/organize the import block
+  ruff flagged (I001). - benchmarks/{profile_dense_stages,run_agent_workflow_benchmarks}.py,
+  src/tensor_grep/cli/edit_ticket_service.py, tests/unit/{test_completeness_
+  projection,test_retrieval_fusion,test_root_probe_parity}.py: re-run `ruff format --preview` (plain
+  `ruff format` without --preview, which was run locally during those slices, produces different
+  hugging than the --preview mode CI actually checks).
+
+Confirmed the remaining 3 --preview format findings (AGENTS.md, docs/ architecture.md,
+  docs/plans/2026-09-07-agentic-quality-simplification.md) predate this whole campaign (present at
+  030988c and 5d67210, before any of the 16 slices) -- pre-existing docs drift, out of scope here.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **ci**: Give test-python 45min timeout (Windows ran 27-30min twice, 0 real failures)
+  ([`f473d67`](https://github.com/oimiragieo/tensor-grep/commit/f473d67a86d356d0c3c636b66592d4c48fe08c45))
+
+Both CI runs this session (34165947791, 34171453414) had a Windows test-python matrix cell get
+  cancelled by the job's 30-minute timeout during post-pytest cleanup/eval-gate, AFTER pytest itself
+  finished with zero failures (7098-7334 tests passed both times). ubuntu/macos finish the same job
+  in 14-16min; Windows alone runs 27-30min, leaving almost no margin under a 30-minute cap.
+  Re-running hoping for a faster runner twice in a row is not a fix -- bumping the timeout to 45min
+  gives real headroom instead of treating a fully-green run as a failure because cleanup didn't
+  finish in time.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **ci**: Reformat the 3 remaining pre-existing --preview format violations
+  ([`10322a7`](https://github.com/oimiragieo/tensor-grep/commit/10322a7294f79c561e10aa601d88f2de5bc49696))
+
+CI's rerun of 34165947791 failed `Formatting & Linting`'s "Python Ruff Formatter" step (`ruff format
+  --check --preview .`) on AGENTS.md, docs/ architecture.md, and
+  docs/plans/2026-09-07-agentic-quality-simplification.md -- python code blocks embedded in these
+  markdown files weren't in --preview hugging style. These predate this whole campaign (confirmed
+  present at 030988c/5d67210, before any of the 16 audit-item commits), but per explicit instruction
+  to fix every issue found regardless of origin, not just campaign-introduced ones -- reformatting
+  all three now closes this CI gate for real instead of leaving it broken on the theory that it's
+  "not this session's fault".
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **docs**: Shrink BACKLOG.md under the CRLF-checkout size ceiling
+  ([`12bdeeb`](https://github.com/oimiragieo/tensor-grep/commit/12bdeebebf4d09a731394dda01bca07b14e7e6fa))
+
+CI failed test-python (windows-latest, py3.12) on 82b3d4a: test_governance_doc_size_ratchet's
+  check_governance_doc_size.py pins docs/BACKLOG.md at max_bytes=400_000, measuring the file as
+  checked out on disk. My prior CEO-update commit's verbose F1-F3/P13-EXT2 additions put the LF byte
+  count at 396,385 -- under budget on this Unix-checkout box, but a Windows git checkout with
+  autocrlf converts every LF to CRLF (+1 byte/line), pushing the SAME content to 400,359 bytes on
+  that runner, 359 over the ceiling. A real CRLF-sensitivity bug in how I measured "under budget"
+  locally, not a CI flake.
+
+Fix: moved the full research/audit detail into
+  docs/plans/2026-09-07-agentic-quality-simplification.md (ungated by this ratchet) and replaced
+  BACKLOG.md's two sections with terse pointer paragraphs, matching this doc's own stated discipline
+  ("detailed steps ... live in the plan/report rather than expanding this size-gated ledger" -- a
+  rule I wrote into this same doc earlier this session and then violated). Verified against BOTH
+  line-ending forms this time: LF 393,293 bytes / simulated CRLF 397,226 bytes, both comfortably
+  under 400,000.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **edit-ticket**: Mark population incomplete on a per-file stat OSError (AGT-04 audit)
+  ([`6b17d59`](https://github.com/oimiragieo/tensor-grep/commit/6b17d594c7e54a4184beffe2ab4086c851cc9aaf))
+
+Adversarial audit of the AGT-04 slice (9377ea4) found _walk_tracked_files_bounded's per-file stat()
+  OSError handler silently `continue`d without setting incomplete_reason -- a file that vanishes or
+  becomes unreadable mid-walk (permission change, concurrent delete) disappeared from the returned
+  population with population["status"] still reporting "complete". That is the exact false-PASS this
+  function's own docstring says it exists to prevent ("a budget hit must report incomplete, never
+  silently truncate and claim a complete population") -- the OSError path was simply missed, not
+  budget-gated like the other three skip reasons already handled.
+
+RED (monkeypatched Path.stat to raise for one file) confirmed the bug on the pre-fix code (status ==
+  "complete" instead of "incomplete"), GREEN after adding the missing incomplete_reason =
+  "unreadable_path" write.
+
+Verify: uv run python -m pytest tests/unit/test_edit_ticket_population.py -q -> 10 passed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **edit-ticket**: Prune dependency trees before descent, bound population budget (AGT-04)
+  ([`9377ea4`](https://github.com/oimiragieo/tensor-grep/commit/9377ea41295eace70668de967af8fa8274fc60c8))
+
+_walk_tracked_files used sorted(root.rglob("*")) -- unbounded, and it read every file under
+  node_modules/.venv/target/dist before any filter could discard them, so a large repo's edit-ticket
+  population walk was slow and had no budget at all (audit: "finite budgets never return false
+  PASS").
+
+Fix: _walk_tracked_files_bounded uses os.walk with topdown pruning
+
+(dirnames[:] filtered against _IGNORED_DEPENDENCY_DIRS before descending), so a dependency tree is
+  never entered. Adds finite file-count, per-file-byte, and aggregate-byte budgets; a budget hit now
+  returns an explicit {"status": "incomplete", "reason": ..., "verified": False} population result
+  rather than silently truncating. EditReadyTicketV1 carries population_status; verify_edit_ticket
+  fails closed (reason="population_incomplete") when a ticket was built from an incomplete
+  population, since an unread file could hide undeclared drift. A ticket predating this field (no
+  population_status key) defaults to "unknown" and still verifies -- a documented legacy compat
+  path, not a relaxation of the new fail-closed default for tickets built after this change. Tracked
+  dotfiles (.gitignore, .github/workflows/*) remain hashed; pruning targets dependency directory
+  NAMES only.
+
+RED: ImportError for _walk_tracked_files_bounded (function didn't exist).
+
+GREEN: 16/16 new + existing edit-ticket suite, 18/18 across the wider edit_ticket/edit_ready sweep.
+
+Self-reviewed only (no external council/audit seat available in this fork execution) -- disclosed as
+  a tier substitution, not fabricated.
+
+Scope: this is the enumeration/budget half of Task 04
+  (docs/plans/2026-09-07-agentic-quality-simplification.md). Git-tracked identity as the primary
+  population source (vs this walk-based fallback), the reviewed design doc
+  (docs/design/2026-09-07-edit-ticket-population.md), symlink/junction confined-primitive controls,
+  and re-running the full valid/unrelated/no-op/malformed/legacy control matrix remain open under
+  AGT-04 in BACKLOG.md.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **prepare**: Stop hardcoding pytest as the on_success validation command (AGT-03)
+  ([`7ae7063`](https://github.com/oimiragieo/tensor-grep/commit/7ae7063472eafebf2963a3a416cfe5ef9fe0deca))
+
+tg prepare --include-next-action's on_success.argv was hardcoded to ["uv", "run", "pytest", "-q"]
+  for EVERY repository, even a Rust-only one where the capsule's own validation_commands already
+  correctly detected "cargo test". An unattended agent following next_action would run the wrong
+  test suite (or one that doesn't exist) after every edit.
+
+Fix: _select_validation_argv() picks an argv only when the first detected validation_commands entry
+  exactly matches a small reviewed allowlist (pytest, uv run pytest, cargo test, go test ./...,
+  npm/pnpm/yarn test). No prefix or substring matching, no shlex.split of the raw string -- per the
+  audit ("Never convert arbitrary shell text into trusted argv"), an unrecognized or shell-augmented
+  string (e.g. "pytest -q; rm -rf /") falls back to on_success.unavailable with a reason, never an
+  invented successful plan.
+
+RED: test_select_validation_argv_* against a stub argv list, plus asserting the old hardcoded-pytest
+  shape no longer appears for a non-matching capsule. GREEN: 10/10 new + existing
+  test_prepare_next_action.py, 392/392 (+4 skip) across the full prepare/session suite.
+
+Scope: this is the detected-validator half of AGT-03
+  (docs/plans/2026-09-07-agentic-quality-simplification.md Task 03). The typed ValidationAdvice
+  dataclass / prepare_protocol.py module, centralized stop_if evaluation (non-current-decision), and
+  the versioned canonical session serialization remain open under AGT-03 in BACKLOG.md.
+
+Self-reviewed only (no external council/audit seat reachable in this fork) -- disclosed as a tier
+  substitution, not a fabricated seat.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **risk**: Rename test-count risk factor to disclose static association, not coverage (P10 ext)
+  ([`0f5a1f4`](https://github.com/oimiragieo/tensor-grep/commit/0f5a1f4cd09c7b451b8943b988888a0382e86047))
+
+_rollback_risk_from_blast_radius fed a static count of files that import/reference the edited symbol
+  (repo_map's test-association scan, no test has been observed to execute) into a variable and
+  parameter both named for coverage (test_count -> coverage_factor). That reads as "N% of this
+  change is covered by passing tests," which is a much stronger, unearned claim -- exactly the gap
+  named in docs/plans/2026-09-07-agentic-quality-simplification.md Task 15 / docs/BACKLOG.md's
+  research-corrections note ("P10 must distinguish test association from runtime coverage").
+
+Rename-only, numeric behavior unchanged (parity-proven: same inputs -> same risk score, verified
+  against pre-rename code before the rename). Docstring now explicitly points to
+  evidence_receipt.py/evidence_signing.py as the separate, stronger primitive for a claim that a
+  test actually executed at a pinned revision.
+
+Scope: this is the naming/correctness half of P10's extension. The larger ask -- "trusted observed
+  execution at exact revision, bounded process/output and replay controls" as a first-class feature
+  -- remains open; evidence_receipt.py already aggregates already-computed revision identity +
+  completeness data but does not itself execute and bound a test command, which is a separate,
+  larger build left open under P10 in docs/BACKLOG.md.
+
+Self-reviewed only (no external council/codex/droid seat reached in this execution) -- disclosed as
+  a tier substitution, not a fabricated seat.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **session**: Refresh no longer clobbers a decision published mid-race (AGT-02)
+  ([`611ca8d`](https://github.com/oimiragieo/tensor-grep/commit/611ca8dd9fd156603f45e443ff392a18a746c2e8))
+
+refresh_session read `existing = get_session(...)` BEFORE acquiring its publication lock, then
+  carried `existing["last_prepare"]` forward once inside the lock. session_prepare takes the SAME
+  lock to publish a new decision, so a prepare racing in between refresh's initial read and its lock
+  acquisition got silently overwritten by the stale pre-lock snapshot -- exactly the residual named
+  in docs/plans/2026-09-07-agentic-quality-simplification.md Task 02 ("refreshed map never makes old
+  advice current", inverted: here a REFRESH clobbers a NEWER decision).
+
+Fix: re-read the on-disk session payload inside the lock and carry forward its last_prepare, never
+  the pre-lock snapshot. RED test (tests/unit/test_session_prepare_refresh_interleaving.py) gates
+  refresh's initial read with two threading.Events, publishes a newer prepare mid-gate via the same
+  public session_prepare() API, and asserts the newer decision survives -- reproduced the clobber
+  pre-fix, green post-fix. Full session_resume suite (358 tests) still green.
+
+Scope: this is the minimal first-fix checkbox from Task 02. Versioned
+  decision_generation/decision_freshness metadata, the historical/unknown freshness states, and the
+  changed-content-retains-history behavior remain open under AGT-02 in BACKLOG.md.
+
+Codex Luna (gpt-5.6-luna, read-only sandbox) adversarial audit: AUDIT_CLEAR.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **tests**: Pin the silent-loss census relocation for root_probe.py (AGT-06)
+  ([`98339c8`](https://github.com/oimiragieo/tensor-grep/commit/98339c835c8dad3afa5d85bb929d05933c873b1c))
+
+CI's test-python matrix (5 platforms: ubuntu/macos x py3.11/3.12, plus the GPU-nvidia job) all
+  failed the same governance ratchet on the push in 34163164897: AGT-06's new
+  src/tensor_grep/io/root_probe.py factored a scan loop out of cli/main.py that swallows OSError
+  inside an accumulating loop without disclosure -- the exact silent-loss shape
+  test_silent_loss_census_ratchet.py exists to catch, and correctly caught here since the file was
+  new and absent from KNOWN_SILENT_LOSS_SITES.
+
+Re-ran the module's own detector (_census()) to measure the real per-file counts rather than guess:
+  main.py dropped 4->3 (the site moved out) and root_probe.py is a new 0->1, net total unchanged --
+  a pure RELOCATION, matching the pattern this file's own history already documents for two prior
+  moves (2026-08-21 main.py->scan_guardrails.py). bootstrap.py's independent copy of the same scan
+  was never in the census; its OSError handler short-circuits a boolean return rather than
+  accumulating, so the detector correctly never flagged it.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **tests**: Stop hard-failing on missing optional extras, skip instead
+  ([`0207438`](https://github.com/oimiragieo/tensor-grep/commit/0207438c166dd6b39ee417531bf903740a431720))
+
+Two pre-existing tests failed (not skipped) on a box missing an optional extra rather than a real
+  product bug:
+
+- test_retrieval_dense.py::TestRealFetchedModel skipped only when the fetched model DIRECTORY was
+  absent, not when the [semantic] `model2vec` package itself was uninstalled -- a venv recreated
+  without [semantic] but with a stale model dir on disk hard-failed with a wrapped ImportError
+  instead of skipping. Added an explicit importability check. -
+  test_backend_bug_fixes.py::test_ast_to_graph_and_torch_geometric_are_fully_removed imported
+  lsp_server.py to read its source text, which requires the optional [ast] extra's
+  `pygls`/`lsprotocol` dependency at import time even though the assertion never executes the module
+  -- only greps its source for dead-code strings. Switched to importlib.util.find_spec to locate the
+  file without importing it, so the check works regardless of whether that extra is installed.
+
+Found while closing out the 2026-09-07 agentic-quality campaign: full `uv run pytest` came back 5944
+  passed / 1 failed, and the one failure traced to the first bug above (confirmed pre-existing,
+  unrelated to any of that campaign's 16 commits).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **tests**: Update timeout-minutes content-pin from 30 to 45 (test-python)
+  ([`82b3d4a`](https://github.com/oimiragieo/tensor-grep/commit/82b3d4a3c7b755a1a59b3cc450103c38d05865f9))
+
+CI failed all 7 test-python matrix cells on the ba4dabe push:
+  test_ci_python_matrix_should_be_timeout_bounded (a governance test that pins the literal
+  `timeout-minutes: 30` string in ci.yml's test-python section) broke because f473d67 bumped that
+  value to 45 without updating this test's pin -- an oversight in that commit, caught immediately by
+  CI. Updated the pin to 45 with the same rationale comment.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **types**: Annotate known_cause as Cause | None in completeness.py
+  ([`89382b4`](https://github.com/oimiragieo/tensor-grep/commit/89382b419fb95ea256194d6fc7c7df63b0376b20))
+
+CI's mypy step failed on 34169543846: `known_cause` was implicitly typed `Cause` from its first
+  assignment (`Cause.NONE`), so the later `.get(raw_cause)` branch (which can legitimately return
+  `None` for an unrecognized legacy cause string) was flagged as an incompatible assignment. The
+  runtime logic at line 164 already handles the None case correctly (`cause = known_cause if
+  known_cause is not None else Cause.UNKNOWN`); this was a type-narrowing gap, not a real bug -- an
+  explicit `Cause | None` annotation on the first assignment fixes it.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+### Documentation
+
+- **backlog**: Backfill P15 SHA, close out the 16-item agentic-quality campaign
+  ([`02c93fb`](https://github.com/oimiragieo/tensor-grep/commit/02c93fbcb3fe5916b7a3fae657e5b3578bb7fec1))
+
+Cite a075264 in P15's progress note. Record in SESSION_HANDOFF.md that all 16 items from the
+  2026-09-07 audit (8 AGT + 8 extensions) now have at least one bounded, TDD-verified slice shipped
+  to main -- honestly, as PARTIAL for all but AGT-06 (fully closed) and P7 (correctly closed as
+  research-no-code). Real remaining scope stays open per-item in BACKLOG.md/ TASK_BOARD.md; this is
+  not a claim the audit is resolved.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Backfill P7 closure commit SHA into TASK_BOARD.md
+  ([`205eda4`](https://github.com/oimiragieo/tensor-grep/commit/205eda42e28ad0183105f1c6408df7f8ace26af8))
+
+Follow-up to 251cbaf -- the board row was written before that commit existed, so it carried a
+  placeholder. Cite the real SHA now that it's known.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Bank agentic-quality audit + 16-owner simplification plan
+  ([`030988c`](https://github.com/oimiragieo/tensor-grep/commit/030988c3ddc261f18570d22e7fee524afc569a6f))
+
+Source-cited audit + Exa research identifying 8 new AGT owners plus extensions to 8 existing owners
+  (P7/P9/P10/P12/P13/P14/P15/MCP-SURFACE). Corrects unsupported premises in older proposals (P7
+  caches already exist, P12 speed target unmeasured, P14 first-to-market claim unsupported, P10
+  test-association != runtime coverage). Audit and plan only -- no production fixes shipped from
+  this pass.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Ceo update closeout -- CI hardening changelog, arch audit, competitive research
+  ([`ba4dabe`](https://github.com/oimiragieo/tensor-grep/commit/ba4dabe4af3aae79c001e8a49b64d4da937d6a3f))
+
+Applies the drafts from three read-only research forks dispatched per the CEO-update orchestrator
+  rules (items 5/7/10/11), each verified against real git log/file citations before being written:
+
+- SESSION_HANDOFF.md: changelog entry for the 6-commit CI hardening round (0207438..f473d67) that
+  followed the 16-item campaign's initial push, and the baseline-dev-architecture audit findings. -
+  BACKLOG.md: 3 Exa-researched competitive feature candidates (F1 bundled AST security-detector
+  pack, F2 git-SHA-pinned agent decision memory, F3 published comparative benchmark) --
+  demand-gated, no design doc yet, not committed work. Plus P13-EXT2's 3 ranked extraction targets
+  from the architecture audit (2 low/moderate-risk, 1 explicitly do-not-attempt- casually), filed as
+  a properly-scoped follow-on to P13's frozen import-edges baseline.
+
+A parallel adversarial-audit fork independently found and fixed a real AGT-04 defect in the same
+  window (6b17d59, edit_ticket_service.py silently swallowing a per-file stat() OSError without
+  marking the population incomplete) -- that commit is separate from this one; this commit is docs
+  only, staged and verified independently to avoid a concurrent-checkout collision with that fork's
+  own commit.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Close P4 on its literal acceptance bar, split residual scope into P15
+  ([`5d67210`](https://github.com/oimiragieo/tensor-grep/commit/5d67210e343f95f2bd4eac31d155f98b29b0c003))
+
+Verified live: README hero features tg prepare, language-count drift fixed this session (8e25c23).
+  The larger tagline-repositioning and auto-generated-table work is real but bigger,
+  subjective/tooling work -- split into P15 with an explicit council/Exa routing for the taste call
+  and a concrete CI-generation scope for the drift-prevention half.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: Close P7 as research, no code (P7 ext, Task 14)
+  ([`251cbaf`](https://github.com/oimiragieo/tensor-grep/commit/251cbaf07c473a5753d6f5d5f3af88ea6b7c8bc2))
+
+Verified caches already exist for the parser/query/source path (repo_map_cache.py's mtime-aware
+  _mtime_aware_cache, ast_scan.py's per-scan source_cache, 11 other cache sites). P7's literal ask
+  -- a persistent on-disk .tensor-grep/ast_cache/ -- duplicates P9's already-scoped daemon-based
+  warm cache and reintroduces the exact cross-process invalidation-desync risk P7's own acceptance
+  bar warned against. No measured gap found; none manufactured to justify shipping code, per
+  tensor-grep-benchmark-and-proof-toolkit's noise-floor discipline. Reopen only under P9's scope if
+  a real gap surfaces once P9 ships.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-01 to IN PROGRESS, cite dd3c594
+  ([`3d4388b`](https://github.com/oimiragieo/tensor-grep/commit/3d4388b680db321a739c4efd16e95c2ad2998c55))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-02 to IN PROGRESS, cite 611ca8d
+  ([`cdb80ca`](https://github.com/oimiragieo/tensor-grep/commit/cdb80caf11054488d4f19334e70804b43c7b2539))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-03 to IN PROGRESS, cite 7ae7063
+  ([`1b7dc0a`](https://github.com/oimiragieo/tensor-grep/commit/1b7dc0a387db0f1f354da634a04b9056765d0912))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-04 to reflect shipped bounded population fix, cite 9377ea4
+  ([`2950654`](https://github.com/oimiragieo/tensor-grep/commit/29506545b65b61d44ab91ee9c697d317950741d9))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-05 to IN PROGRESS, cite bb1aa70
+  ([`8c1acf3`](https://github.com/oimiragieo/tensor-grep/commit/8c1acf30c6578e3980f8d859fd03603f9c8b1995))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-06 to reflect fully-shipped probe dedup, cite 390c39f
+  ([`ea6e458`](https://github.com/oimiragieo/tensor-grep/commit/ea6e4585dd17808ffa8a7542597715f298396c56))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-07 to reflect typed-record half shipped, cite 22cb25c
+  ([`f5b01e2`](https://github.com/oimiragieo/tensor-grep/commit/f5b01e2140abd3e1670819dd122ec5f0c715992a))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip AGT-08 to reflect shipped fusion-explanation primitive, cite c366a34
+  ([`23d3a2a`](https://github.com/oimiragieo/tensor-grep/commit/23d3a2a80b8a531452fe159968215e92551f5a3d))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip MCP-SURFACE to reflect shipped follow-up-ref prototype, cite c9e25f1
+  ([`16d6cf6`](https://github.com/oimiragieo/tensor-grep/commit/16d6cf63708cb8291c8714f57d78af965ef0c74c))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip P10 to IN PROGRESS, cite 0f5a1f4
+  ([`9aae541`](https://github.com/oimiragieo/tensor-grep/commit/9aae541247a00b05be642035b2553530e9f0beb2))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip P12 to READY, cite dense-stage-timings instrument 1f6f4b0
+  ([`d581003`](https://github.com/oimiragieo/tensor-grep/commit/d581003f780307013ada3c560257b0ed30bf798f))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip P13 to reflect frozen import-edges baseline, cite e7ee4f0
+  ([`3e14baf`](https://github.com/oimiragieo/tensor-grep/commit/3e14baf5329e3ecc62fac8648e29c2039f0e793a))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip P14 to READY, cite 3a69430
+  ([`c27bcb7`](https://github.com/oimiragieo/tensor-grep/commit/c27bcb7a4d48b91bcfc1b63342ee717b3b2a7916))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: Flip P9 to READY, cite cache-ownership design doc
+  ([`478d248`](https://github.com/oimiragieo/tensor-grep/commit/478d248f7c4b57deca9e662ee06943436162ee4c))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: P14 provenance census + remove unhedged first-to-market claim (P14 ext, Task 13)
+  ([`3a69430`](https://github.com/oimiragieo/tensor-grep/commit/3a69430eacdf027b335eff21f32c93bf9ec33e8e))
+
+docs/plans/2026-09-07-agentic-quality-simplification.md Task 13's last checkbox ("Remove
+  first-to-market assertions unless a documented competitor census substantiates the exact narrow
+  claim") applies directly to P14's own Objective bullet, which asserted "Be first-to-market ...
+  across the ENTIRE code-intelligence MCP market" -- a claim docs/BACKLOG.md's own
+  research-corrections note (line 28) already concedes is unsupported.
+
+Hedged the objective to what the codebase's own census actually shows: no defs/refs/callers or
+  mcp_symbol_tools.py result carries per-fact provenance today (verified by grep -- zero matches). A
+  per-file/per-target provenance STRING already exists at _symbol_navigation_provenance_for_path
+  (repo_map.py:2416) and is documented in the new census doc as the vocabulary the follow-up
+  envelope should extend, not replace.
+
+Also satisfies Task 13's first checkbox (inventory existing evidence before building).
+  tests/unit/test_symbol_fact_provenance.py pins the claim removal so it can't silently regress,
+  mirroring test_backlog_self_consistency.py's docs-comparing-itself pattern.
+
+Scope: docs + census + regression test only. The actual provenance envelope,
+  method/freshness/confidence_kind fields on defs/refs/callers, and the LSP precise-provider pilot
+  remain unstarted -- left open under P14 in BACKLOG.md.
+
+Self-reviewed only (no external council/codex/droid seat dispatched for this docs-only change) --
+  disclosed as a tier substitution, not fabricated.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **backlog**: P3 released as v1.118.0 -- tag/GitHub release confirmed, PyPI publish still in flight
+  ([`dc29730`](https://github.com/oimiragieo/tensor-grep/commit/dc29730b4f21e299908302e813c8e8b99f3dc823))
+
+Verified via git fetch --tags + gh api releases/latest, not inferred from CI green. PyPI
+  info.version still showed 1.117.0 at check time since publish-pypi hadn't run yet (correctly
+  sequenced downstream of publish-github-release-assets). Not claiming fully shipped until
+  per-artifact PyPI verification passes.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: P3/v1.118.0 fully and finally verified shipped
+  ([`59f958c`](https://github.com/oimiragieo/tensor-grep/commit/59f958ca1e4db0c76780b48b141e385a92dd900f))
+
+release-tag-smoke succeeded (real re-check against the actual tag); whole release-pipeline run
+  concluded success. Every stage independently confirmed this session, not inferred from CI-green
+  alone: tag/GH release, per-artifact PyPI parity, publish-success-gate, and release-tag-smoke. P3's
+  audit-and-ship campaign (3 audit rounds, 10 real defects, full release verification) is closed.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **backlog**: P3/v1.118.0 PyPI publish confirmed complete (4/4 artifacts)
+  ([`82785d4`](https://github.com/oimiragieo/tensor-grep/commit/82785d4745232f9a7040e344c7734925572f166b))
+
+Real per-artifact verification, not version-presence alone: all 3 wheels + sdist present on PyPI for
+  1.118.0. publish-success-gate and release-tag-smoke (the independent re-verification gates) still
+  queued -- not yet confirmed, one remaining open item.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01FQEmq7dWnf223dBYKSnz4d
+
+- **cache**: Record cache ownership map + retain dormant semantic_index.py (P9 ext)
+  ([`183b59f`](https://github.com/oimiragieo/tensor-grep/commit/183b59f0ca277ecb0c6dd7214dfcc39234314905))
+
+Task 06 checkboxes 1-2: docs/design/2026-09-07-cache-ownership.md draws the
+  repo_map/session/native-trigram/semantic-BM25 cache ownership table (key, lifetime, invalidation,
+  writers) and formalizes semantic_index.py's disposition -- RETAIN, library-only, not adopted (zero
+  production callers verified via git grep, reaffirming the 2026-08-01 dead-code campaign's prior
+  retain decision, not a fresh no-caller census claiming deletion authority).
+
+tests/unit/test_semantic_index_dormant_disposition.py guards the decision: fails if the module's
+  "NOT yet wired into the CLI" honesty docstring disappears, or if any of the 6 named production
+  modules starts importing it, without this design doc being updated first.
+
+Scope: this is the documentation-only half of P9's Task 06. Zero-redundant-warm-map-builds
+  (session_prepare always rescans via build_repo_map instead of reusing its loaded payload) and
+  generation-safe publication both require refactoring shared prepare_service.py/session_store.py
+  and remain open, deferred to avoid rushing a regression into code every tg prepare call depends
+  on.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+### Features
+
+- **benchmarks**: Add confidence-calibration report (AGT-05 partial)
+  ([`bb1aa70`](https://github.com/oimiragieo/tensor-grep/commit/bb1aa7006cfb12de96c5d4b62fabb46ad7086aa8))
+
+hit_at_1/hit_at_3 alone don't show whether confidence_overall is trustworthy as an act-vs-ask
+  signal. Add _build_confidence_calibration(): fixed-width bins over confidence_overall with count +
+  observed hit_at_1 correctness per bin, plus a selective-accuracy-vs-answer-coverage curve at
+  0.2-step thresholds -- exactly Task 05's "calibration bins" + "selective accuracy versus answer
+  coverage" checkboxes. Pure REPORT: no scorer/ranking behavior changes, confidence_kind stays
+  "heuristic" (no probability-language claim), zero scored tasks is reported as
+  insufficient_evidence=True rather than a silent 100%.
+
+codex_luna (gpt-5.6-luna, read-only) audit found two real defects, both fixed before this commit:
+  (1) NaN/inf/out-of-range confidence_overall crashed or silently mis-scored bucketing --
+  _is_valid_confidence() now excludes them as incomplete, same as a missing value; (2) plain float
+  division misclassified exact bin boundaries (0.6/0.2 == 2.9999999999999996 put 0.6 in the wrong
+  bin) -- fixed via a rounded ratio. Round 2 audit: AUDIT_CLEAR. Regression tests added for both
+  findings.
+
+Scope: this is the reporting-scaffold checkbox only. DEVELOPMENT-data paraphrases + holdout-safe
+  hardcases, feature tracing for wrong-primary causes (lexical/path/centrality/promotion),
+  one-hypothesis-at-a-time scorer ablation with a no-change control, and order-pin re-verification
+  remain open under AGT-05 in BACKLOG.md/TASK_BOARD.md -- no scorer code was touched.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **benchmarks**: Add wrong_confident_primary autonomous-risk metric (AGT-01 partial)
+  ([`dd3c594`](https://github.com/oimiragieo/tensor-grep/commit/dd3c5945b8ace2e382dfa26e8419e46eeadb4c7d))
+
+hit_at_3 recall treats "correct target ranked 2nd/3rd" as success, but an unattended agent acts on
+  primary_target -- a wrong-but-confident primary with a correct alternative still causes a bad
+  edit. Add wrong_confident_primary (existing WRONG_CONFIDENT_MISS_THRESHOLD, fires when
+  hit_at_1=False, hit_at_3=True, ask_required=False, confidence>=threshold) plus its additive
+  summary rate, per docs/plans/2026-09-07-agentic-quality-simplification.md Task 01 checkbox 1-2.
+  wrong_confident_miss (target missed entirely) is unchanged.
+
+Scope: this is a partial slice of AGT-01. Outcome-identity joins, holdout manifest curation, and the
+  cargo-test-fit-vs-verified-success distinction remain open.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **core**: Add typed CompletenessEvidence record over the incompleteness envelope (AGT-07 partial)
+  ([`22cb25c`](https://github.com/oimiragieo/tensor-grep/commit/22cb25c91ccccf46abf269d904ebd39b049808ac))
+
+unified_incomplete_envelope() already correctly projects a result's incompleteness, but returns an
+  untyped dict[str, Any] with an overloaded boolean status and free-text cause -- a new caller can't
+  distinguish "scan incomplete" from "output capped, scan complete" from "unknown legacy evidence"
+  without re-deriving the same string comparisons. Add CompletenessEvidence (immutable, enum-typed:
+  ScanState/Cause/RetryKind) as a pure adapter on top -- from_legacy_envelope()/to_legacy_dict()
+  round-trip byte-for-byte through the existing dict shape, proven against the frozen truth table
+  from docs/plans/2026-09-07-agentic-quality-simplification.md Task 09, plus mutation controls
+  (forcing unreadable_path to budget-remediable, or a nested-partial root to complete, must disagree
+  with the real projection).
+
+Codex Luna (gpt-5.6-luna, read-only) audit round 1 caught a real round-trip bug: status=True with no
+  cause anywhere in the payload collapsed to Cause.UNKNOWN (round-trips to the string "unknown"),
+  fabricating a cause the source never reported. Fixed via Cause.NONE (round-trips to legacy None);
+  round 2 AUDIT_CLEAR.
+
+Scope: this is the record + parity-proof half of Task 09. Neither producer (main.py, mcp_server.py)
+  nor any consumer is migrated to the new type yet -- that's the remaining, higher-risk half
+  (migrate one consumer, prove old/new projections agree on every truth-table row, migrate the
+  sibling consumer only after equivalence), left open under AGT-07 in docs/BACKLOG.md.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **mcp**: Prototype bounded follow-up reference for omitted source (MCP-SURFACE ext, Task 10)
+  ([`c9e25f1`](https://github.com/oimiragieo/tensor-grep/commit/c9e25f1bb64ce1ea117802c935054169131dd3f6))
+
+Adds mint_followup_ref()/resolve_followup_ref() -- an HMAC-signed, opaque token binding an
+  omitted-content range reference to root, a root-confined path (no traversal/symlink escape), a
+  SHA-256 content-hash snapshot (not mtime+size, which a same-size replacement could pass through
+  unnoticed), the exact request params, and a finite TTL with an exclusive expiry boundary.
+
+Per Task 10's own constraint ("no default catalog/protocol switch"), this is a standalone opt-in
+  primitive: no MCP tool is registered, and it is not called from mcp_server.py's default response
+  path.
+
+4 rounds of Codex Luna adversarial audit found and fixed real defects: forgeable mtime+size snapshot
+  identity, unconfined path traversal, incomplete numeric schema validation (NaN/inf/bool smuggling
+  through expiry and range checks), and missing issued_at validation. A documented TOCTOU limitation
+  remains by design (this primitive validates a range descriptor, not bytes -- a real byte-serving
+  integration must re-verify the hash from the same read it serves).
+
+Scope: one checkbox of Task 10 ("prototype bounded follow-up references"). Response profiles, byte
+  caps, structuredContent/outputSchema negotiation, and tools/list cursor semantics remain open
+  under MCP-SURFACE in BACKLOG.md.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **retrieval**: Add fusion explanation with real per-leg terms (AGT-08 partial)
+  ([`c366a34`](https://github.com/oimiragieo/tensor-grep/commit/c366a34769c01679fde84fb82ea22b052e40f31a))
+
+reciprocal_rank_fusion only returned fused chunk order -- no way to see WHY a chunk ranked where it
+  did (BM25 vs dense contribution), and any future "explain" surface risked recomputing scores via a
+  divergent path that could silently reorder results when explanation was toggled on.
+
+Add reciprocal_rank_fusion_explained(): delegates order to the existing reciprocal_rank_fusion
+  (byte-identical order guaranteed, fuzz-tested across 25 random ranking shapes for both combine
+  modes) and additionally returns a real per-leg-term breakdown per chunk (FusionExplanation),
+  including an explicit 0.0 floor for legs that never ranked a chunk and a winning_leg field.
+
+codex_luna (gpt-5.6-luna, read-only) audit round 1 found two real defects: duplicate
+  chunk-id-within-a-leg divergence from the plain function's accumulation, and silent per-leg-term
+  overwrite on duplicate leg_names. Both fixed (exact per-occurrence accumulation mirroring
+  reciprocal_rank_fusion's own algorithm; leg_names uniqueness validated) with regression tests,
+  round 2 AUDIT_CLEAR.
+
+Scope: this is the core-primitive half of AGT-08
+  (docs/plans/2026-09-07-agentic-quality-simplification.md Task 11). Wiring this into `tg search`'s
+  CLI/MCP output and the production BM25+dense retrieval call sites remains open under AGT-08 in
+  BACKLOG.md.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **retrieval**: Instrument dense-leg phase timings (P12 ext, Task 12)
+  ([`1f6f4b0`](https://github.com/oimiragieo/tensor-grep/commit/1f6f4b062324292c0a296b912890479c5ab25ad7))
+
+P12's prior proposal ("cut latency ~80ms->10ms via ONNX int8 + AVX-512") had no per-phase
+  measurement backing it -- the audit's research correction in BACKLOG.md already flags the
+  ONNX/AVX-512 target as unmeasured. Task 12 requires instrumenting
+  load/corpus-encode/query-encode/score/sort separately BEFORE any runtime/quantization decision.
+
+Adds DenseStageTimings + DenseIndex.query_with_timings() (additive -- query() keeps its exact
+  signature/return shape, delegates to the timed variant internally, so ranking/tie-break order is
+  provably unchanged) and corpus_encode_s recorded unconditionally at construction.
+  benchmarks/profile_dense_stages.py is the measurement harness itself: min-of-N per
+  tensor-grep-benchmark-and-proof-toolkit's noise-floor discipline, synthetic corpus (no
+  network/model-fetch dependency to run), skips cleanly (exit 0) when the optional model2vec extra
+  or fetched model is absent -- verified skip-path exercised on this box, which does not have the
+  extra installed.
+
+Tests use the existing _FixedDimModel fake encoder (Task 12 checkbox 3: count calls without a real
+  model) -- 18/18 pass, 2 pre-existing real-model skips unaffected (confirmed via git-stash
+  baseline: the same 1 real-model test fails identically with or without this diff, from a missing
+  model2vec install, not this change).
+
+Scope: this ships checkbox 2 (separate phase instrumentation) and half of checkbox 3 (fake-encoder
+  unit coverage) of Task 12. Model/corpus reuse-keyed-by-identity, top-k
+  bounded-selection-vs-full-sort comparison, and the actual float16/int8/ONNX comparison arm remain
+  open under P12 in docs/BACKLOG.md/TASK_BOARD.md -- this slice deliberately produces measurement
+  infrastructure only, no runtime/quantization change.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+### Refactoring
+
+- **cli**: Share vendored-root probe between bootstrap and main (AGT-06)
+  ([`390c39f`](https://github.com/oimiragieo/tensor-grep/commit/390c39f77ff4aae2c930ad3fa088b15834e5d96c))
+
+bootstrap.py's _search_paths_include_vendored_root (short-circuit boolean) and main.py's
+  _root_top_level_vendored_dir_names (sorted diagnostic names) independently re-implemented the
+  identical one-level-iterdir/OSError-swallow/case-insensitive scan against the shared vendored-name
+  set from io/scan_limits.py -- audit AGT-06 (docs/audits/2026-09-07-agentic-quality-audit.md #8,
+  Task 08 in the simplification plan). Factored the shared iteration into
+  io/root_probe.iter_top_level_vendored_dirs; each adapter keeps its own return shape, aggregation
+  (short-circuit vs collect/dedupe/ sort), and argv/SearchConfig interpretation untouched.
+
+Behavior-preserving: a frozen fixture-table parity test (tests/unit/test_root_probe_parity.py) locks
+  vendored-child, ordinary-root, tool-cache, nonexistent-root, unreadable-root, mixed-case, and
+  multi-root cases against each adapter's pre-refactor baseline, run green BEFORE the refactor and
+  again after. 174/174 (test_root_probe_parity + test_cli_bootstrap +
+  test_bootstrap_fast_path_imports) and 288/288 wider vendored/bootstrap/backlog-tracker sweep, all
+  via `uv run`. ruff clean.
+
+Codex Luna (gpt-5.6-luna, read-only) adversarial audit: AUDIT_CLEAR.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+### Testing
+
+- **architecture**: Freeze cli/core/backends/io import edges (P13 ext, Task 07)
+  ([`e7ee4f0`](https://github.com/oimiragieo/tensor-grep/commit/e7ee4f08fcdc7711e4215a23ec01eb59f794a7c8))
+
+Adds a dependency-free ast-based import-graph walker plus a committed baseline JSON, so a future
+  CLI/MCP shared-service extraction (the rest of Task 07) can't silently introduce a new
+  cross-package edge undetected -- a prerequisite named explicitly by the task ("freeze import edges
+  then extract").
+
+Freezes REALITY, not intent: the baseline includes pre-existing layering violations (core->cli,
+  backends->cli) that P13's still-open import-linter adoption is meant to eventually enforce
+  against, not fix. This slice does not do the extraction itself, and does not adopt import-linter
+  -- both remain open under P13 in BACKLOG.md.
+
+Codex Luna (gpt-5.6-luna, read-only) audit round 1 found 3 real defects (relative imports crossing
+  package boundaries were unconditionally skipped; a parse failure silently dropped a file's edges
+  instead of failing loud; dynamic imports via importlib/__import__ undetected). Fixed the first two
+  with regression tests; documented the third as an explicit known gap rather than silently claiming
+  completeness -- static import statements are this repo's overwhelming convention, and a
+  dynamic-import scanner is separate, unstarted scope.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+- **docs**: Drift-check tool_comparison.md's language coverage facts (P15 ext, Task 16)
+  ([`a075264`](https://github.com/oimiragieo/tensor-grep/commit/a0752640251679bf4c42c18618b04458102312c5))
+
+docs/tool_comparison.md already has generation functions
+  (_language_scope_descriptor/_symbol_navigation_descriptor in repo_map.py) and a rerunnable
+  one-liner, and its own prose says this exact table has been wrong in four documents at four values
+  while the registry moved underneath them -- but nothing MACHINE-CHECKED that the embedded coverage
+  JSON block or the "against `tg`'s N" comparator count stayed in sync with LANGUAGE_REGISTRY. Add
+  test_tool_comparison_language_coverage_facts_are_generated_not_hand_typed, which fails the moment
+  either drifts.
+
+Codex Luna (gpt-5.6-luna, read-only) adversarial audit: round 1 found 2 real false-negative risks
+  (bare substring count check trivially passing on unrelated "10"s elsewhere in the doc; initial
+  worry the JSON-quoted key form could match the bash-comment one-liner, independently verified
+  false via grep -- single occurrence each for "language_scope": and "symbol_navigation":) -- fixed
+  with an exact "against `tg`'s N" comparator match. Round 2 found the fix was still
+  prefix-matchable (10->1 regression) -- fixed with a \b word boundary via re.search. Round 3
+  repeated round 1's already-disproven JSON-block concern; independently re-verified false by grep
+  (still exactly one occurrence of each quoted key, both inside the JSON block) rather than chased
+  further.
+
+Scope: this is the drift-check half of P15/Task 16. The README tagline repositioning (a taste/
+  positioning call needing Exa + council, deliberately not made unilaterally) and CI wiring to run
+  this check on every PR remain open under P15 in docs/BACKLOG.md/docs/TASK_BOARD.md.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01WqGN9azYYd4Kvoqyv2MqwT
+
+
 ## v1.118.0 (2026-09-06)
 
 ### Bug Fixes
