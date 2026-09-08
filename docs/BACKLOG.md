@@ -28,6 +28,60 @@
 **Research corrections to older proposals:** P7 has existing caches; P12's ONNX/AVX-512 speed target is unmeasured and not the selected solution; P14's entire-market/first-to-market claim is unsupported; P10 must distinguish test association from runtime coverage. The plan supersedes those premises while retaining the old entries as history. #72 publication, #169 spend, DD-006/CONTINUOUS-REFRESH, MCP-LEAN-DEFAULT and F5/F6 gates are unchanged.
 **Scope:** audit and plan only. Apply behavior-preserving refactors separately from intentional correctness changes; no speedup or world-best claim without matched-task evidence. Detailed steps, source/test paths, controls, dependencies, rollback and Exa links live in the plan/report rather than expanding this size-gated ledger.
 
+## Competitive feature research (2026-09-08, Exa)
+
+Researched via `use-exa` against 2026 agent-native code-search competitors (Sverklo, Gortex,
+GitNexus, CodeGraphContext, Claude Context). Tensor-grep already covers most of the landscape
+(hybrid BM25+dense+RRF, symbol graph with defs/refs/callers/blast-radius, scan rulesets, MCP
+server, multi-project search). Three concrete gaps, not yet designed or scoped — **NEW, UNSTARTED**:
+
+- **F1 (bundled AST security-detector pack):** `tg scan --ruleset` is a generic rule engine; no
+  curated, versioned pack of common vulnerability-shape detectors (sql-string-concat,
+  weak-crypto, hardcoded-secret) ships by default the way Gortex's `search_ast` does. Closes a
+  gap explicitly named in third-party competitor comparisons. Seat: **Developer — Hard, Codex
+  Sol** (well-specified pattern authoring). Depends on: the existing `scan --ruleset` engine +
+  security-hardening patterns already in AGENTS.md.
+- **F2 (git-SHA-pinned agent decision memory):** no competitor surveyed (including tensor-grep)
+  has a persistent, symbol-scoped decision log queryable by git SHA ("what did we decide last
+  week about this symbol/file") — the single most differentiated gap found. A natural extension
+  of the existing session/checkpoint subsystem rather than new infrastructure. Seat:
+  **Developer — Extreme, Codex Astra or Fable 5.1 xhigh** (new persistent-state subsystem;
+  needs a design-authorization pass per `tensor-grep-design-authorization-ladder` before any
+  code). Depends on: `session_store.py`, `checkpoint_store.py`.
+- **F3 (published reproducible comparative benchmark):** competitors increasingly publish an
+  open, third-party-submittable benchmark (task categories, F1/R@5) as a credibility move; this
+  repo has strong internal benchmarks (`docs/benchmarks.md`) but no public comparative harness
+  against ripgrep/ast-grep on shared task categories. Seat: **Researcher, agy Gemini 3.8 Flash**
+  + `tensor-grep-benchmark-and-proof-toolkit`. Depends on: existing `scripts/dogfood/` +
+  benchmark scripts, positioned as a new public artifact rather than new product code.
+
+None of F1-F3 have a design doc, plan, or owner yet — they are demand-gated candidates, not
+committed work. Next step for any of them is `tensor-grep-demand-gate-measurement` before a
+design packet, per this repo's standing authorization ladder.
+
+## P13-EXT2: baseline-dev-architecture follow-on (2026-09-08, read-only audit)
+
+Audited against `baseline-dev-architecture`: `cli/main.py` confirmed the dominant violation at
+13,517 lines. More load-bearing than size alone — `docs/design/2026-09-07-import-edges-baseline.json`
+(P13's frozen graph) shows the `{cli,core,backends,io}` split has no real one-directional
+dependency graph (9/12 possible directed edges exist, including backward edges `core->cli` and
+`backends->cli`), already named as debt in the baseline's own `_comment` field, not a fresh find.
+Ranked extraction targets, **NEW, UNSTARTED, no design doc yet**:
+
+- **P13-EXT2a (lowest risk):** two literal duplicate functions between `cli/main.py` and
+  `cli/mcp_server.py` — `_json_output_version` (`main.py:610` / `mcp_server.py:698`) and
+  `_selected_gpu_execution_defaults` (`main.py:2858` / `mcp_server.py:1205`). Isolated, no
+  dispatch/routing logic, zero contract risk. Apply the `file-split-package-pattern` proxy
+  technique (already used by P13's own frozen-import-edges work).
+- **P13-EXT2b (moderate risk):** the 6-function `_route_test*` cluster (`main.py:6273-6530`).
+  Self-contained payload logic for one diagnostic command, but touches the agent-capsule
+  confidence/validation contract (`docs/CONTRACTS.md` §3) — needs contract-invariant tests
+  around the move, not just an import-edge freeze.
+- **DO NOT ATTEMPT CASUALLY:** the front-door/routing core (`search_command`,
+  `_can_delegate_to_native_tg_search`, the native-delegation field-coverage ratchet) — highest-
+  risk mass in the file; any move risks silently breaking the delegation gate's AST-derived
+  field census. Reserve for a dedicated, council-gated slice.
+
 
 > **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
 > GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in

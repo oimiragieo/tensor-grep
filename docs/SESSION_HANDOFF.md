@@ -33,6 +33,40 @@ false alarms this session — IDE/pyright diagnostics were repeatedly stale on j
 and a bare `python` (vs `uv run python`) resolved a stale installed site-packages copy instead
 of `src/` — neither was a real defect once verified against the real test suite.
 
+**2026-09-08 CI hardening: 6 more commits (`0207438`..`f473d67`, `git log 5d67210..f473d67
+--oneline` = 39 total commits in the full campaign) closed real gaps CI surfaced after the push,
+not new feature work.** Two tests hard-failed instead of skipping when an optional extra
+(`model2vec`, `pygls`/`lsprotocol`) was absent (`0207438`). CI's `Formatting & Linting` gate then
+caught a real ruff-lint issue and `--preview`-format drift across 6 campaign-touched files, fixed
+in `c390110`. `test_silent_loss_census_ratchet.py` correctly caught a real regression: AGT-06's
+new `src/tensor_grep/io/root_probe.py` introduced an uncounted silent-filesystem-loss site;
+re-running the census detector confirmed it was a pure relocation from `cli/main.py` (4->3,
+`root_probe.py` 0->1, net unchanged) and the ratchet was re-pinned accordingly, not suppressed
+(`98339c8`). A second `--preview` format pass caught 3 further violations that predate the whole
+campaign (`AGENTS.md`, `docs/architecture.md`, the campaign's own plan doc) — fixed rather than
+left as "not this session's fault" (`10322a7`). `mypy` caught a real type-narrowing gap in
+AGT-07's `completeness.py` (`89382b4`). Finally, the Windows `test-python` CI matrix cell was
+cancelled twice by its own 30-minute job timeout with **zero test failures both times** (7098 and
+7334 tests passed); the timeout was bumped to 45 minutes rather than re-running and hoping for a
+faster runner (`f473d67`). None of these six commits touch the 16 audit items' own remaining open
+scope — they are CI/tooling hygiene fixes surfaced by, not part of, the campaign's feature work.
+
+**2026-09-08 baseline-dev-architecture audit (read-only, no code changed):** `cli/main.py`
+confirmed as the dominant architecture violation at 13,517 lines. More load-bearing than the size
+itself: `docs/design/2026-09-07-import-edges-baseline.json` (P13's frozen graph) shows the
+`{cli,core,backends,io}` split has no real one-directional dependency graph — 9 of 12 possible
+directed edges exist, including two genuine backward edges (`core->cli`, `backends->cli`) that
+violate "lower layers never import higher." This is pre-existing, already named in the baseline's
+own `_comment` field as debt P13's still-open import-linter adoption is meant to burn down — not
+a fresh discovery. Ranked extraction targets for a P13 follow-on: (1) lowest-risk, two literal
+duplicate functions between `cli/main.py` and `cli/mcp_server.py` (`_json_output_version`,
+`_selected_gpu_execution_defaults`); (2) moderate-risk, the 6-function `_route_test*` cluster
+(`main.py:6273-6530`) which touches the agent-capsule confidence/validation contract and needs
+contract-invariant tests around the move; (3) do-not-attempt-casually, the front-door/routing core
+(`search_command`, `_can_delegate_to_native_tg_search`) — highest-risk mass in the file, needs a
+dedicated council-gated slice, not a routine extraction. Filed as P13-EXT2 candidates in
+`docs/BACKLOG.md`'s competitive/follow-on research section.
+
 ### 2026-09-05 — P1 diff-impact ship (v1.116.0) + S1-S6 worktree PRs
 
 - **P1 SHIPPED:** PR #1128 / `7d2baa5` — add `diff-impact` CLI command, transitive blast-radius calculation, risk tiers, and failure thresholds. Published to PyPI and GitHub release assets as `v1.116.0` (run `33995069360`).
