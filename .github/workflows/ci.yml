@@ -507,7 +507,12 @@ jobs:
     needs: [smoke, changes]
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # Windows runners have run this job to 27-30min twice in one session (2026-09-07, all
+    # 7000+ tests passing both times) while ubuntu/macos finish in 14-16min -- 30 was cutting
+    # it too close on Windows specifically and canceling a fully-green run mid-cleanup reads
+    # as a CI failure with zero evidence of one. Bumped for real headroom rather than
+    # re-running the job and hoping for a faster runner.
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
