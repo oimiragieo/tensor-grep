@@ -120,6 +120,12 @@ def _walk_tracked_files_bounded(
             try:
                 size = item.stat().st_size
             except OSError:
+                # A file that vanishes or becomes unreadable mid-walk (permission change, a
+                # concurrent delete) must not silently disappear from `result` while the
+                # population still reports "complete" -- that is the exact false-PASS this
+                # function exists to prevent (see the module docstring). Skip the file but mark
+                # the population incomplete rather than `continue`ing silently.
+                incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
             if size > max_file_bytes:

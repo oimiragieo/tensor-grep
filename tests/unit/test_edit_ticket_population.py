@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from tensor_grep.cli.edit_ticket_service import (
     _IGNORED_DEPENDENCY_DIRS,
@@ -8,6 +11,34 @@ from tensor_grep.cli.edit_ticket_service import (
     build_edit_ready_ticket,
     verify_edit_ticket,
 )
+
+
+def test_unreadable_file_marks_population_incomplete_not_silently_dropped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file that raises OSError on stat() (permission change, vanished mid-walk) must not
+    silently disappear from the result while population still reports "complete" -- that is
+    the exact false-PASS AGT-04 exists to prevent (see the module docstring)."""
+    (tmp_path / "good.py").write_text("1\n", encoding="utf-8")
+    unreadable = tmp_path / "unreadable.py"
+    unreadable.write_text("2\n", encoding="utf-8")
+
+    real_stat = Path.stat
+
+    def _flaky_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
+        if self.name == "unreadable.py":
+            raise OSError("simulated permission error")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _flaky_stat)
+
+    files, population = _walk_tracked_files_bounded(tmp_path)
+
+    assert "good.py" in files
+    assert "unreadable.py" not in files
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert population["verified"] is False
 
 
 def test_dependency_tree_is_pruned_before_descent(tmp_path: Path) -> None:
