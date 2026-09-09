@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-import hashlib
 import json
 import logging
 import os
@@ -55,6 +54,7 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_root import (
     _SESSION_NEARBY_LOOKUP_ENV as _SESSION_NEARBY_LOOKUP_ENV,
 )
+from tensor_grep.cli.session_root import _carry_last_prepare, _snapshot_generation
 from tensor_grep.cli.session_root import (
     _find_project_root as _find_project_root,
 )
@@ -479,19 +479,6 @@ def _capture_snapshot(
     return snapshot
 
 
-def _snapshot_generation(snapshot: list[dict[str, Any]]) -> str:
-    """Opaque, content-derived identity for a session's file snapshot (AGT-02 Task 02).
-
-    Deliberately NOT a wall-clock timestamp -- `decision_freshness` must never infer identity
-    from `refreshed_at`/`created_at` alone (docs/plans/2026-09-07-agentic-quality-simplification.md
-    Task 02). Hashing the sorted `{path, size, mtime_ns}` snapshot list (already produced by
-    `_capture_snapshot`) means the identity changes if and only if the tracked file set or its
-    stat-visible content changed, and is stable across repeated refreshes that see no change.
-    """
-    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
-
-
 def _snapshot_path_key(raw_path: object) -> str:
     path = Path(str(raw_path)).expanduser()
     if path.is_absolute():
@@ -745,23 +732,20 @@ def open_session(
     # Task #288: capture the snapshot through a flag so files we could not stat are COUNTED
     # rather than silently absent. Emitted below only when it actually fired.
     snapshot_unreadable = _UnreadablePathFlag()
+    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
         "root": str(root),
         "created_at": created_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(
-            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
-        ),
+        "snapshot": snapshot,
         "refresh_type": "full",
         "changeset": changeset,
         "scan_limit": scan_limit,
         "build_seconds": max(0.0, built_at - started_at),
+        "current_generation": _snapshot_generation(snapshot),
     }
-    payload["current_generation"] = _snapshot_generation(
-        cast(list[dict[str, Any]], payload["snapshot"])
-    )
     if snapshot_unreadable.hit:
         # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
         # Emitted ONLY when it fired, so a clean capture is byte-identical to the old payload and
@@ -864,6 +848,7 @@ def refresh_session(
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
     snapshot_unreadable = _UnreadablePathFlag()  # task #288, see open_session
+    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -871,12 +856,11 @@ def refresh_session(
         "created_at": created_at,
         "refreshed_at": refreshed_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(
-            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
-        ),
+        "snapshot": snapshot,
         "refresh_type": refresh_type,
         "changeset": changeset,
         "scan_limit": cast(dict[str, Any] | None, repo_map.get("scan_limit")),
+        "current_generation": _snapshot_generation(snapshot),
     }
     if snapshot_unreadable.hit:
         # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
@@ -888,8 +872,6 @@ def refresh_session(
         }
     if refresh_fallback_reason is not None:
         payload["refresh_fallback_reason"] = refresh_fallback_reason
-    new_generation = _snapshot_generation(cast(list[dict[str, Any]], payload["snapshot"]))
-    payload["current_generation"] = new_generation
     session_path = _session_payload_path(root, session_id)
 
     # q10 RMW race: same load->mutate->write hazard as open_session; serialize against every
@@ -915,22 +897,8 @@ def refresh_session(
                 # Payload unreadable at this instant (e.g. mid-write elsewhere); fall back to
                 # the pre-lock snapshot rather than failing the refresh outright.
                 current_on_disk = existing
-        if "last_prepare" in current_on_disk and current_on_disk["last_prepare"] is not None:
-            # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): a decision
-            # made against an older snapshot is retained (never silently discarded on refresh) but
-            # is stamped `historical`, not `current`, once the tracked file set/content has moved
-            # on. `decision_generation` absent (legacy payload predating this feature, or a decision
-            # captured before any generation identity existed) is `unknown` -- identity is never
-            # inferred from wall-clock timestamps alone.
-            carried_last_prepare = dict(cast(dict[str, Any], current_on_disk["last_prepare"]))
-            decision_generation = carried_last_prepare.get("decision_generation")
-            if decision_generation is None:
-                carried_last_prepare["decision_freshness"] = "unknown"
-            elif decision_generation != new_generation:
-                carried_last_prepare["decision_freshness"] = "historical"
-            # else: unchanged content -- preserve whatever freshness status was already recorded.
-            carried_last_prepare["current_generation"] = new_generation
-            payload["last_prepare"] = carried_last_prepare
+        if (carried := current_on_disk.get("last_prepare")) is not None:
+            payload["last_prepare"] = _carry_last_prepare(carried, _snapshot_generation(snapshot))
         _write_json_atomic(session_path, payload)
         if payload_cache is not None:
             payload_cache.put(session_id, str(root), payload)

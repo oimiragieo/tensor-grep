@@ -13,12 +13,9 @@ from tensor_grep.cli.session_root import (
     _index_path,
     _session_payload_path,
     _session_root_for_payload,
-)
-from tensor_grep.cli.session_store import (
-    _load_session_payload,
     _snapshot_generation,
-    _write_json_atomic,
 )
+from tensor_grep.cli.session_store import _load_session_payload, _write_json_atomic
 
 
 def session_prepare(

@@ -18,10 +18,13 @@ There are TWO resolutions here and confusing them has already caused one regress
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 _TG_DIRNAME = ".tensor-grep"
 _SESSIONS_SUBDIR = "sessions"
@@ -240,3 +243,21 @@ def _session_root_for_payload(session_id: str, path: str = ".") -> Path:
             if _session_payload_path(candidate, session_id).exists():
                 return candidate
     return root
+
+
+def _snapshot_generation(snapshot: list[dict[str, Any]]) -> str:
+    """Content-derived snapshot identity; never a wall-clock timestamp (AGT-02)."""
+    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
+
+
+def _carry_last_prepare(last_prepare: dict[str, Any], new_generation: str) -> dict[str, Any]:
+    """Retain a prior decision across refresh, restamped historical/unknown once stale (AGT-02)."""
+    carried = dict(last_prepare)
+    decision_generation = carried.get("decision_generation")
+    if decision_generation is None:
+        carried["decision_freshness"] = "unknown"
+    elif decision_generation != new_generation:
+        carried["decision_freshness"] = "historical"
+    carried["current_generation"] = new_generation
+    return carried
