@@ -41,6 +41,33 @@ lines) as the dominant violation and found real backward import edges (`core->cl
 `backends->cli`) in the frozen P13 graph, already tracked as debt. Ranked extraction targets
 (2 low/moderate-risk, 1 explicitly do-not-attempt-casually) in the same addenda section.
 
+**F4-F6 (new, unstarted, demand-gated, 2026-09-10 CEO-update Exa research):** survey of the 2026
+agent-code-intelligence category (Serena 25.2k stars/MIT/LSP-over-MCP, Aider repo-map, Sverklo MCP,
+mache/ley-line-open, gps, CodeGraph, claude-context, grepai) found three gaps, none yet designed:
+- **F4 — symbol-level atomic edit primitives** (`tg edit symbol replace-body|insert-after|safe-delete|rename`).
+  Every source names Serena's LSP-driven atomic symbol edits (no whole-file read) as the category
+  standard; `tg prepare`/`edit-ready`/`verify-edit` build strong pre-edit evidence but stop short
+  of performing a confined symbol edit itself. Seat: design doc (senior-software-architect +
+  security-trust-officer, new write surface) -> Codex Sol, gated by the existing claims-only OS
+  fence.
+- **F5 — graph-centrality symbol-importance ranking** (PageRank over the existing caller/callee
+  graph, feeding `tg find`/`tg context`'s token-budget packing). Two independent teardowns name
+  this Aider's top differentiator (4.3-6.5% of context window vs 54-70% for iterative search) --
+  the same gap tensor-grep's own architecture contract already flags as "flat no-IDF scorer."
+  Seat: agy research spike (measure against the existing retrieval-quality benchmark) -> Codex
+  Sol/Luna, gated on a measured win, no claim without matched-task evidence.
+- **F6 — agent-callable business-invariant binding** (`tg invariants-for <symbol>` reading
+  `.tg/invariants.yml`: symbol -> human-authored policy statement + evidence-doc pointer, e.g.
+  "refunds > $1000 require finance approval" -> `docs/policy/refunds.md`). A 2026-09 landscape
+  survey names this the one property no surveyed competitor has -- Semgrep/CodeQL rules are
+  security-pattern-first and machine-authored, not a PM-authored business-rule binding an LLM
+  can't reconstruct from a tree-sitter pass. Fits tensor-grep's agent-first positioning (extends
+  `tg prepare`'s existing `ask_user_before_editing` gesture with a real data source). Seat:
+  design-authorization ladder first -- new file format, new CLI surface, new trust boundary.
+
+Sources (Exa, 2026-09-10): agentic-research/mache and invariance-ai/gps competitive-landscape.md;
+sverklo.com/vs/matrix; Ry Walker Research 14-tool survey (2026-03-15); andrew.ooo Serena review.
+
 
 > **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
 > GitHub (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
