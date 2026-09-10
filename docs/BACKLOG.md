@@ -65,8 +65,11 @@ mache/ley-line-open, gps, CodeGraph, claude-context, grepai) found three gaps, n
   `tg prepare`'s existing `ask_user_before_editing` gesture with a real data source). Seat:
   design-authorization ladder first -- new file format, new CLI surface, new trust boundary.
 
-Sources (Exa, 2026-09-10): agentic-research/mache and invariance-ai/gps competitive-landscape.md;
-sverklo.com/vs/matrix; Ry Walker Research 14-tool survey (2026-03-15); andrew.ooo Serena review.
+Sources (Exa): mache/gps competitive-landscape.md; sverklo.com/vs/matrix; Ry Walker 14-tool survey.
+
+**F7-F8 (new, demand-gated, Exa round 2):** **F7** git-diff-to-symbol mapping (`tg diff-symbols`),
+shares AGT-04's git identity layer. **F8** index/session integrity self-check with explicit
+`status:"degraded"`, matching `result_incomplete`.
 
 
 > **Canonical prioritized/historical work ledger.** Kept in sync with the CLI task store (`TaskUpdate`);
