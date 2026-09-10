@@ -1,6 +1,171 @@
 # CHANGELOG
 
 
+## v1.119.2 (2026-09-10)
+
+### Documentation
+
+- **backlog**: Agt-03 ValidationAdvice migration merged (PR #1138)
+  ([`59d93bc`](https://github.com/oimiragieo/tensor-grep/commit/59d93bcd26734b6f60176a2d8f83fdbe79c326ba))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **backlog**: Agt-07 mcp_server migration merged (PR #1137)
+  ([`e4152fa`](https://github.com/oimiragieo/tensor-grep/commit/e4152fa074d736f181e159b1532c25c26c2b6dd0))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **backlog**: Agt-08 why-ranked order pin merged (PR #1139)
+  ([`631e7ee`](https://github.com/oimiragieo/tensor-grep/commit/631e7ee94ecfea1af30c3fd3192f6739e2e692e2))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **backlog**: F4-f6 competitive research (symbol edit, PageRank ranking, invariants)
+  ([`fb52fe0`](https://github.com/oimiragieo/tensor-grep/commit/fb52fe0b5c4d717cc813e4a7d54f89b0ce4452cf))
+
+CEO-update research pass (Exa, 2026-09-10) surveyed the 2026 agent-code-intelligence category
+  (Serena, Aider, Sverklo, mache, gps, CodeGraph, claude-context, grepai) and found three
+  demand-gated feature gaps, none yet designed: - F4: symbol-level atomic edit primitives (Serena's
+  replace_symbol_body/insert_after/ safe_delete/rename pattern; tg builds pre-edit evidence but
+  doesn't perform the edit) - F5: graph-centrality (PageRank) symbol-importance ranking feeding
+  token-budget packing (Aider's top differentiator per two independent teardowns; matches tg's own
+  documented "flat no-IDF scorer" weak point) - F6: agent-callable business-invariant binding
+  (.tg/invariants.yml symbol->policy+evidence binding; explicitly named as the one property no
+  surveyed competitor has)
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **backlog**: P9 warm-prepare-reuse merged (PR #1140)
+  ([`d94a1a9`](https://github.com/oimiragieo/tensor-grep/commit/d94a1a9deb8129b3763dc8ae47048a0bf0568cd9))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **design**: Agt-04 symlink/junction confinement design doc (not yet reviewed)
+  ([`9f5326f`](https://github.com/oimiragieo/tensor-grep/commit/9f5326f3ef1ab4afcd329fdf9ba23703b839e5fb))
+
+Advances AGT-04's remaining Task 04 scope (docs/BACKLOG.md): names the concrete confinement gap in
+  edit_ticket_service.py's population walk (os.walk descends transparently into a Windows junction
+  under root per the cross-platform-path-confinement skill's Part 1 M1 shape; item.stat() follows
+  symlinks, fingerprinting out-of-root content as in-root) and proposes reparse-point-aware
+  directory pruning, lstat-based fingerprinting, and git-tracked identity as the primary population
+  source with the filesystem walk as fallback.
+
+Design only -- no implementation. Per this repo's standing rule for security-relevant
+  path-confinement changes, requires an independent review (senior-software-architect +
+  security-trust-officer) before any implementation PR.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+### Performance Improvements
+
+- **prepare**: Reuse fresh session repo_map, skip redundant build_repo_map (P9)
+  ([#1140](https://github.com/oimiragieo/tensor-grep/pull/1140),
+  [`eb6dec7`](https://github.com/oimiragieo/tensor-grep/commit/eb6dec73bc4b45ba8729141ac99163ab9c067fcd))
+
+Advances P9's warm-reuse gap (docs/BACKLOG.md, Task 06): session_prepare now checks whether the
+  session's stamped current_generation still matches a fresh recomputation of _snapshot_generation
+  over its own snapshot (the exact identity AGT-02 established) and, when fresh, passes the
+  session's already-loaded repo_map into build_prepare_snapshot via a new optional repo_map=
+  parameter threaded through _build_prepare_payload. Every existing caller passes nothing extra and
+  is unaffected (default None preserves today's cold-build behavior byte-for-byte).
+
+Spy-control test proves warm session_prepare makes zero build_repo_map calls, and a drifted
+  current_generation stamp correctly falls back to a cold rebuild rather than silently serving a
+  stale map.
+
+Lock-hold-time measurement, generation-safe BM25 publication, and persistent semantic_index adoption
+  remain open, explicitly out of scope for this slice.
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Refactoring
+
+- **mcp**: Migrate mcp_server incomplete-envelope consumer to CompletenessEvidence (AGT-07)
+  ([#1137](https://github.com/oimiragieo/tensor-grep/pull/1137),
+  [`756769f`](https://github.com/oimiragieo/tensor-grep/commit/756769f14fd1565c375bfdcbd161ac7b7aaa0fb7))
+
+* refactor(mcp): migrate _inject_mcp_contract_fields to typed CompletenessEvidence (AGT-07)
+
+Advances AGT-07 (docs/BACKLOG.md, Task 09): mcp_server.py's incomplete-envelope consumer now
+  constructs the typed CompletenessEvidence record internally via core.completeness.project() and
+  projects back out with to_legacy_dict(), instead of calling unified_incomplete_envelope()
+  directly. Byte-identical output -- proven per-row against the frozen truth table plus two mutation
+  controls (unreadable-path-to-remediable and nested-partial-to-complete must fail).
+
+main.py's own ~74 result_incomplete/budget_remediable references are woven through its Result
+  dataclass across many call sites and are deliberately left for a separate, higher-risk migration
+  slice.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+* fix(mcp): avoid bare-call ratchet regression in the CompletenessEvidence migration
+
+The bare_call_ratchet gate correctly caught a new weld: the test spied on `project` by
+  monkeypatching it directly on `mcp_server`, and the source called it as a bare name in the same
+  module -- exactly the coupling that gate exists to prevent
+  (docs/design/2026-08-19-split-floor-escape.md Route A). Switch to a qualified module attribute
+  read (`_completeness.project(...)`) and patch at the origin module
+  (`tensor_grep.core.completeness.project`) instead, restoring mcp_server.py to 0 bare calls.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+- **prepare**: Introduce typed ValidationAdvice record (AGT-03)
+  ([#1138](https://github.com/oimiragieo/tensor-grep/pull/1138),
+  [`e163de4`](https://github.com/oimiragieo/tensor-grep/commit/e163de4b935dec46bddaeb7b5cf2adc877170afc))
+
+Advances AGT-03 (docs/BACKLOG.md, Task 03): adds prepare_protocol.py with a frozen ValidationAdvice
+  dataclass that separates detected-recipe IDENTITY (status/source/reason) from execution AUTHORITY
+  (argv). Moves the existing _KNOWN_VALIDATION_RECIPES allowlist and _select_validation_argv
+  selector from prepare_service.py into prepare_protocol.py (prepare_service keeps them as aliases
+  -- one-direction import only, prepare_protocol never imports prepare_service back).
+  prepare_service.py's on_success construction now builds/consumes ValidationAdvice internally and
+  projects back to the identical on_success dict shape -- byte-identical output, proven by the
+  existing unchanged test_prepare_next_action.py assertions passing.
+
+Centralized stop_if semantics and versioned canonical session serialization (the other two open
+  items on AGT-03's Task 09) remain out of scope for this slice.
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Testing
+
+- **find**: Pin --why-ranked as order-preserving (AGT-08)
+  ([#1139](https://github.com/oimiragieo/tensor-grep/pull/1139),
+  [`6e80d4f`](https://github.com/oimiragieo/tensor-grep/commit/6e80d4f621e617bfa033a230f8e24f681775b1cc))
+
+Advances AGT-08's Task 11 first checkbox (docs/BACKLOG.md, and
+  docs/plans/2026-09-07-agentic-quality-simplification.md Task 11): freezes the current, correct
+  behavior that `--why-ranked` is a pure additive annotation and never reorders `tg find`'s returned
+  matches, on a fixture producing multiple ranked results. No production code touched -- this is the
+  regression baseline required before any future contribution-recording work (threading the new
+  core.retrieval_fusion.FusionExplanation record through find results) touches the ranking pipeline,
+  per Task 11's accept criterion "Verify why-ranked cannot alter the returned order".
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+
 ## v1.119.1 (2026-09-10)
 
 ### Bug Fixes
