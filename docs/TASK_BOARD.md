@@ -205,7 +205,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-09-05** (DOCS-RECONCILE slice: stamp `post-**v1.115.0**`, correct F8/MCP-SURFACE triggers, record SEC-001 #1122 / `a77a150` and ENV-SYNC closeout). canonical index `2026-08-30.1`. Task 2A RED remains correctly blocked (advanced, not GREEN). Open PRs derived live 2026-08-30: **NONE**. CEO packet: `docs/audits/2026-08-13-ceo-backlog-update.md` (historical closeout; newer dated audits exist but this file remains the governance pin).
+Last reconciled: **2026-09-10** (session closeout: stamp `post-**v1.119.2**`, PyPI-verified live via `pip index versions tensor-grep` = `1.119.2` LATEST, not from a log). canonical index `2026-09-07.1`. Reconciles the agentic-quality-simplification campaign wave 2: 5 PRs merged and squash-closed this session (#1136 AGT-02, #1137 AGT-07, #1138 AGT-03, #1139 AGT-08, #1140 P9), each independently audited AUDIT_CLEAR by a separate agent; released as v1.119.1 and v1.119.2. **Task 2A RED remains correctly blocked** (advanced, not GREEN -- unchanged this session, not touched). Open PRs derived live 2026-09-10: **NONE** (`gh pr list --state open` returned `[]`). One design-only artifact awaiting independent security review before implementation: `docs/design/2026-09-10-agt04-symlink-junction-confinement.md`. Full per-item detail in `docs/BACKLOG.md`'s AGT-02/03/07/08/P9 rows. CEO packet: `docs/audits/2026-08-13-ceo-backlog-update.md` (historical closeout; newer dated audits exist but this file remains the governance pin).
 
 Execution plans (historical, all shipped): `docs/plans/2026-08-10-a90-unknown-command-fail-closed.md`
 (#997 → v1.110.13) and `docs/plans/2026-08-08-backlog-completion-plan.md` (M16/M17 wave).
