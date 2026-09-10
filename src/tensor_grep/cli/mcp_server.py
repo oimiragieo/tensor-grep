@@ -34,9 +34,6 @@ from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
-from tensor_grep.cli.incompleteness import (
-    unified_incomplete_envelope,
-)
 from tensor_grep.cli.main import (
     _LARGE_ROOT_SCAN_FILE_CEILING,
     _apply_semantic_rerank,
@@ -95,6 +92,7 @@ from tensor_grep.cli.repo_map import (
 from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary as resolve_native_tg_binary,
 )
+from tensor_grep.core import completeness as _completeness
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import (
     collect_device_inventory as collect_device_inventory,
@@ -1124,7 +1122,10 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
         return result_json
     payload["mcp_contract_version"] = _TG_MCP_SERVER_CONTRACT_VERSION
     payload.setdefault("schema_version", _json_output_version())
-    payload.setdefault("incomplete", unified_incomplete_envelope(payload))
+    # AGT-07 Task 09: construct the typed CompletenessEvidence record internally and project
+    # back out via to_legacy_dict() for this tool's existing external `incomplete` shape --
+    # behavior-preserving (byte-identical to the prior direct unified_incomplete_envelope call).
+    payload.setdefault("incomplete", _completeness.project(payload).to_legacy_dict())
     return json.dumps(payload, indent=2)
 
 
