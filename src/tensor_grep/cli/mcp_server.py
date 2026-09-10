@@ -92,7 +92,7 @@ from tensor_grep.cli.repo_map import (
 from tensor_grep.cli.runtime_paths import (
     resolve_native_tg_binary as resolve_native_tg_binary,
 )
-from tensor_grep.core.completeness import project
+from tensor_grep.core import completeness as _completeness
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_inventory import (
     collect_device_inventory as collect_device_inventory,
@@ -1125,7 +1125,7 @@ def _inject_mcp_contract_fields(result_json: str) -> str:
     # AGT-07 Task 09: construct the typed CompletenessEvidence record internally and project
     # back out via to_legacy_dict() for this tool's existing external `incomplete` shape --
     # behavior-preserving (byte-identical to the prior direct unified_incomplete_envelope call).
-    payload.setdefault("incomplete", project(payload).to_legacy_dict())
+    payload.setdefault("incomplete", _completeness.project(payload).to_legacy_dict())
     return json.dumps(payload, indent=2)
 
 

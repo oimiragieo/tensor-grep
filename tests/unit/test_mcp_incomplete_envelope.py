@@ -16,7 +16,6 @@ documented in the tensor-grep-architecture-contract skill).
 
 import json
 
-import tensor_grep.cli.mcp_server as mcp_server
 from tensor_grep.cli.incompleteness import unified_incomplete_envelope
 from tensor_grep.cli.mcp_server import (
     _TG_MCP_SERVER_CONTRACT_VERSION,
@@ -26,6 +25,7 @@ from tensor_grep.cli.mcp_server import (
     tg_session_list,
     tg_session_open,
 )
+from tensor_grep.core import completeness
 from tensor_grep.core.completeness import CompletenessEvidence, project
 
 # Frozen truth table fixtures (mirrors test_completeness_projection.py's TRUTH_TABLE) --
@@ -290,13 +290,13 @@ def test_inject_mcp_contract_fields_constructs_completeness_evidence_internally(
     internally (via `project`/`from_legacy_envelope`) rather than operating on the raw
     `unified_incomplete_envelope` dict projection directly."""
     calls: list[dict] = []
-    real_project = mcp_server.project
+    real_project = completeness.project
 
     def spy_project(payload: dict) -> CompletenessEvidence:
         calls.append(payload)
         return real_project(payload)
 
-    monkeypatch.setattr(mcp_server, "project", spy_project)
+    monkeypatch.setattr(completeness, "project", spy_project)
     raw = json.dumps({"result_incomplete": True, "incomplete_reason": "hit scan_limit"})
     _inject_mcp_contract_fields(raw)
     assert calls, "_inject_mcp_contract_fields did not call core.completeness.project"
