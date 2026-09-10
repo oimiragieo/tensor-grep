@@ -1,6 +1,14 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-09-07
+Last updated: 2026-09-10
+
+**2026-09-10 addendum (this session):** 5 more agentic-quality-simplification slices shipped and
+independently audited AUDIT_CLEAR (AGT-02 `3e67c45`, AGT-07 `756769f`, AGT-03 `e163de4`, AGT-08
+`6e80d4f`, P9 `eb6dec7`), released as v1.119.1 and v1.119.2, both PyPI-confirmed live. AGT-04's
+remaining scope now has a drafted design doc (`docs/design/2026-09-10-agt04-symlink-junction-
+confinement.md`) awaiting independent security review before implementation. Full per-item detail
+in `docs/BACKLOG.md`'s AGT-02/03/07/08/P9 rows and F4-F8 competitive-research entries; this
+addendum does not restate the 2026-09-07 closeout narrative below, which remains accurate history.
 
 ## Current Release State
 
