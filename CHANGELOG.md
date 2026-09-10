@@ -1,6 +1,56 @@
 # CHANGELOG
 
 
+## v1.119.3 (2026-09-10)
+
+### Bug Fixes
+
+- **docs**: Reconcile TASK_BOARD.md reconcile stamp (was 6 releases stale)
+  ([`c475e9c`](https://github.com/oimiragieo/tensor-grep/commit/c475e9cd3d96bd8f5e73898599450fadf774861d))
+
+test_task_board_reconcile_stamp_is_not_many_releases_stale correctly caught a real drift: the
+  board's stamp was still post-v1.115.0 while this session's own releases pushed the shipped version
+  to v1.119.2 -- 6 releases behind the 5-release tolerance. Found via CI on a docs-only commit;
+  fixed by reconciling against reality first (0 open PRs verified live, PyPI verified live at
+  v1.119.2, Task 2A's still-blocked status confirmed unchanged) before bumping the stamp, per the
+  test's own explicit instruction not to just re-stamp without reconciling.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+### Documentation
+
+- Session closeout -- reconcile SESSION_HANDOFF.md and stale QUEUE.md
+  ([`a1ce28e`](https://github.com/oimiragieo/tensor-grep/commit/a1ce28e4169307d27db40e01263fd0f909ef6866))
+
+SESSION_HANDOFF.md: addendum for this session's 5 shipped slices (AGT-02/03/07/08, P9), both
+  releases (v1.119.1, v1.119.2), and the AGT-04 design doc awaiting review. docs-governance test
+  suite re-verified green after the edit (44 passed).
+
+features/QUEUE.md: reconciled a stale "todo" row for handler-census-w2-wave2 -- cross-checked
+  against real commits (5816afe, b470750/#1125) rather than trusting the linked plan doc's own "ALL
+  WAVES COMPLETE" header at face value; confirmed both PRs (#1123, #1124) already merged 2026-08-30.
+  Queue now empty.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **backlog**: F7-f8 competitive research (git-diff-to-symbol, index integrity self-check)
+  ([`3d448f2`](https://github.com/oimiragieo/tensor-grep/commit/3d448f2242aa8b1ed15715de92ebeab1fbcc894b))
+
+CEO-update research round 2 (Exa): surveyed 2026 MCP code-intelligence daemons (nexus-mcp, lybrary,
+  codebase-memory-mcp, jCodeMunch) and found two more demand-gated feature gaps: - F7:
+  git-diff-to-symbol mapping (tg diff-symbols), sharing AGT-04's design doc's git-porcelain identity
+  layer (same mechanism serves a security fix and a product feature) - F8: index/session integrity
+  self-check with explicit degraded status, matching tg's own result_incomplete honesty discipline
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+
 ## v1.119.2 (2026-09-10)
 
 ### Documentation
