@@ -54,6 +54,7 @@ from tensor_grep.cli.session_root import (
 from tensor_grep.cli.session_root import (
     _SESSION_NEARBY_LOOKUP_ENV as _SESSION_NEARBY_LOOKUP_ENV,
 )
+from tensor_grep.cli.session_root import _carry_last_prepare, _snapshot_generation
 from tensor_grep.cli.session_root import (
     _find_project_root as _find_project_root,
 )
@@ -731,19 +732,19 @@ def open_session(
     # Task #288: capture the snapshot through a flag so files we could not stat are COUNTED
     # rather than silently absent. Emitted below only when it actually fired.
     snapshot_unreadable = _UnreadablePathFlag()
+    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
         "root": str(root),
         "created_at": created_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(
-            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
-        ),
+        "snapshot": snapshot,
         "refresh_type": "full",
         "changeset": changeset,
         "scan_limit": scan_limit,
         "build_seconds": max(0.0, built_at - started_at),
+        "current_generation": _snapshot_generation(snapshot),
     }
     if snapshot_unreadable.hit:
         # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
@@ -847,6 +848,7 @@ def refresh_session(
     refreshed_at = datetime.now(UTC).isoformat()
     created_at = str(existing.get("created_at", refreshed_at))
     snapshot_unreadable = _UnreadablePathFlag()  # task #288, see open_session
+    snapshot = _capture_snapshot(repo_map["related_paths"], unreadable_hit=snapshot_unreadable)
     payload = {
         "version": _SESSION_VERSION,
         "session_id": session_id,
@@ -854,12 +856,11 @@ def refresh_session(
         "created_at": created_at,
         "refreshed_at": refreshed_at,
         "repo_map": repo_map,
-        "snapshot": _capture_snapshot(
-            repo_map["related_paths"], unreadable_hit=snapshot_unreadable
-        ),
+        "snapshot": snapshot,
         "refresh_type": refresh_type,
         "changeset": changeset,
         "scan_limit": cast(dict[str, Any] | None, repo_map.get("scan_limit")),
+        "current_generation": _snapshot_generation(snapshot),
     }
     if snapshot_unreadable.hit:
         # Task #288: mirrors `build_repo_map`'s `unreadable_paths = {count, sample}` shape (#276).
@@ -896,8 +897,8 @@ def refresh_session(
                 # Payload unreadable at this instant (e.g. mid-write elsewhere); fall back to
                 # the pre-lock snapshot rather than failing the refresh outright.
                 current_on_disk = existing
-        if "last_prepare" in current_on_disk:
-            payload["last_prepare"] = current_on_disk["last_prepare"]
+        if (carried := current_on_disk.get("last_prepare")) is not None:
+            payload["last_prepare"] = _carry_last_prepare(carried, _snapshot_generation(snapshot))
         _write_json_atomic(session_path, payload)
         if payload_cache is not None:
             payload_cache.put(session_id, str(root), payload)

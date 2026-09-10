@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import typer
 
@@ -13,6 +13,7 @@ from tensor_grep.cli.session_root import (
     _index_path,
     _session_payload_path,
     _session_root_for_payload,
+    _snapshot_generation,
 )
 from tensor_grep.cli.session_store import _load_session_payload, _write_json_atomic
 
@@ -38,12 +39,45 @@ def session_prepare(
             query=query,
         )
         snap_dict = asdict(snapshot)
+
+        # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
+        # decision with the session's CURRENT content identity, not a wall-clock timestamp. A
+        # legacy payload written before this feature existed (or before any refresh recomputed
+        # it) has no `current_generation` yet; derive it from the payload's own `snapshot` rather
+        # than leaving it permanently unknowable, but never invent identity out of thin air.
+        current_generation = payload.get("current_generation")
+        if current_generation is None:
+            existing_snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
+            if existing_snapshot:
+                current_generation = _snapshot_generation(existing_snapshot)
+                payload["current_generation"] = current_generation
+        snap_dict["decision_generation"] = current_generation
+        snap_dict["current_generation"] = current_generation
+        snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"
+
         payload["last_prepare"] = snap_dict
         _write_json_atomic(session_path, payload)
 
     res = dict(snap_dict)
     res["session_id"] = session_id
     return res
+
+
+def _last_prepare_with_effective_freshness(payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Fill in `decision_freshness` for a `last_prepare` that predates this feature, or whose
+    identity metadata was stripped some other way. Never inferred from wall-clock timestamps: a
+    missing `decision_generation` is always `unknown`, regardless of when the record was written.
+    """
+    last_prepare = payload.get("last_prepare")
+    if not isinstance(last_prepare, dict):
+        return cast(dict[str, Any] | None, last_prepare)
+    result = dict(last_prepare)
+    decision_generation = result.get("decision_generation")
+    if "decision_freshness" not in result:
+        result["decision_freshness"] = "unknown" if decision_generation is None else "current"
+    if "current_generation" not in result:
+        result["current_generation"] = payload.get("current_generation")
+    return result
 
 
 def session_resume(session_id: str, path: str = ".") -> dict[str, Any]:
@@ -55,7 +89,8 @@ def session_resume(session_id: str, path: str = ".") -> dict[str, Any]:
         "root": payload.get("root", str(Path(path).resolve())),
         "created_at": payload.get("created_at", ""),
         "resumed": True,
-        "last_prepare": payload.get("last_prepare"),
+        "last_prepare": _last_prepare_with_effective_freshness(payload),
+        "current_generation": payload.get("current_generation"),
     }
 
 
