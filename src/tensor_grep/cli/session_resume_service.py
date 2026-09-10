@@ -34,11 +34,6 @@ def session_prepare(
     # HIGH finding: "unlocked prepare/refresh read-modify-write race").
     with index_lock(_index_path(root)):
         payload = _load_session_payload(session_id, path)
-        snapshot = build_prepare_snapshot(
-            path=path,
-            query=query,
-        )
-        snap_dict = asdict(snapshot)
 
         # AGT-02 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 02): stamp this
         # decision with the session's CURRENT content identity, not a wall-clock timestamp. A
@@ -46,11 +41,33 @@ def session_prepare(
         # it) has no `current_generation` yet; derive it from the payload's own `snapshot` rather
         # than leaving it permanently unknowable, but never invent identity out of thin air.
         current_generation = payload.get("current_generation")
+        existing_snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
         if current_generation is None:
-            existing_snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
             if existing_snapshot:
                 current_generation = _snapshot_generation(existing_snapshot)
                 payload["current_generation"] = current_generation
+
+        # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): reuse the
+        # session's own repo_map instead of paying `build_repo_map`'s full cold scan again, but
+        # ONLY when the payload's stamped `current_generation` still matches a fresh
+        # recomputation of `_snapshot_generation` over the payload's own `snapshot` field -- the
+        # exact identity check AGT-02 established (session_root._snapshot_generation). A legacy
+        # payload with no `current_generation` at all, or one whose stamp has drifted from its
+        # own snapshot, falls back to the existing cold build: never silently serve a map whose
+        # freshness cannot be proven.
+        reusable_repo_map: dict[str, Any] | None = None
+        if existing_snapshot and current_generation is not None:
+            if _snapshot_generation(existing_snapshot) == current_generation:
+                candidate_repo_map = payload.get("repo_map")
+                if isinstance(candidate_repo_map, dict):
+                    reusable_repo_map = candidate_repo_map
+
+        snapshot = build_prepare_snapshot(
+            path=path,
+            query=query,
+            repo_map=reusable_repo_map,
+        )
+        snap_dict = asdict(snapshot)
         snap_dict["decision_generation"] = current_generation
         snap_dict["current_generation"] = current_generation
         snap_dict["decision_freshness"] = "current" if current_generation is not None else "unknown"

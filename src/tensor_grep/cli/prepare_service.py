@@ -271,6 +271,7 @@ def _build_prepare_payload(
     claim: bool,
     deadline_monotonic: float | None = None,
     include_next_action: bool = False,
+    repo_map: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Thin composition (CEO #5): ONE repo-map build supplies primary target, confidence,
     ask-user, and validation verbatim; the only NEW scan is the blast-radius floor (see
@@ -289,15 +290,23 @@ def _build_prepare_payload(
     ``build_agent_capsule``'s own public contract/return is completely untouched by this --
     `tg agent` / MCP / its existing tests keep calling it directly, exactly as before."""
     from tensor_grep.cli.agent_capsule import _command_ref, build_agent_capsule_from_map
-    from tensor_grep.cli.repo_map import (
-        DEFAULT_AGENT_REPO_MAP_LIMIT,
-        _copy_scan_limit,
-        build_repo_map,
-    )
+    from tensor_grep.cli.repo_map import _copy_scan_limit
 
-    rm = build_repo_map(
-        path, max_repo_files=DEFAULT_AGENT_REPO_MAP_LIMIT, deadline_monotonic=deadline_monotonic
-    )
+    if repo_map is not None:
+        # P9 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 06): a caller that
+        # already holds a freshness-checked map (session_prepare, via session_root's
+        # `_snapshot_generation` identity) skips this function's own `build_repo_map` walk
+        # entirely. `repo_map` is trusted as-is -- freshness/identity is the CALLER's
+        # responsibility, never re-derived here.
+        rm = repo_map
+    else:
+        from tensor_grep.cli.repo_map import DEFAULT_AGENT_REPO_MAP_LIMIT, build_repo_map
+
+        rm = build_repo_map(
+            path,
+            max_repo_files=DEFAULT_AGENT_REPO_MAP_LIMIT,
+            deadline_monotonic=deadline_monotonic,
+        )
     capsule = build_agent_capsule_from_map(
         rm, query, deadline_monotonic=deadline_monotonic, _rescue_call_site_evidence=True
     )
@@ -548,6 +557,7 @@ def build_prepare_snapshot(
     claim: bool = False,
     deadline_monotonic: float | None = None,
     include_next_action: bool = False,
+    repo_map: dict[str, Any] | None = None,
 ) -> PrepareSnapshotV1:
     """Build a `PrepareSnapshotV1` by calling the existing `_build_prepare_payload` and
     projecting its result onto typed fields. Delegates every computation to that function --
@@ -561,6 +571,7 @@ def build_prepare_snapshot(
         claim=claim,
         deadline_monotonic=deadline_monotonic,
         include_next_action=include_next_action,
+        repo_map=repo_map,
     )
     return PrepareSnapshotV1(
         version=int(payload.get("version") or 1),
