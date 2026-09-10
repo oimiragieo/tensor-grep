@@ -16,6 +16,8 @@ documented in the tensor-grep-architecture-contract skill).
 
 import json
 
+import tensor_grep.cli.mcp_server as mcp_server
+from tensor_grep.cli.incompleteness import unified_incomplete_envelope
 from tensor_grep.cli.mcp_server import (
     _TG_MCP_SERVER_CONTRACT_VERSION,
     _inject_mcp_contract_fields,
@@ -24,6 +26,38 @@ from tensor_grep.cli.mcp_server import (
     tg_session_list,
     tg_session_open,
 )
+from tensor_grep.core.completeness import CompletenessEvidence, project
+
+# Frozen truth table fixtures (mirrors test_completeness_projection.py's TRUTH_TABLE) --
+# AGT-07 Task 09's "migrate one consumer first; run every truth-table row through old and
+# new projections" requirement, applied to the migrated consumer (_inject_mcp_contract_fields).
+_TRUTH_TABLE_PAYLOADS: list[tuple[str, dict[str, object]]] = [
+    ("complete_empty_scan", {}),
+    ("display_cap_only", {"result_incomplete": False}),
+    (
+        "file_scan_cap",
+        {
+            "scan_limit": {
+                "possibly_truncated": True,
+                "truncation_cause": "scan_limit",
+                "budget_remediable": True,
+            }
+        },
+    ),
+    (
+        "deadline",
+        {"incomplete_reason": "deadline", "result_incomplete": True, "budget_remediable": True},
+    ),
+    ("unreadable_path", {"unreadable_paths": {"count": 2}}),
+    (
+        "mixed_roots_one_partial",
+        {"partial": True, "results_by_root": {"a": {"incomplete": {"status": True}}}},
+    ),
+    (
+        "unknown_legacy_evidence",
+        {"result_incomplete": True, "incomplete_reason": "some_future_cause_not_yet_classified"},
+    ),
+]
 
 
 def _assert_incomplete_envelope(result: str, tool_name: str) -> dict:
@@ -247,6 +281,63 @@ def test_incomplete_envelope_does_not_overwrite_existing_key() -> None:
 def test_incomplete_envelope_non_dict_passthrough() -> None:
     array_json = json.dumps([1, 2, 3])
     assert _inject_mcp_contract_fields(array_json) == array_json
+
+
+def test_inject_mcp_contract_fields_constructs_completeness_evidence_internally(
+    monkeypatch,
+) -> None:
+    """AGT-07 Task 09: the migrated consumer must build/consume `CompletenessEvidence`
+    internally (via `project`/`from_legacy_envelope`) rather than operating on the raw
+    `unified_incomplete_envelope` dict projection directly."""
+    calls: list[dict] = []
+    real_project = mcp_server.project
+
+    def spy_project(payload: dict) -> CompletenessEvidence:
+        calls.append(payload)
+        return real_project(payload)
+
+    monkeypatch.setattr(mcp_server, "project", spy_project)
+    raw = json.dumps({"result_incomplete": True, "incomplete_reason": "hit scan_limit"})
+    _inject_mcp_contract_fields(raw)
+    assert calls, "_inject_mcp_contract_fields did not call core.completeness.project"
+
+
+def test_inject_mcp_contract_fields_matches_legacy_projection_for_every_truth_table_row() -> None:
+    """Run every frozen truth-table row through OLD (direct unified_incomplete_envelope) and
+    NEW (post-migration via CompletenessEvidence, as exercised by _inject_mcp_contract_fields)
+    projections and assert they match exactly."""
+    for name, payload in _TRUTH_TABLE_PAYLOADS:
+        old = unified_incomplete_envelope(payload)
+        new = project(payload).to_legacy_dict()
+        assert new == old, (
+            f"row {name!r}: core.completeness diverged from legacy: {new!r} != {old!r}"
+        )
+
+        stamped = json.loads(_inject_mcp_contract_fields(json.dumps(payload)))
+        assert stamped["incomplete"] == old, (
+            f"row {name!r}: _inject_mcp_contract_fields diverged from legacy: "
+            f"{stamped['incomplete']!r} != {old!r}"
+        )
+
+
+def test_inject_mcp_contract_fields_mutation_control_unreadable_path_not_remediable() -> None:
+    """Mutation control (consumer-level): an unreadable-path cause must never be reported as
+    budget_remediable through the migrated consumer's output."""
+    raw = json.dumps({"unreadable_paths": {"count": 1}})
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    mutated = dict(stamped["incomplete"])
+    mutated["budget_remediable"] = True  # wrong: unreadable_path is never remediable
+    assert stamped["incomplete"] != mutated
+
+
+def test_inject_mcp_contract_fields_mutation_control_nested_partial_not_complete() -> None:
+    """Mutation control (consumer-level): a nested-incomplete root must never be reported as
+    complete through the migrated consumer's output."""
+    raw = json.dumps({"results_by_root": {"a": {"incomplete": {"status": True}}}})
+    stamped = json.loads(_inject_mcp_contract_fields(raw))
+    mutated = {"status": False, "cause": None, "budget_remediable": False}  # wrong: complete
+    assert stamped["incomplete"] != mutated
+    assert stamped["incomplete"]["status"] is True
 
 
 def test_contract_version_bumped_for_incomplete_envelope() -> None:
