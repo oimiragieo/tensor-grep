@@ -1,6 +1,26 @@
 # CHANGELOG
 
 
+## v1.119.4 (2026-09-10)
+
+### Bug Fixes
+
+- **docs**: Raise docs/BACKLOG.md governance ceiling with real headroom
+  ([`b417d9b`](https://github.com/oimiragieo/tensor-grep/commit/b417d9ba8d5aaa4559e34e16ae801d04dadcf7e8))
+
+The 400KB ceiling calibrated 2026-09-03 (when the doc was 354KB) hit ~0 bytes of headroom this
+  session: two rounds of competitive-research additions each needed 4-5 rounds of manual
+  word-trimming to land under budget, which does not scale for an append-only-by-design historical
+  ledger. Raised to 460KB (from 399,926/400,000 bytes actual) rather than left as a recurring
+  trim-fight. If this ceiling is approached again, the correct fix is an archival/compaction pass
+  splitting dated history into a separate file, not another bump -- noted in the script's own
+  comment.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+
 ## v1.119.3 (2026-09-10)
 
 ### Bug Fixes
