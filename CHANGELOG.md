@@ -1,6 +1,66 @@
 # CHANGELOG
 
 
+## v1.119.1 (2026-09-10)
+
+### Bug Fixes
+
+- **ci**: Add cargo-install fallback when ripgrep's package manager is down
+  ([`eee6411`](https://github.com/oimiragieo/tensor-grep/commit/eee6411959508abd41c814397cb0c9ad3d6a38f6))
+
+native-build-smoke (ubuntu-latest) failed 2026-09-10 on the AGT-02 merge run: apt-get failed all 3
+  retry attempts while every other OS leg of the same run finished clean -- a transient mirror
+  outage, not a code defect, but the existing step had no fallback and this job's `release`
+  dependency (ci.yml `needs:`) blocks Semantic Release on any failed native-build-smoke leg. This
+  job already sets up the Rust toolchain to build tg itself, so falling back to `cargo install
+  ripgrep --locked` needs no hand-maintained checksum -- crates.io downloads are already
+  integrity-checked via Cargo.lock.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+- **session**: Versioned decision generation/freshness metadata (AGT-02)
+  ([#1136](https://github.com/oimiragieo/tensor-grep/pull/1136),
+  [`3e67c45`](https://github.com/oimiragieo/tensor-grep/commit/3e67c457093fd9b4fb78af01c70a63506b239d32))
+
+* fix(session): add versioned decision generation/freshness metadata (AGT-02)
+
+Closes the remaining AGT-02 gap: session refresh/resume now stamps
+  decision_generation/current_generation/decision_freshness (current, historical, unknown) on
+  last_prepare instead of blindly carrying it forward. A deleted/renamed target is retained as
+  history but marked historical, so session_resume no longer advertises it as current. Legacy
+  payloads without generation identity resolve to unknown rather than a bare null field.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+* fix(session): extract snapshot-generation helpers to session_root to satisfy file-size ratchet
+
+session_store.py's decision-freshness additions from the previous commit pushed it past its pinned
+  file-size ceiling (grew 1828 -> 1860; an allowlisted file may shrink, never grow). Moves
+  _snapshot_generation and the last_prepare carry-forward logic into session_root.py (already a
+  shared, well-under-budget module imported by both session_store.py and session_resume_service.py),
+  keeping session_store.py at exactly its pinned 1828 lines. Behavior is unchanged; only the module
+  boundary moved.
+
+* docs(backlog): mark AGT-02 as PR #1136 in flight
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Mark AGT-02 SHIPPED (PR #1136 merged)
+  ([`a1c986d`](https://github.com/oimiragieo/tensor-grep/commit/a1c986dbb84b9437bd9c89df6c5ff43d22abb0ce))
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01JQPNwabk1wrWGVXyzW6W75
+
+
 ## v1.119.0 (2026-09-08)
 
 ### Bug Fixes
