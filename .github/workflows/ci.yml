@@ -900,9 +900,22 @@ jobs:
           # A retry loop that exhausts its attempts must not look like success: `for` exits 0
           # on the last iteration regardless, so assert the POSTCONDITION rather than trusting
           # the loop's status.
+          #
+          # Package-manager mirrors go down independently of this repo (observed on
+          # native-build-smoke (ubuntu-latest), 2026-09-10: apt failed all 3 attempts while
+          # every other OS leg of the same run finished clean). This job already sets up the
+          # Rust toolchain to build tg itself, so `cargo install` is a same-supply-chain
+          # fallback: crates.io downloads are integrity-checked by cargo/Cargo.lock, so this
+          # needs no hand-maintained checksum (unlike a raw GitHub-release binary fetch would).
           if [ "$RUNNER_OS" != "Windows" ] && ! command -v rg >/dev/null 2>&1; then
-            echo "ripgrep still unavailable after 3 attempts -- failing rather than letting" >&2
-            echo "the rg-parity suites resolve no rg and SILENTLY skip." >&2
+            echo "package manager did not provide rg; falling back to cargo install ripgrep" >&2
+            cargo install ripgrep --locked --root "$RUNNER_TEMP/cargo-rg"
+            echo "$RUNNER_TEMP/cargo-rg/bin" >> "$GITHUB_PATH"
+            export PATH="$RUNNER_TEMP/cargo-rg/bin:$PATH"
+          fi
+          if [ "$RUNNER_OS" != "Windows" ] && ! command -v rg >/dev/null 2>&1; then
+            echo "ripgrep still unavailable after apt retries and a cargo install fallback --" >&2
+            echo "failing rather than letting the rg-parity suites resolve no rg and SILENTLY skip." >&2
             exit 1
           fi
 
