@@ -254,6 +254,17 @@ class Pipeline:
                 else:
                     self.backend = fallback_backend
                     selected_backend_reason = "nlp_backend_unavailable_fallback"
+                    # The ENGINE was swapped (NLP -> the generic fallback backend), so this
+                    # owes a durable `fallback_reason` and not just a local
+                    # `selected_backend_reason`. Only `fallback_reason` is propagated onto the
+                    # result envelope (cli/main.py + cli/mcp_server.py read
+                    # `getattr(pipeline, "fallback_reason", None)`), so without this the JSON
+                    # looked like a clean run of the engine the caller asked for. The sibling
+                    # torch -> CPU swaps below already stamp it; this arm did not.
+                    fallback_reason = (
+                        "NLP classification backend (cybert) is unavailable; "
+                        "served this query with the standard search backend instead"
+                    )
             elif config and config.count and config.gpu_device_ids:
                 # round-4: count (-c) search has no GPU backend; fail loud rather than silently
                 # taking the rust/rg count fast path and dropping the explicit GPU request.
