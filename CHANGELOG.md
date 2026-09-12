@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.119.8 (2026-09-12)
+
+### Bug Fixes
+
+- **edit-verify**: Bind the ticket's repo_root and fail closed on an incomplete verify walk
+  ([#1147](https://github.com/oimiragieo/tensor-grep/pull/1147),
+  [`6c25e79`](https://github.com/oimiragieo/tensor-grep/commit/6c25e79b222b8ee22c4981773303e8288ed9d8c8))
+
+* fix(edit-verify): bind the ticket's repo_root and fail closed on an incomplete verify walk
+
+`verify_edit_ticket` had two holes that let a FAIL-shaped situation reach a PASS verdict.
+
+1. ROOT NOT BOUND. `EditReadyTicketV1` records the `repo_root` it was built from, but this function
+  took the root as an INDEPENDENT argument and never compared the two. A ticket minted against tree
+  A could be verified against tree B, and every fingerprint comparison below would silently be
+  cross-tree.
+
+RED on the pre-fix baseline, verbatim: - FAIL + PASS (a ticket built in tree A, verified against
+  tree B, returned PASS)
+
+2. VERIFY-TIME INCOMPLETENESS DISCARDED. `current_fps, _current_population = _walk_...` threw away
+  the walk's own population status. The ticket-side gate a few lines above cannot speak for THAT
+  walk: if it was cut off by a budget, files it never reached have no current fingerprint, so drift
+  in them is undetectable -- and the comparison loop reads a missing entry as "" and only notices
+  when the ticket happened to carry a fingerprint for it.
+
+Both now return an explicit FAIL (`repo_root_mismatch`, `verify_population_incomplete`).
+
+Roots are compared by RESOLVED identity, not path spelling -- a trailing separator or mixed
+  separators are the same tree, and `_normalized_root` falls back to the lexical form on OSError so
+  a missing directory compares deterministically instead of raising inside a verdict path. Path
+  spelling is not opened-object identity; this closes the spelling gap, it does not claim to close a
+  TOCTOU between resolve and use.
+
+MUTATION CONTROLS (2 of the 4 tests): both new gates RETURN FAIL, so a "fix" that failed
+  unconditionally -- or a root comparison strict enough to reject a legitimate spelling of the same
+  directory -- would satisfy the two positive tests while breaking every real verification.
+  `test_matching_root_and_complete_population_still_passes` and
+  `test_same_root_spelled_differently_still_passes` PASSED on the pre-fix baseline and must keep
+  passing; the RED run was `2 failed, 2 passed`, not 4 failed.
+
+Verified: 23 passed across test_edit_verify_root_binding + test_edit_ticket_service +
+  test_edit_ticket_population + test_edit_ready; file-size budget 28 passed; ruff check + format
+  --preview clean. Neither touched file is allowlisted by the ratchet.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+* docs: correct the C7 severity claim -- verify_edit_ticket has NO production callers
+
+Amending the framing of 9fbec9e, not its code. I described the two holes as a false-PASS in a verify
+  path without checking whether that path is reachable. It is not:
+
+grep -rn "verify_edit_ticket" --include=*.py . -> only edit_ticket_service.py itself and
+  tests/unit/*
+
+and `verify-edit` is listed in `RESERVED_TOP_LEVEL_COMMANDS` (cli/commands.py) -- a roadmap command
+  that DOES NOT EXIST yet. So `verify_edit_ticket` is an implementation ahead of its command, with
+  zero production consumers.
+
+What that changes: - The fix is still correct and worth having. Fail-closed BEFORE exposure is much
+  cheaper than after, and this is the S1 edit-control-plane work the roadmap already calls for. -
+  The fix is NOT an incident. No shipped code path could reach the cross-tree PASS today, so nothing
+  in the field is exploitable via this function.
+
+Why this correction exists at all: "shipped primitive with no consumer" is exactly the gap I flagged
+  this session for C12 (`reciprocal_rank_fusion_explained`, also zero callers) and for AGT-08's
+  remaining scope. I applied that lens to the audit's items and not to my own patch. An unwired
+  primitive is fine; describing it as a live defect is not.
+
+No behavior change in this commit.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.7 (2026-09-12)
 
 ### Bug Fixes
