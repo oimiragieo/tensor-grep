@@ -58,8 +58,8 @@ use tensor_grep_rs::routing::{
 };
 mod search_flag_registry;
 use search_flag_registry::{
-    raw_args_contain_any_flag, search_args_contain_any_flag, token_matches_any_flag,
-    SEARCH_OPTION_FIRST_FLAGS, SEARCH_PYTHON_PASSTHROUGH_FLAGS,
+    raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
+    SEARCH_PYTHON_PASSTHROUGH_FLAGS,
 };
 
 // audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
