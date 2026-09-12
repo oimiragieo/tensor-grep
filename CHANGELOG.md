@@ -1,6 +1,129 @@
 # CHANGELOG
 
 
+## v1.119.9 (2026-09-12)
+
+### Bug Fixes
+
+- **docs**: Refresh the TASK_BOARD reconcile stamp (main was red at 6 releases behind)
+  ([`285ab7c`](https://github.com/oimiragieo/tensor-grep/commit/285ab7c45cb2fb0147ee84edcd0559dbe75dfe29))
+
+`test_task_board_freshness::test_task_board_reconcile_stamp_is_not_many_releases_stale` failed on
+  main (b00f71b), reddening all 6 test-python cells plus test-gpu-nvidia:
+
+docs/TASK_BOARD.md's reconcile stamp is v1.119.2 while pyproject ships v1.119.8 -- 6 releases behind
+  (tolerance 5).
+
+Self-inflicted: I published v1.119.5/.6/.7/.8 in one session without refreshing the stamp. The
+  ratchet is correct -- it exists so the board cannot silently drift behind the product -- and it
+  caught exactly the drift it was built for.
+
+Earlier this session I DECLINED to re-stamp, on the grounds that re-stamping without a real
+  reconcile is a lie. That was right then. It is no longer true: this session moved AGT-02/03/
+  07/08/P9 to IN_FLIGHT with implementation-PR receipts, closed strategic rows P1-P4 against their
+  own receipts, corrected both MCP rows to the live 1.8.0 contract, and closed AGT-06 via #1150. The
+  stamp now records that work, the 8 merged PRs, the open PRs at stamp time, and the blocked items
+  with pointers to their receipts.
+
+Verification is BY FILENAME, not `info.version`: v1.119.5/.6/.7/.8 each confirmed 4/4 on PyPI (3
+  wheels -- macosx_11_0_arm64, manylinux_2_39_x86_64, win_amd64 -- plus sdist), read from the
+  releases map.
+
+Also preserves the three phrases the governance test pins in this line, which my first rewrite
+  dropped and which turned a green stamp fix into a different red: `Task 2A RED remains correctly
+  blocked`, `canonical index`, and the CEO audit filename.
+
+Verified: task_board_freshness + backlog_tracker_truth + public_docs_governance +
+  governance_doc_size_ratchet, 99 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **editor-plane**: Derive graph_completeness instead of hardcoding "strong"
+  ([#1149](https://github.com/oimiragieo/tensor-grep/pull/1149),
+  [`b00f71b`](https://github.com/oimiragieo/tensor-grep/commit/b00f71bf4555eae3923e84d1e786ef67480c0766))
+
+`DefsResponse.graph_completeness` was the literal `"strong"`, so the editor-plane defs surface
+  claimed a strong symbol graph unconditionally -- including when it found ZERO definitions. Agents
+  consume this field to decide how much to trust a result, which makes a fixed maximum the worst
+  possible default.
+
+Scope, checked rather than assumed: this is NOT the `tg defs` CLI path. Live `tg defs ... --json`
+  returns the Python `repo_map` shape (31 fields, `coverage` + `resolution_gaps`) whose
+  `graph_completeness` is already computed -- it returned `"empty"` when dogfooded. The Rust struct
+  is reached through `backend_ast_workflow.rs`'s `execute_defs_core`, which serializes it to the
+  AST-workflow SESSION DAEMON stream. So the overclaim is real and user-reachable, on that surface.
+
+Maps into the vocabulary the Python door already uses (`cli/repo_map.py`: strong / moderate /
+  partial / empty) rather than inventing terms: - 0 definitions -> "empty" (the same word
+  repo_map.py uses for a nil result) - >0 -> "moderate"
+
+`moderate`, not `strong`, is deliberate: the Python defs path earns `strong` only AFTER LSP-proof
+  rows and import filtering, while this path is ast-grep pattern matching over a single configured
+  language, in-file, with no LSP proof and no cross-file resolution. Using the same word for
+  strictly weaker evidence is the overclaim being removed.
+
+No consumer pins the literal: `grep '"strong"' rust_core/ --include=*.rs` matched only the line
+  being changed, and `rust_core/tests/test_schema_compat.rs` types the field as `Option<String>`
+  with no value assertion.
+
+`the_value_varies_with_the_result_and_is_never_strong` is the MUTATION CONTROL -- swapping one
+  hardcoded constant for another would still be dishonest, so it pins that the value actually
+  depends on the definition count AND that "strong" is gone from every arm.
+
+NOT COMPILED LOCALLY: `cargo build/test` is banned on this shared desktop, so first CI compile is
+  the typecheck oracle (A87). `cargo fmt --check` clean. editor_plane.rs is 581 lines against the
+  1500 core limit and is not allowlisted, so the file-size ratchet is not engaged (verified:
+  test_file_size_budget.py 28 passed).
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Independent security review of the AGT-04 confined-walk design (CHANGES_REQUIRED)
+  ([#1148](https://github.com/oimiragieo/tensor-grep/pull/1148),
+  [`06b2ab4`](https://github.com/oimiragieo/tensor-grep/commit/06b2ab4047b25f58c6413a2a75e13f2c01780714))
+
+`docs/design/2026-09-10-agt04-symlink-junction-confinement.md` closes with a Review gate requiring
+  "an equivalent independent security review before any implementation PR is opened against it. Not
+  self-approved by the same session that wrote it." That review did not exist; the board has carried
+  AGT-04 as blocked on it since 2026-09-10.
+
+This is that pass, by a different session from the author. Verdict CHANGES_REQUIRED, four findings:
+
+- F1 (BLOCKING): items 1 and 3 CONTRADICT for an in-root DIRECTORY symlink -- item 1 excludes it
+  from descent fail-closed, item 3 follows it. No precedence stated, so a builder resolves it
+  arbitrarily and probably inconsistently across call sites. - F2 (BLOCKING): item 3 specifies
+  resolve-then-act ("resolve the link's target and classify it"), which is the TOCTOU shape this
+  repo has a dated law and a whole skill against (cross-platform-path-confinement: "handle-anchored
+  identity versus resolve-then-act"). The design inherits the 2026-08-13 threat model's junction
+  DETECTION but not its identity discipline. Either specify handle-anchored identity or state
+  plainly that the TOCTOU window stays open -- silence reads as a claim that it is closed. - F3
+  (BLOCKING unless scoped out): item 4 adds `git ls-files` as a trusted population oracle with no
+  threat model. The OUTPUT is safe, but the proposal executes git as a subprocess inside an
+  attacker-influenceable repo, and a repo's own .git/config can cause git to run attacker-chosen
+  commands (core.fsmonitor, core.pager, core.sshCommand, aliases). tg is pointed at arbitrary
+  checkouts by design, which is exactly the population where that matters. - F4 (CORRECTNESS): no
+  migration story for tickets minted under the current following behavior. Changing the population
+  rule changes which files are fingerprinted, and `verify_edit_ticket` reads a path with a pre-edit
+  fingerprint and no current one as undeclared drift -> FALSE FAIL on an untouched tree.
+
+Also records what the design gets RIGHT so it is not relitigated at implementation time (fail-closed
+  directory descent, deferring the Windows junction API with a citation requirement, item 5's single
+  parametrized control matrix).
+
+New dated artifact rather than an edit to the 2026-09-10 doc -- never edit a dated receipt in place.
+  Docs only; no code. Verified: public-docs-governance + governance-doc-size-ratchet +
+  skill-library-drift, 50 passed.
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.8 (2026-09-12)
 
 ### Bug Fixes
