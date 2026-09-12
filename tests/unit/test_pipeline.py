@@ -241,8 +241,13 @@ class TestPipeline:
     @patch("tensor_grep.core.pipeline.RipgrepBackend")
     @patch("tensor_grep.core.pipeline.RustCoreBackend")
     def test_nlp_routing_should_select_cybert_backend_for_nlp_queries(
-        self, mock_rust, mock_rg, mock_cybert_backend
+        self, mock_rust, mock_rg, mock_cybert_backend, monkeypatch
     ):
+        # C11: the keyword auto-route is now opt-in via TG_NLP_KEYWORD_AUTOROUTE
+        # (default OFF) -- a literal pattern containing "classify" must stay on
+        # the FAST path unless the user opts in. This test keeps covering the
+        # cybert route by opting in explicitly.
+        monkeypatch.setenv("TG_NLP_KEYWORD_AUTOROUTE", "1")
         mock_rg.return_value.is_available.return_value = True
         mock_rust.return_value.is_available.return_value = True
         mock_cybert_backend.return_value.is_available.return_value = True

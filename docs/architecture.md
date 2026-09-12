@@ -119,10 +119,13 @@ names what exists.
   working GPU backend (`pipeline.py:32-39`), and its default path is `rg_default_fast_path` --
   "always delegate to native rg for best end-to-end CLI speed" (`pipeline.py:356-359`).
   `CybertBackend` is selected only when the small keyword-matching `QueryAnalyzer`
-  (`src/tensor_grep/core/query_analyzer.py:4-23`, no NLP model of its own -- it substring-matches
+  (`src/tensor_grep/core/query_analyzer.py`, no NLP model of its own -- it substring-matches
   against `["classify", "detect", "extract entities", "anomaly"]`) classifies the query as
-  `QueryType.NLP` (`pipeline.py:241-256`), or via the explicit opt-in
+  `QueryType.NLP` (`pipeline.py` NLP arm), or via the explicit opt-in
   `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` on `tg classify` (`docs/CONTRACTS.md`, section 3).
+  The keyword auto-route is opt-in only (`TG_NLP_KEYWORD_AUTOROUTE`, default OFF): the keywords
+  substring-match common code identifiers in literal patterns, which hijacked backend selection
+  (and could turn an explicit `--gpu-device-ids` request into a configuration error).
   `Pipeline` is real, reachable code -- from `sidecar.py:450`, `mcp_server.py:3215`/`3486`,
   `cli/main.py:5603-5617`/`6578`, and `cli/ast_workflows.py:990-992` -- it is simply not the
   default path and not wired into the Rust router.
