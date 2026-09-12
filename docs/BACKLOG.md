@@ -119,6 +119,52 @@ shares AGT-04's git identity layer. **F8** index/session integrity self-check wi
 
 
 
+**F7-F9 (2026-09-12, Graft teardown + Exa; design stolen, never code).** Mined
+[Graft](https://github.com/NanoNets/Graft) (NanoNets, MIT, TypeScript code-graph context layer) for
+transferable DESIGN per `port-a-competitors-design-not-implementation`. Three of four candidate gaps
+were real; the fourth was **already shipped and I nearly duplicated it** -- see below, it is the
+governing lesson of this entry.
+
+- **F7 -- `tg file-api`: SHIPPED** (PR #1152, `03ec7f4`). Graft's `graft_file_api` returns a file's
+  signatures for "a tenth of the tokens"; tg had no file-granularity surface (`tg defs` requires a
+  SYMBOL, `tg codemap` requires a DIRECTORY). Built on the existing parser-backed symbol graph, with
+  the honesty floor Graft lacks: a zero `symbol_count` is never a confident empty
+  (`language_not_parser_backed` / `file_unreadable` set `result_incomplete` and exit 2), and a
+  parseable-but-empty file stays a COMPLETE answer so the flag keeps meaning something.
+- **F8 -- `tg freshness`: BUILT AND TESTED, NOT REGISTERED.** `cli/freshness.py` + 6 tests, verified
+  end-to-end (`current` -> edit -> `stale` naming the file, exit 0 -> 2). It reuses the serving
+  path's own `_ensure_session_not_stale` rather than re-deriving a second staleness rule. Floor:
+  "no persisted state" reports UNRESOLVED, never a clean bill of health.
+  **STOP-RECEIPT: blocker: `rust_core/src/main.rs` is 4 lines short of the shrink-only file-size
+  ratchet headroom that both new commands need.** PR #1141 already splits main.rs and frees ~380
+  lines but is a DRAFT awaiting a human merge (draft-PR-only is a change-control gate), and deleting
+  blank lines to pass a size gate is gaming the measure. All four registration sites were removed
+  together -- a half-registered command is the silent misroute the 4-site rule exists to prevent.
+  **Acceptance when unblocked:** merge #1141, re-add the four sites, `test_registration_check` green,
+  and `tg freshness` present in BOTH front doors' `--help`.
+- **F9 -- adopt Graft's BENCHMARK methodology (unstarted, highest value of the three).** Their
+  harness is better than ours in four copyable ways: (1) **push vs pull arms** -- injecting a context
+  bundle up front won on speed while exposing tools and paying only on demand won on CORRECTNESS
+  (98% vs 93% cold); neither of our benchmarks tests that distinction. (2) **cache-aware cost**
+  (reads ~0.1x, writes 1.25x) rather than raw token counts. (3) a **required-keyword floor on the
+  judge** so fast-but-wrong cannot win -- the `calibrate-an-automated-judge-with-paired-controls`
+  discipline, applied. (4) **SWE-bench Verified with the official `swebench` grader** -- no judge
+  model at all, which is the only real answer to "your benchmark is your own mechanism measuring
+  itself", the exact objection F3 exists to answer. They also reported "correctness 93% vs 93%
+  (equal)" in their own sweep rather than claiming a win; that is the honesty bar to match. Seat:
+  agy research spike -> Codex Sol, gated on a measured result, no claim without matched-task evidence.
+
+**REFUTED, and the reason it matters more than the three above:** a fourth "gap" -- joining search
+hits to their enclosing symbol -- **already ships as `tg search --enrich-ast`**
+(`enrich_match_with_container`, `container` on the match payload, `AST_ENRICH_FILE_LIMIT` budget).
+I ran `tg search --json` WITHOUT the flag, read the missing field as ABSENT rather than UNRESOLVED,
+reported it as a gap, and had added `--with-symbols` to both front doors before catching it. A
+competitive teardown is a list of "we don't have X" claims, and every one of them needs the same
+premise check a plan does. Do NOT re-open this as a feature; the real (small) question is
+discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft's LLM
+summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
+moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
+
 ## STRATEGIC (2026-09-04): 2026 Competitive Analysis & Strategic Updates Roadmap
 
 Competitive landscape audit against mid-2026 codebase intelligence and agent context tooling (`Gortex`, `GitNexus`, `Serena`, `GrepAI`, `ripgrep`, `ast-grep`, `Claude Code` native agentic search).
