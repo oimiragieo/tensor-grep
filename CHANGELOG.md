@@ -1,6 +1,290 @@
 # CHANGELOG
 
 
+## v1.119.5 (2026-09-12)
+
+### Bug Fixes
+
+- Gate QueryAnalyzer NLP keyword auto-route behind TG_NLP_KEYWORD_AUTOROUTE (default OFF)
+  ([#1143](https://github.com/oimiragieo/tensor-grep/pull/1143),
+  [`cbbd4a0`](https://github.com/oimiragieo/tensor-grep/commit/cbbd4a068930781f674b27fbde5e9a2410e3c102))
+
+The QueryAnalyzer keyword scan substring-matched common code identifiers ("classify", "detect", ...)
+  in the user's LITERAL search pattern and silently rerouted it to the NLP (CybertBackend) path.
+  Worst case: with cybert unavailable AND --gpu-device-ids set, `tg search detect --gpu-device-ids 0
+  .` hard-failed with a GPU configuration error purely because the pattern contained the word
+  "detect".
+
+Make the speculative auto-route opt-in: TG_NLP_KEYWORD_AUTOROUTE (boolean convention 1/true/yes/on
+  via env_flag_enabled, default OFF). QueryAnalyzer's public API and QueryType.NLP are preserved;
+  with the env var set the old behavior is fully restored.
+
+Tests (TDD, RED observed first): - new tests/unit/test_query_analyzer_autoroute_gate.py pins the
+  default-OFF contract, the boolean convention, the opt-in route, and the sharpest arm (literal
+  "detect" + --gpu-device-ids + cybert unavailable must reach the explicit GPU route, never a
+  ConfigurationError); - test_query_analyzer.py keyword tests updated to opt in explicitly (they
+  asserted the old default auto-route); - test_pipeline.py cybert-routing test updated the same way,
+  keeping coverage of the opt-in cybert route.
+
+docs/architecture.md updated to describe the opt-in gate.
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
+
+- **editor-plane**: Refuse ast-grep metavariable sigils in a caller-supplied symbol
+  ([#1142](https://github.com/oimiragieo/tensor-grep/pull/1142),
+  [`60fd3fc`](https://github.com/oimiragieo/tensor-grep/commit/60fd3fce6327eb2fe1d404f362fa7b0487a4795d))
+
+* fix(editor-plane): refuse ast-grep metavariable sigils in a caller-supplied symbol
+
+`find_definitions` interpolates the caller-supplied symbol straight into ast-grep DSL patterns
+  (`format!("def {}($$$ARGS): $$$BODY", symbol)`, editor_plane.rs) and `find_references` hands it to
+  the matcher AS the pattern (`let pattern = symbol;`). Neither validated it, and
+  `handle_defs`/`handle_refs` pass it through unchecked from the CLI.
+
+ast-grep reads `$NAME` / `$$$ARGS` as METAVARIABLES, so a symbol carrying those sigils does not
+  narrow the query -- it WIDENS it. `tg defs . '$$$'` expands to `def $$$($$$ARGS): $$$BODY`,
+  matches every function in the tree, and still reports `name: "$$$"`. That is the worst failure
+  shape for an agent-facing tool: not an error, a confidently-wrong answer.
+
+Adds `validate_symbol_is_not_a_pattern`, called at the top of both find_* choke points, which fails
+  closed on anything that is not an identifier and gives `$` its own message naming the metavariable
+  reason. Unicode identifiers stay allowed (`char::is_alphanumeric`) -- rejecting non-ASCII names
+  would be a correctness regression for real code, so only DSL-significant and
+  punctuation/whitespace shapes are refused.
+
+Tests include a MUTATION CONTROL (`real_identifiers_still_pass`): a guard that refused everything
+  would look secure while breaking the product, so the suite must fail if the guard over-rejects,
+  not just if it under-rejects.
+
+NOT VERIFIED LOCALLY: `cargo build/test/clippy` is banned on this shared desktop (local rustc
+  starves other agents), so these tests have never been compiled here -- first CI compile is the
+  typecheck oracle (A87: static review is not a typecheck). `cargo fmt --check` is clean (rustfmt is
+  not a compiler). editor_plane.rs is 521 lines against the 1500 core limit and is not allowlisted,
+  so the file-size ratchet is not engaged.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+* fix(ast-scaffold): reject a --lang that can inject YAML into the generated rule
+
+`_write_ast_project_scaffold` hand-formats the sample rule as
+
+f"id: sample-rule\nlanguage: {lang}\nrule:\n pattern: 'print($$$ARGS)'\n"
+
+and `lang` arrived as a free-form `typer.Option` with no validation, so `tg ast new --lang
+  $'python\nmalicious: true'` wrote attacker-chosen sibling keys into a file the user is then told
+  is a valid scaffold. The sibling `name` parameter was ALREADY validated (`_validate_ast_new_name`)
+  -- this closes that asymmetry.
+
+Found by sweeping for the same raw-interpolation shape as the editor-plane metavariable fix (PR
+  #1142) rather than assuming one site was the only one. A guard at one call site proves nothing
+  about its siblings.
+
+The guard rejects empty/whitespace and any `\r`/`\n`, deliberately NOT `str.isidentifier()`: `c++`
+  and `c#` are real language spellings and an identifier check would refuse them -- a correctness
+  regression traded for imaginary safety.
+
+RED PROVEN ON THE PRE-FIX BASELINE, not assumed: with the guard reverted (`git checkout -- main.py`,
+  patch re-applied after), the hostile case fails `DID NOT RAISE <class 'ValueError'>`. Tests live
+  in a NEW file because `tests/unit/test_cli_bootstrap.py` and friends are allowlisted by the
+  file-size ratchet. `test_real_language_spellings_still_scaffold` is the mutation control: it fails
+  if the guard over-rejects, so "reject everything" cannot pass.
+
+main.py is 13522 lines against its pinned baseline of 13523 -- the ratchet stays green (verified:
+  test_file_size_budget.py passes). ruff check + format --preview clean.
+
+KNOWN REMAINING TWIN, NOT FIXED HERE: `rust_core/src/backend_ast_workflow.rs` has the same
+  `format!("...language: {lang}...")` shape, but that file is allowlisted at EXACTLY its current
+  2109 lines -- zero headroom, so adding a guard there needs a split first. Tracked separately; see
+  the commit body of PR #1142 for the ratchet mechanics.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+- **pipeline**: Stamp a durable fallback_reason when the NLP engine is swapped out
+  ([#1144](https://github.com/oimiragieo/tensor-grep/pull/1144),
+  [`8770560`](https://github.com/oimiragieo/tensor-grep/commit/87705607ede1dfaf56ca4d61b15f234e19f5c161))
+
+`Pipeline` sets a local `selected_backend_reason` on every routing decision, but only
+  `fallback_reason` is propagated onto the result envelope -- `cli/main.py:4119` and
+  `cli/mcp_server.py` (3 sites) all read `getattr(pipeline, "fallback_reason", None)`.
+
+The `nlp_backend_unavailable_fallback` arm set the former and NOT the latter, so a query whose
+  execution ENGINE had been swapped came back through --json/MCP looking like a clean run of the
+  engine the caller asked for. The sibling torch->CPU swaps a few lines below already stamp
+  `fallback_reason`; this arm was the odd one out.
+
+RED PROVEN ON THE PRE-FIX BASELINE, not assumed. Probe against the unfixed tree:
+
+selected_backend_reason: nlp_backend_unavailable_fallback fallback_reason : None VERDICT: SILENT
+  SWAP (no fallback_reason)
+
+and the new regression test fails there with `assert None is not None ... where None =
+  Pipeline.fallback_reason`.
+
+`test_a_plain_literal_query_does_not_claim_a_fallback` is the mutation control: stamping the field
+  unconditionally would satisfy the first test while emitting a false "we fell back" signal on every
+  ordinary search -- which is exactly what `core/result.py`'s own comment warns against ("conflating
+  them would emit a false 'we fell back' signal to doctor/JSON"). The control fails if the fix
+  over-stamps.
+
+The test opts into TG_NLP_KEYWORD_AUTOROUTE (default OFF since the C11 fix) because that is now the
+  only way to reach this arm, and skips with a disclosed reason if cybert IS installed, rather than
+  silently passing on an environment where the swap never happens.
+
+pipeline.py is 461 lines against the 1500 core limit and is not allowlisted, so the file-size
+  ratchet is not engaged; the new test lives in a new file. ruff check + format --preview clean. 70
+  passed across the new file + test_pipeline.py + test_file_size_budget.py.
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Close 4 shipped strategic rows the board still showed as open
+  ([`1d0b12c`](https://github.com/oimiragieo/tensor-grep/commit/1d0b12c4b2afd97a9c85da1864f63e8de6f39b7c))
+
+The P3 strategic list carried P1/P2/P3/P4 as unchecked while docs/BACKLOG.md records all four as [x]
+  with merged-PR receipts. The board is the dispatch surface, so four finished items were
+  re-dispatchable -- the same A75 false-dispatch class as the canonical-index reconcile in 5e556a7.
+
+Closed against each item's own receipt, not against a summary: - P1 diff-impact -> PR #1128,
+  `7d2baa5`, released v1.116.0 - P2 language coverage -> PR #1129, `c762b1c` - P3 MCP
+  incompleteness-> PR #1135, `5b8c85e`, released v1.118.0 - P4 front-door -> acceptance met;
+  residual README-tagline scope split off as P15, which stays OPEN
+
+P2's claim was re-derived from the product rather than hand-counted, per the standing rule that this
+  count has been wrong four times: `repo_map._symbol_navigation_descriptor()` returns
+  `parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:`
+  -- 10 parser-backed, foundational tier EMPTY. P3's receipt is the same commit that bumped the MCP
+  contract to 1.8.0, which is what f0173cd corrected on the canonical MCP rows.
+
+P11 (`tg action pr-gate`) is deliberately left unchecked -- BACKLOG lists it open and no receipt
+  exists.
+
+Verified: backlog-tracker-truth + task-board-freshness + public-docs-governance +
+  governance-doc-size-ratchet, 99 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- Correct MCP contract version on the two canonical MCP rows
+  ([`f0173cd`](https://github.com/oimiragieo/tensor-grep/commit/f0173cd27413e84312e46d8ecd3634a236a8d5e4))
+
+The MCP-SURFACE row recorded `_TG_MCP_SERVER_CONTRACT_VERSION` as 1.7.0 at `mcp_server.py:188`.
+  Re-derived against origin/main: the live value is **1.8.0** and the `:188` anchor had drifted (the
+  const now sits at :194; the row now greps the symbol instead of carrying a line number, per "cite
+  the SYMBOL, not the line").
+
+The consequence is not cosmetic. MCP-SURFACE was fenced behind "Task 4 plans 1.8.0->1.9.0 and must
+  not bump from a nonexistent base", sequenced after Task 2C. That base now EXISTS: `git log -S`
+  attributes the bump to `5b8c85e` (`feat(mcp): standardize incompleteness envelope across MCP tools
+  (P3)`, PR #1135), not to Task 2C. The recorded blocker is satisfied, so the row was parked on a
+  dead premise -- it needs re-triage on its own merits rather than a Task-2C wait.
+
+MCP-LEAN-DEFAULT carried the same stale "contract version 1.7.0 re-verified" claim and is superseded
+  in place with the re-derivation date.
+
+Historical dated receipts in docs/BACKLOG.md that quote 1.7.0 are deliberately NOT rewritten -- they
+  were true when written; editing a dated receipt in place destroys the record. Only the two live
+  canonical rows are corrected.
+
+Verified: backlog-tracker-truth + task-board-freshness + public-docs-governance +
+  governance-doc-size-ratchet + mcp-2.0-decision-record, 104 passed. No gate pinned the 1.7.0
+  string.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- Mark the MCP-SURFACE Task-2C fence stale on the live BACKLOG row
+  ([`3ce995b`](https://github.com/oimiragieo/tensor-grep/commit/3ce995beb28f4ec17dd9225570096900a96db5e8))
+
+`f0173cd` corrected the two canonical MCP rows in docs/TASK_BOARD.md, but the live per-item row in
+  docs/BACKLOG.md still asserted the mcp_followup_ref prototype was "still gated behind Task 2C per
+  the existing MCP-SURFACE ladder". That fence rests on the same dead premise: the contract base
+  Task 2C was supposed to create already exists.
+
+Re-derived, not assumed: `_TG_MCP_SERVER_CONTRACT_VERSION` is **1.8.0**, and `git log -S` attributes
+  the bump to `5b8c85e` (`feat(mcp): standardize incompleteness envelope across MCP tools (P3)`, PR
+  #1135) -- not to Task 2C. The "must not bump from a nonexistent base" rationale therefore no
+  longer holds, and the row needs re-triage on its own merits instead of waiting on Task 2C.
+
+The clause is marked stale in place rather than rewritten, so the original claim and the date it
+  stopped being true both stay legible.
+
+Context: `mcp_followup_ref` was checked this session against a proposal to "wire or delete it as
+  dead code". It is NOT dead -- it is a deliberate opt-in primitive with a design doc
+  (docs/design/2026-09-07-mcp-followup-ref-prototype.md), its own test file, and 4 rounds of Codex
+  Luna audit; it registers no MCP tool BY DESIGN. Deleting it would destroy audited work and wiring
+  it would jump this ladder. No code change here.
+
+Verified: backlog-tracker-truth + governance-doc-size-ratchet + public-docs-governance, 88 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- Reconcile TASK_BOARD status for the 5 merged agentic-quality PRs
+  ([`5e556a7`](https://github.com/oimiragieo/tensor-grep/commit/5e556a72df6719a329e713a47aa38d1e88bc91d0))
+
+AGT-02/AGT-03/AGT-07/AGT-08/P9 each carried `Status: READY` (AGT-03: BLOCKED) with `PR: none`, while
+  docs/BACKLOG.md records each as SHIPPED/IN PROGRESS with a merged PR
+  (#1136/#1138/#1137/#1139/#1140, all CI green). Board readers therefore saw five finished
+  implementation PRs as unstarted work -- the A75 false-dispatch class.
+
+Flips those five rows to IN_FLIGHT with their literal PR field and the ordered `Implementation PRs:`
+  receipt the canonical-index grammar requires, and replaces the now-contradictory "READY denotes
+  baseline/design work" trailer on those rows with the IN_FLIGHT meaning (implementation merged;
+  closure still needs a separate closure PR). Remaining-scope prose on each row is unchanged.
+
+No product code. AGT-06 deliberately stays READY: its work landed as direct-main `390c39f` with no
+  PR, and the index grammar requires a literal `PR #NNN` for IN_FLIGHT/SHIPPED.
+
+Verified: tests/unit/test_backlog_tracker_truth.py + test_task_board_freshness.py +
+  test_public_docs_governance.py + test_governance_doc_size_ratchet.py, 99 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+### Testing
+
+- Gate the real-late-model class on onnxruntime too, not just the model dir
+  ([`c1863f2`](https://github.com/oimiragieo/tensor-grep/commit/c1863f262a5c21b9e9992402f17385d4316c8ad0))
+
+`TestRealFetchedModel` skipped on `_real_late_model_dir() is None`, but that is only ONE of the two
+  preconditions for exercising the real model: `load_late_model` also imports `onnxruntime`, an
+  optional extra. On any box where the model HAS been fetched (`python -m
+  tensor_grep.core.retrieval_late --fetch`) but the extra is not installed, the class ran and failed
+  with
+
+BackendExecutionError: late rerank model at ...LateOn-Code-edge failed to load (corrupt or
+  incompatible): No module named 'onnxruntime'
+
+which reads as a product regression on the retired F10 late-rerank path when it is purely an
+  environment gap. Found while triaging a local full-unit baseline that came back `1 failed, 6020
+  passed` -- the one failure was this.
+
+Gates on BOTH conditions via `_real_late_model_runnable()` and discloses both in the skip reason, so
+  the skip says what is missing rather than going quiet. Consistent with the repo's
+  env-independent-gated-test discipline: an unmet optional-extra precondition is the same kind of
+  skip as an unfetched model.
+
+No CI behavior change -- CI never fetches the model, so these already skipped there. Verified
+  locally: was 1 failed; now 22 passed, 3 skipped, reasons shown under `-rs`.
+
+`test:` release class deliberately -- no product code changed, nothing to publish.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+
 ## v1.119.4 (2026-09-10)
 
 ### Bug Fixes
