@@ -1,6 +1,57 @@
 # CHANGELOG
 
 
+## v1.119.7 (2026-09-12)
+
+### Bug Fixes
+
+- **repo-map**: Disclose a JS/TS scan scoped below its tsconfig.json
+  ([#1145](https://github.com/oimiragieo/tensor-grep/pull/1145),
+  [`a4b3039`](https://github.com/oimiragieo/tensor-grep/commit/a4b3039a404c79e5df1b6d73130024d705ba7812))
+
+`_parse_js_ts_tsconfig(root)` looks for `tsconfig.json` at the SCAN ROOT only, so pointing `tg` at a
+  subdirectory of a TS project silently stops resolving path aliases (`@/x`) and
+  `import_graph_consumers` under-reports with NO stated cause.
+
+MEASURED on a real 110-file Next.js corpus, 2026-09-12 -- same symbol, same tree, only the scan root
+  differed:
+
+tg callers <project>/src AppSidebar -> import_graph_consumer_count: 0 tg callers <project>
+  AppSidebar -> import_graph_consumer_count: 1 (names layout.tsx)
+
+`layout.tsx:3` really does `import { AppSidebar } from '@/app/dashboard/app-sidebar'`. The
+  mis-scoped run returned `not_found: true` AND `result_incomplete: false` -- asserting the zero was
+  COMPLETE -- while `resolution_gaps` mentioned only unrelated json files. A quiet under-count
+  presented as a proven absence is the exact failure shape this repo's honesty floor exists to
+  prevent, and an agent acting on it could delete live code as dead.
+
+Adds `cli/js_ts_scope_gap.py`: when the JS/TS scan universe sits below an ancestor holding
+  `tsconfig.json`, emit a `resolution_gaps` entry naming BOTH paths and stating that a low
+  `import_graph_consumer_count` from that scan is "UNRESOLVED, not proven absent".
+
+Deliberately fails QUIET in the safe direction: returns None when the scope already holds the
+  tsconfig (correctly scoped) and when no ancestor holds one (no alias map exists, so nothing is
+  missed), keeping correctly-scoped output byte-identical. The upward walk is bounded (24 ancestors)
+  so a deep path cannot become an unbounded stat storm, and every filesystem probe is
+  OSError-guarded.
+
+`test_correctly_scoped_scan_reports_no_gap` is the MUTATION CONTROL: a helper that always fired
+  would satisfy the positive test while stamping a false gap onto every correctly-scoped TS scan and
+  downgrading graph trust repo-wide. It fails if the helper over-fires.
+
+The logic lives in a NEW module because `repo_map.py` had only 23 lines of headroom against its
+  pinned ratchet baseline; it grows by 6 (15228 vs baseline 15243) and the tests are a new file. No
+  call-site or signature changes -- the helper derives the scope from the scanned files themselves.
+
+Verified: 32 passed (new tests + file-size budget); 331 passed / 3 skipped across the repo_map +
+  resolution_gaps + coverage_gap + import_edges suites (no regression); ruff check and format
+  --preview clean.
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.6 (2026-09-12)
 
 ### Bug Fixes
