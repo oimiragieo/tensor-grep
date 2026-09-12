@@ -190,3 +190,45 @@ def test_a_typescript_declaration_stops_at_its_brace(tmp_path: Path) -> None:
 
     assert payload["symbols"][0]["signature"] == "export function total(n: number) {"
     assert not payload.get("result_incomplete")
+
+
+def test_an_allman_brace_declaration_spans_to_the_brace_on_its_own_line(tmp_path: Path) -> None:
+    """C# and C conventionally put `{` on its OWN line. The declaration is then genuinely
+    two lines, and stopping at the first one would drop nothing visible -- which is exactly
+    why it needs pinning: the output looks plausible either way.
+
+    Verified live against all ten parser-backed languages before this test was written; this
+    locks the two syntactic shapes that were NOT represented in the original Python fixtures.
+    """
+    target = _write(
+        tmp_path,
+        "Svc.cs",
+        'public class Svc\n{\n    public string Build(int total)\n    {\n        return "x";\n    }\n}\n',
+    )
+    symbol = {**_SYMBOL, "start_line": 3, "line": 3, "end_line": 6}
+    payload = build_file_api(target, [symbol], language="csharp", parser_backed=True)
+
+    signature = payload["symbols"][0]["signature"]
+    assert "Build(int total)" in signature
+    assert signature.rstrip().endswith("{")
+    assert "return" not in signature, "the body must not leak past the brace"
+    assert not payload.get("result_incomplete")
+
+
+def test_a_bodiless_declaration_terminates_on_the_semicolon(tmp_path: Path) -> None:
+    """A C/C++ header declaration has no body at all and ends at `;`. Without `;` as a
+    terminator this would run to the line bound and be reported truncated, turning the
+    cheapest possible symbol into a false incompleteness signal.
+    """
+    target = _write(
+        tmp_path,
+        "svc.hpp",
+        "class Svc {\npublic:\n    std::string build(int total);\n};\n",
+    )
+    symbol = {**_SYMBOL, "start_line": 3, "line": 3, "end_line": 3}
+    payload = build_file_api(target, [symbol], language="cpp", parser_backed=True)
+
+    entry = payload["symbols"][0]
+    assert entry["signature"].strip() == "std::string build(int total);"
+    assert not entry.get("signature_truncated")
+    assert not payload.get("result_incomplete")
