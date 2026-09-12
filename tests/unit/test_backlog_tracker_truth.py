@@ -200,9 +200,7 @@ def _parse_status_index(
         elif pr != "none":
             raise AssertionError(f"{item_id} must use PR: none for status {status}")
         if direct_main and status != "SHIPPED":
-            raise AssertionError(
-                f"{item_id} carries a Direct-main SHA receipt but is not SHIPPED"
-            )
+            raise AssertionError(f"{item_id} carries a Direct-main SHA receipt but is not SHIPPED")
         trigger = match.group("trigger").strip()
         if not trigger:
             raise AssertionError(f"empty trigger for {item_id}")
