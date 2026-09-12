@@ -5242,6 +5242,9 @@ def _language_coverage_gap_remediation(
     )
 
 
+from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap  # noqa: E402
+
+
 def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict[str, Any]]:
     """PATH A Stage 0 honesty floor (additive): label files in the refs/callers scan universe
     that have no registered ``LanguageSpec`` (or, for a registered language whose grammar is
@@ -5311,6 +5314,11 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
             },
         )
         entry["files_affected"] += 1
+    # A JS/TS scan rooted BELOW its tsconfig.json silently stops resolving path aliases, so
+    # import_graph_consumers under-reports with no stated cause. Disclose it as a real gap.
+    scope_gap = js_ts_scope_gap(bounded_files)
+    if scope_gap is not None:
+        gaps_by_language.setdefault(str(scope_gap["language"]), scope_gap)
     return sorted(
         gaps_by_language.values(),
         key=lambda item: (-int(item["files_affected"]), str(item["language"])),
