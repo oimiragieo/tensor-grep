@@ -760,6 +760,7 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
     monkeypatch, tmp_path
 ) -> None:
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     calls: list[list[str]] = []
 
     monkeypatch.setattr(
@@ -987,6 +988,7 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     monkeypatch, tmp_path
 ) -> None:
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     seen_commands: list[list[str]] = []
 
     monkeypatch.setattr(
@@ -1181,6 +1183,40 @@ def _flag_sweep_help_stdout() -> str:
     ])
 
 
+def test_agent_readiness_public_search_flag_sweep_fails_when_native_rejects_glob(
+    monkeypatch, tmp_path
+) -> None:
+    module = _load_script_module()
+    native_binary = tmp_path / "native-tg.exe"
+    monkeypatch.setattr(module.shutil, "which", lambda command: "tg" if command == "tg" else None)
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: native_binary)
+
+    def fake_run(command, **_kwargs):
+        if command == ["tg", "search", "--help"]:
+            return subprocess.CompletedProcess(
+                args=command, returncode=0, stdout=_flag_sweep_help_stdout(), stderr=""
+            )
+        if command[0] == str(native_binary) and "--glob" in command:
+            return subprocess.CompletedProcess(
+                args=command,
+                returncode=2,
+                stdout="",
+                stderr="error: unexpected argument '--glob' found\n",
+            )
+        return subprocess.CompletedProcess(
+            args=command, returncode=0, stdout="accepted\n", stderr=""
+        )
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    with pytest.raises(module.ReadinessError) as excinfo:
+        module.validate_public_search_advertised_flag_sweep("", tmp_path, "1.12.28")
+    message = str(excinfo.value)
+    assert "root-option-first-glob" in message
+    assert repr(str(native_binary)) in message
+    assert "unexpected argument '--glob'" in message
+
+
 # The #121 structured refuse the tg CLI emits (plain-text path) when `--count-matches` is
 # invoked with rg unresolvable. Matches cli/main.py's `_exit_search_error` detail text.
 _COUNT_MATCHES_REFUSE_STDERR = (
@@ -1220,6 +1256,7 @@ def test_agent_readiness_count_matches_probe_tolerates_rg_unresolvable_refuse(
     # structured exit-2 refuse (it needs rg for its per-occurrence count) -- the sweep must
     # TOLERATE that instead of raising ReadinessError, mirroring the golden-test skip.
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     monkeypatch.setattr(
         module.shutil, "which", lambda command: command if command == "tg" else None
     )
@@ -1239,6 +1276,7 @@ def test_agent_readiness_count_matches_probe_still_fails_exit2_when_rg_available
     # available, an exit-2 from the count-matches probe is a real regression and must still
     # fail the sweep -- otherwise the tolerance would mask a genuinely broken flag.
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     monkeypatch.setattr(
         module.shutil, "which", lambda command: command if command == "tg" else None
     )
@@ -1260,6 +1298,7 @@ def test_agent_readiness_public_search_flag_sweep_rejects_missing_help_advertise
     monkeypatch, tmp_path
 ) -> None:
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
 
     monkeypatch.setattr(
         module.shutil, "which", lambda command: command if command == "tg" else None
@@ -1687,6 +1726,7 @@ def test_flag_sweep_tolerates_a_disclosed_incomplete_exit_two(monkeypatch, tmp_p
     pass for the wrong reason and prove nothing about the new guard.
     """
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     monkeypatch.setattr(
         module.shutil, "which", lambda command: command if command == "tg" else None
     )
@@ -1707,6 +1747,7 @@ def test_flag_sweep_still_fails_an_undisclosed_exit_two(monkeypatch, tmp_path) -
     passes, the guard has become a blanket `== 2` tolerance and the sweep can no longer fail.
     """
     module = _load_script_module()
+    monkeypatch.setattr(module, "resolve_native_tg_binary", lambda: Path("tg"))
     monkeypatch.setattr(
         module.shutil, "which", lambda command: command if command == "tg" else None
     )

@@ -30,10 +30,15 @@ from tensor_grep.cli.progress import (  # noqa: E402
     ProgressReporter,
     positive_progress_interval_s,
 )
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary  # noqa: E402
 
 
 class ReadinessError(RuntimeError):
     """Raised when an agent-readiness check returns invalid output."""
+
+
+class ReadinessSkip(ReadinessError):
+    """Raised when a readiness check cannot run in the current environment."""
 
 
 Validator = Callable[[str, Path, str], None]
@@ -161,7 +166,10 @@ def validate_windows_launcher_quoted_patterns(
             )
 
 
-def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str]]]:
+def _public_search_flag_sweep_cases(
+    probe_dir: Path, *, native_tg_binary: Path | None = None
+) -> list[tuple[str, list[str]]]:
+    root_command = str(native_tg_binary) if native_tg_binary is not None else "tg"
     log_file = probe_dir / "app.log"
     inverse_config_flags = [
         "--no-pcre2-unicode",
@@ -254,12 +262,12 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         ("unrestricted", ["tg", "search", "-u", "ERROR", str(probe_dir)]),
         (
             "root-option-first-sort",
-            ["tg", "--sort", "path", "-n", "-F", "ERROR", str(probe_dir)],
+            [root_command, "--sort", "path", "-n", "-F", "ERROR", str(probe_dir)],
         ),
-        ("root-option-first-type", ["tg", "-t", "rust", "fn", str(probe_dir)]),
+        ("root-option-first-type", [root_command, "-t", "rust", "fn", str(probe_dir)]),
         (
             "root-option-first-count-matches",
-            ["tg", "--count-matches", "ERROR", str(log_file)],
+            [root_command, "--count-matches", "ERROR", str(log_file)],
         ),
         # C1/C2/C3 (2026-09-12): the native root door historically refused these rg-style
         # spellings in root (option-first) position while the explicit `search` form accepted
@@ -270,41 +278,44 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
         # matcher half (C2).
         (
             "root-option-first-glob",
-            ["tg", "ERROR", "--glob", "*.log", str(probe_dir)],
+            [root_command, "ERROR", "--glob", "*.log", str(probe_dir)],
         ),
-        ("root-option-first-glob-short", ["tg", "ERROR", "-g", "*.log", str(probe_dir)]),
+        (
+            "root-option-first-glob-short",
+            [root_command, "ERROR", "-g", "*.log", str(probe_dir)],
+        ),
         (
             "root-option-first-glob-attached",
-            ["tg", "ERROR", "-g*.log", str(probe_dir)],
+            [root_command, "ERROR", "-g*.log", str(probe_dir)],
         ),
-        ("root-option-first-type-attached", ["tg", "ERROR", "-tpy", str(probe_dir)]),
-        ("root-option-first-files", ["tg", "--files", str(probe_dir)]),
+        ("root-option-first-type-attached", [root_command, "ERROR", "-tpy", str(probe_dir)]),
+        ("root-option-first-files", [root_command, "--files", str(probe_dir)]),
         (
             "root-option-first-files-with-matches",
-            ["tg", "-l", "ERROR", str(log_file)],
+            [root_command, "-l", "ERROR", str(log_file)],
         ),
         (
             "root-option-first-files-with-matches-long",
-            ["tg", "--files-with-matches", "ERROR", str(log_file)],
+            [root_command, "--files-with-matches", "ERROR", str(log_file)],
         ),
-        ("root-option-first-multiline", ["tg", "-U", "ERROR", str(log_file)]),
-        ("root-option-first-multiline-long", ["tg", "--multiline", "ERROR", str(log_file)]),
-        ("root-option-first-hidden", ["tg", "--hidden", "ERROR", str(probe_dir)]),
-        ("root-option-first-null", ["tg", "-0", "ERROR", str(log_file)]),
-        ("root-option-first-null-long", ["tg", "--null", "ERROR", str(log_file)]),
-        ("root-option-first-max-depth", ["tg", "-d", "2", "ERROR", str(probe_dir)]),
+        ("root-option-first-multiline", [root_command, "-U", "ERROR", str(log_file)]),
+        ("root-option-first-multiline-long", [root_command, "--multiline", "ERROR", str(log_file)]),
+        ("root-option-first-hidden", [root_command, "--hidden", "ERROR", str(probe_dir)]),
+        ("root-option-first-null", [root_command, "-0", "ERROR", str(log_file)]),
+        ("root-option-first-null-long", [root_command, "--null", "ERROR", str(log_file)]),
+        ("root-option-first-max-depth", [root_command, "-d", "2", "ERROR", str(probe_dir)]),
         (
             "root-option-first-max-depth-long",
-            ["tg", "--max-depth", "2", "ERROR", str(probe_dir)],
+            [root_command, "--max-depth", "2", "ERROR", str(probe_dir)],
         ),
-        ("root-option-first-smart-case", ["tg", "-S", "ERROR", str(log_file)]),
+        ("root-option-first-smart-case", [root_command, "-S", "ERROR", str(log_file)]),
         (
             "root-option-first-smart-case-long",
-            ["tg", "--smart-case", "ERROR", str(log_file)],
+            [root_command, "--smart-case", "ERROR", str(log_file)],
         ),
         (
             "root-option-first-context-attached",
-            ["tg", "ERROR", "-C2", str(log_file)],
+            [root_command, "ERROR", "-C2", str(log_file)],
         ),
     ]
 
@@ -398,6 +409,19 @@ def validate_public_search_advertised_flag_sweep(
 ) -> None:
     if shutil.which("tg") is None:
         raise ReadinessError("could not resolve public tg command for search flag sweep")
+    try:
+        native_tg_binary = resolve_native_tg_binary()
+    except FileNotFoundError as exc:
+        raise ReadinessError(
+            "could not resolve native tg binary for root-option-first search flag sweep: "
+            f"{exc}"
+        ) from exc
+    if native_tg_binary is None:
+        raise ReadinessSkip(
+            "native root-option-first search flag sweep skipped: "
+            "resolve_native_tg_binary() found no compatible native tg binary "
+            "(set TG_NATIVE_TG_BINARY to run this gate)"
+        )
 
     rg_available = _ripgrep_available()
     probe_dir = repo_root / "artifacts" / "agent_readiness" / "public_search_flags"
@@ -424,7 +448,9 @@ def validate_public_search_advertised_flag_sweep(
     required_flags = set().union(
         *(
             _search_flag_tokens_for_sweep(command)
-            for _label, command in _public_search_flag_sweep_cases(probe_dir)
+            for _label, command in _public_search_flag_sweep_cases(
+                probe_dir, native_tg_binary=native_tg_binary
+            )
         )
     )
     missing_flags = sorted(required_flags - advertised_flags)
@@ -434,7 +460,9 @@ def validate_public_search_advertised_flag_sweep(
         )
 
     failures: list[str] = []
-    for label, command in _public_search_flag_sweep_cases(probe_dir):
+    for label, command in _public_search_flag_sweep_cases(
+        probe_dir, native_tg_binary=native_tg_binary
+    ):
         completed = subprocess.run(
             command,
             cwd=repo_root,
@@ -1250,6 +1278,9 @@ def run_check(check: Check, *, repo_root: Path, expected_version: str) -> dict[s
         message = f"timed out after {check.timeout_s}s"
         stdout = str(exc.stdout or "")
         stderr = str(exc.stderr or "")
+    except ReadinessSkip as exc:
+        status = "skipped"
+        message = str(exc)
     except ReadinessError as exc:
         status = "failed"
         message = str(exc)
