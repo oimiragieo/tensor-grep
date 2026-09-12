@@ -210,6 +210,20 @@ def build_edit_ready_ticket(
     )
 
 
+def _normalized_root(root: str | Path) -> str:
+    """Compare repo roots by RESOLVED identity, not by path spelling.
+
+    A path string is not an opened object, but two spellings of the same directory
+    (trailing slash, mixed separators, a relative form) must not read as different trees.
+    Falls back to the lexical form when the path cannot be resolved, so a missing directory
+    still compares deterministically instead of raising inside a verdict path.
+    """
+    try:
+        return str(Path(root).resolve()).replace("\\", "/").rstrip("/").lower()
+    except OSError:
+        return str(root).replace("\\", "/").rstrip("/").lower()
+
+
 def verify_edit_ticket(
     *,
     repo_root: str,
@@ -224,6 +238,18 @@ def verify_edit_ticket(
         return {
             "verdict": "FAIL",
             "reason": "population_incomplete",
+            "violations": [],
+            "ticket_id": ticket.ticket_id,
+        }
+
+    # The ticket records the repo_root it was BUILT from, but this function took the root as an
+    # independent argument and never compared the two -- so a ticket minted against tree A could
+    # be verified against tree B, and every fingerprint comparison below would silently be
+    # cross-tree. A verdict is only meaningful about the tree the ticket describes.
+    if _normalized_root(repo_root) != _normalized_root(ticket.repo_root):
+        return {
+            "verdict": "FAIL",
+            "reason": "repo_root_mismatch",
             "violations": [],
             "ticket_id": ticket.ticket_id,
         }
@@ -248,7 +274,19 @@ def verify_edit_ticket(
     # ticket's scope and simply omit it, and this function would never know. Re-hashing the
     # tree closes that gap; the fail-closed contract is "prove the tree matches the declared
     # change set," not "trust the declared change set."
-    current_fps, _current_population = _walk_tracked_files_bounded(repo_root)
+    current_fps, current_population = _walk_tracked_files_bounded(repo_root)
+    # The ticket-side population gate above cannot speak for THIS walk. If the verify-time walk
+    # was itself cut off by a budget, files it never reached have no current fingerprint, so
+    # drift in them is undetectable -- and the loop below would read a missing entry as "" and
+    # only flag it when the ticket happened to carry a fingerprint for it. Discarding this
+    # result (it was `_current_population`) let an incomplete verify reach PASS.
+    if current_population.get("status") == "incomplete":
+        return {
+            "verdict": "FAIL",
+            "reason": "verify_population_incomplete",
+            "violations": [],
+            "ticket_id": ticket.ticket_id,
+        }
     all_paths = set(ticket.pre_edit_fingerprints) | set(current_fps)
 
     undeclared_drift: list[str] = []
