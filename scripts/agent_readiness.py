@@ -413,8 +413,7 @@ def validate_public_search_advertised_flag_sweep(
         native_tg_binary = resolve_native_tg_binary()
     except FileNotFoundError as exc:
         raise ReadinessError(
-            "could not resolve native tg binary for root-option-first search flag sweep: "
-            f"{exc}"
+            f"could not resolve native tg binary for root-option-first search flag sweep: {exc}"
         ) from exc
     if native_tg_binary is None:
         raise ReadinessSkip(
