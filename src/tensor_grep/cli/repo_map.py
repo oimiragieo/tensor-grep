@@ -5245,7 +5245,9 @@ def _language_coverage_gap_remediation(
 from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap  # noqa: E402
 
 
-def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict[str, Any]]:
+def _language_coverage_gaps_for_universe(
+    bounded_files: list[Path], scan_root: Path | None = None
+) -> list[dict[str, Any]]:
     """PATH A Stage 0 honesty floor (additive): label files in the refs/callers scan universe
     that have no registered ``LanguageSpec`` (or, for a registered language whose grammar is
     fail-closed with no regex fallback, no usable parser) instead of silently degrading them.
@@ -5316,7 +5318,7 @@ def _language_coverage_gaps_for_universe(bounded_files: list[Path]) -> list[dict
         entry["files_affected"] += 1
     # A JS/TS scan rooted BELOW its tsconfig.json silently stops resolving path aliases, so
     # import_graph_consumers under-reports with no stated cause. Disclose it as a real gap.
-    scope_gap = js_ts_scope_gap(bounded_files)
+    scope_gap = js_ts_scope_gap(bounded_files, scan_root)
     if scope_gap is not None:
         gaps_by_language.setdefault(str(scope_gap["language"]), scope_gap)
     return sorted(
@@ -12237,7 +12239,9 @@ def build_symbol_defs_from_map(
         # fail-closed language (e.g. a Go-only symbol with tree_sitter_go not installed). Attach
         # the same honesty-floor gap here so a defs-only caller gets the hint too.
         gap_files, gap_tests = _repo_map_file_and_test_universe(repo_map)
-        resolution_gaps = _language_coverage_gaps_for_universe([*gap_files, *gap_tests])
+        resolution_gaps = _language_coverage_gaps_for_universe(
+            [*gap_files, *gap_tests], _repo_map_root_dir(repo_map)
+        )
         payload["resolution_gaps"] = resolution_gaps
         if resolution_gaps:
             gap_hint = "; ".join(
@@ -13074,7 +13078,7 @@ def build_symbol_refs_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(references)
     if normalized_provider != "native" and lsp_proof_count == 0 and references:
@@ -14261,7 +14265,7 @@ def build_symbol_callers_from_map(
         context_payload["test_matches"],
     )
     payload["coverage_summary"] = _coverage_summary(payload)
-    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files)
+    payload["resolution_gaps"] = _language_coverage_gaps_for_universe(bounded_files, repo_root)
     payload["semantic_provider"] = normalized_provider
     lsp_proof_count = _lsp_proof_row_count(calls)
     if normalized_provider != "native" and lsp_proof_count == 0 and calls:

@@ -29,6 +29,7 @@ import typer
 from typer.core import TyperGroup
 
 from tensor_grep.cli import ast_scan as _ast_scan
+from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
@@ -1031,26 +1032,9 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "InvalidRegexError"
 
 
-def _search_with_cpu_fallback(
-    current_file: str,
-    pattern: str,
-    config: "SearchConfig",
-    exc: Exception,
-) -> "SearchResult":
-    """Retry a failed native-backend search on the always-available CPU backend.
-
-    A runtime backend failure (native panic, IO/encoding error, version skew, GPU/OOM
-    fault) must never surface to the user as a clean no-match. The CPU backend is pure
-    Python and always available, so it is the safe last-resort engine; the override is
-    announced on stderr so it is observable rather than silent (audit B2/I1).
-    """
-    from tensor_grep.backends.cpu_backend import CPUBackend
-
-    sys.stderr.write(
-        f"tensor-grep: search backend failed on {current_file} ({exc}); "
-        "retried on the CPU backend.\n"
-    )
-    return CPUBackend().search(current_file, pattern, config=config)
+# Split to cli/backend_fallback.py (main.py was at its file-size ratchet ceiling). The alias
+# keeps mcp_server.py's existing import and any monkeypatch target working unchanged.
+_search_with_cpu_fallback = _backend_fallback.search_with_cpu_fallback
 
 
 # F5 (Fable audit MED): retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per FILE).
@@ -4231,6 +4215,7 @@ def search_command(
                     # available CPU backend so the search returns correct results instead
                     # of a false no-match or a crash (audit B2/I1).
                     result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    _backend_fallback.record_fallback_on_aggregate(all_results, result)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)

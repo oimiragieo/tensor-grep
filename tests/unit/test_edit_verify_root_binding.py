@@ -14,6 +14,7 @@ Two holes, both of which let a FAIL-shaped situation reach a PASS-shaped verdict
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,39 @@ def test_same_root_spelled_differently_still_passes(tmp_path: Path) -> None:
     )
 
     assert result["verdict"] == "PASS", result
+
+
+def test_root_identity_is_case_folded_only_where_the_filesystem_is() -> None:
+    """REGRESSION (validator seat, 2026-09-12). `_normalized_root` lowercased every resolved
+    root unconditionally (shipped v1.119.8), so on a CASE-SENSITIVE filesystem `/tmp/Repo`
+    and `/tmp/repo` -- two genuinely different trees -- compared equal and a cross-tree
+    verify could slip past `repo_root_mismatch` when contents happened to match.
+
+    Asserted against the platform's real rule rather than hardcoding one, so the test states
+    the invariant on both populations instead of passing vacuously on the author's Windows
+    box (A125: a maintainer's machine is the wrong population).
+    """
+    from tensor_grep.cli.edit_ticket_service import _normalized_root
+
+    upper = _normalized_root("/tmp/Repo/project")
+    lower = _normalized_root("/tmp/repo/project")
+
+    filesystem_is_case_insensitive = os.path.normcase("A") == "a"
+    if filesystem_is_case_insensitive:
+        assert upper == lower, "Windows/macOS-style FS: the two spellings ARE one tree"
+    else:
+        assert upper != lower, (
+            "case-sensitive FS: /tmp/Repo and /tmp/repo are DIFFERENT trees and must not "
+            "compare equal -- collapsing them bypasses repo_root_mismatch"
+        )
+
+
+def test_spelling_differences_that_are_never_identity_still_normalize() -> None:
+    """Control for the test above: the normalizations that ARE always safe -- separator
+    style and a trailing slash -- must still collapse on every platform, so the fix did not
+    simply disable normalization.
+    """
+    from tensor_grep.cli.edit_ticket_service import _normalized_root
+
+    assert _normalized_root("/tmp/repo/project/") == _normalized_root("/tmp/repo/project")
+    assert _normalized_root("\\tmp\\repo") == _normalized_root("/tmp/repo")

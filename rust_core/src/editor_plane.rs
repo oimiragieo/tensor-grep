@@ -66,6 +66,36 @@ pub fn handle_defs(path: PathBuf, symbol: String, _provider: String, json: bool)
     execute_defs_core(&path, &symbol, &data, &backend, json, &mut stdout)
 }
 
+/// Assemble the `defs` response.
+///
+/// Extracted from `execute_defs_core` (2026-09-12) so the `graph_completeness` wiring is
+/// reachable from a test. Previously every test called `graph_completeness_for` DIRECTLY, so
+/// reverting this construction to a hardcoded `"strong"` would have left the whole suite
+/// green -- a mutation control that passes in both arms is not a control. See
+/// `the_response_itself_is_wired_to_the_derived_value`.
+fn build_defs_response(
+    symbol: &str,
+    path: &Path,
+    definitions: Vec<SymbolDefinition>,
+) -> DefsResponse {
+    let mut definition_files = HashSet::new();
+    for d in &definitions {
+        definition_files.insert(d.file.clone());
+    }
+
+    let mut files: Vec<PathBuf> = definition_files.into_iter().collect();
+    files.sort();
+
+    DefsResponse {
+        symbol: symbol.to_string(),
+        graph_completeness: graph_completeness_for(definitions.len()).to_string(),
+        path: path.to_path_buf(),
+        definitions,
+        files: files.clone(),
+        related_paths: files,
+    }
+}
+
 pub fn execute_defs_core(
     path: &Path,
     symbol: &str,
@@ -75,23 +105,7 @@ pub fn execute_defs_core(
     writer: &mut dyn Write,
 ) -> Result<()> {
     let definitions = find_definitions(backend, data, symbol)?;
-
-    let mut definition_files = HashSet::new();
-    for d in &definitions {
-        definition_files.insert(d.file.clone());
-    }
-
-    let mut files: Vec<PathBuf> = definition_files.into_iter().collect();
-    files.sort();
-
-    let response = DefsResponse {
-        symbol: symbol.to_string(),
-        graph_completeness: graph_completeness_for(definitions.len()).to_string(),
-        path: path.to_path_buf(),
-        definitions,
-        files: files.clone(),
-        related_paths: files,
-    };
+    let response = build_defs_response(symbol, path, definitions);
 
     if json {
         writeln!(writer, "{}", serde_json::to_string_pretty(&response)?)?;
@@ -260,13 +274,37 @@ fn graph_completeness_for(definition_count: usize) -> &'static str {
 /// identifiers stay allowed (`char::is_alphanumeric`), because rejecting non-ASCII names
 /// would be a correctness regression for real code; only the DSL-significant and
 /// whitespace/punctuation shapes are refused.
+/// Combining marks (Unicode general category Mn/Mc) that are legal identifier CONTINUATION
+/// characters but are NOT `char::is_alphanumeric`.
+///
+/// Without this, `"e\u{301}"` -- an `e` followed by COMBINING ACUTE ACCENT, which Python's own
+/// `str.isidentifier()` accepts and which renders identically to a precomposed `é` -- was
+/// refused as "not valid in an identifier". That was a FALSE REFUSAL shipped in v1.119.5: the
+/// guard errs closed, so it never widened a pattern, but it did reject legitimate
+/// non-precomposed Unicode identifiers.
+///
+/// SCOPE, stated rather than implied: these are the combining-diacritic blocks, not the full
+/// `XID_Continue` set. Rust's std exposes no Unicode general-category API, and adding a
+/// `unicode-ident` dependency is a supply-chain and lockfile change this fix does not need.
+/// A `XID_Continue` character outside these blocks is still refused -- fail-closed, and a
+/// narrower gap than before rather than a claim of completeness.
+fn is_combining_mark(c: char) -> bool {
+    matches!(c,
+        '\u{0300}'..='\u{036F}'   // Combining Diacritical Marks
+        | '\u{1AB0}'..='\u{1AFF}' // Combining Diacritical Marks Extended
+        | '\u{1DC0}'..='\u{1DFF}' // Combining Diacritical Marks Supplement
+        | '\u{20D0}'..='\u{20FF}' // Combining Diacritical Marks for Symbols
+        | '\u{FE20}'..='\u{FE2F}' // Combining Half Marks
+    )
+}
+
 fn validate_symbol_is_not_a_pattern(symbol: &str) -> Result<()> {
     if symbol.is_empty() {
         anyhow::bail!("symbol must not be empty");
     }
     if let Some(bad) = symbol
         .chars()
-        .find(|c| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+        .find(|c| !(c.is_alphanumeric() || is_combining_mark(*c) || *c == '_' || *c == '$'))
     {
         anyhow::bail!(
             "symbol {symbol:?} contains {bad:?}, which is not valid in an identifier;              refusing rather than interpolating it into an ast-grep pattern"
@@ -279,6 +317,14 @@ fn validate_symbol_is_not_a_pattern(symbol: &str) -> Result<()> {
     }
     if symbol.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         anyhow::bail!("symbol {symbol:?} starts with a digit, which is not a valid identifier");
+    }
+    // A combining mark is a legal identifier CONTINUATION but never a legal START -- it has
+    // nothing to combine with. Without this, widening the predicate above would have newly
+    // ACCEPTED a leading "\u{301}", trading a false refusal for a false acceptance.
+    if symbol.chars().next().is_some_and(is_combining_mark) {
+        anyhow::bail!(
+            "symbol {symbol:?} starts with a combining mark, which is not a valid identifier start"
+        );
     }
     Ok(())
 }
@@ -576,6 +622,34 @@ mod graph_completeness_tests {
         assert!(
             values[0] != values[1],
             "value must depend on the definition count: {values:?}"
+        );
+    }
+
+    #[test]
+    fn the_response_itself_is_wired_to_the_derived_value() {
+        // MUTATION CONTROL (independent validator finding, 2026-09-12). The three tests above
+        // exercise `graph_completeness_for` DIRECTLY, so reverting the DefsResponse
+        // construction to `"strong".to_string()` would have kept every one of them green --
+        // they proved the helper, never that the shipped response uses it. This pins the
+        // RESPONSE, which is the thing a caller actually receives.
+        let empty = build_defs_response("thing", Path::new("/x"), Vec::new());
+        assert_eq!(empty.graph_completeness, "empty");
+
+        let found = build_defs_response(
+            "thing",
+            Path::new("/x"),
+            vec![SymbolDefinition {
+                name: "thing".to_string(),
+                kind: "function".to_string(),
+                file: PathBuf::from("/x/a.py"),
+                line: 1,
+                end_line: 2,
+            }],
+        );
+        assert_eq!(found.graph_completeness, "moderate");
+        assert_ne!(
+            empty.graph_completeness, found.graph_completeness,
+            "the response's value must track the definition count, not a constant"
         );
     }
 }

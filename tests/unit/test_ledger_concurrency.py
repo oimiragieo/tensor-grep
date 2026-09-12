@@ -194,6 +194,60 @@ def test_claim_reclaims_stale_lock(tmp_path: Path) -> None:
     result = ledger_store.submit_claim(str(root), symbols=["value"], agent_id="agent-a")
     elapsed = time.monotonic() - start
 
-    assert elapsed < 4.0  # reclaimed promptly, not hung toward the acquire timeout
+    # The load-bearing proof of "reclaimed, not hung" is that submit_claim RETURNED at all:
+    # an unreclaimed lock raises IndexLockTimeoutError rather than returning late. The timing
+    # bound is the secondary signal, and it is derived from the acquire timeout rather than
+    # hand-picked -- a tighter wall-clock number measures the shared CI runner, not the
+    # reclaim. Receipt: the previous hardcoded `elapsed < 4.0` failed `assert 4.0 < 4.0` on
+    # windows-latest/py3.12 (run 34720456270) while the reclaim itself worked correctly.
+    assert elapsed < _index_lock._TIMEOUT_S
     live_ids = {entry["claim_id"] for entry in ledger_store.list_claims(str(root))["claims"]}
     assert result["claim"]["claim_id"] in live_ids
+
+
+def test_a_fresh_lock_is_not_reclaimed(tmp_path: Path) -> None:
+    """MUTATION CONTROL for test_claim_reclaims_stale_lock.
+
+    That test's timing bound cannot fail on its own -- an unreclaimed lock RAISES rather than
+    returning late, so the assertion only ever sees the success path. This is the arm that
+    discriminates: an identical lock whose mtime is FRESH must NOT be reclaimed, and must
+    fail closed with IndexLockTimeoutError. Without this, "reclaimed promptly" would pass
+    just as happily against a reclaimer that unlinked every lock it ever saw.
+
+    Driven through ``index_lock`` directly so the timeout is an explicit argument -- the
+    module constants are bound as defaults at def time and cannot be monkeypatched.
+    """
+    import os
+
+    root = _make_project(tmp_path)
+    index_path = ledger_store._index_path(root)
+    lock_path = _index_lock._lock_path_for(index_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    # FRESH, not stale: the only difference from the sibling test's fixture.
+    now = time.time()
+    os.utime(lock_path, (now, now))
+
+    with pytest.raises(_index_lock.IndexLockTimeoutError):
+        with _index_lock.index_lock(index_path, timeout_s=0.3, stale_after_s=10.0):
+            pass  # pragma: no cover -- reaching the body IS the failure
+
+    # The live holder's lock must survive the refused acquire -- a waiter that gives up must
+    # not take the lock file down with it.
+    assert lock_path.exists()
+
+
+def test_the_same_lock_IS_reclaimed_once_its_mtime_goes_stale(tmp_path: Path) -> None:
+    """Positive arm of the control above: same lock, same call, only the mtime differs."""
+    import os
+
+    root = _make_project(tmp_path)
+    index_path = ledger_store._index_path(root)
+    lock_path = _index_lock._lock_path_for(index_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    stale = time.time() - 3600.0
+    os.utime(lock_path, (stale, stale))
+
+    with _index_lock.index_lock(index_path, timeout_s=0.3, stale_after_s=10.0):
+        pass  # acquired: the stale lock was reclaimed inside the same 0.3s budget
