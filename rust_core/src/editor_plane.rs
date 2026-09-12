@@ -591,7 +591,8 @@ mod symbol_guard_tests {
 
 #[cfg(test)]
 mod graph_completeness_tests {
-    use super::graph_completeness_for;
+    use super::{build_defs_response, graph_completeness_for, SymbolDefinition};
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn no_definitions_is_reported_as_empty_not_strong() {
