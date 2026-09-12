@@ -15,6 +15,7 @@ fetched locally (not committed to the repo; CI does not fetch it).
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 from collections.abc import Callable
@@ -408,11 +409,26 @@ def _real_late_model_dir():
     return candidate if candidate.is_dir() else None
 
 
+def _real_late_model_runnable() -> bool:
+    """Both preconditions for exercising the ACTUAL model, not just one.
+
+    The fetched model directory is necessary but NOT sufficient: ``load_late_model``
+    imports ``onnxruntime`` (an optional extra). Gating on the directory alone made this
+    class RUN and FAIL on any box where the model had been fetched but the extra was not
+    installed -- an environment-dependent red that looks like a product regression. Both
+    conditions are unmet-precondition skips of the same kind.
+    """
+    if _real_late_model_dir() is None:
+        return False
+    return importlib.util.find_spec("onnxruntime") is not None
+
+
 @pytest.mark.skipif(
-    _real_late_model_dir() is None,
-    reason="requires the real fetched lightonai/LateOn-Code-edge model (local dev only, not "
-    "committed; CI does not fetch it -- run `python -m tensor_grep.core.retrieval_late --fetch` "
-    "first; this test exercises the ACTUAL model when present)",
+    not _real_late_model_runnable(),
+    reason="requires BOTH the real fetched lightonai/LateOn-Code-edge model (local dev only, "
+    "not committed; CI does not fetch it -- run `python -m tensor_grep.core.retrieval_late "
+    "--fetch` first) AND an importable `onnxruntime` (optional extra); this test exercises "
+    "the ACTUAL model when both are present",
 )
 class TestRealFetchedModel:
     """Exercises the ACTUAL installed onnxruntime + tokenizers against the ACTUAL fetched
