@@ -10427,6 +10427,11 @@ def _validate_ast_new_name(name: str) -> None:
 
 
 def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
+    # `lang` is interpolated into a hand-formatted YAML rule below; a newline would inject
+    # sibling keys. Sibling `name` is already validated -- this closes the asymmetry without
+    # rejecting real language spellings like `c++`/`c#`.
+    if not lang.strip() or any(c in lang for c in "\r\n"):
+        raise ValueError(f"Invalid --lang {lang!r}; use a bare language name.")
     import yaml
 
     config_path = base_dir / "sgconfig.yml"

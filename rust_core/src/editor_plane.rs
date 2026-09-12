@@ -223,11 +223,49 @@ pub fn execute_context_core(
     Ok(())
 }
 
+/// Reject a symbol that would change the MEANING of an ast-grep pattern instead of being
+/// matched literally inside it.
+///
+/// `find_definitions` interpolates the caller-supplied symbol straight into ast-grep DSL
+/// patterns (`format!("def {}($$$ARGS): $$$BODY", symbol)`) and `find_references` hands it
+/// to the matcher AS the pattern. ast-grep treats `$NAME` / `$$$ARGS` as METAVARIABLES, so a
+/// symbol carrying those sigils is not a stricter query -- it is a WIDER one. `tg defs . '$$$'`
+/// would expand to `def $$$($$$ARGS): $$$BODY` and match every function in the tree while
+/// still reporting `name: "$$$"`, i.e. a confidently-wrong answer rather than an error.
+///
+/// A symbol is an identifier, so this fails closed on anything that is not one. Unicode
+/// identifiers stay allowed (`char::is_alphanumeric`), because rejecting non-ASCII names
+/// would be a correctness regression for real code; only the DSL-significant and
+/// whitespace/punctuation shapes are refused.
+fn validate_symbol_is_not_a_pattern(symbol: &str) -> Result<()> {
+    if symbol.is_empty() {
+        anyhow::bail!("symbol must not be empty");
+    }
+    if let Some(bad) = symbol
+        .chars()
+        .find(|c| !(c.is_alphanumeric() || *c == '_' || *c == '$'))
+    {
+        anyhow::bail!(
+            "symbol {symbol:?} contains {bad:?}, which is not valid in an identifier;              refusing rather than interpolating it into an ast-grep pattern"
+        );
+    }
+    if symbol.contains('$') {
+        anyhow::bail!(
+            "symbol {symbol:?} contains '$', which ast-grep reads as a metavariable sigil;              refusing rather than silently widening the pattern to match unrelated code"
+        );
+    }
+    if symbol.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        anyhow::bail!("symbol {symbol:?} starts with a digit, which is not a valid identifier");
+    }
+    Ok(())
+}
+
 fn find_definitions(
     backend: &AstBackend,
     data: &ProjectDataV6,
     symbol: &str,
 ) -> Result<Vec<SymbolDefinition>> {
+    validate_symbol_is_not_a_pattern(symbol)?;
     let mut definitions = Vec::new();
     let lang_str = data
         .project_cfg
@@ -291,6 +329,7 @@ fn find_references(
     data: &ProjectDataV6,
     symbol: &str,
 ) -> Result<Vec<SymbolReference>> {
+    validate_symbol_is_not_a_pattern(symbol)?;
     let mut references = Vec::new();
     let lang_str = data
         .project_cfg
@@ -427,4 +466,56 @@ fn find_config_file(path: &Path) -> Result<Option<PathBuf>> {
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod symbol_guard_tests {
+    use super::validate_symbol_is_not_a_pattern;
+
+    #[test]
+    fn metavariable_sigils_are_refused_before_pattern_interpolation() {
+        // The whole point: `$$$` interpolated into `def {}($$$ARGS): $$$BODY` matches EVERY
+        // function while still reporting name "$$$" -- a confidently-wrong answer.
+        for hostile in ["$$$", "$NAME", "$$$ARGS", "foo$", "$"] {
+            let err = validate_symbol_is_not_a_pattern(hostile)
+                .expect_err("a metavariable-bearing symbol must be refused");
+            let message = err.to_string();
+            assert!(
+                message.contains("refusing"),
+                "refusal for {hostile:?} must say it refused, got: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn pattern_punctuation_and_whitespace_are_refused() {
+        for hostile in ["foo(", "foo bar", "a.b", "a::b", "*", "foo\nbar", ""] {
+            assert!(
+                validate_symbol_is_not_a_pattern(hostile).is_err(),
+                "{hostile:?} is not an identifier and must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn real_identifiers_still_pass() {
+        // MUTATION CONTROL: if the guard rejected everything it would look "secure" while
+        // breaking the product. These must keep working, including non-ASCII identifiers.
+        for good in [
+            "foo",
+            "_private",
+            "CamelCase",
+            "snake_case_2",
+            "handle_defs",
+            "\u{e9}l\u{e9}ment",
+        ] {
+            validate_symbol_is_not_a_pattern(good)
+                .unwrap_or_else(|e| panic!("{good:?} is a valid identifier but was refused: {e}"));
+        }
+    }
+
+    #[test]
+    fn a_leading_digit_is_refused() {
+        assert!(validate_symbol_is_not_a_pattern("1foo").is_err());
+    }
 }
