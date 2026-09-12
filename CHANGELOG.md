@@ -1,6 +1,73 @@
 # CHANGELOG
 
 
+## v1.119.6 (2026-09-12)
+
+### Bug Fixes
+
+- **packaging**: Add a [scan] extra so tg scan --ruleset has a stock install path
+  ([#1146](https://github.com/oimiragieo/tensor-grep/pull/1146),
+  [`95987a5`](https://github.com/oimiragieo/tensor-grep/commit/95987a5bb0e10d25f650b95f0775e21d1e752492))
+
+* fix(packaging): add a [scan] extra so tg scan --ruleset has a stock install path
+
+`tg scan --ruleset/--rule/--inline-rules` runs through the ast-grep WRAPPER backend, which shells
+  out to an `ast-grep`/`sg` BINARY on PATH. That is a different dependency from the tree-sitter
+  packages in the `ast` extra, and NO declared extra provided it -- so the command is advertised in
+  `tg scan --help` with no stock install path at all.
+
+A125 class, measured rather than assumed. On this machine `ast-grep` resolves THREE times (pip
+  Scripts, npm, scoop) while `ast_grep_py` is not importable, so the command "works for the
+  maintainer" for a reason a clean install does not share. With `ast-grep` removed from PATH:
+
+tg scan --ruleset secrets --path src/tensor_grep/cli -> exit 1 "Explicit AST search requires AST
+  dependencies: ast-grep wrapper backend is required ... A stock `pip install tensor-grep` does not
+  include it"
+
+So the product already FAILS CLOSED and says so honestly -- it never reports 0 findings on a missing
+  backend. The gap was reachability, not honesty: there was nothing to install.
+
+Adds `scan = ["ast-grep-cli>=0.39"]` and points both remediation strings at it. Dogfooded end to
+  end, not inferred: a clean venv + `uv pip install "ast-grep-cli>=0.39"` produces `ast-grep.exe`
+  and `sg.exe` in Scripts/ reporting `ast-grep 0.45.3`. `>=0.39` is satisfiable (PyPI currently
+  serves 0.39.0 through 0.45.3).
+
+This changes reachability ONLY. The fail-closed contract is untouched: without the binary the scan
+  still exits 1 with a remediation, it does not degrade to a silent pass.
+
+Verified: 170 passed / 3 skipped across the ast_scan + ruleset + ast_workflows + remediation suites;
+  both constants assert-checked to name the new extra; ruff check + format clean. Neither touched
+  source file is allowlisted by the file-size ratchet.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+* build: lock the new [scan] extra (uv.lock parity)
+
+`Dependency & License Audit` failed on this branch with
+
+error: The lockfile at `uv.lock` needs to be updated, but `--locked` was provided.
+
+Adding `scan = ["ast-grep-cli>=0.39"]` to pyproject.toml without regenerating uv.lock breaks
+  lockfile parity. The gate is correct; the omission was mine.
+
+`uv lock` output audited before committing rather than trusted -- a lockfile regeneration is a
+  supply-chain surface and can quietly re-resolve unrelated packages:
+
+- packages ADDED: 1 (ast-grep-cli v0.45.3) - packages REMOVED: 0 - version changes on any other
+  package: 0 - `provides-extras` gains exactly "scan"
+
+The remaining line churn is re-serialization: +139/-130 `{` lines, net +9, matching ast-grep-cli's
+  own platform wheel entries. No silent upgrade or downgrade rode along.
+
+`uv lock --check` now resolves 197 packages clean.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.5 (2026-09-12)
 
 ### Bug Fixes
