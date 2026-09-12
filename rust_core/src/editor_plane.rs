@@ -86,11 +86,11 @@ pub fn execute_defs_core(
 
     let response = DefsResponse {
         symbol: symbol.to_string(),
+        graph_completeness: graph_completeness_for(definitions.len()).to_string(),
         path: path.to_path_buf(),
         definitions,
         files: files.clone(),
         related_paths: files,
-        graph_completeness: "strong".to_string(),
     };
 
     if json {
@@ -221,6 +221,29 @@ pub fn execute_context_core(
     }
 
     Ok(())
+}
+
+/// Honest `graph_completeness` for the editor-plane defs surface.
+///
+/// This was hardcoded to `"strong"`, so the session-daemon stream claimed a strong symbol
+/// graph even when it found NOTHING. Agents consume this value to decide how much to trust a
+/// result, which makes a fixed maximum the worst possible default.
+///
+/// The vocabulary is shared with the Python door (`cli/repo_map.py` uses
+/// `strong` / `moderate` / `partial` / `empty`), so this maps into it rather than inventing
+/// terms: no definitions -> `empty` (the same word repo_map.py uses for a nil result); one or
+/// more -> `moderate`.
+///
+/// `moderate`, not `strong`, is deliberate. The Python defs path earns `strong` only AFTER
+/// LSP-proof rows and import filtering; this path is ast-grep pattern matching over a single
+/// configured language, in-file, with no LSP proof and no cross-file resolution. Reporting the
+/// same word for strictly weaker evidence is the overclaim being removed here.
+fn graph_completeness_for(definition_count: usize) -> &'static str {
+    if definition_count == 0 {
+        "empty"
+    } else {
+        "moderate"
+    }
 }
 
 /// Reject a symbol that would change the MEANING of an ast-grep pattern instead of being
@@ -517,5 +540,42 @@ mod symbol_guard_tests {
     #[test]
     fn a_leading_digit_is_refused() {
         assert!(validate_symbol_is_not_a_pattern("1foo").is_err());
+    }
+}
+
+#[cfg(test)]
+mod graph_completeness_tests {
+    use super::graph_completeness_for;
+
+    #[test]
+    fn no_definitions_is_reported_as_empty_not_strong() {
+        // The bug: this surface reported "strong" even when it found zero definitions.
+        assert_eq!(graph_completeness_for(0), "empty");
+    }
+
+    #[test]
+    fn found_definitions_are_moderate_not_strong() {
+        // ast-grep pattern matching, in-file, single language, no LSP proof -- strictly weaker
+        // than the Python defs path that earns "strong", so it must not claim the same word.
+        for n in [1usize, 2, 17] {
+            assert_eq!(graph_completeness_for(n), "moderate");
+        }
+    }
+
+    #[test]
+    fn the_value_varies_with_the_result_and_is_never_strong() {
+        // MUTATION CONTROL: swapping one hardcoded constant for another would still be
+        // dishonest and would pass the two tests above if they were written loosely. This
+        // pins that the value actually DEPENDS on what was found, and that the overclaimed
+        // word is gone from every arm.
+        let values: Vec<&str> = [0usize, 1, 5]
+            .iter()
+            .map(|n| graph_completeness_for(*n))
+            .collect();
+        assert!(values.iter().all(|v| *v != "strong"), "{values:?}");
+        assert!(
+            values[0] != values[1],
+            "value must depend on the definition count: {values:?}"
+        );
     }
 }
