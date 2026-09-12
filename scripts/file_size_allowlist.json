@@ -13,7 +13,7 @@
     "rust_core/src/backend_cpu.rs": 1817,
     "rust_core/src/gpu_native.rs": 4952,
     "rust_core/src/index.rs": 1756,
-    "rust_core/src/main.rs": 15127,
+    "rust_core/src/main.rs": 14899,
     "rust_core/src/native_search.rs": 2686,
     "rust_core/tests/test_ast_rewrite.rs": 2509,
     "rust_core/tests/test_index.rs": 2356,
@@ -34,4 +34,4 @@
     "tests/unit/test_session_cli.py": 3337,
     "tests/unit/test_mcp_error_sanitization.py": 2518
   }
-}
+}

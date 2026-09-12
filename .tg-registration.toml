@@ -8,7 +8,10 @@
 name = "search-flag-front-doors"
 entities = ["--rank", "--bm25", "--semantic", "--generate", "--lang", "--stats"]
 sites = [
-  { file = "rust_core/src/main.rs", symbol = "SEARCH_PYTHON_PASSTHROUGH_FLAGS" },
+  # Moved out of main.rs by the flag-registry split (the file-size ratchet left main.rs
+  # ~10 lines of headroom, so the C1/C2 fix could not land inside it). The registration
+  # contract is unchanged -- only the symbol's home moved.
+  { file = "rust_core/src/search_flag_registry.rs", symbol = "SEARCH_PYTHON_PASSTHROUGH_FLAGS" },
   { file = "src/tensor_grep/cli/bootstrap.py", symbol = "_TG_ONLY_SEARCH_FLAGS" },
 ]
 

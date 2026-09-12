@@ -56,6 +56,11 @@ use tensor_grep_rs::routing::{
     plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
 };
+mod search_flag_registry;
+use search_flag_registry::{
+    raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
+    SEARCH_PYTHON_PASSTHROUGH_FLAGS,
+};
 
 // audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
 // Python passthrough is unavailable or times out -- see resolve_help_probe_timeout()). Leads with
@@ -101,211 +106,6 @@ const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
     "target",
     "venv",
 ];
-const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
-    "--count-matches",
-    "--format",
-    "--sort",
-    "--sortr",
-    "--sort-files",
-    "--no-sort-files",
-    "-H",
-    "--with-filename",
-    "-I",
-    "--no-filename",
-    "-q",
-    "--quiet",
-    "-n",
-    "--line-number",
-    "--engine",
-    "-s",
-    "--case-sensitive",
-    "-x",
-    "--line-regexp",
-    "-j",
-    "--threads",
-    "-t",
-    "--type",
-    "--iglob",
-    "-T",
-    "--type-not",
-    "-u",
-    "--unrestricted",
-    "--stats",
-    "--debug",
-    "--trace",
-    "--pcre2-unicode",
-    "--no-pcre2-unicode",
-    "--no-auto-hybrid-regex",
-    "--no-text",
-    "--no-binary",
-    "--no-follow",
-    "--no-glob-case-insensitive",
-    "--no-ignore-file-case-insensitive",
-    "--ignore",
-    "--no-ignore",
-    "--ignore-dot",
-    "--ignore-exclude",
-    "--ignore-files",
-    "--ignore-global",
-    "--ignore-messages",
-    "--ignore-parent",
-    "--ignore-vcs",
-    "--no-ignore-vcs",
-    "--messages",
-    "--require-git",
-    "-C",
-    "--context",
-    "-A",
-    "--after-context",
-    "-B",
-    "--before-context",
-    "--no-hidden",
-    "--no-one-file-system",
-    "--no-block-buffered",
-    "--no-byte-offset",
-    "--no-column",
-    "--no-crlf",
-    "--no-encoding",
-    "--no-fixed-strings",
-    "--no-invert-match",
-    "--no-mmap",
-    "--no-multiline",
-    "--no-multiline-dotall",
-    "--no-pcre2",
-    "--no-pre",
-    "--no-search-zip",
-    "--no-context-separator",
-    "--no-include-zero",
-    "--no-line-buffered",
-    "--no-max-columns-preview",
-    "--no-trim",
-    "--no-json",
-    "--no-stats",
-];
-/// Flags that route a search to the Python passthrough front door rather than being handled by
-/// the native fast path. Exact token matches only; unrecognized flags are caught fail-closed by
-/// `parse_early_ripgrep_args`'s catch-all arm returning `None`.
-const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
-    "-H",
-    "--with-filename",
-    "-I",
-    "--no-filename",
-    "-q",
-    "--quiet",
-    "-N",
-    "--no-line-number",
-    "--engine",
-    "-s",
-    "--case-sensitive",
-    "-x",
-    "--line-regexp",
-    "-j",
-    "--threads",
-    "--iglob",
-    "-T",
-    "--type-not",
-    "-u",
-    "--unrestricted",
-    "--stats",
-    "--debug",
-    "--trace",
-    "-f",
-    "--file",
-    "--pre",
-    "--pre-glob",
-    "-z",
-    "--search-zip",
-    "--crlf",
-    "--dfa-size-limit",
-    "-E",
-    "--encoding",
-    "--mmap",
-    "--no-unicode",
-    "--regex-size-limit",
-    "--stop-on-nonmatch",
-    "--binary",
-    "--glob-case-insensitive",
-    "--ignore-file",
-    "--ignore-file-case-insensitive",
-    "--no-ignore-file-case-insensitive",
-    "--no-require-git",
-    "--pcre2-unicode",
-    "--no-pcre2-unicode",
-    "--no-auto-hybrid-regex",
-    "--no-text",
-    "--no-binary",
-    "--no-follow",
-    "--no-glob-case-insensitive",
-    "--ignore",
-    "--ignore-dot",
-    "--ignore-exclude",
-    "--ignore-files",
-    "--ignore-global",
-    "--ignore-messages",
-    "--ignore-parent",
-    "--ignore-vcs",
-    "--messages",
-    "--require-git",
-    "--no-hidden",
-    "--one-file-system",
-    "--no-one-file-system",
-    "--type-add",
-    "--type-clear",
-    "--block-buffered",
-    "--no-block-buffered",
-    "-b",
-    "--byte-offset",
-    "--no-byte-offset",
-    "--no-crlf",
-    "--no-encoding",
-    "--no-fixed-strings",
-    "--no-invert-match",
-    "--no-mmap",
-    "--no-multiline",
-    "--no-multiline-dotall",
-    "--no-pcre2",
-    "--no-pre",
-    "--no-search-zip",
-    "--colors",
-    "--context-separator",
-    "--no-context-separator",
-    "--field-context-separator",
-    "--field-match-separator",
-    "--heading",
-    "--no-heading",
-    "--hostname-bin",
-    "--hyperlink-format",
-    "--include-zero",
-    "--no-include-zero",
-    "--line-buffered",
-    "--no-line-buffered",
-    "-M",
-    "--max-columns",
-    "--max-columns-preview",
-    "--no-max-columns-preview",
-    "-p",
-    "--pretty",
-    "--trim",
-    "--no-trim",
-    "--no-json",
-    "--no-stats",
-    "--no-ignore-messages",
-    "--no-messages",
-    "--generate",
-    "--lang",
-    // BM25 re-ranking is a Python-side post-process; route --rank/--bm25 searches to the sidecar
-    // so the native front door does not clap-reject the unknown flag.
-    "--rank",
-    "--bm25",
-    // Local hybrid semantic search (RRF fusion of BM25 + dense embeddings) is also a Python-side
-    // post-process (roadmap #27, Path B Stage 1) -- same reasoning as --rank/--bm25 above.
-    "--semantic",
-    // --ltl is a Python-side temporal-query post-process (CPUBackend::_search_ltl); route it
-    // to the sidecar so the native front door does not clap-reject the unknown flag. Paired
-    // with bootstrap.py::_TG_ONLY_SEARCH_FLAGS (the 2-front-door law).
-    "--ltl",
-];
-
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(version)]
@@ -1842,24 +1642,6 @@ fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<O
     normalize_top_level_search_args(raw_args)
 }
 
-fn raw_args_contain_any_flag(raw_args: &[OsString], flags: &[&str]) -> bool {
-    raw_args.iter().skip(1).any(|arg| {
-        let token = arg.to_string_lossy();
-        token_matches_any_flag(&token, flags)
-    })
-}
-
-fn search_args_contain_any_flag(args: &[String], flags: &[&str]) -> bool {
-    args.iter()
-        .any(|token| token_matches_any_flag(token.as_str(), flags))
-}
-
-fn token_matches_any_flag(token: &str, flags: &[&str]) -> bool {
-    flags.iter().any(|flag| {
-        token == *flag || (flag.starts_with("--") && token.starts_with(&format!("{flag}=")))
-    })
-}
-
 fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
     let tokens = raw_args
         .iter()
@@ -2907,8 +2689,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             // unrecognized flag never silently reaches the native fast path -- every arm above
             // is a finite, explicit allowlist, so any `-`-prefixed token this function does not
             // otherwise understand (including a ripgrep combined-short-flag cluster like `-uu`,
-            // `-uuu`, or `-iu` that `SEARCH_PYTHON_PASSTHROUGH_FLAGS`'s exact-token matching
-            // also does not recognize) falls through to here and returns `None`, forcing the
+            // `-uuu`, or `-iu` that the early parser does not recognize) falls through to here
+            // and returns `None`, forcing the
             // caller back to the full Python CLI rather than being silently misparsed or
             // dropped. Do not narrow this arm without an equally fail-closed replacement.
             _ if token.starts_with('-') => return None,
@@ -3009,10 +2791,10 @@ mod tests {
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
     }
 
-    // Task #271: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` is exact-token matching, so it recognizes the
-    // literal spellings `-u`/`--unrestricted` but NOT a ripgrep combined-short-flag cluster like
-    // `-uu`/`-iu` -- those are each a different literal token. The actual fail-closed guarantee
-    // that such a cluster never silently reaches the native fast path is
+    // Task #271: `parse_early_ripgrep_args` recognizes the literal spellings `-u`/
+    // `--unrestricted` but NOT a ripgrep combined-short-flag cluster like `-uu`/`-iu` -- those
+    // are rejected as a different token. The actual fail-closed guarantee that such a cluster
+    // never silently reaches the native fast path is
     // `parse_early_ripgrep_args`'s own catch-all arm (`_ if token.starts_with('-') => return
     // None`), which forces a fall-through to the full Python CLI for any unrecognized
     // `-`-prefixed token. These tests assert that guarantee directly, at the function it actually
