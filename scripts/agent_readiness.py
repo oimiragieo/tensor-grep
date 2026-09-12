@@ -261,6 +261,51 @@ def _public_search_flag_sweep_cases(probe_dir: Path) -> list[tuple[str, list[str
             "root-option-first-count-matches",
             ["tg", "--count-matches", "ERROR", str(log_file)],
         ),
+        # C1/C2/C3 (2026-09-12): the native root door historically refused these rg-style
+        # spellings in root (option-first) position while the explicit `search` form accepted
+        # them ("error: unexpected argument '--glob' found" on shipped tg 1.119.4). Each case
+        # below must exit 0/1 (or a disclosed-incomplete 2) with NO "unexpected argument"
+        # stderr -- the sweep fails while the root door is broken, so the gate cannot stay
+        # green over the defect. Attached short-value forms (-tpy/-C2/-g*.py) cover the
+        # matcher half (C2).
+        (
+            "root-option-first-glob",
+            ["tg", "ERROR", "--glob", "*.log", str(probe_dir)],
+        ),
+        ("root-option-first-glob-short", ["tg", "ERROR", "-g", "*.log", str(probe_dir)]),
+        (
+            "root-option-first-glob-attached",
+            ["tg", "ERROR", "-g*.log", str(probe_dir)],
+        ),
+        ("root-option-first-type-attached", ["tg", "ERROR", "-tpy", str(probe_dir)]),
+        ("root-option-first-files", ["tg", "--files", str(probe_dir)]),
+        (
+            "root-option-first-files-with-matches",
+            ["tg", "-l", "ERROR", str(log_file)],
+        ),
+        (
+            "root-option-first-files-with-matches-long",
+            ["tg", "--files-with-matches", "ERROR", str(log_file)],
+        ),
+        ("root-option-first-multiline", ["tg", "-U", "ERROR", str(log_file)]),
+        ("root-option-first-multiline-long", ["tg", "--multiline", "ERROR", str(log_file)]),
+        ("root-option-first-hidden", ["tg", "--hidden", "ERROR", str(probe_dir)]),
+        ("root-option-first-null", ["tg", "-0", "ERROR", str(log_file)]),
+        ("root-option-first-null-long", ["tg", "--null", "ERROR", str(log_file)]),
+        ("root-option-first-max-depth", ["tg", "-d", "2", "ERROR", str(probe_dir)]),
+        (
+            "root-option-first-max-depth-long",
+            ["tg", "--max-depth", "2", "ERROR", str(probe_dir)],
+        ),
+        ("root-option-first-smart-case", ["tg", "-S", "ERROR", str(log_file)]),
+        (
+            "root-option-first-smart-case-long",
+            ["tg", "--smart-case", "ERROR", str(log_file)],
+        ),
+        (
+            "root-option-first-context-attached",
+            ["tg", "ERROR", "-C2", str(log_file)],
+        ),
     ]
 
 

@@ -835,6 +835,17 @@ def test_agent_readiness_public_search_flag_sweep_rejects_native_frontdoor_drift
                     "      --count-matches",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
+                    # C1/C3: flags the widened root-option-first sweep cases exercise. Each
+                    # is advertised by the REAL `tg search --help` (verified 2026-09-12) --
+                    # this fixture models it, so the missing-flag pre-check passes here.
+                    "  -g, --glob <GLOB>",
+                    "      --files",
+                    "  -l, --files-with-matches",
+                    "  -U, --multiline",
+                    "      --hidden",
+                    "  -0, --null",
+                    "  -d, --max-depth <DEPTH>",
+                    "  -S, --smart-case",
                 ]),
                 stderr="",
             )
@@ -919,6 +930,59 @@ def test_agent_readiness_public_search_flag_sweep_includes_rg_inverse_overrides(
     assert "--no-column" in column_toggle_commands[0]
 
 
+def test_agent_readiness_public_search_flag_sweep_includes_root_option_first_parity_flags(
+    tmp_path,
+) -> None:
+    # C3 (2026-09-12): the sweep's root-option-first coverage was only --sort / -t /
+    # --count-matches, so the gate stayed green while the NATIVE root door refused common
+    # rg-style search flags (`tg needle --glob '*.py' src` -> "unexpected argument" on
+    # shipped tg 1.119.4). The sweep must cover the full C1 flag set (positive spellings the
+    # explicit `search` form accepts) plus the attached short-value forms (C2), in ROOT
+    # (option-first) position, so the agent-readiness gate cannot stay green while the root
+    # door is broken. This is a census of the gate -- if it reds, someone shrank the sweep.
+    module = _load_script_module()
+    cases = module._public_search_flag_sweep_cases(tmp_path)
+    root_cases = [
+        (label, command) for label, command in cases if label.startswith("root-option-first-")
+    ]
+
+    # Positive control: the pre-existing root cases must still be present (the widening adds,
+    # never replaces).
+    root_labels = {label for label, _command in root_cases}
+    for existing in (
+        "root-option-first-sort",
+        "root-option-first-type",
+        "root-option-first-count-matches",
+    ):
+        assert existing in root_labels, f"pre-existing sweep case {existing} was dropped"
+
+    commands = [" ".join(command) for _label, command in root_cases]
+    for flag in (
+        "--glob",
+        "-g",
+        "--files",
+        "-l",
+        "--files-with-matches",
+        "-U",
+        "--multiline",
+        "--hidden",
+        "-0",
+        "--null",
+        "-d",
+        "--max-depth",
+        "-S",
+        "--smart-case",
+        # Attached short-value forms (C2): the matcher must accept these spellings too.
+        "-tpy",
+        "-g*.log",
+        "-C2",
+    ):
+        assert any(f" {flag} " in command for command in commands), (
+            f"root-option-first sweep is missing coverage for {flag} -- the gate cannot "
+            f"detect a root door that refuses it"
+        )
+
+
 def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
     monkeypatch, tmp_path
 ) -> None:
@@ -998,6 +1062,17 @@ def test_agent_readiness_public_search_flag_sweep_accepts_public_frontdoor(
                     "      --count-matches",
                     "  -n, --line-number",
                     "  -F, --fixed-strings",
+                    # C1/C3: flags the widened root-option-first sweep cases exercise. Each
+                    # is advertised by the REAL `tg search --help` (verified 2026-09-12) --
+                    # this fixture models it, so the missing-flag pre-check passes here.
+                    "  -g, --glob <GLOB>",
+                    "      --files",
+                    "  -l, --files-with-matches",
+                    "  -U, --multiline",
+                    "      --hidden",
+                    "  -0, --null",
+                    "  -d, --max-depth <DEPTH>",
+                    "  -S, --smart-case",
                 ]),
                 stderr="",
             )
@@ -1092,6 +1167,17 @@ def _flag_sweep_help_stdout() -> str:
         "      --count-matches",
         "  -n, --line-number",
         "  -F, --fixed-strings",
+        # C1/C3: flags the widened root-option-first sweep cases exercise. Each is advertised
+        # by the REAL `tg search --help` (verified 2026-09-12) -- this fixture models it, so
+        # the missing-flag pre-check passes in the fake-run tests.
+        "  -g, --glob <GLOB>",
+        "      --files",
+        "  -l, --files-with-matches",
+        "  -U, --multiline",
+        "      --hidden",
+        "  -0, --null",
+        "  -d, --max-depth <DEPTH>",
+        "  -S, --smart-case",
     ])
 
 
