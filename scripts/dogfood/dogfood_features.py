@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -54,6 +55,7 @@ def check(
     want_exit: int = 0,
     must_contain: str | None = None,
     must_not_contain: str | None = None,
+    must_match: str | None = None,
     json_key: str | None = None,
 ) -> None:
     """Run ``tg <args>`` and record pass/fail against the given expectations.
@@ -71,6 +73,8 @@ def check(
         ok, detail = False, f"missing {must_contain!r}"
     if ok and must_not_contain is not None and must_not_contain in combined:
         ok, detail = False, f"contains forbidden {must_not_contain!r}"
+    if ok and must_match is not None and re.search(must_match, combined) is None:
+        ok, detail = False, f"no match for pattern {must_match!r}"
     if ok and json_key is not None:
         try:
             cursor: object = json.loads(out)
@@ -192,7 +196,21 @@ def main() -> int:
         empty = Path(td) / "empty"
         empty.mkdir()
 
-        check("version", ["--version"], must_contain="tensor-grep")
+        # `--version` output DIVERGES between the two front doors, measured 2026-09-12:
+        #     published wheel, clean Docker container : "tensor-grep 1.119.8"
+        #     managed NATIVE binary on PATH           : "tg 1.119.7"   (rust_core/src/main.rs
+        #                                               prints `println!("tg {}", ...)`)
+        # The old `must_contain="tensor-grep"` therefore FAILS against a native binary, and a bare
+        # `tg <semver>` pattern FAILS against the published wheel this harness is built to test --
+        # so either product name alone makes the gate wrong for half its own population.
+        #
+        # This harness runs against WHATEVER `tg` is on PATH (wheel in Docker, native locally), so
+        # it asserts the part both doors genuinely owe: a semver, behind either product name. That
+        # is not an endorsement of the divergence -- `tests/e2e/test_routing_parity.py` never
+        # compares `--version` ACROSS launchers (it only uses it as a skip-guard probe), which is
+        # the coverage gap that let two doors drift apart; closing that is a separate slice with a
+        # public-output decision in it, not something to silently pick a winner for here.
+        check("version", ["--version"], must_match=r"\b(?:tg|tensor-grep) \d+\.\d+\.\d+")
         # --- text search (the ripgrep-compatible front door) ---
         check("search (plain text)", ["search", "hub_fn", fx], must_contain="hub")
         # REGRESSION GUARD (v1.14.0/v1.15.1): plain-text --rank must NOT leak to ripgrep.
@@ -250,6 +268,37 @@ def main() -> int:
             "find (dense-absent hint leads with install-dense -- dense-hint)",
             ["find", "hub_fn", fx, "--json"],
             must_contain="install-dense",
+        )
+
+        # importers: the reverse of `tg imports`, and the release harness never exercised it.
+        # Pins the EXPLICIT-ROOT form on purpose. `tg importers FILE` with no ROOT resolves ROOT
+        # from the CURRENT DIRECTORY, so an agent running it from a multi-project home scans that
+        # home, hits the repo-file ceiling, and returns `result_incomplete` with exit 2 -- a real
+        # footgun reported from a Cursor home workspace. Asserting the confirmed reverse edge AND
+        # a complete scan means a regression that silently truncates the walk cannot pass.
+        _check_json(
+            "importers FILE ROOT (confirmed reverse edge, complete scan)",
+            ["importers", str(fixture / "src" / "hub.py"), fx, "--json"],
+            predicate=lambda payload: (
+                (
+                    True,
+                    "",
+                )
+                if (
+                    not payload.get("result_incomplete")
+                    and int(payload.get("importer_count") or 0) >= 1
+                    and any(
+                        "leaf.py" in str(entry.get("file", ""))
+                        for entry in (payload.get("importers") or [])
+                    )
+                )
+                else (
+                    False,
+                    f"expected a complete scan with leaf.py as a confirmed importer; got "
+                    f"count={payload.get('importer_count')!r} "
+                    f"incomplete={payload.get('result_incomplete')!r}",
+                )
+            ),
         )
 
         # daemon-autostart: a cold/never-warmed session daemon gets an honest `autostart` posture string
