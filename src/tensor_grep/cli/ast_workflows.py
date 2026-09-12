@@ -99,9 +99,10 @@ _SUFFIX_CACHE = {
 
 
 _AST_GREP_REMEDIATION = (
-    " -- install the ast-grep CLI to enable it: `pip install ast-grep-cli` "
-    "(or `npm i -g @ast-grep/cli`). A stock `pip install tensor-grep` does not include it, "
-    "so every built-in `tg scan --ruleset` fails until it is on PATH."
+    " -- install the ast-grep CLI to enable it: `pip install tensor-grep[scan]` "
+    "(or `pip install ast-grep-cli`, or `npm i -g @ast-grep/cli`). A bare "
+    "`pip install tensor-grep` does not include it, so every built-in "
+    "`tg scan --ruleset` fails until it is on PATH."
 )
 """Remediation appended to EVERY ast-grep-unavailable refusal.
 

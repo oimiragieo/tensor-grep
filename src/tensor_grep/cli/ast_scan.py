@@ -178,7 +178,8 @@ def _filter_ast_rule_specs(
 
 RULESETS_UNAVAILABLE_REASON = (
     "the ast-grep backend is not installed, so none of these rulesets can run on this "
-    "install -- `pip install ast-grep-cli` (or `npm i -g @ast-grep/cli`) to enable them"
+    "install -- `pip install tensor-grep[scan]` (or `pip install ast-grep-cli`, or "
+    "`npm i -g @ast-grep/cli`) to enable them"
 )
 
 
