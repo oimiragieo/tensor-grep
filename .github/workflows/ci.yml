@@ -99,6 +99,33 @@ jobs:
           fi
           if [ -n "$DOC_FILES" ]; then echo "docs=true" >> "$GITHUB_OUTPUT"; else echo "docs=false" >> "$GITHUB_OUTPUT"; fi
 
+  # CI-cost discipline (2026-09-13, operator directive after $524 GitHub Actions spend): macOS
+  # runners bill at a materially higher per-minute multiplier than Linux/Windows. `matrix.os` is
+  # NOT a valid context in a job-level `if:` (only github/needs/vars/inputs are; matrix is only
+  # available in step-level `if:` and in `strategy.matrix` itself) -- a first attempt at this job
+  # used `if: matrix.os != 'macos-latest' || ...` directly on test-python/test-rust-core/
+  # native-build-smoke and GitHub rejected the whole workflow file at push time with zero jobs
+  # created ("This run likely failed because of a workflow file issue"). The valid pattern is a
+  # DYNAMIC matrix: compute the OS list here (fromJson-consumed by each job's `strategy.matrix`),
+  # so a macOS leg simply never gets scheduled outside the monthly run rather than being
+  # scheduled-then-skipped.
+  ci-cost-os-gate:
+    name: ci-cost-os-gate
+    runs-on: ubuntu-latest
+    outputs:
+      test_os: ${{ steps.set.outputs.test_os }}
+      native_os: ${{ steps.set.outputs.native_os }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ github.event.schedule }}" = "0 6 1 * *" ]; then
+            echo 'test_os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'native_os=["ubuntu-latest","windows-latest","macos-latest","macos-15-intel"]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'test_os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+            echo 'native_os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
+          fi
+
   # ~8s of tests (80 of them, measured) versus a docs drift shipping unnoticed. Runs
   # when EITHER docs or code changed: a code change can invalidate a doc's claim just as
   # a doc edit can, which is the direction the 2026-08-19 audit actually found broken --
@@ -511,12 +538,8 @@ jobs:
 
   test-python:
     name: test-python (${{ matrix.os }}, py${{ matrix.python-version }})
-    needs: [smoke, changes]
-    # CI-cost discipline (2026-09-13): macOS is billed at a materially higher per-minute
-    # multiplier than Linux/Windows. Restrict the macos-latest leg to the monthly schedule
-    # (github.event.schedule distinguishes it from the pre-existing weekly cron at the top of
-    # this file); ubuntu-latest/windows-latest run on every push/PR unchanged.
-    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
+    needs: [smoke, changes, ci-cost-os-gate]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     # Windows runners have run this job to 27-30min twice in one session (2026-09-07, all
     # 7000+ tests passing both times) while ubuntu/macos finish in 14-16min -- 30 was cutting
@@ -529,7 +552,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # CI-cost discipline (2026-09-13): os list is COMPUTED by ci-cost-os-gate above, not
+        # hardcoded -- macos-latest is included only on the monthly schedule run. See that job's
+        # comment for why this indirection exists (a job-level `if: matrix.os == ...` is invalid).
+        os: ${{ fromJson(needs.ci-cost-os-gate.outputs.test_os) }}
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -625,10 +651,8 @@ jobs:
 
   test-rust-core:
     name: test-rust-core (${{ matrix.os }}, ${{ matrix.rust_channel }})
-    needs: [smoke, changes]
-    # CI-cost discipline (2026-09-13): see test-python's identical guard above for the
-    # rationale ($524 spend, macOS billed at a materially higher per-minute multiplier).
-    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
+    needs: [smoke, changes, ci-cost-os-gate]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     env:
       # RUST-REPLACE-SYMLINK (PR #1010): promote CANNOT_MEASURE symlink-test skips to a panic so
@@ -648,7 +672,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # CI-cost discipline (2026-09-13): os list COMPUTED by ci-cost-os-gate (see that job's
+        # comment) -- macos-latest included only on the monthly schedule run.
+        os: ${{ fromJson(needs.ci-cost-os-gate.outputs.test_os) }}
         rust_channel: [stable, nightly]
         # CI-cost discipline (thinktank-ratified): the macOS x nightly leg runs a
         # non-gating signal (continue-on-error) at ~10x the Linux rate for zero release value.
@@ -821,18 +847,18 @@ jobs:
 
   native-build-smoke:
     name: native-build-smoke (${{ matrix.os }})
-    needs: [smoke, changes]
-    # CI-cost discipline (2026-09-13): see test-python's identical guard for the rationale
-    # ($524 spend, macOS billed at a materially higher per-minute multiplier). Two macOS legs
-    # here (macos-latest, macos-15-intel) both fold into the monthly-only restriction.
-    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && ((matrix.os != 'macos-latest' && matrix.os != 'macos-15-intel') || github.event.schedule == '0 6 1 * *')
+    needs: [smoke, changes, ci-cost-os-gate]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
+        # CI-cost discipline (2026-09-13): os list COMPUTED by ci-cost-os-gate (see that job's
+        # comment) -- the two macOS legs (macos-latest, macos-15-intel) are included only on the
+        # monthly schedule run.
+        os: ${{ fromJson(needs.ci-cost-os-gate.outputs.native_os) }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
