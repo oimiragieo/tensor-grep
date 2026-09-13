@@ -131,17 +131,28 @@ governing lesson of this entry.
   the honesty floor Graft lacks: a zero `symbol_count` is never a confident empty
   (`language_not_parser_backed` / `file_unreadable` set `result_incomplete` and exit 2), and a
   parseable-but-empty file stays a COMPLETE answer so the flag keeps meaning something.
-- **F8 -- `tg freshness`: BUILT AND TESTED, NOT REGISTERED.** `cli/freshness.py` + 6 tests, verified
+- **F8 -- `tg freshness`: SHIPPED (PR #1152, `c366f2a`).** `cli/freshness.py` + 6 tests, verified
   end-to-end (`current` -> edit -> `stale` naming the file, exit 0 -> 2). It reuses the serving
   path's own `_ensure_session_not_stale` rather than re-deriving a second staleness rule. Floor:
   "no persisted state" reports UNRESOLVED, never a clean bill of health.
-  **STOP-RECEIPT: blocker: `rust_core/src/main.rs` is 4 lines short of the shrink-only file-size
-  ratchet headroom that both new commands need.** PR #1141 already splits main.rs and frees ~380
-  lines but is a DRAFT awaiting a human merge (draft-PR-only is a change-control gate), and deleting
-  blank lines to pass a size gate is gaming the measure. All four registration sites were removed
-  together -- a half-registered command is the silent misroute the 4-site rule exists to prevent.
-  **Acceptance when unblocked:** merge #1141, re-add the four sites, `test_registration_check` green,
-  and `tg freshness` present in BOTH front doors' `--help`.
+  **The STOP-RECEIPT this entry used to carry was WRONG, and the way it went wrong is the point.**
+  It read: blocked on `rust_core/src/main.rs` being 4 lines short of its shrink-only ratchet, with
+  PR #1141 (which splits main.rs) a draft awaiting a human merge. Both halves were true WHEN
+  WRITTEN. Then `scripts/ci-local` gained a `cuda` lane and a working `rust` lane, so Rust became
+  locally verifiable -- and the conclusion that depended on it being UNverifiable was never
+  revisited. It was reported as blocked for hours after it had stopped being blocked. A limitation
+  restated without re-checking is an assumption wearing a receipt's clothes.
+  **Resolution:** the headroom was freed in-branch instead. An AST census picked the extraction
+  target -- a top-level `fn` in main.rs with ZERO other main.rs-local dependencies -- which chose
+  `error_chain_has_broken_pipe` (one call site, no `.tg-registration.toml` pin, referenced elsewhere
+  only in doc comments that describe rather than call it). Now `rust_core/src/broken_pipe.rs`;
+  main.rs 15127 -> 15096, then 15103 with the clap variant registered, still under the pin.
+  All four sites landed together. Measured acceptance: registration gate + file-size ratchet +
+  freshness suite 54 passed; no persisted state exit 2; after `tg session open` exit 0 `current`;
+  after an edit exit 2 `stale` naming the file; container rust lane exit 0 with 592 passed; and
+  PR #1152 terminal green on `c366f2a` (40 pass / 0 fail), which includes the routing-parity
+  contract enforcing the 4-site rule on all three platforms.
+  **PR #1141 is no longer a blocker for anything here.**
 - **F9 -- adopt Graft's BENCHMARK methodology. PREMISE CORRECTED 2026-09-12: BLOCKED ON F3,
   not ready.** The original entry below said "unstarted, highest value of the three" and named
   a seat. That was written without checking whether the thing the methodology measures exists
