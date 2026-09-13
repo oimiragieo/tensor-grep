@@ -1,6 +1,172 @@
 # CHANGELOG
 
 
+## v1.119.13 (2026-09-13)
+
+### Bug Fixes
+
+- **incompleteness**: Let unreadable_path outrank budget causes, as the contract states
+  ([`b691e00`](https://github.com/oimiragieo/tensor-grep/commit/b691e0020a0ac48fc259b3162014db9621d566b0))
+
+docs/CONTRACTS.md:24-27 says unreadable_path OUTRANKS every budget cause when both fire, because no
+  budget increase makes a path readable. The envelope did the opposite: it checked the budget cause
+  first and preferred the budget's own remediable flag, so a payload carrying both signals reported
+  cause="project-files" with budget_remediable=True -- telling an agent to raise --max-repo-files
+  when a subtree is unreadable. That is the wrong-knob defect class the contract names explicitly,
+  and it reaches every MCP tool through core/completeness.py.
+
+Two edits, both required. The cause check now consults the unreadable path first, and remediable is
+  forced False whenever a path is unreadable. Fixing only the cause would leave
+  budget_remediable=True beside cause="unreadable_path" -- a self-contradicting envelope that still
+  hands over a budget knob.
+
+The hoist is deliberately scoped. Unreadable wins over scan_limit and over an explicit
+  incomplete_reason whose incomplete_reason_class is a budget class (scan_limit, deadline, timeout),
+  and leaves every non-budget reason alone. incomplete_reason_class is the field that actually
+  carries the classification; incomplete_reason itself is free text, which is why keying off it
+  over-reaches.
+
+Evidence: * pre-fix RED 2 failed / 3 passed with src/ untouched -- both isolation controls PASSED,
+  which is what isolates this to the priority ORDER rather than to detection of either signal; *
+  post-fix 5 passed; * half-fix control: reverting the remediable edit alone gives 1 failed / 3
+  passed, so those assertions are load-bearing; * collateral test_mcp_incomplete_envelope +
+  test_completeness_projection + test_mcp_contract_fixes 64 passed; * ruff check clean, mypy clean
+  (136 files) -- mypy caught a real gap the plan carried, where cause was inferred str from the
+  first branch.
+
+The test population was empty by construction: an AST walk over every call to
+  unified_incomplete_envelope / project() found 14 calls and 0 passing both keys, so CI structurally
+  could not catch this.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+### Chores
+
+- **gitignore**: Ignore .claude/thinktank_* council briefs
+  ([`fe50724`](https://github.com/oimiragieo/tensor-grep/commit/fe50724e1a0333d7a9128cdb005f52b7b896bc7b))
+
+Same class as the .claude/cursor_task_* rule directly above: dispatch scratch regenerated every
+  council round, never repo content. This session left TEN of them untracked-but-not-ignored -- one
+  per round -- where any broad `git add` would have swept them onto main.
+
+Verified the rule BITES rather than assuming it: creating .claude/thinktank_probe_control.md leaves
+  `git status --untracked-files=all` showing only the .gitignore edit, and `git check-ignore -v`
+  names .gitignore:136 as the matching rule.
+
+The durable copy is the out-dir the council already writes (question.md beside the seat logs), so
+  the repo copy had no reader.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+### Documentation
+
+- **agents**: Add A160-A162, the three laws this session earned
+  ([`ca0ad36`](https://github.com/oimiragieo/tensor-grep/commit/ca0ad362e9d5715c29d3289927bac64b0b2810c8))
+
+A160 -- a majority APPROVE does not clear a VERIFIED defect. Across six plan-audit council rounds
+  the single seat whose brief INLINED the plan and its cited sources was the sole dissenter three
+  times and was right every time, including overturning an architectural choice two seats had
+  checked carefully. Approving seats verify what the plan points at; a seat reconstructing the
+  control flow from inlined source checks what it does not point at. Verify before acting either way
+  -- three round-5 findings were refuted that way.
+
+A161 -- a brief that both inlines a file and carries a generic abstention clause produces an
+  abstention. A seat emitted CANNOT_READ_REQUIRED_FILE because its sandbox blocked Get-Content,
+  while the whole plan sat inlined in its own brief. That is the brief contradicting itself, not a
+  seat defect.
+
+A162 -- fixing one passage of a plan invalidates others, and re-reading cannot find it. Three
+  consecutive rounds each found a defect created while fixing the previous round's. A plan is a
+  control flow; re-reading confirms each passage in isolation, which is the check that cannot fail.
+  Derive the cross-references.
+
+Gates re-run after the edit: test_skill_library_drift + test_skill_index_sync, 9 passed. The law
+  list enumerates contiguously through A162.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **backlog**: Bank HUNT-4 round 6 -- six seats, all APPROVED, one clean round
+  ([`705caa2`](https://github.com/oimiragieo/tensor-grep/commit/705caa2f2dd9fe219bdd1ad93d35339dfbe34b1a))
+
+Round 6 returned 6 content votes, every one APPROVED (claude, droid_kimi, droid_nemotron, droid_glm,
+  cursor, codex_sub). agy returned no verdict and codex abstains every round; neither absence is a
+  vote. That is HUNT-4's FIRST clean round on hash b86a7e47, and the stopping rule is TWO
+  consecutive clean rounds on the SAME unchanged hash.
+
+The entry now carries an explicit DO-NOT-TIDY instruction. Two seats noted that docs/BACKLOG.md is
+  missing from Task 2's Files: block -- it is in File Structure and in the git add, and Step 6 names
+  it explicitly, so a builder cannot miss it. By the does-it-change-the-BUILD test that is a note,
+  not a defect, and editing it would reset the clean-round counter to zero in exchange for a line
+  that alters nothing about the artifact. A future session that tidies the plan destroys the
+  clearance, so the decision is recorded, not just the line.
+
+codex_sub separately flagged that it could not re-derive the marker-based census because the
+  coverage-contract test body was never inlined in its brief. That is a brief defect, not a plan
+  defect; the builder's region set is now seven and a prebuilt round-7 brief is staged in scratch.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **backlog**: Close HUNT-1, and bank the session-closeout state
+  ([`da8bbd0`](https://github.com/oimiragieo/tensor-grep/commit/da8bbd01e36e7356c854ac33689c2f0ff3a2ff80))
+
+HUNT-1 still read "IN PROGRESS -- plan under council review" while its fix had already shipped as
+  5331dc9. A tracker that lags the tree is the specific failure this repo keeps receipts for, so it
+  is flipped to FIXED with its evidence chain: RED 5 failed / 2 passed with src/ untouched, 7 passed
+  post-fix, the test extracted verbatim from the plan rather than retyped, and two consecutive clean
+  council rounds on one unchanged hash.
+
+The closeout section records every remaining item with a receipt rather than a status word, and
+  keeps the reason HUNT-4's plan is still in council: round 5 overturned an architectural choice
+  that two seats had checked and approved. The new CI edit would have passed the coverage gate and
+  left the literal path outside the governance census forever, because that census derives from grep
+  -rl TG_REQUIRE_RG_PARITY tests/ and the file it named carries no marker. Being precise about that
+  matters -- the gate would NOT have failed, which makes it a silent hole rather than a loud one.
+
+Also banks four ideas for the next session, the sharpest being that "empty population by
+  construction" appeared three separate times today and a cheap AST audit would have found all
+  three.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **backlog**: The codex seat emits a verdict token for a NON-content reason
+  ([`df0c30c`](https://github.com/oimiragieo/tensor-grep/commit/df0c30cc594318592098ab851e08705a6b16b93e))
+
+Correcting a claim in the previous commit. The standing note says "codex abstains every round". In
+  round 6 it did not: it emitted RECOMMENDED: CHANGES_REQUIRED with the text "I could not inspect
+  the plan or
+
+repository: every read-only command was rejected by the workspace policy... This is an
+  audit-environment blocker, not a build defect or requested plan edit."
+
+That is CANNOT_READ_REQUIRED_FILE wearing a verdict token, and it is the dangerous shape. A silent
+  abstention shows up in the triage table as a missing row. A verdict token emitted because the seat
+  could not READ anything is indistinguishable from a seat that read the plan and objected -- and
+  counting it would have falsely reset HUNT-4's clean-round counter to zero.
+
+Round 6's honest tally is 6 content votes, all APPROVED, with TWO named non-voting seats: agy (79
+  bytes, print timeout after 3m0s, no token at all) and codex (token present, excluded on the seat's
+  own stated grounds). The conclusion stands, but only because the exclusion is explicit.
+
+Root cause is the same one that made codex_sub abstain in round 5 -- the sandbox rejects read-only
+  commands. The fix that worked there (inline every source the brief asks about, and say explicitly
+  that a blocked read is NOT an abstention condition) was never applied to the main codex seat.
+  Round 7 should dispatch it with the inlined brief or name it as a known non-voter up front.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+
 ## v1.119.12 (2026-09-13)
 
 ### Bug Fixes
