@@ -193,11 +193,32 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         or has_unreadable_paths
     )
 
-    cause = payload.get("incomplete_reason")
-    if cause is None and scan_limit_cause is not None:
-        cause = scan_limit_cause
-    if cause is None and has_unreadable_paths:
+    # unreadable_path OUTRANKS EVERY budget cause when both fire (docs/CONTRACTS.md:24-27):
+    # no budget increase makes a path readable, so reporting any budget cause hands the caller a
+    # knob that cannot help.
+    #
+    # The contract scope is EXACT: `unreadable_path` outranks every BUDGET cause -- it says
+    # nothing about non-budget reasons. So unreadable beats scan_limit and any explicit reason
+    # CLASSIFIED as a budget cause, and leaves anything else alone. An earlier draft made
+    # unreadable win UNCONDITIONALLY, which silently overwrote legitimate non-budget reasons.
+    #
+    # The budget classes come from `incomplete_reason_class`, which is the field that actually
+    # carries the classification (`cli/main.py` sets "deadline"/"scan_limit";
+    # `ripgrep_backend.py` sets "timeout"); `incomplete_reason` itself is free text.
+    _BUDGET_CLASSES = {"scan_limit", "deadline", "timeout"}
+    explicit_reason = payload.get("incomplete_reason")
+    explicit_class = payload.get("incomplete_reason_class")
+    explicit_is_budget = explicit_class in _BUDGET_CLASSES
+
+    cause: Any | None
+    if has_unreadable_paths and (explicit_reason is None or explicit_is_budget):
         cause = "unreadable_path"
+    else:
+        cause = explicit_reason
+        if cause is None and has_unreadable_paths:
+            cause = "unreadable_path"
+        if cause is None and scan_limit_cause is not None:
+            cause = scan_limit_cause
     if cause is None and payload.get("truncated"):
         cause = "truncated"
     if cause is None and payload.get("partial"):
@@ -206,10 +227,16 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         cause = "nested_incomplete"
     if cause is not None and not isinstance(cause, str):
         cause = str(cause)
-    remediable = bool(
-        scan_limit_remediable
-        if scan_limit_remediable is not None
-        else payload.get("budget_remediable", False)
+    # Fixing only the cause leaves `budget_remediable=True` beside `cause="unreadable_path"` --
+    # a self-contradicting envelope that still tells the caller to raise a budget.
+    remediable = (
+        False
+        if has_unreadable_paths
+        else bool(
+            scan_limit_remediable
+            if scan_limit_remediable is not None
+            else payload.get("budget_remediable", False)
+        )
     )
     return {
         "status": status,

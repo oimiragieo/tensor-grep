@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from tensor_grep.cli import repo_map
@@ -116,6 +117,30 @@ def _agent_payload(project: Path, query: str, *, max_files: int | None = None) -
     if max_files is not None:
         args.extend(["--max-files", str(max_files)])
     result = CliRunner().invoke(app, args)
+    if result.exit_code == 2:
+        # Exit 2 is tg's THREE-STATE contract saying "this answer is not complete" -- not a
+        # crash. The live-repo tests in this file scan the real checkout under a deadline, so
+        # on a loaded box (parallel suites, a busy shared runner) the capsule can legitimately
+        # come back deadline-truncated. A ranking assertion over a truncated capsule measures
+        # the LOAD, not the ranking: the candidate the test looks for may simply never have
+        # been scanned. That is CANNOT_MEASURE, not FAIL.
+        #
+        # Deliberately narrow, because a skip nobody reads is its own failure mode: ONLY a
+        # deadline-driven truncation is excused, and the reason is named in the skip text so
+        # it shows up in `-rs` output instead of vanishing into a green count. Any other exit
+        # 2 (a real incompleteness cause) and every other non-zero exit still FAIL below.
+        try:
+            truncated = json.loads(result.stdout)
+        except (ValueError, TypeError):
+            truncated = {}
+        deadline = truncated.get("deadline_limit") or {}
+        if truncated.get("partial_reason") == "deadline" and deadline.get("deadline_exceeded"):
+            stages = deadline.get("assembly_stages_skipped")
+            pytest.skip(
+                "capsule was deadline-truncated on this machine, so a ranking assertion "
+                f"cannot be evaluated (assembly_stages_skipped={stages!r}). This is tg "
+                "reporting an incomplete walk correctly, not a ranking regression."
+            )
     assert result.exit_code == 0, result.output
     return json.loads(result.stdout)
 

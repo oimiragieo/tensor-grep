@@ -28,6 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tensor_grep_rs::backend_ast::{
     AstBackend, AstMatch, AstMetaVariables, BatchRewritePlan, BatchRewriteRule,
 };
+use tensor_grep_rs::broken_pipe::error_chain_has_broken_pipe;
 use tensor_grep_rs::crossover::{
     run_crossover_calibration, skip_signal_payload, write_crossover_config, NoCudaBuildError,
 };
@@ -55,6 +56,11 @@ use tensor_grep_rs::routing::{
     gpu_proof_fields, native_can_serve_plain_text, plain_text_native_cheap_checks_pass,
     plain_text_native_flag_token_is_allowed, route_search, BackendSelection, IndexRoutingState,
     PlainTextNativeRequest, RoutingDecision, SearchRoutingCalibration, SearchRoutingConfig,
+};
+mod search_flag_registry;
+use search_flag_registry::{
+    raw_args_contain_any_flag, search_args_contain_any_flag, SEARCH_OPTION_FIRST_FLAGS,
+    SEARCH_PYTHON_PASSTHROUGH_FLAGS,
 };
 
 // audit #97 item 1: shown by print_native_top_level_help() (the clap fallback rendered when the
@@ -101,211 +107,6 @@ const BROAD_GENERATED_SCAN_DIR_NAMES: &[&str] = &[
     "target",
     "venv",
 ];
-const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
-    "--count-matches",
-    "--format",
-    "--sort",
-    "--sortr",
-    "--sort-files",
-    "--no-sort-files",
-    "-H",
-    "--with-filename",
-    "-I",
-    "--no-filename",
-    "-q",
-    "--quiet",
-    "-n",
-    "--line-number",
-    "--engine",
-    "-s",
-    "--case-sensitive",
-    "-x",
-    "--line-regexp",
-    "-j",
-    "--threads",
-    "-t",
-    "--type",
-    "--iglob",
-    "-T",
-    "--type-not",
-    "-u",
-    "--unrestricted",
-    "--stats",
-    "--debug",
-    "--trace",
-    "--pcre2-unicode",
-    "--no-pcre2-unicode",
-    "--no-auto-hybrid-regex",
-    "--no-text",
-    "--no-binary",
-    "--no-follow",
-    "--no-glob-case-insensitive",
-    "--no-ignore-file-case-insensitive",
-    "--ignore",
-    "--no-ignore",
-    "--ignore-dot",
-    "--ignore-exclude",
-    "--ignore-files",
-    "--ignore-global",
-    "--ignore-messages",
-    "--ignore-parent",
-    "--ignore-vcs",
-    "--no-ignore-vcs",
-    "--messages",
-    "--require-git",
-    "-C",
-    "--context",
-    "-A",
-    "--after-context",
-    "-B",
-    "--before-context",
-    "--no-hidden",
-    "--no-one-file-system",
-    "--no-block-buffered",
-    "--no-byte-offset",
-    "--no-column",
-    "--no-crlf",
-    "--no-encoding",
-    "--no-fixed-strings",
-    "--no-invert-match",
-    "--no-mmap",
-    "--no-multiline",
-    "--no-multiline-dotall",
-    "--no-pcre2",
-    "--no-pre",
-    "--no-search-zip",
-    "--no-context-separator",
-    "--no-include-zero",
-    "--no-line-buffered",
-    "--no-max-columns-preview",
-    "--no-trim",
-    "--no-json",
-    "--no-stats",
-];
-/// Flags that route a search to the Python passthrough front door rather than being handled by
-/// the native fast path. Exact token matches only; unrecognized flags are caught fail-closed by
-/// `parse_early_ripgrep_args`'s catch-all arm returning `None`.
-const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
-    "-H",
-    "--with-filename",
-    "-I",
-    "--no-filename",
-    "-q",
-    "--quiet",
-    "-N",
-    "--no-line-number",
-    "--engine",
-    "-s",
-    "--case-sensitive",
-    "-x",
-    "--line-regexp",
-    "-j",
-    "--threads",
-    "--iglob",
-    "-T",
-    "--type-not",
-    "-u",
-    "--unrestricted",
-    "--stats",
-    "--debug",
-    "--trace",
-    "-f",
-    "--file",
-    "--pre",
-    "--pre-glob",
-    "-z",
-    "--search-zip",
-    "--crlf",
-    "--dfa-size-limit",
-    "-E",
-    "--encoding",
-    "--mmap",
-    "--no-unicode",
-    "--regex-size-limit",
-    "--stop-on-nonmatch",
-    "--binary",
-    "--glob-case-insensitive",
-    "--ignore-file",
-    "--ignore-file-case-insensitive",
-    "--no-ignore-file-case-insensitive",
-    "--no-require-git",
-    "--pcre2-unicode",
-    "--no-pcre2-unicode",
-    "--no-auto-hybrid-regex",
-    "--no-text",
-    "--no-binary",
-    "--no-follow",
-    "--no-glob-case-insensitive",
-    "--ignore",
-    "--ignore-dot",
-    "--ignore-exclude",
-    "--ignore-files",
-    "--ignore-global",
-    "--ignore-messages",
-    "--ignore-parent",
-    "--ignore-vcs",
-    "--messages",
-    "--require-git",
-    "--no-hidden",
-    "--one-file-system",
-    "--no-one-file-system",
-    "--type-add",
-    "--type-clear",
-    "--block-buffered",
-    "--no-block-buffered",
-    "-b",
-    "--byte-offset",
-    "--no-byte-offset",
-    "--no-crlf",
-    "--no-encoding",
-    "--no-fixed-strings",
-    "--no-invert-match",
-    "--no-mmap",
-    "--no-multiline",
-    "--no-multiline-dotall",
-    "--no-pcre2",
-    "--no-pre",
-    "--no-search-zip",
-    "--colors",
-    "--context-separator",
-    "--no-context-separator",
-    "--field-context-separator",
-    "--field-match-separator",
-    "--heading",
-    "--no-heading",
-    "--hostname-bin",
-    "--hyperlink-format",
-    "--include-zero",
-    "--no-include-zero",
-    "--line-buffered",
-    "--no-line-buffered",
-    "-M",
-    "--max-columns",
-    "--max-columns-preview",
-    "--no-max-columns-preview",
-    "-p",
-    "--pretty",
-    "--trim",
-    "--no-trim",
-    "--no-json",
-    "--no-stats",
-    "--no-ignore-messages",
-    "--no-messages",
-    "--generate",
-    "--lang",
-    // BM25 re-ranking is a Python-side post-process; route --rank/--bm25 searches to the sidecar
-    // so the native front door does not clap-reject the unknown flag.
-    "--rank",
-    "--bm25",
-    // Local hybrid semantic search (RRF fusion of BM25 + dense embeddings) is also a Python-side
-    // post-process (roadmap #27, Path B Stage 1) -- same reasoning as --rank/--bm25 above.
-    "--semantic",
-    // --ltl is a Python-side temporal-query post-process (CPUBackend::_search_ltl); route it
-    // to the sidecar so the native front door does not clap-reject the unknown flag. Paired
-    // with bootstrap.py::_TG_ONLY_SEARCH_FLAGS (the 2-front-door law).
-    "--ltl",
-];
-
 #[derive(Parser, Debug)]
 #[command(name = "tg")]
 #[command(version)]
@@ -985,6 +786,18 @@ pub enum Commands {
     /// Render a persisted, browsable folder->file->symbol code map (lean index + per-folder pages)
     #[command(name = "codemap", disable_help_flag = true)]
     Codemap {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// List every signature in one file, without the bodies (the file's API surface)
+    #[command(name = "file-api", disable_help_flag = true)]
+    FileApi {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Report whether tg's persisted state has drifted from the code
+    #[command(name = "freshness", disable_help_flag = true)]
+    Freshness {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -1840,24 +1653,6 @@ fn normalize_top_level_search_args(raw_args: &[OsString]) -> Option<Vec<OsString
 
 fn normalize_top_level_format_search_args(raw_args: &[OsString]) -> Option<Vec<OsString>> {
     normalize_top_level_search_args(raw_args)
-}
-
-fn raw_args_contain_any_flag(raw_args: &[OsString], flags: &[&str]) -> bool {
-    raw_args.iter().skip(1).any(|arg| {
-        let token = arg.to_string_lossy();
-        token_matches_any_flag(&token, flags)
-    })
-}
-
-fn search_args_contain_any_flag(args: &[String], flags: &[&str]) -> bool {
-    args.iter()
-        .any(|token| token_matches_any_flag(token.as_str(), flags))
-}
-
-fn token_matches_any_flag(token: &str, flags: &[&str]) -> bool {
-    flags.iter().any(|flag| {
-        token == *flag || (flag.starts_with("--") && token.starts_with(&format!("{flag}=")))
-    })
 }
 
 fn requests_explicit_rg_format(raw_args: &[OsString]) -> bool {
@@ -2907,8 +2702,8 @@ fn parse_early_ripgrep_args(raw_args: &[OsString]) -> Option<RipgrepSearchArgs> 
             // unrecognized flag never silently reaches the native fast path -- every arm above
             // is a finite, explicit allowlist, so any `-`-prefixed token this function does not
             // otherwise understand (including a ripgrep combined-short-flag cluster like `-uu`,
-            // `-uuu`, or `-iu` that `SEARCH_PYTHON_PASSTHROUGH_FLAGS`'s exact-token matching
-            // also does not recognize) falls through to here and returns `None`, forcing the
+            // `-uuu`, or `-iu` that the early parser does not recognize) falls through to here
+            // and returns `None`, forcing the
             // caller back to the full Python CLI rather than being silently misparsed or
             // dropped. Do not narrow this arm without an equally fail-closed replacement.
             _ if token.starts_with('-') => return None,
@@ -3009,10 +2804,10 @@ mod tests {
         parse_early_ripgrep_args(&raw_args).expect("expected early rg args to parse")
     }
 
-    // Task #271: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` is exact-token matching, so it recognizes the
-    // literal spellings `-u`/`--unrestricted` but NOT a ripgrep combined-short-flag cluster like
-    // `-uu`/`-iu` -- those are each a different literal token. The actual fail-closed guarantee
-    // that such a cluster never silently reaches the native fast path is
+    // Task #271: `parse_early_ripgrep_args` recognizes the literal spellings `-u`/
+    // `--unrestricted` but NOT a ripgrep combined-short-flag cluster like `-uu`/`-iu` -- those
+    // are rejected as a different token. The actual fail-closed guarantee that such a cluster
+    // never silently reaches the native fast path is
     // `parse_early_ripgrep_args`'s own catch-all arm (`_ if token.starts_with('-') => return
     // None`), which forces a fall-through to the full Python CLI for any unrecognized
     // `-`-prefixed token. These tests assert that guarantee directly, at the function it actually
@@ -7558,6 +7353,8 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Map { args } => handle_python_passthrough("map", args),
         Commands::Orient { args } => handle_python_passthrough("orient", args),
         Commands::Codemap { args } => handle_python_passthrough("codemap", args),
+        Commands::FileApi { args } => handle_python_passthrough("file-api", args),
+        Commands::Freshness { args } => handle_python_passthrough("freshness", args),
         Commands::Inventory { args } => handle_python_passthrough("inventory", args),
         Commands::DocsCoverage { args } => handle_python_passthrough("docs-coverage", args),
         Commands::Session { args } => handle_python_passthrough("session", args),
@@ -9738,35 +9535,6 @@ const BROKEN_PIPE_EXIT_CODE: i32 = 1;
 /// `BrokenPipe`. That was true of the code at the time and became false when `sink_io_error`
 /// replaced those 13 call sites; it is corrected here rather than left to contradict the code and
 /// the comment nine lines below it.)
-fn error_chain_has_broken_pipe(err: &anyhow::Error) -> bool {
-    let mut saw_io_error = false;
-    for cause in err.chain() {
-        if let Some(io_err) = cause.downcast_ref::<io::Error>() {
-            saw_io_error = true;
-            if io_err.kind() == io::ErrorKind::BrokenPipe {
-                return true;
-            }
-        }
-    }
-    if saw_io_error {
-        // A typed `io::Error` was present and said something OTHER than BrokenPipe. Trust it: this
-        // is a real failure and must reach the structured-error and rg-fallback paths below.
-        //
-        // Guarding the string match on this is what stops a SILENT SWALLOW: the anyhow context
-        // embeds the searched path (`native standard output search failed for <path>`), so without
-        // it a file whose path merely contains "broken pipe" would turn any genuine error into a
-        // quiet exit(1) "no matches" -- skipping the JSON error and the rg fallback both. Narrow,
-        // but silent-swallow is the class this repo fails closed on.
-        return false;
-    }
-    // Fallback for the case where no typed `io::Error` survives the chain at all. Kept because an
-    // earlier revision relied on the typed walk alone and CI proved it did not fire on Linux;
-    // `io::Error(BrokenPipe)` renders as "Broken pipe (os error 32)" on Unix and "The pipe is
-    // being closed. (os error 232)" on Windows.
-    let rendered = format!("{err:#}").to_ascii_lowercase();
-    rendered.contains("broken pipe") || rendered.contains("pipe is being closed")
-}
-
 fn run_native_search_with_optional_rg_fallback(
     config: NativeSearchConfig,
     rg_fallback: Option<RipgrepSearchArgs>,

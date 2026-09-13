@@ -951,8 +951,46 @@ concrete failure observed this session.
   debugging logs must sanitize or label the message type, ensuring raw tainted candidate variables
   do not trigger secret-leak static alerts while preserving debugging visibility.
 
+- **A160 — A Majority APPROVE Does Not Clear a VERIFIED Defect (2026-09-13).** Across six plan-audit
+  council rounds, the single seat whose brief INLINED the plan and its cited source regions was the
+  sole dissenter three times and was right every time — including overturning an architectural
+  choice two seats had checked carefully and passed. Seats that approve are not careless; they
+  verify what the plan POINTS AT. A seat reconstructing the control flow from inlined source checks
+  what the plan does NOT point at, which is a different failure surface. So: count content votes for
+  the stopping rule (two consecutive clean rounds on the SAME unchanged hash, >=4 content votes),
+  but never let a majority overrule a finding you have verified against real code — and equally,
+  verify BEFORE acting, because three round-5 findings were refuted that way (a citation that
+  resolved, a line number already correct). Dispatch the inlined-source seat WITH the council: the
+  one time it was added late for quorum, it was the only seat to find anything.
+
+- **A161 — A Brief That Both Inlines a File and Carries an Abstention Clause Produces an
+  Abstention (2026-09-13).** A council seat emitted `CANNOT_READ_REQUIRED_FILE` and cast no vote
+  because its sandbox blocked `Get-Content` and `certutil` — while the entire plan was inlined in
+  its own brief. The generic clause "if you cannot read the file, say CANNOT_READ_REQUIRED_FILE"
+  read as an instruction to abstain on a blocked shell call. That is the brief contradicting
+  itself, not a seat defect, and it cost the round its most valuable seat. When a brief inlines its
+  sources, say so FIRST and state explicitly that a blocked file read is not an abstention
+  condition; scope abstention to "a passage you need is genuinely ABSENT from this brief". Pin the
+  preamble in the brief BUILDER, never retype it per round — the same builder had already silently
+  dropped source regions across two rounds for exactly that reason.
+
+- **A162 — Fixing One Passage of a Plan Invalidates Others, and Re-Reading Cannot Find It
+  (2026-09-13).** Three consecutive council rounds on one plan each found a defect CREATED while
+  fixing the previous round's defect: adding a mandated step made the summary and two step
+  cross-references stale; patching that left an escape hatch in the summary and a citation to a
+  section that existed under no such name; then the approach itself was overturned, invalidating
+  the Goal line, the File Structure, the `git add`, and a whole task. A plan is a control flow, not
+  prose — re-reading confirms each passage in isolation, which is the check that cannot fail. After
+  ANY plan edit, DERIVE the cross-references: `grep -nE "Step [0-9]|Task [0-9]"` for step
+  references, `grep -n` every file path and CI job name against the real tree, and confirm every
+  edited file appears in `Files:`, in File Structure, AND in the `git add`. Write the
+  post-conditions as assertions in the patch script so a non-unique anchor writes nothing. Do not
+  trust your own expected COUNT in those assertions — two were wrong this session and one flagged a
+  deliberate historical note as a defect (Form 9: the reviewer's expected number is the broken
+  half).
+
 ## Current Handoff
-release_docs_current_tag: v1.119.6
+release_docs_current_tag: v1.119.13
 
 
 **2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
@@ -961,7 +999,7 @@ Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 C
 SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
 New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
 
-As of 2026-08-22, the current tagged release state is `v1.119.6`, and the latest complete public PyPI/release-asset distribution is also `v1.119.6` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.119.6` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+As of 2026-08-22, the current tagged release state is `v1.119.13`, and the latest complete public PyPI/release-asset distribution is also `v1.119.13` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.119.13` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
 **2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.
@@ -1169,8 +1207,8 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.119.6 tg --version` reports `tensor-grep 1.119.6`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.119.6>
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.119.13 tg --version` reports `tensor-grep 1.119.13`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.119.13>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.14`
 - Public `v1.12.14` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` verified `tensor-grep 1.12.14`; the release includes `21e5437 fix: collect capsule call-site evidence` while preserving `8a73f8d fix: harden agent bridge ranking`, `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.13 dogfood contract fixes. Public managed GPU is not promotion-ready.

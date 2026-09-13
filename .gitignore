@@ -128,6 +128,13 @@ src/tensor_grep/core/profile_stats
 # deleting the three was only the cleanup.
 .claude/cursor_task_*.md
 
+# Council briefs are the same class as the cursor_task_* files above: dispatch scratch that gets
+# regenerated every round and is never repo content. A 2026-09-13 session left TEN of them
+# untracked-but-not-ignored, one round-brief per council round, where any `git add .` would have
+# swept them onto main. The durable copy is the out-dir the council writes (question.md beside
+# the seat logs), so the repo copy has no reader.
+.claude/thinktank_*.md
+
 # Internal agent orchestration scratch & memory
 .build/
 .orchestrator/
