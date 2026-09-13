@@ -89,6 +89,7 @@ PUBLIC_TOP_LEVEL_COMMANDS = {
     "orient",
     "codemap",
     "file-api",
+    "freshness",
     "inventory",
     "docs-coverage",
     "session",

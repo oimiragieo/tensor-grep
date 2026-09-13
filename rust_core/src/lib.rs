@@ -3,6 +3,7 @@
 pub mod backend_ast;
 pub mod backend_ast_workflow;
 pub mod backend_cpu;
+pub mod broken_pipe;
 pub mod cli;
 pub mod crossover;
 pub mod editor_plane;

@@ -13183,6 +13183,17 @@ def update() -> None:
     _self.upgrade()
 
 
+@app.command(name="freshness")
+def freshness(
+    path: str = typer.Argument(".", help="Repository root to check."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Report whether tg's persisted state for PATH has drifted from the code."""
+    from tensor_grep.cli.freshness import freshness_command
+
+    raise typer.Exit(code=freshness_command(path, json_output=json_output))
+
+
 @app.command(name="file-api")
 def file_api(
     path: str = typer.Argument(..., help="File whose API surface to list."),
