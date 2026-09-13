@@ -219,6 +219,11 @@ pub(crate) const SEARCH_PYTHON_PASSTHROUGH_FLAGS: &[&str] = &[
     // to the sidecar so the native front door does not clap-reject the unknown flag. Paired
     // with bootstrap.py::_TG_ONLY_SEARCH_FLAGS (the 2-front-door law).
     "--ltl",
+    // --enrich-ast is a Python-only search flag (cli/main.py, consumed at build-capsule time)
+    // and is in bootstrap._TG_ONLY_SEARCH_FLAGS to force full-Python dispatch, but was absent
+    // from the native clap parser entirely -- HUNT-4 (docs/BACKLOG.md, 2026-09-13): the native
+    // front door clap-rejected it with exit 2 instead of routing to the sidecar.
+    "--enrich-ast",
 ];
 
 pub(crate) fn raw_args_contain_any_flag(raw_args: &[OsString], flags: &[&str]) -> bool {
