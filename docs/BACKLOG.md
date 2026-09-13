@@ -1,5 +1,46 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## External dogfood audit, v1.119.15 (2026-09-13, received not authored this session)
+
+An external agent session ran the shipped-artifact dogfood harness against `v1.119.15` (managed
+`tg.exe`, PyPI/`uvx`, GitHub release all confirmed at `1.119.15`) and reported it to this session.
+**Two claims spot-checked against real code before banking, per this repo's own "an audit finding
+is a hypothesis" discipline:**
+- `tg freshness` exiting 2 with no session is confirmed INTENTIONAL: `cli/freshness.py:124-126`'s
+  own docstring states the three-state exit contract (0 = current, 2 = stale-or-UNRESOLVED) and
+  sets `incomplete_reason = "no_persisted_state"` rather than a confident "current" -- not a
+  regression.
+- The MCP `cli_version=None` reading in the harness is plausibly a harness-timing race
+  (`tools/list` + a call in one flush): `cli/mcp_server.py:1087` populates `cli_version` via a
+  synchronous per-call `_mcp_server_version()`, consistent with "sequential call returns the
+  real value" rather than a server-side bug. Not independently reproduced this session.
+
+Shipped-artifact harness (`scripts/dogfood/dogfood_features.py`): **18/18 passed.** Full-surface
+matrix: **87/89**, both softs the two reclassified items above -- no product blocker reported on
+the exercised surface.
+
+**Improvement items banked (none started -- each needs real implementation, not a $0 fix):**
+1. Add `tg file-api` + cold/warm `tg freshness` coverage to `scripts/dogfood/dogfood_features.py`.
+2. Document `tg freshness` exit-2 as the intended cold-path contract in README/agent prompts, so
+   an agent does not retry it forever expecting exit 0.
+3. Dual-field MCP `initialize` metadata (`cli_version` alongside the `1.8.0` contract) for a
+   client that never calls `tg_mcp_capabilities`.
+4. A one-shot `tg install-dense` dogfood arm so the hybrid `tg find` leg is not permanently
+   hint-only in CI (currently BM25-only until a user runs the install command manually).
+5. Fixture-backed emit-then-verify loop for `evidence`/`review-bundle`/`diff-impact` in release
+   dogfood (currently `--help`-smoke only).
+6. Keep the `.claude/skills/tensor-grep` usage skill in the SAME PR as any new command -- it was
+   7 minor versions stale (`v1.119.8` -> `.15`) before this audit, the same drift class
+   `tensor-grep-release-drift-check` exists to catch.
+
+**Not verified or acted on this session, explicitly deferred (genuinely multi-turn design work,
+not a receipt-carrying blocker):** the Exa-sourced "world-class agentic search" ideas table
+(agentic-grep-over-stale-RAG, multi-view neighborhood packs, `simulate_edit`,
+freshness-as-first-class-agent-guard, signature-first reads, explicit `retrieval_mode`,
+architecture knowledge graph) -- these are roadmap proposals from an external session's own Exa
+research, not yet cross-checked against this repo's `tensor-grep-research-frontier` /
+`tensor-grep-demand-gate-measurement` skills for demand-gating before any build authorization.
+
 ## Agentic quality audit (2026-09-07)
 
 **New planning snapshot:** audited main `5d67210`; open-PR query returned **0** at inspection. This is not CI/release clearance. Earlier dated counts below are historical; live ownership is in [TASK_BOARD.md](TASK_BOARD.md). No production fixes have shipped from this audit.
