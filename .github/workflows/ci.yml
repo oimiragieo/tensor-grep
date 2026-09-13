@@ -516,9 +516,7 @@ jobs:
     # multiplier than Linux/Windows. Restrict the macos-latest leg to the monthly schedule
     # (github.event.schedule distinguishes it from the pre-existing weekly cron at the top of
     # this file); ubuntu-latest/windows-latest run on every push/PR unchanged.
-    if: |
-      (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') &&
-      (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
+    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
     runs-on: ${{ matrix.os }}
     # Windows runners have run this job to 27-30min twice in one session (2026-09-07, all
     # 7000+ tests passing both times) while ubuntu/macos finish in 14-16min -- 30 was cutting
@@ -630,9 +628,7 @@ jobs:
     needs: [smoke, changes]
     # CI-cost discipline (2026-09-13): see test-python's identical guard above for the
     # rationale ($524 spend, macOS billed at a materially higher per-minute multiplier).
-    if: |
-      (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') &&
-      (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
+    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && (matrix.os != 'macos-latest' || github.event.schedule == '0 6 1 * *')
     runs-on: ${{ matrix.os }}
     env:
       # RUST-REPLACE-SYMLINK (PR #1010): promote CANNOT_MEASURE symlink-test skips to a panic so
@@ -829,9 +825,7 @@ jobs:
     # CI-cost discipline (2026-09-13): see test-python's identical guard for the rationale
     # ($524 spend, macOS billed at a materially higher per-minute multiplier). Two macOS legs
     # here (macos-latest, macos-15-intel) both fold into the monthly-only restriction.
-    if: |
-      (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') &&
-      ((matrix.os != 'macos-latest' && matrix.os != 'macos-15-intel') || github.event.schedule == '0 6 1 * *')
+    if: (github.event_name != 'pull_request' || needs.changes.outputs.code == 'true') && ((matrix.os != 'macos-latest' && matrix.os != 'macos-15-intel') || github.event.schedule == '0 6 1 * *')
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
