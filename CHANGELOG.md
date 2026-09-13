@@ -1,6 +1,84 @@
 # CHANGELOG
 
 
+## v1.119.14 (2026-09-13)
+
+### Bug Fixes
+
+- Accept rg-style search flags in native root position
+  ([#1141](https://github.com/oimiragieo/tensor-grep/pull/1141),
+  [`ec9e019`](https://github.com/oimiragieo/tensor-grep/commit/ec9e019ca95618a5b34d5c4b98d462e628d97b03))
+
+* test: RED parity tests for native root-door search flags
+
+* fix: restore native root search flag parity
+
+* fix(native): drop the now-unused token_matches_any_flag import from main.rs
+
+`clippy -D warnings` failed the `Formatting & Linting` lane on 39dcb33:
+
+error: unused import: `token_matches_any_flag` --> src/main.rs:61:62 = note: `-D unused-imports`
+  implied by `-D warnings`
+
+The flag-registry split moved `token_matches_any_flag`'s only main.rs consumer (the C2
+  attached-short-value test) into `search_flag_registry.rs`'s own cfg(test) module, so the re-import
+  became dead. The two names main.rs still calls are kept.
+
+This is exactly the A87 case the green gap file predicted: the split could not be compiled locally
+  (cargo is banned on this shared desktop), static review is not a typecheck, and the first CI
+  compile is the oracle. It caught this in one round.
+
+Line count unchanged at 14899 = the pinned baseline (the import list reflowed, no line added or
+  removed), so the file-size ratchet stays satisfied. rustfmt --check clean.
+
+test-rust-core already went GREEN on 39dcb33 for ubuntu-stable, ubuntu-nightly and windows-nightly
+  -- the RED->GREEN flip the slice exists to prove is confirmed; this only clears the lint lane.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+* style: ruff format the readiness sweep's native-binary error string
+
+`Formatting & Linting` failed on f506867 with "1 file would be reformatted": the root-option-first
+  sweep's `ReadinessError` message was hand-wrapped across two implicit string literals where `ruff
+  format --preview` joins them onto one line.
+
+Text unchanged (the f-string renders byte-identically); this is purely the formatter's line-joining.
+  `cargo clippy -- -D warnings` PASSED on f506867, so the unused-import fix from that commit cleared
+  the Rust half -- this is the remaining Python-format half of the same lane.
+
+Verified: ruff format --preview --check scripts/agent_readiness.py -> already formatted;
+  tests/unit/test_agent_readiness_script.py -> 52 passed.
+
+* fix(registration): repoint the search-flag front-door site at search_flag_registry.rs
+
+CI `Formatting & Linting` failed on the rebased head with the repo's own registration checker, not a
+  formatter:
+
+FAIL search-flag-front-doors (entity-scoped) empty/missing symbol (typo or renamed?):
+  SEARCH_PYTHON_PASSTHROUGH_FLAGS @ rust_core/src/main.rs --rank / --bm25 / --semantic / --generate
+  / --lang / --stats missing from: ...
+
+`.tg-registration.toml` PINS that symbol's location, and the flag-registry split moved it into
+  `rust_core/src/search_flag_registry.rs` (the file-size ratchet left main.rs ~10 lines of headroom,
+  so the C1/C2 fix could not land inside main.rs). The flags themselves were never lost -- the
+  checker simply could no longer find the symbol, so it reported all six as missing from the native
+  door.
+
+This checker is load-bearing: its own header says a missed flag "leaks to ripgrep (the v1.15.0
+  --rank crash)". A moved symbol silently disarming it is exactly the failure it exists to prevent,
+  so the site is repointed rather than the group relaxed.
+
+Verified the fix AND that the checker still bites, rather than trusting the green: - repointed ->
+  3/3 groups complete (was 2/3) - mutation control: renaming the pinned symbol to ...._TYPO
+  reproduces the original FAIL with all six entities missing, then restoring returns 3/3
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.13 (2026-09-13)
 
 ### Bug Fixes
