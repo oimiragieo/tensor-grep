@@ -195,7 +195,7 @@ discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft'
 summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
 moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
 
-## HUNT-5 -- the two front doors disagree about delegating `-U` (2026-09-13, UNBLOCKED)
+## HUNT-5 -- the two front doors disagree about delegating `-U` (2026-09-13, CLOSED)
 
 **STOP-RECEIPT CLEARED:** the blocker was step (1) below -- fixing this BEFORE the Python
 `--multiline` gate lands would have regressed correctness on every box with a native binary, by
@@ -231,6 +231,36 @@ three instances.
 **Order of operations:** (1) land the Python `--multiline` fail-closed gate; (2) add `-U`,
 `--multiline`, `--multiline-dotall` to `bootstrap.py`'s `unsupported_flags`; (3) add the derived
 parity invariant above so instance four cannot happen silently.
+
+**CLOSED (2026-09-13).** All three steps done: `5331dc9`, `bootstrap.py`'s `unsupported_flags`
+gained `--multiline`/`-U`/`--multiline-dotall`, and
+`tests/unit/test_bootstrap_delegation_flag_parity.py` pins it.
+
+**The acceptance criterion's literal reading was WRONG, and building it caught that before
+shipping a false-positive sweep.** The plan said "for EVERY field in
+`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` that maps to a CLI flag, assert bootstrap
+excludes it too." Building that literally produced **~90 "gaps"** (`-A`, `-B`, `--color`,
+`--pretty`, etc.) that are not real defects: `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
+protects `_build_native_tg_search_command`'s OWN argv-reconstruction completeness (verified:
+`after_context`/`before_context` are in that tuple AND absent from that function's forwarded-
+field set, confirmed by AST), not "the native binary cannot support this flag." Bootstrap's fast
+path passes RAW argv straight to the compiled binary's own clap parser, so `-A`/`-B`/`--color`
+reach it directly and work correctly there -- no exclusion needed. The correct invariant is
+narrower: only flags whose FUNCTIONALITY is genuinely Python-only need bootstrap parity, which is
+exactly the three-instance pattern already named (`-e`/`-f`, `--count-matches`, multiline), not a
+blanket sweep. The shipped test pins the three verified flags plus a control
+(`test_plain_context_flag_still_delegates`) recording exactly this false-positive so it is not
+re-chased.
+
+**Evidence:** RED 4 failed / 3 passed (the 4 real pins fail, mechanism-check + both controls
+pass) -> GREEN 7 passed. **Half-fix control:** reverting the three added flags reproduces the
+identical 4 failed / 3 passed, confirming the test discriminates a real fix from no fix.
+Collateral `test_cli_bootstrap` + `test_bootstrap_fast_path_imports` +
+`test_native_delegation_field_coverage` + `test_scope_note_parity` +
+`test_bare_search_names_its_scope` **197 passed**. `ruff check`/`format --preview`/`mypy` clean.
+Dogfooded live: `tg search 'MULTI\nLINE' target.txt -U --json` on the built wheel returns
+`routing_backend: "RipgrepBackend"`, a real multiline match, exit 0 -- not the bootstrap fast
+path answering a false empty-complete.
 
 ## BUG HUNT 2026-09-13 (subagent sweep, `tg`-navigated) -- 4 findings, all REPRODUCED
 

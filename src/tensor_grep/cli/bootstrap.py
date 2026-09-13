@@ -609,6 +609,18 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
         "--format",
         "--lang",
         "--ltl",
+        # HUNT-5 (2026-09-13): the THIRD instance of this exact drift class (`-e`/`-f` above is
+        # the first, `--count-matches` below is the second). cli/main.py's full-CLI door refuses
+        # to delegate `--multiline`/`-U`/`--multiline-dotall` (they are in
+        # `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`) BECAUSE they need the Python
+        # `--multiline` fail-closed gate (core/pipeline.py, shipped as 5331dc9): without it, a
+        # line-oriented native fallback silently answers a false "complete, no matches" instead
+        # of refusing. This outer argv fast path had no multiline entry at all -- `grep -n
+        # multiline cli/bootstrap.py` returned zero hits -- so a `--json -U` search bypassed
+        # the fail-closed gate entirely and took the same wrong route the gate exists to close.
+        "--multiline",
+        "-U",
+        "--multiline-dotall",
         "--rank",
         "--semantic",
         "--replace",
