@@ -195,6 +195,76 @@ discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft'
 summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
 moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
 
+## BUG HUNT 2026-09-13 (subagent sweep, `tg`-navigated) -- 4 findings, all REPRODUCED
+
+Four defects found by three read-only hunter seats and independently reproduced by the
+orchestrator on the shipped binary. None are style nits; each produces a WRONG ANSWER a caller
+cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-grep\hunt\`
+(scratch -- the durable record is here).
+
+- **HUNT-1 (HIGH, IN PROGRESS -- plan under council review): `--multiline`/`-U` silently dropped
+  by every non-ripgrep backend.** `config.multiline` has ONE consumer in the package
+  (`backends/ripgrep_backend.py:585-592`); `core/pipeline.py` never gates selection on it, so
+  `--cpu -U` lands on the line-oriented `RustCoreBackend` and answers 0. Measured:
+  `tg search -U 'alpha\nbeta' ml` -> 4 matches / exit 0, but `tg search --cpu -U ...` -> EMPTY /
+  **exit 1**, which `docs/CONTRACTS.md` defines as "complete search, no matches". JSON shows
+  `fallback_reason: None`, `result_incomplete: None` -- zero disclosure. Also reached whenever
+  `rg` is absent (`pipeline.py:428-433`). The benign reading is ruled out by the file itself:
+  `pcre2` RAISES `ConfigurationError` at `:188-195` rather than degrade. Plan:
+  `docs/superpowers/plans/2026-09-13-multiline-fail-closed.md` (v3, hash `6fc5151b`, council
+  round 3 in flight). `multiline_dotall` has the identical gap.
+
+- **HUNT-2 (HIGH, OPEN): `-F --json` drops non-UTF-8 TEXT files and labels them
+  `skipped_binary`.** `backends/stringzilla_backend.py:124-128` returns `None` on
+  `UnicodeDecodeError`, and that `None` is funnelled into the SAME result as the NUL-byte binary
+  check (`:113-115`) at `:306-319` / `:400-413`. A latin-1 file with no NUL byte:
+  `tg search -F needle l1` -> finds it (rg front door, exit 0), but
+  `tg search -F --json needle l1` -> `{"total_matches":0, "routing_reason":
+  "stringzilla_fixed_strings_skipped_binary"}`. **Two front doors of one binary disagree 1 vs 0
+  on the same corpus, and the machine/MCP-facing one is wrong.** `pipeline.py:289-297` routes
+  `fixed_strings` to StringZilla AHEAD of the `rg_available` default at `:367`, so an installed
+  rg does not rescue it. `CPUBackend` has the handler StringZilla lacks
+  (`_RustUtf8DecodeMismatch` -> latin-1 decode or raise), and `result_incomplete` +
+  `incomplete_reason_class="unreadable_path"` is this repo's established marker for the event
+  (`ast_wrapper_backend.py:313-320`, `ripgrep_backend.py:141-151`) -- StringZilla sets neither.
+  **Acceptance:** a non-UTF-8 text file is either searched or disclosed as UNRESOLVED; the two
+  front doors return the same count for the same corpus.
+
+- **HUNT-3 (HIGH, OPEN): the incompleteness envelope INVERTS the documented
+  `unreadable_path`-outranks-budget priority.** `docs/CONTRACTS.md:26-27` states
+  `unreadable_path` "OUTRANKS every budget cause when both fire". `cli/incompleteness.py:196-199`
+  checks `scan_limit_cause` FIRST and only falls through to `has_unreadable_paths`, and
+  `:209-213` similarly prefers `scan_limit_remediable`. Reproduced with a pure-function probe on
+  a payload carrying both signals: `{'status': True, 'cause': 'project-files',
+  'budget_remediable': True}` -- telling an agent "raise `--max-repo-files`" when a subtree is
+  unreadable and **no budget value will ever fix it**. This is the wrong-knob defect class the
+  contract names explicitly. It reaches every MCP tool via `core/completeness.py:174-179` ->
+  `mcp_server.py:1128`. **Confirmed untested:** `tests/unit/test_mcp_incomplete_envelope.py:169-230`
+  and `tests/unit/test_completeness_projection.py:90-121` only exercise `unreadable_paths` in
+  ISOLATION, never combined with a `scan_limit` dict -- so CI structurally cannot catch it.
+  **Acceptance:** both signals present -> `cause == "unreadable_path"`,
+  `budget_remediable == False`, plus a test that sets BOTH (the missing population).
+
+- **HUNT-4 (HIGH, OPEN): `--enrich-ast` crashes the NATIVE front door.** It is a live Python
+  search flag (`cli/main.py:3316-3318`, consumed at `:3797`/`:4506`) and is in
+  `bootstrap._TG_ONLY_SEARCH_FLAGS` (`cli/bootstrap.py:52`) specifically to force full-Python
+  dispatch -- but it is **completely absent from `rust_core/src/main.rs`**: not in
+  `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, not in the secondary passthrough branch that catches its
+  siblings `--ast`/`--files` (`main.rs:1704-1711`), not a native clap field anywhere. Reproduced
+  against the installed `tg.exe`: `tg search "hello" . --enrich-ast` -> clap
+  `unexpected argument '--enrich-ast' found`, **exit 2**; same via the option-first root form.
+  This is the `--rank` registration-completeness class AGENTS.md documents, and it is invisible
+  to `CliRunner` tests because those bypass the native binary. **Acceptance:** `--enrich-ast`
+  reaches the Python door through the native binary, plus a routing-parity arm covering it.
+
+**Ruled out during the hunt (recorded so they are not re-chased):** the bare-reserved-command
+fall-through (`tg edit-ready` in a small dir) is DELIBERATE and pinned at `main.rs:8028`,
+`:5248-5262`, and `tests/e2e/test_routing_parity.py:800-824`; the apparent
+`SEARCH_PYTHON_PASSTHROUGH_FLAGS` vs `_TG_ONLY_SEARCH_FLAGS` divergence resolves to native
+structured fields or genuine rg passthrough for every entry EXCEPT `--enrich-ast`; and the
+A83 `--gpu-device-ids` silent-drop is now fail-closed via `rg_passthrough_gpu_dropped_search_flags`
+(`main.rs:9245-9272`).
+
 ## STRATEGIC (2026-09-04): 2026 Competitive Analysis & Strategic Updates Roadmap
 
 Competitive landscape audit against mid-2026 codebase intelligence and agent context tooling (`Gortex`, `GitNexus`, `Serena`, `GrepAI`, `ripgrep`, `ast-grep`, `Claude Code` native agentic search).
