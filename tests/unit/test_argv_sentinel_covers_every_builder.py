@@ -467,6 +467,25 @@ def _agent_argv() -> list[list[str]]:
     try:
         monkeypatch.setattr(mod, "_run_agent_gpu_json_command", _capture)
         monkeypatch.setattr(mod, "resolve_native_tg_binary", lambda: Path("tg.exe"))
+        # FORCE the path-domain seam instead of letting the environment decide it (A85).
+        #
+        # The `tg.exe` stub above is a Windows-shaped name, and `_agent_gpu_evidence` classifies
+        # a Windows-shaped target on a WSL host as CROSS-DOMAIN, then returns
+        # `path_domain_mismatch` when the Linux probe dir cannot be translated -- BEFORE building
+        # either argv. Measured 2026-09-12 inside `scripts/ci-local` (Docker Desktop is WSL2-
+        # backed, `/proc/version` = `microsoft-standard-WSL2`):
+        #     is_wsl_host() -> True ; is_cross_domain_native_binary("tg.exe") -> True
+        #     translate_path_for_windows_binary(Path("/tmp/x")) -> None
+        # so this member captured 0 argvs instead of 2 and DROPPED OUT of the census, while the
+        # same file passed 31/31 on the Windows host. A CWE-88 census that silently loses a
+        # member in one environment is green everywhere the environment happens to cooperate --
+        # only the `len(captured) == 2` guard below made it visible.
+        #
+        # The product is behaving correctly; the FIXTURE was environment-dependent. This test is
+        # about ARGV SHAPE (same reason the two stubs below exist), so pin the classification
+        # rather than the platform: the sentinel's position must not depend on which host runs
+        # the suite.
+        monkeypatch.setattr(mod, "is_cross_domain_native_binary", lambda _command: False)
         # Stub ONLY the route-classification gate between the two builders. This test is about
         # ARGV SHAPE; making the probe payload realistic enough to pass a real GPU-route
         # classification would couple it to routing semantics it does not check, and the first
