@@ -146,5 +146,18 @@ def test_spelling_differences_that_are_never_identity_still_normalize() -> None:
     """
     from tensor_grep.cli.edit_ticket_service import _normalized_root
 
+    # Trailing slash is a UNIVERSAL spelling difference -- the same directory on every platform.
     assert _normalized_root("/tmp/repo/project/") == _normalized_root("/tmp/repo/project")
-    assert _normalized_root("\\tmp\\repo") == _normalized_root("/tmp/repo")
+
+    # Separator style is NOT universal, and asserting it unconditionally was wrong: a backslash
+    # is a path separator on Windows but a legal FILENAME CHARACTER on POSIX, so
+    # `Path("\\tmp\\repo").resolve()` there yields `<cwd>/\tmp\repo` -- a genuinely different
+    # directory, which `_normalized_root` then renders as `/work//tmp/repo`. Measured in a Linux
+    # container: EQUAL? False. The unconditional form passed on Windows and failed all four
+    # ubuntu/macos test-python legs.
+    if os.sep == "\\" or os.altsep == "\\":
+        assert _normalized_root("\\tmp\\repo") == _normalized_root("/tmp/repo")
+    else:
+        # On POSIX the two spellings name DIFFERENT paths, and collapsing them would be the
+        # over-normalization this file's sibling test guards against.
+        assert _normalized_root("\\tmp\\repo") != _normalized_root("/tmp/repo")
