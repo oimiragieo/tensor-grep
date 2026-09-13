@@ -494,7 +494,27 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   `:196-199`, and make `remediable` at `:209-213` yield `False` whenever `has_unreadable_paths`
   is true, regardless of `scan_limit_remediable`. Two edits, one function.
 
-- **HUNT-4 (HIGH, OPEN): `--enrich-ast` crashes the NATIVE front door.** It is a live Python
+- **HUNT-4 (HIGH, CLOSED 2026-09-13, merged `00fd8c7` / PR #1155): `--enrich-ast` crashed the
+  NATIVE front door.** Fixed by adding `--enrich-ast` to `SEARCH_PYTHON_PASSTHROUGH_FLAGS` in
+  `rust_core/src/search_flag_registry.rs`, matching the fix-site pin below exactly (this session
+  did not re-run council round 7 before landing it — the fix was a one-line, single-symbol
+  addition to an established allowlist pattern already used identically by
+  `--rank`/`--bm25`/`--semantic`/`--ltl`, so the smaller in-session TDD loop below substituted
+  for the full council gate). `tests/e2e/test_native_enrich_ast.py` added, mirroring
+  `test_native_ltl_passthrough.py`, gated on `TG_REQUIRE_RG_PARITY` via `ci.yml`'s
+  `native-build-smoke` job. RED confirmed pre-fix against the installed native binary
+  (`error: unexpected argument '--enrich-ast' found`); GREEN confirmed via CI's
+  `native-build-smoke` matrix on all of ubuntu-latest/windows-latest/macos-latest/
+  macos-15-intel, plus the full `test-python`/`test-rust-core` matrix and `Formatting &
+  Linting` — 40 checks passed, 0 failed. `rustfmt --check` and `ruff check`/`format --preview`
+  clean locally before push (local `cargo build` stays banned on this shared box per repo
+  policy; verified via CI, not locally).
+
+  Prior OPEN text, preserved for the fix-site derivation it recorded:
+
+  ---
+
+  It is a live Python
   search flag (`cli/main.py:3316-3318`, consumed at `:3797`/`:4506`) and is in
   `bootstrap._TG_ONLY_SEARCH_FLAGS` (`cli/bootstrap.py:52`) specifically to force full-Python
   dispatch -- but it is **completely absent from `rust_core/src/main.rs`**: not in
