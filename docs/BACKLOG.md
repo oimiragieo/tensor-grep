@@ -4531,14 +4531,17 @@ region set is now seven, and a prebuilt round-7 brief is at
 
 ### What a fresh session should pick up, in order
 
-1. **Read `C:/tmp/tensor-grep/hunt_r6/run.log`** for the round-6 verdicts, then triage: name every
-   non-voting seat (`codex` abstains every round), apply the does-it-change-the-BUILD test, and
-   VERIFY each finding against real code before acting — three round-5 findings were refuted that
-   way. HUNT-4 needs two consecutive clean rounds on one unchanged hash before implementation.
-2. **Merge the PR queue** once no release is in flight: #1154, then #1141, then update+ready #1150.
-   The window closes when the `Semantic Release` JOB succeeds, not when the run completes, and a
-   `bench:`/`docs:` PR that publishes nothing STILL rejects an in-flight release's push.
-3. **HUNT-5**, now unblocked.
+**SUPERSEDED 2026-09-13 (session closeout).** All three steps below are done: HUNT-4 shipped
+directly via a TDD loop at `00fd8c7` (PR #1155) rather than waiting on council round 7 — the fix
+was a one-line, single-symbol addition to an established allowlist pattern already used
+identically by `--rank`/`--bm25`/`--semantic`/`--ltl`, judged small enough to substitute a
+smaller in-session verification loop for the full council gate. #1154/#1141/#1150 are all
+merged (see the table above). HUNT-5 is closed. Preserved below for the round-6/7 brief-building
+mechanics, which remain reusable for a future multi-round council item.
+
+1. ~~Read `C:/tmp/tensor-grep/hunt_r6/run.log`~~ — N/A, HUNT-4 shipped without round 7.
+2. ~~Merge the PR queue~~ — done, all three merged 2026-09-13.
+3. ~~HUNT-5~~ — closed.
 
 ### Ideas that would improve the codebase next session
 
@@ -4557,3 +4560,31 @@ region set is now seven, and a prebuilt round-7 brief is at
 - **The `-x` in `pyproject.toml:48-52` makes every bare pytest count a lie.** Every RED
   measurement this session needed `--maxfail=100`. Consider whether the default is worth what it
   costs in misread evidence.
+
+**Added 2026-09-13 (session closeout, CI-cost work):**
+
+- **`.github/workflows/ci.yml` has no local pre-push schema check for job-level `if:` context
+  validity.** Two consecutive pushes failed at 0s/0-jobs from using `matrix.os` in a job-level
+  `if:` — an invalid-context error `yaml.safe_load()` cannot catch and `gh run view` reports with
+  no useful text (just "This run likely failed because of a workflow file issue"). A local
+  `actionlint`-equivalent pre-push check (or documenting the context-availability table this repo
+  already learned the hard way) would turn a 2-push round-trip into a local catch. AI-doable,
+  unblocked, no CEO gate: `npx --yes action-validator .github/workflows/*.yml` was attempted this
+  session and failed with "could not determine executable to run" — worth a follow-up to get a
+  working local GH Actions linter on this box (npm global install investigation, or a Python-side
+  reimplementation of just the context-availability rule).
+- **`scripts/_release_assets_checks/ci_workflow.py`'s matrix-pin checks are undocumented outside
+  the script itself.** The `macos-15-intel` pin for `native-build-smoke` and `matrix_os_list` pin
+  for `build-release-native-assets` cost a real CI failure this session (`release-readiness`
+  failed with "must include Intel macOS runner label") because nothing surfaced the constraint
+  before push. A one-line comment at the TOP of `native-build-smoke:`'s `strategy.matrix` in
+  `ci.yml` pointing at the validator (which this session's fix now has) is the minimum; a doc
+  cross-reference in `tensor-grep-release-and-positioning` or `tensor-grep-docs-and-writing`
+  skill covering "what CI matrix edits are validator-pinned" would prevent the next session from
+  re-deriving this the same way.
+- **CI cost is now gated for `test-python`/`test-rust-core` macOS legs but unmeasured.** No
+  before/after GitHub Actions billing comparison exists yet — the operator's "$524 spent" figure
+  was the trigger, not a baseline. Next session (or next billing cycle) should pull actual
+  Actions usage minutes before/after this change landed to confirm the expected savings, rather
+  than trusting the design reasoning alone (author-a-probe-that-cannot-lie applies to a
+  cost-reduction claim same as a performance one).
