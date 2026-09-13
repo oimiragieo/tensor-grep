@@ -1104,9 +1104,10 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     from tensor_grep.io.root_probe import iter_top_level_vendored_dirs
     from tensor_grep.io.scan_limits import UNBOUNDED_VENDORED_ROOT_DIR_NAMES
 
-    for _name in iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES):
-        return True
-    return False
+    # any() over the generator preserves the original's short-circuit-on-first-hit behavior
+    # (iter_top_level_vendored_dirs is O(top-level-entries), never walks) without a loop
+    # variable that exists only to be discarded.
+    return any(iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
 
 
 # Item #105 (bootstrap raw-rg-passthrough gap, CEO dogfood v1.92.x directive): neither
