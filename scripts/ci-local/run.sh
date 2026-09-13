@@ -5,6 +5,7 @@
 #   scripts/ci-local/run.sh                 # both lanes, default cap
 #   scripts/ci-local/run.sh rust            # rust lane only
 #   scripts/ci-local/run.sh python          # python lane only
+#   scripts/ci-local/run.sh cuda            # cargo check --features cuda --all-targets
 #   scripts/ci-local/run.sh shell           # interactive shell in the CI image
 #   TG_CI_CPUS=4 scripts/ci-local/run.sh    # override the cap
 #

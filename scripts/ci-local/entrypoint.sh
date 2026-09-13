@@ -98,6 +98,24 @@ run_rust() {
     echo "rust lane exit: ${RUST_RC}"
 }
 
+run_cuda() {
+    RAN_CUDA=1
+    banner "CUDA LANE (cargo check --features cuda --all-targets)"
+    # ci.yml's cuda-feature-check. It is a CHECK, not a test run: it proves the `cuda` feature
+    # still COMPILES, including test targets (--all-targets), which is why it catches a broken
+    # #[cfg(test)] module that the default-feature `cargo test` lane can also catch but a plain
+    # `cargo check` would miss entirely.
+    #
+    # Deliberately NOT part of `all`: it is a separate feature resolution and recompiles a large
+    # part of the graph, which is exactly the kind of cost the shared-box CPU cap exists to bound.
+    # Ask for it explicitly when you have touched Rust.
+    #
+    # No CUDA toolkit is required -- the feature gates code paths, and `cargo check` never links.
+    ( cd /work/rust_core && cargo check --features cuda --all-targets )
+    CUDA_RC=$?
+    echo "cuda lane exit: ${CUDA_RC}"
+}
+
 run_python() {
     RAN_PY=1
     banner "PYTHON LANE (pytest tests -m 'not eval')"
@@ -135,10 +153,11 @@ setup_python_env || { echo "SETUP FAILED -- refusing to report any lane result."
 case "${LANE}" in
     rust)   run_rust ;;
     python) run_python ;;
+    cuda)   run_cuda ;;
     all)    run_rust; run_python ;;
     shell)  exec /bin/bash ;;
     *)
-        echo "unknown lane '${LANE}' (expected: rust | python | all | shell)" >&2
+        echo "unknown lane '${LANE}' (expected: rust | python | cuda | all | shell)" >&2
         exit 2
         ;;
 esac
@@ -147,7 +166,7 @@ banner "SUMMARY"
 [ "${RAN_RUST}" -eq 1 ] && echo "  rust  : exit ${RUST_RC}"
 [ "${RAN_PY}" -eq 1 ]   && echo "  python: exit ${PY_RC}"
 
-if [ "${RUST_RC}" -ne 0 ] || [ "${PY_RC}" -ne 0 ]; then
+if [ "${RUST_RC}" -ne 0 ] || [ "${PY_RC}" -ne 0 ] || [ "${CUDA_RC:-0}" -ne 0 ]; then
     echo "  VERDICT: FAILED"
     exit 1
 fi
@@ -161,7 +180,8 @@ cat <<'NOT_COVERED'
     - Formatting & Linting  (ruff check / ruff format --preview / cargo fmt / clippy)
     - docs-governance, repo-hygiene, release-readiness, release-intent
     - agent-readiness / windows-agent-readiness
-    - native-build-smoke, cuda-feature-check, search-golden-parity, benchmark-regression
+    - native-build-smoke, search-golden-parity, benchmark-regression
+    - cuda-feature-check  (NOT run by rust/python/all -- `run.sh cuda` covers it)
     - test-gpu-nvidia, the `-m eval` gate, and the whole release/publish chain
   KNOWN LOCAL-ONLY FAILURE (not a product defect):
     Whole-repo, DEADLINE-BOUNDED tests can fail here purely on bind-mount I/O.
