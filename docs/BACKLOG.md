@@ -195,11 +195,15 @@ discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft'
 summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
 moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
 
-## HUNT-5 -- the two front doors disagree about delegating `-U` (2026-09-13, banked)
+## HUNT-5 -- the two front doors disagree about delegating `-U` (2026-09-13, UNBLOCKED)
 
-**STOP-RECEIPT: blocker: fixing this BEFORE the Python `--multiline` gate lands would regress
-correctness on every box with a native binary -- it would route `-U` away from the door that
-handles it and into the door that drops it. The fix is correct only after that gate ships.**
+**STOP-RECEIPT CLEARED:** the blocker was step (1) below -- fixing this BEFORE the Python
+`--multiline` gate lands would have regressed correctness on every box with a native binary, by
+routing `-U` away from the door that handles it and into the door that drops it. That gate
+shipped this session as `5331dc9` / `fix(pipeline): fail closed on --multiline instead of
+answering a false complete` (`tests/unit/test_multiline_fail_closed.py`, 7 passed; two
+consecutive clean council rounds on hash `8a897ad6`). **Steps (2) and (3) below are ready to
+start now** -- this is a real, AI-doable item with no remaining blocker, not queued work.
 
 `src/tensor_grep/cli/main.py`'s `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` lists
 `multiline` and `multiline_dotall`, so the full-CLI door refuses to delegate a `-U` request.
@@ -451,6 +455,50 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   **Verification route:** local `cargo build/test/clippy/check` is BANNED on this box (shared
   server). Verify through `scripts/ci-local/run.sh rust` or CI. `rustfmt --check` is the one
   local exception.
+
+  **PLAN STATUS (2026-09-13, current as of this session's closeout — supersedes the fix-site
+  pin above where they differ):** the plan lives at
+  `docs/superpowers/plans/2026-09-13-enrich-ast-native-door.md` (agent-local, gitignored via
+  `.gitignore:118`, so it will not exist in a fresh clone) and is at **version v5b, sha256
+  `b86a7e47...` (first 8 hex: `b86a7e47`)**. A frozen byte-identical backup, verified to restore,
+  lives at `C:/tmp/tensor-grep/hunt_r7/PLAN-b86a7e47-FROZEN.md` in case the gitignored copy is
+  missing.
+
+  Council round 6 returned **6 content votes, ALL APPROVED** (claude, droid_kimi,
+  droid_nemotron, droid_glm, cursor, codex_sub) — HUNT-4's FIRST clean round on this hash. Two
+  non-voting seats were named explicitly rather than silently absent: `agy` (79-byte log, print
+  timeout, no verdict token at all) and `codex` (emitted `RECOMMENDED: CHANGES_REQUIRED`, but
+  for the stated reason "every read-only command was rejected by the workspace policy" — an
+  abstention wearing a verdict token, excluded on its own grounds; see A160 in `AGENTS.md`).
+
+  **Do not edit this plan before round 7 runs.** Two seats noted `docs/BACKLOG.md` is missing
+  from Task 2's `Files:` block; it IS in File Structure and in the `git add`, and Step 6 names it
+  explicitly, so a builder cannot miss it — by the does-it-change-the-BUILD test that is a NOTE,
+  not a defect. Editing it would change the hash and reset the clean-round counter for a line
+  that alters nothing about the built artifact.
+
+  The plan's own approach changed substantially across rounds 4→5: v4 put the new native-door
+  test inside `tests/e2e/test_routing_parity.py` and extended the `native-build-smoke` CI glob
+  with a literal path. Round 5 (`droid_kimi`) found that would sit outside the
+  `TG_REQUIRE_RG_PARITY` self-enrolling coverage census (`grep -c TG_REQUIRE_RG_PARITY
+  tests/e2e/test_routing_parity.py` → 0) and reintroduce the exact hardcoded-filename defect
+  task #266 fixed. v5 moves the arm into a NEW `tests/e2e/test_native_enrich_ast.py`, which the
+  EXISTING `native-build-smoke` glob (`test_native_*.py`) already matches, so **no `ci.yml` edit
+  is needed at all** — the fix-site pin above (which still frames the CI glob edit as the plan of
+  record) is superseded by this note, not the other way around.
+
+  **Next action for a fresh session:** run council round 7 against hash `b86a7e47` unchanged.
+  Build the brief with `python C:/tmp/tensor-grep/hunt/build_hunt_r6_brief.py` (retarget the
+  round number inside the script) and the inlined-source brief with
+  `python C:/tmp/tensor-grep/hunt/build_hunt_codex_sub_brief.py <brief> <out>` (fails closed on a
+  missing region; carries 7 regions as of this session, including
+  `tests/unit/test_native_e2e_ci_coverage_contract.py` so a seat can verify the census claim
+  above without guessing). Run the seat-health gate first
+  (`bash ~/.claude/skills/use-thinktank/tt_smoke.sh`), dispatch `codex_sub` WITH the council (not
+  late), and this time also dispatch the MAIN `codex` seat with an inlined brief or name it a
+  known non-voter up front — its sandbox blocks reads, which produced the misleading verdict
+  token in round 6. If round 7 is clean (two consecutive clean rounds on this SAME hash),
+  implement TDD-first with a half-fix control, then move to HUNT-5 below.
 
 **Ruled out during the hunt (recorded so they are not re-chased):** the bare-reserved-command
 fall-through (`tg edit-ready` in a small dir) is DELIBERATE and pinned at `main.rs:8028`,
