@@ -195,6 +195,39 @@ discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft'
 summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
 moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
 
+## HUNT-5 -- the two front doors disagree about delegating `-U` (2026-09-13, banked)
+
+**STOP-RECEIPT: blocker: fixing this BEFORE the Python `--multiline` gate lands would regress
+correctness on every box with a native binary -- it would route `-U` away from the door that
+handles it and into the door that drops it. The fix is correct only after that gate ships.**
+
+`src/tensor_grep/cli/main.py`'s `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` lists
+`multiline` and `multiline_dotall`, so the full-CLI door refuses to delegate a `-U` request.
+`src/tensor_grep/cli/bootstrap.py`'s `_can_delegate_to_native_tg_search` triggers on `--cpu` /
+`--force-cpu` / `--json` / `--ndjson` / `--gpu-device-ids` and its `unsupported_flags` set has NO
+multiline entry -- `grep -n multiline src/tensor_grep/cli/bootstrap.py` returns zero hits. Same
+flag, two front doors, opposite routing.
+
+**This is the THIRD instance of this exact drift**, and the previous two are documented in
+`bootstrap.py`'s own comments: `-e`/`-f` (audit #69) and `--count-matches` (task #121), the
+latter noting the gap "silently returned a LINE count mislabeled as an occurrence count ...
+bypassing cli/main.py's OWN identical exclusion entirely". Three recurrences means the defect is
+a MISSING INVARIANT, not three separate bugs -- fixing only the multiline instance leaves the
+fourth to be found the same way.
+
+**Acceptance test** (write it first; it must fail before the fix):
+a test that derives BOTH doors' exclusion sets and asserts they agree, rather than hardcoding a
+list -- e.g. for every field in `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` that maps to a
+CLI flag, assert that flag (and its aliases) appears in `bootstrap.py`'s `unsupported_flags` or
+`unsupported_prefixes`. Pin it with a mutation control: delete `--count-matches` from the
+bootstrap set and confirm the test goes RED, proving it can fail. An enumeration is correct when
+written and silently incomplete on the next addition -- which is precisely how this gap reached
+three instances.
+
+**Order of operations:** (1) land the Python `--multiline` fail-closed gate; (2) add `-U`,
+`--multiline`, `--multiline-dotall` to `bootstrap.py`'s `unsupported_flags`; (3) add the derived
+parity invariant above so instance four cannot happen silently.
+
 ## BUG HUNT 2026-09-13 (subagent sweep, `tg`-navigated) -- 4 findings, all REPRODUCED
 
 Four defects found by three read-only hunter seats and independently reproduced by the
@@ -230,6 +263,35 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   **Acceptance:** a non-UTF-8 text file is either searched or disclosed as UNRESOLVED; the two
   front doors return the same count for the same corpus.
 
+  **MECHANISM PINNED (measured 2026-09-13 on `552dea5`) — one sentence:**
+  `_load_searchable_text` has exactly TWO `return None` sites and they mean OPPOSITE things —
+  *"this really is binary"* (the NUL-byte probe, `stringzilla_backend.py:~115`) and *"this is
+  TEXT I could not decode"* (`UnicodeDecodeError`, `:~128`). Both call sites — `:316` and `:410`,
+  the only two occurrences of the reason string — receive the same bare `None` and both label it
+  `stringzilla_fixed_strings_skipped_binary`. **One return value, two meanings, two callers
+  guessing.** That is the whole defect.
+
+  **The capability is not missing from the codebase, only from this backend.** `CPUBackend`
+  already handles undecodable text: `_RustUtf8DecodeMismatch` (`cpu_backend.py:70`) is raised at
+  `:464`, caught at `:486`, and falls through to a latin-1/replace decode at `:489`. So the repo
+  has already decided what to do here; StringZilla just does not participate. That makes this a
+  single-file change, not a design debate.
+
+  **Disclosure is absent, measured:** `grep -c "incomplete_reason_class\|result_incomplete"
+  src/tensor_grep/backends/stringzilla_backend.py` returns **0**. The backend sets neither
+  marker, so a caller cannot distinguish a skipped file from a genuine zero-match — which is the
+  false-complete shape `docs/CONTRACTS.md` exists to prevent.
+
+  **Fix shape:** make the two `None` causes distinguishable (a sentinel or a dedicated exception),
+  then have each of the two call sites either (a) decode latin-1 as `CPUBackend` does and search
+  it, or (b) set `result_incomplete` + `incomplete_reason_class="unreadable_path"` — the marker
+  `ast_wrapper_backend.py:313-320` and `ripgrep_backend.py:141-151` already use. Do NOT simply
+  rename the reason string: that leaves the count wrong and only relabels the lie.
+
+  **Test population warning:** this defect is invisible to any fixture whose files are all valid
+  UTF-8. The RED needs a latin-1 file with NO NUL byte — the two conditions must BOTH hold, or
+  the NUL probe short-circuits first and the decode path is never reached.
+
 - **HUNT-3 (HIGH, OPEN): the incompleteness envelope INVERTS the documented
   `unreadable_path`-outranks-budget priority.** `docs/CONTRACTS.md:26-27` states
   `unreadable_path` "OUTRANKS every budget cause when both fire". `cli/incompleteness.py:196-199`
@@ -245,6 +307,35 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   **Acceptance:** both signals present -> `cause == "unreadable_path"`,
   `budget_remediable == False`, plus a test that sets BOTH (the missing population).
 
+  **RE-MEASURED 2026-09-13 on `552dea5` with two controls — still live, and now isolated:**
+
+  | arm | `cause` | `budget_remediable` |
+  |---|---|---|
+  | only `unreadable_paths` | `unreadable_path` | `False` (correct) |
+  | only `scan_limit` | `project-files` | `True` (correct) |
+  | **both** | `project-files` | **`True` (INVERTED)** |
+
+  Both signals behave correctly in ISOLATION. That is what isolates the defect to the PRIORITY
+  ORDER at `cli/incompleteness.py:196-199` and `:209-213`, rather than to detection of either
+  signal — without the controls, the combined arm could have been dismissed as the unreadable
+  path simply not being seen.
+
+  **FIXTURE TRAP — read this before writing the RED, it cost a probe cycle and would have
+  produced a FALSE REFUTATION.** The payload shapes are not the obvious ones
+  (`cli/incompleteness.py:169-184`):
+  - `unreadable_paths` must be a **dict with a truthy `count`** — a LIST is silently ignored.
+  - `scan_limit` keys are **`possibly_truncated` / `truncation_cause` / `budget_remediable`**,
+    not `truncated`/`cause`/`remediable`.
+
+  With the wrong shapes all three arms return `cause=None`: the function never sees the signals,
+  the combined arm looks benign, and the finding reads as refuted. **Any test for this MUST carry
+  the isolation control** (unreadable-only must yield `unreadable_path`), or it cannot tell a
+  passing fix from a fixture that never applied.
+
+  **Fix shape:** hoist the `has_unreadable_paths` check ABOVE the `scan_limit_cause` check at
+  `:196-199`, and make `remediable` at `:209-213` yield `False` whenever `has_unreadable_paths`
+  is true, regardless of `scan_limit_remediable`. Two edits, one function.
+
 - **HUNT-4 (HIGH, OPEN): `--enrich-ast` crashes the NATIVE front door.** It is a live Python
   search flag (`cli/main.py:3316-3318`, consumed at `:3797`/`:4506`) and is in
   `bootstrap._TG_ONLY_SEARCH_FLAGS` (`cli/bootstrap.py:52`) specifically to force full-Python
@@ -256,6 +347,27 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   This is the `--rank` registration-completeness class AGENTS.md documents, and it is invisible
   to `CliRunner` tests because those bypass the native binary. **Acceptance:** `--enrich-ast`
   reaches the Python door through the native binary, plus a routing-parity arm covering it.
+
+  **FIX SITE PINNED (measured 2026-09-13 on `552dea5`, so the next session does not re-derive
+  it):** add `"--enrich-ast",` to `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, declared at
+  `rust_core/src/main.rs:189` and consumed at `:1701` via `search_args_contain_any_flag`. That
+  list is exactly the Python-only search flags — `--stats`, `--debug`, `--engine` and `--trace`
+  are already members, and `--enrich-ast` is the same shape.
+
+  **Do NOT add it to the sibling branch at `main.rs:1704-1710`** (`--files` /
+  `--allow-broad-generated-scan` / `--ast`). That is a different mechanism, and `--ast` being a
+  name-prefix of `--enrich-ast` is a coincidence, not a reason — the prefix similarity is the
+  trap here.
+
+  **Ratchet headroom, measured:** `main.rs` is 15103 lines against a 15127 allowance = **24 lines
+  spare**, and `scripts/file_size_budget.py` exits 0 today. The one-line addition fits with no
+  split. This matters because the previous flag addition to this file DID require a split, and a
+  split disarms location-pinned gates (`.tg-registration.toml` pins `{file, symbol}`) — see the
+  2026-09-12 receipt. Re-measure before assuming the headroom is still there.
+
+  **Verification route:** local `cargo build/test/clippy/check` is BANNED on this box (shared
+  server). Verify through `scripts/ci-local/run.sh rust` or CI. `rustfmt --check` is the one
+  local exception.
 
 **Ruled out during the hunt (recorded so they are not re-chased):** the bare-reserved-command
 fall-through (`tg edit-ready` in a small dir) is DELIBERATE and pinned at `main.rs:8028`,
