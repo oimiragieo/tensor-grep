@@ -4563,16 +4563,15 @@ mechanics, which remain reusable for a future multi-round council item.
 
 **Added 2026-09-13 (session closeout, CI-cost work):**
 
-- **`.github/workflows/ci.yml` has no local pre-push schema check for job-level `if:` context
-  validity.** Two consecutive pushes failed at 0s/0-jobs from using `matrix.os` in a job-level
-  `if:` — an invalid-context error `yaml.safe_load()` cannot catch and `gh run view` reports with
-  no useful text (just "This run likely failed because of a workflow file issue"). A local
-  `actionlint`-equivalent pre-push check (or documenting the context-availability table this repo
-  already learned the hard way) would turn a 2-push round-trip into a local catch. AI-doable,
-  unblocked, no CEO gate: `npx --yes action-validator .github/workflows/*.yml` was attempted this
-  session and failed with "could not determine executable to run" — worth a follow-up to get a
-  working local GH Actions linter on this box (npm global install investigation, or a Python-side
-  reimplementation of just the context-availability rule).
+- **RESOLVED same session, follow-up closeout pass:** `.github/workflows/ci.yml` had no local
+  pre-push schema check for job-level `if:` context validity, which cost two failed CI pushes
+  this session (`matrix.os` used in a job-level `if:` — an invalid-context error
+  `yaml.safe_load()` cannot catch). The bare package name `npx --yes action-validator` fails with
+  "could not determine executable to run", but the SCOPED package name works:
+  `npx --yes @action-validator/cli .github/workflows/ci.yml` — exit 0, clean, confirmed against
+  the current (known-good) `ci.yml`. Usage: `@action-validator/cli <path_to_yaml>` (no flags,
+  positional arg only). Not yet wired into a pre-push hook or CI job — that wiring is the
+  remaining AI-doable step, unblocked, no CEO gate.
 - **`scripts/_release_assets_checks/ci_workflow.py`'s matrix-pin checks are undocumented outside
   the script itself.** The `macos-15-intel` pin for `native-build-smoke` and `matrix_os_list` pin
   for `build-release-native-assets` cost a real CI failure this session (`release-readiness`
@@ -4582,9 +4581,14 @@ mechanics, which remain reusable for a future multi-round council item.
   cross-reference in `tensor-grep-release-and-positioning` or `tensor-grep-docs-and-writing`
   skill covering "what CI matrix edits are validator-pinned" would prevent the next session from
   re-deriving this the same way.
-- **CI cost is now gated for `test-python`/`test-rust-core` macOS legs but unmeasured.** No
-  before/after GitHub Actions billing comparison exists yet — the operator's "$524 spent" figure
-  was the trigger, not a baseline. Next session (or next billing cycle) should pull actual
-  Actions usage minutes before/after this change landed to confirm the expected savings, rather
-  than trusting the design reasoning alone (author-a-probe-that-cannot-lie applies to a
-  cost-reduction claim same as a performance one).
+- **CEO-GATED / TIME-BLOCKED (not AI-doable today):** CI cost is now gated for
+  `test-python`/`test-rust-core` macOS legs (`7dc5970`/PR#1156) but the savings are UNMEASURED —
+  the operator's "$524 spent" figure was the trigger, not a baseline. **Blocker:** GitHub billing
+  data needs real wall-clock time to accumulate a comparable before/after window (the gate landed
+  2026-09-13; a fair comparison needs at least one full billing cycle of "after" data, and the
+  "before" baseline is whatever minutes were already billed as of 2026-09-13). **Trigger:** next
+  session that runs on or after 2026-10-13 (one month out) should pull GitHub Actions usage
+  minutes via the repo billing/usage API or `gh api` billing endpoints and compare against this
+  session's implicit baseline, per author-a-probe-that-cannot-lie (a cost-reduction claim needs
+  the same measurement discipline as a performance one — trusting the design reasoning alone is
+  not evidence).

@@ -1585,6 +1585,12 @@ jobs:
       RELEASE_NATIVE_ASSET_PROFILE: ${{ vars.TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE || 'native-frontdoor' }}
     strategy:
       fail-fast: false
+      # scripts/_release_assets_checks/ci_workflow.py statically pins that this job's asset list
+      # (the `asset_name` values below) must cover tg-linux-amd64-cpu/-nvidia,
+      # tg-macos-amd64-cpu, tg-windows-amd64-cpu.exe/-nvidia.exe -- it parses this YAML with a
+      # plain loader and cannot resolve a computed matrix, so any change to this `include:` list
+      # must keep those five asset names literal. Run `uv run python
+      # scripts/validate_release_assets.py` locally before pushing an edit here.
       matrix:
         include:
           - os: ubuntu-latest
