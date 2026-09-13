@@ -1,6 +1,65 @@
 # CHANGELOG
 
 
+## v1.119.16 (2026-09-13)
+
+### Bug Fixes
+
+- **bootstrap**: Register --enrich-ast on the native front door
+  ([#1155](https://github.com/oimiragieo/tensor-grep/pull/1155),
+  [`00fd8c7`](https://github.com/oimiragieo/tensor-grep/commit/00fd8c70f0757533ee1b45c7a69fe193938c183c))
+
+HUNT-4 (docs/BACKLOG.md, 2026-09-13): --enrich-ast is a Python-only search flag forced into
+  full-Python dispatch via bootstrap._TG_ONLY_SEARCH_FLAGS, but was entirely absent from
+  SEARCH_PYTHON_PASSTHROUGH_FLAGS in the native Rust front door. The compiled tg binary
+  clap-rejected it with exit 2 instead of routing to the Python sidecar.
+
+Add --enrich-ast to SEARCH_PYTHON_PASSTHROUGH_FLAGS (search_flag_registry.rs), the same list
+  --rank/--bm25/--semantic/--ltl already use for this exact reason. Add
+  tests/e2e/test_native_enrich_ast.py, mirroring test_native_ltl_passthrough.py, gated on
+  TG_REQUIRE_RG_PARITY via ci.yml's native-build-smoke job so a missing binary hard-fails rather
+  than silently skipping.
+
+RED confirmed locally against the pre-fix installed native binary: "error: unexpected argument
+  '--enrich-ast' found".
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Bank an external agent's v1.119.15 dogfood audit findings
+  ([`3a7f0f7`](https://github.com/oimiragieo/tensor-grep/commit/3a7f0f728abefcc4fb94e811ac4eb44188d91d97))
+
+Received a full-surface dogfood report from another session (18/18 shipped harness, 87/89
+  full-surface matrix, no product blocker). Spot-checked its two "looked broken, reclassified"
+  claims against real code before banking rather than trusting the report at face value:
+
+* tg freshness exit 2 with no session is confirmed intentional -- cli/freshness.py:124-126's own
+  docstring states the three-state exit contract and sets incomplete_reason="no_persisted_state"
+  rather than a confident "current". * the MCP cli_version=None reading is plausibly a
+  harness-timing race -- cli/mcp_server.py:1087 populates it via a synchronous per-call function,
+  consistent with "sequential call returns the real value" -- not independently reproduced this
+  session, so flagged as plausible rather than confirmed.
+
+Banked the six concrete improvement items (dogfood harness coverage gaps, freshness UX
+  documentation, MCP dual-field metadata, install-dense dogfood arm, evidence/review-bundle fixture
+  loop, skill-drift-in-the-same-PR discipline) so they are not lost the moment this conversation
+  ends. The Exa-sourced "world-class agentic search" roadmap ideas are explicitly deferred as
+  unstarted design proposals, not receipted work items -- they need demand-gating against
+  tensor-grep-research-frontier / tensor-grep-demand-gate-measurement before any build
+  authorization.
+
+docs/BACKLOG.md stays well inside its own size ratchet (443586/460000 bytes, 4534/4600 lines) --
+  verified rather than assumed, after this session's TASK_BOARD.md near-miss on the same class of
+  gate.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+
 ## v1.119.15 (2026-09-13)
 
 ### Bug Fixes
