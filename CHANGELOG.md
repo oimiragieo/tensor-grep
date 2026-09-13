@@ -1,6 +1,101 @@
 # CHANGELOG
 
 
+## v1.119.11 (2026-09-13)
+
+### Bug Fixes
+
+- **dogfood**: Make the version check work on BOTH front doors, and cover `tg importers`
+  ([#1151](https://github.com/oimiragieo/tensor-grep/pull/1151),
+  [`a5c91bd`](https://github.com/oimiragieo/tensor-grep/commit/a5c91bd089d0d946ed73d1e9247d64dbb680f778))
+
+1. THE VERSION CHECK WAS WRONG FOR HALF ITS OWN POPULATION -- and my first fix was wrong for the
+  other half. Measured 2026-09-12:
+
+published wheel, clean Docker container : "tensor-grep 1.119.8" managed NATIVE binary on PATH : "tg
+  1.119.7" python -m tensor_grep : "tensor-grep 1.119.4"
+
+`rust_core/src/main.rs` prints `println!("tg {}", env!("CARGO_PKG_VERSION"))`; the Python door
+  prints `tensor-grep <ver>`. So the original `must_contain="tensor-grep"` FAILS against a native
+  binary, and the `\btg \d+\.\d+\.\d+` pattern I first replaced it with FAILS against the published
+  wheel this harness exists to test. Either product name ALONE makes the gate wrong for half its
+  population.
+
+I found that only by running the Docker battery against the published 1.119.8 -- my first diagnosis
+  came from the local managed binary, which is the WRONG POPULATION (A125, the rule I had just
+  read). The harness runs against whatever `tg` is on PATH, so it now asserts the part both doors
+  genuinely owe: a semver behind EITHER product name, via a new `must_match` regex primitive. A
+  substring check cannot tell "renamed" from "printed nothing".
+
+This is NOT an endorsement of the divergence. `tests/e2e/test_routing_parity.py` never compares
+  `--version` ACROSS launchers -- it only uses it as a skip-guard probe -- which is the coverage gap
+  that let two front doors drift apart. Closing that carries a public-output decision (which string
+  wins) and belongs in its own slice, not a silent pick here.
+
+2. COVERAGE GAP: `tg importers` was never exercised. ("~17 checks vs 50+ commands" is overstated --
+  `prepare --out`, `find`, `ledger list`, `imports` and `doctor --json` are all already covered --
+  but `importers` genuinely was not.)
+
+The new check pins the EXPLICIT-ROOT form deliberately. `tg importers FILE` with no ROOT resolves
+  ROOT from the CURRENT DIRECTORY, so an agent invoking it from a multi-project home scans that
+  home, hits the repo-file ceiling and returns `result_incomplete` with exit 2 -- a real footgun
+  reported from a Cursor home workspace. Asserting BOTH a confirmed reverse edge (leaf.py -> hub.py)
+  AND `result_incomplete == false` means a regression that silently truncates the walk cannot pass
+  as success.
+
+VERIFIED ON BOTH POPULATIONS, which is what the first attempt lacked: local native binary (tg
+  1.119.7) -> 18/18 published wheel 1.119.8, clean container -> 18/18 (docker build exit read
+  UNPIPED, image confirmed present, per A127)
+
+BOTH new assertions mutation-proven rather than trusted green: version pattern -> "ZZZ" => [FAIL] no
+  match for pattern, 16/17 importers "leaf.py" -> "ZZZNOTAFILE.py" => [FAIL] expected ... confirmed
+  importer, 17/18
+
+ruff check + format --preview clean.
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Bank HUNT-5 and pin measured fix sites for HUNT-2/3/4
+  ([`53352a1`](https://github.com/oimiragieo/tensor-grep/commit/53352a118e306558a2309ee4c18f20a0fab25c2a))
+
+Four entries, each measured on main rather than inferred from reading.
+
+HUNT-5 (new): the two Python front doors disagree about delegating `-U`. cli/main.py's
+  _NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS lists multiline and multiline_dotall;
+  cli/bootstrap.py's _can_delegate_to_native_tg_search triggers on --cpu and has zero multiline
+  entries, so it DOES delegate where a native binary resolves. Third instance of this drift -- -e/-f
+  (audit #69) and --count-matches (task #121) are documented in bootstrap.py's own comments -- so
+  the defect is a MISSING INVARIANT, not three bugs. Carries a STOP-RECEIPT: fixing it before the
+  --multiline gate lands would route -U away from the door that handles it into the door that drops
+  it.
+
+HUNT-4: fix site pinned to SEARCH_PYTHON_PASSTHROUGH_FLAGS (main.rs:189,
+
+consumed :1701), with the sibling-branch trap named (--ast is a name-prefix of --enrich-ast, which
+  is coincidence not signal) and 24 lines of ratchet headroom measured, so the one-liner needs no
+  file split.
+
+HUNT-2: mechanism reduced to one sentence -- _load_searchable_text has two
+
+`return None` sites meaning OPPOSITE things, and both callers (:316, :410) label the result
+  skipped_binary. The file sets the incompleteness marker zero times. CPUBackend already solved this
+  (cpu_backend.py:70/464/486/489).
+
+HUNT-3: re-measured with two controls. Both signals behave correctly in isolation; only the combined
+  arm inverts, which isolates the defect to the priority order rather than to detection. Records the
+  fixture trap that nearly produced a FALSE REFUTATION: unreadable_paths must be a dict with
+  `count`, and scan_limit keys are possibly_truncated/truncation_cause/budget_remediable -- wrong
+  shapes make every arm return cause=None and the finding read as refuted.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+
 ## v1.119.10 (2026-09-13)
 
 ### Bug Fixes
