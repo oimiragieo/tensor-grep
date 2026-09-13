@@ -250,7 +250,7 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   cannot track a document it does not contain, and the previous pin (`v3, hash 6fc5151b`)
   was thirteen revisions stale by the time anyone read it. `multiline_dotall` has the identical gap.
 
-- **HUNT-2 (HIGH, OPEN): `-F --json` drops non-UTF-8 TEXT files and labels them
+- **HUNT-2 (HIGH, FIXED 2026-09-13): `-F --json` drops non-UTF-8 TEXT files and labels them
   `skipped_binary`.** `backends/stringzilla_backend.py:124-128` returns `None` on
   `UnicodeDecodeError`, and that `None` is funnelled into the SAME result as the NUL-byte binary
   check (`:113-115`) at `:306-319` / `:400-413`. A latin-1 file with no NUL byte:
@@ -265,6 +265,28 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   (`ast_wrapper_backend.py:313-320`, `ripgrep_backend.py:141-151`) -- StringZilla sets neither.
   **Acceptance:** a non-UTF-8 text file is either searched or disclosed as UNRESOLVED; the two
   front doors return the same count for the same corpus.
+
+  **CLOSED.** `_load_searchable_text` now raises `_UndecodableText` from its `UnicodeDecodeError`
+  arm instead of returning the same bare `None` the NUL probe returns, and **both** call sites
+  catch it and return `routing_reason="stringzilla_fixed_strings_undecodable_text"` with
+  `result_incomplete=True` and `incomplete_reason_class="unreadable_path"` — the class
+  `ripgrep_backend.py:150` already uses. The NUL probe is untouched, so a genuine binary still
+  reports `skipped_binary`.
+
+  **Evidence, in order:**
+  - pre-fix RED measured at **2 failed / 2 passed** with `src/` untouched;
+  - post-fix **4 passed**;
+  - **half-fix control**: reverting CALLER 2 only, with caller 1 still fixed, gives
+    **1 failed / 3 passed** — so the suite genuinely catches a one-site fix. The plan's v1 test
+    had a single undecodable arm and would have gone GREEN on exactly that half-fix, because
+    `_search_with_index` is only called when `fixed_strings` is set and returns early for
+    patterns under 3 chars or `invert_match`. Council round 1's `codex_sub` caught it;
+    four other seats did not.
+  - `ruff check` clean, `mypy` clean (136 files), suite re-run AFTER `ruff format --preview`
+    touched a file, collateral `test_stringzilla_backend` + `test_silent_failure_hardening`
+    **24 passed**.
+  - Plan `2026-09-13-stringzilla-undecodable-text.md` (agent-local, `.gitignore:118`) cleared by
+    council rounds 2 AND 3 on the same unchanged hash, five content votes each.
 
   **MECHANISM PINNED (measured 2026-09-13 on `552dea5`) — one sentence:**
   `_load_searchable_text` has exactly TWO `return None` sites and they mean OPPOSITE things —

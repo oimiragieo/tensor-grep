@@ -20,6 +20,21 @@ _DEFAULT_STRING_INDEX_CACHE_MAX_ENTRIES = 512
 _STRING_INDEX_CACHE_FORMAT_VERSION = 2
 
 
+class _UndecodableText(RuntimeError):
+    """The file is TEXT this backend could not decode -- it is NOT binary.
+
+    HUNT-2: `_load_searchable_text` used to return a bare `None` for BOTH the NUL-probe hit and a
+    `UnicodeDecodeError`, so both of its call sites labelled the result
+    `stringzilla_fixed_strings_skipped_binary`. A caller could not distinguish "this file is
+    binary, correctly skipped" from "this file is text I failed to decode", and neither
+    `result_incomplete` nor `incomplete_reason_class` was set -- so exit 0 with zero matches was
+    indistinguishable from a genuine absence.
+
+    `CPUBackend` already draws exactly this distinction with `_RustUtf8DecodeMismatch`
+    (cpu_backend.py:70, raised at :464, caught at :486); this backend simply did not participate.
+    """
+
+
 class StringZillaBackend(ComputeBackend):
     """
     A backend utilizing the StringZilla native C++/SIMD library.
@@ -124,8 +139,15 @@ class StringZillaBackend(ComputeBackend):
         try:
             raw = Path(file_path).read_bytes()
             return raw.decode("utf-8")
-        except UnicodeDecodeError:
-            return None
+        except UnicodeDecodeError as exc:
+            # HUNT-2: this used to `return None`, the SAME value the NUL probe above returns --
+            # so both callers labelled the result `stringzilla_fixed_strings_skipped_binary`.
+            # One return value, two opposite meanings ("this is binary" vs "this is TEXT I could
+            # not decode"), and the caller got exit 0 with zero matches either way: a false
+            # complete indistinguishable from the pattern genuinely being absent.
+            # CPUBackend already draws this distinction with `_RustUtf8DecodeMismatch`
+            # (cpu_backend.py:70); StringZilla simply did not participate.
+            raise _UndecodableText(str(exc)) from exc
 
     def _get_index_cache_path(
         self, file_path: str, ignore_case: bool, treat_binary_as_text: bool
@@ -304,9 +326,26 @@ class StringZillaBackend(ComputeBackend):
         cached = self._load_cached_index(file_path, ignore_case, treat_binary_as_text)
         routing_reason = "stringzilla_fixed_strings_index_cache"
         if cached is None:
-            content = self._load_searchable_text(
-                file_path, treat_binary_as_text=treat_binary_as_text
-            )
+            try:
+                content = self._load_searchable_text(
+                    file_path, treat_binary_as_text=treat_binary_as_text
+                )
+            except _UndecodableText:
+                # CALLER 1 (HUNT-2). Undecodable TEXT is NOT binary: disclose it rather than
+                # label it `skipped_binary` and return a trustworthy-looking zero.
+                # `unreadable_path` is the established class for this event
+                # (ripgrep_backend.py:150 sets exactly that string).
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_fixed_strings_undecodable_text",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                    result_incomplete=True,
+                    incomplete_reason_class="unreadable_path",
+                )
             if content is None:
                 return SearchResult(
                     matches=[],
@@ -397,10 +436,29 @@ class StringZillaBackend(ComputeBackend):
                 if indexed is not None:
                     return indexed
 
-            content = self._load_searchable_text(
-                file_path,
-                treat_binary_as_text=self._should_search_binary_as_text(config),
-            )
+            try:
+                content = self._load_searchable_text(
+                    file_path,
+                    treat_binary_as_text=self._should_search_binary_as_text(config),
+                )
+            except _UndecodableText:
+                # CALLER 2 (HUNT-2). Reached by any NON-fixed-string search, and by a
+                # fixed-string search whose pattern is under 3 chars or uses invert_match --
+                # `_search_with_index` returns None early in those cases. Fixing only caller 1
+                # would leave every one of those paths still mislabelling undecodable text, and
+                # a single-arm test would not notice. That is the `-e`/`-f` then
+                # `--count-matches` drift in bootstrap.py, repeated.
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_fixed_strings_undecodable_text",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                    result_incomplete=True,
+                    incomplete_reason_class="unreadable_path",
+                )
             if content is None:
                 return SearchResult(
                     matches=[],
