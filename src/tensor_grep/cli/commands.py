@@ -56,6 +56,7 @@ KNOWN_COMMANDS = {
     "map",
     "orient",
     "codemap",
+    "file-api",
     "inventory",
     "docs-coverage",
     "session",

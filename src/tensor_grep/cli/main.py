@@ -29,9 +29,11 @@ import typer
 from typer.core import TyperGroup
 
 from tensor_grep.cli import ast_scan as _ast_scan
+from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
+from tensor_grep.cli import rg_replacement as _rg_replacement
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.formatters.base import OutputFormatter
@@ -1031,26 +1033,9 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     return exc.__class__.__name__ == "InvalidRegexError"
 
 
-def _search_with_cpu_fallback(
-    current_file: str,
-    pattern: str,
-    config: "SearchConfig",
-    exc: Exception,
-) -> "SearchResult":
-    """Retry a failed native-backend search on the always-available CPU backend.
-
-    A runtime backend failure (native panic, IO/encoding error, version skew, GPU/OOM
-    fault) must never surface to the user as a clean no-match. The CPU backend is pure
-    Python and always available, so it is the safe last-resort engine; the override is
-    announced on stderr so it is observable rather than silent (audit B2/I1).
-    """
-    from tensor_grep.backends.cpu_backend import CPUBackend
-
-    sys.stderr.write(
-        f"tensor-grep: search backend failed on {current_file} ({exc}); "
-        "retried on the CPU backend.\n"
-    )
-    return CPUBackend().search(current_file, pattern, config=config)
+# Split to cli/backend_fallback.py (main.py was at its file-size ratchet ceiling). The alias
+# keeps mcp_server.py's existing import and any monkeypatch target working unchanged.
+_search_with_cpu_fallback = _backend_fallback.search_with_cpu_fallback
 
 
 # F5 (Fable audit MED): retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per FILE).
@@ -2697,59 +2682,8 @@ def _replace_lines(
     return extracted
 
 
-def _expand_ripgrep_replacement(template: str, match: re.Match[str]) -> str:
-    def _is_ascii_digit(char: str) -> bool:
-        return "0" <= char <= "9"
-
-    def _is_ascii_ref_char(char: str) -> bool:
-        return char == "_" or ("0" <= char <= "9") or ("A" <= char <= "Z") or ("a" <= char <= "z")
-
-    def _resolve_token(token: str) -> str:
-        if not token:
-            return ""
-        try:
-            if all(_is_ascii_digit(char) for char in token):
-                group_value = match.group(int(token))
-            else:
-                group_value = match.group(token)
-        except Exception:
-            return ""
-        return "" if group_value is None else str(group_value)
-
-    result: list[str] = []
-    index = 0
-    while index < len(template):
-        char = template[index]
-        if char != "$" or index + 1 >= len(template):
-            result.append(char)
-            index += 1
-            continue
-
-        next_char = template[index + 1]
-        if next_char == "$":
-            result.append("$")
-            index += 2
-            continue
-
-        if next_char == "{":
-            end_index = template.find("}", index + 2)
-            if end_index != -1:
-                result.append(_resolve_token(template[index + 2 : end_index]))
-                index = end_index + 1
-                continue
-
-        if _is_ascii_ref_char(next_char):
-            end_index = index + 2
-            while end_index < len(template) and _is_ascii_ref_char(template[end_index]):
-                end_index += 1
-            result.append(_resolve_token(template[index + 1 : end_index]))
-            index = end_index
-            continue
-
-        result.append("$")
-        index += 1
-
-    return "".join(result)
+# Split to cli/rg_replacement.py under the file-size ratchet; alias keeps the local name.
+_expand_ripgrep_replacement = _rg_replacement.expand_ripgrep_replacement
 
 
 def _only_matching_lines(
@@ -4231,6 +4165,7 @@ def search_command(
                     # available CPU backend so the search returns correct results instead
                     # of a false no-match or a crash (audit B2/I1).
                     result = _search_with_cpu_fallback(current_file, pattern, config, exc)
+                    _backend_fallback.record_fallback_on_aggregate(all_results, result)
                 except Exception as exc:
                     if _is_invalid_regex_error(exc):
                         _exit_invalid_regex(exc, json_mode=json)
@@ -13246,6 +13181,17 @@ def ledger_find(
 def update() -> None:
     """Alias for upgrade."""
     _self.upgrade()
+
+
+@app.command(name="file-api")
+def file_api(
+    path: str = typer.Argument(..., help="File whose API surface to list."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """List every signature in FILE, without the bodies (the file's API surface)."""
+    from tensor_grep.cli.file_api import file_api_command
+
+    raise typer.Exit(code=file_api_command(path, json_output=json_output))
 
 
 @app.command(name="ast-info")

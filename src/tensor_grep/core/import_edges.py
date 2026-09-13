@@ -12,9 +12,20 @@ cross-package dependency will fail this check even before import-linter itself l
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterator
 from pathlib import Path
 
 TOP_LEVEL_PACKAGES = ("cli", "core", "backends", "io")
+
+#: The package-pair edges the frozen baseline itself labels as PRE-EXISTING LAYERING
+#: VIOLATIONS (see ``docs/design/2026-09-07-import-edges-baseline.json``). The package-pair
+#: freeze cannot ratchet these down: once ``("core", "cli")`` is in the baseline set, an
+#: unbounded number of NEW ``core -> cli`` imports pass it, because the set records which
+#: KINDS of edge exist and not how many or which modules carry them. That is the
+#: "a baseline that legitimizes every regression it captures" failure. These pairs are
+#: therefore additionally frozen at MODULE granularity by
+#: :func:`compute_violation_module_edges`, so the violation class can only shrink.
+VIOLATION_PACKAGE_EDGES = (("core", "cli"), ("backends", "cli"))
 
 
 def _module_top_level_package(src_root: Path, path: Path) -> str | None:
@@ -65,19 +76,13 @@ def _resolve_relative_import(from_module: str, level: int, target: str | None) -
     return f"{base}.{target}" if base else target
 
 
-def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
-    """Return the set of (from_package, to_package) edges actually present under ``src_root``
-    (expected to be .../src/tensor_grep), considering only the four top-level packages this
-    repo's layering convention names. Edges are (source_package, imported_package); a package
-    importing itself is excluded.
+def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str, str]]:
+    """Yield ``(from_package, from_module, to_package, to_module)`` for every static
+    cross-package import under ``src_root``.
 
-    Known gap (documented, not silently claimed complete): this walks ``ast.Import`` /
-    ``ast.ImportFrom`` nodes only. A dynamic import (``importlib.import_module(...)``,
-    ``__import__(...)``) that names a cross-package module by a string literal is NOT detected.
-    Static import statements are this repo's overwhelming convention; a dynamic-import scanner
-    is separate, unstarted scope for a future P13 slice.
+    Both freeze checks consume this one walk, so the package-pair gate and the
+    module-pair violation gate can never disagree about what an edge is.
     """
-    edges: set[tuple[str, str]] = set()
     for path in src_root.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
@@ -93,21 +98,51 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
             raise RuntimeError(f"import_edges: cannot parse {path}: {exc}") from exc
         from_module = _module_dotted_name(src_root, path)
         for node in ast.walk(tree):
+            targets: list[str] = []
             if isinstance(node, ast.Import):
-                for alias in node.names:
-                    to_pkg = _imported_top_level_package(alias.name)
-                    if to_pkg is not None and to_pkg != from_pkg:
-                        edges.add((from_pkg, to_pkg))
+                targets = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
                 if node.level and node.level > 0:
                     resolved = _resolve_relative_import(from_module, node.level, node.module)
-                    if resolved is None:
-                        continue
-                    to_pkg = _imported_top_level_package(resolved)
-                else:
-                    if node.module is None:
-                        continue
-                    to_pkg = _imported_top_level_package(node.module)
+                    targets = [resolved] if resolved is not None else []
+                elif node.module is not None:
+                    targets = [node.module]
+            for target in targets:
+                to_pkg = _imported_top_level_package(target)
                 if to_pkg is not None and to_pkg != from_pkg:
-                    edges.add((from_pkg, to_pkg))
-    return edges
+                    yield from_pkg, from_module, to_pkg, target
+
+
+def compute_violation_module_edges(src_root: Path) -> set[tuple[str, str]]:
+    """Return ``(from_module, to_module)`` for every import whose package pair is in
+    :data:`VIOLATION_PACKAGE_EDGES`.
+
+    This is the ratchet the package-pair freeze cannot provide. Freezing THIS set means a
+    declared layering violation can only be removed, never added to -- a new
+    ``core -> cli`` import fails even though ``("core", "cli")`` is already an accepted
+    package-pair edge.
+    """
+    violations = set(VIOLATION_PACKAGE_EDGES)
+    return {
+        (from_module, to_module)
+        for from_pkg, from_module, to_pkg, to_module in _iter_cross_package_imports(src_root)
+        if (from_pkg, to_pkg) in violations
+    }
+
+
+def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
+    """Return the set of (from_package, to_package) edges actually present under ``src_root``
+    (expected to be .../src/tensor_grep), considering only the four top-level packages this
+    repo's layering convention names. Edges are (source_package, imported_package); a package
+    importing itself is excluded.
+
+    Known gap (documented, not silently claimed complete): this walks ``ast.Import`` /
+    ``ast.ImportFrom`` nodes only. A dynamic import (``importlib.import_module(...)``,
+    ``__import__(...)``) that names a cross-package module by a string literal is NOT detected.
+    Static import statements are this repo's overwhelming convention; a dynamic-import scanner
+    is separate, unstarted scope for a future P13 slice.
+    """
+    return {
+        (from_pkg, to_pkg)
+        for from_pkg, _from_module, to_pkg, _to_module in _iter_cross_package_imports(src_root)
+    }
