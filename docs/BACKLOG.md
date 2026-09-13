@@ -244,8 +244,11 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   `fallback_reason: None`, `result_incomplete: None` -- zero disclosure. Also reached whenever
   `rg` is absent (`pipeline.py:428-433`). The benign reading is ruled out by the file itself:
   `pcre2` RAISES `ConfigurationError` at `:188-195` rather than degrade. Plan:
-  `docs/superpowers/plans/2026-09-13-multiline-fail-closed.md` (v3, hash `6fc5151b`, council
-  round 3 in flight). `multiline_dotall` has the identical gap.
+  `2026-09-13-multiline-fail-closed.md`, under `docs/superpowers/plans/` -- **an agent-local
+  path, NOT in the tree** (`.gitignore:118` ignores all of `docs/superpowers/`), so do not hunt
+  for it in a fresh clone. No version or hash is pinned here on purpose: a committed file
+  cannot track a document it does not contain, and the previous pin (`v3, hash 6fc5151b`)
+  was thirteen revisions stale by the time anyone read it. `multiline_dotall` has the identical gap.
 
 - **HUNT-2 (HIGH, OPEN): `-F --json` drops non-UTF-8 TEXT files and labels them
   `skipped_binary`.** `backends/stringzilla_backend.py:124-128` returns `None` on
@@ -291,6 +294,26 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   **Test population warning:** this defect is invisible to any fixture whose files are all valid
   UTF-8. The RED needs a latin-1 file with NO NUL byte — the two conditions must BOTH hold, or
   the NUL probe short-circuits first and the decode path is never reached.
+
+  **REPRODUCED END-TO-END 2026-09-13 on `53352a1`, through `StringZillaBackend.search()`, with
+  two controls.** All three files contain the literal string `needle`:
+
+  | arm | `total_matches` | `routing_reason` |
+  |---|---|---|
+  | plain ASCII | **1** | `stringzilla_fixed_strings_index` (harness works) |
+  | real binary, has NUL | 0 | `stringzilla_fixed_strings_skipped_binary` (correct use of the label) |
+  | **latin-1 text, NO NUL** | **0** | `stringzilla_fixed_strings_skipped_binary` (**mislabel**) |
+
+  The defect arm is **byte-identical** to the genuine-binary arm, and both report
+  `result_incomplete=False` / `incomplete_reason_class=None`. The controls are what make this a
+  MISLABEL rather than a dead arm: ASCII proves the path works, and the real binary proves the
+  label has a legitimate use. Without them, "it returned zero" explains nothing.
+
+  **Why CI has never caught it:** `_load_searchable_text` probes the first 4096 bytes for `\x00`
+  BEFORE attempting the decode, so a fixture containing any NUL short-circuits and never reaches
+  the failing path, while a valid-UTF-8 fixture never fails to decode. No fixture in the suite is
+  both latin-1 and NUL-free, so the population that exhibits the defect is empty by construction —
+  the defect is in the POPULATION, not in any assertion.
 
 - **HUNT-3 (HIGH, OPEN): the incompleteness envelope INVERTS the documented
   `unreadable_path`-outranks-budget priority.** `docs/CONTRACTS.md:26-27` states
@@ -3520,8 +3543,8 @@ still-open item — which is why the check came first.
 
 ## OPEN FINDINGS — 2026-07-31 deep-dive audit (Wave-1+2)
 
-Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation:
-`docs/superpowers/plans/2026-07-31-tensor-grep-audit-remediation.md`. Local checkout audited at
+Full register: `docs/audits/2026-07-31-tensor-grep-deep-dive.md`. Remediation: `2026-07-31-tensor-grep-audit-remediation.md`, under
+`docs/superpowers/plans/` -- **agent-local, NOT in the tree** (`.gitignore:118`). Local checkout audited at
 **v1.101.20**; live tip then **v1.101.22**.
 
 | # | sev | finding | wave2 | status |

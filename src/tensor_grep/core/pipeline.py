@@ -193,6 +193,74 @@ class Pipeline:
                     raise ConfigurationError(
                         "PCRE2 requested but no PCRE2-capable 'rg' backend is available."
                     )
+            elif config and (config.multiline or config.multiline_dotall) and not config.ast:
+                # Fail loud, as pcre2 already does above. `multiline` has exactly ONE consumer
+                # in the package -- backends/ripgrep_backend.py:585-592 -- so any other
+                # selection silently drops it and runs a LINE-oriented search. That returns
+                # exit 1, which docs/CONTRACTS.md defines as "complete search, no matches": a
+                # false complete, indistinguishable from the pattern genuinely being absent.
+                #
+                # The condition EXCLUDES `ast` on purpose: a greedy `elif multiline` spliced
+                # ahead of the later arms would capture `-U --ast`, which belongs to the AST
+                # arm (the `elif config and config.ast:` branch BELOW this one -- deliberately
+                # not cited by line, because inserting this gate shifts every line under it
+                # by the length of this block). Nothing is lost there because ast-grep
+                # matches TREE STRUCTURE,
+                # not a regex character stream, and the wrapper has an explicit multi-line
+                # pattern branch -- backends/ast_wrapper_backend.py:130-146, which forks on
+                # whether the pattern contains a newline. There is no `.` for
+                # --multiline-dotall to redefine and no line-orientation for -U to lift.
+                # (v8 cited :143 for this, which is the ERROR STRING inside that branch, not
+                # the branch -- a citation that mentions the word 'multiline' in prose rather
+                # than proving behaviour. Council round 6 caught it.)
+                # Council round 2 caught the greediness itself in v2.
+                #
+                # It deliberately does NOT exclude `ltl`. `-U --ltl` would otherwise reach the
+                # semantics arm below (the one whose body does `self.backend = CPUBackend()`
+                # when `config.ltl` is set) and get CPUBackend, which never reads
+                # `config.multiline` -- so `-U` is DISCARDED and
+                # the search runs line-oriented, returning the same false complete this gate
+                # exists to remove. Routing it to rg is not an option either (that would drop
+                # LTL semantics), so the only honest answer is to refuse the combination.
+                if config.ltl:
+                    raise ConfigurationError(
+                        "--multiline cannot be combined with --ltl: LTL semantics run on the "
+                        "Python CPU backend, which has no multiline mode, so '-U' would be "
+                        "silently discarded."
+                    )
+                #
+                # This gate is the SINGLE CURE FOR BOTH DOORS, not a Python-only patch.
+                # The native TEXT route already fails closed on its own:
+                # search_requires_ripgrep_passthrough (rust_core/src/main.rs:9095-9132,
+                # the multiline ORs at :9129-9130)
+                # checks multiline/multiline_dotall and require_ripgrep_or_exit
+                # (main.rs:1517-1525) exits 2 when rg is missing -- "incomplete", not a
+                # false complete. But that list lives inside `!args.json && !args.ndjson`
+                # (main.rs:9097-9099): the native STRUCTURED route instead re-dispatches
+                # --json/--ndjson + -U back to the Python sidecar
+                # (search_format_python_passthrough_args, main.rs:1676/:1737), landing HERE.
+                # So this gate is what makes the structured native route correct too. (v1-v8 of this plan claimed the opposite, citing
+                # main.rs:3552-3553; those lines are inside a #[cfg(test)] helper at
+                # main.rs:3526 and never ship. Corrected in v9.)
+                if config.gpu_device_ids:
+                    # Mirrors the existing explicit-GPU guard in the `config.ast` arm
+                    # (`_raise_explicit_gpu_configuration_error`). An EXPLICIT GPU
+                    # request that this arm cannot honor must raise, not be quietly
+                    # re-routed to rg -- silently downgrading it is the same defect class
+                    # this whole plan exists to remove.
+                    self._raise_explicit_gpu_configuration_error(
+                        config, "multiline search has no GPU backend"
+                    )
+                if rg_available:
+                    self.backend = rg_backend
+                    selected_backend_reason = "multiline_explicit_ripgrep"
+                else:
+                    raise ConfigurationError(
+                        "--multiline/--multiline-dotall requires the 'rg' backend, which is "
+                        "not available here. Install ripgrep, or drop the flag and search "
+                        "line-by-line; refusing rather than returning a line-oriented result "
+                        "that would look like a complete no-match answer."
+                    )
             elif force_cpu:
                 if rust_available and not needs_python_cpu:
                     self.backend = rust_backend
