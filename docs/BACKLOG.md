@@ -337,7 +337,7 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   both latin-1 and NUL-free, so the population that exhibits the defect is empty by construction —
   the defect is in the POPULATION, not in any assertion.
 
-- **HUNT-3 (HIGH, OPEN): the incompleteness envelope INVERTS the documented
+- **HUNT-3 (HIGH, FIXED 2026-09-13): the incompleteness envelope INVERTS the documented
   `unreadable_path`-outranks-budget priority.** `docs/CONTRACTS.md:26-27` states
   `unreadable_path` "OUTRANKS every budget cause when both fire". `cli/incompleteness.py:196-199`
   checks `scan_limit_cause` FIRST and only falls through to `has_unreadable_paths`, and
@@ -351,6 +351,35 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   ISOLATION, never combined with a `scan_limit` dict -- so CI structurally cannot catch it.
   **Acceptance:** both signals present -> `cause == "unreadable_path"`,
   `budget_remediable == False`, plus a test that sets BOTH (the missing population).
+
+  **CLOSED.** `unified_incomplete_envelope` now consults the unreadable path BEFORE the budget
+  cause, and `remediable` is forced `False` whenever a path is unreadable. The hoist is scoped:
+  unreadable wins over `scan_limit` and over an explicit `incomplete_reason` whose
+  `incomplete_reason_class` is in `{"scan_limit", "deadline", "timeout"}`, and leaves every
+  non-budget reason alone. `incomplete_reason_class` is the field that actually carries the
+  classification (`cli/main.py` sets "deadline"/"scan_limit"; `ripgrep_backend.py` sets
+  "timeout"); `incomplete_reason` itself is free text, which is why an earlier draft that keyed
+  off it over-reached and would have overwritten legitimate non-budget reasons.
+
+  **Evidence, in order:**
+  - pre-fix RED measured at **2 failed / 3 passed** with `src/` untouched -- both isolation
+    controls PASSED, which is what isolates the defect to the priority ORDER rather than to
+    detection of either signal;
+  - post-fix **5 passed**;
+  - **half-fix control**: reverting EDIT 2 (the `remediable` forcing) with EDIT 1 still applied
+    gives **1 failed / 3 passed** -- so the `budget_remediable` assertions are load-bearing and
+    the suite genuinely catches a one-edit fix. Without this arm, "both edits are required" would
+    be an unverified claim;
+  - collateral `test_mcp_incomplete_envelope` + `test_completeness_projection` +
+    `test_mcp_contract_fixes` **64 passed** -- these exercise the ISOLATED arms, so a break there
+    would mean the hoist changed single-signal behaviour;
+  - `ruff check` clean, `mypy` clean (136 files). mypy caught a real gap the plan's code carried:
+    `cause` was inferred `str` from the first branch and the else-branch assigns `Any | None`.
+    Annotated rather than cast.
+  - Plan `2026-09-13-incompleteness-priority-inversion.md` (agent-local, `.gitignore:118`)
+    cleared council rounds 3 AND 4 on the same unchanged hash `8af0c3a8`, five content votes
+    each. In round 4 `codex_sub` independently walked the five tests and derived 2 failed /
+    3 passed, matching the plan arm for arm.
 
   **RE-MEASURED 2026-09-13 on `552dea5` with two controls — still live, and now isolated:**
 
