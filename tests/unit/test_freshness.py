@@ -135,3 +135,37 @@ def test_a_stale_session_is_counted_and_explained(tmp_path: Path, monkeypatch) -
     # "stale" without being told what moved cannot decide whether it matters.
     assert "changed on disk" in payload["sessions"][0]["detail"]
     assert "changed on disk" in render_freshness_text(payload)
+
+
+def test_an_unexpected_staleness_error_is_unknown_never_current(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The third broad handler, proven rather than pinned as `defensive`.
+
+    `_ensure_session_not_stale` raising something OTHER than SessionStaleError means the
+    freshness check did not run. A check that cannot run has not passed, so the only honest
+    answer is UNKNOWN -- reporting "current" here would be a confident all-clear produced by
+    a crash. Covering it is what lets the broad-handler ratchet classify it as disclosing
+    instead of taking my word for it.
+    """
+    import tensor_grep.cli.session_store as session_store
+
+    class _Record:
+        session_id = "session-boom"
+
+    def _unexpected(_payload, **_kwargs):
+        raise RuntimeError("staleness probe exploded")
+
+    monkeypatch.setattr(session_store, "list_sessions", lambda _path: [_Record()])
+    monkeypatch.setattr(session_store, "get_session", lambda _s, _p: {"snapshot": []})
+    monkeypatch.setattr(session_store, "_ensure_session_not_stale", _unexpected)
+
+    payload = check_freshness(tmp_path)
+
+    assert payload["sessions"][0]["status"] == "unknown"
+    assert payload["stale_count"] == 0
+    assert payload["unknown_count"] == 1
+    # The exception CLASS is disclosed, not swallowed -- that is what makes this handler
+    # classifiable as adding disclosure rather than suppressing a finding.
+    assert "RuntimeError" in payload["sessions"][0]["detail"]
+    assert payload["result_incomplete"] is True

@@ -36,7 +36,7 @@ def _session_status(payload: dict[str, Any]) -> tuple[str, str | None]:
         _ensure_session_not_stale(payload, detect_added_files=True)
     except SessionStaleError as exc:
         return _STATUS_STALE, str(exc)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:  # covered: test_an_unexpected_staleness_error_is_unknown_never_current
         # An unexpected failure is UNKNOWN, never "current" -- a check that cannot run has
         # not passed.
         return _STATUS_UNKNOWN, f"{type(exc).__name__}: {exc}"
