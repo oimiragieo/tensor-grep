@@ -4316,7 +4316,7 @@ partial fix -> lint/type -> commit.
 | HUNT-1 `--multiline` fail-closed | **SHIPPED** | `5331dc9`; RED 5f/2p -> 7 passed; council rounds 13+14 clean on hash `8a897ad6` |
 | HUNT-2 undecodable TEXT disclosure | **SHIPPED** | `8ae32db`; RED 2f/2p -> 4 passed; half-fix control 1f/3p; council rounds 2+3 clean on `4b317ca3` |
 | HUNT-3 incompleteness priority inversion | **SHIPPED** | `bb1d92c`; RED 2f/3p -> 5 passed; half-fix control 1f/3p; collateral 64 passed; council rounds 3+4 clean on `8af0c3a8` |
-| HUNT-4 `--enrich-ast` native door | **OPEN — plan at v5b, council round 6 IN FLIGHT** | plan hash `b86a7e47`; seat logs `C:/tmp/tensor-grep/hunt_r6/`; brief `C:/tmp/tensor-grep/hunt_r6/question.md` |
+| HUNT-4 `--enrich-ast` native door | **OPEN — plan at v5b, ONE clean round banked, needs a SECOND** | plan hash `b86a7e47`; round 6 = **6 content votes, ALL APPROVED**; seat logs `C:/tmp/tensor-grep/hunt_r6/`; brief `C:/tmp/tensor-grep/hunt_r6/question.md` |
 | HUNT-5 `-U` delegation parity | **OPEN, unblocked** | its STOP-RECEIPT required the multiline gate, which now exists as `5331dc9` |
 | PR #1154 (`bench:`) | **OPEN, terminal green** | merge after the release window closes |
 | PR #1141 (`fix:`) | **OPEN, terminal green** | merge second; publishes |
@@ -4343,6 +4343,27 @@ v5 therefore moves the arm into a new `tests/e2e/test_native_enrich_ast.py`, whi
 glob already matches and which carries the marker, so it enrols itself in the census and needs no
 workflow edit at all. `tests/e2e/test_native_ltl_passthrough.py` is the precedent — same defect
 class (a missing `SEARCH_PYTHON_PASSTHROUGH_FLAGS` entry), same naming decision.
+
+### HUNT-4 round 6: six seats, all APPROVED — and why the plan must NOT be touched
+
+Round 6 returned **6 content votes, every one `APPROVED`** (claude, droid_kimi, droid_nemotron,
+droid_glm, cursor, codex_sub; `agy` returned no verdict and `codex` abstains every round, as
+always — neither absence is a vote). That is HUNT-4's **FIRST** clean round on hash `b86a7e47`.
+The stopping rule is TWO consecutive clean rounds on the SAME unchanged hash, so it is not
+cleared yet.
+
+**Do not "tidy" the plan before round 7.** Two seats noted that `docs/BACKLOG.md` is missing from
+Task 2's `Files:` block. It IS listed in File Structure AND staged by the `git add`, and Step 6's
+instruction names it explicitly, so a builder cannot miss it — by the does-it-change-the-BUILD
+test that is a NOTE, not a defect. Editing it would change the hash and reset the clean-round
+counter to zero in exchange for a line that alters nothing about the built artifact. Round 7 must
+run against `b86a7e47` byte-for-byte.
+
+`codex_sub` also flagged, correctly, that it could not independently re-derive the marker-based
+census because `tests/unit/test_native_e2e_ci_coverage_contract.py` was never inlined in its
+brief. That is a brief defect, not a plan defect, and it is already fixed in the builder — the
+region set is now seven, and a prebuilt round-7 brief is at
+`C:/tmp/tensor-grep/hunt_r7/codex_sub_brief_PREBUILT.md`.
 
 ### What a fresh session should pick up, in order
 
