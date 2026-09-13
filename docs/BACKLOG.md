@@ -4455,11 +4455,16 @@ partial fix -> lint/type -> commit.
 | HUNT-1 `--multiline` fail-closed | **SHIPPED** | `5331dc9`; RED 5f/2p -> 7 passed; council rounds 13+14 clean on hash `8a897ad6` |
 | HUNT-2 undecodable TEXT disclosure | **SHIPPED** | `8ae32db`; RED 2f/2p -> 4 passed; half-fix control 1f/3p; council rounds 2+3 clean on `4b317ca3` |
 | HUNT-3 incompleteness priority inversion | **SHIPPED** | `bb1d92c`; RED 2f/3p -> 5 passed; half-fix control 1f/3p; collateral 64 passed; council rounds 3+4 clean on `8af0c3a8` |
-| HUNT-4 `--enrich-ast` native door | **OPEN — plan at v5b, ONE clean round banked, needs a SECOND** | plan hash `b86a7e47`; round 6 = **6 content votes, ALL APPROVED**; seat logs `C:/tmp/tensor-grep/hunt_r6/`; brief `C:/tmp/tensor-grep/hunt_r6/question.md` |
-| HUNT-5 `-U` delegation parity | **OPEN, unblocked** | its STOP-RECEIPT required the multiline gate, which now exists as `5331dc9` |
-| PR #1154 (`bench:`) | **OPEN, terminal green** | merge after the release window closes |
-| PR #1141 (`fix:`) | **OPEN, terminal green** | merge second; publishes |
-| PR #1150 | **DRAFT, 11 commits behind main** | needs `gh pr update-branch` + `gh pr ready` + REAL CI against current main before merge |
+| HUNT-4 `--enrich-ast` native door | **SHIPPED 2026-09-13** (superseding the v5b/round-6 plan status below — the in-session TDD loop substituted for the pending council round 7) | `00fd8c7` (PR #1155); RED confirmed against the installed native binary (`unexpected argument '--enrich-ast'`); GREEN across all 4 `native-build-smoke` OS legs (ubuntu/windows/macos-latest/macos-15-intel) + full `test-python`/`test-rust-core` matrix, 40 CI checks passed; `tests/e2e/test_native_enrich_ast.py` |
+| HUNT-5 `-U` delegation parity | **SHIPPED, CLOSED 2026-09-13** | see the dedicated `## HUNT-5` section above; `tests/unit/test_bootstrap_delegation_flag_parity.py`, 197 passed |
+| PR #1154 (`bench:`) | **MERGED** `2026-09-13T07:06:03Z` | `gh pr view 1154 --json mergedAt` |
+| PR #1141 (`fix:`) | **MERGED** `2026-09-13T08:42:15Z` | `gh pr view 1141 --json mergedAt` |
+| PR #1150 | **MERGED** `2026-09-13T09:24:48Z` (as `fix(board): let SHIPPED accept a direct-main receipt, and close AGT-06`) | `gh pr view 1150 --json mergedAt` |
+
+**GROOMED 2026-09-13 (CEO-update pass):** the four rows above were stale — this table predates
+the HUNT-4/HUNT-5 closeouts recorded earlier in this file and the three PR merges, all of which
+completed within the same session window. `gh pr list --state open` returns **zero** open PRs as
+of this pass; `git worktree list` shows only the primary `main` worktree; no stray local branches.
 
 ### HUNT-4 is the one item whose PLAN is not settled, and the reason is worth keeping
 
