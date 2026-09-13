@@ -70,6 +70,11 @@ def check_freshness(root: Path) -> dict[str, Any]:
         session_id = getattr(record, "session_id", None)
         if session_id is None:
             continue
+        # Annotated because the two branches disagree: the `except` arm always produces a
+        # detail string while `_session_status` returns `str | None` for the current case.
+        # Without this, mypy narrows `detail` to `str` from whichever arm it sees first.
+        status: str
+        detail: str | None
         try:
             session_payload = get_session(session_id, str(root))
         except Exception as exc:

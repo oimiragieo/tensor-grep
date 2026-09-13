@@ -434,6 +434,20 @@ def _doctor_probe_argv() -> list[str]:
         native.write_text("native", encoding="utf-8")
         try:
             monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)
+            # FORCE the path-domain seam, same reason as the agent-GPU member below (A85).
+            # `native` is named `tg.exe` here, and on a WSL host that is a GENUINE cross-domain
+            # classification: the probe then tries to translate a Linux temp path, gets None,
+            # and returns before ever reaching subprocess.run -- so this member captured
+            # nothing and dropped out of the CWE-88 census. Measured inside scripts/ci-local
+            # (Docker Desktop is WSL2-backed). `doctor_report` reaches the classifier through
+            # `_self`, which its own module docstring defines as CLI/MAIN.PY's module object
+            # (imported from `cli/_main_binding`) -- so the patch target is `cli.main`, NOT
+            # `doctor_report`. Patching the latter raises AttributeError: the name does not
+            # live there at all.
+            monkeypatch.setattr(
+                "tensor_grep.cli.main.is_cross_domain_native_binary",
+                lambda _command: False,
+            )
             cli_main._doctor_gpu_search_runtime_probe(native)
         finally:
             monkeypatch.undo()
