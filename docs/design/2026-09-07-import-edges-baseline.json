@@ -3,14 +3,68 @@
   "generated": "2026-09-07",
   "generator": "tensor_grep.core.import_edges.compute_import_edges",
   "edges": [
-    ["backends", "cli"],
-    ["backends", "core"],
-    ["backends", "io"],
-    ["cli", "backends"],
-    ["cli", "core"],
-    ["cli", "io"],
-    ["core", "backends"],
-    ["core", "cli"],
-    ["io", "core"]
+    [
+      "backends",
+      "cli"
+    ],
+    [
+      "backends",
+      "core"
+    ],
+    [
+      "backends",
+      "io"
+    ],
+    [
+      "cli",
+      "backends"
+    ],
+    [
+      "cli",
+      "core"
+    ],
+    [
+      "cli",
+      "io"
+    ],
+    [
+      "core",
+      "backends"
+    ],
+    [
+      "core",
+      "cli"
+    ],
+    [
+      "io",
+      "core"
+    ]
+  ],
+  "_violation_module_edges_comment": "MODULE-granularity freeze of the two package-pair edges the comment above calls pre-existing layering violations (core->cli, backends->cli). The package-pair `edges` list cannot ratchet these down: once [\"core\",\"cli\"] is accepted there, an unbounded number of NEW core->cli imports pass it, because that set records which KINDS of edge exist, not how many or which modules carry them. Measured 2026-09-12: 6 such imports existed and one of them (core.query_analyzer -> cli.runtime_paths, added by cbbd4a0 earlier the same day) had been introduced AFTER the freeze and passed the gate. This list may only SHRINK. Removing an entry as you burn the violation down is the intended edit; adding one requires the same scrutiny as disabling a test, and must be justified in the commit message.",
+  "violation_module_edges": [
+    [
+      "tensor_grep.backends.cpu_backend",
+      "tensor_grep.cli.subprocess_policy"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.rg_root_ignore"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.runtime_paths"
+    ],
+    [
+      "tensor_grep.backends.ripgrep_backend",
+      "tensor_grep.cli.subprocess_policy"
+    ],
+    [
+      "tensor_grep.core.completeness",
+      "tensor_grep.cli.incompleteness"
+    ],
+    [
+      "tensor_grep.core.query_analyzer",
+      "tensor_grep.cli.runtime_paths"
+    ]
   ]
 }

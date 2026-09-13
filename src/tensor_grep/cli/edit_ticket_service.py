@@ -217,11 +217,22 @@ def _normalized_root(root: str | Path) -> str:
     (trailing slash, mixed separators, a relative form) must not read as different trees.
     Falls back to the lexical form when the path cannot be resolved, so a missing directory
     still compares deterministically instead of raising inside a verdict path.
+
+    Case folding is delegated to ``os.path.normcase``, which lowercases on Windows and is
+    the IDENTITY on POSIX. An unconditional ``.lower()`` (shipped in v1.119.8) made
+    ``/tmp/Repo`` and ``/tmp/repo`` -- two genuinely different trees on a case-sensitive
+    filesystem -- compare equal, so a cross-tree verify could slip past
+    ``repo_root_mismatch`` entirely when the contents happened to match. Case-insensitivity
+    is a property of the FILESYSTEM, never of the string.
     """
+
+    def _fold(value: str) -> str:
+        return os.path.normcase(value).replace("\\", "/").rstrip("/")
+
     try:
-        return str(Path(root).resolve()).replace("\\", "/").rstrip("/").lower()
+        return _fold(str(Path(root).resolve()))
     except OSError:
-        return str(root).replace("\\", "/").rstrip("/").lower()
+        return _fold(str(root))
 
 
 def verify_edit_ticket(

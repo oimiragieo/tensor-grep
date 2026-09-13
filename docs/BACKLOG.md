@@ -119,6 +119,152 @@ shares AGT-04's git identity layer. **F8** index/session integrity self-check wi
 
 
 
+**F7-F9 (2026-09-12, Graft teardown + Exa; design stolen, never code).** Mined
+[Graft](https://github.com/NanoNets/Graft) (NanoNets, MIT, TypeScript code-graph context layer) for
+transferable DESIGN per `port-a-competitors-design-not-implementation`. Three of four candidate gaps
+were real; the fourth was **already shipped and I nearly duplicated it** -- see below, it is the
+governing lesson of this entry.
+
+- **F7 -- `tg file-api`: SHIPPED** (PR #1152, `03ec7f4`). Graft's `graft_file_api` returns a file's
+  signatures for "a tenth of the tokens"; tg had no file-granularity surface (`tg defs` requires a
+  SYMBOL, `tg codemap` requires a DIRECTORY). Built on the existing parser-backed symbol graph, with
+  the honesty floor Graft lacks: a zero `symbol_count` is never a confident empty
+  (`language_not_parser_backed` / `file_unreadable` set `result_incomplete` and exit 2), and a
+  parseable-but-empty file stays a COMPLETE answer so the flag keeps meaning something.
+- **F8 -- `tg freshness`: SHIPPED (PR #1152, `c366f2a`).** `cli/freshness.py` + 6 tests, verified
+  end-to-end (`current` -> edit -> `stale` naming the file, exit 0 -> 2). It reuses the serving
+  path's own `_ensure_session_not_stale` rather than re-deriving a second staleness rule. Floor:
+  "no persisted state" reports UNRESOLVED, never a clean bill of health.
+  **The STOP-RECEIPT this entry used to carry was WRONG, and the way it went wrong is the point.**
+  It read: blocked on `rust_core/src/main.rs` being 4 lines short of its shrink-only ratchet, with
+  PR #1141 (which splits main.rs) a draft awaiting a human merge. Both halves were true WHEN
+  WRITTEN. Then `scripts/ci-local` gained a `cuda` lane and a working `rust` lane, so Rust became
+  locally verifiable -- and the conclusion that depended on it being UNverifiable was never
+  revisited. It was reported as blocked for hours after it had stopped being blocked. A limitation
+  restated without re-checking is an assumption wearing a receipt's clothes.
+  **Resolution:** the headroom was freed in-branch instead. An AST census picked the extraction
+  target -- a top-level `fn` in main.rs with ZERO other main.rs-local dependencies -- which chose
+  `error_chain_has_broken_pipe` (one call site, no `.tg-registration.toml` pin, referenced elsewhere
+  only in doc comments that describe rather than call it). Now `rust_core/src/broken_pipe.rs`;
+  main.rs 15127 -> 15096, then 15103 with the clap variant registered, still under the pin.
+  All four sites landed together. Measured acceptance: registration gate + file-size ratchet +
+  freshness suite 54 passed; no persisted state exit 2; after `tg session open` exit 0 `current`;
+  after an edit exit 2 `stale` naming the file; container rust lane exit 0 with 592 passed; and
+  PR #1152 terminal green on `c366f2a` (40 pass / 0 fail), which includes the routing-parity
+  contract enforcing the 4-site rule on all three platforms.
+  **PR #1141 is no longer a blocker for anything here.**
+- **F9 -- adopt Graft's BENCHMARK methodology. PREMISE CORRECTED 2026-09-12: BLOCKED ON F3,
+  not ready.** The original entry below said "unstarted, highest value of the three" and named
+  a seat. That was written without checking whether the thing the methodology measures exists
+  here. It does not: `grep -rlE "anthropic|openai|api_key" benchmarks/*.py` returns NOTHING,
+  and no benchmark records provider token usage (the `max_tokens` hits in
+  `run_agent_success_harness.py` are tg's OWN `--max-tokens` budget flag).
+  `run_agent_workflow_benchmarks.py` measures tg's phases deterministically on a synthetic
+  corpus. **Graft's benchmark ran real Claude agents; tensor-grep's harness measures
+  tensor-grep.** Push-vs-pull arms and a cache-aware cost model have nothing to price until an
+  agent-driven benchmark exists, which is F3. Two primitives were built before this check and
+  are parked UNMERGED on `feat/benchmark-cost-model` (PR #1153, retitled PREMISE FAILED):
+  `agent_cost_model.py` and `agent_judge_floor.py`, 21 tests, no consumers. They are
+  speculative generality until F3 lands -- the `instrumented-build-gate` case, and the same
+  anti-pattern `baseline-dev-architecture` names. **One measured finding survives regardless
+  and is the reason to keep the branch:** raw token counts and cache-weighted cost can rank two
+  arms OPPOSITELY (a front-loaded bundle prices 2.1x more expensive by raw tokens and 2.7x
+  cheaper by real cost), so any future agent benchmark that reports raw tokens can pick the
+  wrong winner. **Acceptance for F9: do not restart it until F3 exists and records per-run
+  provider token usage.** The methodology notes below remain correct as a DESIGN TARGET.
+  Their
+  harness is better than ours in four copyable ways: (1) **push vs pull arms** -- injecting a context
+  bundle up front won on speed while exposing tools and paying only on demand won on CORRECTNESS
+  (98% vs 93% cold); neither of our benchmarks tests that distinction. (2) **cache-aware cost**
+  (reads ~0.1x, writes 1.25x) rather than raw token counts. (3) a **required-keyword floor on the
+  judge** so fast-but-wrong cannot win -- the `calibrate-an-automated-judge-with-paired-controls`
+  discipline, applied. (4) **SWE-bench Verified with the official `swebench` grader** -- no judge
+  model at all, which is the only real answer to "your benchmark is your own mechanism measuring
+  itself", the exact objection F3 exists to answer. They also reported "correctness 93% vs 93%
+  (equal)" in their own sweep rather than claiming a win; that is the honesty bar to match. Seat:
+  agy research spike -> Codex Sol, gated on a measured result, no claim without matched-task evidence.
+
+**REFUTED, and the reason it matters more than the three above:** a fourth "gap" -- joining search
+hits to their enclosing symbol -- **already ships as `tg search --enrich-ast`**
+(`enrich_match_with_container`, `container` on the match payload, `AST_ENRICH_FILE_LIMIT` budget).
+I ran `tg search --json` WITHOUT the flag, read the missing field as ABSENT rather than UNRESOLVED,
+reported it as a gap, and had added `--with-symbols` to both front doors before catching it. A
+competitive teardown is a list of "we don't have X" claims, and every one of them needs the same
+premise check a plan does. Do NOT re-open this as a feature; the real (small) question is
+discoverability of `--enrich-ast`, not absence. Separately: NOT stolen is Graft's LLM
+summarization (`--deep`, Pass 1/Pass 2) -- it needs an API key and works against tg's CPU/no-key
+moat; their key-free tier is pure tree-sitter, which is the tier tg already occupies more thoroughly.
+
+## BUG HUNT 2026-09-13 (subagent sweep, `tg`-navigated) -- 4 findings, all REPRODUCED
+
+Four defects found by three read-only hunter seats and independently reproduced by the
+orchestrator on the shipped binary. None are style nits; each produces a WRONG ANSWER a caller
+cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-grep\hunt\`
+(scratch -- the durable record is here).
+
+- **HUNT-1 (HIGH, IN PROGRESS -- plan under council review): `--multiline`/`-U` silently dropped
+  by every non-ripgrep backend.** `config.multiline` has ONE consumer in the package
+  (`backends/ripgrep_backend.py:585-592`); `core/pipeline.py` never gates selection on it, so
+  `--cpu -U` lands on the line-oriented `RustCoreBackend` and answers 0. Measured:
+  `tg search -U 'alpha\nbeta' ml` -> 4 matches / exit 0, but `tg search --cpu -U ...` -> EMPTY /
+  **exit 1**, which `docs/CONTRACTS.md` defines as "complete search, no matches". JSON shows
+  `fallback_reason: None`, `result_incomplete: None` -- zero disclosure. Also reached whenever
+  `rg` is absent (`pipeline.py:428-433`). The benign reading is ruled out by the file itself:
+  `pcre2` RAISES `ConfigurationError` at `:188-195` rather than degrade. Plan:
+  `docs/superpowers/plans/2026-09-13-multiline-fail-closed.md` (v3, hash `6fc5151b`, council
+  round 3 in flight). `multiline_dotall` has the identical gap.
+
+- **HUNT-2 (HIGH, OPEN): `-F --json` drops non-UTF-8 TEXT files and labels them
+  `skipped_binary`.** `backends/stringzilla_backend.py:124-128` returns `None` on
+  `UnicodeDecodeError`, and that `None` is funnelled into the SAME result as the NUL-byte binary
+  check (`:113-115`) at `:306-319` / `:400-413`. A latin-1 file with no NUL byte:
+  `tg search -F needle l1` -> finds it (rg front door, exit 0), but
+  `tg search -F --json needle l1` -> `{"total_matches":0, "routing_reason":
+  "stringzilla_fixed_strings_skipped_binary"}`. **Two front doors of one binary disagree 1 vs 0
+  on the same corpus, and the machine/MCP-facing one is wrong.** `pipeline.py:289-297` routes
+  `fixed_strings` to StringZilla AHEAD of the `rg_available` default at `:367`, so an installed
+  rg does not rescue it. `CPUBackend` has the handler StringZilla lacks
+  (`_RustUtf8DecodeMismatch` -> latin-1 decode or raise), and `result_incomplete` +
+  `incomplete_reason_class="unreadable_path"` is this repo's established marker for the event
+  (`ast_wrapper_backend.py:313-320`, `ripgrep_backend.py:141-151`) -- StringZilla sets neither.
+  **Acceptance:** a non-UTF-8 text file is either searched or disclosed as UNRESOLVED; the two
+  front doors return the same count for the same corpus.
+
+- **HUNT-3 (HIGH, OPEN): the incompleteness envelope INVERTS the documented
+  `unreadable_path`-outranks-budget priority.** `docs/CONTRACTS.md:26-27` states
+  `unreadable_path` "OUTRANKS every budget cause when both fire". `cli/incompleteness.py:196-199`
+  checks `scan_limit_cause` FIRST and only falls through to `has_unreadable_paths`, and
+  `:209-213` similarly prefers `scan_limit_remediable`. Reproduced with a pure-function probe on
+  a payload carrying both signals: `{'status': True, 'cause': 'project-files',
+  'budget_remediable': True}` -- telling an agent "raise `--max-repo-files`" when a subtree is
+  unreadable and **no budget value will ever fix it**. This is the wrong-knob defect class the
+  contract names explicitly. It reaches every MCP tool via `core/completeness.py:174-179` ->
+  `mcp_server.py:1128`. **Confirmed untested:** `tests/unit/test_mcp_incomplete_envelope.py:169-230`
+  and `tests/unit/test_completeness_projection.py:90-121` only exercise `unreadable_paths` in
+  ISOLATION, never combined with a `scan_limit` dict -- so CI structurally cannot catch it.
+  **Acceptance:** both signals present -> `cause == "unreadable_path"`,
+  `budget_remediable == False`, plus a test that sets BOTH (the missing population).
+
+- **HUNT-4 (HIGH, OPEN): `--enrich-ast` crashes the NATIVE front door.** It is a live Python
+  search flag (`cli/main.py:3316-3318`, consumed at `:3797`/`:4506`) and is in
+  `bootstrap._TG_ONLY_SEARCH_FLAGS` (`cli/bootstrap.py:52`) specifically to force full-Python
+  dispatch -- but it is **completely absent from `rust_core/src/main.rs`**: not in
+  `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, not in the secondary passthrough branch that catches its
+  siblings `--ast`/`--files` (`main.rs:1704-1711`), not a native clap field anywhere. Reproduced
+  against the installed `tg.exe`: `tg search "hello" . --enrich-ast` -> clap
+  `unexpected argument '--enrich-ast' found`, **exit 2**; same via the option-first root form.
+  This is the `--rank` registration-completeness class AGENTS.md documents, and it is invisible
+  to `CliRunner` tests because those bypass the native binary. **Acceptance:** `--enrich-ast`
+  reaches the Python door through the native binary, plus a routing-parity arm covering it.
+
+**Ruled out during the hunt (recorded so they are not re-chased):** the bare-reserved-command
+fall-through (`tg edit-ready` in a small dir) is DELIBERATE and pinned at `main.rs:8028`,
+`:5248-5262`, and `tests/e2e/test_routing_parity.py:800-824`; the apparent
+`SEARCH_PYTHON_PASSTHROUGH_FLAGS` vs `_TG_ONLY_SEARCH_FLAGS` divergence resolves to native
+structured fields or genuine rg passthrough for every entry EXCEPT `--enrich-ast`; and the
+A83 `--gpu-device-ids` silent-drop is now fail-closed via `rg_passthrough_gpu_dropped_search_flags`
+(`main.rs:9245-9272`).
+
 ## STRATEGIC (2026-09-04): 2026 Competitive Analysis & Strategic Updates Roadmap
 
 Competitive landscape audit against mid-2026 codebase intelligence and agent context tooling (`Gortex`, `GitNexus`, `Serena`, `GrepAI`, `ripgrep`, `ast-grep`, `Claude Code` native agentic search).
