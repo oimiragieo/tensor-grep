@@ -4359,6 +4359,26 @@ test that is a NOTE, not a defect. Editing it would change the hash and reset th
 counter to zero in exchange for a line that alters nothing about the built artifact. Round 7 must
 run against `b86a7e47` byte-for-byte.
 
+**The `codex` seat is not an abstainer — it is worse, and round 7 must handle it.** The standing
+note says "codex abstains every round". In round 6 it did NOT: it emitted
+`RECOMMENDED: CHANGES_REQUIRED` with the text *"I could not inspect the plan or repository: every
+read-only command was rejected by the workspace policy... This is an audit-environment blocker,
+not a build defect or requested plan edit."* That is `CANNOT_READ_REQUIRED_FILE` wearing a verdict
+token. A silent abstention is visible in the triage table; a verdict token emitted for an
+environment blocker is indistinguishable from a real content objection, and **counting it would
+have falsely reset HUNT-4's clean-round counter to zero.**
+
+Round 6's honest tally is therefore **6 content votes, all APPROVED, with TWO named non-voting
+seats**: `agy` (79 bytes, `print timeout after 3m0s with turn in progress`, no token at all) and
+`codex` (token present, excluded on the seat's own stated grounds).
+
+The root cause is the same one that made `codex_sub` abstain in round 5 — the sandbox rejects
+read-only commands. The fix that worked there (inline every source the brief asks about, and state
+explicitly that a blocked file read is NOT an abstention condition) was never applied to the MAIN
+`codex` seat. **For round 7, dispatch `codex` with the inlined brief too**
+(`C:/tmp/tensor-grep/hunt/build_hunt_codex_sub_brief.py` builds it), or name it as a known
+non-voting seat before the round rather than discovering it during triage.
+
 `codex_sub` also flagged, correctly, that it could not independently re-derive the marker-based
 census because `tests/unit/test_native_e2e_ci_coverage_contract.py` was never inlined in its
 brief. That is a brief defect, not a plan defect, and it is already fixed in the builder — the
