@@ -235,7 +235,7 @@ orchestrator on the shipped binary. None are style nits; each produces a WRONG A
 cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-grep\hunt\`
 (scratch -- the durable record is here).
 
-- **HUNT-1 (HIGH, IN PROGRESS -- plan under council review): `--multiline`/`-U` silently dropped
+- **HUNT-1 (HIGH, FIXED 2026-09-13): `--multiline`/`-U` silently dropped
   by every non-ripgrep backend.** `config.multiline` has ONE consumer in the package
   (`backends/ripgrep_backend.py:585-592`); `core/pipeline.py` never gates selection on it, so
   `--cpu -U` lands on the line-oriented `RustCoreBackend` and answers 0. Measured:
@@ -249,6 +249,15 @@ cannot distinguish from a correct one. Gap files were written to `C:\tmp\tensor-
   for it in a fresh clone. No version or hash is pinned here on purpose: a committed file
   cannot track a document it does not contain, and the previous pin (`v3, hash 6fc5151b`)
   was thirteen revisions stale by the time anyone read it. `multiline_dotall` has the identical gap.
+
+  **CLOSED as `5331dc9`.** `core/pipeline.py` now raises `ConfigurationError` when
+  `--multiline`/`--multiline-dotall` is combined with `--ltl` or with explicit GPU device
+  selection, instead of routing to a line-oriented backend and answering a false "complete, no
+  matches". Evidence: RED 5 failed / 2 passed with `src/` untouched -> 7 passed post-fix
+  (`tests/unit/test_multiline_fail_closed.py`, extracted VERBATIM from the plan rather than
+  retyped); dogfooded through the REAL CLI, not `CliRunner`. The plan reached **two consecutive
+  clean council rounds (13 and 14) on one unchanged hash `8a897ad6`, five content votes each**,
+  after fourteen rounds and sixteen revisions.
 
 - **HUNT-2 (HIGH, FIXED 2026-09-13): `-F --json` drops non-UTF-8 TEXT files and labels them
   `skipped_binary`.** `backends/stringzilla_backend.py:124-128` returns `None` on
@@ -4293,3 +4302,73 @@ stated symptom.
 ## References
 - Cross-session resume anchor (memory): `tensor-grep-drain-resume-2026-07-09.md` (live drain/audit/dogfood/GPU state).
 - Full process rules: [AGENTS.md](https://github.com/oimiragieo/tensor-grep/blob/main/AGENTS.md).
+
+
+## Session closeout 2026-09-13 — three HIGH defects shipped, one plan still in council
+
+**Final local SHA: `bb1d92c`.** Three fixes landed this session, each through the same loop:
+plan -> council until two consecutive clean rounds on one unchanged hash -> RED measured with
+`src/` untouched -> implement -> GREEN -> a **half-fix control** proving the suite catches a
+partial fix -> lint/type -> commit.
+
+| item | state | receipt |
+|---|---|---|
+| HUNT-1 `--multiline` fail-closed | **SHIPPED** | `5331dc9`; RED 5f/2p -> 7 passed; council rounds 13+14 clean on hash `8a897ad6` |
+| HUNT-2 undecodable TEXT disclosure | **SHIPPED** | `8ae32db`; RED 2f/2p -> 4 passed; half-fix control 1f/3p; council rounds 2+3 clean on `4b317ca3` |
+| HUNT-3 incompleteness priority inversion | **SHIPPED** | `bb1d92c`; RED 2f/3p -> 5 passed; half-fix control 1f/3p; collateral 64 passed; council rounds 3+4 clean on `8af0c3a8` |
+| HUNT-4 `--enrich-ast` native door | **OPEN — plan at v5b, council round 6 IN FLIGHT** | plan hash `b86a7e47`; seat logs `C:/tmp/tensor-grep/hunt_r6/`; brief `C:/tmp/tensor-grep/hunt_r6/question.md` |
+| HUNT-5 `-U` delegation parity | **OPEN, unblocked** | its STOP-RECEIPT required the multiline gate, which now exists as `5331dc9` |
+| PR #1154 (`bench:`) | **OPEN, terminal green** | merge after the release window closes |
+| PR #1141 (`fix:`) | **OPEN, terminal green** | merge second; publishes |
+| PR #1150 | **DRAFT, 11 commits behind main** | needs `gh pr update-branch` + `gh pr ready` + REAL CI against current main before merge |
+
+### HUNT-4 is the one item whose PLAN is not settled, and the reason is worth keeping
+
+Round 5 was 2 APPROVED / 3 CHANGES_REQUIRED, and the dissent overturned an **architectural**
+choice the two approving seats had checked carefully and passed. v4 added the new test arm to
+`tests/e2e/test_routing_parity.py` and extended the `native-build-smoke` pytest invocation with a
+literal path so the arm would run. But `.github/workflows/ci.yml:930-940` records, from task
+\#266, that this step uses a GLOB and explicitly NOT a hardcoded filename.
+
+The measurement that settled it is the census of the gate that enforces the rule:
+`tests/unit/test_native_e2e_ci_coverage_contract.py` derives its census from
+`grep -rl TG_REQUIRE_RG_PARITY tests/`, and `grep -c TG_REQUIRE_RG_PARITY
+tests/e2e/test_routing_parity.py` returns **0**. And be precise about what the gate would have
+done: `test_ci_runs_a_pattern_not_a_hardcoded_filename` asserts only
+`any("*" in pattern ...)` (`:98`), so v4's edit — which KEPT the glob and added a literal beside
+it — **would have passed, and CI would have been green**. The literal would simply have sat
+outside the invariant forever. That is worse than a gate failure, not better.
+
+v5 therefore moves the arm into a new `tests/e2e/test_native_enrich_ast.py`, which the EXISTING
+glob already matches and which carries the marker, so it enrols itself in the census and needs no
+workflow edit at all. `tests/e2e/test_native_ltl_passthrough.py` is the precedent — same defect
+class (a missing `SEARCH_PYTHON_PASSTHROUGH_FLAGS` entry), same naming decision.
+
+### What a fresh session should pick up, in order
+
+1. **Read `C:/tmp/tensor-grep/hunt_r6/run.log`** for the round-6 verdicts, then triage: name every
+   non-voting seat (`codex` abstains every round), apply the does-it-change-the-BUILD test, and
+   VERIFY each finding against real code before acting — three round-5 findings were refuted that
+   way. HUNT-4 needs two consecutive clean rounds on one unchanged hash before implementation.
+2. **Merge the PR queue** once no release is in flight: #1154, then #1141, then update+ready #1150.
+   The window closes when the `Semantic Release` JOB succeeds, not when the run completes, and a
+   `bench:`/`docs:` PR that publishes nothing STILL rejects an in-flight release's push.
+3. **HUNT-5**, now unblocked.
+
+### Ideas that would improve the codebase next session
+
+- **A `codex_sub`-shaped seat is worth more than a fifth council seat.** Across six rounds the
+  inlined-source seat was the sole dissenter three times, and was right every time — including on
+  the half-fix hole in HUNT-2's original test, which four seats had cleared. Consider making an
+  inlined-source seat a permanent council member rather than an add-on.
+- **The `TG_REQUIRE_RG_PARITY` census is a good pattern that only one job uses.** Other
+  location-pinned gates (`.tg-registration.toml` pins `{file, symbol}`) have no equivalent
+  self-enrolment, which is why a file split disarmed one on 2026-09-12. Worth a survey of which
+  gates could derive their census instead of listing it.
+- **`unified_incomplete_envelope` had 14 call sites and 0 exercising two signals at once.** That
+  "empty population by construction" shape recurred THREE times this session (HUNT-2's NUL probe
+  ordering, HUNT-3's call census, HUNT-4's inert glob). A cheap AST audit that flags a function
+  whose tests never combine two independent inputs would have found all three.
+- **The `-x` in `pyproject.toml:48-52` makes every bare pytest count a lie.** Every RED
+  measurement this session needed `--maxfail=100`. Consider whether the default is worth what it
+  costs in misread evidence.
