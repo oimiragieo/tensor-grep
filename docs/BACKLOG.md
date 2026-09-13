@@ -142,7 +142,26 @@ governing lesson of this entry.
   together -- a half-registered command is the silent misroute the 4-site rule exists to prevent.
   **Acceptance when unblocked:** merge #1141, re-add the four sites, `test_registration_check` green,
   and `tg freshness` present in BOTH front doors' `--help`.
-- **F9 -- adopt Graft's BENCHMARK methodology (unstarted, highest value of the three).** Their
+- **F9 -- adopt Graft's BENCHMARK methodology. PREMISE CORRECTED 2026-09-12: BLOCKED ON F3,
+  not ready.** The original entry below said "unstarted, highest value of the three" and named
+  a seat. That was written without checking whether the thing the methodology measures exists
+  here. It does not: `grep -rlE "anthropic|openai|api_key" benchmarks/*.py` returns NOTHING,
+  and no benchmark records provider token usage (the `max_tokens` hits in
+  `run_agent_success_harness.py` are tg's OWN `--max-tokens` budget flag).
+  `run_agent_workflow_benchmarks.py` measures tg's phases deterministically on a synthetic
+  corpus. **Graft's benchmark ran real Claude agents; tensor-grep's harness measures
+  tensor-grep.** Push-vs-pull arms and a cache-aware cost model have nothing to price until an
+  agent-driven benchmark exists, which is F3. Two primitives were built before this check and
+  are parked UNMERGED on `feat/benchmark-cost-model` (PR #1153, retitled PREMISE FAILED):
+  `agent_cost_model.py` and `agent_judge_floor.py`, 21 tests, no consumers. They are
+  speculative generality until F3 lands -- the `instrumented-build-gate` case, and the same
+  anti-pattern `baseline-dev-architecture` names. **One measured finding survives regardless
+  and is the reason to keep the branch:** raw token counts and cache-weighted cost can rank two
+  arms OPPOSITELY (a front-loaded bundle prices 2.1x more expensive by raw tokens and 2.7x
+  cheaper by real cost), so any future agent benchmark that reports raw tokens can pick the
+  wrong winner. **Acceptance for F9: do not restart it until F3 exists and records per-run
+  provider token usage.** The methodology notes below remain correct as a DESIGN TARGET.
+  Their
   harness is better than ours in four copyable ways: (1) **push vs pull arms** -- injecting a context
   bundle up front won on speed while exposing tools and paying only on demand won on CORRECTNESS
   (98% vs 93% cold); neither of our benchmarks tests that distinction. (2) **cache-aware cost**
