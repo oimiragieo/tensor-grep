@@ -951,6 +951,44 @@ concrete failure observed this session.
   debugging logs must sanitize or label the message type, ensuring raw tainted candidate variables
   do not trigger secret-leak static alerts while preserving debugging visibility.
 
+- **A160 — A Majority APPROVE Does Not Clear a VERIFIED Defect (2026-09-13).** Across six plan-audit
+  council rounds, the single seat whose brief INLINED the plan and its cited source regions was the
+  sole dissenter three times and was right every time — including overturning an architectural
+  choice two seats had checked carefully and passed. Seats that approve are not careless; they
+  verify what the plan POINTS AT. A seat reconstructing the control flow from inlined source checks
+  what the plan does NOT point at, which is a different failure surface. So: count content votes for
+  the stopping rule (two consecutive clean rounds on the SAME unchanged hash, >=4 content votes),
+  but never let a majority overrule a finding you have verified against real code — and equally,
+  verify BEFORE acting, because three round-5 findings were refuted that way (a citation that
+  resolved, a line number already correct). Dispatch the inlined-source seat WITH the council: the
+  one time it was added late for quorum, it was the only seat to find anything.
+
+- **A161 — A Brief That Both Inlines a File and Carries an Abstention Clause Produces an
+  Abstention (2026-09-13).** A council seat emitted `CANNOT_READ_REQUIRED_FILE` and cast no vote
+  because its sandbox blocked `Get-Content` and `certutil` — while the entire plan was inlined in
+  its own brief. The generic clause "if you cannot read the file, say CANNOT_READ_REQUIRED_FILE"
+  read as an instruction to abstain on a blocked shell call. That is the brief contradicting
+  itself, not a seat defect, and it cost the round its most valuable seat. When a brief inlines its
+  sources, say so FIRST and state explicitly that a blocked file read is not an abstention
+  condition; scope abstention to "a passage you need is genuinely ABSENT from this brief". Pin the
+  preamble in the brief BUILDER, never retype it per round — the same builder had already silently
+  dropped source regions across two rounds for exactly that reason.
+
+- **A162 — Fixing One Passage of a Plan Invalidates Others, and Re-Reading Cannot Find It
+  (2026-09-13).** Three consecutive council rounds on one plan each found a defect CREATED while
+  fixing the previous round's defect: adding a mandated step made the summary and two step
+  cross-references stale; patching that left an escape hatch in the summary and a citation to a
+  section that existed under no such name; then the approach itself was overturned, invalidating
+  the Goal line, the File Structure, the `git add`, and a whole task. A plan is a control flow, not
+  prose — re-reading confirms each passage in isolation, which is the check that cannot fail. After
+  ANY plan edit, DERIVE the cross-references: `grep -nE "Step [0-9]|Task [0-9]"` for step
+  references, `grep -n` every file path and CI job name against the real tree, and confirm every
+  edited file appears in `Files:`, in File Structure, AND in the `git add`. Write the
+  post-conditions as assertions in the patch script so a non-unique anchor writes nothing. Do not
+  trust your own expected COUNT in those assertions — two were wrong this session and one flagged a
+  deliberate historical note as a defect (Form 9: the reviewer's expected number is the broken
+  half).
+
 ## Current Handoff
 release_docs_current_tag: v1.119.12
 
