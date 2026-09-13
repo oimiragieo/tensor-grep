@@ -1,6 +1,574 @@
 # CHANGELOG
 
 
+## v1.119.10 (2026-09-13)
+
+### Bug Fixes
+
+- Repair 8 defects an independent audit found, and add tg file-api
+  ([#1152](https://github.com/oimiragieo/tensor-grep/pull/1152),
+  [`552dea5`](https://github.com/oimiragieo/tensor-grep/commit/552dea59dad9eb57d36813c6012f68193e544d6e))
+
+* fix: repair 5 defects an independent audit found in the last 8 merged SHAs
+
+An independent validator seat (read-only, given the diffs rather than my descriptions) audited the
+  eight SHAs merged this session and returned DEFECTS: 8. Six of those SHAs are already published to
+  PyPI, so these were live, not hypothetical. Every finding was reproduced before being fixed.
+
+Product defects --------------- * js_ts_scope_gap inferred the scan root from the common parent of
+  the matched files. A project with tsconfig.json at its root and sources under src/ therefore got a
+  resolution_gaps entry claiming its correctly-scoped scan was mis-scoped -- a FALSE disclosure
+  shipped in v1.119.7. The real scan root is now threaded from _repo_map_root_dir through all three
+  _language_coverage_gaps_for_universe call sites. Reproduced on the in-tree fixture
+  benchmarks/bakeoff_fixtures/js_ts/tsconfig_path_alias.
+
+* js_ts_scope_gap also collapsed every OSError to None, reporting "correctly scoped, no gap" for a
+  tree it never managed to read. An unreadable probe is UNRESOLVED, so all three sites now emit an
+  explicit unresolved gap.
+
+* _normalized_root lowercased every resolved root unconditionally (v1.119.8), so /tmp/Repo and
+  /tmp/repo -- different trees on a case-sensitive filesystem -- compared equal and could bypass
+  repo_root_mismatch. Case folding now goes through os.path.normcase, which folds on Windows and is
+  the identity on POSIX. Case-insensitivity is a property of the filesystem, never of the string.
+
+* _search_with_cpu_fallback announced its native->CPU engine swap on stderr ONLY. stderr never
+  reaches a --json consumer or an MCP caller, i.e. exactly the machine readers that cannot notice an
+  engine changed under them. The swap now stamps the same durable fallback_reason the NLP arm sets,
+  and propagates it onto the aggregate (the envelope stamps that field before the per-file loop
+  begins, so a mid-loop swap would otherwise never surface). main.py sat one line under its
+  file-size ratchet ceiling, so this is a split into cli/backend_fallback.py rather than a patch;
+  the old name is kept as an alias so mcp_server's import is unchanged. main.py 13522 -> 13507.
+
+* validate_symbol_is_not_a_pattern rejected Unicode combining marks, so "e\u{301}" -- which Python's
+  own str.isidentifier() accepts -- was refused as invalid. A false refusal, not a widening: the
+  guard still errs closed. A leading-combining-mark guard is added in the same change so widening
+  the predicate does not trade a false refusal for a false acceptance. Scope is stated in the
+  source: the combining-diacritic blocks, not full XID_Continue.
+
+Controls that did not control ----------------------------- * graph_completeness: all three tests
+  exercised graph_completeness_for directly, so reverting the DefsResponse construction to a
+  hardcoded "strong" would have left them green. The construction is extracted to
+  build_defs_response and a new test pins the RESPONSE.
+
+* js_ts_scope_gap's original control was topologically vacuous (Oracle Form 5): it placed index.tsx
+  BESIDE tsconfig.json, the one layout where the inference bug cannot appear. Confirmed by mutation
+  -- under the reverted fix all four original tests passed while the new regression test failed.
+
+Found while auditing, not reported by the seat ---------------------------------------------- * The
+  import-edges freeze recorded package-PAIR edges, so ["core","cli"] being accepted meant an
+  unbounded number of NEW core->cli imports passed. Six existed, and one (core.query_analyzer ->
+  cli.runtime_paths, added by cbbd4a0 earlier the same day) was introduced after the freeze and
+  passed the gate. Declared violations are now frozen at MODULE granularity as a shrink-only list.
+  Under a synthetic new backward import the old package-pair gates pass and the new gate fails.
+
+* test_claim_reclaims_stale_lock asserted a hardcoded elapsed < 4.0 and failed "assert 4.0 < 4.0" on
+  windows-latest/py3.12 while the reclaim itself worked. The bound is now derived from the acquire
+  timeout, and the paired control the file lacked is added: a FRESH lock must NOT be reclaimed and
+  must fail closed.
+
+* _agent_payload asserted exit_code == 0, so a deadline-truncated capsule on a loaded box read as a
+  ranking regression. Exit 2 is tg's three-state contract reporting an incomplete walk correctly;
+  that is CANNOT_MEASURE, not FAIL. Narrowly excused, and only when partial_reason == "deadline" and
+  deadline_exceeded is set -- every other exit 2 and every other non-zero exit still fails.
+
+Verification: each fix has an observed RED arm (the mutation is applied, the test fails, the
+  mutation is reverted). The Rust changes are NOT compiled -- the shared-box ban forbids local
+  cargo; rustfmt --check is clean and CI compiles them. The POSIX case-sensitivity arm cannot fail
+  on Windows, so it was proven by substituting posixpath.normcase; it bites on the Linux cells.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+* feat: tg file-api -- every signature in one file, without the bodies
+
+Ported from a design idea in Graft (NanoNets), not its code: `graft_file_api` returns a file's
+  signatures for "a tenth of the tokens". tg had no equivalent -- `tg defs` answers "where is symbol
+  X" and REQUIRES a symbol, `tg codemap` requires a DIRECTORY -- so the only way to learn a file's
+  API was to read all of it, which is the largest avoidable token cost in an agent loop.
+
+What it does ------------ `tg file-api PATH` lists every symbol's declaration with no body, reusing
+  the existing parser-backed symbol graph (`_symbols_for_file`). Signatures are lifted as TEXT
+  rather than recorded as a line range, so an edit above a declaration cannot silently invalidate
+  them -- the same reason this repo cites symbols rather than line numbers, and Graft arrived at it
+  independently.
+
+The honesty floor, which is the part Graft does not have
+  -------------------------------------------------------- An outline that returns zero symbols for
+  a file it could not parse is indistinguishable from an outline of a file that genuinely has none.
+  So a zero `symbol_count` is never a confident empty: `result_incomplete` plus a named
+  `incomplete_reason` fires for `language_not_parser_backed` and `file_unreadable`, and the command
+  follows the three-state exit contract (0 complete, 2 untrusted). A file tg CAN parse that
+  genuinely holds no symbols stays a COMPLETE answer and exits 0 --
+  `test_a_parseable_file_with_genuinely_no_symbols_is_complete` is the control that stops the flag
+  from degrading into "always set".
+
+A runaway declaration is bounded at 8 lines and flagged `signature_truncated`, so a minified file
+  cannot turn this command into the whole-file read it exists to avoid.
+
+Two defects found in my own work while building it
+  -------------------------------------------------- * The text renderer printed only the FIRST line
+  of a signature, so a wrapped `def alpha(` displayed naming none of its parameters. JSON had it;
+  text did not. Text and JSON owe the same story (CONTRACTS P3). * Found by dogfooding a SECOND
+  language: the completeness check balanced `{}` along with `()`, but in a brace language the
+  declaration ends AT the opening `{` and that brace never closes on the declaration line. Nothing
+  ever looked balanced, so the scan ran to the line bound and flattened whole struct and function
+  BODIES into the "signature", flagging every Rust and TypeScript symbol truncated. Python hid it
+  completely -- `:` closes nothing, so the balance check was vacuous there and all seven original
+  tests passed. One language is not a population.
+
+The first mutation control for that fix PASSED IN BOTH ARMS: it swapped the bracket character set,
+  which changes nothing once the terminator is stripped. The real variable is stripping the
+  terminator before balancing; mutated there, the body leaks into the signature exactly as it did in
+  production.
+
+Registration ------------ All four sites per AGENTS.md: KNOWN_COMMANDS, the native
+  `Commands::FileApi` variant plus dispatch arm, PUBLIC_TOP_LEVEL_COMMANDS, and the `@app.command`
+  entry point. `tests/unit/test_registration_check.py` green.
+
+Two splits the file-size ratchet forced --------------------------------------- `cli/main.py` and
+  `rust_core/src/main.rs` are both allowlisted shrink-only, and the ratchet's own message is "Reduce
+  it, or split it": * the command BODY lives in `cli/file_api.py`; main.py keeps a Typer shim *
+  `_expand_ripgrep_replacement` moved to `cli/rg_replacement.py`, chosen by asking the AST for a
+  top-level function with ZERO module-local dependencies. The blast-radius mermaid renderer looked
+  liftable by eye and dragged six helpers with it -- reverted rather than forced.
+
+That split orphaned a handler-disposition ledger record: `_resolve_token` is NESTED inside the moved
+  function, so its disposed broad handler changed MODULE. The retarget tool refuses to write when an
+  identity orphans, which is how this was caught rather than papered over with a lineno re-stamp.
+
+`tg freshness` is built and tested (`cli/freshness.py`, 6 tests) but NOT registered here:
+  `rust_core/src/main.rs` is 4 lines short of the headroom both commands need. PR #1141 already
+  splits main.rs and frees ~380 lines but is a DRAFT awaiting human merge, and deleting blank lines
+  to pass a size gate is gaming the measure. All four of its registration sites come out together --
+  a half-registered command is the silent misroute the 4-site rule prevents -- and land in the
+  immediate follow-up.
+
+NOT compiled: the shared-box ban forbids local cargo. rustfmt --check is clean; CI compiles the
+  native door.
+
+* docs(backlog): record the Graft teardown as F7-F9, including the gap that was already shipped
+
+F7 tg file-api SHIPPED (03ec7f4). F8 tg freshness built+tested but carries a STOP-RECEIPT: main.rs
+  is 4 lines short of the shrink-only ratchet headroom, and the split that frees ~380 lines (PR
+  #1141) is a draft awaiting human merge. F9 adopts Graft's benchmark methodology -- push-vs-pull
+  arms, cache-aware cost, a required-keyword judge floor, and SWE-bench Verified under the official
+  grader, which is the only real answer to 'your benchmark measures your own mechanism'.
+
+Also records the REFUTED fourth gap: enclosing-symbol-on-search-hits already ships as `tg search
+  --enrich-ast`. I read a missing field in flagless output as ABSENT rather than UNRESOLVED and
+  nearly shipped a duplicate surface. A competitive teardown is a list of absence claims and each
+  one needs the premise check a plan gets.
+
+* test(file-api): pin the two syntax shapes Python and Rust fixtures did not cover
+
+Applying the lesson from the brace bug rather than just recording it: I had banked 'one language is
+  not a population' and then verified only 3 of tg's 10 parser-backed languages. Ran file-api
+  against all ten. go/java/csharp/php/c/cpp were all already correct, and two syntactic shapes
+  worked that nothing tested:
+
+* Allman brace style (C#, C) puts `{` on its OWN line, so the declaration is genuinely two lines.
+  Stopping at the first would drop nothing visible, which is exactly why it needs a pin -- the
+  output looks plausible either way. * A C/C++ header declaration has no body and ends at `;`.
+  Without `;` as a terminator it would run to the line bound and be reported truncated, turning the
+  cheapest possible symbol into a false incompleteness signal.
+
+Both have a verified RED arm against the literal each actually guards: the Allman test fails when
+  brace balance is restored to the pre-fix form, and the semicolon test fails when `;` is dropped
+  from _DECLARATION_TERMINATORS. Checked separately, because `-x` stopped before reaching the second
+  one and an unverified control is worth nothing -- the semicolon test is VACUOUS against the brace
+  mutation, which is why it needed its own.
+
+* fix(editor-plane): import the names the new graph_completeness control needs
+
+CI caught what the shared-box cargo ban guarantees I cannot: `mod graph_completeness_tests` imported
+  only `graph_completeness_for`, while the mutation control added alongside it uses
+  `build_defs_response`, `SymbolDefinition`, `Path` and `PathBuf`. Pure name resolution -- rustfmt
+  parses the file fine (exit 0), which is exactly why `rustfmt --check` is not a substitute for a
+  compiler and was reported as such rather than as verification.
+
+Both failing lanes share this one cause: `cuda-feature-check` runs `cargo check --features cuda
+  --all-targets`, so it compiles test targets too.
+
+* feat(ci-local): add a cuda lane so the harness covers the job that broke
+
+When cuda-feature-check went red on this PR I reproduced it with a hand-rolled `docker run` and left
+  the harness untouched -- so the next person hits the same wall with no affordance.
+  `scripts/ci-local/run.sh cuda` now runs ci.yml's exact command (`cargo check --features cuda
+  --all-targets`) under the same --cpus cap and warm cargo volumes. Verified: 'cuda lane exit: 0'.
+
+Deliberately NOT part of `all`: it is a separate feature resolution that recompiles much of the
+  graph, which is the cost the shared-box cap bounds.
+
+The NOT-COVERED list stayed HONEST rather than being trimmed to look better: a plain rust/python/all
+  run still does not execute this lane, so the entry remains with the affordance attached. Deleting
+  the line would have made the harness lie about its own coverage.
+
+Pinned in MIRRORED_VALUES, so the lane cannot drift from the CI job it mirrors -- the parity test
+  proves the invocation string appears verbatim in BOTH ci.yml and entrypoint.sh, not merely that
+  the lane exists.
+
+Also fixes CRLF I introduced in the same edit: pathlib.write_text defaults to newline=None on
+  Windows and rewrote both scripts, shebang included, so the container answered `/usr/bin/env:
+  'bash\r': No such file or directory` and the lane never ran. `bash -n` passed on both files and
+  they look correct in an editor -- the byte-level twin of the heredoc-escape hazard. Rewritten as
+  bytes; 0 CR remain, shebang verified with od -c.
+
+* docs(backlog): correct F9's premise -- it is blocked on F3, not ready to start
+
+I wrote the F9 entry hours ago calling it "unstarted, highest value of the three" and naming a seat,
+  without checking whether the thing the methodology measures exists here. It does not:
+
+grep -rlE "anthropic|openai|api_key" benchmarks/*.py -> NOTHING
+
+No benchmark records provider token usage; the `max_tokens` hits in run_agent_success_harness.py are
+  tg's OWN --max-tokens budget flag. run_agent_workflow_benchmarks.py measures tg's phases
+  deterministically on a synthetic corpus. Graft's benchmark ran real Claude agents; tensor-grep's
+  harness measures tensor-grep. Push-vs-pull arms and a cache-aware cost model have nothing to price
+  until an agent-driven benchmark exists -- that is F3.
+
+Two primitives were built BEFORE this check and are parked unmerged on feat/benchmark-cost-model (PR
+  #1153, retitled PREMISE FAILED): 21 tests, zero consumers, no named second consumer. That is the
+  instrumented-build-gate case and the speculative-generality anti-pattern baseline-dev-architecture
+  names -- which I had quoted earlier the same session while auditing this repo against it.
+
+One measured finding survives and is why the branch is kept rather than deleted: raw token counts
+  and cache-weighted cost can rank two arms OPPOSITELY, so any future agent benchmark reporting raw
+  tokens can pick the wrong winner.
+
+Acceptance: do not restart F9 until F3 exists and records per-run provider token usage. The
+  methodology notes stay as a design target.
+
+* fix(test): force the path-domain seam so the CWE-88 census keeps its GPU member
+
+The `_agent_gpu_evidence[probe]` member of the argv-sentinel census captured 0 argvs instead of 2
+  under scripts/ci-local, while the same file passed 31/31 on the Windows host. Measured, not
+  inferred -- Docker Desktop is WSL2-backed:
+
+/proc/version Linux version 6.6.87.2-microsoft-standard-WSL2 is_wsl_host() -> True
+  is_cross_domain_native_binary("tg.exe") -> True translate_path_for_windows_binary(/tmp/x)-> None
+
+The fixture stubs resolve_native_tg_binary to Path("tg.exe"), a Windows-shaped name. On a WSL host
+  that is a GENUINE cross-domain classification, the Linux probe dir cannot be translated, and
+  _agent_gpu_evidence returns path_domain_mismatch BEFORE building either argv.
+
+The product is correct; the FIXTURE was environment-dependent. That matters because this is the
+  CWE-88 sentinel census: a member capturing nothing is a member CHECKING nothing, and it would stay
+  green on every Windows host and every bare Linux runner while silently dropping coverage of the
+  GPU-probe builder anywhere WSL-backed. Only the file's own `len(captured) == 2` population guard
+  made it visible -- the assertion that exists precisely so a census cannot shrink in silence.
+
+Fix: force the classification seam rather than the platform (AGENTS.md A85 -- env-independent gated
+  tests force the seam, never env-detect). Consistent with the two stubs already present for the
+  same stated reason: this test is about ARGV SHAPE, not routing semantics. The measured values are
+  in the comment so the next reader does not re-derive them.
+
+I was wrong twice before probing: first blaming the product (that run was corrupted by my own
+  mid-run branch switch), then fingering the FileNotFoundError arm after reading the source -- the
+  container resolves a REAL binary at /work/rust_core/target/debug/tg, so that arm never fires. Both
+  readings were coherent and confident; a four-line probe settled it.
+
+Host 31/31; container verification in flight.
+
+* fix: close the CWE-88 census's WSL family, and a mypy narrowing in freshness
+
+Three fixes, all found by execution rather than review.
+
+1. SECOND census member, same defect class. After the _agent_gpu_evidence fix landed, the container
+  revealed `_doctor_gpu_search_runtime_probe` failing identically: "the doctor probe never reached
+  subprocess.run; this capture is inert". Same mechanism -- the fixture writes `tg.exe`, WSL makes
+  that a GENUINE cross-domain classification, the probe returns before reaching subprocess.run. `-x`
+  had hidden it behind the first. Two members of a CWE-88 census silently dropping out on any
+  WSL-backed host; a gate bounds one failure mode, not the family.
+
+2. MY FIRST PATCH FOR (1) BROKE THE HOST. I patched `doctor_report.is_cross_domain_native_binary` --
+  AttributeError, the name does not live there. `doctor_report` reaches it through `_self`, which
+  its own module docstring defines as CLI/MAIN.PY's module object (via `cli/_main_binding`). Host
+  went 31 -> 30 and I found it by running, not by re-reading. Correct target patched; comment
+  records why.
+
+3. mypy, surfaced by CI's "Formatting & Linting" job -- which was NOT ruff. The failing STEP was
+  Python Mypy Typecheck (a job NAME is not its failure mode): freshness.py's except-arm always
+  yields a detail string while _session_status returns str | None, so mypy narrowed from whichever
+  branch it saw first. Annotated, with the branch disagreement stated.
+
+Verified across BOTH populations, because the host never reproduced either bug: host 31/31, mypy 136
+  files clean, ruff check + 861 files formatted WSL container 31/31 (was 1 failed / 13 passed before
+  these fixes)
+
+* fix(test): separator style is not a universal path property
+
+Four CI legs failed -- ubuntu x2 and macos x2, Windows green. That pattern is POSIX-only, which
+  pointed at my own test rather than the product.
+
+I asserted `_normalized_root("\tmp\repo") == _normalized_root("/tmp/repo")` as though separator
+  style were a universal spelling difference. It is not: a backslash is a SEPARATOR on Windows and a
+  legal FILENAME CHARACTER on POSIX, so Path("\tmp\repo").resolve() there yields <cwd>/\tmp\repo --
+  a genuinely different directory, rendered as /work//tmp/repo. Measured in a Linux container:
+
+repr(backslash form): '\tmp\repo' normalized backslash: '/work//tmp/repo' normalized slash :
+  '/tmp/repo' EQUAL? False trailing-slash EQUAL? True
+
+Now gated on os.sep/os.altsep, and the POSIX arm asserts the two spellings are DIFFERENT rather than
+  skipping -- collapsing them would be the over-normalization the sibling case-folding test exists
+  to prevent, so both arms stay load-bearing. The trailing-slash assertion is genuinely universal
+  and is unchanged.
+
+Instrument note: my first container probe printed `/work/<TAB>mpepo` -- the shell ate \t and \r as
+  escapes before Python saw them, so it tested a tab and a carriage return, not backslashes.
+  Trusting it would have "confirmed" the bug against a string the test never uses. Re-run as a FILE
+  with no escaping layer (the inline-escape hazard this box has receipts for), which produced the
+  values above.
+
+Verified on both populations: host 6/6; Linux container 24 passed across
+  test_edit_verify_root_binding.py + test_freshness.py + test_file_api.py.
+
+* test(freshness): classify and cover the 3 broad handlers, raise the ceiling 340 -> 343
+
+CI's broad-exception ratchet caught cli/freshness.py adding 3 handlers. Counted per-file rather than
+  assumed: freshness.py 3, file_api.py 0, backend_fallback.py 0, rg_replacement.py 1 but
+  PRE-EXISTING (it moved out of main.py -- net zero).
+
+The ratchet's own rule is to CLASSIFY, not re-pin: "Raised because the handler is classified, not to
+  make an unreviewed one pass."
+
+Classification -- all three sit on a command whose entire purpose is disclosure, and each ADDS a
+  visible UNRESOLVED rather than suppressing a finding: _session_status -> ("unknown", "<ExcClass>:
+  <msg>"), never "current". A check that cannot RUN has not passed. check_freshness/list_sessions ->
+  result_incomplete + "session_index_unreadable" + remediation naming the exception class.
+  check_freshness/get_session -> ("unknown", ...), and unknown_count then forces result_incomplete =
+  "session_state_unreadable".
+
+NARROWING WOULD BE WORSE, which is why these are pinned rather than typed: session_store can raise
+  OSError / JSONDecodeError / KeyError / ValueError, and an uncaught class would CRASH `tg
+  freshness` -- telling an agent nothing -- where "unknown" tells it freshness is UNRESOLVED. A
+  crash is this ratchet's own silent-confidence failure, inverted.
+
+One handler carried `# pragma: no cover - defensive`. Pinning a handler I had never executed would
+  be ASSERTING its behaviour, not classifying it, so it now has
+  test_an_unexpected_staleness_error_is_unknown_never_current: a RuntimeError raised through the
+  staleness probe, asserting "unknown" plus the class name in the detail. The pragma is replaced by
+  that test's name. All three handlers are now named by a covering test in the ceiling comment, so
+  the next reader can check the classification instead of trusting it.
+
+Verified: 20 passed across the ratchet, the freshness suite, and the handler-disposition ledger --
+  which independently tracks classification and could have disagreed.
+
+Note: the earlier POSIX separator fix WORKED. The four ubuntu/macos test-python failures are gone;
+  this was a different gate on the same run.
+
+* feat: register tg freshness -- I unblocked my own blocker
+
+F8 shipped. I had been reporting this blocked on a merge that never came, and the blocker was STALE.
+
+The reasoning was: main.rs needs 7 lines of headroom (a 6-line clap variant plus a 1-line dispatch
+  arm), PR #1141 frees ~380 by splitting it, and I cannot verify a Rust split locally under the
+  shared-box cargo ban. Both halves were true WHEN WRITTEN. Then I added scripts/ci-local's cuda
+  lane and proved the container compiles Rust -- and never revisited the conclusion that depended on
+  that being impossible. A limitation restated without re-checking is an assumption wearing a
+  receipt's clothes; I wrote that line earlier today and then did it again.
+
+So I freed the headroom myself. An AST census picked the extraction target: a top-level fn in
+  main.rs with ZERO other main.rs-local dependencies -- the same technique that found a clean winner
+  in Python after eyeballing picked one that dragged six helpers along. It chose
+  error_chain_has_broken_pipe: ONE call site, no .tg-registration.toml pin, and referenced elsewhere
+  only in DOC COMMENTS (native_search.rs, routing.rs) that describe the guard rather than call it,
+  so those stay accurate. Now rust_core/src/broken_pipe.rs.
+
+main.rs 15127 -> 15096 (31 lines of headroom for a 7-line need) with tg freshness registered: 15103,
+  still under the 15127 pin main.py 13479, under its 13523 pin
+
+All FOUR registration sites per AGENTS.md: KNOWN_COMMANDS, the Commands::Freshness variant +
+  dispatch arm, PUBLIC_TOP_LEVEL_COMMANDS, and the @app.command shim delegating to
+  freshness_command. Registered together -- a half-registered command is the silent misroute the
+  4-site rule exists to prevent.
+
+Acceptance, all measured: registration gate + file-size ratchet + freshness suite 54 passed no
+  persisted state exit 2 after `tg session open` exit 0, "current" after editing a file exit 2,
+  "stale", naming mod.py container rust lane (the step that was impossible before) exit 0, 592
+  passed / 0 failed
+
+cli/freshness.py itself is unchanged from when it was written and tested hours ago; this commit is
+  purely the four sites plus the headroom that made them fit.
+
+* docs(backlog): F8 shipped -- retire a STOP-RECEIPT whose blocker I removed myself
+
+The entry still claimed `tg freshness` was BUILT AND TESTED, NOT REGISTERED, carrying a STOP-RECEIPT
+  that named PR #1141 as the blocker. That has been false since c366f2a.
+
+How it went wrong is worth keeping, so the entry records it rather than quietly flipping to SHIPPED:
+  the receipt was accurate WHEN WRITTEN (main.rs 4 lines short of its ratchet, Rust unverifiable
+  locally under the shared-box cargo ban). Then scripts/ci-local gained a working rust lane and a
+  cuda lane -- and the conclusion that depended on Rust being unverifiable was never revisited. It
+  was reported blocked for hours after it had stopped being blocked.
+
+Resolution recorded with the measurements: AST census picked error_chain_has_broken_pipe (zero
+  main.rs-local deps, one call site, no manifest pin, only doc-comment references elsewhere) ->
+  rust_core/src/broken_pipe.rs; main.rs 15127 -> 15096, 15103 with the clap variant, under the pin.
+  Acceptance: 54 passed on the registration gate + ratchet + freshness suite, exit 2 with no
+  persisted state, exit 0 after `tg session open`, exit 2 + "stale" naming the file after an edit,
+  container rust lane exit 0 / 592 passed, and PR #1152 terminal green on c366f2a (40 pass / 0 fail)
+  including the routing-parity contract that enforces the 4-site rule on all three platforms.
+
+A stale STOP-RECEIPT is worse than no receipt: it parks ready work behind a blocker that no longer
+  exists, which is the drift this session spent its time hunting elsewhere.
+
+* docs(backlog): bank 4 reproduced bug-hunt findings (HUNT-1..4)
+
+Three read-only hunter seats navigated with `tg` (not grep/rg) and returned four defects; the
+  orchestrator reproduced every one on the shipped binary before banking. Gap files were written
+  under C:\tmp, which is scratch -- this is the durable record, because prose across turns is how
+  findings get lost.
+
+HUNT-1 (in progress, plan at council round 3): --multiline silently dropped by every non-ripgrep
+  backend; --cpu -U returns exit 1 = "complete search, no matches" over a search that never ran,
+  with no fallback_reason and no result_incomplete. The benign reading is ruled out by pcre2 RAISING
+  at pipeline.py:188-195 for the same class of flag.
+
+HUNT-2: -F --json funnels UnicodeDecodeError into the same result as the NUL-byte binary check, so a
+  latin-1 text file is reported as skipped_binary. Two front doors of one binary disagree 1 vs 0 on
+  the same corpus and the MCP-facing one is wrong.
+
+HUNT-3: incompleteness.py:196-199 checks the budget cause BEFORE unreadable_path,
+
+inverting docs/CONTRACTS.md:26-27 which states unreadable_path outranks every budget cause when both
+  fire. Reproduced: cause=project-files, budget_remediable=True for an unreadable subtree -- the
+  wrong-knob defect class the contract names. Existing tests only exercise unreadable_paths in
+  ISOLATION, so CI structurally cannot catch it.
+
+HUNT-4: --enrich-ast is absent from rust_core/src/main.rs entirely, so the native door dies with
+  clap 'unexpected argument', exit 2. The --rank registration class, invisible to CliRunner tests.
+
+Also records four shapes RULED OUT during the hunt so they are not re-chased.
+
+---------
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
+## v1.119.9 (2026-09-12)
+
+### Bug Fixes
+
+- **docs**: Refresh the TASK_BOARD reconcile stamp (main was red at 6 releases behind)
+  ([`285ab7c`](https://github.com/oimiragieo/tensor-grep/commit/285ab7c45cb2fb0147ee84edcd0559dbe75dfe29))
+
+`test_task_board_freshness::test_task_board_reconcile_stamp_is_not_many_releases_stale` failed on
+  main (b00f71b), reddening all 6 test-python cells plus test-gpu-nvidia:
+
+docs/TASK_BOARD.md's reconcile stamp is v1.119.2 while pyproject ships v1.119.8 -- 6 releases behind
+  (tolerance 5).
+
+Self-inflicted: I published v1.119.5/.6/.7/.8 in one session without refreshing the stamp. The
+  ratchet is correct -- it exists so the board cannot silently drift behind the product -- and it
+  caught exactly the drift it was built for.
+
+Earlier this session I DECLINED to re-stamp, on the grounds that re-stamping without a real
+  reconcile is a lie. That was right then. It is no longer true: this session moved AGT-02/03/
+  07/08/P9 to IN_FLIGHT with implementation-PR receipts, closed strategic rows P1-P4 against their
+  own receipts, corrected both MCP rows to the live 1.8.0 contract, and closed AGT-06 via #1150. The
+  stamp now records that work, the 8 merged PRs, the open PRs at stamp time, and the blocked items
+  with pointers to their receipts.
+
+Verification is BY FILENAME, not `info.version`: v1.119.5/.6/.7/.8 each confirmed 4/4 on PyPI (3
+  wheels -- macosx_11_0_arm64, manylinux_2_39_x86_64, win_amd64 -- plus sdist), read from the
+  releases map.
+
+Also preserves the three phrases the governance test pins in this line, which my first rewrite
+  dropped and which turned a green stamp fix into a different red: `Task 2A RED remains correctly
+  blocked`, `canonical index`, and the CEO audit filename.
+
+Verified: task_board_freshness + backlog_tracker_truth + public_docs_governance +
+  governance_doc_size_ratchet, 99 passed.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **editor-plane**: Derive graph_completeness instead of hardcoding "strong"
+  ([#1149](https://github.com/oimiragieo/tensor-grep/pull/1149),
+  [`b00f71b`](https://github.com/oimiragieo/tensor-grep/commit/b00f71bf4555eae3923e84d1e786ef67480c0766))
+
+`DefsResponse.graph_completeness` was the literal `"strong"`, so the editor-plane defs surface
+  claimed a strong symbol graph unconditionally -- including when it found ZERO definitions. Agents
+  consume this field to decide how much to trust a result, which makes a fixed maximum the worst
+  possible default.
+
+Scope, checked rather than assumed: this is NOT the `tg defs` CLI path. Live `tg defs ... --json`
+  returns the Python `repo_map` shape (31 fields, `coverage` + `resolution_gaps`) whose
+  `graph_completeness` is already computed -- it returned `"empty"` when dogfooded. The Rust struct
+  is reached through `backend_ast_workflow.rs`'s `execute_defs_core`, which serializes it to the
+  AST-workflow SESSION DAEMON stream. So the overclaim is real and user-reachable, on that surface.
+
+Maps into the vocabulary the Python door already uses (`cli/repo_map.py`: strong / moderate /
+  partial / empty) rather than inventing terms: - 0 definitions -> "empty" (the same word
+  repo_map.py uses for a nil result) - >0 -> "moderate"
+
+`moderate`, not `strong`, is deliberate: the Python defs path earns `strong` only AFTER LSP-proof
+  rows and import filtering, while this path is ast-grep pattern matching over a single configured
+  language, in-file, with no LSP proof and no cross-file resolution. Using the same word for
+  strictly weaker evidence is the overclaim being removed.
+
+No consumer pins the literal: `grep '"strong"' rust_core/ --include=*.rs` matched only the line
+  being changed, and `rust_core/tests/test_schema_compat.rs` types the field as `Option<String>`
+  with no value assertion.
+
+`the_value_varies_with_the_result_and_is_never_strong` is the MUTATION CONTROL -- swapping one
+  hardcoded constant for another would still be dishonest, so it pins that the value actually
+  depends on the definition count AND that "strong" is gone from every arm.
+
+NOT COMPILED LOCALLY: `cargo build/test` is banned on this shared desktop, so first CI compile is
+  the typecheck oracle (A87). `cargo fmt --check` clean. editor_plane.rs is 581 lines against the
+  1500 core limit and is not allowlisted, so the file-size ratchet is not engaged (verified:
+  test_file_size_budget.py 28 passed).
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- Independent security review of the AGT-04 confined-walk design (CHANGES_REQUIRED)
+  ([#1148](https://github.com/oimiragieo/tensor-grep/pull/1148),
+  [`06b2ab4`](https://github.com/oimiragieo/tensor-grep/commit/06b2ab4047b25f58c6413a2a75e13f2c01780714))
+
+`docs/design/2026-09-10-agt04-symlink-junction-confinement.md` closes with a Review gate requiring
+  "an equivalent independent security review before any implementation PR is opened against it. Not
+  self-approved by the same session that wrote it." That review did not exist; the board has carried
+  AGT-04 as blocked on it since 2026-09-10.
+
+This is that pass, by a different session from the author. Verdict CHANGES_REQUIRED, four findings:
+
+- F1 (BLOCKING): items 1 and 3 CONTRADICT for an in-root DIRECTORY symlink -- item 1 excludes it
+  from descent fail-closed, item 3 follows it. No precedence stated, so a builder resolves it
+  arbitrarily and probably inconsistently across call sites. - F2 (BLOCKING): item 3 specifies
+  resolve-then-act ("resolve the link's target and classify it"), which is the TOCTOU shape this
+  repo has a dated law and a whole skill against (cross-platform-path-confinement: "handle-anchored
+  identity versus resolve-then-act"). The design inherits the 2026-08-13 threat model's junction
+  DETECTION but not its identity discipline. Either specify handle-anchored identity or state
+  plainly that the TOCTOU window stays open -- silence reads as a claim that it is closed. - F3
+  (BLOCKING unless scoped out): item 4 adds `git ls-files` as a trusted population oracle with no
+  threat model. The OUTPUT is safe, but the proposal executes git as a subprocess inside an
+  attacker-influenceable repo, and a repo's own .git/config can cause git to run attacker-chosen
+  commands (core.fsmonitor, core.pager, core.sshCommand, aliases). tg is pointed at arbitrary
+  checkouts by design, which is exactly the population where that matters. - F4 (CORRECTNESS): no
+  migration story for tickets minted under the current following behavior. Changing the population
+  rule changes which files are fingerprinted, and `verify_edit_ticket` reads a path with a pre-edit
+  fingerprint and no current one as undeclared drift -> FALSE FAIL on an untouched tree.
+
+Also records what the design gets RIGHT so it is not relitigated at implementation time (fail-closed
+  directory descent, deferring the Windows junction API with a citation requirement, item 5's single
+  parametrized control matrix).
+
+New dated artifact rather than an edit to the 2026-09-10 doc -- never edit a dated receipt in place.
+  Docs only; no code. Verified: public-docs-governance + governance-doc-size-ratchet +
+  skill-library-drift, 50 passed.
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+Co-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.119.8 (2026-09-12)
 
 ### Bug Fixes

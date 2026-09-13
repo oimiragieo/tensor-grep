@@ -171,7 +171,27 @@ _EXCLUDED_MODULES = frozenset({
 #   non-zero (`raise typer.Exit(1) from exc`), the same top-level command-boundary disclosure
 #   pattern already used throughout main.py's existing Typer commands. Neither swallows the
 #   error or returns a normal-looking success value on failure.
-TOTAL_BROAD_HANDLERS_CEILING = 340
+# - 2026-09-12 (tg freshness, PR #1152): 340 -> 343 (+3: cli/freshness.py). All three are
+#   INTENTIONAL-BOUNDARY handlers on a command whose ENTIRE PURPOSE is disclosure, and each one
+#   ADDS a visible UNRESOLVED rather than suppressing a finding:
+#     _session_status            -> returns ("unknown", "<ExcClass>: <msg>"), never "current".
+#                                   A check that cannot RUN has not passed.
+#     check_freshness/list_sessions -> result_incomplete + incomplete_reason
+#                                   "session_index_unreadable" + remediation naming the class.
+#     check_freshness/get_session   -> ("unknown", "<ExcClass>: <msg>"), and unknown_count
+#                                   then forces result_incomplete = "session_state_unreadable".
+#   NARROWING WOULD BE WORSE, which is why these are pinned rather than typed: session_store can
+#   raise OSError / JSONDecodeError / KeyError / ValueError, and an uncaught class would CRASH
+#   `tg freshness` -- telling an agent nothing -- where "unknown" tells it freshness is
+#   UNRESOLVED. A crash is the silent-confidence failure this ratchet exists to prevent, inverted.
+#   None returns a normal-looking success value on failure; none can hide an incomplete RESULT,
+#   because the command produces no search result to hide.
+#   Each handler is COVERED by a test, so this is classified, not asserted:
+#     test_an_unexpected_staleness_error_is_unknown_never_current
+#     test_an_unreadable_session_index_is_unresolved
+#     test_a_session_that_cannot_be_read_is_unknown_not_current
+#     340 + 3 (cli/freshness.py disclosure boundaries, INTENTIONAL-BOUNDARY)          343
+TOTAL_BROAD_HANDLERS_CEILING = 343
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

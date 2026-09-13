@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap
+from tensor_grep.cli.js_ts_scope_gap import _common_ancestor, js_ts_scope_gap
 
 
 def _project(tmp_path: Path, *, with_tsconfig: bool = True) -> Path:
@@ -67,3 +67,50 @@ def test_non_js_ts_universe_reports_no_gap(tmp_path: Path) -> None:
     files[0].write_text("x = 1\n", encoding="utf-8")
 
     assert js_ts_scope_gap(files) is None
+
+
+def test_sources_in_a_subdirectory_of_a_correctly_scoped_root_emit_no_gap(tmp_path) -> None:
+    """REGRESSION (validator seat, 2026-09-12). The original control was topologically
+    vacuous per Oracle Form 5: it placed `index.tsx` BESIDE `tsconfig.json`, the one layout
+    where the common parent of the matched files IS the scan root, so the inference bug it
+    was meant to catch could not appear.
+
+    The real-world shape -- tsconfig at the project root, every source under `src/` -- made
+    the common parent `<project>/src`, which has no tsconfig, so a CORRECTLY scoped scan was
+    told it was mis-scoped. Shipped in v1.119.7 and reproduced on the in-tree fixture
+    `benchmarks/bakeoff_fixtures/js_ts/tsconfig_path_alias`.
+    """
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    (root / "tsconfig.json").write_text("{}", encoding="utf-8")
+    files = []
+    for name in ("service.ts", "payments.ts"):
+        f = root / "src" / name
+        f.write_text("export const x = 1;\n", encoding="utf-8")
+        files.append(f)
+
+    # The common parent is <project>/src -- NOT the scan root. That divergence is the bug.
+    assert _common_ancestor(files) == root / "src"
+    assert not (root / "src" / "tsconfig.json").exists()
+
+    # Scanned at the project root, aliases resolve: no gap.
+    assert js_ts_scope_gap(files, root) is None
+
+
+def test_the_same_tree_scanned_below_the_tsconfig_still_reports_the_gap(tmp_path) -> None:
+    """Positive arm of the regression above: identical tree, identical files, only the scan
+    root differs. Without this, the fix could pass by never emitting a gap at all.
+    """
+    root = tmp_path / "project"
+    (root / "src").mkdir(parents=True)
+    (root / "tsconfig.json").write_text("{}", encoding="utf-8")
+    files = []
+    for name in ("service.ts", "payments.ts"):
+        f = root / "src" / name
+        f.write_text("export const x = 1;\n", encoding="utf-8")
+        files.append(f)
+
+    gap = js_ts_scope_gap(files, root / "src")
+    assert gap is not None
+    assert gap["files_affected"] == 2
+    assert str(root) in gap["remediation"]
