@@ -103,27 +103,25 @@ jobs:
   # runners bill at a materially higher per-minute multiplier than Linux/Windows. `matrix.os` is
   # NOT a valid context in a job-level `if:` (only github/needs/vars/inputs are; matrix is only
   # available in step-level `if:` and in `strategy.matrix` itself) -- a first attempt at this job
-  # used `if: matrix.os != 'macos-latest' || ...` directly on test-python/test-rust-core/
-  # native-build-smoke and GitHub rejected the whole workflow file at push time with zero jobs
-  # created ("This run likely failed because of a workflow file issue"). The valid pattern is a
-  # DYNAMIC matrix: compute the OS list here (fromJson-consumed by each job's `strategy.matrix`),
-  # so a macOS leg simply never gets scheduled outside the monthly run rather than being
-  # scheduled-then-skipped.
+  # used `if: matrix.os != 'macos-latest' || ...` directly on test-python/test-rust-core and
+  # GitHub rejected the whole workflow file at push time with zero jobs created ("This run likely
+  # failed because of a workflow file issue"). The valid pattern is a DYNAMIC matrix: compute the
+  # OS list here (fromJson-consumed by each job's `strategy.matrix`), so the macOS leg simply
+  # never gets scheduled outside the monthly run rather than being scheduled-then-skipped.
+  # native-build-smoke is deliberately NOT wired to this gate -- see that job's own comment for
+  # why (a static-YAML-parsing release-asset-parity check pins its matrix).
   ci-cost-os-gate:
     name: ci-cost-os-gate
     runs-on: ubuntu-latest
     outputs:
       test_os: ${{ steps.set.outputs.test_os }}
-      native_os: ${{ steps.set.outputs.native_os }}
     steps:
       - id: set
         run: |
           if [ "${{ github.event.schedule }}" = "0 6 1 * *" ]; then
             echo 'test_os=["ubuntu-latest","windows-latest","macos-latest"]' >> "$GITHUB_OUTPUT"
-            echo 'native_os=["ubuntu-latest","windows-latest","macos-latest","macos-15-intel"]' >> "$GITHUB_OUTPUT"
           else
             echo 'test_os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
-            echo 'native_os=["ubuntu-latest","windows-latest"]' >> "$GITHUB_OUTPUT"
           fi
 
   # ~8s of tests (80 of them, measured) versus a docs drift shipping unnoticed. Runs
@@ -847,18 +845,26 @@ jobs:
 
   native-build-smoke:
     name: native-build-smoke (${{ matrix.os }})
-    needs: [smoke, changes, ci-cost-os-gate]
+    needs: [smoke, changes]
     if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
+      # CI-cost discipline (2026-09-13): this matrix is deliberately NOT gated to the monthly
+      # schedule like test-python/test-rust-core's macOS legs -- macos-15-intel is the exact
+      # runner label build-release-native-assets uses to produce the shipped `tg-macos-amd64-cpu`
+      # asset, and scripts/_release_assets_checks/ci_workflow.py statically pins that this job's
+      # matrix must always include it, specifically so a broken Intel-Mac build is caught on every
+      # PR rather than only once a month right before it reaches a real release. That check parses
+      # this YAML statically and cannot resolve a fromJson(...)-computed list, so macos-15-intel
+      # must stay a literal matrix entry here. macos-latest carries no such constraint (it is not
+      # a shipped release asset, purely an extra smoke double-check) and stays on every PR too --
+      # this job is comparatively cheap (a build+one-shot smoke, not the full test suite), so the
+      # cost/parity tradeoff favors leaving it alone entirely.
       matrix:
-        # CI-cost discipline (2026-09-13): os list COMPUTED by ci-cost-os-gate (see that job's
-        # comment) -- the two macOS legs (macos-latest, macos-15-intel) are included only on the
-        # monthly schedule run.
-        os: ${{ fromJson(needs.ci-cost-os-gate.outputs.native_os) }}
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
