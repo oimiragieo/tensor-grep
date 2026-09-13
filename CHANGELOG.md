@@ -1,6 +1,88 @@
 # CHANGELOG
 
 
+## v1.119.12 (2026-09-13)
+
+### Bug Fixes
+
+- **pipeline**: Fail closed on --multiline instead of answering a false complete
+  ([`5331dc9`](https://github.com/oimiragieo/tensor-grep/commit/5331dc92654c6944420af459f521e78e67c7a98f))
+
+`config.multiline` has exactly ONE consumer in the package -- backends/ripgrep_backend.py:585-591 --
+  so every other backend selection silently DISCARDED the flag and ran a line-oriented search. That
+  returns exit 1, which docs/CONTRACTS.md defines as "complete search, no matches": a false complete
+  the caller cannot distinguish from the pattern genuinely being absent.
+
+The gate mirrors the pcre2 branch immediately above it: route to ripgrep when it is available, raise
+  ConfigurationError when it is not. It is spliced before `elif force_cpu:` because that arm, the
+  rg-absent secondary path, the count fast path and the semantics arm all dropped the flag.
+
+Three exclusions, each deliberate: * `--ast` falls through to the AST arm -- ast-grep matches tree
+  structure, not a regex character stream, so there is no `.` for --multiline-dotall to redefine and
+  no line-orientation for -U to lift. * `--ltl` RAISES rather than routing: CPUBackend never reads
+  config.multiline, so routing there discards -U, and routing to rg would discard LTL semantics.
+  Refusing is the only answer that is neither a silent downgrade nor a lie. * an explicit
+  --gpu-device-ids request raises rather than being quietly rerouted, mirroring the existing guard
+  in the AST arm.
+
+This gate is the single cure for BOTH front doors. The native TEXT route already fails closed on its
+  own (search_requires_ripgrep_passthrough, rust_core/src/main.rs:9095-9132, exiting 2 via
+  require_ripgrep_or_exit), but that flag list sits inside `!args.json && !args.ndjson` -- the
+  native STRUCTURED route re-dispatches --json/--ndjson + -U back to the Python sidecar
+  (main.rs:1676/:1737), landing in this very Pipeline.
+
+Evidence: * pre-fix RED measured at 5 failed / 2 passed, post-fix 7 passed * mutation control:
+  restoring the pre-fix file makes `grep -c multiline_explicit_ripgrep` print 0 and the RED returns
+  as 5 failed / 2 passed; restoring the fix returns 7 passed * ruff check clean, mypy clean (136
+  files), collateral 70 passed / 1 xfailed * plan reviewed across 14 council rounds; the final two
+  were clean on one unchanged hash, and Codex Sol audited the applied diff
+
+docs/BACKLOG.md also gains HUNT-2's end-to-end reproduction (with the two isolation controls that
+  make it a mislabel rather than a dead arm) and a fix for an A111 violation: two committed
+  citations pointed at `docs/superpowers/` plan paths, which .gitignore:118 excludes from every
+  clone.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+- **stringzilla**: Disclose undecodable TEXT instead of labelling it binary
+  ([`8ae32db`](https://github.com/oimiragieo/tensor-grep/commit/8ae32dba0207c34d34cbebeafaeb37e5c62fff6a))
+
+`_load_searchable_text` had exactly two `return None` sites and they meant OPPOSITE things: the NUL
+  probe means "this really is binary", the UnicodeDecodeError arm means "this is TEXT I could not
+  decode". Both call sites received the same bare None and both labelled the result
+  `stringzilla_fixed_strings_skipped_binary`, with neither `result_incomplete` nor
+  `incomplete_reason_class` set. So a latin-1 file containing the pattern returned exit 0 with zero
+  matches -- indistinguishable from the pattern genuinely being absent, which is the false complete
+  docs/CONTRACTS.md exists to prevent.
+
+The capability was never missing from the codebase, only from this backend: CPUBackend already draws
+  the same distinction with `_RustUtf8DecodeMismatch` (cpu_backend.py:70). This mirrors it. The NUL
+  probe is untouched, so a genuine binary still reports `skipped_binary` -- pinned by a control.
+
+BOTH call sites are fixed, and that is the point. Caller 2 is reached by any NON-fixed-string
+  search, and by fixed-string searches whose pattern is under 3 characters or uses invert_match,
+  because `_search_with_index` returns early there. Fixing caller 1 alone leaves every one of those
+  paths still mislabelling.
+
+Why CI never caught this: the NUL probe runs BEFORE the decode attempt, so a fixture containing a
+  NUL short-circuits and a valid-UTF-8 fixture never fails to decode. No fixture in the suite was
+  both latin-1 AND NUL-free -- the population that exhibits the defect was empty by construction.
+
+Evidence: * pre-fix RED measured 2 failed / 2 passed with src/ untouched; post-fix 4 passed *
+  HALF-FIX CONTROL: reverting caller 2 only, caller 1 still fixed, gives 1 failed / 3 passed -- the
+  suite genuinely catches a one-site fix. The plan's first draft had a single undecodable arm and
+  would have gone green on exactly that half-fix; council round 1's codex_sub caught it while four
+  other seats cleared the plan. * ruff check clean, mypy clean (136 files), suite re-run AFTER ruff
+  format touched a file, collateral stringzilla + silent-failure ratchet 24 passed * plan cleared by
+  council rounds 2 and 3 on one unchanged hash, five content votes each
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_017dXq2wuRT1uZTHEcxvNtc4
+
+
 ## v1.119.11 (2026-09-13)
 
 ### Bug Fixes
