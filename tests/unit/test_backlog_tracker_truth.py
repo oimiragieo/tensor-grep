@@ -119,6 +119,12 @@ IMPLEMENTATION_PRS_RE = re.compile(
 )
 CLOSURE_PR_RE = re.compile(r"(?:^|; )Closure PR: (?P<pr>PR #[1-9]\d*)(?:;|$)")
 MERGED_SHA_RE = re.compile(r"(?:^|; )Merged SHA: (?P<sha>[0-9a-f]{40})(?:;|$)")
+# Work that landed as a DIRECT COMMIT ON MAIN has no PR number, so the `PR #NNN` requirement
+# below made SHIPPED unreachable for it -- such rows were stuck at READY forever even with
+# every checkbox done, which is a permanent FALSE READY (an orchestrator re-dispatches it).
+# A direct-main SHA is the equivalent receipt: it names the exact commit, which is strictly
+# more specific than a PR number.
+DIRECT_MAIN_SHA_RE = re.compile(r"(?:^|; )Direct-main SHA: (?P<sha>[0-9a-f]{7,40})(?:;|$)")
 WINDOWS_ACCOUNT_PATH_RE = re.compile(r"[A-Za-z]:[\\/]+Users[\\/]+(?!<)[^\\/\s]+", re.IGNORECASE)
 
 
@@ -179,11 +185,22 @@ def _parse_status_index(
         if checked != (status in TERMINAL):
             raise AssertionError(f"checkbox/status disagreement for {item_id}")
         pr = match.group("pr")
+        trigger_raw = match.group("trigger")
+        direct_main = DIRECT_MAIN_SHA_RE.search(trigger_raw) is not None
         if status in PR_STATUSES:
             if re.fullmatch(r"PR #[1-9]\d*", pr) is None:
-                raise AssertionError(f"{item_id} requires one literal PR #NNN field")
+                # SHIPPED-without-a-PR is allowed ONLY with a direct-main commit receipt, and
+                # only for SHIPPED: IN_FLIGHT means "a PR is open", which a direct commit is
+                # not. Without either receipt the row is an unevidenced completion claim.
+                if not (status == "SHIPPED" and pr == "none" and direct_main):
+                    raise AssertionError(
+                        f"{item_id} requires one literal PR #NNN field, or (SHIPPED only) "
+                        "PR: none with a `Direct-main SHA: <sha>` receipt in the trigger"
+                    )
         elif pr != "none":
             raise AssertionError(f"{item_id} must use PR: none for status {status}")
+        if direct_main and status != "SHIPPED":
+            raise AssertionError(f"{item_id} carries a Direct-main SHA receipt but is not SHIPPED")
         trigger = match.group("trigger").strip()
         if not trigger:
             raise AssertionError(f"empty trigger for {item_id}")
@@ -267,6 +284,57 @@ def test_minimal_valid_synthetic_document() -> None:
     index = _parse_status_index(_valid_document(), expected_ids={"X"})
     assert index.version == "2026-08-02.1"
     assert index.rows["X"].status == "READY"
+
+
+def _shipped_row(pr: str, trigger: str) -> str:
+    return _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        f"- [x] **X** — Status: SHIPPED; PR: {pr}; Trigger: {trigger}",
+    )
+
+
+def test_shipped_without_a_pr_needs_a_direct_main_sha_receipt() -> None:
+    """Work landed as a direct commit on main has no PR number.
+
+    Before this, SHIPPED required a literal `PR #NNN`, so such a row could never leave READY
+    even with every checkbox done -- a permanent FALSE READY that makes an orchestrator
+    re-dispatch finished work. A direct-main SHA is the equivalent receipt.
+    """
+    text = _shipped_row("none", "Direct-main SHA: 390c39f; reopen on a new failing receipt")
+    index = _parse_status_index(text, expected_ids={"X"})
+    assert index.rows["X"].status == "SHIPPED"
+
+
+def test_shipped_without_a_pr_or_a_direct_main_sha_is_rejected() -> None:
+    """MUTATION CONTROL for the relaxation above.
+
+    The point of the new branch is to accept a RECEIPT, not to accept "no PR". A bare
+    `PR: none` SHIPPED row is an unevidenced completion claim and must still fail, or the
+    relaxation would have removed the gate rather than widened it.
+    """
+    text = _shipped_row("none", "no receipt at all, just a claim")
+    with pytest.raises(AssertionError, match="Direct-main SHA"):
+        _parse_status_index(text, expected_ids={"X"})
+
+
+def test_in_flight_cannot_use_a_direct_main_sha_instead_of_a_pr() -> None:
+    """IN_FLIGHT means a PR is open; a direct commit is not an open PR."""
+    text = _valid_document().replace(
+        "- [ ] **X** — Status: READY; PR: none; Trigger: first implementation PR",
+        "- [ ] **X** — Status: IN_FLIGHT; PR: none; Trigger: Direct-main SHA: 390c39f",
+    )
+    with pytest.raises(AssertionError, match="PR #NNN"):
+        _parse_status_index(text, expected_ids={"X"})
+
+
+def test_a_direct_main_receipt_on_a_nonshipped_row_is_rejected() -> None:
+    """A completion receipt on a row that is not SHIPPED is a contradiction."""
+    text = _valid_document().replace(
+        "Trigger: first implementation PR",
+        "Trigger: Direct-main SHA: 390c39f; still being worked",
+    )
+    with pytest.raises(AssertionError, match="not SHIPPED"):
+        _parse_status_index(text, expected_ids={"X"})
 
 
 def test_missing_version_metadata_is_rejected() -> None:
