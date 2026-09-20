@@ -1,6 +1,74 @@
 # CHANGELOG
 
 
+## v1.121.1 (2026-09-20)
+
+### Bug Fixes
+
+- Keep task board below governance size ceiling
+  ([#1163](https://github.com/oimiragieo/tensor-grep/pull/1163),
+  [`63f05a6`](https://github.com/oimiragieo/tensor-grep/commit/63f05a65b9215e01ececf138a0cec2681ddebbec))
+
+### Continuous Integration
+
+- Scope ci-cost-os-gate to zero GITHUB_TOKEN permissions
+  ([#1161](https://github.com/oimiragieo/tensor-grep/pull/1161),
+  [`97eea20`](https://github.com/oimiragieo/tensor-grep/commit/97eea20906cde3a82015820a9fb9a260dcdcedc6))
+
+Code-scanning alert #24 (actions/missing-workflow-permissions) fired on the ci-cost-os-gate job: it
+  declared no job-level permissions and inherited the default GITHUB_TOKEN scope, yet its single
+  inline step only compares github.event.schedule and writes one step output. Add the empty mapping
+  permissions: {} beneath runs-on: ubuntu-latest - the narrowest true contract for a token-free job.
+  Behavior unchanged: same name, runner, test_os output key, schedule comparison, and both JSON OS
+  arrays; diff vs merge parent c3b33ce is additions-only (numstat 1 0).
+
+tests/unit/test_ci_cost_os_gate_permissions.py pins the mapping (present AND empty, distinguishing
+  absent-key from {} via a sentinel), the token-free step list, and the output contract. Observed
+  RED before the fix (1 failed, 2 passed: declares_empty_permissions naming alert #24); all four
+  mutation controls observed RED (A: remove key; B: widen to contents: read; C: inject
+  actions/checkout - RED on both token-marker and single-step contract; D: drift the default OS
+  array).
+
+Gates: ruff check clean; test file already ruff-format --preview clean; file_size_budget.py --report
+  0 regressions; check_repo_hygiene.py passed; focused ci.yml suites 98 passed;
+  validate_release_assets.py passed; git diff --check clean. All runs via uv run --no-sync against
+  the shared Windows venv.
+
+Co-authored-by: factory-droid[bot] <138933559+factory-droid[bot]@users.noreply.github.com>
+
+GLM audit round 3: the token scan read yaml.safe_dump(job), but PyYAML folds long scalars at its
+  ~80-column wrap and can split a marker such as `gh api` across `gh\` + newline + ` api` --
+  forgeably green. Replaced with a typed recursive traversal (_iter_string_leaves) that checks
+  string keys and string leaves individually and never concatenates adjacent leaves; case-folded
+  comparison and original marker spelling in diagnostics preserved. Hostile controls proven:
+  injected `gh api` at a fold-sensitive offset of the real run string (bite control pins that the
+  dump misses it), github.token / GITHUB.TOKEN / github-token still detected, real job green,
+  key-position markers detected, no false positive from adjacent leaves. Mutations observed RED:
+  dump-scan restore (folding blind spot, detected: []) and leaf-join (fabricated `gh api`);
+  restored, 3/3 green.
+
+GLM audit round 5: the output-contract test pinned the job-side schedule comparison to the monthly
+  cron but never the producer-side top-level `on.schedule` trigger, so a trigger drift left the
+  scheduled branch unreachable while every test stayed green. The test now parses the top-level
+  trigger (explicit PyYAML 1.1 `on`->True vs YAML 1.2 "on" key handling) via _workflow_trigger and
+  fails clearly on malformed schedule shapes via _schedule_crons, pinning _MONTHLY_CRON among the
+  schedule entries. RED control: mutating ONLY the trigger cron to 0 7 1 * * (the job-side "0 6 1 *
+  *" occurrence verified untouched) reddened exactly the new producer-side assertion (1 failed, 2
+  passed); HEAD's pre-fix test scored 3 passed under the same mutation -- the false green this fix
+  removes; ci.yml restored byte-identical (SHA-256 match). GREEN: 3/3 focused; job-side cron/array
+  pins unchanged. Gates at final bytes: mypy --strict clean; ruff check clean; ruff format --check
+  --preview clean on the test file (remaining 20 repo-wide reformat candidates pre-exist on HEAD);
+  98 workflow suites passed; validate_release_assets.py passed; file_size_budget.py --report 0
+  regressions; check_repo_hygiene.py passed; git diff --check clean. ci.yml untouched beyond the
+  committed one-line permissions fix.
+
+### Documentation
+
+- Reconcile AGT-01 and security closeout
+  ([#1162](https://github.com/oimiragieo/tensor-grep/pull/1162),
+  [`69dbe9e`](https://github.com/oimiragieo/tensor-grep/commit/69dbe9ead4a664fb7375cf73d80cee0816ba8e53))
+
+
 ## v1.121.0 (2026-09-20)
 
 ### Features
