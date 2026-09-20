@@ -861,6 +861,62 @@ def test_scorecard_payload_reports_an_empty_join_when_no_records_are_supplied() 
     assert join["summary"]["complete_cases"] == 0
 
 
+def test_scorecard_join_retains_non_dict_records_as_unidentified() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_non_dict_records",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [],
+        "outcome_join": {
+            "predictions": ["not-a-prediction"],
+            "outcomes": ["not-an-outcome"],
+        },
+    })
+
+    join = payload["outcome_join"]
+    expected_missing = [
+        "system_id",
+        "instance_id",
+        "repo_commit",
+        "tool_version",
+        "model_id",
+        "budget_id",
+    ]
+    assert join["unidentified_predictions"] == [
+        {
+            "record": "not-a-prediction",
+            "missing_fields": expected_missing,
+        }
+    ]
+    assert join["unidentified_outcomes"] == [
+        {
+            "record": "not-an-outcome",
+            "missing_fields": expected_missing,
+        }
+    ]
+    assert join["summary"]["unidentified_prediction_count"] == 1
+    assert join["summary"]["unidentified_outcome_count"] == 1
+
+
+def test_scorecard_join_rejects_null_record_lists_clearly() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_null_records",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({
+            "systems": [],
+            "outcome_join": {"predictions": None},
+        })
+    except TypeError as error:
+        assert str(error) == "outcome_join predictions must be a list"
+    else:
+        raise AssertionError("null outcome_join predictions must fail clearly")
+
+
 def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
     module = _load_script_module(
         "scorecard_outcome_join_written",

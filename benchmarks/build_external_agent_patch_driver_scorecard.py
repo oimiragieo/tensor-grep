@@ -157,16 +157,16 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     join_inputs = comparison.get("outcome_join")
     if not isinstance(join_inputs, dict):
         join_inputs = {}
+    predictions = join_inputs.get("predictions", [])
+    if not isinstance(predictions, list):
+        raise TypeError("outcome_join predictions must be a list")
+    outcomes = join_inputs.get("outcomes", [])
+    if not isinstance(outcomes, list):
+        raise TypeError("outcome_join outcomes must be a list")
     join_module = _load_outcome_join_module()
     outcome_join = join_module.build_outcome_join_report(
-        predictions=[
-            dict(item)
-            for item in list(join_inputs.get("predictions", []))
-            if isinstance(item, dict)
-        ],
-        outcomes=[
-            dict(item) for item in list(join_inputs.get("outcomes", [])) if isinstance(item, dict)
-        ],
+        predictions=predictions,
+        outcomes=outcomes,
     )
     return {
         "artifact": "external_agent_patch_driver_scorecard",
