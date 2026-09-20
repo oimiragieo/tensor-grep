@@ -107,7 +107,7 @@ def adapt_legacy_bakeoff_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _index(
-    records: list[dict[str, Any]],
+    records: list[Any],
 ) -> tuple[
     dict[OutcomeIdentity, dict[str, Any]],
     list[dict[str, Any]],
@@ -117,6 +117,12 @@ def _index(
     unidentified: list[dict[str, Any]] = []
     counts: Counter[OutcomeIdentity] = Counter()
     for record in records:
+        if not isinstance(record, dict):
+            unidentified.append({
+                "record": record,
+                "missing_fields": list(IDENTITY_FIELDS),
+            })
+            continue
         identity, missing = extract_identity(record)
         if identity is None:
             unidentified.append({"record": dict(record), "missing_fields": missing})
@@ -170,8 +176,8 @@ def _rate(numerator: int, denominator: int) -> float | None:
 
 def build_outcome_join_report(
     *,
-    predictions: list[dict[str, Any]],
-    outcomes: list[dict[str, Any]],
+    predictions: list[Any],
+    outcomes: list[Any],
 ) -> dict[str, Any]:
     pred_by_id, unidentified_predictions, pred_counts = _index(predictions)
     out_by_id, unidentified_outcomes, out_counts = _index(outcomes)

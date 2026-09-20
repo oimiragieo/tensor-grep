@@ -155,6 +155,20 @@ def test_identity_components_with_padding_or_controls_are_unidentified() -> None
     assert control_missing == ["model_id"]
 
 
+def test_non_object_records_are_quarantined_as_unidentified() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[None],
+        outcomes=["malformed"],
+    )
+
+    assert report["joined"] == []
+    assert report["summary"]["unidentified_prediction_count"] == 1
+    assert report["summary"]["unidentified_outcome_count"] == 1
+    assert report["unidentified_predictions"][0]["missing_fields"] == list(module.IDENTITY_FIELDS)
+
+
 def test_join_does_not_cross_join_rows_differing_in_one_identity_field() -> None:
     """MAP.md Answer 1: same instance_id, different model_id must never join."""
     module = _load_join_module()
