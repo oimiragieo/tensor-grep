@@ -3,6 +3,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 _MISSING = object()
 
 
@@ -915,6 +917,42 @@ def test_scorecard_join_rejects_null_record_lists_clearly() -> None:
         assert str(error) == "outcome_join predictions must be a list"
     else:
         raise AssertionError("null outcome_join predictions must fail clearly")
+
+
+@pytest.mark.parametrize("invalid_join", [None, "not-an-object", []])
+def test_scorecard_rejects_present_non_object_outcome_join(invalid_join: object) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_invalid_container",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": [], "outcome_join": invalid_join})
+    except TypeError as error:
+        assert str(error) == "outcome_join must be an object"
+    else:
+        raise AssertionError("present non-object outcome_join must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_present_null_outcome_join(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_null_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({"systems": [], "outcome_join": None}),
+        encoding="utf-8",
+    )
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "outcome_join must be an object"
+    else:
+        raise AssertionError("present null outcome_join must fail clearly")
+    assert not output_path.exists()
 
 
 def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:

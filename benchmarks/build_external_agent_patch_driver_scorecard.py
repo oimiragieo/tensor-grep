@@ -154,9 +154,12 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     outcome_states = [entry["outcome_state"] for entry in by_system.values()]
     complete_outcomes = [state for state in outcome_states if state != "unavailable"]
     success_count = sum(1 for state in complete_outcomes if state == "passed")
-    join_inputs = comparison.get("outcome_join")
-    if not isinstance(join_inputs, dict):
+    if "outcome_join" not in comparison:
         join_inputs = {}
+    else:
+        join_inputs = comparison["outcome_join"]
+        if not isinstance(join_inputs, dict):
+            raise TypeError("outcome_join must be an object")
     predictions = join_inputs.get("predictions", [])
     if not isinstance(predictions, list):
         raise TypeError("outcome_join predictions must be a list")
