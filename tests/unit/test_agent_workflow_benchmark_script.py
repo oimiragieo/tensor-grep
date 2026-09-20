@@ -774,6 +774,52 @@ def test_scorecard_outcome_state_requires_strict_boolean_validation_flag() -> No
     assert payload["summary"]["verified_task_success_rate"] == 0.0
 
 
+def test_scorecard_rejects_duplicate_system_names_before_scoring() -> None:
+    module = _load_script_module(
+        "scorecard_duplicate_system_names",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    comparison = {
+        "systems": [
+            {"system": "tensor-grep", "primary_file": "src/a.py"},
+            {"system": "tensor-grep", "primary_file": "src/b.py"},
+        ]
+    }
+
+    try:
+        module.build_scorecard_payload(comparison)
+    except ValueError as error:
+        assert str(error) == "duplicate system name: 'tensor-grep'"
+    else:
+        raise AssertionError("duplicate system names must fail closed")
+
+
+def test_scorecard_main_does_not_publish_duplicate_system_artifact(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_duplicate_system_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({
+            "systems": [
+                {"system": "tensor-grep", "primary_file": "src/a.py"},
+                {"system": "tensor-grep", "primary_file": "src/b.py"},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except ValueError as error:
+        assert str(error) == "duplicate system name: 'tensor-grep'"
+    else:
+        raise AssertionError("duplicate system names must fail closed")
+    assert not output_path.exists()
+
+
 def test_scorecard_payload_embeds_the_outcome_join_report() -> None:
     module = _load_script_module(
         "scorecard_outcome_join_embedded",

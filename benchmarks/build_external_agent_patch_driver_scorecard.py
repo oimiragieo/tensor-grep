@@ -105,6 +105,12 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     systems = [
         dict(system) for system in list(comparison.get("systems", [])) if isinstance(system, dict)
     ]
+    seen_system_names: set[str] = set()
+    for system in systems:
+        system_name = str(system.get("system") or "")
+        if system_name in seen_system_names:
+            raise ValueError(f"duplicate system name: {system_name!r}")
+        seen_system_names.add(system_name)
     by_system: dict[str, dict[str, Any]] = {}
     compactness_scores: list[float] = []
     fit_scores: list[float] = []
