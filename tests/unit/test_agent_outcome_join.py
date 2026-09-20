@@ -289,6 +289,25 @@ def test_absent_execution_is_unavailable_never_passing() -> None:
     assert report["summary"]["verified_task_success_rate"] is None
 
 
+def test_non_boolean_outcome_flags_never_fabricate_verified_success() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction()],
+        outcomes=[
+            _outcome(
+                execution_observed="false",
+                validation_passed="false",
+            )
+        ],
+    )
+
+    row = report["joined"][0]
+    assert row["outcome_state"] == "unavailable"
+    assert row["verified_task_success"] is False
+    assert report["summary"]["complete_cases"] == 0
+
+
 def test_tokens_and_elapsed_include_failed_attempts() -> None:
     module = _load_join_module()
 

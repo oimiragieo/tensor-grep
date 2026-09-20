@@ -117,9 +117,9 @@ def _index(
 
 
 def _outcome_state(outcome: dict[str, Any]) -> str:
-    if not bool(outcome.get("execution_observed")):
+    if outcome.get("execution_observed") is not True:
         return "unavailable"
-    return "passed" if bool(outcome.get("validation_passed")) else "failed"
+    return "passed" if outcome.get("validation_passed") is True else "failed"
 
 
 def _command_fit(prediction: dict[str, Any]) -> bool:
