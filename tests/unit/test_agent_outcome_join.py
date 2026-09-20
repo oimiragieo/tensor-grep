@@ -260,6 +260,20 @@ def test_cargo_command_fit_with_failing_patch_gets_fit_but_zero_verified_success
     assert report["summary"]["verified_task_success_rate"] == 0.0
 
 
+def test_malformed_validation_command_does_not_earn_command_fit_credit() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction(predicted_validation_commands=[None, 7, "   "])],
+        outcomes=[_outcome()],
+    )
+
+    row = report["joined"][0]
+    assert row["command_fit"] is False
+    assert report["summary"]["command_fit_cases"] == 0
+    assert report["summary"]["command_fit_rate"] == 0.0
+
+
 def test_absent_execution_is_unavailable_never_passing() -> None:
     module = _load_join_module()
 

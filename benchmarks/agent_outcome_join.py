@@ -126,7 +126,7 @@ def _command_fit(prediction: dict[str, Any]) -> bool:
     commands = prediction.get("predicted_validation_commands")
     if not isinstance(commands, list):
         return False
-    return any(str(item).strip() for item in commands)
+    return any(isinstance(item, str) and bool(item.strip()) for item in commands)
 
 
 def _nullable_total(values: list[Any]) -> Any:
