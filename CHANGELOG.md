@@ -1,6 +1,208 @@
 # CHANGELOG
 
 
+## v1.120.0 (2026-09-20)
+
+### Chores
+
+- **deps**: Bump anyio in the uv group across 1 directory
+  ([#1157](https://github.com/oimiragieo/tensor-grep/pull/1157),
+  [`855521f`](https://github.com/oimiragieo/tensor-grep/commit/855521f5c1779ba10e7492df0d24ed9265a6805e))
+
+Bumps the uv group with 1 update in the / directory: [anyio](https://github.com/agronholm/anyio).
+
+Updates `anyio` from 4.12.1 to 4.14.2 - [Release notes](https://github.com/agronholm/anyio/releases)
+  - [Commits](https://github.com/agronholm/anyio/compare/4.12.1...4.14.2)
+
+--- updated-dependencies: - dependency-name: anyio dependency-version: 4.14.2
+
+dependency-type: indirect
+
+dependency-group: uv ...
+
+Signed-off-by: dependabot[bot] <support@github.com>
+
+Co-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
+
+### Continuous Integration
+
+- **cost**: Restrict macOS matrix legs to a monthly schedule
+  ([#1156](https://github.com/oimiragieo/tensor-grep/pull/1156),
+  [`7dc5970`](https://github.com/oimiragieo/tensor-grep/commit/7dc59700cba92de978b80286f6364a0fa2e02e47))
+
+* ci(cost): restrict macOS matrix legs to a monthly schedule
+
+Operator directive (2026-09-13): $524 spent on GitHub Actions so far. macOS runners are billed at a
+  materially higher per-minute multiplier than Linux/Windows, and this repo runs macOS legs on EVERY
+  push/PR across three matrix jobs (test-python: 1 leg, test-rust-core: 1 leg, native-build-smoke: 2
+  legs -- macos-latest + macos-15-intel).
+
+Add a second monthly cron trigger (1st of month) alongside the existing weekly one, and gate every
+  non-release macOS leg in those three jobs to run only when triggered by that monthly schedule
+  (matched via the exact github.event.schedule string, so it does not also fire on the pre-existing
+  weekly cron). ubuntu-latest and windows-latest legs are completely unaffected and keep running on
+  every push/PR exactly as before.
+
+Release-time macOS jobs (build-pypi-wheels, build-release-native-assets) are deliberately left
+  untouched: those gate on needs.release outputs and only run once per actual release, not per PR,
+  so they are not part of the per-PR cost driver this change targets and macOS wheels/binaries are a
+  real product requirement at release time.
+
+Follows the repo's existing CI-cost-discipline precedent (the macOS x nightly exclude already in
+  test-rust-core, thinktank-ratified).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+* fix(ci): use single-line if: expressions for the macOS monthly gate
+
+The multi-line `if: |` block scalars in the previous commit failed the workflow file's own
+  parse/schema validation ("This run likely failed because of a workflow file issue", 0 jobs
+  created) despite parsing fine under plain PyYAML. Collapse each to the single-line style already
+  used throughout this file.
+
+* fix(ci): compute the macOS-gated matrix via a job, not a job-level if:
+
+`matrix.os` is not a valid context in a job-level `if:` (only github/needs/vars/inputs are -- matrix
+  is only available in step-level `if:` and in `strategy.matrix` itself). The previous two commits
+  both used `if: matrix.os != 'macos-latest' || ...` directly on the three affected jobs, and GitHub
+  rejected the whole workflow file at push time with zero jobs created every time ("This run likely
+  failed because of a workflow file issue").
+
+Replace with the standard dynamic-matrix pattern: a new `ci-cost-os-gate` job computes the OS list
+  as JSON (schedule-gated) and each of test-python/test-rust-core/native-build-smoke consumes it via
+  `fromJson(needs.ci-cost-os-gate.outputs.*)` in their own `strategy.matrix.os`. A macOS leg now
+  simply never gets scheduled outside the monthly run, rather than being scheduled then
+  short-circuited.
+
+* fix(ci): leave native-build-smoke's macOS legs ungated
+
+scripts/_release_assets_checks/ci_workflow.py statically pins that native-build-smoke's matrix must
+  always include `macos-15-intel` -- that job builds the exact runner label
+  build-release-native-assets uses for the shipped `tg-macos-amd64-cpu` release asset, so PR-time
+  smoke deliberately mirrors it (a broken Intel-Mac build must be caught every PR, not once a month
+  right before a release). That check parses the workflow YAML statically and cannot resolve a
+  fromJson(...)-computed matrix, which is what the previous commit's wiring produced -- reproduced
+  locally: `uv run python scripts/validate_release_assets.py` now passes.
+
+Revert native-build-smoke to its original static matrix (unchanged) and drop it from ci-cost-os-gate
+  entirely. test-python/test-rust-core keep the monthly-only macOS gate -- neither is pinned by this
+  validator, and between the two, native-build-smoke is comparatively cheap (a build + one-shot
+  smoke, not the full test suite), so leaving it ungated is the right cost/parity tradeoff anyway.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Close HUNT-4 -- --enrich-ast native front door fix merged
+  ([`75117a6`](https://github.com/oimiragieo/tensor-grep/commit/75117a6a4c053119bfa2fd634c16950cee1834d2))
+
+PR #1155 / 00fd8c7 added --enrich-ast to SEARCH_PYTHON_PASSTHROUGH_FLAGS in
+  rust_core/src/search_flag_registry.rs and tests/e2e/test_native_enrich_ast.py. 40 CI checks passed
+  (0 failed) including native-build-smoke across all four OS legs. RED confirmed pre-fix against the
+  installed native binary.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+- **backlog**: Groom stale session-closeout table (CEO-update pass)
+  ([`b38f297`](https://github.com/oimiragieo/tensor-grep/commit/b38f297b05712368fd358428d9ddcd5ad901eb28))
+
+HUNT-4/HUNT-5 and PRs #1154/#1141/#1150 were all recorded OPEN in a 2026-09-13 session-closeout
+  table that predates their actual closeout (recorded elsewhere in this same file) and merges.
+  Reconciled against git log + `gh pr view --json mergedAt` for all three PRs.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+- **backlog**: Session closeout -- supersede the stale HUNT-4 round-7 pickup plan
+  ([`c5f4f4d`](https://github.com/oimiragieo/tensor-grep/commit/c5f4f4d75e0b717e2fa5af8f10bfb0ac41890085))
+
+HUNT-4 shipped directly at 00fd8c7 (PR #1155) via a TDD loop, not the pending council round 7 the
+  "What a fresh session should pick up" section still described. Mark that section superseded rather
+  than delete it -- the round-6/7 brief-building mechanics stay reusable for a future multi-round
+  council item. Add three new backlog ideas from this session's CI-cost work: a local GH Actions
+  context-validity linter is missing, scripts/_release_assets_checks/ci_workflow.py's matrix pins
+  are undocumented outside the script, and the CI-cost change has no before/after billing
+  measurement yet.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+- **ci**: Close out two of three deferred follow-ups from the last closeout
+  ([`2ccc4ff`](https://github.com/oimiragieo/tensor-grep/commit/2ccc4ffbdd9a2ee6e563f4bcd189ddb62532cbb8))
+
+Ready-now items completed rather than left as prose:
+
+1. Found a working local GH Actions linter -- `npx --yes @action-validator/cli <path>` (the SCOPED
+  package name; the bare `action-validator` name fails with "could not determine executable to
+  run"). Confirmed exit 0 clean against the current ci.yml. Recorded the exact invocation in
+  docs/BACKLOG.md so it doesn't need re-deriving. 2. Added the missing validator pointer comment to
+  build-release-native-assets' matrix (native-build-smoke already had one from the prior commit) --
+  both scripts/_release_assets_checks/ ci_workflow.py-pinned jobs now say so inline.
+
+The third item (CI-cost before/after billing measurement) is genuinely time-blocked, not AI-doable
+  today -- banked in docs/BACKLOG.md with an explicit blocker (needs a real billing-cycle window to
+  accumulate) and trigger (next session on/after 2026-10-13).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+Claude-Session: https://claude.ai/code/session_01AE9etpEHDfnfrFSZG18fM4
+
+### Features
+
+- Add fail-closed agent outcome joins ([#1159](https://github.com/oimiragieo/tensor-grep/pull/1159),
+  [`bb63594`](https://github.com/oimiragieo/tensor-grep/commit/bb6359412bc665d0c693b4cf8d1012d257a708c6))
+
+* feat: join agent patch outcomes on a complete versioned identity
+
+AGT-01 slice A (Tasks 1-2). benchmarks/agent_outcome_join.py joins predictions to observed patch
+  executions ONLY on the complete six-field identity (system_id, instance_id, repo_commit,
+  tool_version, model_id, budget_id): missing identity is unavailable and never guessed, duplicate
+  identities fail closed, absent execution is unavailable (never counted as success), command fit
+  stays separate from verified success, and any missing cost makes that aggregate null. 15
+  behavioral tests plus loader-registration controls (M16/M17/M20) and per-behavior mutation
+  controls (M1-M6); holdout curation is explicitly NOT in this slice.
+
+Receipt: .build/agt-01-outcome-joins-holdout/receipt-slice-a.md
+
+* docs: mark outcome join scorecard wiring as pending
+
+* docs: remove ephemeral outcome join plan citation
+
+* docs: describe legacy outcome adapter precisely
+
+* fix: reject non-boolean outcome success flags
+
+* fix: reject malformed validation commands
+
+* fix: fail closed on malformed cost values
+
+* fix: preserve boolean legacy execution semantics
+
+* fix: reject overflowing cost totals
+
+* fix: keep large integer costs exact
+
+* fix: handle mixed numeric cost overflow
+
+* fix: validate outcome cost domains
+
+* fix: reject non-string legacy identities
+
+* fix: reject malformed identity and command strings
+
+* fix: reject malformed legacy identity strings
+
+* fix: quarantine non-object outcome records
+
+
 ## v1.119.16 (2026-09-13)
 
 ### Bug Fixes
