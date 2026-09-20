@@ -87,8 +87,11 @@ def adapt_legacy_bakeoff_row(row: dict[str, Any]) -> dict[str, Any]:
     adapted record stays incomplete and lands in unidentified_outcomes.
     """
     adapted = dict(row)
-    system = str(row.get("system") or "").strip()
-    if system and not str(adapted.get("system_id") or "").strip():
+    raw_system = row.get("system")
+    system = raw_system.strip() if isinstance(raw_system, str) else ""
+    if system and not isinstance(adapted.get("system_id"), str):
+        adapted["system_id"] = system
+    elif system and not adapted["system_id"].strip():
         adapted["system_id"] = system
     adapted.setdefault("execution_observed", row.get("patch_applied") is True)
     adapted.setdefault("tokens_in", None)

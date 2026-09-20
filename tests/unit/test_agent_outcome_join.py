@@ -214,6 +214,23 @@ def test_legacy_adapter_rejects_truthy_non_boolean_patch_applied() -> None:
     assert report["joined"][0]["verified_task_success"] is False
 
 
+def test_legacy_adapter_does_not_coerce_non_string_system_identity() -> None:
+    module = _load_join_module()
+    source = _outcome()
+    source.pop("system_id")
+    source["system"] = 1
+
+    legacy = module.adapt_legacy_bakeoff_row(source)
+    report = module.build_outcome_join_report(
+        predictions=[_prediction(system_id="1")],
+        outcomes=[legacy],
+    )
+
+    assert "system_id" not in legacy
+    assert report["joined"] == []
+    assert report["summary"]["unidentified_outcome_count"] == 1
+
+
 def test_matching_full_identity_joins_and_counts_verified_success() -> None:
     module = _load_join_module()
 
