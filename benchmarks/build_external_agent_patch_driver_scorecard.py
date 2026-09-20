@@ -209,12 +209,15 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    input_path = Path(args.input).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
+    if input_path == output_path:
+        raise ValueError("input and output paths must differ")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.unlink(missing_ok=True)
     temporary_path: Path | None = None
     try:
-        payload = build_scorecard_payload(load_comparison(args.input))
+        payload = build_scorecard_payload(load_comparison(input_path))
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",

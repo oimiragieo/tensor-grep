@@ -1007,6 +1007,29 @@ def test_scorecard_main_invalidates_stale_output_before_validation(tmp_path) -> 
     assert not output_path.exists()
 
 
+def test_scorecard_main_rejects_same_input_and_output_without_mutation(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_same_input_output_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_output_path = tmp_path / "comparison.json"
+    original = json.dumps({"systems": []}) + "\n"
+    input_output_path.write_text(original, encoding="utf-8")
+
+    try:
+        module.main([
+            "--input",
+            str(input_output_path),
+            "--output",
+            str(input_output_path),
+        ])
+    except ValueError as error:
+        assert str(error) == "input and output paths must differ"
+    else:
+        raise AssertionError("same input and output paths must fail clearly")
+    assert input_output_path.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize("invalid_system_entry", [None, "not-an-object", 3, []])
 def test_scorecard_rejects_non_object_system_entries(invalid_system_entry: object) -> None:
     module = _load_script_module(
