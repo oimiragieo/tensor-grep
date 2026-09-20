@@ -243,6 +243,22 @@ def test_legacy_adapter_does_not_coerce_non_string_system_identity() -> None:
     assert report["summary"]["unidentified_outcome_count"] == 1
 
 
+def test_legacy_adapter_rejects_padded_or_control_system_identity() -> None:
+    module = _load_join_module()
+
+    for malformed in (" tg ", "tg\x00"):
+        source = _outcome()
+        source.pop("system_id")
+        source["system"] = malformed
+
+        legacy = module.adapt_legacy_bakeoff_row(source)
+
+        assert "system_id" not in legacy
+        identity, missing = module.extract_identity(legacy)
+        assert identity is None
+        assert missing == ["system_id"]
+
+
 def test_matching_full_identity_joins_and_counts_verified_success() -> None:
     module = _load_join_module()
 

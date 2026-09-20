@@ -88,7 +88,13 @@ def adapt_legacy_bakeoff_row(row: dict[str, Any]) -> dict[str, Any]:
     """
     adapted = dict(row)
     raw_system = row.get("system")
-    system = raw_system.strip() if isinstance(raw_system, str) else ""
+    system = (
+        raw_system
+        if isinstance(raw_system, str)
+        and raw_system == raw_system.strip()
+        and raw_system.isprintable()
+        else ""
+    )
     if system and not isinstance(adapted.get("system_id"), str):
         adapted["system_id"] = system
     elif system and not adapted["system_id"].strip():
