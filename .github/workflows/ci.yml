@@ -113,6 +113,7 @@ jobs:
   ci-cost-os-gate:
     name: ci-cost-os-gate
     runs-on: ubuntu-latest
+    permissions: {}
     outputs:
       test_os: ${{ steps.set.outputs.test_os }}
     steps:
