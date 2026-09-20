@@ -5,6 +5,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 from types import ModuleType
@@ -12,6 +13,7 @@ from typing import Any, cast
 
 _JOIN_PATH = Path(__file__).resolve().parent / "agent_outcome_join.py"
 _MISSING = object()
+_OUTCOME_JOIN_LOAD_LOCK = threading.Lock()
 
 
 def _load_outcome_join_module() -> Any:
@@ -20,15 +22,16 @@ def _load_outcome_join_module() -> Any:
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
         raise RuntimeError(f"cannot load the outcome-join module from {_JOIN_PATH}")
     module = importlib.util.module_from_spec(spec)
-    previous: object = sys.modules.get(spec.name, _MISSING)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        if previous is _MISSING:
-            sys.modules.pop(spec.name, None)
-        else:
-            sys.modules[spec.name] = cast(ModuleType, previous)
+    with _OUTCOME_JOIN_LOAD_LOCK:
+        previous: object = sys.modules.get(spec.name, _MISSING)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            if previous is _MISSING:
+                sys.modules.pop(spec.name, None)
+            else:
+                sys.modules[spec.name] = cast(ModuleType, previous)
     return module
 
 

@@ -1,6 +1,9 @@
+import importlib.machinery
 import importlib.util
 import json
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -1142,6 +1145,86 @@ def test_scorecard_join_loader_restores_a_preexisting_none_entry() -> None:
         assert sys.modules["agent_outcome_join"] is None
     finally:
         del sys.modules["agent_outcome_join"]
+
+
+@pytest.mark.parametrize("prior_sentinel", [False, True])
+def test_scorecard_join_loader_serializes_concurrent_sys_modules_access(
+    monkeypatch: pytest.MonkeyPatch, prior_sentinel: bool
+) -> None:
+    module = _load_script_module(
+        f"scorecard_join_loader_concurrent_{prior_sentinel}",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    module_name = "agent_outcome_join"
+    previous = sys.modules.get(module_name, _MISSING)
+    sentinel = object()
+    if prior_sentinel:
+        sys.modules[module_name] = sentinel
+    else:
+        sys.modules.pop(module_name, None)
+
+    ready = threading.Barrier(3)
+    first_entered = threading.Event()
+    second_attempted = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    call_index_lock = threading.Lock()
+    call_index = 0
+
+    class BlockingLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            nonlocal call_index
+            with call_index_lock:
+                index = call_index
+                call_index += 1
+            if index == 0:
+                first_entered.set()
+                if not release_first.wait(timeout=2):
+                    raise AssertionError("first loader call was not released")
+            else:
+                second_entered.set()
+
+    loader = BlockingLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+
+    def load(role):
+        ready.wait(timeout=2)
+        if role == "second":
+            if not first_entered.wait(timeout=2):
+                raise AssertionError("first loader call did not start")
+            second_attempted.set()
+        return module._load_outcome_join_module()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(load, "first"), executor.submit(load, "second")]
+            try:
+                ready.wait(timeout=2)
+                assert first_entered.wait(timeout=2)
+                assert second_attempted.wait(timeout=2)
+                assert not second_entered.wait(timeout=1)
+            finally:
+                release_first.set()
+            results = [future.result(timeout=2) for future in futures]
+        assert len(results) == 2
+        if prior_sentinel:
+            assert sys.modules[module_name] is sentinel
+        else:
+            assert module_name not in sys.modules
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
 
 
 def test_base_payload_declares_the_outcome_join_identity_contract() -> None:
