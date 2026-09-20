@@ -1,6 +1,37 @@
 # CHANGELOG
 
 
+## v1.121.0 (2026-09-20)
+
+### Features
+
+- Report verified agent outcomes in scorecards
+  ([#1160](https://github.com/oimiragieo/tensor-grep/pull/1160),
+  [`cc833b0`](https://github.com/oimiragieo/tensor-grep/commit/cc833b0630a51c74991a3621c5808ae1a59cc689))
+
+* feat: emit agent outcome joins in benchmark artifacts
+
+* fix: require strict booleans for scorecard outcomes
+
+* fix: reject duplicate scorecard system names
+
+* fix: preserve malformed outcome join records
+
+* fix: reject non-object outcome join containers
+
+* fix: reject non-list scorecard systems
+
+* fix: reject non-object scorecard systems
+
+* fix: invalidate stale scorecard outputs
+
+* fix: reject same-path scorecard inputs
+
+* fix: serialize outcome join module loading
+
+* fix: isolate outcome join loader instances
+
+
 ## v1.120.0 (2026-09-20)
 
 ### Chores
