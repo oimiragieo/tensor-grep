@@ -988,6 +988,25 @@ def test_scorecard_main_does_not_publish_present_null_systems(tmp_path) -> None:
     assert not output_path.exists()
 
 
+def test_scorecard_main_invalidates_stale_output_before_validation(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_stale_output_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": None}), encoding="utf-8")
+    output_path.write_text("old successful scorecard\n", encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("invalid input must fail clearly")
+    assert not output_path.exists()
+
+
 @pytest.mark.parametrize("invalid_system_entry", [None, "not-an-object", 3, []])
 def test_scorecard_rejects_non_object_system_entries(invalid_system_entry: object) -> None:
     module = _load_script_module(
@@ -1056,6 +1075,7 @@ def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
     assert join["joined"][0]["verified_task_success"] is False
     assert join["summary"]["incomplete_cases"] == 1
     assert join["summary"]["verified_task_success_rate"] is None
+    assert not list(tmp_path.glob(f".{output_path.name}.*.tmp"))
 
 
 def test_scorecard_join_loader_restores_a_preexisting_sys_modules_entry() -> None:

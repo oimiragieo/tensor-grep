@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path
 from types import ModuleType
@@ -208,10 +209,27 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    payload = build_scorecard_payload(load_comparison(args.input))
     output_path = Path(args.output).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    output_path.unlink(missing_ok=True)
+    temporary_path: Path | None = None
+    try:
+        payload = build_scorecard_payload(load_comparison(args.input))
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=output_path.parent,
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(json.dumps(payload, indent=2) + "\n")
+        temporary_path.replace(output_path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
     print(f"Results written to {output_path}")
     return 0
 
