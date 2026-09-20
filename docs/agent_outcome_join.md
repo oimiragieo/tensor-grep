@@ -38,12 +38,12 @@ onto the outcome shape. It supplies `system_id` from `system` and nothing else; 
 remains unidentified by design. Legacy readers and existing recall metrics are unchanged --
 this module adds a report, it does not modify any existing one.
 
-## Where the report is emitted
+## Where the report will be emitted
 
-`build_external_agent_patch_driver_scorecard.py` embeds the report under the top-level
-`outcome_join` key of the scorecard artifact it writes to `--output`. The scorecard reads its
-inputs from an optional `outcome_join` section of the comparison input; when that section is
-absent the report is present and empty, with `null` rates -- never a fabricated success.
+A later AGT-01 slice will embed the report under the top-level `outcome_join` key of the
+scorecard artifact written by `build_external_agent_patch_driver_scorecard.py`. No consumer
+exists yet: this slice defines and verifies `build_outcome_join_report`, but currently emits its
+output nowhere.
 
 ## Not covered
 
