@@ -34,9 +34,11 @@ cost value, the corresponding total is `null`, not zero.
 ## Legacy records
 
 `adapt_legacy_bakeoff_row` maps a `run_patch_bakeoff.py` result row (`instance_id` + `system`)
-onto the outcome shape. It supplies `system_id` from `system` and nothing else; the record
-remains unidentified by design. Legacy readers and existing recall metrics are unchanged --
-this module adds a report, it does not modify any existing one.
+onto the outcome shape. It supplies `system_id` from `system`, derives `execution_observed` from
+`patch_applied`, and defaults the three cost fields to `null`; it does not invent the four
+remaining identity fields, so the record remains unidentified by design. Legacy readers and
+existing recall metrics are unchanged -- this module adds a report, it does not modify any
+existing one.
 
 ## Where the report will be emitted
 
