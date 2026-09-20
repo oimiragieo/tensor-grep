@@ -140,7 +140,10 @@ def _nullable_total(values: list[Any]) -> Any:
         return None
     if not values:
         return 0
-    total = sum(values)
+    try:
+        total = sum(values)
+    except OverflowError:
+        return None
     if isinstance(total, float) and not isfinite(total):
         return None
     return round(total, 6) if isinstance(total, float) else total

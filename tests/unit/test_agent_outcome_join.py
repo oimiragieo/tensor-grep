@@ -409,6 +409,20 @@ def test_large_integer_cost_remains_exact_without_float_coercion() -> None:
     assert report["summary"]["tokens_in_total"] == large_cost
 
 
+def test_mixed_large_integer_and_float_cost_returns_null_without_crashing() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction(), _prediction(instance_id="second")],
+        outcomes=[
+            _outcome(tokens_in=10**1000),
+            _outcome(instance_id="second", tokens_in=1.0),
+        ],
+    )
+
+    assert report["summary"]["tokens_in_total"] is None
+
+
 def test_empty_inputs_report_no_evidence_rather_than_perfect_success() -> None:
     module = _load_join_module()
 
