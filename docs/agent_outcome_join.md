@@ -1,0 +1,52 @@
+# Agent outcome join (AGT-01, partial)
+
+`benchmarks/agent_outcome_join.py` joins benchmark predictions to observed patch execution.
+
+## Identity
+
+A join is authorized ONLY by the full tuple:
+`system_id`, `instance_id`, `repo_commit`, `tool_version`, `model_id`, `budget_id`.
+
+A record missing any field is never completed by guessing. It appears in
+`unidentified_predictions` / `unidentified_outcomes` with the exact `missing_fields` list.
+Duplicate full identities fail closed on both sides: neither row joins, and the pair is
+reported in `duplicate_identities`.
+
+## Command fit is not success
+
+`command_fit` means a validation command was PLANNED. `verified_task_success` requires an
+observed passing execution bound to the same identity:
+
+| `execution_observed` | `validation_passed` | `outcome_state` | counted in denominator? |
+|---|---|---|---|
+| true | true | `passed` | yes |
+| true | false | `failed` | yes |
+| false | anything | `unavailable` | **no** |
+
+`verified_task_success_rate` divides by `complete_cases` (observed executions only) and is
+`null` when that count is zero. Zero evidence is never reported as success.
+
+## Cost
+
+`tokens_in`/`tokens_out`/`elapsed_s` include failed attempts. If any joined row is missing a
+cost value, the corresponding total is `null`, not zero.
+
+## Legacy records
+
+`adapt_legacy_bakeoff_row` maps a `run_patch_bakeoff.py` result row (`instance_id` + `system`)
+onto the outcome shape. It supplies `system_id` from `system` and nothing else; the record
+remains unidentified by design. Legacy readers and existing recall metrics are unchanged --
+this module adds a report, it does not modify any existing one.
+
+## Where the report is emitted
+
+`build_external_agent_patch_driver_scorecard.py` embeds the report under the top-level
+`outcome_join` key of the scorecard artifact it writes to `--output`. The scorecard reads its
+inputs from an optional `outcome_join` section of the comparison input; when that section is
+absent the report is present and empty, with `null` rates -- never a fabricated success.
+
+## Not covered
+
+This module does NOT close AGT-01. Holdout curation (MAP.md Destination lines 8-9, scoped out at
+Out of scope lines 24-26 -- it is not one of the MAP's three Answers) is not implemented here;
+see `.build/agt-01-outcome-joins-holdout/PLAN.md` section 6.
