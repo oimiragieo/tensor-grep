@@ -7,18 +7,21 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from pathlib import Path
 from types import ModuleType
 from typing import Any, cast
 
 _JOIN_PATH = Path(__file__).resolve().parent / "agent_outcome_join.py"
+_JOIN_MODULE_PREFIX = "agent_outcome_join"
 _MISSING = object()
 _OUTCOME_JOIN_LOAD_LOCK = threading.Lock()
 
 
 def _load_outcome_join_module() -> Any:
     """Load the sibling join module while restoring the caller's module table."""
-    spec = importlib.util.spec_from_file_location("agent_outcome_join", _JOIN_PATH)
+    module_name = f"{_JOIN_MODULE_PREFIX}_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, _JOIN_PATH)
     if spec is None or spec.loader is None:  # pragma: no cover - defensive
         raise RuntimeError(f"cannot load the outcome-join module from {_JOIN_PATH}")
     module = importlib.util.module_from_spec(spec)
@@ -28,10 +31,11 @@ def _load_outcome_join_module() -> Any:
         try:
             spec.loader.exec_module(module)
         finally:
-            if previous is _MISSING:
-                sys.modules.pop(spec.name, None)
-            else:
-                sys.modules[spec.name] = cast(ModuleType, previous)
+            if sys.modules.get(spec.name, _MISSING) is module:
+                if previous is _MISSING:
+                    sys.modules.pop(spec.name, None)
+                else:
+                    sys.modules[spec.name] = cast(ModuleType, previous)
     return module
 
 

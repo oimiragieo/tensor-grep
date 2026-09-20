@@ -1147,6 +1147,38 @@ def test_scorecard_join_loader_restores_a_preexisting_none_entry() -> None:
         del sys.modules["agent_outcome_join"]
 
 
+def test_scorecard_join_loader_preserves_a_replacement_during_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_replacement",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    replacement = object()
+
+    class ReplacingLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            sys.modules[loaded_module.__name__] = replacement
+
+    loader = ReplacingLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+    loaded = module._load_outcome_join_module()
+    try:
+        assert loaded.__name__.startswith("agent_outcome_join_")
+        assert sys.modules[loaded.__name__] is replacement
+    finally:
+        sys.modules.pop(loaded.__name__, None)
+
+
 @pytest.mark.parametrize("prior_sentinel", [False, True])
 def test_scorecard_join_loader_serializes_concurrent_sys_modules_access(
     monkeypatch: pytest.MonkeyPatch, prior_sentinel: bool
@@ -1225,6 +1257,90 @@ def test_scorecard_join_loader_serializes_concurrent_sys_modules_access(
             sys.modules.pop(module_name, None)
         else:
             sys.modules[module_name] = previous
+
+
+def test_scorecard_join_loader_isolated_across_scorecard_module_instances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_module = _load_script_module(
+        "scorecard_join_loader_cross_instance_first",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    second_module = _load_script_module(
+        "scorecard_join_loader_cross_instance_second",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    module_name = "agent_outcome_join"
+    unique_prefix = f"{module_name}_"
+    previous = sys.modules.get(module_name, _MISSING)
+    previous_unique = {
+        key: value for key, value in sys.modules.items() if key.startswith(unique_prefix)
+    }
+    sentinel = object()
+    sys.modules[module_name] = sentinel
+
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    first_returned = threading.Event()
+    overlap = threading.Barrier(2)
+    call_index_lock = threading.Lock()
+    call_index = 0
+
+    class OverlapLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            nonlocal call_index
+            with call_index_lock:
+                index = call_index
+                call_index += 1
+            if index == 0:
+                first_entered.set()
+            else:
+                second_entered.set()
+            overlap.wait(timeout=2)
+            if index == 0:
+                if not release_first.wait(timeout=2):
+                    raise AssertionError("first loader call was not released")
+                first_returned.set()
+            elif not first_returned.wait(timeout=2):
+                raise AssertionError("first loader call did not return")
+
+    loader = OverlapLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        first_module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(first_module._load_outcome_join_module),
+                executor.submit(second_module._load_outcome_join_module),
+            ]
+            try:
+                assert first_entered.wait(timeout=2)
+                assert second_entered.wait(timeout=2)
+            finally:
+                release_first.set()
+            results = [future.result(timeout=2) for future in futures]
+        assert len({result.__name__ for result in results}) == 2
+        assert sys.modules[module_name] is sentinel
+        assert not [key for key in sys.modules if key.startswith(unique_prefix)]
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+        for key in [key for key in sys.modules if key.startswith(unique_prefix)]:
+            if key not in previous_unique:
+                sys.modules.pop(key, None)
+        sys.modules.update(previous_unique)
 
 
 def test_base_payload_declares_the_outcome_join_identity_contract() -> None:
