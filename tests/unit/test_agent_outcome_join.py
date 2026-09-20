@@ -383,6 +383,20 @@ def test_malformed_cost_values_are_null_instead_of_crashing() -> None:
     assert report["summary"]["elapsed_s_total"] is None
 
 
+def test_finite_cost_inputs_that_overflow_are_reported_as_null() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction(), _prediction(instance_id="second")],
+        outcomes=[
+            _outcome(elapsed_s=1e308),
+            _outcome(instance_id="second", elapsed_s=1e308),
+        ],
+    )
+
+    assert report["summary"]["elapsed_s_total"] is None
+
+
 def test_empty_inputs_report_no_evidence_rather_than_perfect_success() -> None:
     module = _load_join_module()
 

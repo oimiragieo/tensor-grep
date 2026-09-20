@@ -139,6 +139,8 @@ def _nullable_total(values: list[Any]) -> Any:
     if not values:
         return 0
     total = sum(values)
+    if not isfinite(total):
+        return None
     return round(total, 6) if isinstance(total, float) else total
 
 
