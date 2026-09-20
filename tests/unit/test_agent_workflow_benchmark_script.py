@@ -1,6 +1,14 @@
+import importlib.machinery
 import importlib.util
 import json
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import pytest
+
+_MISSING = object()
 
 
 def _load_script_module(name: str, rel_path: str):
@@ -648,3 +656,752 @@ def test_build_agent_capsule_summary_calibration_bin_boundaries_are_exact():
     assert bins.get("[0.4,0.6)") == 1
     assert bins.get("[0.6,0.8)") == 1
     assert bins.get("[0.8,1.0]") == 1
+
+
+def test_scorecard_reports_verified_success_separately_from_command_fit() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_fields",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "fit-and-passed",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": True},
+            },
+            {
+                "system": "fit-but-failed",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": False},
+            },
+            {
+                "system": "fit-but-unobserved",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+            },
+        ]
+    })
+
+    passed = payload["by_system"]["fit-and-passed"]
+    failed = payload["by_system"]["fit-but-failed"]
+    unobserved = payload["by_system"]["fit-but-unobserved"]
+    assert passed["validation_fit"] == "strong"
+    assert failed["validation_fit"] == "strong"
+    assert failed["validation_fit_score"] == 1.0
+    assert unobserved["validation_fit"] == "strong"
+    assert passed["outcome_state"] == "passed"
+    assert passed["verified_task_success"] is True
+    assert failed["outcome_state"] == "failed"
+    assert failed["verified_task_success"] is False
+    assert unobserved["outcome_state"] == "unavailable"
+    assert unobserved["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 2
+    assert payload["summary"]["incomplete_outcome_systems"] == 1
+    assert payload["summary"]["verified_task_success_systems"] == 1
+    assert payload["summary"]["verified_task_success_rate"] == 0.5
+    assert passed["overall_score"] == failed["overall_score"]
+    assert "mean_compactness_score" in payload["summary"]
+
+
+def test_scorecard_verified_success_rate_is_null_when_nothing_was_executed() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_no_evidence",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "unobserved",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 1,
+                "validation_commands": ["cargo test"],
+            }
+        ]
+    })
+    assert payload["summary"]["complete_outcome_systems"] == 0
+    assert payload["summary"]["verified_task_success_rate"] is None
+
+
+def test_scorecard_outcome_state_requires_strict_boolean_execution_flag() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_strict_execution_flag",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "truthy-but-not-boolean",
+                "primary_file": "src/lib.rs",
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": 1, "validation_passed": True},
+            }
+        ]
+    })
+
+    row = payload["by_system"]["truthy-but-not-boolean"]
+    assert row["outcome_state"] == "unavailable"
+    assert row["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 0
+    assert payload["summary"]["verified_task_success_rate"] is None
+
+
+def test_scorecard_outcome_state_requires_strict_boolean_validation_flag() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_strict_validation_flag",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "string-false",
+                "primary_file": "src/lib.rs",
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": "false"},
+            }
+        ]
+    })
+
+    row = payload["by_system"]["string-false"]
+    assert row["outcome_state"] == "failed"
+    assert row["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 1
+    assert payload["summary"]["verified_task_success_rate"] == 0.0
+
+
+def test_scorecard_rejects_duplicate_system_names_before_scoring() -> None:
+    module = _load_script_module(
+        "scorecard_duplicate_system_names",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    comparison = {
+        "systems": [
+            {"system": "tensor-grep", "primary_file": "src/a.py"},
+            {"system": "tensor-grep", "primary_file": "src/b.py"},
+        ]
+    }
+
+    try:
+        module.build_scorecard_payload(comparison)
+    except ValueError as error:
+        assert str(error) == "duplicate system name: 'tensor-grep'"
+    else:
+        raise AssertionError("duplicate system names must fail closed")
+
+
+def test_scorecard_main_does_not_publish_duplicate_system_artifact(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_duplicate_system_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({
+            "systems": [
+                {"system": "tensor-grep", "primary_file": "src/a.py"},
+                {"system": "tensor-grep", "primary_file": "src/b.py"},
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except ValueError as error:
+        assert str(error) == "duplicate system name: 'tensor-grep'"
+    else:
+        raise AssertionError("duplicate system names must fail closed")
+    assert not output_path.exists()
+
+
+def test_scorecard_payload_embeds_the_outcome_join_report() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_embedded",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    identity = {
+        "system_id": "tensor-grep",
+        "instance_id": "clap-lex-parse",
+        "repo_commit": "a" * 40,
+        "tool_version": "1.113.3",
+        "model_id": "gpt-5.6-sol",
+        "budget_id": "tokens=16000",
+    }
+    payload = module.build_scorecard_payload({
+        "systems": [],
+        "outcome_join": {
+            "predictions": [{**identity, "predicted_validation_commands": ["cargo test"]}],
+            "outcomes": [{**identity, "execution_observed": True, "validation_passed": True}],
+        },
+    })
+    join = payload["outcome_join"]
+    assert join["artifact"] == "agent_outcome_join"
+    assert join["identity_fields"][0] == "system_id"
+    assert len(join["joined"]) == 1
+    assert join["joined"][0]["verified_task_success"] is True
+    assert join["summary"]["complete_cases"] == 1
+    assert join["summary"]["verified_task_success_rate"] == 1.0
+
+
+def test_scorecard_payload_reports_an_empty_join_when_no_records_are_supplied() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_absent",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({"systems": []})
+    join = payload["outcome_join"]
+    assert join["joined"] == []
+    assert join["summary"]["verified_task_success_rate"] is None
+    assert join["summary"]["complete_cases"] == 0
+
+
+def test_scorecard_join_retains_non_dict_records_as_unidentified() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_non_dict_records",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [],
+        "outcome_join": {
+            "predictions": ["not-a-prediction"],
+            "outcomes": ["not-an-outcome"],
+        },
+    })
+
+    join = payload["outcome_join"]
+    expected_missing = [
+        "system_id",
+        "instance_id",
+        "repo_commit",
+        "tool_version",
+        "model_id",
+        "budget_id",
+    ]
+    assert join["unidentified_predictions"] == [
+        {
+            "record": "not-a-prediction",
+            "missing_fields": expected_missing,
+        }
+    ]
+    assert join["unidentified_outcomes"] == [
+        {
+            "record": "not-an-outcome",
+            "missing_fields": expected_missing,
+        }
+    ]
+    assert join["summary"]["unidentified_prediction_count"] == 1
+    assert join["summary"]["unidentified_outcome_count"] == 1
+
+
+def test_scorecard_join_rejects_null_record_lists_clearly() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_null_records",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({
+            "systems": [],
+            "outcome_join": {"predictions": None},
+        })
+    except TypeError as error:
+        assert str(error) == "outcome_join predictions must be a list"
+    else:
+        raise AssertionError("null outcome_join predictions must fail clearly")
+
+
+@pytest.mark.parametrize("invalid_join", [None, "not-an-object", []])
+def test_scorecard_rejects_present_non_object_outcome_join(invalid_join: object) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_invalid_container",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": [], "outcome_join": invalid_join})
+    except TypeError as error:
+        assert str(error) == "outcome_join must be an object"
+    else:
+        raise AssertionError("present non-object outcome_join must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_present_null_outcome_join(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_null_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({"systems": [], "outcome_join": None}),
+        encoding="utf-8",
+    )
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "outcome_join must be an object"
+    else:
+        raise AssertionError("present null outcome_join must fail clearly")
+    assert not output_path.exists()
+
+
+@pytest.mark.parametrize("invalid_systems", [None, "not-a-list", {}, 3])
+def test_scorecard_rejects_present_non_list_systems(invalid_systems: object) -> None:
+    module = _load_script_module(
+        "scorecard_invalid_systems_container",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": invalid_systems})
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("present non-list systems must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_present_null_systems(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_null_systems_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": None}), encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("present null systems must fail clearly")
+    assert not output_path.exists()
+
+
+def test_scorecard_main_invalidates_stale_output_before_validation(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_stale_output_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": None}), encoding="utf-8")
+    output_path.write_text("old successful scorecard\n", encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("invalid input must fail clearly")
+    assert not output_path.exists()
+
+
+def test_scorecard_main_rejects_same_input_and_output_without_mutation(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_same_input_output_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_output_path = tmp_path / "comparison.json"
+    original = json.dumps({"systems": []}) + "\n"
+    input_output_path.write_text(original, encoding="utf-8")
+
+    try:
+        module.main([
+            "--input",
+            str(input_output_path),
+            "--output",
+            str(input_output_path),
+        ])
+    except ValueError as error:
+        assert str(error) == "input and output paths must differ"
+    else:
+        raise AssertionError("same input and output paths must fail clearly")
+    assert input_output_path.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("invalid_system_entry", [None, "not-an-object", 3, []])
+def test_scorecard_rejects_non_object_system_entries(invalid_system_entry: object) -> None:
+    module = _load_script_module(
+        "scorecard_invalid_system_entry",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": [invalid_system_entry]})
+    except TypeError as error:
+        assert str(error) == "systems entries must be objects"
+    else:
+        raise AssertionError("non-object systems entries must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_non_object_system_entry(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_non_object_system_entry_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": [None]}), encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems entries must be objects"
+    else:
+        raise AssertionError("non-object systems entries must fail clearly")
+    assert not output_path.exists()
+
+
+def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_written",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    identity = {
+        "system_id": "tensor-grep",
+        "instance_id": "clap-lex-parse",
+        "repo_commit": "a" * 40,
+        "tool_version": "1.113.3",
+        "model_id": "gpt-5.6-sol",
+        "budget_id": "tokens=16000",
+    }
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [],
+            "outcome_join": {
+                "predictions": [{**identity, "predicted_validation_commands": ["cargo test"]}],
+                "outcomes": [{**identity, "execution_observed": False, "validation_passed": True}],
+            },
+        }),
+        encoding="utf-8",
+    )
+    exit_code = module.main(["--input", str(input_path), "--output", str(output_path)])
+    assert exit_code == 0
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    join = written["outcome_join"]
+    assert join["artifact"] == "agent_outcome_join"
+    assert join["joined"][0]["outcome_state"] == "unavailable"
+    assert join["joined"][0]["verified_task_success"] is False
+    assert join["summary"]["incomplete_cases"] == 1
+    assert join["summary"]["verified_task_success_rate"] is None
+    assert not list(tmp_path.glob(f".{output_path.name}.*.tmp"))
+
+
+def test_scorecard_join_loader_restores_a_preexisting_sys_modules_entry() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_restores",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    sentinel = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader("agent_outcome_join", loader=None)
+    )
+    sys.modules["agent_outcome_join"] = sentinel
+    try:
+        payload = module.build_scorecard_payload({"systems": []})
+        assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+        assert sys.modules["agent_outcome_join"] is sentinel
+    finally:
+        del sys.modules["agent_outcome_join"]
+
+
+def test_scorecard_join_loader_leaves_no_entry_when_none_existed() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_no_leak",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    assert "agent_outcome_join" not in sys.modules
+    payload = module.build_scorecard_payload({"systems": []})
+    assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+    assert "agent_outcome_join" not in sys.modules
+
+
+def test_scorecard_join_loader_restores_a_preexisting_none_entry() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_none_entry",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    sys.modules["agent_outcome_join"] = None
+    try:
+        payload = module.build_scorecard_payload({"systems": []})
+        assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+        assert "agent_outcome_join" in sys.modules
+        assert sys.modules["agent_outcome_join"] is None
+    finally:
+        del sys.modules["agent_outcome_join"]
+
+
+def test_scorecard_join_loader_preserves_a_replacement_during_restore(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_replacement",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    replacement = object()
+
+    class ReplacingLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            sys.modules[loaded_module.__name__] = replacement
+
+    loader = ReplacingLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+    loaded = module._load_outcome_join_module()
+    try:
+        assert loaded.__name__.startswith("agent_outcome_join_")
+        assert sys.modules[loaded.__name__] is replacement
+    finally:
+        sys.modules.pop(loaded.__name__, None)
+
+
+@pytest.mark.parametrize("prior_sentinel", [False, True])
+def test_scorecard_join_loader_serializes_concurrent_sys_modules_access(
+    monkeypatch: pytest.MonkeyPatch, prior_sentinel: bool
+) -> None:
+    module = _load_script_module(
+        f"scorecard_join_loader_concurrent_{prior_sentinel}",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    module_name = "agent_outcome_join"
+    previous = sys.modules.get(module_name, _MISSING)
+    sentinel = object()
+    if prior_sentinel:
+        sys.modules[module_name] = sentinel
+    else:
+        sys.modules.pop(module_name, None)
+
+    ready = threading.Barrier(3)
+    first_entered = threading.Event()
+    second_attempted = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    call_index_lock = threading.Lock()
+    call_index = 0
+
+    class BlockingLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            nonlocal call_index
+            with call_index_lock:
+                index = call_index
+                call_index += 1
+            if index == 0:
+                first_entered.set()
+                if not release_first.wait(timeout=2):
+                    raise AssertionError("first loader call was not released")
+            else:
+                second_entered.set()
+
+    loader = BlockingLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+
+    def load(role):
+        ready.wait(timeout=2)
+        if role == "second":
+            if not first_entered.wait(timeout=2):
+                raise AssertionError("first loader call did not start")
+            second_attempted.set()
+        return module._load_outcome_join_module()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(load, "first"), executor.submit(load, "second")]
+            try:
+                ready.wait(timeout=2)
+                assert first_entered.wait(timeout=2)
+                assert second_attempted.wait(timeout=2)
+                assert not second_entered.wait(timeout=1)
+            finally:
+                release_first.set()
+            results = [future.result(timeout=2) for future in futures]
+        assert len(results) == 2
+        if prior_sentinel:
+            assert sys.modules[module_name] is sentinel
+        else:
+            assert module_name not in sys.modules
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+
+
+def test_scorecard_join_loader_isolated_across_scorecard_module_instances(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_module = _load_script_module(
+        "scorecard_join_loader_cross_instance_first",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    second_module = _load_script_module(
+        "scorecard_join_loader_cross_instance_second",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    module_name = "agent_outcome_join"
+    unique_prefix = f"{module_name}_"
+    previous = sys.modules.get(module_name, _MISSING)
+    previous_unique = {
+        key: value for key, value in sys.modules.items() if key.startswith(unique_prefix)
+    }
+    sentinel = object()
+    sys.modules[module_name] = sentinel
+
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+    first_returned = threading.Event()
+    overlap = threading.Barrier(2)
+    call_index_lock = threading.Lock()
+    call_index = 0
+
+    class OverlapLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, loaded_module):
+            nonlocal call_index
+            with call_index_lock:
+                index = call_index
+                call_index += 1
+            if index == 0:
+                first_entered.set()
+            else:
+                second_entered.set()
+            overlap.wait(timeout=2)
+            if index == 0:
+                if not release_first.wait(timeout=2):
+                    raise AssertionError("first loader call was not released")
+                first_returned.set()
+            elif not first_returned.wait(timeout=2):
+                raise AssertionError("first loader call did not return")
+
+    loader = OverlapLoader()
+
+    def fake_spec_from_file_location(name, location):
+        return importlib.machinery.ModuleSpec(name, loader)
+
+    monkeypatch.setattr(
+        first_module.importlib.util, "spec_from_file_location", fake_spec_from_file_location
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(first_module._load_outcome_join_module),
+                executor.submit(second_module._load_outcome_join_module),
+            ]
+            try:
+                assert first_entered.wait(timeout=2)
+                assert second_entered.wait(timeout=2)
+            finally:
+                release_first.set()
+            results = [future.result(timeout=2) for future in futures]
+        assert len({result.__name__ for result in results}) == 2
+        assert sys.modules[module_name] is sentinel
+        assert not [key for key in sys.modules if key.startswith(unique_prefix)]
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous
+        for key in [key for key in sys.modules if key.startswith(unique_prefix)]:
+            if key not in previous_unique:
+                sys.modules.pop(key, None)
+        sys.modules.update(previous_unique)
+
+
+def test_base_payload_declares_the_outcome_join_identity_contract() -> None:
+    import argparse
+
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_identity_contract",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    args = argparse.Namespace(
+        iterations=1,
+        seed=42,
+        max_files=3,
+        max_sources=5,
+        max_tokens=1200,
+        max_repo_files=512,
+        files=250,
+        loc=12500,
+        pattern="alpha",
+        replacement="beta",
+    )
+    payload = module.build_base_payload(args)
+    assert payload["outcome_join_identity_fields"] == [
+        "system_id",
+        "instance_id",
+        "repo_commit",
+        "tool_version",
+        "model_id",
+        "budget_id",
+    ]
+    assert payload["artifact"] == "bench_agent_workflow"
+    assert payload["suite"] == "run_agent_workflow_benchmarks"
+    assert payload["workflow_surfaces"] == ["agent_capsule", "edit_loop"]
+
+
+def _load_registered_script_module(name: str, rel_path: str):
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(name, root / rel_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(spec.name, _MISSING)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(spec.name, None)
+        else:
+            sys.modules[spec.name] = previous
+    return module
+
+
+def test_workflow_identity_fields_match_the_join_modules_definition() -> None:
+    bench = _load_script_module(
+        "run_agent_workflow_benchmarks_identity_drift",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    join = _load_registered_script_module(
+        "agent_outcome_join",
+        "benchmarks/agent_outcome_join.py",
+    )
+    assert bench.OUTCOME_JOIN_IDENTITY_FIELDS == join.IDENTITY_FIELDS
+    assert join.IDENTITY_FIELDS == join.ANNOTATED_IDENTITY_FIELDS

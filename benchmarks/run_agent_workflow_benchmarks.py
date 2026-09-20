@@ -57,6 +57,14 @@ DEFAULT_AGENT_SCENARIOS: list[dict[str, object]] = [
     },
 ]
 WRONG_CONFIDENT_MISS_THRESHOLD = 0.75
+OUTCOME_JOIN_IDENTITY_FIELDS: tuple[str, ...] = (
+    "system_id",
+    "instance_id",
+    "repo_commit",
+    "tool_version",
+    "model_id",
+    "budget_id",
+)
 
 
 def default_output_path() -> Path:
@@ -827,6 +835,7 @@ def build_base_payload(args: argparse.Namespace) -> dict[str, object]:
         "generated_at_epoch_s": time.time(),
         "positioning": POSITIONING,
         "workflow_surfaces": ["agent_capsule", "edit_loop"],
+        "outcome_join_identity_fields": list(OUTCOME_JOIN_IDENTITY_FIELDS),
         "environment": {
             "platform": platform.system().lower(),
             "machine": platform.machine().lower(),

@@ -1,10 +1,42 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
+import tempfile
+import threading
 import time
+import uuid
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, cast
+
+_JOIN_PATH = Path(__file__).resolve().parent / "agent_outcome_join.py"
+_JOIN_MODULE_PREFIX = "agent_outcome_join"
+_MISSING = object()
+_OUTCOME_JOIN_LOAD_LOCK = threading.Lock()
+
+
+def _load_outcome_join_module() -> Any:
+    """Load the sibling join module while restoring the caller's module table."""
+    module_name = f"{_JOIN_MODULE_PREFIX}_{uuid.uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(module_name, _JOIN_PATH)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise RuntimeError(f"cannot load the outcome-join module from {_JOIN_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    with _OUTCOME_JOIN_LOAD_LOCK:
+        previous: object = sys.modules.get(spec.name, _MISSING)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            if sys.modules.get(spec.name, _MISSING) is module:
+                if previous is _MISSING:
+                    sys.modules.pop(spec.name, None)
+                else:
+                    sys.modules[spec.name] = cast(ModuleType, previous)
+    return module
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -69,10 +101,32 @@ def _parallel_read_reduction_score(follow_up_count: int, parallel_read_group_cou
     return round(min(1.0, saved_steps / max_savable), 6)
 
 
+def _outcome_state(system: dict[str, Any]) -> str:
+    """Return observed validation state separately from planned command fit."""
+    outcome = system.get("outcome")
+    if not isinstance(outcome, dict) or outcome.get("execution_observed") is not True:
+        return "unavailable"
+    return "passed" if outcome.get("validation_passed") is True else "failed"
+
+
 def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
-    systems = [
-        dict(system) for system in list(comparison.get("systems", [])) if isinstance(system, dict)
-    ]
+    if "systems" not in comparison:
+        systems_input: Any = []
+    else:
+        systems_input = comparison["systems"]
+        if not isinstance(systems_input, list):
+            raise TypeError("systems must be a list")
+    systems: list[dict[str, Any]] = []
+    for system in systems_input:
+        if not isinstance(system, dict):
+            raise TypeError("systems entries must be objects")
+        systems.append(dict(system))
+    seen_system_names: set[str] = set()
+    for system in systems:
+        system_name = str(system.get("system") or "")
+        if system_name in seen_system_names:
+            raise ValueError(f"duplicate system name: {system_name!r}")
+        seen_system_names.add(system_name)
     by_system: dict[str, dict[str, Any]] = {}
     compactness_scores: list[float] = []
     fit_scores: list[float] = []
@@ -86,6 +140,7 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
         validation_commands = [str(item) for item in list(system.get("validation_commands", []))]
         validation_fit = _validation_fit(str(system.get("primary_file") or ""), validation_commands)
         fit_score = _fit_score(validation_fit)
+        outcome_state = _outcome_state(system)
         overall_score = round((compactness_score + fit_score + parallel_score) / 3.0, 6)
         compactness_scores.append(compactness_score)
         fit_scores.append(fit_score)
@@ -101,6 +156,8 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
             "validation_fit": validation_fit,
             "validation_fit_score": fit_score,
             "validation_commands": validation_commands,
+            "outcome_state": outcome_state,
+            "verified_task_success": outcome_state == "passed",
             "overall_score": overall_score,
         }
     mean_compactness = (
@@ -109,6 +166,26 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     mean_validation_fit = round(sum(fit_scores) / len(fit_scores), 6) if fit_scores else 0.0
     mean_parallel_reduction = (
         round(sum(parallel_scores) / len(parallel_scores), 6) if parallel_scores else 0.0
+    )
+    outcome_states = [entry["outcome_state"] for entry in by_system.values()]
+    complete_outcomes = [state for state in outcome_states if state != "unavailable"]
+    success_count = sum(1 for state in complete_outcomes if state == "passed")
+    if "outcome_join" not in comparison:
+        join_inputs = {}
+    else:
+        join_inputs = comparison["outcome_join"]
+        if not isinstance(join_inputs, dict):
+            raise TypeError("outcome_join must be an object")
+    predictions = join_inputs.get("predictions", [])
+    if not isinstance(predictions, list):
+        raise TypeError("outcome_join predictions must be a list")
+    outcomes = join_inputs.get("outcomes", [])
+    if not isinstance(outcomes, list):
+        raise TypeError("outcome_join outcomes must be a list")
+    join_module = _load_outcome_join_module()
+    outcome_join = join_module.build_outcome_join_report(
+        predictions=predictions,
+        outcomes=outcomes,
     )
     return {
         "artifact": "external_agent_patch_driver_scorecard",
@@ -122,20 +199,47 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
             "mean_overall_score": round(
                 (mean_compactness + mean_validation_fit + mean_parallel_reduction) / 3.0, 6
             ),
+            "complete_outcome_systems": len(complete_outcomes),
+            "incomplete_outcome_systems": len(outcome_states) - len(complete_outcomes),
+            "verified_task_success_systems": success_count,
+            "verified_task_success_rate": (
+                round(success_count / len(complete_outcomes), 6) if complete_outcomes else None
+            ),
             "next_action": str(
                 dict(comparison.get("common_contract", {})).get("next_action") or ""
             ),
         },
         "by_system": by_system,
+        "outcome_join": outcome_join,
     }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    payload = build_scorecard_payload(load_comparison(args.input))
+    input_path = Path(args.input).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
+    if input_path == output_path:
+        raise ValueError("input and output paths must differ")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    output_path.unlink(missing_ok=True)
+    temporary_path: Path | None = None
+    try:
+        payload = build_scorecard_payload(load_comparison(input_path))
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=output_path.parent,
+            prefix=f".{output_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary_file:
+            temporary_path = Path(temporary_file.name)
+            temporary_file.write(json.dumps(payload, indent=2) + "\n")
+        temporary_path.replace(output_path)
+    except BaseException:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
     print(f"Results written to {output_path}")
     return 0
 
