@@ -1,10 +1,34 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
 import time
 from pathlib import Path
-from typing import Any
+from types import ModuleType
+from typing import Any, cast
+
+_JOIN_PATH = Path(__file__).resolve().parent / "agent_outcome_join.py"
+_MISSING = object()
+
+
+def _load_outcome_join_module() -> Any:
+    """Load the sibling join module while restoring the caller's module table."""
+    spec = importlib.util.spec_from_file_location("agent_outcome_join", _JOIN_PATH)
+    if spec is None or spec.loader is None:  # pragma: no cover - defensive
+        raise RuntimeError(f"cannot load the outcome-join module from {_JOIN_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    previous: object = sys.modules.get(spec.name, _MISSING)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(spec.name, None)
+        else:
+            sys.modules[spec.name] = cast(ModuleType, previous)
+    return module
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -69,6 +93,14 @@ def _parallel_read_reduction_score(follow_up_count: int, parallel_read_group_cou
     return round(min(1.0, saved_steps / max_savable), 6)
 
 
+def _outcome_state(system: dict[str, Any]) -> str:
+    """Return observed validation state separately from planned command fit."""
+    outcome = system.get("outcome")
+    if not isinstance(outcome, dict) or not bool(outcome.get("execution_observed")):
+        return "unavailable"
+    return "passed" if bool(outcome.get("validation_passed")) else "failed"
+
+
 def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     systems = [
         dict(system) for system in list(comparison.get("systems", [])) if isinstance(system, dict)
@@ -86,6 +118,7 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
         validation_commands = [str(item) for item in list(system.get("validation_commands", []))]
         validation_fit = _validation_fit(str(system.get("primary_file") or ""), validation_commands)
         fit_score = _fit_score(validation_fit)
+        outcome_state = _outcome_state(system)
         overall_score = round((compactness_score + fit_score + parallel_score) / 3.0, 6)
         compactness_scores.append(compactness_score)
         fit_scores.append(fit_score)
@@ -101,6 +134,8 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
             "validation_fit": validation_fit,
             "validation_fit_score": fit_score,
             "validation_commands": validation_commands,
+            "outcome_state": outcome_state,
+            "verified_task_success": outcome_state == "passed",
             "overall_score": overall_score,
         }
     mean_compactness = (
@@ -109,6 +144,23 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
     mean_validation_fit = round(sum(fit_scores) / len(fit_scores), 6) if fit_scores else 0.0
     mean_parallel_reduction = (
         round(sum(parallel_scores) / len(parallel_scores), 6) if parallel_scores else 0.0
+    )
+    outcome_states = [entry["outcome_state"] for entry in by_system.values()]
+    complete_outcomes = [state for state in outcome_states if state != "unavailable"]
+    success_count = sum(1 for state in complete_outcomes if state == "passed")
+    join_inputs = comparison.get("outcome_join")
+    if not isinstance(join_inputs, dict):
+        join_inputs = {}
+    join_module = _load_outcome_join_module()
+    outcome_join = join_module.build_outcome_join_report(
+        predictions=[
+            dict(item)
+            for item in list(join_inputs.get("predictions", []))
+            if isinstance(item, dict)
+        ],
+        outcomes=[
+            dict(item) for item in list(join_inputs.get("outcomes", [])) if isinstance(item, dict)
+        ],
     )
     return {
         "artifact": "external_agent_patch_driver_scorecard",
@@ -122,11 +174,18 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
             "mean_overall_score": round(
                 (mean_compactness + mean_validation_fit + mean_parallel_reduction) / 3.0, 6
             ),
+            "complete_outcome_systems": len(complete_outcomes),
+            "incomplete_outcome_systems": len(outcome_states) - len(complete_outcomes),
+            "verified_task_success_systems": success_count,
+            "verified_task_success_rate": (
+                round(success_count / len(complete_outcomes), 6) if complete_outcomes else None
+            ),
             "next_action": str(
                 dict(comparison.get("common_contract", {})).get("next_action") or ""
             ),
         },
         "by_system": by_system,
+        "outcome_join": outcome_join,
     }
 
 

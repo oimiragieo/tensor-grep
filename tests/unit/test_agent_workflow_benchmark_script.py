@@ -1,6 +1,9 @@
 import importlib.util
 import json
+import sys
 from pathlib import Path
+
+_MISSING = object()
 
 
 def _load_script_module(name: str, rel_path: str):
@@ -648,3 +651,261 @@ def test_build_agent_capsule_summary_calibration_bin_boundaries_are_exact():
     assert bins.get("[0.4,0.6)") == 1
     assert bins.get("[0.6,0.8)") == 1
     assert bins.get("[0.8,1.0]") == 1
+
+
+def test_scorecard_reports_verified_success_separately_from_command_fit() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_fields",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "fit-and-passed",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": True},
+            },
+            {
+                "system": "fit-but-failed",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": False},
+            },
+            {
+                "system": "fit-but-unobserved",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 3,
+                "parallel_read_group_count": 1,
+                "validation_commands": ["cargo test"],
+            },
+        ]
+    })
+
+    passed = payload["by_system"]["fit-and-passed"]
+    failed = payload["by_system"]["fit-but-failed"]
+    unobserved = payload["by_system"]["fit-but-unobserved"]
+    assert passed["validation_fit"] == "strong"
+    assert failed["validation_fit"] == "strong"
+    assert failed["validation_fit_score"] == 1.0
+    assert unobserved["validation_fit"] == "strong"
+    assert passed["outcome_state"] == "passed"
+    assert passed["verified_task_success"] is True
+    assert failed["outcome_state"] == "failed"
+    assert failed["verified_task_success"] is False
+    assert unobserved["outcome_state"] == "unavailable"
+    assert unobserved["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 2
+    assert payload["summary"]["incomplete_outcome_systems"] == 1
+    assert payload["summary"]["verified_task_success_systems"] == 1
+    assert payload["summary"]["verified_task_success_rate"] == 0.5
+    assert passed["overall_score"] == failed["overall_score"]
+    assert "mean_compactness_score" in payload["summary"]
+
+
+def test_scorecard_verified_success_rate_is_null_when_nothing_was_executed() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_no_evidence",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "unobserved",
+                "primary_file": "src/lib.rs",
+                "follow_up_count": 1,
+                "validation_commands": ["cargo test"],
+            }
+        ]
+    })
+    assert payload["summary"]["complete_outcome_systems"] == 0
+    assert payload["summary"]["verified_task_success_rate"] is None
+
+
+def test_scorecard_payload_embeds_the_outcome_join_report() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_embedded",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    identity = {
+        "system_id": "tensor-grep",
+        "instance_id": "clap-lex-parse",
+        "repo_commit": "a" * 40,
+        "tool_version": "1.113.3",
+        "model_id": "gpt-5.6-sol",
+        "budget_id": "tokens=16000",
+    }
+    payload = module.build_scorecard_payload({
+        "systems": [],
+        "outcome_join": {
+            "predictions": [{**identity, "predicted_validation_commands": ["cargo test"]}],
+            "outcomes": [{**identity, "execution_observed": True, "validation_passed": True}],
+        },
+    })
+    join = payload["outcome_join"]
+    assert join["artifact"] == "agent_outcome_join"
+    assert join["identity_fields"][0] == "system_id"
+    assert len(join["joined"]) == 1
+    assert join["joined"][0]["verified_task_success"] is True
+    assert join["summary"]["complete_cases"] == 1
+    assert join["summary"]["verified_task_success_rate"] == 1.0
+
+
+def test_scorecard_payload_reports_an_empty_join_when_no_records_are_supplied() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_absent",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    payload = module.build_scorecard_payload({"systems": []})
+    join = payload["outcome_join"]
+    assert join["joined"] == []
+    assert join["summary"]["verified_task_success_rate"] is None
+    assert join["summary"]["complete_cases"] == 0
+
+
+def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_outcome_join_written",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    identity = {
+        "system_id": "tensor-grep",
+        "instance_id": "clap-lex-parse",
+        "repo_commit": "a" * 40,
+        "tool_version": "1.113.3",
+        "model_id": "gpt-5.6-sol",
+        "budget_id": "tokens=16000",
+    }
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(
+        json.dumps({
+            "artifact": "external_agent_patch_driver_comparison",
+            "systems": [],
+            "outcome_join": {
+                "predictions": [{**identity, "predicted_validation_commands": ["cargo test"]}],
+                "outcomes": [{**identity, "execution_observed": False, "validation_passed": True}],
+            },
+        }),
+        encoding="utf-8",
+    )
+    exit_code = module.main(["--input", str(input_path), "--output", str(output_path)])
+    assert exit_code == 0
+    written = json.loads(output_path.read_text(encoding="utf-8"))
+    join = written["outcome_join"]
+    assert join["artifact"] == "agent_outcome_join"
+    assert join["joined"][0]["outcome_state"] == "unavailable"
+    assert join["joined"][0]["verified_task_success"] is False
+    assert join["summary"]["incomplete_cases"] == 1
+    assert join["summary"]["verified_task_success_rate"] is None
+
+
+def test_scorecard_join_loader_restores_a_preexisting_sys_modules_entry() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_restores",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    sentinel = importlib.util.module_from_spec(
+        importlib.util.spec_from_loader("agent_outcome_join", loader=None)
+    )
+    sys.modules["agent_outcome_join"] = sentinel
+    try:
+        payload = module.build_scorecard_payload({"systems": []})
+        assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+        assert sys.modules["agent_outcome_join"] is sentinel
+    finally:
+        del sys.modules["agent_outcome_join"]
+
+
+def test_scorecard_join_loader_leaves_no_entry_when_none_existed() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_no_leak",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    assert "agent_outcome_join" not in sys.modules
+    payload = module.build_scorecard_payload({"systems": []})
+    assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+    assert "agent_outcome_join" not in sys.modules
+
+
+def test_scorecard_join_loader_restores_a_preexisting_none_entry() -> None:
+    module = _load_script_module(
+        "scorecard_join_loader_none_entry",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    sys.modules["agent_outcome_join"] = None
+    try:
+        payload = module.build_scorecard_payload({"systems": []})
+        assert payload["outcome_join"]["artifact"] == "agent_outcome_join"
+        assert "agent_outcome_join" in sys.modules
+        assert sys.modules["agent_outcome_join"] is None
+    finally:
+        del sys.modules["agent_outcome_join"]
+
+
+def test_base_payload_declares_the_outcome_join_identity_contract() -> None:
+    import argparse
+
+    module = _load_script_module(
+        "run_agent_workflow_benchmarks_identity_contract",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    args = argparse.Namespace(
+        iterations=1,
+        seed=42,
+        max_files=3,
+        max_sources=5,
+        max_tokens=1200,
+        max_repo_files=512,
+        files=250,
+        loc=12500,
+        pattern="alpha",
+        replacement="beta",
+    )
+    payload = module.build_base_payload(args)
+    assert payload["outcome_join_identity_fields"] == [
+        "system_id",
+        "instance_id",
+        "repo_commit",
+        "tool_version",
+        "model_id",
+        "budget_id",
+    ]
+    assert payload["artifact"] == "bench_agent_workflow"
+    assert payload["suite"] == "run_agent_workflow_benchmarks"
+    assert payload["workflow_surfaces"] == ["agent_capsule", "edit_loop"]
+
+
+def _load_registered_script_module(name: str, rel_path: str):
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location(name, root / rel_path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    previous = sys.modules.get(spec.name, _MISSING)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous is _MISSING:
+            sys.modules.pop(spec.name, None)
+        else:
+            sys.modules[spec.name] = previous
+    return module
+
+
+def test_workflow_identity_fields_match_the_join_modules_definition() -> None:
+    bench = _load_script_module(
+        "run_agent_workflow_benchmarks_identity_drift",
+        "benchmarks/run_agent_workflow_benchmarks.py",
+    )
+    join = _load_registered_script_module(
+        "agent_outcome_join",
+        "benchmarks/agent_outcome_join.py",
+    )
+    assert bench.OUTCOME_JOIN_IDENTITY_FIELDS == join.IDENTITY_FIELDS
+    assert join.IDENTITY_FIELDS == join.ANNOTATED_IDENTITY_FIELDS
