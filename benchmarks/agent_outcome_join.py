@@ -130,10 +130,12 @@ def _command_fit(prediction: dict[str, Any]) -> bool:
     return any(isinstance(item, str) and bool(item.strip()) for item in commands)
 
 
-def _nullable_total(values: list[Any]) -> Any:
+def _nullable_total(values: list[Any], *, integer_only: bool = False) -> Any:
     if any(
         isinstance(value, bool)
         or not isinstance(value, (int, float))
+        or value < 0
+        or (integer_only and not isinstance(value, int))
         or (isinstance(value, float) and not isfinite(value))
         for value in values
     ):
@@ -229,8 +231,12 @@ def build_outcome_join_report(
             "unidentified_outcome_count": len(unidentified_outcomes),
             "unmatched_prediction_count": len(unmatched_predictions),
             "unmatched_outcome_count": len(unmatched_outcomes),
-            "tokens_in_total": _nullable_total([row["tokens_in"] for row in joined]),
-            "tokens_out_total": _nullable_total([row["tokens_out"] for row in joined]),
+            "tokens_in_total": _nullable_total(
+                [row["tokens_in"] for row in joined], integer_only=True
+            ),
+            "tokens_out_total": _nullable_total(
+                [row["tokens_out"] for row in joined], integer_only=True
+            ),
             "elapsed_s_total": _nullable_total([row["elapsed_s"] for row in joined]),
         },
     }

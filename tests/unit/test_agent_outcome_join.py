@@ -423,6 +423,19 @@ def test_mixed_large_integer_and_float_cost_returns_null_without_crashing() -> N
     assert report["summary"]["tokens_in_total"] is None
 
 
+def test_domain_invalid_cost_values_are_null() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction()],
+        outcomes=[_outcome(tokens_in=-7, tokens_out=1.5, elapsed_s=-2.0)],
+    )
+
+    assert report["summary"]["tokens_in_total"] is None
+    assert report["summary"]["tokens_out_total"] is None
+    assert report["summary"]["elapsed_s_total"] is None
+
+
 def test_empty_inputs_report_no_evidence_rather_than_perfect_success() -> None:
     module = _load_join_module()
 
