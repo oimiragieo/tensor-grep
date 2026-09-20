@@ -354,6 +354,19 @@ def test_missing_cost_is_null_not_zero() -> None:
     assert report["summary"]["elapsed_s_total"] is None
 
 
+def test_malformed_cost_values_are_null_instead_of_crashing() -> None:
+    module = _load_join_module()
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction()],
+        outcomes=[_outcome(tokens_in="1", tokens_out=True, elapsed_s=float("inf"))],
+    )
+
+    assert report["summary"]["tokens_in_total"] is None
+    assert report["summary"]["tokens_out_total"] is None
+    assert report["summary"]["elapsed_s_total"] is None
+
+
 def test_empty_inputs_report_no_evidence_rather_than_perfect_success() -> None:
     module = _load_join_module()
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, TypeAlias, get_type_hints
 
 IDENTITY_FIELDS: tuple[str, ...] = (
@@ -130,7 +131,10 @@ def _command_fit(prediction: dict[str, Any]) -> bool:
 
 
 def _nullable_total(values: list[Any]) -> Any:
-    if any(value is None for value in values):
+    if any(
+        isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value)
+        for value in values
+    ):
         return None
     if not values:
         return 0
