@@ -47,6 +47,5 @@ output nowhere.
 
 ## Not covered
 
-This module does NOT close AGT-01. Holdout curation (MAP.md Destination lines 8-9, scoped out at
-Out of scope lines 24-26 -- it is not one of the MAP's three Answers) is not implemented here;
-see `.build/agt-01-outcome-joins-holdout/PLAN.md` section 6.
+This module does NOT close AGT-01. Holdout curation is not implemented here; it remains a
+separate follow-up that requires real repository fixtures and known-good patches.
