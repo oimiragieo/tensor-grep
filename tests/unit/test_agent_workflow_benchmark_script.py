@@ -955,6 +955,39 @@ def test_scorecard_main_does_not_publish_present_null_outcome_join(tmp_path) -> 
     assert not output_path.exists()
 
 
+@pytest.mark.parametrize("invalid_systems", [None, "not-a-list", {}, 3])
+def test_scorecard_rejects_present_non_list_systems(invalid_systems: object) -> None:
+    module = _load_script_module(
+        "scorecard_invalid_systems_container",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": invalid_systems})
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("present non-list systems must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_present_null_systems(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_null_systems_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": None}), encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems must be a list"
+    else:
+        raise AssertionError("present null systems must fail clearly")
+    assert not output_path.exists()
+
+
 def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
     module = _load_script_module(
         "scorecard_outcome_join_written",

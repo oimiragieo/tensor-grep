@@ -102,9 +102,13 @@ def _outcome_state(system: dict[str, Any]) -> str:
 
 
 def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
-    systems = [
-        dict(system) for system in list(comparison.get("systems", [])) if isinstance(system, dict)
-    ]
+    if "systems" not in comparison:
+        systems_input: Any = []
+    else:
+        systems_input = comparison["systems"]
+        if not isinstance(systems_input, list):
+            raise TypeError("systems must be a list")
+    systems = [dict(system) for system in systems_input if isinstance(system, dict)]
     seen_system_names: set[str] = set()
     for system in systems:
         system_name = str(system.get("system") or "")
