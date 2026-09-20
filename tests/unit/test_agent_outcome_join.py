@@ -198,6 +198,22 @@ def test_legacy_row_missing_identity_stays_unavailable_not_guessed() -> None:
     assert report["summary"]["verified_task_success_cases"] == 0
 
 
+def test_legacy_adapter_rejects_truthy_non_boolean_patch_applied() -> None:
+    module = _load_join_module()
+    source = _outcome(patch_applied="false", validation_passed=True)
+    source.pop("execution_observed")
+    legacy = module.adapt_legacy_bakeoff_row(source)
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction()],
+        outcomes=[legacy],
+    )
+
+    assert legacy["execution_observed"] is False
+    assert report["joined"][0]["outcome_state"] == "unavailable"
+    assert report["joined"][0]["verified_task_success"] is False
+
+
 def test_matching_full_identity_joins_and_counts_verified_success() -> None:
     module = _load_join_module()
 

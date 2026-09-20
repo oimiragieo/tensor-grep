@@ -90,7 +90,7 @@ def adapt_legacy_bakeoff_row(row: dict[str, Any]) -> dict[str, Any]:
     system = str(row.get("system") or "").strip()
     if system and not str(adapted.get("system_id") or "").strip():
         adapted["system_id"] = system
-    adapted.setdefault("execution_observed", bool(row.get("patch_applied")))
+    adapted.setdefault("execution_observed", row.get("patch_applied") is True)
     adapted.setdefault("tokens_in", None)
     adapted.setdefault("tokens_out", None)
     adapted.setdefault("elapsed_s", None)
