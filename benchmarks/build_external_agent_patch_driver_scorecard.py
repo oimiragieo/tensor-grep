@@ -108,7 +108,11 @@ def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:
         systems_input = comparison["systems"]
         if not isinstance(systems_input, list):
             raise TypeError("systems must be a list")
-    systems = [dict(system) for system in systems_input if isinstance(system, dict)]
+    systems: list[dict[str, Any]] = []
+    for system in systems_input:
+        if not isinstance(system, dict):
+            raise TypeError("systems entries must be objects")
+        systems.append(dict(system))
     seen_system_names: set[str] = set()
     for system in systems:
         system_name = str(system.get("system") or "")

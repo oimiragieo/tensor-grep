@@ -988,6 +988,39 @@ def test_scorecard_main_does_not_publish_present_null_systems(tmp_path) -> None:
     assert not output_path.exists()
 
 
+@pytest.mark.parametrize("invalid_system_entry", [None, "not-an-object", 3, []])
+def test_scorecard_rejects_non_object_system_entries(invalid_system_entry: object) -> None:
+    module = _load_script_module(
+        "scorecard_invalid_system_entry",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    try:
+        module.build_scorecard_payload({"systems": [invalid_system_entry]})
+    except TypeError as error:
+        assert str(error) == "systems entries must be objects"
+    else:
+        raise AssertionError("non-object systems entries must fail clearly")
+
+
+def test_scorecard_main_does_not_publish_non_object_system_entry(tmp_path) -> None:
+    module = _load_script_module(
+        "scorecard_non_object_system_entry_main",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+    input_path = tmp_path / "comparison.json"
+    output_path = tmp_path / "scorecard.json"
+    input_path.write_text(json.dumps({"systems": [None]}), encoding="utf-8")
+
+    try:
+        module.main(["--input", str(input_path), "--output", str(output_path)])
+    except TypeError as error:
+        assert str(error) == "systems entries must be objects"
+    else:
+        raise AssertionError("non-object systems entries must fail clearly")
+    assert not output_path.exists()
+
+
 def test_scorecard_main_writes_the_join_into_the_output_file(tmp_path) -> None:
     module = _load_script_module(
         "scorecard_outcome_join_written",
