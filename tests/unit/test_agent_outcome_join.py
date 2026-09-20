@@ -143,6 +143,18 @@ def test_extract_identity_returns_missing_fields_instead_of_guessing() -> None:
     assert missing == ["model_id", "tool_version"]
 
 
+def test_identity_components_with_padding_or_controls_are_unidentified() -> None:
+    module = _load_join_module()
+
+    padded_identity, padded_missing = module.extract_identity(_prediction(system_id=" tg "))
+    control_identity, control_missing = module.extract_identity(_prediction(model_id="gpt\x00"))
+
+    assert padded_identity is None
+    assert padded_missing == ["system_id"]
+    assert control_identity is None
+    assert control_missing == ["model_id"]
+
+
 def test_join_does_not_cross_join_rows_differing_in_one_identity_field() -> None:
     """MAP.md Answer 1: same instance_id, different model_id must never join."""
     module = _load_join_module()
@@ -297,7 +309,7 @@ def test_malformed_validation_command_does_not_earn_command_fit_credit() -> None
     module = _load_join_module()
 
     report = module.build_outcome_join_report(
-        predictions=[_prediction(predicted_validation_commands=[None, 7, "   "])],
+        predictions=[_prediction(predicted_validation_commands=[None, 7, "   ", "\x00"])],
         outcomes=[_outcome()],
     )
 

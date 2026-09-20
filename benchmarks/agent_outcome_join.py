@@ -69,7 +69,7 @@ def extract_identity(record: dict[str, Any]) -> tuple[OutcomeIdentity | None, li
     missing: list[str] = []
     for field in IDENTITY_FIELDS:
         raw = record.get(field)
-        text = raw.strip() if isinstance(raw, str) else ""
+        text = raw if isinstance(raw, str) and raw == raw.strip() and raw.isprintable() else ""
         if not text:
             missing.append(field)
         else:
@@ -130,7 +130,9 @@ def _command_fit(prediction: dict[str, Any]) -> bool:
     commands = prediction.get("predicted_validation_commands")
     if not isinstance(commands, list):
         return False
-    return any(isinstance(item, str) and bool(item.strip()) for item in commands)
+    return any(
+        isinstance(item, str) and bool(item.strip()) and item.isprintable() for item in commands
+    )
 
 
 def _nullable_total(values: list[Any], *, integer_only: bool = False) -> Any:
