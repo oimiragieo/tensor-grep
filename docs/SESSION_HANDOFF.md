@@ -1,6 +1,22 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-09-10
+Last updated: 2026-09-20
+
+**2026-09-20 closeout:** PR #1159 shipped AGT-01's fail-closed outcome join and PR #1160
+shipped scorecard wiring; v1.121.0 is live and published-wheel verified. AGT-01 remains mixed,
+not closed: holdout curation is blocked on real repository fixtures and independently reviewed
+known-good patches. PR #1161 merged the explicit zero-token contract for `ci-cost-os-gate` as
+`97eea20906cde3a82015820a9fb9a260dcdcedc6`; PR CI run `35530330403` tested exact head
+`0bd3d3aac85364530d8783bfc33ac36fc6cc87f8`, and merged-main CI run
+`35532348748` each completed 38 jobs successfully, and main CodeQL run `35532348414` completed
+success at head `97eea20906cde3a82015820a9fb9a260dcdcedc6`. Code-scanning alert #24 reports `state=fixed`, `dismissed_at=null`,
+`fixed_at=2026-09-20T19:27:52Z`. A same-time GitHub reconciliation found zero open PRs,
+issues, Dependabot alerts, code-scanning alerts, or secret-scanning alerts; treat those zero
+counts as the 2026-09-20 snapshot, not a permanent claim.
+Receipts were re-derived with `gh run view 35530330403 --json status,conclusion,headSha,jobs`,
+the same command for runs `35532348748` and `35532348414`, and
+`gh api repos/oimiragieo/tensor-grep/code-scanning/alerts/24`; zero counts came from the
+corresponding paginated GitHub alert/list endpoints filtered to open state.
 
 **2026-09-10 addendum (this session):** 5 more agentic-quality-simplification slices shipped and
 independently audited AUDIT_CLEAR (AGT-02 `3e67c45`, AGT-07 `756769f`, AGT-03 `e163de4`, AGT-08
