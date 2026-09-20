@@ -397,6 +397,18 @@ def test_finite_cost_inputs_that_overflow_are_reported_as_null() -> None:
     assert report["summary"]["elapsed_s_total"] is None
 
 
+def test_large_integer_cost_remains_exact_without_float_coercion() -> None:
+    module = _load_join_module()
+    large_cost = 10**1000
+
+    report = module.build_outcome_join_report(
+        predictions=[_prediction()],
+        outcomes=[_outcome(tokens_in=large_cost)],
+    )
+
+    assert report["summary"]["tokens_in_total"] == large_cost
+
+
 def test_empty_inputs_report_no_evidence_rather_than_perfect_success() -> None:
     module = _load_join_module()
 

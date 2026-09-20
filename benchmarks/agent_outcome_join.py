@@ -132,14 +132,16 @@ def _command_fit(prediction: dict[str, Any]) -> bool:
 
 def _nullable_total(values: list[Any]) -> Any:
     if any(
-        isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value)
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or (isinstance(value, float) and not isfinite(value))
         for value in values
     ):
         return None
     if not values:
         return 0
     total = sum(values)
-    if not isfinite(total):
+    if isinstance(total, float) and not isfinite(total):
         return None
     return round(total, 6) if isinstance(total, float) else total
 
