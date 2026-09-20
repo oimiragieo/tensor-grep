@@ -96,9 +96,9 @@ def _parallel_read_reduction_score(follow_up_count: int, parallel_read_group_cou
 def _outcome_state(system: dict[str, Any]) -> str:
     """Return observed validation state separately from planned command fit."""
     outcome = system.get("outcome")
-    if not isinstance(outcome, dict) or not bool(outcome.get("execution_observed")):
+    if not isinstance(outcome, dict) or outcome.get("execution_observed") is not True:
         return "unavailable"
-    return "passed" if bool(outcome.get("validation_passed")) else "failed"
+    return "passed" if outcome.get("validation_passed") is True else "failed"
 
 
 def build_scorecard_payload(comparison: dict[str, Any]) -> dict[str, Any]:

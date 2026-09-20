@@ -726,6 +726,54 @@ def test_scorecard_verified_success_rate_is_null_when_nothing_was_executed() -> 
     assert payload["summary"]["verified_task_success_rate"] is None
 
 
+def test_scorecard_outcome_state_requires_strict_boolean_execution_flag() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_strict_execution_flag",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "truthy-but-not-boolean",
+                "primary_file": "src/lib.rs",
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": 1, "validation_passed": True},
+            }
+        ]
+    })
+
+    row = payload["by_system"]["truthy-but-not-boolean"]
+    assert row["outcome_state"] == "unavailable"
+    assert row["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 0
+    assert payload["summary"]["verified_task_success_rate"] is None
+
+
+def test_scorecard_outcome_state_requires_strict_boolean_validation_flag() -> None:
+    module = _load_script_module(
+        "scorecard_outcome_strict_validation_flag",
+        "benchmarks/build_external_agent_patch_driver_scorecard.py",
+    )
+
+    payload = module.build_scorecard_payload({
+        "systems": [
+            {
+                "system": "string-false",
+                "primary_file": "src/lib.rs",
+                "validation_commands": ["cargo test"],
+                "outcome": {"execution_observed": True, "validation_passed": "false"},
+            }
+        ]
+    })
+
+    row = payload["by_system"]["string-false"]
+    assert row["outcome_state"] == "failed"
+    assert row["verified_task_success"] is False
+    assert payload["summary"]["complete_outcome_systems"] == 1
+    assert payload["summary"]["verified_task_success_rate"] == 0.0
+
+
 def test_scorecard_payload_embeds_the_outcome_join_report() -> None:
     module = _load_script_module(
         "scorecard_outcome_join_embedded",
