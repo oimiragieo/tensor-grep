@@ -1,8 +1,8 @@
 # tensor-grep — Project Backlog & PR Tracker
 
-## Pagination caveat truth — IN FLIGHT on `fix/pagination-caveat-truth` (2026-09-22)
+## Pagination caveat truth — SHIPPED in v1.121.3 (2026-09-22)
 
-Implementation candidate for the approved `.build/pagination-caveat/PLAN.md` slice: output-only
+The approved `.build/pagination-caveat/PLAN.md` slice shipped in PR #1167: output-only
 `--max-files`/`--max-callers` caps now keep exit 0 and `result_incomplete=false` with an
 `OUTPUT LIMITED: display omitted N ...; raise --max-* to see more` advisory (composed by the new
 `_output_limit_note` beside `_scan_truncation_warning` in `cli/main.py`), scan/deadline/upstream
@@ -12,8 +12,14 @@ both, `tg map` now routes through the shared `_annotate_result_completeness` exi
 node) with no invented edges. Falsified in memory both ways (advisory suppressed: 9 focused
 failures; output-only forced `result_incomplete=true`: the CLI exit-0 pins fail at exit 2), then
 restored. Two sibling tests and one helper comment that pinned the retired conflation were
-reconciled in the same slice. Shipping remains gated on focused tests, independent audit,
-exact-SHA verification, PR CI, merge verification, and published-wheel dogfood.
+reconciled in the same slice. Implementation head
+`a930b9af72c56bece8a71ef572353ef140a6c015` passed independent `AUDIT_CLEAR`, Security Audit
+run `35786477154`, CodeQL, and PR CI run `35786477119` (38/38 terminal jobs, zero failures).
+Squash merge `cff35c7a644febba2c1f6ce2b2eb846d818905df` passed 112 focused post-merge tests and
+main release run `35790128118` (44/44 terminal jobs, zero failures). Published-wheel dogfood
+with `uvx --from tensor-grep@1.121.3` confirmed `result_incomplete=false` and
+`scan_limit.possibly_truncated=false` while separately reporting 41 omitted callers and 25
+omitted files under `OUTPUT LIMITED`.
 
 ## v1.121.1 Windows dogfood audit correction (2026-09-22)
 
