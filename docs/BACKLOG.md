@@ -1,5 +1,35 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## v1.121.1 Windows dogfood audit correction (2026-09-22)
+
+**TG-MAP-DEFAULT — SHIPPED in v1.121.2.** The audited `tg map` CLI
+still defaulted to 512 files while the shared agent/map budget was 2,000. PR #1164
+changed the default and CLI/README wording, and added a 600-file regression proving
+that a file beyond 512 is included without a false incomplete result. Implementation
+head `82243be599ccaba736c402dc63ae3f0f565fc93e` passed exact-head CI run
+`35721913673` (38 terminal jobs: 30 success, 8 skipped, zero failed) and Security Audit `35721913691`;
+the squash merge is `1867329514db7510d0c3baf570b7e9042c3cb54e`.
+The first PR head `099709fd70581023507656fd832aced824b718de` failed
+Ubuntu Python 3.11 because an old contract test still expected 512; this was fixed
+before merge, not waved away as a flaky check. The new regression was independently
+proved RED under the old default (`scanned_files=512`, incomplete, exit 2) and GREEN
+under 2,000. Post-merge targeted tests passed 26/26 on main. The Fable approval seat
+was explicitly waived by the user; the failed full council attempt is not an approval.
+Main release run `35725520334` completed 44 terminal jobs (43 success, 1 skipped,
+zero failed) on the merge SHA;
+PyPI v1.121.2 serves four files (macOS/Linux/Windows wheels and sdist), and a
+published Windows wheel probe `uvx --from tensor-grep==1.121.2 tg map . --json`
+exited 0 with `max_repo_files=2000`, `scanned_files=1455`, and
+`possibly_truncated=false`.
+
+Other audit claims were checked rather than promoted to defects: the v1.121.1 Windows
+session daemon stayed resident in the observed repro, `tg blast-radius` did not use
+the asserted 512 default, and `tg codemap <root>` writing beneath the supplied root
+matched its documented output contract. PowerShell interpolation of double-quoted
+`$NAME` is a shell parser behavior; no CLI parser change was made. Larger graph,
+query-conjunction, and embedded-vector ideas remain demand/benchmark-gated under
+their existing P/F backlog owners rather than authorized by this dogfood alone.
+
 ## External dogfood audit, v1.119.15 (2026-09-13, received not authored this session)
 
 An external agent session ran the shipped-artifact dogfood harness against `v1.119.15` (managed

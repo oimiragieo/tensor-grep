@@ -1,6 +1,17 @@
 # tensor-grep Session Handoff
 
-Last updated: 2026-09-20
+Last updated: 2026-09-22
+
+**2026-09-22 map dogfood correction:** PR #1164 merged as
+`1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure
+on a stale 512 assertion was fixed. Corrected head `82243be599ccaba736c402dc63ae3f0f565fc93e`
+passed PR CI `35721913673` (38 terminal jobs: 30 success, 8 skipped, zero failed), Security Audit
+`35721913691`, and 26/26 post-merge targeted tests. Main release run
+`35725520334` completed 44 terminal jobs (43 success, 1 skipped, zero failed);
+v1.121.2 is live on PyPI with
+four files. Published Windows wheel `tg map . --json` exited 0 on 1,455 repo
+files with the 2,000-file default and no truncation. The Fable plan-approval
+seat was waived by the user, while the full council attempt remains failed.
 
 **2026-09-20 closeout:** PR #1159 shipped AGT-01's fail-closed outcome join and PR #1160
 shipped scorecard wiring; v1.121.0 is live and published-wheel verified. AGT-01 remains mixed,
