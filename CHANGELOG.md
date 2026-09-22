@@ -1,6 +1,19 @@
 # CHANGELOG
 
 
+## v1.121.2 (2026-09-22)
+
+### Bug Fixes
+
+- **map**: Align default scan cap with agent map limit
+  ([#1164](https://github.com/oimiragieo/tensor-grep/pull/1164),
+  [`1867329`](https://github.com/oimiragieo/tensor-grep/commit/1867329514db7510d0c3baf570b7e9042c3cb54e))
+
+* fix(map): align default scan cap with agent map limit
+
+* test(map): align inventory contract with 2000 default
+
+
 ## v1.121.1 (2026-09-20)
 
 ### Bug Fixes
