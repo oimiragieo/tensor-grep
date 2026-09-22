@@ -150,6 +150,11 @@ def _annotation_disclosure_is_bound(
             and node.id == leading_var
         ):
             return False
+    for node in ast.walk(function):
+        if not (disclosure_line < getattr(node, "lineno", 0) < gate_line):
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == gate_var:
+            return False
     return True
 
 
@@ -267,6 +272,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation and False)\n    typer.echo(leading)",
         "caveat = None\n    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)",
         "if False:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)\n    is_truncation = False",
     ],
 )
 def test_annotation_disclosure_binding_rejects_false_green_mutations(render_lines: str) -> None:

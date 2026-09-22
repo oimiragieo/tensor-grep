@@ -603,7 +603,8 @@ less of an answer I fully computed".
 **Two vocabularies, one truth (read them as a pair):** `result_incomplete` describes the
 ANALYSIS/SCAN (`scan_limit`/`caller_scan_limit`/`partial`/`caller_scan_truncated`, or an
 upstream-stamped incompleteness) and is what exit 2 keys on; `output_limit` describes DISPLAY
-omissions only. An output-only cap keeps `result_incomplete: false` and exit 0, and discloses
+omissions only, including symbol-command `--max-tests` caps. An output-only cap keeps
+`result_incomplete: false` and exit 0, and discloses
 through an `OUTPUT LIMITED: display omitted N caller(s)/file(s)/test file(s)/import consumer(s); raise
 --max-* to see more` caveat -- trailing `note:` in text, a distinct `tg_output_limited` node in
 `--mermaid`, never the scan-truncation `tg_incomplete` node. Never suggest a capped subset is

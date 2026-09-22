@@ -81,7 +81,7 @@ def test_mermaid_notes_truncation_when_result_incomplete() -> None:
     )
     lines = out.splitlines()
     assert lines[0] == "graph TD"  # the diagram-type declaration still opens the block
-    assert "truncated" in out.lower()
+    assert "incomplete result" in out.lower()
     assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
     # Premise: a node really was rendered, so the ordering comparison below is not vacuous.
     assert "a.py" in out

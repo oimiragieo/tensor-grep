@@ -172,6 +172,30 @@ def test_l1_emit_keeps_exit_zero_when_results_present(
     assert emitted["not_found"] is False
 
 
+def test_upstream_incomplete_empty_symbol_result_never_claims_not_found(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "definitions": [],
+        "symbol": "x",
+        "path": ".",
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    with pytest.raises(typer.Exit) as exc:
+        _emit_symbol_command_result(
+            payload,
+            result_key="definitions",
+            json_output=True,
+            emit_text=lambda _p: None,
+        )
+    assert exc.value.exit_code == 2
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["result_incomplete"] is True
+    assert emitted["not_found"] is False
+    assert "upstream analysis stopped early" in emitted["caveat"]
+
+
 # ----------------------------------------------------------------- P7 zero-callers caveat
 # "zero callers != dead code": a symbol that RESOLVED but has no callers in the static graph
 # is the P7 trap (validated twice on real codebases: registration symbols + spec_to_env_fragment,
@@ -508,6 +532,33 @@ def test_preexisting_incomplete_gets_a_fail_closed_warning() -> None:
     assert payload["result_incomplete"] is True and is_truncation is True
     assert caveat is not None
     assert "INCOMPLETE RESULT" in caveat and "upstream analysis stopped early" in caveat
+
+
+def test_blast_radius_upstream_incomplete_empty_result_never_claims_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import main as main_mod
+    from tensor_grep.cli import repo_map
+
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": str(tmp_path),
+        "definitions": [],
+        "callers": [],
+        "files": [],
+        "tests": [],
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    monkeypatch.setattr(main_mod, "_maybe_symbol_command_via_running_daemon", lambda **_k: None)
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", lambda *_a, **_k: dict(payload))
+
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "x", "--json"])
+    assert result.exit_code == 2, result.output
+    emitted = json.loads(result.stdout)
+    assert emitted["result_incomplete"] is True
+    assert emitted["not_found"] is False
+    assert "upstream analysis stopped early" in emitted["caveat"]
 
 
 def test_map_route_preexisting_incomplete_warns_and_exits_two(

@@ -6836,17 +6836,20 @@ def _symbol_not_found_claim(payload: dict[str, Any], result_key: str) -> bool:
     docstring exists to prevent, surviving in the one field the completeness machinery never
     covered.
 
-    The truncation predicate is ``_scan_incomplete`` -- NOT a fresh check -- because that gate is
-    already where "the scan-vs-output-cap contract is defined exactly once". A second notion of
-    incompleteness here could drift from the exit-code gate and reintroduce exactly the
-    inconsistency this fixes. It also gets the OUTPUT-cap boundary right for free: an output cap
-    is a complete analysis capped for display, so it must NOT suppress ``not_found``.
+    The truncation predicate is ``_scan_incomplete`` plus the upstream ``result_incomplete``
+    stamp -- the same two facts used by the exit-2 gates. It gets the OUTPUT-cap boundary right:
+    an output cap is a complete analysis capped for display, so it must NOT suppress
+    ``not_found``.
 
     Exit codes are unaffected: ``_scan_incomplete``-true payloads already exit 2 on a branch
     evaluated before ``not_found`` is consulted, so this only changes what the FIELD says to a
     caller reading the JSON.
     """
-    return _symbol_payload_has_no_results(payload, result_key) and not _scan_incomplete(payload)
+    return (
+        _symbol_payload_has_no_results(payload, result_key)
+        and not _scan_incomplete(payload)
+        and not bool(payload.get("result_incomplete"))
+    )
 
 
 _ZERO_CALLERS_CAVEAT = (
@@ -8264,7 +8267,10 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         # An incompleteness stamped upstream that carries no scan_limit/output_limit of its own
         # still owes the reader a disclosure; falling through silently would trade a MISPOSITIONED
         # warning for an ABSENT one, which is the worse half of this same class.
-        truncation = _truncation_message("the result was truncated")
+        reason = payload.get("incomplete_reason")
+        truncation = _truncation_message(
+            str(reason) if reason else "the result is incomplete and may be missing entries"
+        )
     leading, _ = _completeness_caveat_lines(truncation, is_truncation=truncation is not None)
     if leading is not None:
         # Flattened because a `%%` comment ends at the newline: an embedded one would close the
