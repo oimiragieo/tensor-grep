@@ -1,5 +1,20 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## Pagination caveat truth — IN FLIGHT on `fix/pagination-caveat-truth` (2026-09-22)
+
+Implementation candidate for the approved `.build/pagination-caveat/PLAN.md` slice: output-only
+`--max-files`/`--max-callers` caps now keep exit 0 and `result_incomplete=false` with an
+`OUTPUT LIMITED: display omitted N ...; raise --max-* to see more` advisory (composed by the new
+`_output_limit_note` beside `_scan_truncation_warning` in `cli/main.py`), scan/deadline/upstream
+incompleteness keeps the leading `INCOMPLETE RESULT` warning and exit 2, mixed payloads disclose
+both, `tg map` now routes through the shared `_annotate_result_completeness` exit gate, and
+`--mermaid` renders a distinct `tg_output_limited` advisory node (never the scan `tg_incomplete`
+node) with no invented edges. Falsified in memory both ways (advisory suppressed: 9 focused
+failures; output-only forced `result_incomplete=true`: the CLI exit-0 pins fail at exit 2), then
+restored. Two sibling tests and one helper comment that pinned the retired conflation were
+reconciled in the same slice. Shipping remains gated on focused tests, independent audit,
+exact-SHA verification, PR CI, merge verification, and published-wheel dogfood.
+
 ## v1.121.1 Windows dogfood audit correction (2026-09-22)
 
 **TG-MAP-DEFAULT — SHIPPED in v1.121.2.** The audited `tg map` CLI

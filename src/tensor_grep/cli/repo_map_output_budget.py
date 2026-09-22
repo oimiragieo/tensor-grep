@@ -100,11 +100,17 @@ def apply_repo_map_output_limits(
             for path in payload.get("related_paths", [])
             if str(path) in allowed_related_paths
         ]
-    _output_capped = len(original_files) > normalized_max_files
+    omitted_files = max(0, len(original_files) - len(selected_files))
+    omitted_tests = max(0, len(original_tests) - len(selected_tests))
+    _output_capped = omitted_files > 0 or omitted_tests > 0
     limited["output_limit"] = {
         "max_files": normalized_max_files,
         "emitted_files": len(selected_files),
         "original_files": len(original_files),
+        "omitted_files": omitted_files,
+        "returned_tests": len(selected_tests),
+        "total_tests": len(original_tests),
+        "omitted_tests": omitted_tests,
         # output_limit operates on files already filtered by the repo-map walk,
         # so these are always project files; possibly_truncated is accurate here.
         "possibly_truncated": _output_capped,
@@ -676,8 +682,8 @@ def _apply_symbol_field_output_limit(
 
     Deliberately field-NAME-scoped output_limit keys (``{field_name}_truncated``, e.g.
     ``tests_truncated`` -- never blast-radius's own ``callers_truncated``/``files_truncated``
-    names, which ``main._scan_truncation_warning`` DOES recognize as a SCAN truncation). An
-    output cap here is a COMPLETE analysis capped for display and must stay exit-0 (design #96
+    names, which ``main._output_limit_note`` recognizes as display truncation). An output cap
+    here is a COMPLETE analysis capped for display and must stay exit-0 (design #96
     contract-safety section; see ``main._scan_incomplete``'s docstring for the scan-vs-output-cap
     split this deliberately avoids colliding with).
 

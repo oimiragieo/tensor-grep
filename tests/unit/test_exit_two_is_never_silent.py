@@ -50,13 +50,11 @@ def _truncated() -> dict[str, Any]:
 
 def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
     lines = _MAIN.read_text(encoding="utf-8").splitlines()
-    gates = []
+    gates: list[tuple[int, str, str | None, str | None]] = []
     for i, line in enumerate(lines):
         if not line.strip().startswith("if "):
             continue
         m = re.search(r"_scan_incomplete\((\w+)\)", line)
-        if not m:
-            continue
         # A GATE is defined by BEHAVIOUR -- it exits 2 -- not by mentioning `_scan_incomplete`.
         # Two other uses exist and neither owes a disclosure: this file's own helper guards on it
         # (`if not _scan_incomplete(...): return False`) and `_scan_truncation_warning` ends with
@@ -73,7 +71,26 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         body = "\n".join(lines[i : i + 8])
         if "Exit(2)" not in body:
             continue
-        gates.append((i, m.group(1)))
+        if m:
+            gates.append((i, m.group(1), None, None))
+            continue
+
+        # The shared annotation path classifies the same payload once, then gates on the
+        # returned boolean. Preserve that dataflow in the ratchet instead of exempting the
+        # command by name: payload -> annotation -> is_truncation -> Exit(2), with disclosure
+        # rendered from the paired caveat value.
+        condition = re.fullmatch(r"if (\w+):", line.strip())
+        if condition is None:
+            continue
+        start = next((j for j in range(i, 0, -1) if lines[j].startswith("def ")), 0)
+        before_gate = "\n".join(lines[start:i])
+        annotation = re.search(
+            rf"(\w+),\s*{re.escape(condition.group(1))}\s*=\s*"
+            r"_annotate_result_completeness\((\w+)\)",
+            before_gate,
+        )
+        if annotation:
+            gates.append((i, annotation.group(2), annotation.group(1), condition.group(1)))
     # PREMISE: the gates still exist and are plural. If a refactor renamed them this test would
     # otherwise pass over an empty list -- a ratchet that quietly covers nothing still reads green.
     assert len(gates) >= 12, f"expected the exit-2 gate family, found {len(gates)}"
@@ -82,7 +99,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
     # whose text output an agent is most likely to read as a finished answer.
     covered = {
         next((lines[j] for j in range(i, 0, -1) if lines[j].startswith("def ")), "").split("(")[0]
-        for i, _ in gates
+        for i, _, _, _ in gates
     }
     for command in ("def map", "def agent", "def context", "def edit_plan", "def prepare"):
         assert command in covered, (
@@ -91,7 +108,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         )
 
     undisclosed = []
-    for idx, var in gates:
+    for idx, var, caveat_var, gate_var in gates:
         # Scoped to the ENCLOSING FUNCTION, not a fixed line window. A 40-line window flagged
         # `prepare`, whose banner is correctly placed but sits ~50 lines above its gate with the
         # capsule-writing block in between. An arbitrary window makes the ratchet's verdict depend
@@ -99,6 +116,16 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         # until it stops complaining, which is how a ratchet quietly stops ratcheting.
         start = next((j for j in range(idx, 0, -1) if lines[j].startswith("def ")), 0)
         window = "\n".join(lines[start:idx])
+        if (
+            caveat_var is not None
+            and gate_var is not None
+            and re.search(
+                rf"_completeness_caveat_lines\(\s*{re.escape(caveat_var)}\s*,\s*"
+                rf"is_truncation\s*=\s*{re.escape(gate_var)}\b",
+                window,
+            )
+        ):
+            continue
         if f"{_CALL}({var})" in window:
             continue
         # `codemap` discloses through its own older `PARTIAL:` line; it is not silent, and

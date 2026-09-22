@@ -88,6 +88,64 @@ def test_mermaid_notes_truncation_when_result_incomplete() -> None:
     assert out.index("warning:") < out.index("a.py")
 
 
+def test_mermaid_output_only_cap_gets_an_advisory_node_not_the_incomplete_node() -> None:
+    # Pagination-caveat split: an OUTPUT cap is a display limitation on a COMPLETE analysis, so
+    # the diagram carries a distinct `tg_output_limited` advisory node + `%% note:` comment --
+    # NEVER the scan-incomplete node, and no invented call edges. The node leads the target so a
+    # reader meets the advisory before tracing the paginated graph it qualifies.
+    out = _render_blast_radius_mermaid(
+        _payload(
+            "Big",
+            [{"file": "/repo/a.py", "line": 1}],
+            output_limit={
+                "max_callers": 1,
+                "callers_truncated": True,
+                "total_callers": 9,
+                "returned_callers": 1,
+                "omitted_callers": 8,
+            },
+        )
+    )
+    lines = out.splitlines()
+    assert lines[0] == "graph TD"
+    assert "%% note: OUTPUT LIMITED" in out
+    assert "8 caller(s)" in out
+    assert "tg_output_limited[" in out
+    assert "tg_incomplete[" not in out, "a display cap must not render as a scan failure"
+    assert "INCOMPLETE RESULT" not in out
+    assert out.count("-->") == 1  # the one real caller edge; an advisory adds none
+    assert out.index("tg_output_limited[") < out.index('target["')
+
+
+def test_mermaid_mixed_truncation_renders_both_disclosures() -> None:
+    # A scan truncation and an output cap are independent facts: the diagram must retain the
+    # scan-incomplete node AND carry the output advisory, with no extra edges from either.
+    out = _render_blast_radius_mermaid(
+        _payload(
+            "Big",
+            [{"file": "/repo/a.py", "line": 1}],
+            scan_limit={
+                "max_repo_files": 512,
+                "scanned_files": 512,
+                "possibly_truncated": True,
+                "truncation_cause": "project-files",
+            },
+            output_limit={
+                "max_callers": 1,
+                "callers_truncated": True,
+                "total_callers": 9,
+                "returned_callers": 1,
+                "omitted_callers": 8,
+            },
+        )
+    )
+    assert "tg_incomplete[" in out  # scan incompleteness stays visibly rendered
+    assert "%% warning: INCOMPLETE RESULT:" in out
+    assert "tg_output_limited[" in out
+    assert "%% note: OUTPUT LIMITED" in out
+    assert out.count("-->") == 1
+
+
 def test_blast_radius_command_supports_mermaid_flag(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
