@@ -117,6 +117,27 @@ def test_mermaid_output_only_cap_gets_an_advisory_node_not_the_incomplete_node()
     assert out.index("tg_output_limited[") < out.index('target["')
 
 
+def test_mermaid_discloses_tests_only_output_cap() -> None:
+    out = _render_blast_radius_mermaid(
+        _payload(
+            "Big",
+            [{"file": "/repo/a.py", "line": 1}],
+            output_limit={
+                "max_files": 1,
+                "tests_truncated": True,
+                "total_tests": 4,
+                "returned_tests": 1,
+                "omitted_tests": 3,
+            },
+        )
+    )
+    assert "%% note: OUTPUT LIMITED" in out
+    assert "3 test file(s)" in out
+    assert "tg_output_limited[" in out
+    assert "tg_incomplete[" not in out
+    assert out.count("-->") == 1
+
+
 def test_mermaid_mixed_truncation_renders_both_disclosures() -> None:
     # A scan truncation and an output cap are independent facts: the diagram must retain the
     # scan-incomplete node AND carry the output advisory, with no extra edges from either.

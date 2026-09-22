@@ -682,8 +682,9 @@ def _apply_symbol_field_output_limit(
 
     Deliberately field-NAME-scoped output_limit keys (``{field_name}_truncated``, e.g.
     ``tests_truncated`` -- never blast-radius's own ``callers_truncated``/``files_truncated``
-    names, which ``main._output_limit_note`` recognizes as display truncation). An output cap
-    here is a COMPLETE analysis capped for display and must stay exit-0 (design #96
+    names). ``main._output_limit_note`` distinguishes this producer's ``max_tests`` discriminator
+    from blast-radius's ``max_files`` before naming the remediation knob. An output cap here is a
+    COMPLETE analysis capped for display and must stay exit-0 (design #96
     contract-safety section; see ``main._scan_incomplete``'s docstring for the scan-vs-output-cap
     split this deliberately avoids colliding with).
 
@@ -721,6 +722,7 @@ def _apply_blast_radius_output_limits(
     limited = dict(payload)
     original_callers = _self._list_of_dicts(payload.get("callers"))
     original_files = _self._list_of_strings(payload.get("files"))
+    original_tests = _self._list_of_strings(payload.get("tests"))
     original_import_consumers = _self._list_of_dicts(payload.get("import_graph_consumers"))
 
     if normalized_max_callers is not None:
@@ -754,7 +756,7 @@ def _apply_blast_radius_output_limits(
             for current in _self._list_of_dicts(payload.get("file_summaries"))
             if str(current.get("path")) in selected_file_set
         ][:normalized_max_files]
-        limited["tests"] = _self._list_of_strings(payload.get("tests"))[:normalized_max_files]
+        limited["tests"] = original_tests[:normalized_max_files]
         selected_test_set = set(limited["tests"])
         limited["test_matches"] = [
             current
@@ -818,6 +820,9 @@ def _apply_blast_radius_output_limits(
         "files_truncated": (
             normalized_max_files is not None and len(original_files) > normalized_max_files
         ),
+        "tests_truncated": (
+            normalized_max_files is not None and len(original_tests) > normalized_max_files
+        ),
         "import_consumers_truncated": (
             normalized_max_files is not None
             and len(returned_import_consumers) < len(original_import_consumers)
@@ -831,6 +836,11 @@ def _apply_blast_radius_output_limits(
         "returned_files": len(_self._list_of_strings(limited.get("files"))),
         "omitted_files": max(
             0, len(original_files) - len(_self._list_of_strings(limited.get("files")))
+        ),
+        "total_tests": len(original_tests),
+        "returned_tests": len(_self._list_of_strings(limited.get("tests"))),
+        "omitted_tests": max(
+            0, len(original_tests) - len(_self._list_of_strings(limited.get("tests")))
         ),
         "total_import_consumers": len(original_import_consumers),
         "returned_import_consumers": len(returned_import_consumers),

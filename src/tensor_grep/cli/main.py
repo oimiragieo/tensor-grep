@@ -7015,6 +7015,13 @@ def _output_limit_note(payload: dict[str, Any]) -> str | None:
     if files_omitted:
         dropped.append(f"{files_omitted} file(s)")
         knobs.add("--max-files")
+    tests_omitted = _omitted("tests_truncated", "total_tests", "returned_tests", "omitted_tests")
+    tests_knob = (
+        "--max-files" if "max_files" in limit else "--max-tests" if "max_tests" in limit else None
+    )
+    if tests_omitted and tests_knob is not None:
+        dropped.append(f"{tests_omitted} test file(s)")
+        knobs.add(tests_knob)
     consumers_omitted = _omitted(
         "import_consumers_truncated",
         "total_import_consumers",

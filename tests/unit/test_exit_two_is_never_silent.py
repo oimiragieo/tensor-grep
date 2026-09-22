@@ -22,6 +22,7 @@ permanent.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,68 @@ from tensor_grep.cli.main import _emit_scan_incompleteness_banner
 
 _MAIN = Path(main_mod.__file__)
 _CALL = "_emit_scan_incompleteness_banner"
+
+
+def _annotation_disclosure_is_bound(
+    source: str, gate_line: int, caveat_var: str, gate_var: str
+) -> bool:
+    tree = ast.parse(source)
+    function = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno <= gate_line <= (node.end_lineno or node.lineno)
+        ),
+        None,
+    )
+    if function is None:
+        return False
+    annotation_line: int | None = None
+    disclosure_line: int | None = None
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Tuple)
+            and [elt.id for elt in node.targets[0].elts if isinstance(elt, ast.Name)]
+            == [caveat_var, gate_var]
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_annotate_result_completeness"
+        ):
+            annotation_line = node.lineno
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_completeness_caveat_lines"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == caveat_var
+            and any(
+                keyword.arg == "is_truncation"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == gate_var
+                for keyword in node.keywords
+            )
+        ):
+            disclosure_line = node.lineno
+    if annotation_line is None or disclosure_line is None:
+        return False
+    for node in ast.walk(function):
+        if not (annotation_line < getattr(node, "lineno", 0) < disclosure_line):
+            continue
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id
+            in {
+                caveat_var,
+                gate_var,
+            }
+        ):
+            return False
+    return disclosure_line < gate_line
 
 
 def _truncated() -> dict[str, Any]:
@@ -49,7 +112,8 @@ def _truncated() -> dict[str, Any]:
 
 
 def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
-    lines = _MAIN.read_text(encoding="utf-8").splitlines()
+    source = _MAIN.read_text(encoding="utf-8")
+    lines = source.splitlines()
     gates: list[tuple[int, str, str | None, str | None]] = []
     for i, line in enumerate(lines):
         if not line.strip().startswith("if "):
@@ -119,11 +183,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         if (
             caveat_var is not None
             and gate_var is not None
-            and re.search(
-                rf"_completeness_caveat_lines\(\s*{re.escape(caveat_var)}\s*,\s*"
-                rf"is_truncation\s*=\s*{re.escape(gate_var)}\b",
-                window,
-            )
+            and _annotation_disclosure_is_bound(source, idx + 1, caveat_var, gate_var)
         ):
             continue
         if f"{_CALL}({var})" in window:
@@ -145,6 +205,29 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         f"Add {_CALL}(<the same var the gate reads>) at the TOP of the `else` of the "
         "`if json_output` fork -- never beside the json.dumps, which would break json.loads."
     )
+
+
+@pytest.mark.parametrize(
+    "render_lines",
+    [
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation and False)",
+        "caveat = None\n    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)",
+    ],
+)
+def test_annotation_disclosure_binding_rejects_false_green_mutations(render_lines: str) -> None:
+    source = (
+        "def command(payload):\n"
+        "    caveat, is_truncation = _annotate_result_completeness(payload)\n"
+        f"    {render_lines}\n"
+        "    if is_truncation:\n"
+        "        raise typer.Exit(2)\n"
+    )
+    gate_line = next(
+        index
+        for index, line in enumerate(source.splitlines(), start=1)
+        if line.strip() == "if is_truncation:"
+    )
+    assert not _annotation_disclosure_is_bound(source, gate_line, "caveat", "is_truncation")
 
 
 def test_the_banner_is_never_emitted_on_a_json_branch() -> None:

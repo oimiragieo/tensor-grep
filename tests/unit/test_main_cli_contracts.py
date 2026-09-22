@@ -363,7 +363,7 @@ def test_repo_map_output_limit_is_advisory_not_incomplete() -> None:
 
 
 def test_apply_blast_radius_output_limits_omissions_reach_the_advisory() -> None:
-    # Real budget helper on a concrete payload: all three omission fields (callers, files, AND
+    # Real budget helper on a concrete payload: every omission field (callers, files, tests, AND
     # import consumers) must fire, and the annotation must surface every exact omitted count as
     # an advisory without ever calling the analysis incomplete.
     from tensor_grep.cli.repo_map import _apply_blast_radius_output_limits
@@ -378,6 +378,7 @@ def test_apply_blast_radius_output_limits_omissions_reach_the_advisory() -> None
         ],
         "caller_tree": [],
         "files": ["a.py", "b.py", "c.py"],
+        "tests": ["test_a.py", "test_b.py", "test_c.py"],
         "import_graph_consumers": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}],
     }
     limited = _apply_blast_radius_output_limits(payload, max_callers=1, max_files=1)
@@ -386,17 +387,51 @@ def test_apply_blast_radius_output_limits_omissions_reach_the_advisory() -> None
     output_limit = limited["output_limit"]
     assert output_limit["callers_truncated"] is True
     assert output_limit["files_truncated"] is True
+    assert output_limit["tests_truncated"] is True
     assert output_limit["import_consumers_truncated"] is True
     assert output_limit["omitted_callers"] == 2
     assert output_limit["omitted_files"] == 2
+    assert output_limit["omitted_tests"] == 2
     assert output_limit["omitted_import_consumers"] == 2
     caveat, is_truncation = _annotate_result_completeness(limited, result_key="callers")
     assert limited["result_incomplete"] is False and is_truncation is False
     assert caveat is not None and "OUTPUT LIMITED" in caveat
     assert "2 caller(s)" in caveat
     assert "2 file(s)" in caveat
+    assert "2 test file(s)" in caveat
     assert "2 import consumer(s)" in caveat
     assert "INCOMPLETE RESULT" not in caveat
+
+
+def test_test_omission_advisory_names_its_producer_knob() -> None:
+    blast_payload = {
+        "output_limit": {
+            "max_files": 2,
+            "tests_truncated": True,
+            "total_tests": 5,
+            "returned_tests": 2,
+            "omitted_tests": 3,
+        }
+    }
+    symbol_payload = {
+        "output_limit": {
+            "max_tests": 2,
+            "tests_truncated": True,
+            "total_tests": 5,
+            "returned_tests": 2,
+            "omitted_tests": 3,
+        }
+    }
+    blast_note = _annotate_result_completeness(blast_payload)[0]
+    symbol_note = _annotate_result_completeness(symbol_payload)[0]
+    assert (
+        blast_note is not None and "--max-files" in blast_note and "--max-tests" not in blast_note
+    )
+    assert (
+        symbol_note is not None
+        and "--max-tests" in symbol_note
+        and "--max-files" not in symbol_note
+    )
 
 
 def test_scan_only_truncation_stays_an_incomplete_result() -> None:
@@ -600,6 +635,64 @@ def test_blast_radius_cli_surfaces_output_cap_on_real_output(tmp_path: Path) -> 
     assert "OUTPUT LIMITED" in payload["caveat"]
     assert f"{omitted} caller(s)" in payload["caveat"]
     assert "INCOMPLETE RESULT" not in payload["caveat"]
+
+
+@pytest.mark.parametrize(
+    "warm,json_output", [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_blast_radius_tests_only_cap_discloses_on_warm_and_cold_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    warm: bool,
+    json_output: bool,
+) -> None:
+    from tensor_grep.cli import main as main_mod
+    from tensor_grep.cli import repo_map
+
+    base: dict[str, Any] = {
+        "symbol": "target",
+        "path": str(tmp_path),
+        "definitions": [{"file": "src.py", "line": 1}],
+        "callers": [{"file": "src.py", "line": 2}],
+        "caller_tree": [],
+        "files": ["src.py"],
+        "tests": ["test_a.py", "test_b.py", "test_c.py"],
+        "import_graph_consumers": [],
+    }
+    monkeypatch.setattr(
+        main_mod,
+        "_maybe_symbol_command_via_running_daemon",
+        lambda **_kwargs: dict(base) if warm else None,
+    )
+
+    def _cold(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        return repo_map._apply_blast_radius_output_limits(
+            dict(base), max_callers=kwargs.get("max_callers"), max_files=kwargs.get("max_files")
+        )
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _cold)
+    main_mod.blast_radius(
+        path=str(tmp_path),
+        symbol_arg="target",
+        symbol=None,
+        provider="native",
+        max_depth=3,
+        max_repo_files=512,
+        max_callers=None,
+        max_files=1,
+        deadline=None,
+        json_output=json_output,
+        mermaid_output=False,
+    )
+    out = capsys.readouterr().out
+    assert "2 test file(s)" in out
+    assert "INCOMPLETE RESULT" not in out
+    if json_output:
+        payload = json.loads(out)
+        assert payload["output_limit"]["tests_truncated"] is True
+        assert payload["output_limit"]["omitted_tests"] == 2
+        assert payload["result_incomplete"] is False
 
 
 def test_blast_radius_cli_mixed_truncation_warns_leads_and_exits_two(
