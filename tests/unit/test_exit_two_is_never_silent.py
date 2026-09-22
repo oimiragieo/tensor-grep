@@ -98,6 +98,7 @@ def _annotation_disclosure_is_bound(
             and isinstance(node.value, ast.Call)
             and isinstance(node.value.func, ast.Name)
             and node.value.func.id == "_annotate_result_completeness"
+            and _is_reachable(node)
         ):
             annotation_line = node.lineno
         if not (
@@ -310,6 +311,20 @@ def test_annotation_disclosure_binding_rejects_false_green_mutations(render_line
         if line.strip() == "if is_truncation:"
     )
     assert not _annotation_disclosure_is_bound(source, gate_line, "caveat", "is_truncation")
+
+
+def test_annotation_disclosure_binding_rejects_dead_annotation() -> None:
+    source = (
+        "def command(payload):\n"
+        "    caveat, is_truncation = None, False\n"
+        "    if False:\n"
+        "        caveat, is_truncation = _annotate_result_completeness(payload)\n"
+        "    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n"
+        "    typer.echo(leading)\n"
+        "    if is_truncation:\n"
+        "        raise typer.Exit(2)\n"
+    )
+    assert not _annotation_disclosure_is_bound(source, 7, "caveat", "is_truncation")
 
 
 def test_the_banner_is_never_emitted_on_a_json_branch() -> None:
