@@ -164,6 +164,7 @@ jobs:
             tests/unit/test_skill_library_drift.py \
             tests/unit/test_skill_index_sync.py \
             tests/unit/test_harness_api_docs.py \
+            tests/unit/test_governance_doc_size_ratchet.py \
             -v --tb=short -p no:cacheprovider
 
   repo-hygiene:
