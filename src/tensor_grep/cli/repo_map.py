@@ -498,7 +498,7 @@ CALLER_SCAN_FILE_CEILING = 2000
 # F1-review HIGH fix (task#52 shape, 2026-07-06): _order_caller_scan_candidates probes
 # _file_may_contain_literal_symbol (a stat + cached read_bytes) across the caller-scan file
 # UNIVERSE to decide ordering, BEFORE _cap_caller_scan_files slices to CALLER_SCAN_FILE_CEILING.
-# Left unbounded, that probe pays O(map-size) I/O regardless of the 512 ceiling or --deadline --
+# Left unbounded, that probe pays O(map-size) I/O regardless of the 2000 ceiling or --deadline --
 # exactly the pathology CALLER_SCAN_FILE_CEILING exists to prevent, just one step earlier in the
 # pipeline. This ceiling bounds the PROBE itself (belt); the deadline check threaded into the
 # same loop is the suspenders. 4x the scan ceiling so a normal (<=2000-file) map's ordering pass

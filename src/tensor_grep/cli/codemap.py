@@ -44,7 +44,7 @@ from tensor_grep.cli.subprocess_policy import (
     run_subprocess,
 )
 
-# Mirrors inventory's/docs-coverage's 50000 default (NOT map's 512 or agent's 2000 -- codemap is
+# Mirrors inventory's/docs-coverage's 50000 default (NOT map's/agent's 2000 -- codemap is
 # an exhaustive inventory, not an agent-context budget). Kept as a real module constant (unlike
 # main.py's CLI option, which literal-duplicates the number to keep the heavy import lazy -- the
 # established `map`/`inventory` pattern; a routing-parity/contract test is not needed for a private
