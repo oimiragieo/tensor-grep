@@ -165,6 +165,18 @@ def test_defs_finds_symbol_past_512_at_the_new_default(tmp_path: Path) -> None:
     assert any(str(d["file"]).endswith("m00550.py") for d in payload["definitions"])
 
 
+def test_map_includes_files_past_512_at_the_shared_default(tmp_path: Path) -> None:
+    project = _make_flat_repo(tmp_path, 600)
+
+    result = runner.invoke(app, ["map", str(project), "--json"])
+
+    assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    mapped_paths = [str(item) for item in payload["files"]]
+    assert any(path.endswith("m00550.py") for path in mapped_paths), payload
+    assert payload.get("partial") is not True
+
+
 def test_edit_plan_routes_to_symbol_past_512_at_the_new_default(tmp_path: Path) -> None:
     project = _make_flat_repo(tmp_path, 600, target_index=550, symbol="find_me_past_512")
 
