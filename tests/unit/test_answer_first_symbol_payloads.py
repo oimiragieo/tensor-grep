@@ -365,7 +365,10 @@ def test_max_tests_and_max_tokens_trim_never_sets_result_incomplete_or_partial(
     caller_scan_limit = payload.get("caller_scan_limit")
     if isinstance(caller_scan_limit, dict):
         assert caller_scan_limit.get("possibly_truncated") is not True
-    assert "caveat" not in payload
+    assert "OUTPUT LIMITED" in payload["caveat"]
+    assert "9 test file(s)" in payload["caveat"]
+    assert "--max-tests" in payload["caveat"]
+    assert "INCOMPLETE RESULT" not in payload["caveat"]
     assert payload["not_found"] is False
 
 
