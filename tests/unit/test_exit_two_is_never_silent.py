@@ -52,8 +52,24 @@ def _annotation_disclosure_is_bound(
     )
     if function is None:
         return False
+    parents = {
+        child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
+    }
+
+    def _is_reachable(node: ast.AST) -> bool:
+        child = node
+        while child in parents:
+            parent = parents[child]
+            if isinstance(parent, ast.If) and isinstance(parent.test, ast.Constant):
+                if child in parent.body and parent.test.value is False:
+                    return False
+                if child in parent.orelse and parent.test.value is True:
+                    return False
+            child = parent
+        return True
+
     annotation_line: int | None = None
-    disclosure_line: int | None = None
+    disclosure: tuple[int, str] | None = None
     for node in ast.walk(function):
         if (
             isinstance(node, ast.Assign)
@@ -66,23 +82,33 @@ def _annotation_disclosure_is_bound(
             and node.value.func.id == "_annotate_result_completeness"
         ):
             annotation_line = node.lineno
-        if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "_completeness_caveat_lines"
-            and node.args
-            and isinstance(node.args[0], ast.Name)
-            and node.args[0].id == caveat_var
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Tuple)
+            and len(node.targets[0].elts) == 2
+            and all(isinstance(elt, ast.Name) for elt in node.targets[0].elts)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_completeness_caveat_lines"
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Name)
+            and node.value.args[0].id == caveat_var
             and any(
                 keyword.arg == "is_truncation"
                 and isinstance(keyword.value, ast.Name)
                 and keyword.value.id == gate_var
-                for keyword in node.keywords
+                for keyword in node.value.keywords
             )
+            and _is_reachable(node)
         ):
-            disclosure_line = node.lineno
-    if annotation_line is None or disclosure_line is None:
+            continue
+        leading = node.targets[0].elts[0]
+        assert isinstance(leading, ast.Name)
+        disclosure = (node.lineno, leading.id)
+    if annotation_line is None or disclosure is None:
         return False
+    disclosure_line, leading_var = disclosure
     for node in ast.walk(function):
         if not (annotation_line < getattr(node, "lineno", 0) < disclosure_line):
             continue
@@ -96,7 +122,35 @@ def _annotation_disclosure_is_bound(
             }
         ):
             return False
-    return disclosure_line < gate_line
+    emitted_line: int | None = None
+    for node in ast.walk(function):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "echo"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "typer"
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == leading_var
+            and disclosure_line < node.lineno < gate_line
+            and _is_reachable(node)
+        ):
+            continue
+        emitted_line = node.lineno
+        break
+    if emitted_line is None:
+        return False
+    for node in ast.walk(function):
+        if not (disclosure_line < getattr(node, "lineno", 0) < emitted_line):
+            continue
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == leading_var
+        ):
+            return False
+    return True
 
 
 def _truncated() -> dict[str, Any]:
@@ -210,8 +264,9 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
 @pytest.mark.parametrize(
     "render_lines",
     [
-        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation and False)",
-        "caveat = None\n    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation and False)\n    typer.echo(leading)",
+        "caveat = None\n    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)",
+        "if False:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
     ],
 )
 def test_annotation_disclosure_binding_rejects_false_green_mutations(render_lines: str) -> None:
