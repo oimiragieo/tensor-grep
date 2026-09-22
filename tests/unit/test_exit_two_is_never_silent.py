@@ -62,6 +62,33 @@ def _annotation_disclosure_is_bound(
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             operand = _constant_truth(node.operand)
             return None if operand is None else not operand
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "bool"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return _constant_truth(node.args[0])
+        if isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1:
+            try:
+                left = ast.literal_eval(node.left)
+                right = ast.literal_eval(node.comparators[0])
+            except (ValueError, TypeError):
+                return None
+            operator = node.ops[0]
+            if isinstance(operator, ast.Eq):
+                return left == right
+            if isinstance(operator, ast.NotEq):
+                return left != right
+            if isinstance(operator, ast.Lt):
+                return left < right
+            if isinstance(operator, ast.LtE):
+                return left <= right
+            if isinstance(operator, ast.Gt):
+                return left > right
+            if isinstance(operator, ast.GtE):
+                return left >= right
         if isinstance(node, ast.BoolOp):
             values = [_constant_truth(value) for value in node.values]
             if any(value is None for value in values):
@@ -294,6 +321,8 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         "if not True:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
         "if 0:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
         "if True and False:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if bool(False):\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if 1 == 0:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
         "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)\n    is_truncation = False",
     ],
 )
