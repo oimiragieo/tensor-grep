@@ -1127,6 +1127,10 @@ def test_map_json_accepts_agent_output_bounds(tmp_path):
         "max_files": 1,
         "emitted_files": 1,
         "original_files": 2,
+        "omitted_files": 1,
+        "total_tests": 0,
+        "returned_tests": 0,
+        "omitted_tests": 0,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
         # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
@@ -1215,6 +1219,10 @@ def test_context_json_accepts_agent_output_bounds(tmp_path):
         "max_files": 1,
         "emitted_files": 1,
         "original_files": 2,
+        "omitted_files": 1,
+        "total_tests": 1,
+        "returned_tests": 1,
+        "omitted_tests": 0,
         "possibly_truncated": True,
         "truncation_cause": "project-files",
         # ADDED #336: exact-dict assertions exist so a new field must be declared DELIBERATELY.
