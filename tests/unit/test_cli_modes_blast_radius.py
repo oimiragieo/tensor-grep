@@ -1086,7 +1086,7 @@ def test_map_json_emits_repo_inventory_envelope(tmp_path):
     assert payload["routing_reason"] == "repo-map"
     assert payload["sidecar_used"] is False
     assert payload["path"] == str(project.resolve())
-    assert payload["scan_limit"]["max_repo_files"] == 512
+    assert payload["scan_limit"]["max_repo_files"] == 2000
     assert payload["scan_limit"]["possibly_truncated"] is False
     assert str(module_path.resolve()) in payload["files"]
     assert str(test_path.resolve()) in payload["tests"]

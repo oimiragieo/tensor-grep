@@ -36,8 +36,8 @@ from tensor_grep.cli.repo_map import (
 
 INVENTORY_SCHEMA_VERSION = 1
 # Walk-only inventory is O(files) with only a stat()+8KB-read per file, orders of
-# magnitude cheaper than the AST DEFAULT_AGENT_REPO_MAP_LIMIT (512) which budgets a
-# full parse per file. Reusing 512 here would silently truncate any repo above ~500
+# magnitude cheaper than the AST DEFAULT_AGENT_REPO_MAP_LIMIT (2000) which budgets a
+# full parse per file. Reusing 2000 here would silently truncate any repo above ~2000
 # files and defeat the "whole-repo manifest" purpose.
 DEFAULT_MAX_INVENTORY_FILES = 50_000
 _LARGEST_FILES_LIMIT = 10

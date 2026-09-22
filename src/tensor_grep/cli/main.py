@@ -4677,10 +4677,10 @@ def map(
         None, "--max-files", min=1, help="Maximum source files to include in output."
     ),
     max_repo_files: int | None = typer.Option(
-        512,
+        2000,
         "--max-repo-files",
         min=1,
-        help="Maximum repo files to scan before returning. Defaults to the agent-safe 512-file cap.",
+        help="Maximum repo files to scan before returning. Defaults to the agent-safe 2000-file cap.",
     ),
     deadline: float | None = _deadline_option(
         "Stop the underlying repo scan after N seconds and return a partial map (partial=true, deadline_limit) with whatever was found so far, instead of running unbounded. Unlike `codemap`, no bound is applied by default -- pass --deadline to opt in."
@@ -4738,7 +4738,7 @@ def inventory(
     path: str = typer.Argument(".", help="File or directory to inventory"),
     max_repo_files: int = typer.Option(
         # Literal mirrors inventory.DEFAULT_MAX_INVENTORY_FILES (kept literal so the heavy
-        # repo_map import stays lazy, matching `map`'s 512 pattern); a guard test pins them.
+        # repo_map import stays lazy, matching `map`'s literal-default pattern); a guard test pins them.
         50_000,
         "--max-repo-files",
         min=1,
