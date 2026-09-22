@@ -36,6 +36,7 @@ from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import rg_replacement as _rg_replacement
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
+from tensor_grep.cli.completeness_output import _output_limit_note
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
@@ -6980,93 +6981,6 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _output_limit_note(payload: dict[str, Any]) -> str | None:
-    """Advisory note when an OUTPUT cap (``--max-callers``/``--max-files``) trimmed the display.
-
-    The sibling of `_scan_truncation_warning` for the OTHER half of the completeness contract: an
-    output cap is a COMPLETE analysis whose DISPLAY was paginated, so its disclosure must never
-    read "INCOMPLETE RESULT" nor flip ``result_incomplete``/exit 2 — pagination hides returned
-    entries, not the analysis that discovered them, and telling the reader a zero/low caller
-    count is untrustworthy "because the scan failed" would be the lie the scan warning exists to
-    tell ONLY when it is true. Counts come from the producer's own ``output_limit`` stamp, never
-    re-derived from the trimmed arrays: blast-radius's ``*_truncated`` flags with the
-    ``omitted_*`` / ``total_* - returned_*`` counts (``_apply_blast_radius_output_limits``), and
-    the repo-map's ``possibly_truncated`` with its exact omitted file and test-file counts
-    (``apply_repo_map_output_limits``). Returns None when no actual output cap fired, so a
-    complete (or scan-truncated-only) payload gains no note.
-    """
-    limit = payload.get("output_limit")
-    if not isinstance(limit, dict):
-        return None
-
-    def _omitted(flag_key: str, total_key: str, returned_key: str, omitted_key: str) -> int | None:
-        if not limit.get(flag_key):
-            return None
-        if limit.get(omitted_key) is not None:
-            return max(0, int(limit[omitted_key]))
-        return max(0, int(limit.get(total_key, 0)) - int(limit.get(returned_key, 0)))
-
-    dropped: list[str] = []
-    knobs: set[str] = set()
-    callers_omitted = _omitted(
-        "callers_truncated", "total_callers", "returned_callers", "omitted_callers"
-    )
-    if callers_omitted:
-        dropped.append(f"{callers_omitted} caller(s)")
-        knobs.add("--max-callers")
-    files_omitted = _omitted("files_truncated", "total_files", "returned_files", "omitted_files")
-    if files_omitted:
-        dropped.append(f"{files_omitted} file(s)")
-        knobs.add("--max-files")
-    tests_omitted = _omitted("tests_truncated", "total_tests", "returned_tests", "omitted_tests")
-    tests_knob = (
-        "--max-files" if "max_files" in limit else "--max-tests" if "max_tests" in limit else None
-    )
-    if tests_omitted and tests_knob is not None:
-        dropped.append(f"{tests_omitted} test file(s)")
-        knobs.add(tests_knob)
-    consumers_omitted = _omitted(
-        "import_consumers_truncated",
-        "total_import_consumers",
-        "returned_import_consumers",
-        "omitted_import_consumers",
-    )
-    if consumers_omitted:
-        dropped.append(f"{consumers_omitted} import consumer(s)")
-        knobs.add("--max-files")
-    if not dropped and limit.get("possibly_truncated"):
-        # The repo-map shape (`tg map`): one knob independently bounds source and test files.
-        map_files_omitted = max(
-            0,
-            int(
-                limit.get(
-                    "omitted_files",
-                    int(limit.get("original_files", 0)) - int(limit.get("emitted_files", 0)),
-                )
-            ),
-        )
-        map_tests_omitted = max(
-            0,
-            int(
-                limit.get(
-                    "omitted_tests",
-                    int(limit.get("total_tests", 0)) - int(limit.get("returned_tests", 0)),
-                )
-            ),
-        )
-        if map_files_omitted:
-            dropped.append(f"{map_files_omitted} file(s)")
-            knobs.add("--max-files")
-        if map_tests_omitted:
-            dropped.append(f"{map_tests_omitted} test file(s)")
-            knobs.add("--max-files")
-    if not dropped:
-        return None
-    # `--max-callers` sorts after `--max-files`; emit callers-first order to match the dropped list.
-    knob_text = "--max-callers/--max-files" if len(knobs) == 2 else knobs.pop()
-    return f"OUTPUT LIMITED: display omitted {' and '.join(dropped)}; raise {knob_text} to see more"
-
-
 def _scan_incomplete(payload: dict[str, Any]) -> bool:
     """Whether a payload's SCAN (not output) was truncated.
 
@@ -7155,22 +7069,8 @@ def _completeness_caveat_lines(
     The zero-callers caveat (P7) is the opposite shape: the result IS complete, the note only
     warns against over-reading it, so it stays trailing. That asymmetry is the point.
 
-    Defined once, here, so the THREE emitters wired to it cannot drift into different orderings:
-    ``_emit_symbol_command_result``, the ``blast-radius`` counts block, and
-    ``_render_blast_radius_mermaid``. JSON output is unaffected: ``caveat`` is a field there, and
-    field order carries no such reading bias.
-
-    Three is the count of emitters CONVERTED to this ORDERING helper, not of emitters that
-    disclose at all: the leading-banner path (``_emit_scan_incompleteness_banner``) now covers
-    the payload-emitting commands -- derive the current membership from that function's call
-    sites (grep ``_emit_scan_incompleteness_banner(``), never from this sentence. Commands
-    still trailing their disclosure (if any) are whatever that grep does NOT reach; re-derive,
-    do not enumerate here. Stated this way because two earlier enumerations here already rotted:
-    one claimed ``code-map``/``route-test``/``session open``/``agent`` all trail disclosure
-    (``route-test`` and ``agent`` are wired now), the other claimed
-    ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
-    ``blast-radius-plan`` "say nothing in text at all" (all six are wired now too). An
-    enumeration in prose rots the moment the set grows; a grep does not.
+    Shared by all text emitters; JSON carries the same fact in fields, where position is not
+    meaningful. Derive the current emitter population from call sites rather than prose.
     """
     if caveat is None:
         return None, None
