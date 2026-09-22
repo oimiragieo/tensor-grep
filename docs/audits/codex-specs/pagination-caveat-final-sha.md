@@ -3,7 +3,7 @@
 - Working directory: `C:\dev\projects\tensor-grep`
 - Branch: `fix/pagination-caveat-truth`
 - Model: `gpt-5.6-sol`, high reasoning
-- Exact artifact: read `git rev-parse HEAD` and audit only that commit's product changes against its first parent.
+- Exact artifact: read `git rev-parse HEAD` and audit the complete product delta `origin/main..HEAD` (the branch contains multiple implementation/fix commits).
 - Review: `src/tensor_grep/cli/main.py`, `src/tensor_grep/cli/repo_map_output_budget.py`, their changed tests, and the changed public-contract docs.
 - Existing evidence: GLM audit rounds found and closed stale contract twins, a disclosure-ratchet blind spot, tests-only map pagination silence, and a false-green variable-binding weakness. Round 3 returned `AUDIT_CLEAR`. The final expanded local suite passed 167 tests; Ruff, preview format, mypy, diff hygiene, and all four build gates passed.
 
