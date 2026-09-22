@@ -176,6 +176,7 @@ def _annotation_disclosure_is_bound(
             and node.func.attr == "echo"
             and isinstance(node.func.value, ast.Name)
             and node.func.value.id == "typer"
+            and isinstance(parents.get(node), ast.Expr)
             and node.args
             and isinstance(node.args[0], ast.Name)
             and node.args[0].id == leading_var
@@ -324,6 +325,8 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         "if bool(False):\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
         "if 1 == 0:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
         "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)\n    is_truncation = False",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    False and typer.echo(leading)",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    True or typer.echo(leading)",
     ],
 )
 def test_annotation_disclosure_binding_rejects_false_green_mutations(render_lines: str) -> None:
