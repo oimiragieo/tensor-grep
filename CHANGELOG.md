@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v1.121.3 (2026-09-22)
+
+### Bug Fixes
+
+- **cli**: Distinguish pagination from incomplete scans
+  ([#1167](https://github.com/oimiragieo/tensor-grep/pull/1167),
+  [`cff35c7`](https://github.com/oimiragieo/tensor-grep/commit/cff35c7a644febba2c1f6ce2b2eb846d818905df))
+
+* fix(cli): separate pagination from scan incompleteness
+
+* docs(audit): pin pagination final-sha review
+
+* fix(cli): disclose capped blast-radius tests
+
+* docs(audit): review complete pagination delta
+
+* test(cli): prove truncation disclosure is emitted
+
+* fix(cli): align upstream incompleteness contracts
+
+* test(cli): reject constant-dead disclosure branches
+
+* test(cli): reject unreachable completeness annotations
+
+* docs(cli): align pagination contract twins
+
+* test(cli): reject short-circuited disclosure calls
+
+* refactor(cli): extract pagination caveat formatting
+
+* test(cli): align blast-radius omission schema
+
+* test(cli): expect max-tests pagination advisory
+
+* test(cli): align map omission schema
+
+* test(cli): realign handler audit anchors
+
+### Continuous Integration
+
+- Restore governance size and deadline test gates
+  ([#1166](https://github.com/oimiragieo/tensor-grep/pull/1166),
+  [`6e77050`](https://github.com/oimiragieo/tensor-grep/commit/6e770503b706639fd5e592d83ccc723602429115))
+
+* ci: restore governance size and deadline test gates
+
+* ci: reconcile task board before restoring main gates
+
+### Documentation
+
+- Record v1.121.2 map-default dogfood closeout
+  ([#1165](https://github.com/oimiragieo/tensor-grep/pull/1165),
+  [`14b11d4`](https://github.com/oimiragieo/tensor-grep/commit/14b11d44fc77e23ddddbdd28400c574f4939946f))
+
+
 ## v1.121.2 (2026-09-22)
 
 ### Bug Fixes
