@@ -22,12 +22,15 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from typer.testing import CliRunner
 
 import tensor_grep.cli.agent_capsule as agent_capsule
+import tensor_grep.cli.agent_capsule_builder as agent_capsule_builder
+import tensor_grep.cli.agent_capsule_call_sites as agent_capsule_call_sites
 import tensor_grep.cli.main as main
 import tensor_grep.cli.repo_map as repo_map
 from tensor_grep.cli.main import app
@@ -279,16 +282,18 @@ def _write_helper_and_caller(tmp_path: Path) -> None:
 
 
 def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch) -> None:
-    # Delay AFTER the real render/ranking pass resolves "helper" as the primary target (so the
-    # rescue collector's early gates -- no-symbol / not-requested / low-confidence -- all pass and
-    # execution actually reaches the remaining-seconds clamp), but BEFORE the rescue scan reads the
-    # clock -- so the shared deadline is provably expired only once we get there.
+    # Advance only the post-render consumers' clocks AFTER the real render/ranking pass resolves
+    # "helper". A 0.3s real-time budget could expire before that pass on a loaded GPU runner,
+    # leaving no primary target and never exercising the rescue scan's floor at all.
     _write_helper_and_caller(tmp_path)
     original_render = repo_map.build_context_render_from_map
 
     def _slow_render(rm, query, **kwargs):
         result = original_render(rm, query, **kwargs)
-        time.sleep(0.5)
+        deadline = kwargs["deadline_monotonic"]
+        expired_clock = SimpleNamespace(monotonic=lambda: deadline + 1.0)
+        monkeypatch.setattr(agent_capsule_call_sites, "time", expired_clock)
+        monkeypatch.setattr(agent_capsule_builder, "time", expired_clock)
         return result
 
     recorded: dict = {}
@@ -302,14 +307,14 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(agent_capsule.repo_map, "build_symbol_blast_radius", _spy_blast_radius)
 
     result = CliRunner().invoke(
-        app, ["agent", str(tmp_path), "helper", "--deadline", "0.3", "--json"]
+        app, ["agent", str(tmp_path), "helper", "--deadline", "30", "--json"]
     )
     # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this scenario's shared deadline has ALREADY
-    # elapsed by the time the rescue scan even starts (0.5s injected delay > 0.3s budget) -- pre-
+    # elapsed by the time the rescue scan even starts (injected post-render clock) -- pre-
     # fix that silently reported exit 0 (the rescue scan itself still succeeded inside its floored
     # 0.1s sub-budget, so nothing individually named in the old fold-in ever flagged it), which was
-    # itself an instance of the exact silent lie this PR closes: a `--deadline 0.3` request that
-    # actually ran ~0.5s+ must never report success as if it finished in budget. The FINAL
+    # itself an instance of the exact silent lie this PR closes: an expired deadline must never
+    # report success as if it finished in budget. The FINAL
     # wall-clock catch-all now correctly reports exit 2 / partial=True here, even though the rescue
     # scan's OWN substantive result (found the caller) is still present and still useful.
     assert result.exit_code == 2, result.output
@@ -321,8 +326,8 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     # `agent_capsule.py:800`/`:949` set the status as
     #   "collected" if related_call_sites else "collected_no_call_sites"
     # i.e. the difference is purely "did the scan happen to find a caller", and this scenario
-    # deliberately runs the rescue scan inside a FLOORED sub-budget (0.5s injected sleep against a
-    # 0.3s deadline). Whether a floored scan finds the caller is a race with the machine, not a
+    # deliberately runs the rescue scan inside a FLOORED sub-budget (injected expired clock).
+    # Whether a floored scan finds the caller is a race with the machine, not a
     # contract. `agent_capsule.py:2040` is the product's own view -- it accepts BOTH
     # ("collected", "collected_no_call_sites") as success -- so pinning "collected" made this test
     # STRICTER THAN THE CODE IT GUARDS.
@@ -348,8 +353,8 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     }, payload["call_site_evidence"]
     assert payload.get("partial") is True, result.output
     assert payload.get("partial_reason") == "deadline", result.output
-    # The item-3 assertion (unchanged): the shared deadline had already elapsed (0.5s sleep > 0.3s
-    # budget), so the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero
+    # The item-3 assertion (unchanged): the shared deadline has already elapsed in the post-render
+    # clock, so the rescue scan must receive the FLOORED 0.1s budget, never a negative or zero
     # value. THIS assertion is what proves the floor -- it reads the value the collector was
     # actually handed. The previous version of this comment said the floor was "proven by the
     # substantive 'collected' result above", which is no longer true now that
