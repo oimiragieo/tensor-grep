@@ -36,6 +36,7 @@ from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import rg_replacement as _rg_replacement
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
+from tensor_grep.cli.completeness_output import _output_limit_note
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
@@ -4717,19 +4718,28 @@ def map(
         raise typer.Exit(1) from exc
 
     # Cold path (Cluster B, 2026-07-06): dump the SAME payload/limit order the old build_repo_map_json
-    # helper used (build_repo_map then apply_repo_map_output_limits, json.dumps(indent=2)) so JSON
-    # stays byte-identical, and gate on it so both json and text branches share the scan-truncation
-    # contract -- output the full payload FIRST, then exit 2 if the scan itself was capped (an
-    # output-only cap from --max-files stays exit 0).
+    # helper used (build_repo_map then apply_repo_map_output_limits, json.dumps(indent=2)), with the
+    # shared completeness annotation applied FIRST so JSON and text tell one truth -- then gate the
+    # exit on the annotation's truncation classification, exactly like the blast-radius command:
+    # a scan truncation OR an independently stamped upstream result_incomplete=true exits 2 with a
+    # leading warning, while an output-only cap (--max-files) stays exit 0 with a trailing
+    # "note: OUTPUT LIMITED ..." advisory. Composition is owned by `_annotate_result_completeness`
+    # -- this route deliberately does not re-derive scan-vs-output semantics (one shared
+    # annotation is the point; a second derivation here is how map and blast-radius drifted).
+    caveat, is_truncation = _annotate_result_completeness(payload)
     if json_output:
         typer.echo(json.dumps(payload, indent=2))
     else:
-        _emit_scan_incompleteness_banner(payload)
+        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)
+        if leading is not None:
+            typer.echo(leading)
         typer.echo(f"Repository map for {payload['path']}")
         typer.echo(f"files={len(payload['files'])} tests={len(payload['tests'])}")
         typer.echo(f"symbols={len(payload['symbols'])} imports={len(payload['imports'])}")
+        if trailing is not None:
+            typer.echo(trailing)
 
-    if _scan_incomplete(payload):
+    if is_truncation:
         raise typer.Exit(2)
 
 
@@ -6827,17 +6837,20 @@ def _symbol_not_found_claim(payload: dict[str, Any], result_key: str) -> bool:
     docstring exists to prevent, surviving in the one field the completeness machinery never
     covered.
 
-    The truncation predicate is ``_scan_incomplete`` -- NOT a fresh check -- because that gate is
-    already where "the scan-vs-output-cap contract is defined exactly once". A second notion of
-    incompleteness here could drift from the exit-code gate and reintroduce exactly the
-    inconsistency this fixes. It also gets the OUTPUT-cap boundary right for free: an output cap
-    is a complete analysis capped for display, so it must NOT suppress ``not_found``.
+    The truncation predicate is ``_scan_incomplete`` plus the upstream ``result_incomplete``
+    stamp -- the same two facts used by the exit-2 gates. It gets the OUTPUT-cap boundary right:
+    an output cap is a complete analysis capped for display, so it must NOT suppress
+    ``not_found``.
 
     Exit codes are unaffected: ``_scan_incomplete``-true payloads already exit 2 on a branch
     evaluated before ``not_found`` is consulted, so this only changes what the FIELD says to a
     caller reading the JSON.
     """
-    return _symbol_payload_has_no_results(payload, result_key) and not _scan_incomplete(payload)
+    return (
+        _symbol_payload_has_no_results(payload, result_key)
+        and not _scan_incomplete(payload)
+        and not bool(payload.get("result_incomplete"))
+    )
 
 
 _ZERO_CALLERS_CAVEAT = (
@@ -6879,21 +6892,26 @@ def _deadline_truncation_message(what: str) -> str:
 
 
 def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
-    """Human warning when a result was truncated before covering the project (P0).
+    """Human warning when a result's SCAN was truncated before covering the project (P0).
 
     A truncated result that drops project files can return a confident-looking zero (or small
     count) that renders identically to a real one — the single most dangerous output for a
     refactor-safety tool, since it greenlights deleting live code. The payload already knows;
     this projects it into the default output so an incomplete result can never look complete.
-    Handles all four shapes production emits: the repo-scan cap
-    (``scan_limit.possibly_truncated`` — callers/refs/impact), the caller-scan ceiling
+    Handles the three SCAN shapes production emits: the repo-scan cap
+    (``scan_limit.possibly_truncated`` — callers/refs/impact) and the caller-scan ceiling
     (``caller_scan_limit.possibly_truncated`` — F1: a COMPLETE repo-map whose own internal
     CALLER_SCAN_FILE_CEILING still bounded how many of its files were walked for callers/refs),
-    the repo-map output cap (``output_limit.possibly_truncated`` — map/context), and the
-    blast-radius output cap (``output_limit.callers_truncated`` / ``files_truncated``). Returns
-    None when complete.
+    plus the fail-closed tail below. Returns None when the scan finished.
+
+    OUTPUT caps are deliberately NOT here: an ``output_limit`` stamp (``--max-callers``/
+    ``--max-files`` pagination, blast-radius's ``callers_truncated``/``files_truncated`` or the
+    repo-map's ``possibly_truncated``) is a COMPLETE analysis whose DISPLAY was paginated, so it
+    is disclosed by the sibling `_output_limit_note` as an ``OUTPUT LIMITED`` advisory that keeps
+    ``result_incomplete`` False and exit 0. Folding it back in here would flip a paginated display
+    to exit 2 — the pagination-as-scan-failure conflation the pagination-caveat slice retires.
     """
-    for key in ("scan_limit", "caller_scan_limit", "output_limit"):
+    for key in ("scan_limit", "caller_scan_limit"):
         limit = payload.get(key)
         if not (isinstance(limit, dict) and limit.get("possibly_truncated")):
             continue
@@ -6909,29 +6927,6 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
         return _truncation_message(
             f"the scan stopped at a {cap}-file cap (scanned {scanned}) and dropped project files"
         )
-    output_limit = payload.get("output_limit")
-    if isinstance(output_limit, dict) and (
-        output_limit.get("callers_truncated") or output_limit.get("files_truncated")
-    ):
-        dropped: list[str] = []
-        if output_limit.get("callers_truncated"):
-            omitted = output_limit.get(
-                "omitted_callers",
-                max(
-                    0,
-                    int(output_limit.get("total_callers", 0))
-                    - int(output_limit.get("returned_callers", 0)),
-                ),
-            )
-            dropped.append(f"{omitted} caller(s)")
-        if output_limit.get("files_truncated"):
-            omitted_files = max(
-                0,
-                int(output_limit.get("total_files", 0))
-                - int(output_limit.get("returned_files", 0)),
-            )
-            dropped.append(f"{omitted_files} file(s)")
-        return _truncation_message(f"output was capped, omitting {' and '.join(dropped)}")
     # THE DEADLINE SHAPE -- a third cause this function could not see, and the largest ABSENT case
     # in the disclosure class. A `--deadline` cutoff sets `partial` / `deadline_limit`, never a
     # `*_limit.possibly_truncated`, so every branch above missed it and this returned None. Meanwhile
@@ -6995,9 +6990,9 @@ def _scan_incomplete(payload: dict[str, Any]) -> bool:
     ``--max-files``) is a COMPLETE analysis capped only for display and must stay exit 0, so this
     checks ONLY ``scan_limit`` / ``caller_scan_limit`` ``possibly_truncated``, ``partial`` (a
     ``--deadline`` cutoff), and ``caller_scan_truncated`` (the ``CALLER_SCAN_FILE_CEILING``) --
-    NEVER ``result_incomplete``, which ``_annotate_result_completeness`` also sets on an output cap
-    (that would silently flip an output-cap-only invocation to exit 2 and break the
-    output-cap-stays-0 pins).
+    NEVER ``result_incomplete``, which ``_annotate_result_completeness`` sets only from an actual
+    scan truncation or an upstream-stamped incompleteness (that would silently flip an
+    output-cap-only invocation to exit 2 and break the output-cap-stays-0 pins).
     """
     for key in ("scan_limit", "caller_scan_limit"):
         limit = payload.get(key)
@@ -7011,25 +7006,54 @@ def _annotate_result_completeness(
 ) -> tuple[str | None, bool]:
     """Set additive ``result_incomplete`` + ``caveat`` on a symbol payload.
 
-    Returns ``(caveat_text_or_None, is_truncation)``. Truncation (P0) supersedes the
-    "zero callers != dead code" caveat (P7), which applies only to a resolved ``callers`` result.
-    Shared by the symbol-command emitter and the blast-radius command (which has its own output).
+    Returns ``(caveat_text_or_None, is_truncation)``. Two INDEPENDENT facts are composed here,
+    never conflated:
+
+    * SCAN incompleteness (``_scan_truncation_warning`` -- a ``--max-repo-files``/caller-scan cap,
+      a ``--deadline`` cutoff) or a preexisting upstream-stamped ``result_incomplete=true`` sets
+      ``result_incomplete`` and classifies as truncation (exit 2 downstream).
+    * OUTPUT pagination (``_output_limit_note`` -- a ``--max-callers``/``--max-files`` display
+      cap) is an ``OUTPUT LIMITED`` advisory on a COMPLETE analysis: it joins the caveat but
+      never flips ``result_incomplete`` nor the exit code.
+
+    When both facts are present the caveat carries BOTH (a deadline cannot be masked by an output
+    cap, and vice versa). Truncation (P0) supersedes the "zero callers != dead code" caveat (P7),
+    which applies only to a resolved ``callers`` result and only while the scan is complete and
+    no other disclosure exists. Shared by the symbol-command emitter and the blast-radius command
+    (which has its own output), and by ``tg map``'s direct route for its exit gate.
     """
-    truncation = _scan_truncation_warning(payload)
-    payload["result_incomplete"] = bool(payload.get("result_incomplete")) or (
-        truncation is not None
-    )
-    caveat = truncation
+    scan_warning = _scan_truncation_warning(payload)
+    output_note = _output_limit_note(payload)
+    preexisting_incomplete = bool(payload.get("result_incomplete"))
+    # `result_incomplete` describes the ANALYSIS/SCAN, never the display: an output-only cap
+    # keeps it False so the exit gate (exit 0) and the JSON field tell one truth.
+    payload["result_incomplete"] = preexisting_incomplete or scan_warning is not None
+    caveat = scan_warning
+    if caveat is None and preexisting_incomplete:
+        # FAIL-CLOSED: an upstream-stamped incomplete result with no scan shape of its own still
+        # owes the reader a warning -- silence beside exit 2 is the failure class this surface
+        # exists to prevent (the same reasoning as _emit_symbol_command_result's fallback below).
+        reason = payload.get("incomplete_reason")
+        caveat = _truncation_message(
+            str(reason) if reason else "the result is incomplete and may be missing entries"
+        )
+    if caveat is not None and output_note is not None:
+        caveat = f"{caveat} {output_note}"
+    elif output_note is not None:
+        caveat = output_note
     if (
-        caveat is None
+        scan_warning is None
+        and not preexisting_incomplete
         and result_key == "callers"
         and not payload.get("no_match")
         and not payload.get("callers")
     ):
-        caveat = _ZERO_CALLERS_CAVEAT
+        # Zero-callers caution (P7) on a COMPLETE scan -- kept even when an output note fired
+        # (both are trailing advisories on a complete analysis), suppressed by a real truncation.
+        caveat = f"{caveat} {_ZERO_CALLERS_CAVEAT}" if caveat else _ZERO_CALLERS_CAVEAT
     if caveat is not None:
         payload["caveat"] = caveat
-    return caveat, truncation is not None
+    return caveat, scan_warning is not None or preexisting_incomplete
 
 
 def _completeness_caveat_lines(
@@ -7045,22 +7069,8 @@ def _completeness_caveat_lines(
     The zero-callers caveat (P7) is the opposite shape: the result IS complete, the note only
     warns against over-reading it, so it stays trailing. That asymmetry is the point.
 
-    Defined once, here, so the THREE emitters wired to it cannot drift into different orderings:
-    ``_emit_symbol_command_result``, the ``blast-radius`` counts block, and
-    ``_render_blast_radius_mermaid``. JSON output is unaffected: ``caveat`` is a field there, and
-    field order carries no such reading bias.
-
-    Three is the count of emitters CONVERTED to this ORDERING helper, not of emitters that
-    disclose at all: the leading-banner path (``_emit_scan_incompleteness_banner``) now covers
-    the payload-emitting commands -- derive the current membership from that function's call
-    sites (grep ``_emit_scan_incompleteness_banner(``), never from this sentence. Commands
-    still trailing their disclosure (if any) are whatever that grep does NOT reach; re-derive,
-    do not enumerate here. Stated this way because two earlier enumerations here already rotted:
-    one claimed ``code-map``/``route-test``/``session open``/``agent`` all trail disclosure
-    (``route-test`` and ``agent`` are wired now), the other claimed
-    ``map``/``context``/``context-render``/``edit-plan``/``blast-radius-render``/
-    ``blast-radius-plan`` "say nothing in text at all" (all six are wired now too). An
-    enumeration in prose rots the moment the set grows; a grep does not.
+    Shared by all text emitters; JSON carries the same fact in fields, where position is not
+    meaningful. Derive the current emitter population from call sites rather than prose.
     """
     if caveat is None:
         return None, None
@@ -8140,18 +8150,27 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
     # mermaid's `%%{...}%%` DIRECTIVE form is the space AFTER `%%`, guaranteed by the `warning: `
     # prefix `_completeness_caveat_lines` always emits -- not the indentation, which is cosmetic.
     #
-    # The text comes from the shared _scan_truncation_warning/_completeness_caveat_lines pair
-    # rather than a hardcoded literal, which fixes two further defects the old line carried: it
-    # said `note:` for a TRUNCATION (inverting the warning-vs-advisory split this command defines
-    # one function above), and it advised "raise --max-callers/--max-files" for EVERY cause --
-    # naming the only two knobs that cannot lift a --max-repo-files scan cap or a caller-scan
-    # ceiling. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface.
+    # The text comes from the shared _scan_truncation_warning/_output_limit_note pair (the same two
+    # helpers `_annotate_result_completeness` composes, so the diagram cannot disagree with the
+    # JSON/text caveat) rather than a hardcoded literal, which fixes two further defects the old
+    # line carried: it said `note:` for a TRUNCATION (inverting the warning-vs-advisory split this
+    # command defines one function above), and it advised "raise --max-callers/--max-files" for
+    # EVERY cause -- naming the only two knobs that cannot lift a --max-repo-files scan cap or a
+    # caller-scan ceiling. Wrong-knob remediation advice is the failure #762 fixed on the MCP surface.
+    #
+    # TWO disclosure kinds, kept distinct (the pagination-caveat split): a SCAN truncation renders
+    # the `warning:` comment + `tg_incomplete` node below; an OUTPUT cap renders a `note: OUTPUT
+    # LIMITED` comment + a DISTINCT `tg_output_limited` advisory node -- never the scan-incomplete
+    # node, because pagination is not a scan failure. A mixed payload renders both nodes.
     truncation = _scan_truncation_warning(payload)
     if truncation is None and payload.get("result_incomplete"):
         # An incompleteness stamped upstream that carries no scan_limit/output_limit of its own
         # still owes the reader a disclosure; falling through silently would trade a MISPOSITIONED
         # warning for an ABSENT one, which is the worse half of this same class.
-        truncation = _truncation_message("the result was truncated")
+        reason = payload.get("incomplete_reason")
+        truncation = _truncation_message(
+            str(reason) if reason else "the result is incomplete and may be missing entries"
+        )
     leading, _ = _completeness_caveat_lines(truncation, is_truncation=truncation is not None)
     if leading is not None:
         # Flattened because a `%%` comment ends at the newline: an embedded one would close the
@@ -8176,6 +8195,17 @@ def _render_blast_radius_mermaid(payload: dict[str, Any]) -> str:
         # remedy sentence is long enough to distort a diagram, and it remains one line up in the
         # comment for whoever is reading the source.
         lines.append(f'  tg_incomplete["{_mermaid_label(_mermaid_incomplete_label(leading))}"]')
+    output_note = _output_limit_note(payload)
+    if output_note is not None:
+        # OUTPUT-cap advisory, DISTINCT from the scan-incomplete node above: pagination is not a
+        # scan failure, so it must never wear the `warning:`/`tg_incomplete` costume (an exit-0
+        # display cap rendering as "INCOMPLETE" would cry wolf on every large caller graph). Same
+        # two-line shape -- a greppable `%% note:` comment AND a visible node, because a comment
+        # alone never reaches a rendered diagram -- and same no-edge discipline: declared with no
+        # `-->`, so the "no invented edges" guard stays untouched. Placed BEFORE the target so a
+        # reader meets the advisory before tracing the (paginated) graph it qualifies.
+        lines.append(f"  %% note: {' '.join(output_note.split())}")
+        lines.append(f'  tg_output_limited["{_mermaid_label(output_note)}"]')
     lines.append(f'  target["{_mermaid_label(symbol)}"]')
     for idx, rel in enumerate(sorted(grouped)):
         node = f"n{idx}"
@@ -8333,14 +8363,20 @@ def blast_radius(
     not_found = _symbol_not_found_claim(payload, "callers")
     payload["not_found"] = not_found
     # Annotate completeness BEFORE any output path so mermaid/json/text all see result_incomplete and
-    # honor the shared exit contract (cursor review 1.40.0): a --deadline partial or output-cap
-    # truncation must exit 2, never a silent exit 0 that reads as complete. (The mermaid renderer also
-    # reads payload.result_incomplete for its `%% truncated` comment.)
+    # honor the shared exit contract (cursor review 1.40.0): a --deadline partial or scan-cap
+    # truncation must exit 2, never a silent exit 0 that reads as complete; an output-only cap
+    # carries the OUTPUT LIMITED advisory but stays exit 0. (The mermaid renderer also reads
+    # payload.result_incomplete for its `%% truncated` comment.)
     caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
-    # Exit 2 ONLY for SCAN incompleteness (--deadline partial, or a --max-repo-files scan cap) -- the
-    # analysis didn't finish. An OUTPUT cap (--max-callers/--max-files) is a COMPLETE analysis with a
-    # capped display (callers_truncated/files_truncated) and stays exit 0: the agent raises the cap for
-    # more. So gate on scan-truncation, NOT result_incomplete (which _annotate also sets on output cap).
+    # Exit 2 ONLY for analysis incompleteness: a SCAN truncation (--deadline partial, or a
+    # --max-repo-files scan cap via the shared _scan_incomplete gate), or a preexisting
+    # upstream-stamped result_incomplete=true (no scan shape of its own -- _scan_incomplete
+    # cannot see it, but the annotation preserved it fail-closed above). An OUTPUT cap
+    # (--max-callers/--max-files) is a COMPLETE analysis with a capped display
+    # (callers_truncated/files_truncated) and stays exit 0: the agent raises the cap for more.
+    # _annotate_result_completeness sets result_incomplete from scan truncation or the preexisting
+    # stamp ONLY -- never from an output cap -- so reading it here cannot flip a paginated display
+    # to exit 2 (the output-cap-stays-0 contract, defined once in _scan_incomplete's docstring).
     # A SCAN-truncated blast radius is INCOMPLETE regardless of whether callers were found -> exit 2
     # (council-verified B, 2026-07-05; found-but-truncated->0 was tried in #399 and overturned). A
     # truncated caller-set silently trusted as exhaustive is exactly the wrong-refactor risk this gate
@@ -8350,7 +8386,7 @@ def blast_radius(
     # truncated at 512 (Fable final review of #405). `_scan_incomplete` is the shared gate reused by
     # every daemon/render fast-path (map, context-render, edit-plan, blast-radius-render; Cluster B,
     # 2026-07-06) so the scan-vs-output-cap contract is defined exactly once.
-    incomplete = _scan_incomplete(payload)
+    incomplete = _scan_incomplete(payload) or bool(payload.get("result_incomplete"))
 
     if mermaid_output and json_output:
         # task #164: `--json --mermaid` together used to let mermaid short-circuit json (an

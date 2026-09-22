@@ -22,6 +22,7 @@ permanent.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 from typing import Any
@@ -34,6 +35,174 @@ from tensor_grep.cli.main import _emit_scan_incompleteness_banner
 
 _MAIN = Path(main_mod.__file__)
 _CALL = "_emit_scan_incompleteness_banner"
+
+
+def _annotation_disclosure_is_bound(
+    source: str, gate_line: int, caveat_var: str, gate_var: str
+) -> bool:
+    tree = ast.parse(source)
+    function = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.lineno <= gate_line <= (node.end_lineno or node.lineno)
+        ),
+        None,
+    )
+    if function is None:
+        return False
+    parents = {
+        child: parent for parent in ast.walk(function) for child in ast.iter_child_nodes(parent)
+    }
+
+    def _constant_truth(node: ast.AST) -> bool | None:
+        if isinstance(node, ast.Constant):
+            return bool(node.value)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            operand = _constant_truth(node.operand)
+            return None if operand is None else not operand
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "bool"
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return _constant_truth(node.args[0])
+        if isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1:
+            try:
+                left = ast.literal_eval(node.left)
+                right = ast.literal_eval(node.comparators[0])
+            except (ValueError, TypeError):
+                return None
+            operator = node.ops[0]
+            if isinstance(operator, ast.Eq):
+                return left == right
+            if isinstance(operator, ast.NotEq):
+                return left != right
+            if isinstance(operator, ast.Lt):
+                return left < right
+            if isinstance(operator, ast.LtE):
+                return left <= right
+            if isinstance(operator, ast.Gt):
+                return left > right
+            if isinstance(operator, ast.GtE):
+                return left >= right
+        if isinstance(node, ast.BoolOp):
+            values = [_constant_truth(value) for value in node.values]
+            if any(value is None for value in values):
+                return None
+            known = [bool(value) for value in values]
+            if isinstance(node.op, ast.And):
+                return all(known)
+            if isinstance(node.op, ast.Or):
+                return any(known)
+        return None
+
+    def _is_reachable(node: ast.AST) -> bool:
+        child = node
+        while child in parents:
+            parent = parents[child]
+            if isinstance(parent, ast.If):
+                truth = _constant_truth(parent.test)
+                if child in parent.body and truth is False:
+                    return False
+                if child in parent.orelse and truth is True:
+                    return False
+            child = parent
+        return True
+
+    annotation_line: int | None = None
+    disclosure: tuple[int, str] | None = None
+    for node in ast.walk(function):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Tuple)
+            and [elt.id for elt in node.targets[0].elts if isinstance(elt, ast.Name)]
+            == [caveat_var, gate_var]
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_annotate_result_completeness"
+            and _is_reachable(node)
+        ):
+            annotation_line = node.lineno
+        if not (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Tuple)
+            and len(node.targets[0].elts) == 2
+            and all(isinstance(elt, ast.Name) for elt in node.targets[0].elts)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_completeness_caveat_lines"
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Name)
+            and node.value.args[0].id == caveat_var
+            and any(
+                keyword.arg == "is_truncation"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == gate_var
+                for keyword in node.value.keywords
+            )
+            and _is_reachable(node)
+        ):
+            continue
+        leading = node.targets[0].elts[0]
+        assert isinstance(leading, ast.Name)
+        disclosure = (node.lineno, leading.id)
+    if annotation_line is None or disclosure is None:
+        return False
+    disclosure_line, leading_var = disclosure
+    for node in ast.walk(function):
+        if not (annotation_line < getattr(node, "lineno", 0) < disclosure_line):
+            continue
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id
+            in {
+                caveat_var,
+                gate_var,
+            }
+        ):
+            return False
+    emitted_line: int | None = None
+    for node in ast.walk(function):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "echo"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "typer"
+            and isinstance(parents.get(node), ast.Expr)
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == leading_var
+            and disclosure_line < node.lineno < gate_line
+            and _is_reachable(node)
+        ):
+            continue
+        emitted_line = node.lineno
+        break
+    if emitted_line is None:
+        return False
+    for node in ast.walk(function):
+        if not (disclosure_line < getattr(node, "lineno", 0) < emitted_line):
+            continue
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and node.id == leading_var
+        ):
+            return False
+    for node in ast.walk(function):
+        if not (disclosure_line < getattr(node, "lineno", 0) < gate_line):
+            continue
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == gate_var:
+            return False
+    return True
 
 
 def _truncated() -> dict[str, Any]:
@@ -49,14 +218,13 @@ def _truncated() -> dict[str, Any]:
 
 
 def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
-    lines = _MAIN.read_text(encoding="utf-8").splitlines()
-    gates = []
+    source = _MAIN.read_text(encoding="utf-8")
+    lines = source.splitlines()
+    gates: list[tuple[int, str, str | None, str | None]] = []
     for i, line in enumerate(lines):
         if not line.strip().startswith("if "):
             continue
         m = re.search(r"_scan_incomplete\((\w+)\)", line)
-        if not m:
-            continue
         # A GATE is defined by BEHAVIOUR -- it exits 2 -- not by mentioning `_scan_incomplete`.
         # Two other uses exist and neither owes a disclosure: this file's own helper guards on it
         # (`if not _scan_incomplete(...): return False`) and `_scan_truncation_warning` ends with
@@ -73,7 +241,26 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         body = "\n".join(lines[i : i + 8])
         if "Exit(2)" not in body:
             continue
-        gates.append((i, m.group(1)))
+        if m:
+            gates.append((i, m.group(1), None, None))
+            continue
+
+        # The shared annotation path classifies the same payload once, then gates on the
+        # returned boolean. Preserve that dataflow in the ratchet instead of exempting the
+        # command by name: payload -> annotation -> is_truncation -> Exit(2), with disclosure
+        # rendered from the paired caveat value.
+        condition = re.fullmatch(r"if (\w+):", line.strip())
+        if condition is None:
+            continue
+        start = next((j for j in range(i, 0, -1) if lines[j].startswith("def ")), 0)
+        before_gate = "\n".join(lines[start:i])
+        annotation = re.search(
+            rf"(\w+),\s*{re.escape(condition.group(1))}\s*=\s*"
+            r"_annotate_result_completeness\((\w+)\)",
+            before_gate,
+        )
+        if annotation:
+            gates.append((i, annotation.group(2), annotation.group(1), condition.group(1)))
     # PREMISE: the gates still exist and are plural. If a refactor renamed them this test would
     # otherwise pass over an empty list -- a ratchet that quietly covers nothing still reads green.
     assert len(gates) >= 12, f"expected the exit-2 gate family, found {len(gates)}"
@@ -82,7 +269,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
     # whose text output an agent is most likely to read as a finished answer.
     covered = {
         next((lines[j] for j in range(i, 0, -1) if lines[j].startswith("def ")), "").split("(")[0]
-        for i, _ in gates
+        for i, _, _, _ in gates
     }
     for command in ("def map", "def agent", "def context", "def edit_plan", "def prepare"):
         assert command in covered, (
@@ -91,7 +278,7 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         )
 
     undisclosed = []
-    for idx, var in gates:
+    for idx, var, caveat_var, gate_var in gates:
         # Scoped to the ENCLOSING FUNCTION, not a fixed line window. A 40-line window flagged
         # `prepare`, whose banner is correctly placed but sits ~50 lines above its gate with the
         # capsule-writing block in between. An arbitrary window makes the ratchet's verdict depend
@@ -99,6 +286,12 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         # until it stops complaining, which is how a ratchet quietly stops ratcheting.
         start = next((j for j in range(idx, 0, -1) if lines[j].startswith("def ")), 0)
         window = "\n".join(lines[start:idx])
+        if (
+            caveat_var is not None
+            and gate_var is not None
+            and _annotation_disclosure_is_bound(source, idx + 1, caveat_var, gate_var)
+        ):
+            continue
         if f"{_CALL}({var})" in window:
             continue
         # `codemap` discloses through its own older `PARTIAL:` line; it is not silent, and
@@ -118,6 +311,52 @@ def test_every_exit_two_gate_has_a_disclosure_on_its_text_branch() -> None:
         f"Add {_CALL}(<the same var the gate reads>) at the TOP of the `else` of the "
         "`if json_output` fork -- never beside the json.dumps, which would break json.loads."
     )
+
+
+@pytest.mark.parametrize(
+    "render_lines",
+    [
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation and False)\n    typer.echo(leading)",
+        "caveat = None\n    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)",
+        "if False:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if not True:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if 0:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if True and False:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if bool(False):\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "if 1 == 0:\n        leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n        typer.echo(leading)",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    typer.echo(leading)\n    is_truncation = False",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    False and typer.echo(leading)",
+        "leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n    True or typer.echo(leading)",
+    ],
+)
+def test_annotation_disclosure_binding_rejects_false_green_mutations(render_lines: str) -> None:
+    source = (
+        "def command(payload):\n"
+        "    caveat, is_truncation = _annotate_result_completeness(payload)\n"
+        f"    {render_lines}\n"
+        "    if is_truncation:\n"
+        "        raise typer.Exit(2)\n"
+    )
+    gate_line = next(
+        index
+        for index, line in enumerate(source.splitlines(), start=1)
+        if line.strip() == "if is_truncation:"
+    )
+    assert not _annotation_disclosure_is_bound(source, gate_line, "caveat", "is_truncation")
+
+
+def test_annotation_disclosure_binding_rejects_dead_annotation() -> None:
+    source = (
+        "def command(payload):\n"
+        "    caveat, is_truncation = None, False\n"
+        "    if False:\n"
+        "        caveat, is_truncation = _annotate_result_completeness(payload)\n"
+        "    leading, trailing = _completeness_caveat_lines(caveat, is_truncation=is_truncation)\n"
+        "    typer.echo(leading)\n"
+        "    if is_truncation:\n"
+        "        raise typer.Exit(2)\n"
+    )
+    assert not _annotation_disclosure_is_bound(source, 7, "caveat", "is_truncation")
 
 
 def test_the_banner_is_never_emitted_on_a_json_branch() -> None:

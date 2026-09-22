@@ -27,6 +27,7 @@ import typer
 
 from tensor_grep.cli import main as main_mod
 from tensor_grep.cli.main import (
+    _output_limit_note,
     _render_blast_radius_mermaid,
     _scan_incomplete,
     _scan_truncation_warning,
@@ -117,18 +118,19 @@ def test_an_output_cap_alone_is_not_a_deadline_truncation() -> None:
     # Boundary guard: an OUTPUT cap is a COMPLETE analysis capped for display. It must not be
     # dragged into the deadline branch, whose message would tell the reader to raise --deadline
     # for a scan that finished.
-    warning = _scan_truncation_warning(
-        _payload(
-            output_limit={
-                "callers_truncated": True,
-                "total_callers": 9,
-                "returned_callers": 4,
-            }
-        )
+    payload = _payload(
+        output_limit={
+            "callers_truncated": True,
+            "total_callers": 9,
+            "returned_callers": 4,
+        }
     )
-    assert warning is not None
-    assert "output was capped" in warning
-    assert "--deadline" not in warning
+    assert _scan_truncation_warning(payload) is None
+    note = _output_limit_note(payload)
+    assert note is not None
+    assert "OUTPUT LIMITED" in note
+    assert "omitted 5 caller(s)" in note
+    assert "--deadline" not in note
 
 
 # ------------------------------------------------------- the emitters that inherit it (class)

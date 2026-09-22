@@ -368,13 +368,21 @@ def test_blast_radius_output_cap_only_stays_exit_0(tmp_path, monkeypatch) -> Non
             "callers": [{"file": "m.py", "line": 2}],
             "files": ["m.py"],
             "tests": [],
-            "result_incomplete": True,
-            "output_limit": {"possibly_truncated": True, "callers_truncated": True},
+            "result_incomplete": False,
+            "output_limit": {
+                "possibly_truncated": True,
+                "callers_truncated": True,
+                "total_callers": 2,
+                "returned_callers": 1,
+            },
         }
 
     monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _spy)
     result = runner.invoke(app, ["blast-radius", str(tmp_path), "f", "--json"])
     assert result.exit_code == 0, result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is False
+    assert "OUTPUT LIMITED" in payload["caveat"]
 
 
 # --- F1 (dogfood v1.42.0, 24->14 refs regression): the ceiling slice must ORDER literal-hit ---

@@ -172,6 +172,30 @@ def test_l1_emit_keeps_exit_zero_when_results_present(
     assert emitted["not_found"] is False
 
 
+def test_upstream_incomplete_empty_symbol_result_never_claims_not_found(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    payload: dict[str, Any] = {
+        "definitions": [],
+        "symbol": "x",
+        "path": ".",
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    with pytest.raises(typer.Exit) as exc:
+        _emit_symbol_command_result(
+            payload,
+            result_key="definitions",
+            json_output=True,
+            emit_text=lambda _p: None,
+        )
+    assert exc.value.exit_code == 2
+    emitted = json.loads(capsys.readouterr().out)
+    assert emitted["result_incomplete"] is True
+    assert emitted["not_found"] is False
+    assert "upstream analysis stopped early" in emitted["caveat"]
+
+
 # ----------------------------------------------------------------- P7 zero-callers caveat
 # "zero callers != dead code": a symbol that RESOLVED but has no callers in the static graph
 # is the P7 trap (validated twice on real codebases: registration symbols + spec_to_env_fragment,
@@ -306,9 +330,12 @@ def test_truncation_warning_supersedes_dead_code_caveat_in_text(
     assert "dead code" not in out.lower()  # truncation is the real story, not the generic caveat
 
 
-def test_blast_radius_output_limit_truncation_flagged() -> None:
+def test_blast_radius_output_only_cap_is_advisory_not_incomplete() -> None:
     # REAL blast-radius shape: _apply_blast_radius_output_limits emits callers_truncated /
-    # files_truncated (NOT possibly_truncated). A capped blast radius must read as incomplete.
+    # files_truncated (NOT possibly_truncated). An output cap is a COMPLETE analysis whose DISPLAY
+    # was paginated: result_incomplete stays False, is_truncation stays False (exit 0), and the
+    # caveat carries the OUTPUT LIMITED advisory with the exact omitted count -- never
+    # "INCOMPLETE RESULT", which would misclassify pagination as a failed scan.
     payload: dict[str, Any] = {
         "symbol": "x",
         "path": ".",
@@ -318,20 +345,28 @@ def test_blast_radius_output_limit_truncation_flagged() -> None:
             "max_callers": 1,
             "max_files": 1,
             "callers_truncated": True,
-            "files_truncated": False,
+            "files_truncated": True,
             "total_callers": 9,
             "returned_callers": 1,
             "omitted_callers": 8,
+            "total_files": 4,
+            "returned_files": 1,
+            "omitted_files": 3,
         },
     }
     caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
-    assert payload["result_incomplete"] is True
-    assert is_truncation is True
-    assert caveat is not None and "INCOMPLETE" in caveat and "8 caller(s)" in caveat
+    assert payload["result_incomplete"] is False
+    assert is_truncation is False
+    assert caveat is not None and "OUTPUT LIMITED" in caveat and "8 caller(s)" in caveat
+    assert "3 file(s)" in caveat
+    assert "--max-callers" in caveat and "--max-files" in caveat
+    assert "INCOMPLETE RESULT" not in caveat
 
 
-def test_repo_map_output_limit_possibly_truncated_flagged() -> None:
-    # The repo-map output cap shape (apply_repo_map_output_limits) uses possibly_truncated.
+def test_repo_map_output_limit_is_advisory_not_incomplete() -> None:
+    # The repo-map output cap shape (apply_repo_map_output_limits) uses possibly_truncated with
+    # original/emitted counts. Pagination must stay exit-0-complete: result_incomplete False and
+    # an OUTPUT LIMITED advisory naming the exact omitted count and the --max-files knob.
     payload: dict[str, Any] = {
         "symbol": "x",
         "path": ".",
@@ -344,31 +379,422 @@ def test_repo_map_output_limit_possibly_truncated_flagged() -> None:
         },
     }
     caveat, is_truncation = _annotate_result_completeness(payload)
+    assert payload["result_incomplete"] is False and is_truncation is False
+    assert caveat is not None and "OUTPUT LIMITED" in caveat
+    assert "375 file(s)" in caveat
+    assert "--max-files" in caveat
+    assert "INCOMPLETE RESULT" not in caveat
+
+
+def test_apply_blast_radius_output_limits_omissions_reach_the_advisory() -> None:
+    # Real budget helper on a concrete payload: every omission field (callers, files, tests, AND
+    # import consumers) must fire, and the annotation must surface every exact omitted count as
+    # an advisory without ever calling the analysis incomplete.
+    from tensor_grep.cli.repo_map import _apply_blast_radius_output_limits
+
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
+        "callers": [
+            {"file": "a.py", "line": 1},
+            {"file": "b.py", "line": 2},
+            {"file": "c.py", "line": 3},
+        ],
+        "caller_tree": [],
+        "files": ["a.py", "b.py", "c.py"],
+        "tests": ["test_a.py", "test_b.py", "test_c.py"],
+        "import_graph_consumers": [{"file": "a.py"}, {"file": "b.py"}, {"file": "c.py"}],
+    }
+    limited = _apply_blast_radius_output_limits(payload, max_callers=1, max_files=1)
+    # PREMISE: the caps really fired on all three omissions -- a cap that did not apply would
+    # make every assertion below vacuous.
+    output_limit = limited["output_limit"]
+    assert output_limit["callers_truncated"] is True
+    assert output_limit["files_truncated"] is True
+    assert output_limit["tests_truncated"] is True
+    assert output_limit["import_consumers_truncated"] is True
+    assert output_limit["omitted_callers"] == 2
+    assert output_limit["omitted_files"] == 2
+    assert output_limit["omitted_tests"] == 2
+    assert output_limit["omitted_import_consumers"] == 2
+    caveat, is_truncation = _annotate_result_completeness(limited, result_key="callers")
+    assert limited["result_incomplete"] is False and is_truncation is False
+    assert caveat is not None and "OUTPUT LIMITED" in caveat
+    assert "2 caller(s)" in caveat
+    assert "2 file(s)" in caveat
+    assert "2 test file(s)" in caveat
+    assert "2 import consumer(s)" in caveat
+    assert "INCOMPLETE RESULT" not in caveat
+
+
+def test_test_omission_advisory_names_its_producer_knob() -> None:
+    blast_payload = {
+        "output_limit": {
+            "max_files": 2,
+            "tests_truncated": True,
+            "total_tests": 5,
+            "returned_tests": 2,
+            "omitted_tests": 3,
+        }
+    }
+    symbol_payload = {
+        "output_limit": {
+            "max_tests": 2,
+            "tests_truncated": True,
+            "total_tests": 5,
+            "returned_tests": 2,
+            "omitted_tests": 3,
+        }
+    }
+    blast_note = _annotate_result_completeness(blast_payload)[0]
+    symbol_note = _annotate_result_completeness(symbol_payload)[0]
+    assert (
+        blast_note is not None and "--max-files" in blast_note and "--max-tests" not in blast_note
+    )
+    assert (
+        symbol_note is not None
+        and "--max-tests" in symbol_note
+        and "--max-files" not in symbol_note
+    )
+
+
+def test_scan_only_truncation_stays_an_incomplete_result() -> None:
+    # Scan-only payload: the old classification that must survive this slice unchanged.
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
+        "callers": [],
+        "scan_limit": {
+            "max_repo_files": 512,
+            "scanned_files": 512,
+            "possibly_truncated": True,
+            "truncation_cause": "project-files",
+        },
+    }
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
     assert payload["result_incomplete"] is True and is_truncation is True
-    assert caveat is not None and "INCOMPLETE" in caveat
+    assert caveat is not None and "INCOMPLETE RESULT" in caveat
+    assert "OUTPUT LIMITED" not in caveat
 
 
-def test_blast_radius_cli_surfaces_truncation_on_real_output() -> None:
-    # Dogfood the REAL command output: cap callers to 1 on a symbol with several callers so
-    # production actually emits callers_truncated=True, and assert the warning is surfaced
-    # (defends against testing a payload shape production never emits).
+def test_deadline_only_truncation_names_the_deadline_remedy() -> None:
+    # A --deadline cutoff is a SCAN truncation (its own remedy), never an output advisory.
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
+        "callers": [],
+        "partial": True,
+        "deadline_limit": {"deadline_exceeded": True, "files_scanned": 37, "files_total": 900},
+    }
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
+    assert payload["result_incomplete"] is True and is_truncation is True
+    assert caveat is not None and "INCOMPLETE RESULT" in caveat and "--deadline" in caveat
+    assert "OUTPUT LIMITED" not in caveat
+
+
+def test_mixed_deadline_plus_output_discloses_both_facts() -> None:
+    # A display cap and a failed scan are independent facts: the deadline warning leads (exit 2)
+    # AND the output omissions stay disclosed -- a deadline must not be masked by an output cap.
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
+        "callers": [{"file": "a.py"}],
+        "partial": True,
+        "deadline_limit": {"deadline_exceeded": True, "files_scanned": 37, "files_total": 900},
+        "output_limit": {
+            "max_callers": 1,
+            "max_files": 1,
+            "callers_truncated": True,
+            "files_truncated": False,
+            "total_callers": 9,
+            "returned_callers": 1,
+            "omitted_callers": 8,
+        },
+    }
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
+    assert payload["result_incomplete"] is True and is_truncation is True
+    assert caveat is not None
+    assert "--deadline" in caveat
+    assert "OUTPUT LIMITED" in caveat and "8 caller(s)" in caveat
+
+
+def test_preexisting_incomplete_gets_a_fail_closed_warning() -> None:
+    # An independently stamped upstream analysis-incomplete reason with no scan shape of its own
+    # must still warn (fail-closed) and classify as truncation (exit 2 downstream).
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": ".",
+        "callers": [{"file": "a.py"}],
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    caveat, is_truncation = _annotate_result_completeness(payload, result_key="callers")
+    assert payload["result_incomplete"] is True and is_truncation is True
+    assert caveat is not None
+    assert "INCOMPLETE RESULT" in caveat and "upstream analysis stopped early" in caveat
+
+
+def test_blast_radius_upstream_incomplete_empty_result_never_claims_not_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli import main as main_mod
+    from tensor_grep.cli import repo_map
+
+    payload: dict[str, Any] = {
+        "symbol": "x",
+        "path": str(tmp_path),
+        "definitions": [],
+        "callers": [],
+        "files": [],
+        "tests": [],
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    monkeypatch.setattr(main_mod, "_maybe_symbol_command_via_running_daemon", lambda **_k: None)
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", lambda *_a, **_k: dict(payload))
+
+    result = runner.invoke(app, ["blast-radius", str(tmp_path), "x", "--json"])
+    assert result.exit_code == 2, result.output
+    emitted = json.loads(result.stdout)
+    assert emitted["result_incomplete"] is True
+    assert emitted["not_found"] is False
+    assert "upstream analysis stopped early" in emitted["caveat"]
+
+
+def test_map_route_preexisting_incomplete_warns_and_exits_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # `tg map` must gate its exit on the SHARED annotation's truncation classification, so an
+    # upstream-only incomplete stamp (no scan_limit of its own) warns and exits 2.
+    from tensor_grep.cli import repo_map
+
+    map_payload: dict[str, Any] = {
+        "path": str(tmp_path),
+        "files": ["a.py"],
+        "tests": [],
+        "symbols": [],
+        "imports": [],
+        "result_incomplete": True,
+        "incomplete_reason": "upstream analysis stopped early",
+    }
+    monkeypatch.setattr(repo_map, "build_repo_map", lambda *a, **k: dict(map_payload))
+
+    json_result = runner.invoke(app, ["map", str(tmp_path), "--json"])
+    assert json_result.exit_code == 2, json_result.output
+    json_payload = json.loads(json_result.stdout)
+    assert json_payload["result_incomplete"] is True
+    assert "INCOMPLETE RESULT" in json_payload["caveat"]
+
+    text_result = runner.invoke(app, ["map", str(tmp_path)])
+    assert text_result.exit_code == 2, text_result.output
+    # LEADING disclosure: the warning precedes the data it qualifies.
+    assert text_result.output.splitlines()[0].startswith("warning: INCOMPLETE RESULT:")
+
+
+def test_map_cli_output_cap_only_exits_zero_with_output_limited_note(tmp_path: Path) -> None:
+    # REAL map route (previously a raw dump with no advisory): a two-file fixture capped to one
+    # file must keep exit 0, keep JSON result_incomplete false, disclose the exact omission in
+    # JSON and text, and never claim the capped subset is the whole answer.
+    project = tmp_path / "map_cap_project"
+    project.mkdir()
+    for index in range(2):
+        (project / f"module_{index}.py").write_text(
+            f"def helper_{index}():\n    return {index}\n", encoding="utf-8"
+        )
+    json_result = runner.invoke(app, ["map", str(project), "--max-files", "1", "--json"])
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.stdout)
+    # PREMISE: the cap really fired -- a cap that did not apply would make the assertions below
+    # vacuous.
+    assert payload["output_limit"]["original_files"] > payload["output_limit"]["emitted_files"]
+    omitted = payload["output_limit"]["original_files"] - payload["output_limit"]["emitted_files"]
+    assert payload["result_incomplete"] is False
+    assert "OUTPUT LIMITED" in payload["caveat"]
+    assert f"{omitted} file(s)" in payload["caveat"]
+    assert "--max-files" in payload["caveat"]
+    assert "INCOMPLETE RESULT" not in payload["caveat"]
+
+    text_result = runner.invoke(app, ["map", str(project), "--max-files", "1"])
+    assert text_result.exit_code == 0, text_result.output
+    assert "OUTPUT LIMITED" in text_result.output
+    assert f"{omitted} file(s)" in text_result.output
+    assert "INCOMPLETE RESULT" not in text_result.output
+    # An output note is commentary on a complete analysis, so it TRAILS the result rather than
+    # leading it (the inverse of the scan-warning position contract).
+    assert text_result.output.index("Repository map for") < text_result.output.index(
+        "OUTPUT LIMITED"
+    )
+
+
+def test_map_cli_tests_only_output_cap_is_disclosed(tmp_path: Path) -> None:
+    project = tmp_path / "map_test_cap_project"
+    project.mkdir()
+    (project / "module.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    for index in range(4):
+        (project / f"test_module_{index}.py").write_text(
+            f"def test_helper_{index}():\n    assert {index} == {index}\n", encoding="utf-8"
+        )
+
+    json_result = runner.invoke(app, ["map", str(project), "--max-files", "1", "--json"])
+    assert json_result.exit_code == 0, json_result.output
+    payload = json.loads(json_result.stdout)
+    limit = payload["output_limit"]
+    assert limit["omitted_files"] == 0
+    assert limit["total_tests"] > limit["returned_tests"]
+    assert limit["omitted_tests"] == 3
+    assert payload["result_incomplete"] is False
+    assert "OUTPUT LIMITED" in payload["caveat"]
+    assert "3 test file(s)" in payload["caveat"]
+    assert "INCOMPLETE RESULT" not in payload["caveat"]
+
+    text_result = runner.invoke(app, ["map", str(project), "--max-files", "1"])
+    assert text_result.exit_code == 0, text_result.output
+    assert "3 test file(s)" in text_result.output
+    assert "INCOMPLETE RESULT" not in text_result.output
+
+
+def test_blast_radius_cli_surfaces_output_cap_on_real_output(tmp_path: Path) -> None:
+    # Dogfood the REAL command output: a fixture with at least two known callers capped to one.
+    # Production MUST emit callers_truncated=True (asserted as a premise, so a cap that does not
+    # fire fails the test instead of silently passing), and the payload must stay exit 0 /
+    # result_incomplete False with an exact OUTPUT LIMITED omitted count.
+    project = tmp_path / "blast_cap_project"
+    src_dir = project / "src"
+    src_dir.mkdir(parents=True)
+    (src_dir / "target.py").write_text(
+        "def target_fn(value):\n    return value\n", encoding="utf-8"
+    )
+    for index in range(2):
+        (src_dir / f"caller_{index}.py").write_text(
+            "from src.target import target_fn\n\n"
+            f"def caller_{index}(value):\n"
+            "    return target_fn(value)\n",
+            encoding="utf-8",
+        )
     result = runner.invoke(
         app,
-        [
-            "blast-radius",
-            "src/tensor_grep/cli/main.py",
-            "_emit_symbol_command_result",
-            "--max-callers",
-            "1",
-            "--json",
-        ],
+        ["blast-radius", str(project), "target_fn", "--max-callers", "1", "--json"],
     )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
-    # Only assert the completeness contract when production actually truncated.
-    if payload.get("output_limit", {}).get("callers_truncated"):
-        assert payload["result_incomplete"] is True
-        assert "INCOMPLETE" in payload["caveat"]
+    # PREMISE: pagination really fired (total > returned, truncated flag set).
+    assert payload["output_limit"]["callers_truncated"] is True
+    assert payload["output_limit"]["total_callers"] > payload["output_limit"]["returned_callers"]
+    omitted = payload["output_limit"]["omitted_callers"]
+    assert omitted >= 1
+    assert payload["result_incomplete"] is False
+    assert "OUTPUT LIMITED" in payload["caveat"]
+    assert f"{omitted} caller(s)" in payload["caveat"]
+    assert "INCOMPLETE RESULT" not in payload["caveat"]
+
+
+@pytest.mark.parametrize(
+    "warm,json_output", [(False, False), (False, True), (True, False), (True, True)]
+)
+def test_blast_radius_tests_only_cap_discloses_on_warm_and_cold_routes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    warm: bool,
+    json_output: bool,
+) -> None:
+    from tensor_grep.cli import main as main_mod
+    from tensor_grep.cli import repo_map
+
+    base: dict[str, Any] = {
+        "symbol": "target",
+        "path": str(tmp_path),
+        "definitions": [{"file": "src.py", "line": 1}],
+        "callers": [{"file": "src.py", "line": 2}],
+        "caller_tree": [],
+        "files": ["src.py"],
+        "tests": ["test_a.py", "test_b.py", "test_c.py"],
+        "import_graph_consumers": [],
+    }
+    monkeypatch.setattr(
+        main_mod,
+        "_maybe_symbol_command_via_running_daemon",
+        lambda **_kwargs: dict(base) if warm else None,
+    )
+
+    def _cold(*_args: Any, **kwargs: Any) -> dict[str, Any]:
+        return repo_map._apply_blast_radius_output_limits(
+            dict(base), max_callers=kwargs.get("max_callers"), max_files=kwargs.get("max_files")
+        )
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _cold)
+    main_mod.blast_radius(
+        path=str(tmp_path),
+        symbol_arg="target",
+        symbol=None,
+        provider="native",
+        max_depth=3,
+        max_repo_files=512,
+        max_callers=None,
+        max_files=1,
+        deadline=None,
+        json_output=json_output,
+        mermaid_output=False,
+    )
+    out = capsys.readouterr().out
+    assert "2 test file(s)" in out
+    assert "INCOMPLETE RESULT" not in out
+    if json_output:
+        payload = json.loads(out)
+        assert payload["output_limit"]["tests_truncated"] is True
+        assert payload["output_limit"]["omitted_tests"] == 2
+        assert payload["result_incomplete"] is False
+
+
+def test_blast_radius_cli_mixed_truncation_warns_leads_and_exits_two(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Mixed deadline+output through the REAL blast-radius text route: exit 2, LEADING deadline
+    # warning, and the output omissions still disclosed (a deadline cannot be masked by a cap).
+    from tensor_grep.cli import main as main_mod
+    from tensor_grep.cli import repo_map
+
+    mixed: dict[str, Any] = {
+        "symbol": "x",
+        "path": str(tmp_path),
+        "definitions": [],
+        "callers": [{"file": "a.py", "line": 1}],
+        "files": ["a.py"],
+        "tests": [],
+        "partial": True,
+        "deadline_limit": {"deadline_exceeded": True, "files_scanned": 37, "files_total": 900},
+        "output_limit": {
+            "max_callers": 1,
+            "max_files": 1,
+            "callers_truncated": True,
+            "files_truncated": False,
+            "total_callers": 9,
+            "returned_callers": 1,
+            "omitted_callers": 8,
+        },
+    }
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", lambda *a, **k: dict(mixed))
+    monkeypatch.setattr(main_mod, "_maybe_symbol_command_via_running_daemon", lambda **k: None)
+
+    with pytest.raises(typer.Exit) as exc:
+        main_mod.blast_radius(
+            path=str(tmp_path),
+            symbol_arg="x",
+            symbol=None,
+            provider="native",
+            max_depth=3,
+            max_repo_files=512,
+            max_callers=None,
+            max_files=None,
+            deadline=None,
+            json_output=False,
+            mermaid_output=False,
+        )
+    assert exc.value.exit_code == 2
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].startswith("warning: INCOMPLETE RESULT:")
+    assert "--deadline" in out
+    assert "OUTPUT LIMITED" in out and "8 caller(s)" in out
 
 
 def test_complete_scan_sets_result_incomplete_false(

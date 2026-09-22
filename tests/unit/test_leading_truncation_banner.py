@@ -380,7 +380,11 @@ def test_mermaid_upstream_result_incomplete_still_gets_a_leading_disclosure() ->
     # An incompleteness stamped upstream carries no scan_limit/output_limit to describe. Sourcing
     # the text from _scan_truncation_warning must not silently DROP the disclosure in that case --
     # trading a mispositioned warning for an absent one is the worse half of the same class.
-    out = _render_blast_radius_mermaid(_mermaid_payload(result_incomplete=True))
+    reason = "upstream analysis stopped early"
+    out = _render_blast_radius_mermaid(
+        _mermaid_payload(result_incomplete=True, incomplete_reason=reason)
+    )
     lines = out.splitlines()
     assert lines[1].startswith("  %% warning: INCOMPLETE RESULT:")
+    assert reason in lines[1]
     assert out.index("warning:") < out.index("pkg/caller.py")

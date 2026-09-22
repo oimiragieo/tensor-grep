@@ -73,7 +73,7 @@ prefer the canonical path-first form.
 When you add an entity that must be registered in multiple places (a command, a flag, a route, a hook), enumerate ALL its registration sites BEFORE claiming the change is done — missing one fails *quietly*. The default audit path:
 
 1. **Blast radius** — `tg callers PATH SYMBOL --json` lists every call site (file:line). On a real billing repo it surfaced 2 webhook handlers + 1 reconcile cron in ~1s — a 10-minute grep-and-read became a one-second decision.
-   When the JSON has `"result_incomplete": true`, the call-site list was TRUNCATED by a scan/output cap — treat coverage as partial; do not conclude unlisted sites are safe. Human mode emits a loud stderr caveat.
+   `result_incomplete: true` means the analysis/scan itself stopped early and exits 2. A display-only cap instead keeps `result_incomplete: false` and exit 0, with exact caller/file/test-file/import-consumer omissions in `output_limit`; treat any such subset as partial and raise the named `--max-callers`, `--max-files`, or `--max-tests` knob. Human text prints the same `INCOMPLETE RESULT` warning or `OUTPUT LIMITED` advisory on stdout.
 2. **Pattern bugs** — `tg scan PATH --ruleset RULESET` runs a built-in security/compliance rule pack across those sites (see `tg rulesets` for pack names). `--config sgconfig.yml` and `--rule FILE` are separate options for a custom ast-grep config or a single rule file — not for built-in packs.
 3. **Diagnostics** — `tg doctor --with-lsp`.
 

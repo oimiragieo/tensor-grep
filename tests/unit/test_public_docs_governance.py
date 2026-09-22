@@ -19,6 +19,8 @@ SKILL_DOC_PATH = _REPO_ROOT / "SKILL.md"
 SESSION_HANDOFF_PATH = _REPO_ROOT / "docs/SESSION_HANDOFF.md"
 CONTINUATION_PLAN_PATH = _REPO_ROOT / "docs/CONTINUATION_PLAN.md"
 CONTRACTS_DOC_PATH = _REPO_ROOT / "docs/CONTRACTS.md"
+HARNESS_API_PATH = _REPO_ROOT / "docs/harness_api.md"
+TENSOR_GREP_SKILL_PATH = _REPO_ROOT / ".claude/skills/tensor-grep/SKILL.md"
 
 
 def _project_release_tag() -> str:
@@ -70,6 +72,16 @@ def test_readme_should_point_to_canonical_public_docs() -> None:
     #   - multi-project workspace roots / broad generated-root scan -> docs/CONTRACTS.md (below)
     #   - PowerShell `$NAME` expansion / `cmd.exe` metacharacters -> docs/CONTRACTS.md (below)
     #   - open a session once / daemon-routed edit-plan/context -> docs/CONTRACTS.md (warm-path)
+
+
+def test_pagination_contract_twins_name_output_only_semantics() -> None:
+    for path in (CONTRACTS_DOC_PATH, HARNESS_API_PATH, TENSOR_GREP_SKILL_PATH):
+        text = path.read_text(encoding="utf-8")
+        assert "result_incomplete" in text, path
+        assert "output_limit" in text, path
+        assert "OUTPUT LIMITED" in text, path
+        assert "stdout" in text, path
+        assert "test" in text and "import" in text, path
 
 
 def test_contracts_should_record_windows_shell_and_ordering_limits() -> None:
