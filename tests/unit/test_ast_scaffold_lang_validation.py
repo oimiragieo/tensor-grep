@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from tensor_grep.cli.main import _write_ast_project_scaffold
+from tensor_grep.cli.ast_scaffold import _write_ast_project_scaffold
 
 
 @pytest.mark.parametrize(

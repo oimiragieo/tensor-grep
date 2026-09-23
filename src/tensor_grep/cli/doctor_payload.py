@@ -118,6 +118,15 @@ def _build_doctor_payload(
         _self._DOCTOR_LSP_PROBE_TIMEOUT_ENV,
     ]
     installed_version = _self._doctor_installed_version()
+    from tensor_grep.cli import runtime_paths
+    from tensor_grep.cli.repair_env import editable_install_points_at
+
+    source_version = runtime_paths._read_project_version_fallback()
+    python_package_version_status = "ok"
+    if source_version != "0.0.0" and source_version != installed_version:
+        # Fail-closed provenance: only an editable install of THIS checkout is "stale_editable".
+        is_editable, _ = editable_install_points_at(runtime_paths._repo_root())
+        python_package_version_status = "stale_editable" if is_editable else "version_mismatch"
     # NIT-1 + MF-2 (#172): compute rust_binary_version BEFORE the inspect_native_tg_binary call
     # (it used to be computed after) so it can be threaded through as version_text below --
     # inspect_native_tg_binary's own internal _native_tg_version call would otherwise spawn a
@@ -322,7 +331,12 @@ def _build_doctor_payload(
         "rust_binary_remediation": _doctor_rust_binary_remediation(
             rust_binary_version_status=rust_binary_version_status,
             native_tg_binary_kind=native_tg_binary_kind,
+            python_package_version_status=python_package_version_status,
+            rust_binary_version=rust_binary_version,
+            source_version=source_version,
         ),
+        "python_package_version_status": python_package_version_status,
+        "source_version": source_version,
         "skipped_native_tg_binaries": skipped_native_tg_binaries,
         "path_tg_candidates": path_tg_candidates,
         "path_tg_first_version": path_tg_first_version,
@@ -529,6 +543,8 @@ def _render_doctor_payload(payload: dict[str, Any]) -> str:
         lines.append(f"rust_binary_version_warning: {rust_binary_warning}")
     if rust_binary_remediation := payload.get("rust_binary_remediation"):
         lines.append(f"rust_binary_remediation: {rust_binary_remediation}")
+    if (status := payload.get("python_package_version_status")) and status != "ok":
+        lines.append(f"python_package_version_status: {status}")
     skipped_native_tg_binaries = cast(
         list[dict[str, str | None]],
         payload.get("skipped_native_tg_binaries", []),

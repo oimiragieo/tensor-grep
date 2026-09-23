@@ -31,6 +31,9 @@ import re
 from pathlib import Path
 
 _MAIN = Path(__file__).resolve().parents[2] / "src" / "tensor_grep" / "cli" / "main.py"
+# Commands split out of main.py for the file-size ratchet stay under this gate: moving a
+# command into its own module must not move it out of the disclosure obligation.
+_SPLIT_COMMAND_MODULES = (_MAIN.parent / "sql_query.py",)
 
 # A payload READ that means "this result may be incomplete".
 #
@@ -190,3 +193,12 @@ def test_the_two_p0_surfaces_are_covered_by_the_class_not_by_name() -> None:
         "the symbol-command emitter no longer reaches a disclosure surface -- this is the exact "
         "shape of the `tg imports` P0 (exit 2, imports=0, zero bytes of stderr)"
     )
+
+
+def test_split_out_command_modules_are_not_silent() -> None:
+    """Same class check over command modules that no longer live in main.py."""
+    for module in _SPLIT_COMMAND_MODULES:
+        source = module.read_text(encoding="utf-8")
+        assert _INCOMPLETE_READ.search(source), f"{module.name}: no incompleteness read found"
+        offenders = _readers_without_disclosure(source)
+        assert not offenders, f"{module.name}: silent incompleteness readers: {offenders}"

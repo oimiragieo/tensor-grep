@@ -500,7 +500,17 @@ def _doctor_rust_binary_remediation(
     *,
     rust_binary_version_status: str,
     native_tg_binary_kind: str,
+    python_package_version_status: str | None = None,
+    rust_binary_version: str | None = None,
+    source_version: str | None = None,
 ) -> str | None:
+    if python_package_version_status == "stale_editable":
+        if rust_binary_version is not None and source_version is not None:
+            if _doctor_version_tuple(rust_binary_version) == _doctor_version_tuple(source_version):
+                return (
+                    "The native tg binary is up to date, but the .venv dist-info metadata is lagging behind pyproject.toml. "
+                    "Run 'tg repair-env' or 'uv pip install -e . --no-deps' to re-sync editable package metadata."
+                )
     if (
         rust_binary_version_status == "stale" and native_tg_binary_kind.startswith("in-tree-")
     ) or rust_binary_version_status == "stale-skipped":

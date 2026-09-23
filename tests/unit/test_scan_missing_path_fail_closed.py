@@ -72,8 +72,16 @@ def _native_ast_seam(monkeypatch):
     has -- exactly the environment-tracking failure these tests exist to guard against (A85).
     """
     from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.cli import ast_workflows
 
     monkeypatch.setattr(AstGrepWrapperBackend, "is_available", lambda self: False)
+    # Backend selection reads availability through a module-global cache keyed by (name, class).
+    # Patching `is_available` does not change the class, so an earlier test that cached the
+    # wrapper as available would bypass the patch and route to the wrapper -- which then fails on
+    # a box without `sg` (observed in the full-suite CI container run, order-dependent). Isolate
+    # both caches for this test; monkeypatch restores the originals afterwards.
+    monkeypatch.setattr(ast_workflows, "_BACKEND_AVAILABILITY", {})
+    monkeypatch.setattr(ast_workflows, "_CACHED_BACKENDS", {})
 
 
 def test_scan_missing_path_exits_non_zero_with_path_not_found(tmp_path: Path):

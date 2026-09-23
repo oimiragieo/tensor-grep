@@ -67,6 +67,8 @@ KNOWN_COMMANDS = {
     "install-dense",
     "install",
     "uninstall",
+    "repair-env",
+    "sql",
 }
 
 # `RESERVED_TOP_LEVEL_COMMANDS` = roadmap commands that DO NOT EXIST yet (A90). They must never

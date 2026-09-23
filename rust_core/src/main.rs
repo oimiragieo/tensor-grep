@@ -646,11 +646,10 @@ pub struct RunArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct CalibrateArgs {
-    /// Emit a structured JSON result, including a machine-readable
-    /// `calibration_status: skipped_no_cuda_build` signal when this build cannot run GPU
-    /// calibration, instead of the default human-readable output. Does not change the exit
-    /// code (still 2 on the no-cuda skip, per the backend-unavailable convention) or the
-    /// success-path output (already JSON).
+    /// Emit structured JSON instead of text, including a machine-readable `calibration_status:
+    /// skipped_no_cuda_build` signal when GPU calibration cannot run (it needs NVIDIA hardware and
+    /// a CUDA-enabled binary build). Does not change the exit code (still 2 on the no-cuda skip,
+    /// per the backend-unavailable convention) or the success-path output (already JSON).
     #[arg(long)]
     pub json: bool,
 }
@@ -718,6 +717,7 @@ pub enum Commands {
     /// Run log classification with local heuristics; CyBERT/Triton is opt-in
     Classify(ClassifyArgs),
     /// Run a validated AST slice for structural search and guarded rewrites
+    #[command(long_about = "Run a validated AST slice for structural search and guarded rewrites.\n\nPatterns match exact AST node shapes: a single-line 'def $NAME($$$ARGS): $$$BODY' does not match a multiline function block. Multiline examples -- Python: 'def $NAME($$$ARGS):\\n    $$$BODY'; TypeScript: 'function $NAME($$$ARGS) {\\n  $$$BODY\\n}'. Use `--selector function_definition` to match any function regardless of formatting.")]
     Run(RunArgs),
     /// Scan code by configuration
     Scan {
@@ -1014,6 +1014,18 @@ pub enum Commands {
     /// One-call edit-readiness capsule: primary target, blast-radius floor, validation, claims
     #[command(name = "prepare", disable_help_flag = true)]
     Prepare {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Repair editable package metadata desync
+    #[command(name = "repair-env", disable_help_flag = true)]
+    RepairEnv {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Query AST symbols using structured SQL
+    #[command(name = "sql", disable_help_flag = true)]
+    Sql {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -7393,6 +7405,8 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Install { args } => handle_python_passthrough("install", args),
         Commands::Uninstall { args } => handle_python_passthrough("uninstall", args),
         Commands::Prepare { args } => handle_python_passthrough("prepare", args),
+        Commands::RepairEnv { args } => handle_python_passthrough("repair-env", args),
+        Commands::Sql { args } => handle_python_passthrough("sql", args),
         Commands::PythonPassthrough(args) => {
             let command = args[0].clone();
             let command_args = args[1..].to_vec();
