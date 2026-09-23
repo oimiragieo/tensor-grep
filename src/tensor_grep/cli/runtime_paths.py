@@ -375,6 +375,16 @@ def is_wsl_host() -> bool:
         return True
     if os.path.exists("/run/WSL"):
         return True
+    return _kernel_reports_wsl()
+
+
+def _kernel_reports_wsl() -> bool:
+    """The `/proc/version` "microsoft" kernel-stamp fallback of ``is_wsl_host`` (fail-closed).
+
+    Its own seam because the stamp is a property of the HOST KERNEL, not the process: a Linux
+    container on Docker Desktop runs on the WSL2 kernel and reports it too. Tests pin it off by
+    default (tests/conftest.py) so a suite's verdict does not depend on which kernel it runs on.
+    """
     try:
         with open("/proc/version", encoding="utf-8", errors="replace") as fh:
             return "microsoft" in fh.read().lower()

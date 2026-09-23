@@ -221,6 +221,10 @@ def load_patch_predictions(path: str | Path) -> list[Prediction]:
 def _validation_subprocess_env() -> dict[str, str]:
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
+    # The caller's own pytest options (-k, --deselect, extra test paths) must not leak into a
+    # fixture's `pytest -q`: a leaked -k selects nothing (exit 5 = "validation failed") and a
+    # leaked test path makes the nested pytest re-run the caller's suite.
+    env.pop("PYTEST_ADDOPTS", None)
     env.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
     return env
 

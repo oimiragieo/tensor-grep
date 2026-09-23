@@ -173,6 +173,11 @@ This is a **third**, independent rg-passthrough decision, distinct from both the
   python -c "from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary as r; print(r())"
   ```
   A real path on one OS and `None` on the other reproduces the whole divergence directly.
+- **SUPERSEDED (2026-09-23): the missing scope note is fixed.** The `--stats` branch now writes
+  the defaulted-scope note on rg's zero-match exit under the same three gates as `is_empty`
+  (`grep -n "Task #24" src/tensor_grep/cli/main.py`; shared gate `_scope_filtered`). The
+  routing divergence described above still exists -- only its user-visible symptom is closed;
+  tg's own `[stats]` line and `--debug` echo are still skipped on this route.
 
 ## The walk-ceiling fast-refuse: 3 doors, 2 constants, 1 value (A9, v1.92.3/#702)
 

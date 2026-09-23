@@ -57,6 +57,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         git \
+        # `node --test` validates the commander patch-bakeoff fixtures; the GitHub ubuntu runner
+        # image ships Node, so without it test_real_patch_fixture_scenarios_* diverged here.
+        nodejs \
         pkg-config \
         python3.12 \
         python3.12-dev \

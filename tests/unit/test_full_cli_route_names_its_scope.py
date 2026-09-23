@@ -68,35 +68,10 @@ def _run(corpus: Path, *args: str) -> subprocess.CompletedProcess[str]:
         "--ast",
         "--rank",
         "--semantic",
-        pytest.param(
-            "--stats",
-            marks=pytest.mark.xfail(
-                sys.platform == "win32",
-                strict=True,
-                reason=(
-                    "ROOT-CAUSED, NOT PLATFORM-CONDITIONAL CODE (task #24). search_command has a "
-                    "SECOND, internal rg-passthrough branch beyond bootstrap's own front door "
-                    "(`can_passthrough_rg and stats and _selected_route_supports_rg_passthrough(...)`, "
-                    "cli/main.py:8004-8017): when Pipeline picks RipgrepBackend, the whole search is "
-                    "handed to a live `rg --stats` subprocess and sys.exit()s on ITS exit code, never "
-                    "reaching the is_empty branch below (or this file's scope note). Whether that "
-                    "happens depends ONLY on whether `rg`/`rg.exe` resolves on PATH "
-                    "(resolve_ripgrep_binary, cli/runtime_paths.py) -- there is no sys.platform/os.name "
-                    "check anywhere in the chain. The `test-python` CI job installs no ripgrep package "
-                    "on any OS, so this reduces to an ambient PATH fact per runner image, not a code "
-                    "branch: XPASSes here iff a real `rg` is resolvable in THIS job's environment. "
-                    "Paired-proof (same tree, PATH with/without a real rg.exe): with rg resolvable, "
-                    "this exact symptom reproduces; with PATH stripped of rg (Pipeline falls back to "
-                    "CPUBackend), the identical invocation reaches is_empty and the note fires. "
-                    "`--ast`/`--rank`/`--semantic` never take this branch (categorically excluded in "
-                    "_can_passthrough_rg, cli/main.py:5359-5363) -- --stats is the one flag here with "
-                    "no such exclusion. Full trail: tensor-grep-architecture-contract SKILL.md, 'A "
-                    "THIRD rg-passthrough door lives INSIDE cli/main.py::search_command', and "
-                    "docs/BACKLOG.md. Kept strict so a change to this dispatch shape converts to a "
-                    "hard failure rather than passing quietly."
-                ),
-            ),
-        ),
+        # --stats used to be a strict win32 xfail (task #24): with a real `rg` on PATH, search's
+        # internal `rg --stats` passthrough sys.exit()ed before the scope note. That branch now
+        # emits the note on rg's zero-match exit, so the flag passes with or without rg.
+        "--stats",
     ],
 )
 def test_a_defaulted_zero_result_names_its_scope(corpus: Path, flag: str) -> None:

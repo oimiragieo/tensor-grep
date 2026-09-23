@@ -3743,6 +3743,15 @@ both routes are contractually honest (exit 1, real output either way); this is a
 broken, dispatch shape. Xfail reason sharpened to point at this mechanism instead of "platform-
 divergent" (`tests/unit/test_full_cli_route_names_its_scope.py`).
 
+**SUPERSEDED (2026-09-23) -- the scope-note half of task #24 is FIXED.** The `--stats`
+rg-passthrough branch in `search_command` now writes the defaulted-scope note on rg's
+zero-match exit (1) under the same three gates as the `is_empty` branch (`paths_defaulted`,
+not `_scope_filtered(config)`, not `--quiet`; find it with
+`grep -n "Task #24" src/tensor_grep/cli/main.py`). The strict win32 xfail on the `--stats`
+param is removed; the test passes with and without `rg` on PATH (RED on the pre-fix
+`main.py` with a real `rg` resolvable, GREEN after). Still true: this branch skips tg's own
+`_emit_stats()` line and the `--debug` echo -- rg's stats block is what the user sees.
+
 **NEW FINDING (task #24 sweep, not yet filed as its own PR) — `--quiet` is silently dropped by BOTH
 of `cli/main.py`'s internal rg-passthrough branches (the plain one at `cli/main.py:7937-7943` and the
 stats one above).** `RipgrepBackend._build_cmd` (`backends/ripgrep_backend.py`) never translates

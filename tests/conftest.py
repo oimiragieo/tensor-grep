@@ -129,3 +129,22 @@ def _disable_session_daemon_autostart_by_default():
             os.environ.pop("TG_SESSION_DAEMON_AUTOSTART", None)
         else:
             os.environ["TG_SESSION_DAEMON_AUTOSTART"] = previous
+
+
+@pytest.fixture(autouse=True)
+def _host_kernel_is_not_a_wsl_signal():
+    """``runtime_paths.is_wsl_host`` falls back to the ``/proc/version`` "microsoft" stamp, which
+    is a property of the HOST KERNEL: every Linux container on Docker Desktop runs on the WSL2
+    kernel and reports it. Unpinned, 13 tests that model a non-WSL Linux box (GPU doctor probes,
+    the bare-Linux-CI regression guard, ...) failed only inside scripts/ci-local. Tests express
+    WSL-ness through WSL_DISTRO_NAME / WSL_INTEROP / ``/run/WSL``; the kernel-stamp helper is
+    tested directly in test_runtime_paths.py. Same no-``monkeypatch`` rule as the fixture above.
+    """
+    from tensor_grep.cli import runtime_paths
+
+    original = runtime_paths._kernel_reports_wsl
+    runtime_paths._kernel_reports_wsl = lambda: False
+    try:
+        yield
+    finally:
+        runtime_paths._kernel_reports_wsl = original

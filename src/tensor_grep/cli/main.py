@@ -2573,6 +2573,18 @@ def _plain_json_incompatible_render_flags(argv: list[str] | None = None) -> list
     return flagged
 
 
+def _scope_filtered(config: Any) -> bool:
+    """`--glob`/`--iglob`/`--type`/`--type-not`/`--max-depth` ARE a chosen scope: a defaulted-
+    PATH scope note would misdescribe such a search (see the is_empty branch in search)."""
+    return bool(
+        config.max_depth is not None
+        or config.glob
+        or config.iglob
+        or config.file_type
+        or config.type_not
+    )
+
+
 def _selected_route_supports_rg_passthrough(
     *,
     selected_backend_name: str,
@@ -3998,6 +4010,11 @@ def search_command(
         passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
+        # Task #24: this branch exits before the is_empty scope note below; same three gates.
+        if exit_code == 1 and paths_defaulted and not _scope_filtered(config) and not quiet:
+            from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
+
+            _write_defaulted_scope_note()
         sys.exit(exit_code)
 
     # F6: at this point neither native delegation, the rg-passthrough fast path, nor the
@@ -4473,13 +4490,7 @@ def search_command(
         # `quiet` suppresses it: `--quiet` promises no incidental output, and emitting an
         # informational note there is a silent contract change on a flag whose entire purpose is
         # silence.
-        scope_filtered = bool(
-            config.max_depth is not None
-            or config.glob
-            or config.iglob
-            or config.file_type
-            or config.type_not
-        )
+        scope_filtered = _scope_filtered(config)
         if paths_defaulted and not scope_filtered:
             # Stamp the JSON body BEFORE the formatter runs, so a machine consumer reading only
             # stdout learns why the zero is ambiguous. v1.101.22 dogfood: "PATH note is
