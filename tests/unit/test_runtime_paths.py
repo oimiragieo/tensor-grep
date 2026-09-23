@@ -12,6 +12,10 @@ import pytest
 from tensor_grep.cli import runtime_paths
 from tensor_grep.cli.runtime_paths import resolve_native_tg_binary, resolve_ripgrep_binary
 
+# Captured at import, BEFORE tests/conftest.py's autouse fixture pins the kernel-stamp
+# seam off per test; tests that exercise the /proc/version fallback opt back in with it.
+_REAL_KERNEL_REPORTS_WSL = runtime_paths._kernel_reports_wsl
+
 
 @pytest.fixture(autouse=True)
 def clear_caches():
@@ -792,6 +796,7 @@ class TestIsWslHost:
         WSL_DISTRO_NAME/WSL_INTEROP and runs on a WSL1-style host with no `/run/WSL` is still
         detected via `/proc/version`, which every real WSL1/WSL2 kernel stamps with "microsoft"
         (e.g. "Linux version 6.6.87.2-microsoft-standard-WSL2")."""
+        monkeypatch.setattr(runtime_paths, "_kernel_reports_wsl", _REAL_KERNEL_REPORTS_WSL)
         monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
         monkeypatch.delenv("WSL_INTEROP", raising=False)
         original_exists = os.path.exists
@@ -824,6 +829,7 @@ class TestIsWslHost:
     def test_false_when_proc_version_unreadable(self, monkeypatch):
         """A bare/minimal or permission-restricted host where `/proc/version` cannot be opened
         must fail closed to False, never raise."""
+        monkeypatch.setattr(runtime_paths, "_kernel_reports_wsl", _REAL_KERNEL_REPORTS_WSL)
         monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
         monkeypatch.delenv("WSL_INTEROP", raising=False)
         original_exists = os.path.exists
@@ -1049,3 +1055,21 @@ def test_translate_path_for_windows_binary_real_wslpath_smoke(tmp_path):
     translated = runtime_paths.translate_path_for_windows_binary(probe_file)
     assert translated is not None
     assert translated.strip() != ""
+
+
+class TestKernelReportsWsl:
+    """The /proc/version fallback of is_wsl_host, tested directly (it is pinned off suite-wide
+    because the stamp belongs to the host kernel -- Docker Desktop containers carry it too)."""
+
+    def test_true_for_a_wsl2_kernel_stamp(self):
+        stamp = "Linux version 6.6.87.2-microsoft-standard-WSL2 (root@host) #1 SMP"
+        with patch("builtins.open", mock_open(read_data=stamp)):
+            assert _REAL_KERNEL_REPORTS_WSL() is True
+
+    def test_false_for_a_stock_linux_kernel_stamp(self):
+        with patch("builtins.open", mock_open(read_data="Linux version 6.8.0-45-generic #45")):
+            assert _REAL_KERNEL_REPORTS_WSL() is False
+
+    def test_false_when_proc_version_is_unreadable(self):
+        with patch("builtins.open", side_effect=OSError("no /proc/version")):
+            assert _REAL_KERNEL_REPORTS_WSL() is False

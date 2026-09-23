@@ -1924,3 +1924,16 @@ def test_run_gemini_patch_predictions_should_fallback_to_kill_when_taskkill_hang
 
     assert ("kill", None) in calls
     assert ("wait", 5) in calls
+
+
+def test_patch_bakeoff_validation_env_drops_callers_pytest_options(monkeypatch):
+    """A caller's PYTEST_ADDOPTS (-k, --deselect, extra paths) must not reach a fixture's
+    `pytest -q`: a leaked -k collects nothing (exit 5) and scores every validation as failed."""
+    bakeoff_module = _load_script_module(
+        "run_patch_bakeoff_env_script", "benchmarks/run_patch_bakeoff.py"
+    )
+    monkeypatch.setenv("PYTEST_ADDOPTS", "-k something_else")
+    monkeypatch.setenv("PYTHONPATH", "/leaky")
+    env = bakeoff_module._validation_subprocess_env()
+    assert "PYTEST_ADDOPTS" not in env
+    assert "PYTHONPATH" not in env

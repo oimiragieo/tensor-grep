@@ -1481,8 +1481,9 @@ _EXPECTED_HELPER_BACKED = {
         "_write_json_refuse_symlink",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
+    # `_write_ast_project_scaffold` moved to `ast_scaffold.py` (main.py file-size ratchet).
     (
-        "main.py",
+        "ast_scaffold.py",
         "_write_ast_project_scaffold",
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),

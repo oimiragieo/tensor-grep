@@ -27,6 +27,11 @@ from tensor_grep.cli.checkpoint_retention import (
     _check_checkpoint_disk_budget,
     _select_retained_checkpoints,
 )
+from tensor_grep.cli.checkpoint_scope import (
+    matches_scoped_paths,
+    resolved_rel_within,
+    scope_violation,
+)
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
 _CHECKPOINT_VERSION = 1
@@ -232,6 +237,7 @@ class CheckpointCreateResult:
     # repo tracked as a gitlink, mode 160000) rather than a plain tracked file. Additive
     # field, default-empty, so every existing caller/serializer stays backward-compatible.
     skipped_nested_repos: list[str] = field(default_factory=list)
+    scoped_paths: list[str] | None = None
 
 
 @dataclass
@@ -737,6 +743,7 @@ def _write_checkpoint_metadata(
     *,
     scope_kind: str,
     original_path: Path,
+    scoped_paths: list[str] | None = None,
 ) -> None:
     payload: dict[str, Any] = {
         "version": _CHECKPOINT_VERSION,
@@ -755,16 +762,37 @@ def _write_checkpoint_metadata(
         "skipped_nested_repos": result.skipped_nested_repos,
         "active": True,
     }
+    if scoped_paths is not None:
+        payload["scoped_paths"] = scoped_paths
     _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
 
 
-def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
+def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> CheckpointCreateResult:
     scope = _detect_checkpoint_scope(Path(path))
     root = scope.root
     mode = scope.mode
+    root_resolved = root.resolve()
+
+    scoped_paths: list[str] | None = None
+    if paths is not None:
+        if scope.scope_kind == "file":
+            raise ValueError("Cannot specify both a single-file path and --paths")
+        scoped_rel_paths: set[str] = set()
+        for p in paths:
+            cand = Path(p) if Path(p).is_absolute() else root / p
+            rel = resolved_rel_within(root_resolved, cand)
+            if rel is None:
+                raise ValueError(f"Path outside checkpoint root: {p!r}")
+            _resolve_within_root(root, root_resolved, rel)
+            scoped_rel_paths.add(rel)
+        scoped_paths = sorted(scoped_rel_paths)
+
     created_at = datetime.now(UTC).isoformat()
     checkpoint_id = f"ckpt-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}-{uuid4().hex[:8]}"
     entries, skipped_nested_repos = _snapshot_entries(scope)
+
+    if scoped_paths is not None:
+        entries = {k: v for k, v in entries.items() if matches_scoped_paths(k, scoped_paths)}
 
     # audit H4: refuse BEFORE any snapshot directory exists if the copy would blow a
     # configured size/free-space budget -- see _check_checkpoint_disk_budget.
@@ -800,7 +828,6 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
         #     link). OWNER: undo-change-control. DISPOSITION: DEFERRED. REOPEN TRIGGER: a
         #     checkpoint containing a tracked out-of-root-pointing leaf symlink that undo
         #     must restore as a link (cannot today).
-        root_resolved = root.resolve()
         for rel_path, exists in entries.items():
             if not exists:
                 continue
@@ -821,6 +848,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
             undo_argv=_undo_argv(scope, checkpoint_id),
             undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
             skipped_nested_repos=skipped_nested_repos,
+            scoped_paths=scoped_paths,
         )
         _write_checkpoint_metadata(
             root,
@@ -828,6 +856,7 @@ def create_checkpoint(path: str = ".") -> CheckpointCreateResult:
             entries,
             scope_kind=scope.scope_kind,
             original_path=scope.original_path,
+            scoped_paths=scoped_paths,
         )
 
         # audit #178 (surfaced by the #610 gate): the guarded region must also extend through
@@ -1212,6 +1241,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
 
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     entries: dict[str, bool] = metadata["entries"]
+    scoped_paths: list[str] | None = metadata.get("scoped_paths")
     snapshot_dir = _snapshot_path(root, checkpoint_id)
     root_resolved = root.resolve()
     snapshot_dir_resolved = snapshot_dir.resolve()
@@ -1235,6 +1265,11 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         rel_path: _resolve_within_root(snapshot_dir, snapshot_dir_resolved, rel_path)
         for rel_path in entries
     }
+
+    if scoped_paths is not None:
+        for rel_path, target in resolved_targets.items():
+            if msg := scope_violation(root_resolved, target, rel_path, scoped_paths, "Target path"):
+                raise CheckpointCorruptError(msg)
 
     # Task #308: sample divergence NOW, while this is still read-only. Computing it after the
     # commit phase would read the mtimes undo itself just wrote and report nothing every time --
@@ -1288,6 +1323,15 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         current_entries, _skipped_nested_repos_now = _git_snapshot_entries(root)
     else:
         current_entries = _filesystem_snapshot_entries(root)
+
+    if scoped_paths is not None:
+        current_entries = {
+            k: v for k, v in current_entries.items() if matches_scoped_paths(k, scoped_paths)
+        }
+        for rel_p in current_entries:
+            what = "Current tree path"
+            if msg := scope_violation(root_resolved, root / rel_p, rel_p, scoped_paths, what):
+                raise CheckpointCorruptError(msg)
     expected_paths = set(entries.keys())
 
     # Build a list of (staged_source, final_target) pairs for files to restore.
@@ -1414,6 +1458,10 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
             except ValueError:
                 continue
             if any(part in {".git", _CHECKPOINT_DIRNAME} for part in relative.parts):
+                continue
+            if scoped_paths is not None and not matches_scoped_paths(
+                relative.as_posix(), scoped_paths
+            ):
                 continue
             if not any(directory.iterdir()):
                 directory.rmdir()

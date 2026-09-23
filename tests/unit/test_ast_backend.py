@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -1087,10 +1088,22 @@ class TestAstBackend:
 
         config = SearchConfig(ast=True, lang="python")
         first = backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
+        signature_before = backend._build_file_signature(str(file_path))
 
+        # Linux stamps ctime from a COARSE kernel clock (one tick, ~1-10ms) and commonly reuses
+        # the freed inode, so an unlink+rewrite inside one tick yields a byte-identical stat
+        # signature -- the scenario this test names ("identity changes") would never be built
+        # (observed in the ci-local container). Wait past the tick so ctime genuinely differs.
+        time.sleep(0.05)
         file_path.unlink()
         file_path.write_text("def bravo():\n    pass\n", encoding="utf-8")
         os.utime(file_path, ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns))
+        # Premise check: mtime and size are unchanged, but the identity must really differ,
+        # or a pass/fail here says nothing about the cache.
+        signature_after = backend._build_file_signature(str(file_path))
+        assert signature_after[2] == signature_before[2]  # mtime restored
+        assert signature_after[4] == signature_before[4]  # same size
+        assert signature_after != signature_before, "fixture did not change file identity"
 
         second = backend.search(str(file_path), _NON_SIMPLE_AST_PATTERN, config)
 

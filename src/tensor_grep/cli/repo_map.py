@@ -12249,6 +12249,10 @@ def build_symbol_defs_from_map(
                 for gap in resolution_gaps
             )
             payload["message"] += f" Coverage gap detected: {gap_hint}"
+        # Bounded near-misses only: this payload also reaches MCP/LSP/context consumers.
+        from tensor_grep.cli.symbol_suggestions import bounded_candidates
+
+        payload["candidate_symbols"] = bounded_candidates(symbol, repo_map.get("symbols", []))
         payload["files"] = []
         payload["symbols"] = []
         payload["imports"] = []
@@ -12387,6 +12391,8 @@ def build_symbol_source_from_map(
     payload["semantic_provider"] = _normalize_semantic_provider(semantic_provider)
     payload["provider_agreement"] = dict(defs_payload.get("provider_agreement", default_agreement))
     payload["provider_status"] = dict(defs_payload.get("provider_status", default_status))
+    if "candidate_symbols" in defs_payload:
+        payload["candidate_symbols"] = defs_payload["candidate_symbols"]
     _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)

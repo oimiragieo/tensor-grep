@@ -11,3 +11,13 @@
 *.sh text eol=lf
 Dockerfile text eol=lf
 Dockerfile.* text eol=lf
+
+# Patch-bakeoff fixtures are byte-exact targets for model patches: under Windows autocrlf the
+# .js/.json files checked out CRLF, so LF patches failed to apply in the ci-local container
+# (mean_patch_applied_rate 0.58 vs 1.0 on a Linux runner). Pin the whole fixture tree to LF.
+benchmarks/patch_fixtures/** text eol=lf
+
+# Markdown is LF too: `ruff format --preview` formats python blocks inside .md with
+# `line-ending = "lf"` (pyproject), so a CRLF Windows checkout of AGENTS.md / docs/*.md fails the
+# format gate in the ci-local container even though the committed LF blob is clean.
+*.md text eol=lf

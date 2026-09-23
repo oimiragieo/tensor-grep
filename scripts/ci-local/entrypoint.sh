@@ -11,8 +11,10 @@ set -uo pipefail
 LANE="${1:-all}"
 RUST_RC=0
 PY_RC=0
+LINT_RC=0
 RAN_RUST=0
 RAN_PY=0
+RAN_LINT=0
 
 banner() { printf '\n=== %s ===\n' "$1"; }
 
@@ -148,16 +150,38 @@ run_python() {
     echo "python lane exit: ${PY_RC}"
 }
 
+# The Formatting & Linting job (incl. mypy), which this harness used to list as NOT covered -- and a green
+# `all` run then shipped a `cargo fmt` failure to a PR on 2026-09-23. fmt and ruff are seconds;
+# clippy reuses the cached target volume. Mirrors ci.yml's commands exactly.
+run_lint() {
+    RAN_LINT=1
+    banner "LINT LANE (ruff check / ruff format --preview / mypy / cargo fmt --check / clippy)"
+    # `.[dev]` is what ci.yml's lint job installs; it pins the exact ruff and mypy versions.
+    (
+        cd /work \
+            && uv pip install --python /work/.venv/bin/python -e ".[dev]" \
+            && python -m ruff check . \
+            && python -m ruff format --check --preview . \
+            && python -m mypy src/tensor_grep \
+            && cd rust_core \
+            && cargo fmt -- --check \
+            && cargo clippy -- -D warnings
+    )
+    LINT_RC=$?
+    echo "lint lane exit: ${LINT_RC}"
+}
+
 setup_python_env || { echo "SETUP FAILED -- refusing to report any lane result." >&2; exit 2; }
 
 case "${LANE}" in
     rust)   run_rust ;;
     python) run_python ;;
     cuda)   run_cuda ;;
-    all)    run_rust; run_python ;;
+    lint)   run_lint ;;
+    all)    run_lint; run_rust; run_python ;;
     shell)  exec /bin/bash ;;
     *)
-        echo "unknown lane '${LANE}' (expected: rust | python | cuda | all | shell)" >&2
+        echo "unknown lane '${LANE}' (expected: lint | rust | python | cuda | all | shell)" >&2
         exit 2
         ;;
 esac
@@ -165,8 +189,9 @@ esac
 banner "SUMMARY"
 [ "${RAN_RUST}" -eq 1 ] && echo "  rust  : exit ${RUST_RC}"
 [ "${RAN_PY}" -eq 1 ]   && echo "  python: exit ${PY_RC}"
+[ "${RAN_LINT}" -eq 1 ] && echo "  lint  : exit ${LINT_RC}"
 
-if [ "${RUST_RC}" -ne 0 ] || [ "${PY_RC}" -ne 0 ] || [ "${CUDA_RC:-0}" -ne 0 ]; then
+if [ "${RUST_RC}" -ne 0 ] || [ "${PY_RC}" -ne 0 ] || [ "${LINT_RC}" -ne 0 ] || [ "${CUDA_RC:-0}" -ne 0 ]; then
     echo "  VERDICT: FAILED"
     exit 1
 fi
@@ -177,7 +202,7 @@ cat <<'NOT_COVERED'
     - windows-latest / macos-latest legs of test-python and test-rust-core
     - python 3.11 (this image is 3.12 only; CI matrixes 3.11 + 3.12)
     - the nightly Rust channel leg of test-rust-core
-    - Formatting & Linting  (ruff check / ruff format --preview / cargo fmt / clippy)
+    - Formatting & Linting when the lane was not `lint` or `all`
     - docs-governance, repo-hygiene, release-readiness, release-intent
     - agent-readiness / windows-agent-readiness
     - native-build-smoke, search-golden-parity, benchmark-regression

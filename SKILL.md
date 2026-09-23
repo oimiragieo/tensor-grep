@@ -174,15 +174,18 @@ Only pass `--allow-broad-generated-scan` when the generated/cache/dependency tre
 | Source lookup | `tg source src someSymbol --json` |
 | Refs lookup | `tg refs src someSymbol --json` |
 | Blast radius | `tg blast-radius src someSymbol --json` |
-| Context bundle | `tg context-render src --query "how routing works" --render-profile llm --json` |
+| Context bundle | `tg context-render src "how routing works" --render-profile llm --json` |
 | Device inventory | `tg devices --json` |
 | MCP server | `tg mcp` |
+| **Route Test** | `tg route-test [PATH] [QUERY] [--json]` |
+| **SQL AST Query** | `tg sql [PATH] "<SELECT ... FROM symbols ...>" [--json]` |
+| **Repair Environment** | `tg repair-env [--json]` |
 | **LSP setup** | `tg lsp-setup [--json]` |
 | **LSP server** | `tg lsp --provider native` or `tg lsp --provider hybrid` |
-| **Edit Planning** | `tg edit-plan src --query "change invoice tax"` |
+| **Edit Planning** | `tg edit-plan src "change invoice tax"` |
 | **Interactive Session** | `tg session open [PATH] --json` |
 | **Session Daemon** | `tg session daemon start [PATH] --json` |
-| **Create Checkpoint (Rewind)** | `tg checkpoint create [PATH] --json` |
+| **Create Checkpoint (Rewind)** | `tg checkpoint create [PATH] [--paths <p1> --paths <p2> ...] --json` |
 | **List Checkpoints** | `tg checkpoint list [PATH] --json` |
 | **Rollback / Rewind to checkpoint** | `tg checkpoint undo <checkpoint_id> [PATH] --json` |
 
@@ -208,7 +211,7 @@ For agentic editing loops, `tg` supports structured edit tracking and map caches
 
 ### 3. Checkpoints & Rollbacks (Rewind)
 Before initiating a complex code rewrite, agents should create a checkpoint when rollback evidence matters.
-- **Checkpoint Creation**: `tg checkpoint create [PATH] --json` creates a checkpoint scoped to the current editable tree or supplied path.
+- **Checkpoint Creation**: `tg checkpoint create [PATH] [--paths <p1> --paths <p2> ...] --json` creates a checkpoint scoped to the current editable tree, supplied path, or specific subdirectories/files.
 - **Listing Checkpoints**: `tg checkpoint list [PATH] --json` lists available checkpoints; add `--discover` to recursively discover checkpoint scopes.
 - **Undo / Rollback (Rewind)**: `tg checkpoint undo <checkpoint_id> [PATH] --json` restores the selected checkpoint for that scope.
 

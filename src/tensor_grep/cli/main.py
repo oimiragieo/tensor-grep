@@ -2573,6 +2573,18 @@ def _plain_json_incompatible_render_flags(argv: list[str] | None = None) -> list
     return flagged
 
 
+def _scope_filtered(config: Any) -> bool:
+    """`--glob`/`--iglob`/`--type`/`--type-not`/`--max-depth` ARE a chosen scope: a defaulted-
+    PATH scope note would misdescribe such a search (see the is_empty branch in search)."""
+    return bool(
+        config.max_depth is not None
+        or config.glob
+        or config.iglob
+        or config.file_type
+        or config.type_not
+    )
+
+
 def _selected_route_supports_rg_passthrough(
     *,
     selected_backend_name: str,
@@ -3998,6 +4010,11 @@ def search_command(
         passthrough_paths = [] if paths_defaulted else paths_to_search
         with nvtx_range("search.passthrough_rg", color="green"):
             exit_code = rg_backend.search_passthrough(passthrough_paths, pattern, config=config)
+        # Task #24: this branch exits before the is_empty scope note below; same three gates.
+        if exit_code == 1 and paths_defaulted and not _scope_filtered(config) and not quiet:
+            from tensor_grep.cli.bootstrap import _write_defaulted_scope_note
+
+            _write_defaulted_scope_note()
         sys.exit(exit_code)
 
     # F6: at this point neither native delegation, the rg-passthrough fast path, nor the
@@ -4473,13 +4490,7 @@ def search_command(
         # `quiet` suppresses it: `--quiet` promises no incidental output, and emitting an
         # informational note there is a silent contract change on a flag whose entire purpose is
         # silence.
-        scope_filtered = bool(
-            config.max_depth is not None
-            or config.glob
-            or config.iglob
-            or config.file_type
-            or config.type_not
-        )
+        scope_filtered = _scope_filtered(config)
         if paths_defaulted and not scope_filtered:
             # Stamp the JSON body BEFORE the formatter runs, so a machine consumer reading only
             # stdout learns why the zero is ambiguous. v1.101.22 dogfood: "PATH note is
@@ -4583,7 +4594,8 @@ def calibrate(
         help="Emit a structured JSON result, including a machine-readable "
         "calibration_status skip signal when GPU calibration cannot run, instead of the "
         "default human-readable output. Forwarded to the native tg binary; does not change "
-        "the exit code.",
+        "the exit code. GPU calibration requires NVIDIA hardware and a CUDA-enabled "
+        "native binary build.",
     ),
 ) -> None:
     """Measure CPU vs GPU crossover thresholds using the native Rust binary."""
@@ -6554,6 +6566,7 @@ def route_test(
             query_arg=query_arg,
             query_option=query,
             command_name="route-test",
+            echo_warning=not json_output,
         )
         payload = _build_route_test_payload(
             path=resolved_path,
@@ -6567,6 +6580,9 @@ def route_test(
             profile=profile,
             deadline_monotonic=deadline_monotonic,
         )
+        if json_output and query is not None:
+            # --json keeps stderr empty: the warning travels in the payload instead.
+            payload.setdefault("warnings", []).append(_query_deprecation_warning("route-test"))
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -7203,6 +7219,11 @@ def _emit_symbol_command_result(
     """
     not_found = _symbol_not_found_claim(payload, result_key)
     payload["not_found"] = not_found
+    from tensor_grep.cli.symbol_suggestions import suggestions_for_payload
+
+    suggestions = suggestions_for_payload(payload) if not_found else []
+    payload["suggestions"] = suggestions
+    payload.pop("candidate_symbols", None)
     caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
     # FAIL-CLOSED COUPLING between the message and the exit code below.
     #
@@ -7232,6 +7253,8 @@ def _emit_symbol_command_result(
         if leading is not None:
             typer.echo(leading)
         emit_text(payload)
+        if suggestions:
+            typer.echo(f"Did you mean: {', '.join(suggestions)}?")
         if trailing is not None:
             typer.echo(trailing)
     # Exit-code contract (council-verified B, 2026-07-05): a deadline/scan-truncated result is INCOMPLETE
@@ -7354,17 +7377,15 @@ def _resolve_path_and_query(
     query_arg: str | None,
     query_option: str | None,
     command_name: str,
+    echo_warning: bool = True,
 ) -> tuple[str, str]:
+    """``echo_warning=False`` lets a --json caller route the deprecation warning into its
+    payload (``_query_deprecation_warning``) instead of stderr."""
     if query_arg is not None and query_option is not None:
         raise ValueError("Use either positional QUERY or --query, not both.")
     if query_option is not None:
-        typer.echo(
-            "Warning: --query is deprecated for "
-            f"tg {command_name}; use a positional QUERY form instead. "
-            "The --query form remains accepted during the 1.13.x deprecation cycle "
-            "and will not be removed before 1.14.0.",
-            err=True,
-        )
+        if echo_warning:
+            typer.echo(_query_deprecation_warning(command_name), err=True)
         return path, query_option
     if query_arg is not None:
         return _maybe_swap_reversed_positionals(
@@ -7376,6 +7397,15 @@ def _resolve_path_and_query(
     if path != "." and not Path(path).expanduser().exists():
         return ".", path
     raise ValueError("Missing query. Use positional QUERY or --query QUERY.")
+
+
+def _query_deprecation_warning(command_name: str) -> str:
+    return (
+        "Warning: --query is deprecated for "
+        f"tg {command_name}; use a positional QUERY form instead. "
+        "The --query form remains accepted during the 1.13.x deprecation cycle "
+        "and will not be removed before 1.14.0."
+    )
 
 
 @app.command()
@@ -9530,13 +9560,18 @@ def session_serve(
 @checkpoint_app.command("create")
 def checkpoint_create(
     path: str = typer.Argument(".", help="File or directory rooted at the checkpoint scope."),
+    paths: list[str] | None = typer.Option(
+        None,
+        "--paths",
+        help="File or subdirectory to include (repeatable: --paths a --paths b); scopes create + undo.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Create a checkpoint for the current editable tree."""
     from tensor_grep.cli.checkpoint_store import create_checkpoint
 
     try:
-        payload = create_checkpoint(path)
+        payload = create_checkpoint(path, paths=paths)
     except Exception as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -10397,50 +10432,6 @@ def _validate_ast_new_name(name: str) -> None:
         raise ValueError(f"Invalid item name {name!r}; use a bare scaffold identifier.")
 
 
-def _write_ast_project_scaffold(base_dir: Path, lang: str) -> Path:
-    # `lang` is interpolated into a hand-formatted YAML rule below; a newline would inject
-    # sibling keys. Sibling `name` is already validated -- this closes the asymmetry without
-    # rejecting real language spellings like `c++`/`c#`.
-    if not lang.strip() or any(c in lang for c in "\r\n"):
-        raise ValueError(f"Invalid --lang {lang!r}; use a bare language name.")
-    import yaml
-
-    config_path = base_dir / "sgconfig.yml"
-    if config_path.exists():
-        raise FileExistsError(f"Project already initialized ({config_path} exists).")
-
-    config_data = {
-        "ruleDirs": ["rules"],
-        "testDirs": ["tests"],
-        "utilsDir": "utils",
-        "language": lang,
-    }
-
-    base_dir.mkdir(parents=True, exist_ok=True)
-    atomic_write_bytes_anchored(
-        config_path, yaml.dump(config_data).encode("utf-8"), mode=0o644, replace=False
-    )
-
-    rules_dir = base_dir / "rules"
-    tests_dir = base_dir / "tests"
-    rules_dir.mkdir(exist_ok=True)
-    tests_dir.mkdir(exist_ok=True)
-    atomic_write_bytes_anchored(
-        rules_dir / "sample-rule.yml",
-        f"id: sample-rule\nlanguage: {lang}\nrule:\n  pattern: 'print($$$ARGS)'\n".encode(),
-        mode=0o644,
-        replace=False,
-    )
-    atomic_write_bytes_anchored(
-        tests_dir / "sample-test.yml",
-        b'id: sample-test\nruleId: sample-rule\nvalid:\n  - "pass"\ninvalid:\n'
-        b'  - "print(\\"hello\\")"\n',
-        mode=0o644,
-        replace=False,
-    )
-    return config_path
-
-
 @app.command()
 def new(
     command: str | None = typer.Argument(
@@ -10471,6 +10462,8 @@ def new(
             if name is not None:
                 _validate_ast_new_name(name)
                 project_dir = base_dir / name
+            from tensor_grep.cli.ast_scaffold import _write_ast_project_scaffold
+
             config_path = _write_ast_project_scaffold(project_dir, lang)
             typer.echo(f"Initialized new tensor-grep structural search project in {config_path}.")
             return
@@ -11772,6 +11765,13 @@ def uninstall_command(
     from tensor_grep.cli.agent_installer import uninstall_command as _impl
 
     _impl(target=target, dry_run=dry_run, yes=yes, json_output=json_output)
+
+
+from tensor_grep.cli.repair_env import repair_env_command  # noqa: E402
+from tensor_grep.cli.sql_query import sql_command  # noqa: E402
+
+app.command(name="repair-env")(repair_env_command)
+app.command(name="sql")(sql_command)
 
 
 def _audit_diff_error_payload(message: str, *, code: str) -> dict[str, object]:
@@ -13258,7 +13258,11 @@ def ast_info(
     help=(
         "Run a validated AST slice for structural search and guarded rewrites. "
         "PowerShell users should single-quote AST patterns containing $ captures, "
-        "for example 'def $NAME($$$ARGS): $$$BODY'. When the ast-grep `sg` binary is on "
+        "for example 'def $NAME($$$ARGS):\\n    $$$BODY'. Patterns match exact AST node "
+        "shapes: a single-line 'def $NAME($$$ARGS): $$$BODY' does not match a multiline "
+        "function body (TypeScript: 'function $NAME($$$ARGS) {\\n  $$$BODY\\n}'); use "
+        "--selector function_definition to match any function regardless of formatting. "
+        "When the ast-grep `sg` binary is on "
         "PATH, the pattern is delegated to it verbatim (full $NAME/$$$ARGS/--selector/"
         "--strictness compatibility); without `sg`, a native-shaped pattern still runs "
         "through tg's own tree-sitter backend, but a $-metavariable pattern needs `sg` and "

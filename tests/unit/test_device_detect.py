@@ -1,11 +1,15 @@
 from unittest.mock import MagicMock, mock_open, patch
 
+from tensor_grep.cli import runtime_paths
 from tensor_grep.core.hardware.device_detect import (
     DeviceDetector,
     DeviceInfo,
     Platform,
     _running_under_wsl,
 )
+
+# Captured at import, before tests/conftest.py pins the kernel-stamp seam off per test.
+_REAL_KERNEL_REPORTS_WSL = runtime_paths._kernel_reports_wsl
 
 
 class TestDeviceDetect:
@@ -326,6 +330,10 @@ class TestDeviceDetect:
         ]
         for name, env, run_wsl_exists, proc_version in cases:
             with ExitStack() as stack:
+                # This parity test drives the REAL /proc/version read on both sides.
+                stack.enter_context(
+                    patch.object(runtime_paths, "_kernel_reports_wsl", _REAL_KERNEL_REPORTS_WSL)
+                )
                 stack.enter_context(patch.dict("os.environ", env, clear=True))
                 stack.enter_context(patch("os.path.exists", return_value=run_wsl_exists))
                 if proc_version is None:

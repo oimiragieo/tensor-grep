@@ -1,0 +1,585 @@
+"""`tg sql`: read-only SQL over the AST symbol inventory in an in-memory SQLite sandbox.
+
+Lives outside ``main.py`` (file-size ratchet); registered there as a thin command. The scan
+completeness helpers are imported from ``main`` at call time (``main`` imports this module).
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import typer
+
+# Mirrors main._DEFAULT_AGENT_REPO_SCAN_LIMIT (asserted equal in the unit tests).
+_DEFAULT_AGENT_REPO_SCAN_LIMIT = 2000
+
+
+_SAFE_SQL_FUNCTIONS = {
+    "count",
+    "upper",
+    "lower",
+    "substr",
+    "substring",
+    "length",
+    "min",
+    "max",
+    "sum",
+    "avg",
+    "trim",
+    "ltrim",
+    "rtrim",
+    "coalesce",
+    "ifnull",
+    "nullif",
+    "typeof",
+    "instr",
+    "like",
+    "glob",
+    "round",
+    "abs",
+    "sign",
+    "total",
+    "hex",
+    "quote",
+    "unicode",
+    "char",
+    "group_concat",
+    "string_agg",
+    "replace",
+    "printf",
+    "format",
+    "iif",
+    "concat",
+    "concat_ws",
+    "octet_length",
+}
+
+
+def _has_multiple_sql_statements(query: str) -> bool:
+    """Return True if query contains multiple SQL statements separated by semicolons."""
+    in_single = False
+    in_double = False
+    in_backtick = False
+    in_line_comment = False
+    in_block_comment = False
+    i = 0
+    n = len(query)
+    while i < n:
+        c = query[i]
+        next_c = query[i + 1] if i + 1 < n else ""
+        if in_line_comment:
+            if c == "\n":
+                in_line_comment = False
+        elif in_block_comment:
+            if c == "*" and next_c == "/":
+                in_block_comment = False
+                i += 1
+        elif in_single:
+            if c == "'":
+                if next_c == "'":
+                    i += 1
+                else:
+                    in_single = False
+        elif in_double:
+            if c == '"':
+                if next_c == '"':
+                    i += 1
+                else:
+                    in_double = False
+        elif in_backtick:
+            if c == "`":
+                in_backtick = False
+        else:
+            if c == "-" and next_c == "-":
+                in_line_comment = True
+                i += 1
+            elif c == "/" and next_c == "*":
+                in_block_comment = True
+                i += 1
+            elif c == "'":
+                in_single = True
+            elif c == '"':
+                in_double = True
+            elif c == "`":
+                in_backtick = True
+            elif c == ";":
+                rem = query[i + 1 :]
+                rem_has_code = False
+                r_line = False
+                r_block = False
+                j = 0
+                while j < len(rem):
+                    rc = rem[j]
+                    r_next = rem[j + 1] if j + 1 < len(rem) else ""
+                    if r_line:
+                        if rc == "\n":
+                            r_line = False
+                    elif r_block:
+                        if rc == "*" and r_next == "/":
+                            r_block = False
+                            j += 1
+                    else:
+                        if rc == "-" and r_next == "-":
+                            r_line = True
+                            j += 1
+                        elif rc == "/" and r_next == "*":
+                            r_block = True
+                            j += 1
+                        elif not rc.isspace() and rc != ";":
+                            rem_has_code = True
+                            break
+                    j += 1
+                if rem_has_code:
+                    return True
+        i += 1
+    return False
+
+
+def _sql_read_only_authorizer(
+    action: int,
+    param1: str | None,
+    param2: str | None,
+    db_name: str | None,
+    trigger_or_view: str | None,
+) -> int:
+    import sqlite3
+
+    sqlite_recursive = getattr(sqlite3, "SQLITE_RECURSIVE", 33)
+    if action in (sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite_recursive):
+        return sqlite3.SQLITE_OK
+    if action == sqlite3.SQLITE_FUNCTION:
+        func_name = (param2 or "").lower()
+        if func_name in _SAFE_SQL_FUNCTIONS:
+            return sqlite3.SQLITE_OK
+        return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_DENY
+
+
+MAX_SQL_PAYLOAD_BYTES: int = 5 * 1024 * 1024
+
+
+def sql_command(
+    arg1: str = typer.Argument(..., help="Path to search, or SQL query string."),
+    arg2: str | None = typer.Argument(None, help="SQL query string (if path was first argument)."),
+    limit: int = typer.Option(100, "--limit", "-n", min=1, help="Maximum rows to return."),
+    max_repo_files: int = typer.Option(
+        _DEFAULT_AGENT_REPO_SCAN_LIMIT,
+        "--max-repo-files",
+        min=1,
+        help="Maximum repository files to scan for symbols.",
+    ),
+    deadline: float = typer.Option(
+        2.0,
+        "--deadline",
+        min=0.1,
+        help="Query execution deadline in seconds (progress handler abort).",
+    ),
+    scan_deadline: float = typer.Option(
+        30.0,
+        "--scan-deadline",
+        min=1.0,
+        help="Repository scan deadline in seconds.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
+) -> None:
+    """Query AST symbols across a codebase using structured SQL in a read-only sandbox."""
+    import sqlite3
+    import time
+
+    from tensor_grep.cli.repo_map import build_repo_map
+
+    def _looks_like_sql(text: str) -> bool:
+        t = text.strip()
+        while True:
+            if t.startswith("--"):
+                _, _, t = t.partition("\n")
+                t = t.strip()
+            elif t.startswith("/*"):
+                _, _, t = t.partition("*/")
+                t = t.strip()
+            else:
+                break
+        return t.upper().startswith(("SELECT", "WITH", "EXPLAIN", "PRAGMA", "VALUES"))
+
+    if arg2 is None:
+        path, query = ".", arg1
+    else:
+        p1_exists = Path(arg1).expanduser().exists()
+        p2_exists = Path(arg2).expanduser().exists()
+        if p1_exists and not p2_exists:
+            path, query = arg1, arg2
+        elif p2_exists and not p1_exists:
+            path, query = arg2, arg1
+        elif _looks_like_sql(arg1) and not _looks_like_sql(arg2):
+            path, query = arg2, arg1
+        else:
+            path, query = arg1, arg2
+
+    target_path = Path(path).expanduser().resolve()
+    if not target_path.exists():
+        err_msg = f"Path not found: {path}"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "error": err_msg,
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": False,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(err_msg, err=True)
+        raise typer.Exit(code=1)
+
+    if len(query) > 10_000:
+        err_msg = f"SQL query exceeds maximum length of 10000 characters (length: {len(query)})"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "error": err_msg,
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": False,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(err_msg, err=True)
+        raise typer.Exit(code=1)
+
+    if _has_multiple_sql_statements(query):
+        err_msg = "Multiple statements are not permitted. Execute a single query."
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "error": err_msg,
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": False,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(err_msg, err=True)
+        raise typer.Exit(code=1)
+
+    deadline_monotonic = time.monotonic() + scan_deadline
+    repo_map = build_repo_map(
+        target_path,
+        max_repo_files=max_repo_files,
+        deadline_monotonic=deadline_monotonic,
+    )
+    from tensor_grep.cli import main as cli_main
+
+    # The shared predicate also catches a --max-repo-files cap (scan_limit.possibly_truncated),
+    # which a bare partial/result_incomplete read misses.
+    scan_incomplete = cli_main._scan_incomplete(repo_map) or bool(repo_map.get("result_incomplete"))
+
+    raw_symbols = repo_map.get("symbols", [])
+    symbol_records = []
+    lang_map = {
+        ".py": "python",
+        ".rs": "rust",
+        ".ts": "typescript",
+        ".tsx": "typescript",
+        ".js": "javascript",
+        ".jsx": "javascript",
+        ".go": "go",
+        ".c": "c",
+        ".cpp": "cpp",
+        ".h": "c",
+        ".hpp": "cpp",
+        ".java": "java",
+        ".php": "php",
+        ".cs": "csharp",
+    }
+    for item in raw_symbols:
+        if not isinstance(item, dict):
+            continue
+        file_val = str(item.get("file", ""))
+        sym_val = str(item.get("name") or item.get("symbol", ""))
+        kind_val = str(item.get("kind", ""))
+        line_val = int(item.get("line") or item.get("start_line", 0))
+        end_line_val = int(item.get("end_line") or line_val)
+        lang_val = item.get("language")
+        if not lang_val:
+            ext = Path(file_val).suffix.lower()
+            lang_val = lang_map.get(ext, ext.lstrip(".") or "unknown")
+        sig_val = item.get("signature")
+        symbol_records.append((
+            file_val,
+            sym_val,
+            kind_val,
+            line_val,
+            end_line_val,
+            lang_val,
+            sig_val,
+        ))
+
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("""
+            CREATE TABLE symbols (
+                file TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                kind TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                end_line INTEGER NOT NULL,
+                language TEXT NOT NULL,
+                signature TEXT
+            );
+        """)
+        conn.execute("CREATE INDEX idx_symbols_file ON symbols(file);")
+        conn.execute("CREATE INDEX idx_symbols_kind ON symbols(kind);")
+        conn.execute("CREATE INDEX idx_symbols_name ON symbols(symbol);")
+
+        conn.executemany(
+            "INSERT INTO symbols (file, symbol, kind, line, end_line, language, signature) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            symbol_records,
+        )
+        conn.commit()
+
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
+
+        conn.set_authorizer(_sql_read_only_authorizer)
+
+        query_deadline_monotonic = time.monotonic() + deadline
+        deadline_tripped = {"hit": False}
+
+        def progress_handler() -> int:
+            if time.monotonic() >= query_deadline_monotonic:
+                deadline_tripped["hit"] = True
+                return 1
+            return 0
+
+        conn.set_progress_handler(progress_handler, 1000)
+
+        try:
+            cursor = conn.execute(query)
+            if cursor.description:
+                col_names = [d[0] for d in cursor.description]
+                seen_cols: set[str] = set()
+                dup_cols: list[str] = []
+                for c in col_names:
+                    if c in seen_cols and c not in dup_cols:
+                        dup_cols.append(c)
+                    seen_cols.add(c)
+                if dup_cols:
+                    err_msg = (
+                        f"Query contains duplicate column name(s): {', '.join(repr(c) for c in dup_cols)}. "
+                        "Use distinct column aliases."
+                    )
+                    if json_output:
+                        typer.echo(
+                            json.dumps(
+                                {
+                                    "error": err_msg,
+                                    "rows": [],
+                                    "count": 0,
+                                    "truncated": False,
+                                    "result_incomplete": False,
+                                },
+                                indent=2,
+                            )
+                        )
+                    else:
+                        typer.echo(err_msg, err=True)
+                    raise typer.Exit(code=1)
+            else:
+                col_names = []
+
+            MAX_PAYLOAD_BYTES = MAX_SQL_PAYLOAD_BYTES
+            rows: list[dict[str, Any]] = []
+            output_truncated = False
+            # Account for JSON envelope overhead (query, path, count, formatting indent)
+            accumulated_bytes = min(2048, max(0, MAX_PAYLOAD_BYTES // 4))
+
+            while True:
+                row_tuple = cursor.fetchone()
+                if row_tuple is None:
+                    break
+                row_dict = dict(zip(col_names, row_tuple, strict=False))
+                # Bound check using indented serialization overhead to guarantee strict 5MB adherence
+                row_bytes = len(json.dumps(row_dict, indent=4, default=str).encode("utf-8")) + 64
+                if len(rows) < limit:
+                    if accumulated_bytes + row_bytes > MAX_PAYLOAD_BYTES:
+                        output_truncated = True
+                        break
+                    accumulated_bytes += row_bytes
+                    rows.append(row_dict)
+                else:
+                    output_truncated = True
+                    break
+
+        except sqlite3.Error as exc:
+            is_deadline = (
+                deadline_tripped["hit"]
+                or getattr(exc, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT
+            )
+            if is_deadline:
+                payload = {
+                    "error": "query_deadline_exceeded",
+                    "deadline_exceeded": True,
+                    "result_incomplete": True,
+                    "partial": True,
+                    "rows": [],
+                    "count": 0,
+                    "truncated": False,
+                }
+                if json_output:
+                    typer.echo(json.dumps(payload, indent=2))
+                else:
+                    typer.echo(
+                        "Error: query deadline exceeded (query took longer than allocated time)",
+                        err=True,
+                    )
+                raise typer.Exit(code=2) from exc
+            else:
+                err_msg = str(exc)
+                if (
+                    isinstance(exc, sqlite3.ProgrammingError)
+                    and "one statement at a time" in err_msg.lower()
+                ):
+                    err_msg = "Multiple statements are not permitted. Execute a single query."
+                if json_output:
+                    typer.echo(
+                        json.dumps(
+                            {
+                                "error": err_msg,
+                                "rows": [],
+                                "count": 0,
+                                "truncated": False,
+                                "result_incomplete": False,
+                            },
+                            indent=2,
+                        )
+                    )
+                else:
+                    typer.echo(f"SQL error: {err_msg}", err=True)
+                raise typer.Exit(code=1) from exc
+
+    finally:
+        conn.close()
+
+    is_incomplete = scan_incomplete or output_truncated
+    payload = {
+        "query": query,
+        "path": str(path),
+        "count": len(rows),
+        "rows": rows,
+        "truncated": output_truncated,
+        "result_incomplete": is_incomplete,
+        "partial": is_incomplete,
+    }
+    if scan_incomplete:
+        payload["scan_incomplete"] = True
+        payload["scan_truncated"] = True
+
+    if json_output:
+        encoded = json.dumps(payload, indent=2).encode("utf-8")
+        while len(encoded) + 1 > MAX_PAYLOAD_BYTES and rows:
+            rows.pop()
+            output_truncated = True
+            is_incomplete = True
+            payload["rows"] = rows
+            payload["count"] = len(rows)
+            payload["truncated"] = True
+            payload["result_incomplete"] = True
+            payload["partial"] = True
+            encoded = json.dumps(payload, indent=2).encode("utf-8")
+        typer.echo(encoded.decode("utf-8"))
+    else:
+        # LEADING stdout disclosure (task #329 rule): the table below is partial repository data.
+        if scan_incomplete and not cli_main._emit_scan_incompleteness_banner(repo_map):
+            typer.echo(
+                "INCOMPLETE RESULT: repository scan was incomplete; the symbols table holds "
+                "partial repository data."
+            )
+        if not rows:
+            if output_truncated:
+                typer.echo("(0 rows [truncated])")
+            else:
+                typer.echo("0 rows returned.")
+        else:
+            headers = list(rows[0].keys())
+            header_overhead = (
+                sum(len(str(h).encode("utf-8")) for h in headers) + len(headers) * 3
+            ) * 2 + 50
+            if header_overhead > MAX_PAYLOAD_BYTES - 1:
+                output_truncated = True
+                is_incomplete = True
+                typer.echo("(output [truncated]: table headers exceed payload limit)")
+            else:
+                widths = {h: len(str(h)) for h in headers}
+                for r in rows:
+                    for h in headers:
+                        widths[h] = max(widths[h], len(str(r.get(h, ""))))
+
+                header_line = " | ".join(str(h).ljust(widths[h]) for h in headers)
+                sep_line = "-+-".join("-" * widths[h] for h in headers)
+
+                if (
+                    len(header_line.encode("utf-8")) + len(sep_line.encode("utf-8")) + 50
+                    > MAX_PAYLOAD_BYTES - 1
+                ):
+                    output_truncated = True
+                    is_incomplete = True
+                    widths = {h: len(str(h)) for h in headers}
+                    header_line = " | ".join(str(h).ljust(widths[h]) for h in headers)
+                    sep_line = "-+-".join("-" * widths[h] for h in headers)
+                    rendered_lines = [header_line, sep_line, "(0 rows [truncated])"]
+                else:
+                    rendered_lines = [header_line, sep_line]
+                    current_bytes = (
+                        len(header_line.encode("utf-8")) + len(sep_line.encode("utf-8")) + 2
+                    )
+                    emitted_rows = 0
+                    for r in rows:
+                        row_line = " | ".join(str(r.get(h, "")).ljust(widths[h]) for h in headers)
+                        line_bytes = len(row_line.encode("utf-8")) + 1
+                        if current_bytes + line_bytes + 50 > MAX_PAYLOAD_BYTES - 1:
+                            output_truncated = True
+                            is_incomplete = True
+                            break
+                        rendered_lines.append(row_line)
+                        current_bytes += line_bytes
+                        emitted_rows += 1
+
+                    summary_line = f"({emitted_rows} row{'s' if emitted_rows != 1 else ''}{' [truncated]' if output_truncated else ''})"
+                    rendered_lines.append(summary_line)
+
+                full_text = "\n".join(rendered_lines)
+                while (
+                    len(full_text.encode("utf-8")) + 1 > MAX_PAYLOAD_BYTES
+                    and len(rendered_lines) > 3
+                ):
+                    output_truncated = True
+                    is_incomplete = True
+                    rendered_lines.pop(len(rendered_lines) - 2)
+                    summary_idx = len(rendered_lines) - 1
+                    rendered_lines[summary_idx] = f"({len(rendered_lines) - 3} rows [truncated])"
+                    full_text = "\n".join(rendered_lines)
+
+                if len(full_text.encode("utf-8")) + 1 > MAX_PAYLOAD_BYTES:
+                    output_truncated = True
+                    is_incomplete = True
+                    full_text = "(output [truncated]: payload limit exceeded)"
+
+                typer.echo(full_text)
+
+    if is_incomplete:
+        raise typer.Exit(code=2)

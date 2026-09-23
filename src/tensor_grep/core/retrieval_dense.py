@@ -77,8 +77,8 @@ def dense_available() -> tuple[bool, str | None]:
         # "tensor-grep[semantic]" verbatim in the message: pinned by
         # test_retrieval_dense.py::test_false_when_model2vec_missing.
         return False, (
-            "semantic ranking unavailable: model2vec not installed -- "
-            f"run `tg install-dense` (or pip install 'tensor-grep[semantic]') ({exc})"
+            "BM25 lexical ranking active (100% functional). For dense semantic vector reranking, "
+            f"run `tg install-dense` (or pip install 'tensor-grep[semantic]'): model2vec not installed ({exc})"
         )
     try:
         import numpy  # noqa: F401

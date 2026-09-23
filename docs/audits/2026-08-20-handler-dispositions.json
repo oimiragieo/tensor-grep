@@ -21,7 +21,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1176,
+    "lineno": 1177,
     "enclosing_symbol": "_record_generated_audit_manifest",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -31,7 +31,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1655,
+    "lineno": 1665,
     "enclosing_symbol": "tg_repo_map",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -41,7 +41,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1738,
+    "lineno": 1748,
     "enclosing_symbol": "tg_orient",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -51,7 +51,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1820,
+    "lineno": 1830,
     "enclosing_symbol": "tg_doctor",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -61,7 +61,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1880,
+    "lineno": 1890,
     "enclosing_symbol": "tg_context_pack",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -71,7 +71,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1967,
+    "lineno": 1977,
     "enclosing_symbol": "tg_edit_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -81,7 +81,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2058,
+    "lineno": 2068,
     "enclosing_symbol": "tg_context_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -91,7 +91,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2161,
+    "lineno": 2171,
     "enclosing_symbol": "tg_agent_capsule",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -101,7 +101,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2255,
+    "lineno": 2265,
     "enclosing_symbol": "tg_session_edit_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -111,7 +111,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2363,
+    "lineno": 2373,
     "enclosing_symbol": "tg_session_context_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -121,7 +121,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2450,
+    "lineno": 2460,
     "enclosing_symbol": "tg_session_blast_radius",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -131,7 +131,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2561,
+    "lineno": 2571,
     "enclosing_symbol": "tg_session_file_importers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -141,7 +141,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2681,
+    "lineno": 2691,
     "enclosing_symbol": "tg_session_blast_radius_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -151,7 +151,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2794,
+    "lineno": 2804,
     "enclosing_symbol": "tg_session_blast_radius_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -161,7 +161,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2910,
+    "lineno": 2920,
     "enclosing_symbol": "tg_find",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -171,7 +171,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3407,
+    "lineno": 3422,
     "enclosing_symbol": "tg_search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -181,7 +181,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3754,
+    "lineno": 3769,
     "enclosing_symbol": "tg_ast_search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -191,7 +191,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3897,
+    "lineno": 3917,
     "enclosing_symbol": "tg_classify_logs",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -201,7 +201,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4015,
+    "lineno": 3999,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -211,7 +211,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3999,
+    "lineno": 4010,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -221,7 +221,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4041,
+    "lineno": 4054,
     "enclosing_symbol": "tg_session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -231,7 +231,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4085,
+    "lineno": 4100,
     "enclosing_symbol": "tg_session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -241,7 +241,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4125,
+    "lineno": 4140,
     "enclosing_symbol": "tg_session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -251,7 +251,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4198,
+    "lineno": 4222,
     "enclosing_symbol": "tg_session_context",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -261,7 +261,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4335,
+    "lineno": 4359,
     "enclosing_symbol": "tg_navigate",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -271,7 +271,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4444,
+    "lineno": 4468,
     "enclosing_symbol": "tg_impact",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -281,7 +281,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4743,
+    "lineno": 4767,
     "enclosing_symbol": "tg_query",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -291,7 +291,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4866,
+    "lineno": 4890,
     "enclosing_symbol": "tg_context",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -301,7 +301,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4935,
+    "lineno": 4959,
     "enclosing_symbol": "tg_explore",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -311,7 +311,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5147,
+    "lineno": 5171,
     "enclosing_symbol": "tg_session",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -321,7 +321,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5225,
+    "lineno": 5249,
     "enclosing_symbol": "tg_scan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -331,7 +331,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5332,
+    "lineno": 5356,
     "enclosing_symbol": "tg_audit",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -341,7 +341,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5390,
+    "lineno": 5405,
     "enclosing_symbol": "tg_checkpoint",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -351,7 +351,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5474,
+    "lineno": 5498,
     "enclosing_symbol": "tg_rewrite",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -361,7 +361,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5641,
+    "lineno": 5642,
     "enclosing_symbol": "stdin_reader",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -471,7 +471,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 786,
+    "lineno": 792,
     "enclosing_symbol": "tg_audit_manifest_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -481,7 +481,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 831,
+    "lineno": 837,
     "enclosing_symbol": "tg_audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -491,7 +491,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 894,
+    "lineno": 900,
     "enclosing_symbol": "tg_audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -501,7 +501,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1019,
+    "lineno": 1025,
     "enclosing_symbol": "tg_review_bundle_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -511,7 +511,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1089,
+    "lineno": 1095,
     "enclosing_symbol": "tg_review_bundle_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -521,7 +521,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1142,
+    "lineno": 1148,
     "enclosing_symbol": "tg_checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -531,7 +531,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1206,
+    "lineno": 1212,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -541,7 +541,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1274,
+    "lineno": 1280,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -571,7 +571,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 670,
+    "lineno": 689,
     "enclosing_symbol": "_execute_embedded_rewrite_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -581,7 +581,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1062,
+    "lineno": 1081,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -651,7 +651,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 712,
+    "lineno": 722,
     "enclosing_symbol": "_doctor_tg_candidate_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -661,7 +661,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1028,
+    "lineno": 1038,
     "enclosing_symbol": "_doctor_gpu_tier_installed",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -671,7 +671,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1044,
+    "lineno": 1054,
     "enclosing_symbol": "_doctor_gpu_tier_usable",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -681,7 +681,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1063,
+    "lineno": 1073,
     "enclosing_symbol": "_doctor_gpu_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1296,
+    "lineno": 1306,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -701,7 +701,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1333,
+    "lineno": 1343,
     "enclosing_symbol": "_doctor_resident_worker_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -811,7 +811,7 @@
   },
   {
     "module": "cli/ast_scan.py",
-    "lineno": 857,
+    "lineno": 858,
     "enclosing_symbol": "_run_ast_scan_payload",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -831,7 +831,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 571,
+    "lineno": 578,
     "enclosing_symbol": "_read_project_version_fallback",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -841,7 +841,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 587,
+    "lineno": 588,
     "enclosing_symbol": "_cli_package_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -851,7 +851,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 1970,
+    "lineno": 1972,
     "enclosing_symbol": "_pcre2_fallback_backend_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -871,7 +871,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 2775,
+    "lineno": 2788,
     "enclosing_symbol": "_warn_unavailable_gpu_device_ids",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -881,7 +881,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5362,
+    "lineno": 5384,
     "enclosing_symbol": "_maybe_symbol_command_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -891,7 +891,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5409,
+    "lineno": 5431,
     "enclosing_symbol": "_maybe_orient_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -901,7 +901,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5478,
+    "lineno": 5500,
     "enclosing_symbol": "_maybe_agent_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -911,7 +911,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5528,
+    "lineno": 5550,
     "enclosing_symbol": "_maybe_context_render_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 5570,
+    "lineno": 5592,
     "enclosing_symbol": "_maybe_edit_plan_via_running_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -931,7 +931,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 7299,
+    "lineno": 7332,
     "enclosing_symbol": "_maybe_swap_reversed_session_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -941,7 +941,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11677,
+    "lineno": 11670,
     "enclosing_symbol": "_run_install_dense",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -951,7 +951,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 3708,
+    "lineno": 3656,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -961,7 +961,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 3991,
+    "lineno": 3939,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -971,7 +971,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4170,
+    "lineno": 4123,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 4233,
+    "lineno": 4187,
     "enclosing_symbol": "search_command",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -991,7 +991,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8646,
+    "lineno": 8676,
     "enclosing_symbol": "session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1001,7 +1001,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8677,
+    "lineno": 8707,
     "enclosing_symbol": "session_daemon_start",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1011,7 +1011,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8702,
+    "lineno": 8732,
     "enclosing_symbol": "session_daemon_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1021,7 +1021,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8730,
+    "lineno": 8760,
     "enclosing_symbol": "session_daemon_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1031,7 +1031,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8752,
+    "lineno": 8782,
     "enclosing_symbol": "session_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1041,7 +1041,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8801,
+    "lineno": 8831,
     "enclosing_symbol": "session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1051,7 +1051,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8834,
+    "lineno": 8864,
     "enclosing_symbol": "session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8923,
+    "lineno": 8953,
     "enclosing_symbol": "session_context_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1071,7 +1071,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9064,
+    "lineno": 9094,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9166,
+    "lineno": 9196,
     "enclosing_symbol": "session_edit_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1091,7 +1091,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9241,
+    "lineno": 9271,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9290,
+    "lineno": 9320,
     "enclosing_symbol": "session_importers_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1111,7 +1111,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9397,
+    "lineno": 9427,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9486,
+    "lineno": 9516,
     "enclosing_symbol": "session_blast_radius_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9525,
+    "lineno": 9555,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1141,7 +1141,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9540,
+    "lineno": 9575,
     "enclosing_symbol": "checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1151,7 +1151,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9671,
+    "lineno": 9706,
     "enclosing_symbol": "checkpoint_list",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1161,7 +1161,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9749,
+    "lineno": 9784,
     "enclosing_symbol": "checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1291,7 +1291,7 @@
   },
   {
     "module": "cli/ast_scan.py",
-    "lineno": 201,
+    "lineno": 202,
     "enclosing_symbol": "_ruleset_backend_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1541,7 +1541,7 @@
   },
   {
     "module": "backends/stringzilla_backend.py",
-    "lineno": 449,
+    "lineno": 507,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1761,7 +1761,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1151,
+    "lineno": 1152,
     "enclosing_symbol": "tg_mcp_capabilities",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1771,7 +1771,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1423,
+    "lineno": 1424,
     "enclosing_symbol": "_confine_write_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1781,7 +1781,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1483,
+    "lineno": 1484,
     "enclosing_symbol": "_mcp_root",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -1791,7 +1791,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1491,
+    "lineno": 1492,
     "enclosing_symbol": "_mcp_root",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1801,7 +1801,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1522,
+    "lineno": 1523,
     "enclosing_symbol": "_confine_mcp_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1811,7 +1811,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1664,
+    "lineno": 1674,
     "enclosing_symbol": "tg_repo_map",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1821,7 +1821,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1747,
+    "lineno": 1757,
     "enclosing_symbol": "tg_orient",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1831,7 +1831,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1829,
+    "lineno": 1839,
     "enclosing_symbol": "tg_doctor",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1841,7 +1841,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1890,
+    "lineno": 1900,
     "enclosing_symbol": "tg_context_pack",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1851,7 +1851,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 1977,
+    "lineno": 1987,
     "enclosing_symbol": "tg_edit_plan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1861,7 +1861,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2068,
+    "lineno": 2078,
     "enclosing_symbol": "tg_context_render",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1871,7 +1871,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2168,
+    "lineno": 2178,
     "enclosing_symbol": "tg_agent_capsule",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1881,7 +1881,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2264,
+    "lineno": 2274,
     "enclosing_symbol": "tg_session_edit_plan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1891,7 +1891,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2372,
+    "lineno": 2382,
     "enclosing_symbol": "tg_session_context_render",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1901,7 +1901,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2460,
+    "lineno": 2470,
     "enclosing_symbol": "tg_session_blast_radius",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1911,7 +1911,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2570,
+    "lineno": 2580,
     "enclosing_symbol": "tg_session_file_importers",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1921,7 +1921,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2695,
+    "lineno": 2705,
     "enclosing_symbol": "tg_session_blast_radius_render",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1931,7 +1931,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2809,
+    "lineno": 2819,
     "enclosing_symbol": "tg_session_blast_radius_plan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1941,7 +1941,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 2941,
+    "lineno": 2951,
     "enclosing_symbol": "tg_find",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1951,7 +1951,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3409,
+    "lineno": 3424,
     "enclosing_symbol": "tg_search",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1961,7 +1961,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3769,
+    "lineno": 3784,
     "enclosing_symbol": "tg_ast_search",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1971,7 +1971,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3910,
+    "lineno": 3930,
     "enclosing_symbol": "tg_classify_logs",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1981,7 +1981,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3951,
+    "lineno": 3962,
     "enclosing_symbol": "tg_devices",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1991,7 +1991,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 3956,
+    "lineno": 3967,
     "enclosing_symbol": "tg_devices",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2001,7 +2001,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4007,
+    "lineno": 4029,
     "enclosing_symbol": "tg_session_open",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2011,7 +2011,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4054,
+    "lineno": 4069,
     "enclosing_symbol": "tg_session_list",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2021,7 +2021,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4094,
+    "lineno": 4109,
     "enclosing_symbol": "tg_session_show",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2031,7 +2031,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4135,
+    "lineno": 4150,
     "enclosing_symbol": "tg_session_refresh",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2041,7 +2041,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4208,
+    "lineno": 4232,
     "enclosing_symbol": "tg_session_context",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2051,7 +2051,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4339,
+    "lineno": 4363,
     "enclosing_symbol": "tg_navigate",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2061,7 +2061,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4448,
+    "lineno": 4472,
     "enclosing_symbol": "tg_impact",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2071,7 +2071,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4747,
+    "lineno": 4771,
     "enclosing_symbol": "tg_query",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2081,7 +2081,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4870,
+    "lineno": 4894,
     "enclosing_symbol": "tg_context",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2091,7 +2091,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 4939,
+    "lineno": 4963,
     "enclosing_symbol": "tg_explore",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2101,7 +2101,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5151,
+    "lineno": 5175,
     "enclosing_symbol": "tg_session",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2111,7 +2111,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5229,
+    "lineno": 5253,
     "enclosing_symbol": "tg_scan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2121,7 +2121,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5336,
+    "lineno": 5360,
     "enclosing_symbol": "tg_audit",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2131,7 +2131,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5394,
+    "lineno": 5409,
     "enclosing_symbol": "tg_checkpoint",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2141,7 +2141,7 @@
   },
   {
     "module": "cli/mcp_server.py",
-    "lineno": 5478,
+    "lineno": 5502,
     "enclosing_symbol": "tg_rewrite",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2251,7 +2251,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 148,
+    "lineno": 151,
     "enclosing_symbol": "tg_rulesets",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2261,7 +2261,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 466,
+    "lineno": 472,
     "enclosing_symbol": "tg_ruleset_scan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2271,7 +2271,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 476,
+    "lineno": 482,
     "enclosing_symbol": "tg_ruleset_scan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2281,7 +2281,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 531,
+    "lineno": 537,
     "enclosing_symbol": "tg_index_search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2291,7 +2291,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 539,
+    "lineno": 545,
     "enclosing_symbol": "tg_index_search",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2301,7 +2301,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 585,
+    "lineno": 591,
     "enclosing_symbol": "tg_rewrite_plan",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2311,7 +2311,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 591,
+    "lineno": 597,
     "enclosing_symbol": "tg_rewrite_plan",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2321,7 +2321,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 699,
+    "lineno": 705,
     "enclosing_symbol": "tg_rewrite_apply",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2331,7 +2331,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 705,
+    "lineno": 711,
     "enclosing_symbol": "tg_rewrite_apply",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2341,7 +2341,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 792,
+    "lineno": 798,
     "enclosing_symbol": "tg_audit_manifest_verify",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2351,7 +2351,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 837,
+    "lineno": 843,
     "enclosing_symbol": "tg_audit_history",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2361,7 +2361,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 900,
+    "lineno": 906,
     "enclosing_symbol": "tg_audit_diff",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2371,7 +2371,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1026,
+    "lineno": 1032,
     "enclosing_symbol": "tg_review_bundle_create",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2381,7 +2381,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1096,
+    "lineno": 1102,
     "enclosing_symbol": "tg_review_bundle_verify",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2391,7 +2391,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1162,
+    "lineno": 1168,
     "enclosing_symbol": "tg_checkpoint_create",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2401,7 +2401,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1225,
+    "lineno": 1231,
     "enclosing_symbol": "tg_checkpoint_list",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2411,7 +2411,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1295,
+    "lineno": 1301,
     "enclosing_symbol": "tg_checkpoint_undo",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2421,7 +2421,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1343,
+    "lineno": 1349,
     "enclosing_symbol": "tg_rewrite_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2431,7 +2431,7 @@
   },
   {
     "module": "cli/mcp_audit_tools.py",
-    "lineno": 1349,
+    "lineno": 1355,
     "enclosing_symbol": "tg_rewrite_diff",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2441,7 +2441,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 182,
+    "lineno": 184,
     "enclosing_symbol": "_resolve_native_tg_binary_for_mcp",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2451,7 +2451,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 813,
+    "lineno": 832,
     "enclosing_symbol": "execute_rewrite_plan_json",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2461,7 +2461,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1116,
+    "lineno": 1135,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2471,7 +2471,7 @@
   },
   {
     "module": "cli/mcp_rewrite_tools.py",
-    "lineno": 1166,
+    "lineno": 1185,
     "enclosing_symbol": "execute_rewrite_apply_json",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
