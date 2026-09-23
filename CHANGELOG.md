@@ -1,6 +1,106 @@
 # CHANGELOG
 
 
+## v1.122.0 (2026-09-23)
+
+### Documentation
+
+- Close pagination caveat release ([#1168](https://github.com/oimiragieo/tensor-grep/pull/1168),
+  [`ce5758f`](https://github.com/oimiragieo/tensor-grep/commit/ce5758f6147b8d6abb7fb961fd13f83fc4f1a2f2))
+
+### Features
+
+- Dogfood v1.121.3 remediation (sql, repair-env, scoped checkpoints, --stats scope note)
+  ([#1169](https://github.com/oimiragieo/tensor-grep/pull/1169),
+  [`3b436fd`](https://github.com/oimiragieo/tensor-grep/commit/3b436fd7b3215c222545845fe5337889408f6501))
+
+* feat: dogfood v1.121.3 remediation (sql, repair-env, scoped checkpoints, suggestions)
+
+Implements docs/audits/plans/dogfood_v1_121_3_fix_plan.md, corrected by an independent audit of the
+  builder's sign-off:
+
+- tg sql: read-only SQLite sandbox over the AST symbol inventory. Uses the shared _scan_incomplete
+  predicate, so a --max-repo-files cap (scan_limit.possibly_truncated) now exits 2 and discloses on
+  stdout; the original bare partial/result_incomplete read returned exit 0 there. - tg repair-env:
+  fail-closed editable-provenance check shared with doctor. - tg checkpoint create --paths
+  (repeatable) with scoped undo confinement. - Did-you-mean suggestions for not-found symbols; the
+  candidate list is bounded to near-misses at the source so MCP/LSP/context payloads never carry the
+  whole repo inventory. - route-test --json routes the --query deprecation warning into the payload.
+  - tg run / calibrate help: multiline pattern + CUDA guidance (Python + Rust).
+
+Gate hygiene (no pin raised): sql/repair-env/suggestions/checkpoint-scope/ ast-scaffold split into
+  their own modules to hold the file-size ratchet; broad excepts narrowed; handler-ledger advisory
+  linenos re-derived (identity triples unchanged); disclosure gate extended to split-out command
+  modules. Test fixes: stale-editable test no longer hardcodes a Windows checkout path; the scan
+  fail-closed fixture isolates the backend-availability cache (order-dependent failure in the
+  full-suite container run).
+
+Verified: ci-local container, rust lane green; python lane 7845 passed with 13 failures that
+  reproduce identically on clean HEAD ce5758f in the same container (environment divergences) plus
+  the fixture fixed above. Local backup commit; not pushed (GitHub Actions quota exhausted).
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+* test: make the AST file-identity cache test build its own premise on Linux
+
+On Linux, ctime comes from a coarse kernel clock and a freed inode is often reused, so an
+  unlink+rewrite inside one tick produced a byte-identical stat signature: the test never
+  constructed the "identity changed" scenario it names, and failed in the ci-local container for a
+  reason unrelated to the cache. Wait past the tick and assert the premise (mtime and size equal,
+  signature different) so a pass or fail actually says something about the parsed-source cache.
+
+* fix(search): name the defaulted scope on the --stats rg passthrough; make the suite
+  host-independent
+
+Task #24's user-visible symptom: with a real `rg` on PATH, `tg search PAT --stats` (no PATH) handed
+  off to a live `rg --stats` and exited before the defaulted-scope note, so a zero-result search
+  said nothing about the scope it covered. The branch now writes the note on rg's zero-match exit
+  under the same three gates as the is_empty branch (shared `_scope_filtered`). The strict win32
+  xfail is removed: RED on the pre-fix main.py with rg resolvable, GREEN after.
+
+Host-independence fixes found by running the whole suite in the ci-local container (all 13 failures
+  there previously reproduced on clean main, i.e. pre-existing): - runtime_paths: the /proc/version
+  "microsoft" fallback is its own seam (`_kernel_reports_wsl`); tests/conftest.py pins it off
+  because the stamp belongs to the HOST KERNEL (every Docker Desktop container runs the WSL2
+  kernel). Tests that exercise the fallback opt back into the real function; new direct tests cover
+  it. (11 tests) - .gitattributes: benchmarks/patch_fixtures/** eol=lf. Under Windows autocrlf the
+  .js/.json fixtures checked out CRLF and 5/12 LF patches failed to apply in a Linux container. -
+  run_patch_bakeoff: drop the caller's PYTEST_ADDOPTS from the validation env (as PYTHONPATH already
+  was); a leaked -k made every fixture's `pytest -q` collect nothing. Regression test. -
+  scripts/ci-local/Dockerfile: install nodejs (the GitHub ubuntu image ships Node; the commander
+  bakeoff fixtures validate with `node --test`). - Handler-ledger advisory linenos re-derived
+  (identity triples unchanged).
+
+Verified: ci-local container, full suite, nothing deselected: rust lane green (34 suites); python
+  7864 passed, the sole failure (ledger linenos, fixed above) re-verified natively with the
+  governance gates (64 passed). BACKLOG.md and the architecture skill carry dated SUPERSEDED notes.
+
+* ci: rustfmt the Run long_about; add a lint lane to ci-local; pin *.md to LF
+
+PR #1169's Formatting & Linting job failed on `cargo fmt --check`: rustfmt wraps the Run variant's
+  long_about attribute. Applied rustfmt's layout and kept rust_core/src/main.rs at its 14899-line
+  pin by tightening the calibrate --json doc (4 -> 3 lines, same content) and dropping one blank
+  line.
+
+Root cause of the miss: scripts/ci-local never ran the Formatting & Linting job (it said so in its
+  NOT-COVERED footer). New `lint` lane mirrors ci.yml exactly -- installs `.[dev]` (pinned
+  ruff/mypy), then ruff check, ruff format --check --preview, mypy src/tensor_grep, cargo fmt
+  --check, clippy -D warnings -- and `all` now runs it first.
+
+Running that lane surfaced one more container-vs-runner divergence: `ruff format --preview .`
+  formats python blocks inside Markdown with line-ending=lf, so the CRLF Windows checkout of
+  AGENTS.md / docs/*.md failed while the committed LF blobs are clean. `*.md text eol=lf` in
+  .gitattributes; README.md's index copy had 249 CRLF lines and is normalized (EOL-only diff).
+
+Verified: ci-local `lint` lane green (ruff check, 1075 files formatted, mypy 142 files clean, cargo
+  fmt, clippy); tests referencing ci-local incl. test_ci_local_harness_parity + docs governance: 132
+  passed.
+
+---------
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.121.3 (2026-09-22)
 
 ### Bug Fixes
