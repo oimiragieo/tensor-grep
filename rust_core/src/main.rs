@@ -646,10 +646,9 @@ pub struct RunArgs {
 
 #[derive(Args, Debug, Clone, Default)]
 pub struct CalibrateArgs {
-    /// Emit structured JSON instead of text, including a machine-readable `calibration_status:
-    /// skipped_no_cuda_build` signal when GPU calibration cannot run (it needs NVIDIA hardware and
-    /// a CUDA-enabled binary build). Does not change the exit code (still 2 on the no-cuda skip,
-    /// per the backend-unavailable convention) or the success-path output (already JSON).
+    /// Emit JSON, incl. `calibration_status: skipped_no_cuda_build` when GPU calibration cannot run
+    /// (needs NVIDIA hardware + a CUDA-enabled binary). Exit code unchanged: still 2 on the no-cuda
+    /// skip (backend-unavailable convention); the success path already emits JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -717,7 +716,9 @@ pub enum Commands {
     /// Run log classification with local heuristics; CyBERT/Triton is opt-in
     Classify(ClassifyArgs),
     /// Run a validated AST slice for structural search and guarded rewrites
-    #[command(long_about = "Run a validated AST slice for structural search and guarded rewrites.\n\nPatterns match exact AST node shapes: a single-line 'def $NAME($$$ARGS): $$$BODY' does not match a multiline function block. Multiline examples -- Python: 'def $NAME($$$ARGS):\\n    $$$BODY'; TypeScript: 'function $NAME($$$ARGS) {\\n  $$$BODY\\n}'. Use `--selector function_definition` to match any function regardless of formatting.")]
+    #[command(
+        long_about = "Run a validated AST slice for structural search and guarded rewrites.\n\nPatterns match exact AST node shapes: a single-line 'def $NAME($$$ARGS): $$$BODY' does not match a multiline function block. Multiline examples -- Python: 'def $NAME($$$ARGS):\\n    $$$BODY'; TypeScript: 'function $NAME($$$ARGS) {\\n  $$$BODY\\n}'. Use `--selector function_definition` to match any function regardless of formatting."
+    )]
     Run(RunArgs),
     /// Scan code by configuration
     Scan {
@@ -1029,7 +1030,6 @@ pub enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-
     #[command(external_subcommand)]
     PythonPassthrough(Vec<String>),
 }
