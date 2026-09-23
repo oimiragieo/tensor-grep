@@ -620,3 +620,18 @@ def test_sql_scan_limit_default_mirrors_main() -> None:
     from tensor_grep.cli import sql_query
 
     assert sql_query._DEFAULT_AGENT_REPO_SCAN_LIMIT == cli_main._DEFAULT_AGENT_REPO_SCAN_LIMIT
+
+
+def test_repair_env_on_a_wheel_install_explains_instead_of_blaming_a_missing_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Dogfooded on the published 1.122.0 wheel: `_repo_root()` resolves under site-packages,
+    which has no pyproject.toml. That is the NORMAL install, so the refusal must say repair-env
+    does not apply (and point at `tg upgrade`), not read like a broken environment."""
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths._repo_root", lambda: tmp_path)
+    result = runner.invoke(app, ["repair-env", "--json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "failed"
+    assert "Nothing to repair" in payload["error"]
+    assert "tg upgrade" in payload["error"]

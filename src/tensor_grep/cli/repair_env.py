@@ -75,10 +75,13 @@ def repair_env_command(
     start = time.perf_counter()
     repo_root = runtime_paths._repo_root()
     if not (repo_root / "pyproject.toml").exists():
+        # The normal case for a PyPI/wheel install: there is no source checkout to re-sync.
         _fail(
             json_output,
             start,
-            f"Cannot repair environment: pyproject.toml not found at {repo_root}",
+            "Nothing to repair: tg repair-env re-syncs an EDITABLE source checkout "
+            "(`uv pip install -e .`), and this tensor-grep is not one (no pyproject.toml at "
+            f"{repo_root}). For a PyPI install, upgrade with `tg upgrade` instead.",
         )
 
     is_editable, previous_version = editable_install_points_at(repo_root)
