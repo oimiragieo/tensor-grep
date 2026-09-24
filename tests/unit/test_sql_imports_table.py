@@ -123,6 +123,25 @@ def test_sql_imports_no_imports_negative_control(tmp_path: Path) -> None:
     assert payload["result_incomplete"] is False
 
 
+def test_sql_imports_non_code_files_do_not_make_the_table_incomplete(tmp_path: Path) -> None:
+    """Control arm for the Kotlin test below: README/config/text files have no imports, so they
+    are outside the table's universe. Before this, one `commands.txt` flagged every `imports`
+    query INCOMPLETE with exit 2 -- dogfooded on the published 1.123.0 wheel against
+    src/tensor_grep/cli, i.e. nearly every real repository read as partial."""
+    proj = tmp_path / "proj"
+    _write(proj / "app.py", "import os\n\ndef f():\n    pass\n")
+    _write(proj / "README.md", "# docs\n")
+    _write(proj / "commands.txt", "tg search\n")
+    _write(proj / "config.toml", "[tool]\n")
+
+    result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["result_incomplete"] is False, payload
+    assert "incomplete_reason" not in payload or not payload["incomplete_reason"], payload
+    assert {row["module"] for row in payload["rows"]} == {"os"}
+
+
 def test_sql_imports_unsupported_language_file_flagged(tmp_path: Path) -> None:
     """A file with no registered language spec (e.g. Kotlin) is honestly disclosed, not silently
     treated as "this file has zero imports"."""
