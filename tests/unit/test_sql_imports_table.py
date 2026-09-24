@@ -347,3 +347,37 @@ def test_sql_imports_referenced_via_alias_subquery_or_cte_runs_the_pass(
     payload = json.loads(result.stdout)
     assert len(calls) == 1, f"query {query!r} must invoke the imports pass exactly once"
     assert any(row["module"] == "os" for row in payload["rows"])
+
+
+def test_sql_over_length_query_rejected_before_the_imports_probe_ever_compiles_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sol audit round 3: connection limits (`SQLITE_LIMIT_SQL_LENGTH`/`SQLITE_LIMIT_COLUMN`) and
+    the progress handler/deadline must be applied BEFORE `_detect_imports_referenced` ever
+    compiles anything -- an over-length query must be rejected with the SAME error as before that
+    reorder, and the detection probe must never even see it (spy on the module's own entry
+    point, not a `repo_map` symbol -- mind the bare-call ratchet)."""
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    proj = tmp_path / "proj"
+    _write(proj / "a.py", "import os\n")
+
+    calls: list[object] = []
+    real_detect = sql_query_module._detect_imports_referenced
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real_detect(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_detect_imports_referenced", spy)
+
+    over_length_query = "SELECT " + "1," * 5000 + "1"
+    assert len(over_length_query) > 10_000
+
+    result = runner.invoke(app, ["sql", str(proj), over_length_query, "--json"])
+    assert result.exit_code == 1, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"] == (
+        f"SQL query exceeds maximum length of 10000 characters (length: {len(over_length_query)})"
+    )
+    assert calls == [], "an over-length query must never reach the imports-reference probe"

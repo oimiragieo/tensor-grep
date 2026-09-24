@@ -543,6 +543,28 @@ def sql_command(
         conn.execute("CREATE INDEX idx_imports_module ON imports(module);")
         conn.commit()
 
+        # Sol audit round 3: connection-wide limits and the query deadline/progress handler must
+        # be in place BEFORE ANY statement is compiled on this connection -- including the
+        # `EXPLAIN`-only detection probe below. Applying them only before the REAL execution left
+        # `_detect_imports_referenced`'s compile running under SQLite's much larger DEFAULT
+        # limits (unbounded `SQLITE_LIMIT_SQL_LENGTH`, 2000-column `SQLITE_LIMIT_COLUMN`) and with
+        # no progress-handler interrupt at all, so a resource-shaped query could make the
+        # detection compile itself do unbounded work before the connection was ever constrained.
+        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
+        conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
+
+        query_deadline_monotonic = time.monotonic() + deadline
+        deadline_tripped = {"hit": False}
+
+        def progress_handler() -> int:
+            if time.monotonic() >= query_deadline_monotonic:
+                deadline_tripped["hit"] = True
+                return 1
+            return 0
+
+        conn.set_progress_handler(progress_handler, 1000)
+
         # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
         # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
         # `_detect_imports_referenced` asks SQLite's own authorizer whether *query* actually
@@ -592,22 +614,7 @@ def sql_command(
         if imports_unsupported_files_hit:
             incomplete_reasons.append("imports_unsupported_files")
 
-        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
-        conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
-
         conn.set_authorizer(_sql_read_only_authorizer)
-
-        query_deadline_monotonic = time.monotonic() + deadline
-        deadline_tripped = {"hit": False}
-
-        def progress_handler() -> int:
-            if time.monotonic() >= query_deadline_monotonic:
-                deadline_tripped["hit"] = True
-                return 1
-            return 0
-
-        conn.set_progress_handler(progress_handler, 1000)
 
         try:
             cursor = conn.execute(query)
