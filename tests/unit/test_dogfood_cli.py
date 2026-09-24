@@ -528,6 +528,52 @@ def test_run_dogfood_readiness_fails_closed_when_the_budget_child_emits_bad_json
     assert report["agent_readiness"]["results"][0]["reason"] == "timeout_budget_unavailable"
 
 
+@pytest.mark.parametrize(
+    "budget_json_literal",
+    [
+        "-1000",
+        "0",
+        '"nan"',
+        '"inf"',
+        "true",
+        '"12"',
+    ],
+)
+def test_run_dogfood_readiness_fails_closed_on_a_non_finite_or_wrong_type_budget(
+    tmp_path: Path, budget_json_literal: str
+) -> None:
+    """Codex Sol PR #1176 R1: `budget_s` must be validated as a finite positive JSON
+    number before adding overhead -- negative, zero, NaN/Inf-shaped strings, bool, and
+    numeric strings must all fail closed rather than silently coercing via `float(...)`.
+    """
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    script.write_text(
+        "\n".join([
+            "import sys",
+            "if '--print-timeout-budget' in sys.argv:",
+            f"    print('{{\"budget_s\": {budget_json_literal}}}')",
+            "    sys.exit(0)",
+            "sys.exit(0)",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+    )
+
+    assert exit_code == 1
+    assert report["timeout_source"] == "derived"
+    assert report["agent_readiness"]["status"] == "error"
+    assert report["agent_readiness"]["results"][0]["reason"] == "timeout_budget_unavailable"
+
+
 def test_explicit_timeout_s_skips_derivation_entirely(tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
     scripts_dir.mkdir()

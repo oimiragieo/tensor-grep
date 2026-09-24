@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import signal
 import subprocess
@@ -489,9 +490,17 @@ def _derive_readiness_timeout_s(
     if completed.returncode != 0:
         return None, f"exit {completed.returncode}: {completed.stderr.strip() or '<empty>'}"
     try:
-        budget_s = float(_json_from_stdout(completed.stdout)["budget_s"])
+        raw_budget_s = _json_from_stdout(completed.stdout)["budget_s"]
     except (ValueError, KeyError, TypeError) as exc:
         return None, str(exc)
+    # Codex Sol PR #1176 R1: `budget_s` must be a genuine JSON number, never `bool` (a
+    # subclass of `int`), a numeric-looking string, NaN, or +/-inf -- any of those would
+    # otherwise pass `float(...)` and either add a garbage overhead or crash later.
+    if isinstance(raw_budget_s, bool) or not isinstance(raw_budget_s, (int, float)):
+        return None, f"budget_s must be a JSON number, got {raw_budget_s!r}"
+    budget_s = float(raw_budget_s)
+    if not math.isfinite(budget_s) or budget_s <= 0:
+        return None, f"budget_s must be a finite positive number, got {raw_budget_s!r}"
     return budget_s + TIMEOUT_BUDGET_OVERHEAD_S, None
 
 
