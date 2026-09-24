@@ -1,6 +1,396 @@
 # CHANGELOG
 
 
+## v1.123.0 (2026-09-24)
+
+### Documentation
+
+- Teach positional SYMBOL and correct the native-embeddings route
+  ([#1174](https://github.com/oimiragieo/tensor-grep/pull/1174),
+  [`42f6818`](https://github.com/oimiragieo/tensor-grep/commit/42f6818f935a76b87495e77774548e2847c4b7f1))
+
+* docs: teach positional SYMBOL and correct the native-embeddings route
+
+Slice 2 (plan resilient-cooking-cupcake): the live teaching docs (SKILL.md, AGENTS.md,
+  docs/CONTRACTS.md) still taught `impact --symbol` even though `_resolve_path_and_symbol`
+  deprecated `--symbol` in favor of positional SYMBOL for
+  defs/source/refs/callers/impact/blast-radius*. Rewrites those three usage mentions to the
+  positional form, keeps the compatibility statement in CONTRACTS.md (now naming it deprecated), and
+  leaves `tg ledger`'s unrelated `--symbol` flag and every dated/historical doc untouched. Adds
+  tests/unit/test_docs_no_deprecated_symbol_flag.py as a drift gate over the scoped live docs,
+  confirmed RED against the unmodified doc text before the fix.
+
+Slice 5: docs/architecture/native_embeddings.md gets an append-only, dated correction -- model2vec
+  is static embeddings, so the official model2vec-rs Rust crate (MinishLab, v0.2.1) supersedes the
+  tract/ONNX route documented in Section 2 for that model, with a license-field discrepancy (GitHub
+  MIT vs crates.io "non-standard") flagged for verification before adoption. Also records --focus
+  goal-conditioned skimming (SWE-Pruner, arXiv:2601.16746) as demand-gated for a CPU-only product,
+  and drops CodeComp (arXiv:2604.10235) as a KV-cache technique with no integration point in a CLI.
+
+Neither slice releases.
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+
+* test(docs): harden the deprecated --symbol drift scan
+
+Sol R1 audit of PR #1174 found three real gaps in the drift scanner:
+
+1. A per-line scan missed a `tg` invocation whose `--symbol` flag lands on a backslash-continued
+  second line inside a fenced shell example. The scanner now joins backslash-continued lines inside
+  fenced code blocks into one logical unit before matching. 2. The ledger exemption was
+  keyword-based ("ledger" anywhere on the line), which could paper over a real bad example in the
+  same paragraph. It is now invocation-scoped: it fires only when the command token immediately
+  after `tg` actually parses as `ledger`, and target-command detection is judged per
+  inline-code-span (or per whole fenced block) so a paragraph naming `tg defs` for comparison,
+  elsewhere in the same line as a genuine `tg ledger ... --symbol` invocation, does not falsely trip
+  on the unrelated mention. 3. The "deprecated" keyword exemption was line-wide, so a fenced code
+  example could dodge the gate by adding a comment containing the word "deprecated". The exemption
+  now applies only to PROSE (not inside a fence, not itself a `tg ...` invocation) -- a real
+  invocation is always a violation regardless of nearby wording.
+
+Adds six scanner unit tests against synthetic strings: a plain prose violation, a multiline
+  backslash-continued invocation, a genuine ledger invocation (exempt), deprecated prose (exempt), a
+  fenced `tg impact --symbol` example containing the word "deprecated" (must still flag), and a
+  prose sentence that mentions "ledger" while also showing a real `tg impact --symbol` example (must
+  still flag -- the word "ledger" alone must not exempt it).
+
+RED/GREEN checked without git stash (worktrees share stash refs): copied
+  SKILL.md/AGENTS.md/docs/CONTRACTS.md aside, replaced them with their pre-slice-2 content from
+  ff1ba2e, confirmed the same 4 violations RED, then restored the fixed files from the copies and
+  confirmed GREEN again.
+
+uv run pytest tests/unit/test_docs_no_deprecated_symbol_flag.py
+  tests/unit/test_skill_library_drift.py tests/unit/test_skill_index_sync.py
+  tests/unit/test_public_docs_governance.py -q -> 62 passed. uv run ruff format --check --preview .
+  -> 1076 files already formatted.
+
+---------
+
+Co-authored-by: Claude Sonnet 5 <noreply@anthropic.com>
+
+### Features
+
+- **sql**: Add an imports table joinable with symbols
+  ([#1175](https://github.com/oimiragieo/tensor-grep/pull/1175),
+  [`49bc89f`](https://github.com/oimiragieo/tensor-grep/commit/49bc89fae2e602a2056cb8854a97e902c109738c))
+
+* feat(sql): add an imports table joinable with symbols
+
+Adds `imports(file, module, line, resolved_file)` to `tg sql`'s in-memory SQLite sandbox, indexed on
+  file and module. sql_query.py owns its own pass over repo_map["files"] (the shared repo-map
+  payload gains no new keys), extracting via repo_map._imports_with_lines_for_path and resolving via
+  repo_map._resolve_raw_import_entry. The pass checks the same scan deadline before each file AND
+  before each resolve call within a file, so a cutoff can land within one file's own import list. An
+  early stop, or an unsupported-language/over-cap file, marks the result INCOMPLETE
+  (imports_deadline) alongside the existing scan-incomplete check, combined before the text banner,
+  JSON flag, and exit-2 gate. Unresolved imports are kept with a NULL resolved_file rather than
+  dropped or guessed.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+* fix(sql): disclose imports-pass incompleteness precisely
+
+Addresses Sol audit round 2 on PR #1175: - Emit a machine-readable `incomplete_reason` list in JSON
+  (e.g. ["imports_deadline"], ["imports_unsupported_files"], or the map's own scan-truncation text),
+  so an agent can branch on which cause fired instead of only seeing `scan_incomplete: true`. - The
+  text banner now names which table is partial (imports, symbols, or both), instead of always
+  claiming "the symbols table". - Normalize every `file`/`resolved_file` column through the same
+  `Path(...).resolve()` form the resolver itself uses, so `JOIN symbols s ON s.file =
+  i.resolved_file` actually matches; added a test proving that join returns the imported module's
+  own defining symbol. - Measured the import pass on src/tensor_grep: +2.703s / +164.7% over
+  build_repo_map alone (142 files, 1983 import rows). Memoized `_resolve_raw_import_entry`
+  resolution per (importing-dir, repo-root, language, module, level, dynamic flags) -- the same
+  shape recurs across a repo (every file importing `os`/`json`/a shared package) -- which cut it to
+  +1.313s / +90.4% (1613 cache hits / 370 misses). - Strengthened the within-file deadline test to
+  prove the repo-map build reached the file (a marker symbol is present) and resolution began (count
+  > 0) before the cutoff, not only that fewer than all rows landed.
+
+* perf(sql): build the imports table only when the query references it
+
+The imports pass added a +90% latency tax to EVERY `tg sql` call, including a bare `SELECT * FROM
+  symbols` that never looks at `imports`. Never guess from the query text (a substring/regex check
+  is a parser the real SQL grammar can always outrun -- a CTE, a subquery, a comment, a case
+  difference). Instead ask SQLite itself: `_detect_imports_referenced` compiles the query with
+  `EXPLAIN` against a connection that already has the `imports` SCHEMA (empty) in place, with an
+  authorizer that records every `SQLITE_READ` on table "imports". SQLite resolves the REAL table
+  name during compilation regardless of alias, subquery, or CTE indirection, so this sees through
+  all three without a hand-rolled parser.
+
+`_run_imports_pass` -- the extraction+resolution pass itself -- moved to a module-level function in
+  `sql_query.py` (not `repo_map.py`) precisely so a test can spy on its own entry point directly; it
+  now only runs when detection says the query needs it. Imports incompleteness (the deadline /
+  unsupported-files reasons from the prior commit) is reported ONLY when the pass actually ran.
+
+Measured on src/tensor_grep (real `tg sql` CLI, wall clock): - BEFORE (unconditional pass):
+  symbols-only query 6.031s - AFTER (lazy pass): symbols-only query 3.500s - AFTER (lazy pass):
+  imports-referencing query 5.937s (unchanged cost when the pass is actually needed)
+
+* test(sql): make the imports deadline tests deterministic
+
+Sol audit round 3 on PR #1175, tests-only:
+
+1. Deleted `test_sql_symbols_only_query_is_faster_without_the_imports_pass` -- a real-wall-clock
+  timing assertion on a shared box. The spy test
+  (`test_sql_symbols_only_query_does_not_run_imports_pass`) already proves laziness
+  deterministically (zero calls to `_run_imports_pass`), so the timing arm added shared-box flake
+  risk without adding real coverage.
+
+2. `_run_imports_pass` gained a `clock` parameter (defaulting to `time.monotonic`), injected ONLY
+  into that pass -- never into `time.monotonic` globally, which the prior round's tests did and
+  which also slows/derails the repo-map SCAN this pass runs after. The two deadline tests now drive
+  a deterministic counter clock (`_clock_expiring_after(n)`, unexpired for exactly `n` calls, then
+  `inf` forever) via `_inject_imports_clock`, which wraps `_run_imports_pass` itself (this module's
+  own entry point, not a `repo_map` symbol -- mind the bare-call ratchet). - The mid-pass test now
+  expires on the very FIRST call (deterministic "already expired when the pass starts"), asserting
+  `count == 0`. - The within-file test now expires after EXACTLY 21 calls (the file check + 20
+  per-entry checks), asserting `count == 20` of 60 -- an exact, reproducible number instead of "some
+  real sleep accumulated past some real deadline".
+
+* fix(sql): apply query limits before the imports-reference probe
+
+Sol audit round 3 on PR #1175: `_detect_imports_referenced` compiled its `EXPLAIN`-only prepare pass
+  BEFORE `SQLITE_LIMIT_SQL_LENGTH`, `SQLITE_LIMIT_COLUMN`, and the query deadline/progress handler
+  were applied to the connection -- so that probe ran under SQLite's much larger DEFAULT limits
+  (effectively unbounded SQL length, 2000-column cap) and with no interrupt mechanism at all.
+
+Moved all three `conn.setlimit(...)` calls and the query-deadline progress handler to immediately
+  after the `symbols`/`imports` schema is created, BEFORE `_detect_imports_referenced` runs. The
+  read-only authorizer stays where it was (set only for the real execution):
+  `_detect_imports_referenced` already installs and tears down its own permissive detection-only
+  authorizer, so moving the enforcement authorizer earlier would just have it overwritten and
+  require re-installing it after detection anyway.
+
+Test: an over-length (>10,000 char) query is still rejected with the IDENTICAL error message and
+  exit code 1 as before this change (the top-of-command Python length check, unaffected by the
+  reorder), and a spy on `sql_query._detect_imports_referenced` (this module's own entry point, not
+  a `repo_map` symbol) proves the detection probe is never even called for it.
+
+* refactor(sql): drop the shadowed progress handler
+
+Pyright reported `progress_handler` at sql_query.py:560 as redeclared/ obscured by a same-named
+  declaration. Verified directly with `uv run pyright` (default and strict modes): the pushed file
+  itself already has exactly one `def progress_handler(): ...`, but the two textual instances that
+  existed transiently across the round-3 limits-reorder commit's diff (one removed, one added in the
+  same hunk) are exactly the shape a diff/patch-scanning static-analysis pass can misread as a
+  redeclaration.
+
+Extracted the query-deadline progress-handler installation into its own module-level function,
+  `_install_query_deadline_handler(conn, deadline) -> dict[str, bool]`, so this module now
+  structurally has exactly one place that can ever define a callback named `progress_handler` -- not
+  just one in the current file, but one in every future diff that touches it. `sql_command` now
+  calls it once (`deadline_tripped = _install_query_deadline_handler(conn, deadline)`) at the same
+  call site the inline block previously occupied, so the query-deadline behavior (and the
+  `--scan-deadline`/imports-probe ordering fixed in the prior commit) is unchanged.
+
+Confirmed `test_sql_cooperative_deadline_interruption` (a real recursive CTE against a tight
+  `--deadline`, asserting the exact `query_deadline_exceeded` JSON shape and exit 2) still exercises
+  the extracted handler and passes.
+
+* fix(sql): start the query deadline at query execution
+
+Sol R5 on PR #1175: the query `--deadline` clock started counting from BEFORE the imports-reference
+  detection probe and the imports pass ran, so the probe's `EXPLAIN` compile and the pass's row
+  INSERTs (real SQLite VM steps) silently consumed the query's own budget before the real query ever
+  executed. A repo with enough imports could make a genuinely fast query look like it timed out.
+
+`_install_query_deadline_handler` now accepts a `clock` parameter (default `time.monotonic`),
+  mirroring `_run_imports_pass`'s existing test seam. The connection-wide limits AND a first
+  progress-handler install still happen BEFORE the detection probe (so that compile stays bounded,
+  per the prior commit), but its `deadline_tripped` result is discarded -- the handler is
+  RE-INSTALLED immediately before `conn.execute(query)` runs, giving the real query a fresh clock
+  baseline that only counts ITS OWN progress-handler ticks.
+
+Tests (deterministic, no real wall-clock sleep): a shared counter clock injected into both
+  `_run_imports_pass` and `_install_query_deadline_handler` proves (a) a query cheap enough to
+  invoke the progress handler only ~2 times must NOT be interrupted even though the imports pass
+  consumed far more "ticks" than the deadline on the same shared counter, and (b) a genuinely slow
+  query (a large recursive CTE) still gets interrupted after the reset. Verified the first test
+  actually discriminates old-vs-new behavior by temporarily reverting the reset call and confirming
+  it fails exactly as predicted, then restoring the fix and confirming green.
+
+* fix(sql): scope the query deadline to query execution only
+
+Sol R6 on PR #1175: round 5's "install a bounding handler before the probe, then re-install a fresh
+  one before the real query" still left the FIRST handler live during the imports pass's
+  `executemany`/`commit`. A large `imports` INSERT is real SQLite VM work, so a stale query-deadline
+  clock could interrupt it with an UNCAUGHT `sqlite3.OperationalError` -- raised OUTSIDE the query's
+  own `except sqlite3.Error` block, which only wraps `conn.execute(query)`. Reproduced directly:
+  reverting to the round-5 design and running the new test below raised exactly
+  `OperationalError('interrupted')` as an uncaught exception.
+
+New design, no layering: (1) connection-wide limits (`SQLITE_LIMIT_LENGTH`/ `COLUMN`/`SQL_LENGTH`)
+  are still set before the probe. (2) NO query-deadline progress handler is installed for the probe
+  or the imports pass at all -- the probe is an `EXPLAIN` compile that never executes (bounded by
+  the length/column limits alone), and the imports pass is already bounded by its own
+  `--scan-deadline` checks in `_run_imports_pass`. (3) The query-deadline handler is installed
+  EXACTLY ONCE, immediately before `conn.execute(query)`, and removed right after
+  (`conn.set_progress_handler(None, 0)`) in a `finally` so it cannot linger on any exit path.
+
+Tests: `test_sql_large_imports_insert_is_never_interrupted_by_the_query_deadline` injects an
+  ALREADY-EXPIRED deterministic clock into `_install_query_deadline_handler` and proves a 300-row
+  imports insert completes and a fast real query still succeeds -- verified this test actually
+  reproduces the round-5 bug by temporarily reverting just the handler-scoping change and confirming
+  the exact uncaught `OperationalError('interrupted')`, then restoring the fix and confirming green.
+  `test_sql_slow_query_still_interrupted_after_the_deadline_reset` and the over-length-query
+  rejection test both still pass unchanged.
+
+* fix(sql): disclose unreadable files in the imports pass
+
+ci-local caught `test_silent_loss_census_ratchet.py`: `_run_imports_pass`'s per-file `stat()` fell
+  back to `file_size = 0` on `OSError` and kept going -- silently reading an unreadable or vanished
+  file (permission denied, a TOCTOU deletion mid-scan) as "genuinely has zero imports" instead of
+  "imports not determined". The `imports` table makes a completeness claim, so this is exactly the
+  silent-loss class the ratchet exists to catch, not a site for `KNOWN_SILENT_LOSS_SITES`.
+
+Threaded `repo_map._UnreadablePathFlag` through the loop -- the same mutable-out-param shape
+  `inventory.py`/`docs_coverage.py` already use for the identical
+  per-file-stat-after-a-successful-walk failure. On `OSError`, the file is now recorded and SKIPPED
+  (not silently zeroed and parsed anyway). `sql_command`: - sets `imports_incomplete` from the
+  flag's `.hit` alongside the existing deadline/unsupported-files causes; - appends
+  `incomplete_reason: "imports_unreadable_files"`; - discloses `unreadable_paths` (a bounded sample)
+  and `unreadable_paths_count` (the true total) in the JSON payload, mirroring inventory's shape; -
+  the existing text-banner logic already names "imports table holds" for ANY `imports_incomplete`
+  cause, so no separate wording was needed there.
+
+Test: `test_sql_imports_unreadable_file_is_disclosed_not_silently_zero` hermetically denies
+  `Path.stat()` for one file, scoped to BOTH the exact path and the calling frame (`sql_query.py`
+  only -- mirrors `test_inventory.py`'s `_deny_stat_from_inventory_only`, never `chmod`, which is
+  unreliable on Windows/root CI containers). A control arm (no denial) proves both files' imports
+  are present; the treatment arm proves the denied file's import drops out AND the payload discloses
+  why. Verified `tests/unit/test_inventory.py` still passes (35/35) to confirm the shared
+  `Path.stat` monkeypatch pattern doesn't leak across files.
+
+* fix(sql): disclose read failures in the imports pass
+
+Sol follow-up on 844e07f: a second silent-loss path. `repo_map._imports_with_lines_for_path` reads
+  the file itself (Python's extractor via `read_text`, others via their own tree-sitter/byte reads)
+  and returns `[]` on `OSError` -- a read failure AFTER a successful `stat()` (TOCTOU, a permission
+  change, a vanished file) is therefore invisible to `_run_imports_pass`'s caller and the command
+  exits 0 over a truncated table.
+
+Fixed without touching the shared helper's contract (it has other callers -- `build_file_imports`,
+  `tg imports` -- that already handle its `[]` return differently): `_run_imports_pass` now reads
+  the file itself first (`file_path.read_bytes()`), inside the SAME `OSError` ->
+  `_UnreadablePathFlag` handling the previous commit added for the `stat()` failure, immediately
+  after the size-cap check and before calling `imports_with_lines_for_path`. A successful read here
+  guarantees the shared helper's own internal read will also succeed (nothing changes the file in
+  between), so this never masks a genuine parse failure inside the helper -- it only catches the
+  read failing before the helper gets a chance to try. `repo_map.py` is untouched, so the bare-call
+  ratchet stays green trivially.
+
+Test: `test_sql_imports_read_failure_after_successful_stat_is_disclosed` denies `Path.read_bytes`
+  (never `Path.stat`) for one file, scoped to the exact path and the calling frame (`sql_query.py`
+  only), so the precondition ("stat succeeds, read fails") is real. A control arm proves both files'
+  imports are present without the denial. Verified the test is load-bearing: temporarily removed the
+  new canary-read block and confirmed the test failed (the denied file's `sys` import silently
+  appeared with `result_incomplete: false`, exit 0 -- exactly the swallowed-failure shape), then
+  restored the fix and confirmed green.
+
+* fix(sql): report an over-length query identically on every sqlite build
+
+ci-local (Linux container, Python 3.12, system sqlite) failed
+  `test_sql_over_length_query_rejected_before_the_imports_probe_ever_compiles_it` with stdout EMPTY
+  -- it passed on Windows. Root cause is not sqlite at all: the CLI's path-vs-query argument routing
+  calls bare `Path(candidate).exists()` on BOTH positional args to guess which one is the path.
+  `pathlib._IGNORED_ERRNOS` swallows ENOENT/ENOTDIR/EBADF/(Windows WSAELOOP) inside `Path.exists()`,
+  but NOT `ENAMETOOLONG` (38) -- so on Linux, calling `.exists()` on the 10,000+ character
+  over-length QUERY string (routed through here as a candidate "path") raises an uncaught `OSError`,
+  escaping before the Python-level `len(query) > 10_000` check ever runs, before any JSON is
+  written. Windows's own path-length handling doesn't raise the same way, so the same test passed
+  there and only there.
+
+Fix: `_safe_path_exists` wraps the candidate-path probe and returns `False` on any `OSError` (the
+  same "doesn't exist" semantics `Path.exists()` already applies to its own ignored errnos), used
+  for both positional-arg probes. The final `target_path = Path(path).expanduser().resolve()` /
+  `.exists()` gets the identical treatment for defense in depth, since the resolved `path` could in
+  principle hit the same OS limit.
+
+Tests: - `test_sql_path_routing_survives_an_ename_too_long_style_os_error` -- reproduces the
+  ci-local Linux failure HERMETICALLY on any platform by injecting the exact `OSError(ENAMETOOLONG,
+  ...)` Linux raises for `Path.exists()` on the over-length-query candidate, rather than trying to
+  grow a real 10,000+ char path on disk. Verified it is load-bearing: temporarily reverted to the
+  bare `.exists()` calls and confirmed the test failed with the exact ci-local symptom (`stdout is
+  EMPTY; exception=OSError(38, 'File name too long')`), then restored the fix and confirmed green. -
+  The existing over-length-query test's assertions now include `result.output`/`result.exception` in
+  every failure message, so the next platform-specific instrument failure is self-diagnosing without
+  needing a container to reproduce.
+
+Not run: the full local suite (shared box; targeted file + mypy/pyright/ ruff verified instead, per
+  instruction).
+
+* fix(sql): report an unreadable target path distinctly
+
+Sol audit follow-up on e784229: the FINAL target-path check's blanket `except OSError:
+  target_path_exists = False` mapped ANY access failure -- including `PermissionError` (EACCES is
+  not in `pathlib._IGNORED_ERRNOS`, so `Path.exists()` legitimately raises it for a
+  permission-denied path) -- onto the exact same `"Path not found"` message and exit code as a path
+  that plain doesn't exist. That hides a real access failure behind wrong-knob advice: the user
+  tries a different path instead of fixing permissions.
+
+Kept the OSError->False fallback ONLY for `_safe_path_exists`, the positional path-vs-query ROUTING
+  probe (it never claims to know whether a path is readable, only which argument IS one). For the
+  FINAL `target_path` -- the path the command is actually about to scan -- split the two: - a
+  genuine non-existence (ENOENT) is already swallowed internally by `Path.exists()` and never
+  reaches our `except OSError` handler at all, so it keeps the existing `path_not_found` message and
+  exit 1, unchanged; - any `OSError` that DOES reach the handler (`PermissionError`, or another real
+  access failure) now reports the structured error `path_unreadable` -- JSON carries `error`,
+  `path`, `errno`, `strerror`; text mode prints a clear "Path unreadable: ... (strerror)" message --
+  and exits 2.
+
+Tests (hermetic, no chmod): `test_sql_target_path_permission_denied_is_reported_distinctly` injects
+  `PermissionError` for `Path.exists()` on the exact resolved target path, scoped to the calling
+  frame (`sql_query.py` only). Verified it is load-bearing: temporarily disabled the new branch and
+  confirmed the test reproduced the EXACT pre-fix bug (`PermissionError` -> `"Path not found"`, exit
+  1), then restored the fix and confirmed green.
+  `test_sql_target_path_not_found_stays_exit_1_with_path_not_found` is the control arm proving
+  genuine non-existence is unaffected by the split.
+
+* fix(sql): classify target-path errors by errno
+
+Sol audit follow-up (final) on 25a5f49: the FINAL target-path check reported every non-ENOENT
+  `OSError` as `path_unreadable`, conflating two different problems -- a real access-control failure
+  (permission denied) and a malformed path string (too long, an invalid segment, a symlink loop) --
+  which have different fixes and shouldn't share one diagnosis.
+
+`_classify_target_path_error` now splits by errno: - EACCES / EPERM (a genuine access-control
+  failure, e.g. `PermissionError`) -> `path_unreadable`. - ENAMETOOLONG / EINVAL / ELOOP / ENOTDIR
+  (the path STRING itself is malformed for this OS), plus the Windows-only `winerror` codes for the
+  identical shape (123 = ERROR_INVALID_NAME, 206 = ERROR_FILENAME_EXCED_RANGE) -> `invalid_path`. -
+  anything else stays `path_unreadable`, with its own errno/strerror rather than guessing which
+  bucket it belongs in. All three classes exit 2, all structured JSON (`error`, `path`, `errno`,
+  `strerror`), all a clear text message ("Path unreadable: ..." vs "Invalid path: ...").
+
+Test: `test_sql_target_path_error_classified_by_errno` is parametrized over all six errno cases plus
+  both Windows winerror codes plus an unrecognized errno (EIO) that must fall through to
+  `path_unreadable` rather than being silently misclassified or swallowed. Hermetic (no real chmod
+  or a real 10,000+ char path on disk): injects the exact `OSError` for `Path.exists()` on the
+  resolved target path, scoped to the calling frame (`sql_query.py` only). Verified at least one
+  parametrized case (the `invalid_path` class) is load-bearing: temporarily forced the classifier to
+  always return `path_unreadable` and confirmed that case failed exactly as predicted, then restored
+  the fix and confirmed all 30 tests in the file pass.
+
+Not run: the full local suite (shared box; targeted file + mypy/pyright/ ruff verified instead, per
+  instruction). This closes the target-path error handling thread -- no further features on this
+  path.
+
+---------
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+### Testing
+
+- **sql**: Make the deadline-interruption query unbounded
+  ([#1177](https://github.com/oimiragieo/tensor-grep/pull/1177),
+  [`7a0b0cc`](https://github.com/oimiragieo/tensor-grep/commit/7a0b0cc7e8780fd0eecb7f73154805e9cc88b536))
+
+test_sql_cooperative_deadline_interruption used a 1M-row recursive CTE with --deadline 0.1. On a
+  fast runner the query can finish inside the deadline, so the command exits 0 and the assertion
+  fails (main run 35952079622, windows py3.12: assert 0 == 2). Only the deadline may stop the query,
+  so bound it at max int64 instead.
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.122.2 (2026-09-24)
 
 ### Bug Fixes
