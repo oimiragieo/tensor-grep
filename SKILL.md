@@ -79,7 +79,7 @@ Known current weak spots:
 - In PowerShell, invoke `tg` or `tg.ps1` for regex metacharacters. Direct `tg.cmd` invocation with unescaped `|` is parsed by `cmd.exe` before the batch file receives argv.
 - `tg --version` is one-line by default for scripts; use `tg --version --verbose` for feature/SIMD/Arrow details.
 - Installed help should show `Usage: tg`, not `Usage: python -m tensor_grep`.
-- `impact --symbol` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
+- `impact SYMBOL` can be noisier than `blast-radius`; use `blast-radius` for direct symbol impact.
 - `validation_commands` can be heuristic and should be treated as hints.
 - `validation_plan[]` rows should include `detection` (`detected`, `heuristic`, or `generic`). JavaScript package-manager commands require `package.json` evidence; Python commands require tests, project markers, or Python layout evidence; when no runner evidence exists, emit no command rather than a fake `npm test` or `uv run pytest`.
 - Validation commands must align with the selected primary target language unless verified cross-language dependency evidence exists. `validation_alignment` reports filtered mismatches; do not silently pair a TypeScript primary target with pytest-only validation or a Python primary target with JS-only validation.
