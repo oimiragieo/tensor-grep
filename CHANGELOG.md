@@ -1,6 +1,116 @@
 # CHANGELOG
 
 
+## v1.122.2 (2026-09-24)
+
+### Bug Fixes
+
+- **dogfood**: Outer timeout must bound the whole invoked readiness sequence
+  ([#1176](https://github.com/oimiragieo/tensor-grep/pull/1176),
+  [`cb6abfe`](https://github.com/oimiragieo/tensor-grep/commit/cb6abfefe5ad8d66ecb8490eb19e61be8b9882af))
+
+* fix(dogfood): outer timeout must bound the whole invoked readiness sequence
+
+`tg dogfood`'s outer timeout was a fixed 170s regardless of what the invoked `agent_readiness.py`
+  check plan actually needed, so it could time out before even one of its own steps (e.g.
+  repo-cli-build-warmup alone budgets 240s on Windows).
+
+`scripts/agent_readiness.py` now derives a worst-case timeout budget from the exact check plan it
+  will run (`--print-timeout-budget`), including declared `budget_s` for validator-only checks whose
+  own subprocess loops are not bounded by `timeout_s` alone (the search-flag sweep and the Windows
+  launcher quoted-pattern probe). `tg dogfood` runs that as a separate, bounded (30s) child process
+  -- never importing the script into the parent -- and uses budget + 60s overhead as its outer
+  timeout. An explicit `--timeout-s` still wins; when the budget child fails or emits unparseable
+  JSON, dogfood fails closed (status `error`, reason `timeout_budget_unavailable`) instead of
+  falling back to a hard-coded floor. The wheel/public self-check path is unaffected.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+* fix(dogfood): reject a non-finite readiness budget
+
+Codex Sol audit on PR #1176 (round 1): `_derive_readiness_timeout_s` fed the child's `budget_s`
+  straight into `float(...)` and added the overhead, so a negative, zero, bool, numeric-string, or
+  non-finite (NaN/+-inf) value would either silently produce a useless timeout or crash
+  `subprocess.communicate()` outright (NaN raised `ValueError: Invalid value NaN`; `inf` raised
+  `OverflowError: timestamp out of range`).
+
+`budget_s` is now validated as a genuine JSON number (bool explicitly excluded, since it is an `int`
+  subclass) that is finite and strictly positive before overhead is added; anything else fails
+  closed with `timeout_budget_unavailable`, same as an unparseable child. Parametrized RED-confirmed
+  coverage for -1000, 0, "nan", "inf", true, and "12".
+
+* test(dogfood): make the budget census platform-hermetic
+
+ci-local's Linux container failed PR #1176's
+  test_validator_only_checks_declare_a_budget_covering_their_subprocess_case_count with KeyError:
+  'public-windows-launcher-quoted-patterns' -- that check only exists in the
+
+plan built with IS_WINDOWS=True (build_check_plan gates it behind `if IS_WINDOWS:`), so keying on
+  its name assumed the host running the test was Windows (A85).
+
+The test now forces the IS_WINDOWS seam via monkeypatch and is parametrized over both branches; it
+  asserts a budget only for whichever validator-only checks are actually present in that plan (never
+  a hardcoded name), and separately asserts the census itself isn't vacuous (both known checks are
+  present and checked on IS_WINDOWS=True; the launcher is confirmed ABSENT on IS_WINDOWS=False). The
+  neighboring 170s RED control is parametrized the same way for the same reason. Verified locally
+  with IS_WINDOWS forced False (simulating the Linux container) as well as True.
+
+---------
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+- **repair-env**: A wheel install is not_applicable, not a failure
+  ([#1173](https://github.com/oimiragieo/tensor-grep/pull/1173),
+  [`3e1c980`](https://github.com/oimiragieo/tensor-grep/commit/3e1c98083e6feca7b9fc22e9f64cfcd41d32739a))
+
+* fix(repair-env): a wheel install is not_applicable, not a failure
+
+A PyPI/wheel install has no pyproject.toml to re-sync, which is the normal state -- not an
+  environment defect. tg repair-env now reports status "not_applicable", reason
+  "no_source_checkout", exit 0 (JSON and text mode), keeping the "Nothing to repair" message and `tg
+  upgrade` hint. A source checkout with a non-editable or mismatched install still fails closed:
+  status "failed", exit 1, unchanged.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+* test(repair-env): pin both branches in text and JSON mode
+
+Sol REVISE follow-up: add a text-mode test for the in-checkout non-editable branch (still exit 1
+  with the refusal message), strengthen the wheel text-mode test to assert stdout is not JSON and
+  carries both "Nothing to repair" and "tg upgrade", and assert the "Nothing to repair" message
+  field explicitly in the wheel JSON test.
+
+---------
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Record the 2026-09-23 remediation closeout state
+  ([#1172](https://github.com/oimiragieo/tensor-grep/pull/1172),
+  [`ff1ba2e`](https://github.com/oimiragieo/tensor-grep/commit/ff1ba2e96c214aa7d6d0befd4af5f2d86ead7c8c))
+
+Shipped rows with receipts (PR #1169/v1.122.0, PR #1170/v1.122.1, PR #1171, task #24), five open
+  AI-doable items with their evidence (AST cache identity on Linux, --stats passthrough [stats]
+  line, ci-local env forwarding, tg sql scan-limit default, is_wsl_host in Docker Desktop), the
+  claude-code-hydron handoff, and three next-session ideas.
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+- **skills**: Record the ci-local divergences found on 2026-09-23; count-free wording
+  ([#1171](https://github.com/oimiragieo/tensor-grep/pull/1171),
+  [`bce7755`](https://github.com/oimiragieo/tensor-grep/commit/bce775548dd870d2433cf8274286e2a6d62ada99))
+
+The local-CI harness skill claimed "twelve measured divergences"; the 2026-09-23 session found six
+  more (Docker Desktop WSL2 kernel stamp, Windows autocrlf CRLF fixtures/Markdown, missing Node,
+  PYTEST_ADDOPTS leaking into nested pytest, git worktrees unusable in the container, and no lint
+  lane) plus the addopts `-x` truncation trap. Rows 13-18 record each with its fix; the new `lint`
+  lane is documented. The count is dropped from the skill and from the CLAUDE.md / AGENTS.md index
+  line (kept byte-identical) -- a prose count is a third place to drift.
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.122.1 (2026-09-24)
 
 ### Bug Fixes
