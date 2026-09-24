@@ -381,3 +381,114 @@ def test_sql_over_length_query_rejected_before_the_imports_probe_ever_compiles_i
         f"SQL query exceeds maximum length of 10000 characters (length: {len(over_length_query)})"
     )
     assert calls == [], "an over-length query must never reach the imports-reference probe"
+
+
+def _make_shared_counter_clock(increment: float = 1.0):
+    """A deterministic clock: every call (from ANY caller) advances a shared counter by
+    *increment* and returns the new value. Used to prove the query-deadline clock RESETS right
+    before the real query runs, without any real wall-clock sleep -- the SAME counter is shared
+    across `_run_imports_pass`'s deadline checks and `_install_query_deadline_handler`'s own
+    checks, so "the imports pass consumed N clock ticks" and "the query deadline started counting
+    from tick N" are the exact same number, not two independently-drifting real clocks.
+    """
+    state = {"t": 0.0}
+
+    def clock() -> float:
+        state["t"] += increment
+        return state["t"]
+
+    return clock
+
+
+def _inject_shared_clock_into_pass_and_handler(monkeypatch: pytest.MonkeyPatch, clock) -> None:
+    """Wrap BOTH `_run_imports_pass` and `_install_query_deadline_handler` (this module's own
+    entry points, not `repo_map` symbols -- mind the bare-call ratchet) so every clock read
+    either one performs comes from the SAME shared counter."""
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    real_pass = sql_query_module._run_imports_pass
+    real_install = sql_query_module._install_query_deadline_handler
+
+    def wrapped_pass(*args, **kwargs):
+        kwargs["clock"] = clock
+        return real_pass(*args, **kwargs)
+
+    def wrapped_install(*args, **kwargs):
+        kwargs["clock"] = clock
+        return real_install(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_run_imports_pass", wrapped_pass)
+    monkeypatch.setattr(sql_query_module, "_install_query_deadline_handler", wrapped_install)
+
+
+def test_sql_imports_pass_consuming_more_than_deadline_does_not_interrupt_a_fast_query(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sol audit round 5: the imports pass runs on the SAME connection as the real query, before
+    it. Its own clock reads (many, for a file with many imports) must NOT count against the
+    query's `--deadline` -- the deadline clock is re-installed (reset) right before the real
+    query executes. Deterministic: a shared counter clock proves the reset by construction,
+    not by racing a real sleep against a real deadline."""
+    proj = tmp_path / "proj"
+    lines = "\n".join(f"import mod_{i}" for i in range(30))
+    _write(proj / "many_imports.py", lines + "\n")
+
+    clock = _make_shared_counter_clock(increment=1.0)
+    _inject_shared_clock_into_pass_and_handler(monkeypatch, clock)
+
+    # The imports pass alone reads the shared clock ~31 times (1 file-level check + 30
+    # per-entry checks) -- far more than the query's own `--deadline` of 5 "ticks". A query that
+    # ALSO references `imports` (so the pass actually runs, via the `WHERE` subquery, without a
+    # row-multiplying cross join) but is itself cheap enough to invoke the progress handler only
+    # a handful of times (empirically ~1 call for 100 recursion steps, measured against the real
+    # sqlite3 progress-handler cadence) must still complete successfully: the fresh baseline
+    # installed right before it runs means only ITS OWN ticks count, not the pass's.
+    fast_query_referencing_imports = (
+        "WITH RECURSIVE r(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM r WHERE i < 100), "
+        "bound(n) AS (SELECT count(*) + 999999 FROM imports) "
+        "SELECT count(*) FROM r, bound WHERE r.i < bound.n"
+    )
+    result = runner.invoke(
+        app,
+        [
+            "sql",
+            str(proj),
+            fast_query_referencing_imports,
+            "--json",
+            "--deadline",
+            "5",
+            "--scan-deadline",
+            "30",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload.get("error") is None, payload
+    assert payload["result_incomplete"] is False
+
+
+def test_sql_slow_query_still_interrupted_after_the_deadline_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Sol audit round 5: the reset must not defeat real enforcement -- a query that is ITSELF
+    slow (many progress-handler ticks past the fresh baseline) still gets interrupted. No imports
+    pass involved here (the query never references `imports`), isolating the assertion to the
+    re-installed handler alone."""
+    proj = tmp_path / "proj"
+    _write(proj / "a.py", "def f():\n    pass\n")
+
+    clock = _make_shared_counter_clock(increment=1.0)
+    _inject_shared_clock_into_pass_and_handler(monkeypatch, clock)
+
+    slow_query = (
+        "WITH RECURSIVE r(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM r WHERE i < 1000000) "
+        "SELECT count(*) FROM r"
+    )
+    result = runner.invoke(
+        app,
+        ["sql", str(proj), slow_query, "--json", "--deadline", "5"],
+    )
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["error"] == "query_deadline_exceeded"
+    assert payload["deadline_exceeded"] is True

@@ -160,7 +160,9 @@ def _sql_read_only_authorizer(
 MAX_SQL_PAYLOAD_BYTES: int = 5 * 1024 * 1024
 
 
-def _install_query_deadline_handler(conn: Any, deadline: float) -> dict[str, bool]:
+def _install_query_deadline_handler(
+    conn: Any, deadline: float, *, clock: Any = None
+) -> dict[str, bool]:
     """Install the query-execution deadline as a SQLite progress handler and return the mutable
     ``deadline_tripped`` flag the caller checks after the query completes or raises.
 
@@ -170,14 +172,24 @@ def _install_query_deadline_handler(conn: Any, deadline: float) -> dict[str, boo
     intermediate patch could read as a redeclaration/obscured-declaration.  Exercised by
     ``test_sql_cooperative_deadline_interruption`` (a real recursive CTE against a tight
     ``--deadline``, asserting the exact ``query_deadline_exceeded`` JSON shape and exit 2).
+
+    Sol audit round 5: the caller calls this TWICE on the same connection -- once (discarded
+    result) before the imports-reference probe/pass so THAT work stays bounded, and again right
+    before the real query executes, to give the query its OWN fresh clock baseline. ``clock``
+    (default ``time.monotonic``) is the same test seam `_run_imports_pass` uses, so a test can
+    inject one deterministic counter shared across both this function and `_run_imports_pass` to
+    prove the reset actually happens, without any real wall-clock sleep.
     """
     import time
 
-    query_deadline_monotonic = time.monotonic() + deadline
+    if clock is None:
+        clock = time.monotonic
+
+    query_deadline_monotonic = clock() + deadline
     deadline_tripped = {"hit": False}
 
     def progress_handler() -> int:
-        if time.monotonic() >= query_deadline_monotonic:
+        if clock() >= query_deadline_monotonic:
             deadline_tripped["hit"] = True
             return 1
         return 0
@@ -580,7 +592,14 @@ def sql_command(
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
         conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
 
-        deadline_tripped = _install_query_deadline_handler(conn, deadline)
+        # Sol audit round 5: this FIRST install exists only to bound the detection probe and the
+        # imports pass below (so neither can run unbounded on this connection) -- its own
+        # `deadline_tripped` flag is discarded. The REAL query gets a FRESH clock, re-installed
+        # right before it runs (see the second `_install_query_deadline_handler` call below):
+        # otherwise `--deadline` would silently also have to cover the probe's compile time and
+        # the imports pass's row INSERTs (real SQLite VM steps), shrinking the query's own budget
+        # by however long those happened to take.
+        _install_query_deadline_handler(conn, deadline)
 
         # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
         # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
@@ -632,6 +651,15 @@ def sql_command(
             incomplete_reasons.append("imports_unsupported_files")
 
         conn.set_authorizer(_sql_read_only_authorizer)
+
+        # Sol audit round 5: the guard handler installed above (before the detection probe and
+        # the imports pass, so THAT compile stays bounded) was also the one the REAL query's
+        # `--deadline` was measured against -- so the probe's own compile time, and the imports
+        # pass's row INSERTs (real SQLite VM steps), silently ate into the query's budget before
+        # the query itself ever ran. Re-installing it HERE resets `query_deadline_monotonic` to
+        # start fresh at the moment the real query begins, so `--deadline` bounds only the query,
+        # never the work that happens to run before it on the same connection.
+        deadline_tripped = _install_query_deadline_handler(conn, deadline)
 
         try:
             cursor = conn.execute(query)
