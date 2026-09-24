@@ -445,11 +445,26 @@ def sql_command(
                 break
         return t.upper().startswith(("SELECT", "WITH", "EXPLAIN", "PRAGMA", "VALUES"))
 
+    def _safe_path_exists(candidate: str) -> bool:
+        # ci-local (Linux, Python 3.12) finding: `Path.exists()` swallows ENOENT/ENOTDIR/EBADF
+        # internally, but NOT `ENAMETOOLONG` -- a candidate string longer than the platform's
+        # path-length limit (the over-length-QUERY arm routes a 10,000+ char SQL string through
+        # here as a candidate "path") raises an uncaught `OSError` on Linux that never happens on
+        # Windows (whose own path-length handling differs), so the SAME over-length-query
+        # scenario produced a clean JSON error on Windows and an escaped traceback -- empty
+        # stdout, no JSON to parse -- on Linux. A string that cannot even be STATTED is not a
+        # valid path either way, so this treats any `OSError` here exactly like `Path.exists()`
+        # already treats its own ignored errno list: "doesn't exist".
+        try:
+            return Path(candidate).expanduser().exists()
+        except OSError:
+            return False
+
     if arg2 is None:
         path, query = ".", arg1
     else:
-        p1_exists = Path(arg1).expanduser().exists()
-        p2_exists = Path(arg2).expanduser().exists()
+        p1_exists = _safe_path_exists(arg1)
+        p2_exists = _safe_path_exists(arg2)
         if p1_exists and not p2_exists:
             path, query = arg1, arg2
         elif p2_exists and not p1_exists:
@@ -459,8 +474,18 @@ def sql_command(
         else:
             path, query = arg1, arg2
 
-    target_path = Path(path).expanduser().resolve()
-    if not target_path.exists():
+    target_path = Path(path)
+    try:
+        target_path = target_path.expanduser().resolve()
+        target_path_exists = target_path.exists()
+    except OSError:
+        # Same platform-specific class as `_safe_path_exists` above (e.g. `ENAMETOOLONG` on
+        # Linux, uncaught by `Path.resolve()`/`Path.exists()`): a `path` this routing could not
+        # even stat is not a valid path, on any platform. `target_path` stays bound to the
+        # un-resolved fallback (never read: the `not target_path_exists` branch below always
+        # exits before anything downstream would use it).
+        target_path_exists = False
+    if not target_path_exists:
         err_msg = f"Path not found: {path}"
         if json_output:
             typer.echo(

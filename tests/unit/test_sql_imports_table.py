@@ -375,12 +375,58 @@ def test_sql_over_length_query_rejected_before_the_imports_probe_ever_compiles_i
     assert len(over_length_query) > 10_000
 
     result = runner.invoke(app, ["sql", str(proj), over_length_query, "--json"])
-    assert result.exit_code == 1, result.output
+    # ci-local (Linux, Python 3.12, system sqlite) finding: stdout came back EMPTY here because
+    # `_safe_path_exists`'s predecessor called bare `Path(candidate).exists()` on the
+    # over-length query STRING (routing logic probing "is this arg a path?"), which raises an
+    # uncaught `OSError(ENAMETOOLONG)` on Linux (not in `pathlib._IGNORED_ERRNOS`) but not on
+    # Windows -- self-diagnosing on the next platform-specific instrument failure: dump BOTH
+    # `result.output` (empty stdout reads as nothing here) AND `result.exception`.
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert result.stdout, (
+        "stdout is EMPTY -- an exception likely escaped before any JSON was written; "
+        f"exception={result.exception!r} output={result.output!r}"
+    )
     payload = json.loads(result.stdout)
     assert payload["error"] == (
         f"SQL query exceeds maximum length of 10000 characters (length: {len(over_length_query)})"
     )
     assert calls == [], "an over-length query must never reach the imports-reference probe"
+
+
+def test_sql_path_routing_survives_an_ename_too_long_style_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reproduces the ci-local Linux failure HERMETICALLY, on any platform: `Path.exists()`
+    raising `OSError` for a candidate too long for the OS's path-length limit is exactly the
+    class `pathlib._IGNORED_ERRNOS` does NOT cover (it swallows ENOENT/ENOTDIR/EBADF, not
+    ENAMETOOLONG) -- so the real defect is platform-specific (Linux only) but the fix is
+    verifiable everywhere by injecting the exact OSError Linux raises, rather than trying to
+    grow a real 10,000+ char path on disk."""
+    import errno
+
+    proj = tmp_path / "proj"
+    _write(proj / "a.py", "import os\n")
+
+    over_length_query = "SELECT " + "1," * 5000 + "1"
+
+    real_exists = Path.exists
+
+    def _fake_exists(self, *args, **kwargs):
+        if str(self) == over_length_query:
+            raise OSError(errno.ENAMETOOLONG, "File name too long")
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", _fake_exists)
+
+    result = runner.invoke(app, ["sql", str(proj), over_length_query, "--json"])
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert result.stdout, (
+        f"stdout is EMPTY; exception={result.exception!r} output={result.output!r}"
+    )
+    payload = json.loads(result.stdout)
+    assert payload["error"] == (
+        f"SQL query exceeds maximum length of 10000 characters (length: {len(over_length_query)})"
+    )
 
 
 def _make_shared_counter_clock(increment: float = 1.0):
