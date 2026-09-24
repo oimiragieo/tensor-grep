@@ -475,16 +475,46 @@ def sql_command(
             path, query = arg1, arg2
 
     target_path = Path(path)
+    target_path_unreadable_exc: OSError | None = None
     try:
         target_path = target_path.expanduser().resolve()
         target_path_exists = target_path.exists()
-    except OSError:
-        # Same platform-specific class as `_safe_path_exists` above (e.g. `ENAMETOOLONG` on
-        # Linux, uncaught by `Path.resolve()`/`Path.exists()`): a `path` this routing could not
-        # even stat is not a valid path, on any platform. `target_path` stays bound to the
-        # un-resolved fallback (never read: the `not target_path_exists` branch below always
-        # exits before anything downstream would use it).
+    except OSError as exc:
+        # Sol audit follow-up: the PRIOR blanket `except OSError: target_path_exists = False`
+        # mapped a genuine access failure (PermissionError -- a directory a lower-privileged
+        # user cannot even stat, EACCES is NOT in `pathlib._IGNORED_ERRNOS`) onto the exact same
+        # "Path not found" message as a path that plain doesn't exist, hiding a real
+        # unreadable-path condition behind a wrong-knob diagnosis (the user would try a
+        # different path instead of fixing permissions). Only `_safe_path_exists` above (the
+        # positional path-vs-query ROUTING probe, which never claims to know whether a path is
+        # readable -- it only guesses which argument IS one) keeps the blanket OSError->False
+        # fallback; this FINAL check, on the path the command is actually about to scan,
+        # distinguishes the two.
         target_path_exists = False
+        target_path_unreadable_exc = exc
+    if target_path_unreadable_exc is not None:
+        unreadable_exc = target_path_unreadable_exc
+        err_msg = f"Path unreadable: {path} ({unreadable_exc.strerror or unreadable_exc})"
+        if json_output:
+            typer.echo(
+                json.dumps(
+                    {
+                        "error": "path_unreadable",
+                        "path": str(path),
+                        "errno": unreadable_exc.errno,
+                        "strerror": unreadable_exc.strerror or str(unreadable_exc),
+                        "rows": [],
+                        "count": 0,
+                        "truncated": False,
+                        "result_incomplete": True,
+                        "partial": True,
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            typer.echo(err_msg, err=True)
+        raise typer.Exit(code=2)
     if not target_path_exists:
         err_msg = f"Path not found: {path}"
         if json_output:

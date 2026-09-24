@@ -429,6 +429,66 @@ def test_sql_path_routing_survives_an_ename_too_long_style_os_error(
     )
 
 
+def test_sql_target_path_not_found_stays_exit_1_with_path_not_found(tmp_path: Path) -> None:
+    """Control arm for the split below: a target path that GENUINELY does not exist (ENOENT,
+    already swallowed internally by `Path.exists()` -- it never even reaches our `except
+    OSError` handler) must keep the ORIGINAL `path_not_found` shape and exit code, unaffected by
+    the `path_unreadable` split for real access failures."""
+    missing = tmp_path / "does-not-exist"
+    assert not missing.exists()
+
+    result = runner.invoke(app, ["sql", str(missing), "SELECT 1", "--json"])
+    assert result.exit_code == 1, (result.output, result.exception)
+    assert result.stdout, f"stdout is EMPTY; exception={result.exception!r}"
+    payload = json.loads(result.stdout)
+    assert payload["error"] == f"Path not found: {missing}"
+    assert "errno" not in payload
+
+
+def test_sql_target_path_permission_denied_is_reported_distinctly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sol audit follow-up on e784229: the FINAL target-path check previously mapped ANY
+    `OSError` (including `PermissionError`) to the same `path_not_found` message as a path that
+    plain doesn't exist -- hiding a real access failure behind wrong-knob advice ("try a
+    different path" instead of "fix permissions"). Hermetic (no real chmod, which the routing
+    probe's OWN denial pattern already avoids for the same Windows/root-CI reasons): inject
+    `PermissionError` for `Path.exists()` on the exact resolved target path, scoped to the
+    calling frame (`sql_query.py` only, not the routing probe's `_safe_path_exists`, which stays
+    on the OSError->False fallback deliberately -- see the finding's own instruction)."""
+    import errno
+    import sys
+
+    denied = tmp_path / "denied-dir"
+    denied.mkdir()
+    resolved_target = str(denied.resolve())
+
+    real_exists = Path.exists
+
+    def _fake_exists(self, *args, **kwargs):
+        caller = sys._getframe(1).f_code.co_filename
+        if str(self) == resolved_target and caller.endswith("sql_query.py"):
+            raise PermissionError(errno.EACCES, "Permission denied")
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", _fake_exists)
+
+    json_result = runner.invoke(app, ["sql", str(denied), "SELECT 1", "--json"])
+    assert json_result.exit_code == 2, (json_result.output, json_result.exception)
+    assert json_result.stdout, f"stdout is EMPTY; exception={json_result.exception!r}"
+    payload = json.loads(json_result.stdout)
+    assert payload["error"] == "path_unreadable"
+    assert payload["path"] == str(denied)
+    assert payload["errno"] == errno.EACCES
+    assert payload["strerror"] == "Permission denied"
+    assert payload["result_incomplete"] is True
+
+    text_result = runner.invoke(app, ["sql", str(denied), "SELECT 1"])
+    assert text_result.exit_code == 2, (text_result.output, text_result.exception)
+    assert "Path unreadable" in text_result.output
+    assert "Permission denied" in text_result.output
+
+
 def _make_shared_counter_clock(increment: float = 1.0):
     """A deterministic clock: every call (from ANY caller) advances a shared counter by
     *increment* and returns the new value. Used to prove the query-deadline clock RESETS right
