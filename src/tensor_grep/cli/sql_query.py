@@ -260,6 +260,7 @@ def _run_imports_pass(
     supported_languages: frozenset[str],
     norm_path: Any,
     clock: Any = None,
+    unreadable_hit: Any = None,
 ) -> tuple[list[tuple[str, str, int, str | None]], bool, bool]:
     """The actual `imports` extraction+resolution pass -- ONLY called when
     `_detect_imports_referenced` says the query needs it (perf finding, CEO round 3 on #1175).
@@ -284,6 +285,14 @@ def _run_imports_pass(
     slowing the repo-map SCAN this function is called after; a global `time.monotonic` patch
     (the prior round's approach) taxed both and made "did the cutoff land mid-file" a function of
     real wall-clock timing, not of the exact call the test meant to control.
+
+    ``unreadable_hit`` (silent-loss ratchet fix, ci-local): an optional `repo_map._UnreadablePathFlag`
+    the caller creates and inspects afterward -- the SAME mutable-out-param idiom
+    `inventory.py`/`docs_coverage.py` use for the identical shape (a file the WALK already
+    reported, but whose per-file `stat()` fails mid-pass: unreadable, vanished, or a broken
+    symlink). Before this, that `stat()` failure fell back to `file_size = 0` and kept going,
+    silently treating an unreadable file as "zero imports" instead of "imports not determined" --
+    a truncated `imports` table that still reported `result_incomplete: false`.
     """
     import time
 
@@ -310,8 +319,15 @@ def _run_imports_pass(
             continue
         try:
             file_size = file_path.stat().st_size
-        except OSError:
-            file_size = 0
+        except OSError as exc:
+            # The walk already reported this file, so it is inside the universe `tg sql` claims
+            # to describe -- record it and SKIP, rather than silently substituting `file_size =
+            # 0` and letting the file read as "genuinely has zero imports" (the silent-loss
+            # ratchet's exact class: a loop that accumulates into a reported result must not
+            # swallow a filesystem failure with no signal).
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
+            continue
         if file_size > max_parse_bytes():
             imports_unsupported_files_hit = True
             continue
@@ -393,6 +409,7 @@ def sql_command(
         _imports_with_lines_for_path,
         _infer_project_root,
         _max_parse_bytes,
+        _UnreadablePathFlag,
         build_repo_map,
     )
     from tensor_grep.cli.repo_map import _resolve_raw_import_entry as resolve_raw_import_entry
@@ -617,6 +634,7 @@ def sql_command(
         imports_referenced = _detect_imports_referenced(conn, query)
         imports_deadline_hit = False
         imports_unsupported_files_hit = False
+        imports_unreadable_hit = _UnreadablePathFlag()
         if imports_referenced:
             import_records, imports_deadline_hit, imports_unsupported_files_hit = _run_imports_pass(
                 repo_map,
@@ -628,6 +646,7 @@ def sql_command(
                 resolve_raw_import_entry=resolve_raw_import_entry,
                 supported_languages=_SUPPORTED_FILE_DEPENDENCY_LANGUAGES,
                 norm_path=_norm_path,
+                unreadable_hit=imports_unreadable_hit,
             )
             conn.executemany(
                 "INSERT INTO imports (file, module, line, resolved_file) VALUES (?, ?, ?, ?)",
@@ -635,7 +654,9 @@ def sql_command(
             )
             conn.commit()
 
-        imports_incomplete = imports_deadline_hit or imports_unsupported_files_hit
+        imports_incomplete = (
+            imports_deadline_hit or imports_unsupported_files_hit or imports_unreadable_hit.hit
+        )
 
         # Sol R4: combine BEFORE the text banner, the JSON flag, and the exit-2 gate below -- an
         # imports-only cutoff must read exactly like any other scan incompleteness, not a silent
@@ -656,6 +677,8 @@ def sql_command(
             incomplete_reasons.append("imports_deadline")
         if imports_unsupported_files_hit:
             incomplete_reasons.append("imports_unsupported_files")
+        if imports_unreadable_hit.hit:
+            incomplete_reasons.append("imports_unreadable_files")
 
         conn.set_authorizer(_sql_read_only_authorizer)
 
@@ -791,6 +814,12 @@ def sql_command(
         payload["scan_incomplete"] = True
         payload["scan_truncated"] = True
         payload["incomplete_reason"] = incomplete_reasons
+    if imports_unreadable_hit.hit:
+        # Mirrors inventory.py/docs_coverage.py's `unreadable_paths` shape (#276/#767/#768):
+        # a bounded sample (never unbounded for a tree with thousands of denied paths) plus the
+        # TRUE total count, which can exceed the sample length.
+        payload["unreadable_paths"] = imports_unreadable_hit.sample
+        payload["unreadable_paths_count"] = imports_unreadable_hit.count
 
     if json_output:
         encoded = json.dumps(payload, indent=2).encode("utf-8")

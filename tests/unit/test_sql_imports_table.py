@@ -537,3 +537,73 @@ def test_sql_large_imports_insert_is_never_interrupted_by_the_query_deadline(
     payload = json.loads(result.stdout)
     assert payload["rows"][0]["n"] == 300
     assert payload.get("error") is None
+
+
+def _deny_stat_from_sql_query_only(monkeypatch: pytest.MonkeyPatch, denied_path: Path) -> None:
+    """Hermetic seam injection (not `chmod`, which is unreliable on Windows and CI containers
+    running as root): monkeypatch `Path.stat` itself, scoped to BOTH the exact denied path AND
+    the calling frame (`sql_query.py`) -- mirrors `test_inventory.py`'s
+    `_deny_stat_from_inventory_only`. Scoping to the caller frame reproduces the real defect (the
+    file is walked -- inside the universe `tg sql`'s `imports` table claims to describe -- and a
+    LATER per-file `stat()` fails: the ordinary TOCTOU window of a file deleted or its
+    permissions changed mid-command) without also poisoning `stat()` calls made during the
+    repo-map SCAN (`repo_map.py`/`repo_map_lang_python.py`), which would conflate this failure
+    with an unrelated one.
+    """
+    import os as _os
+    import sys as _sys
+
+    real_stat = Path.stat
+    target = _os.path.abspath(_os.fspath(denied_path))
+
+    def _fake_stat(self, *args, **kwargs):
+        caller = _sys._getframe(1).f_code.co_filename
+        if _os.path.abspath(_os.fspath(self)) == target and caller.endswith("sql_query.py"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", _fake_stat)
+
+
+def test_sql_imports_unreadable_file_is_disclosed_not_silently_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ci-local finding: `_run_imports_pass`'s per-file `stat()` fell back to `file_size = 0` on
+    `OSError` and kept going, silently reading an unreadable/vanished file as "genuinely has zero
+    imports" -- the exact silent-loss class `test_silent_loss_census_ratchet.py` guards (the walk
+    already reported this file, so it is inside the universe the `imports` table claims to
+    describe). Fixed by threading `repo_map._UnreadablePathFlag` through the loop, the same shape
+    `inventory.py`/`docs_coverage.py` already use."""
+    proj = tmp_path / "proj"
+    _write(proj / "good.py", "import os\n")
+    denied = proj / "denied.py"
+    _write(denied, "import sys\n")
+
+    # CONTROL ARM -- both files' imports present, nothing incomplete. If this stops differing
+    # from the treatment arm below, the fixture has stopped discriminating.
+    clean_result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports", "--json"])
+    assert clean_result.exit_code == 0, clean_result.output
+    clean_payload = json.loads(clean_result.stdout)
+    assert {row["module"] for row in clean_payload["rows"]} == {"os", "sys"}
+    assert clean_payload["result_incomplete"] is False
+
+    _deny_stat_from_sql_query_only(monkeypatch, denied)
+
+    json_result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports", "--json"])
+    assert json_result.exit_code == 2, json_result.output
+    payload = json.loads(json_result.stdout)
+    modules = {row["module"] for row in payload["rows"]}
+    assert modules == {"os"}, (
+        "precondition: the denied file's import must actually drop out, otherwise the "
+        f"disclosure below is untested (got {modules})"
+    )
+    assert payload["result_incomplete"] is True
+    assert payload.get("scan_incomplete") is True
+    assert "imports_unreadable_files" in payload["incomplete_reason"]
+    assert payload["unreadable_paths_count"] == 1
+    assert any(Path(p).name == "denied.py" for p in payload["unreadable_paths"])
+
+    text_result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports"])
+    assert text_result.exit_code == 2
+    assert "INCOMPLETE" in text_result.stdout
+    assert "imports table holds" in text_result.stdout
