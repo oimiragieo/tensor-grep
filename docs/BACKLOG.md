@@ -1,5 +1,53 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## Dogfood v1.121.3 remediation -- SHIPPED v1.122.0 / v1.122.1; closeout state (2026-09-23)
+
+**Shipped (verified on the final SHA):**
+
+| Item | Commit / release | Receipt |
+|---|---|---|
+| Remediation + audit corrections (suggestion leak bounded at source, `--paths` repeatable syntax, `tg sql` `--max-repo-files` truncation -> exit 2 + stdout banner, Python `run`/`calibrate` help, unplanned `sidecar.py` change reverted) | PR #1169 -> `3b436fd`, v1.122.0 `59f2d86` | PR CI 38/38; RED-before/GREEN-after for suggestion bounds, sql scan-limit, scan-fixture cache isolation; PyPI 1.122.0 (4 files) dogfooded in a fresh venv |
+| **Task #24** user-visible symptom: `tg search PAT --stats` with `rg` on PATH now names the defaulted scope | in `3b436fd` | strict win32 xfail removed; RED on pre-fix `main.py` with a real `rg`, GREEN after |
+| `repair-env` on a wheel install explains itself instead of blaming a missing file | PR #1170 -> `0be685f`, v1.122.1 `552ba8b` | RED/GREEN; PyPI 1.122.1 (4 files) dogfooded |
+| Suite made host-independent (WSL kernel seam pinned in `tests/conftest.py`; `benchmarks/patch_fixtures/**` + `*.md` eol=lf; bakeoff strips `PYTEST_ADDOPTS`; `nodejs` in ci-local image) + ci-local `lint` lane | in `3b436fd` | full ci-local container run: rust green, python 7864 passed, lint lane green |
+| Harness skill: divergences 13-18, lint lane, `-x` trap; count-free index line | PR #1171 -> `bce7755` | 71 docs/skill gates passed |
+
+**OPEN -- every item AI-doable unless marked:**
+
+1. **AST parsed-source cache identity can collide on Linux** (`backends/ast_backend.py::_build_file_signature`).
+   The key is `(st_dev, st_ino, mtime_ns, ctime_ns, size)`. On Linux ctime comes from a coarse
+   kernel clock and a freed inode is often reused, so an unlink+rewrite inside one tick with the
+   same size and a restored mtime is a byte-identical signature -> stale cached parse. Only the
+   TEST was fixed (`d12201b`, it now builds its own premise). Product fix needs a benchmark
+   (hot path): e.g. verify content hash for small files, or fold a cheap content prefix hash
+   into the key. Deps: tensor-grep-benchmark-and-proof-toolkit (no-speed-claim-without-numbers).
+2. **`--stats` rg passthrough still skips tg's own `[stats]` line and the `--debug` routing echo**
+   (task #24 remainder; documented in the architecture skill's SUPERSEDED note). Decide: emit
+   them around the passthrough, or document the route as rg-native stats only.
+3. **`scripts/ci-local/run.sh` does not forward env**, so the `-x` workaround needs a hand-written
+   `docker run`. Add a passthrough (e.g. `TG_CI_PYTEST_ADDOPTS`) + mirror it in
+   `tests/unit/test_ci_local_harness_parity.py`. Small.
+4. **`tg sql` default `--max-repo-files` is 2000** (shared `_DEFAULT_AGENT_REPO_SCAN_LIMIT`) while
+   the plan text said 1000. Pinned equal to main's constant by a test; decide and record.
+5. **Product: `is_wsl_host()` is true inside any Docker Desktop Linux container** (WSL2 kernel
+   stamp). Consequence for users is limited to Windows-`.exe` path translation, which fails
+   closed via `wslpath`. Consider requiring `/proc/sys/fs/binfmt_misc/WSLInterop` (interop
+   present) for the kernel-stamp fallback. Needs a hermetic test pair.
+
+**Handed off (not tensor-grep):** claude-code-hydron PR #177 (Windows/macOS lanes off pull
+requests + blind-CI fixes) -- taken over by the user 2026-09-23. That repo's `main` CI had not
+executed since its Actions budget was exhausted; 15 wave-13 evidence-pin failures there are stale
+pins of LIVE files and belong to that campaign.
+
+**Ideas for next session:**
+- A gate that every hash-pinned or byte-exact fixture path carries an `eol=lf` attribute
+  (`git check-attr eol`) -- this session found two unpinned families by accident.
+- `scripts/ci-local/run.sh all` could end with a machine-readable summary (per-lane pass/fail/
+  skip counts) so "stopped at 12%" is impossible to misread as "1 failure".
+- Contract-drift sweep: `test_disclosure_covers_every_incompleteness_emitter.py` scans only
+  `main.py` + the split-out modules listed in `_SPLIT_COMMAND_MODULES`; derive that list from
+  `app.registered_commands` instead of maintaining it by hand.
+
 ## Pagination caveat truth — SHIPPED in v1.121.3 (2026-09-22)
 
 The approved `.build/pagination-caveat/PLAN.md` slice shipped in PR #1167: output-only
