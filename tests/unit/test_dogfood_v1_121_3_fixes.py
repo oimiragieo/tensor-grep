@@ -374,7 +374,7 @@ def test_sql_lookahead_truncation_exact_vs_exceeded(sql_test_env: Path) -> None:
 def test_sql_cooperative_deadline_interruption(sql_test_env: Path) -> None:
     """When query exceeds deadline, progress handler triggers exit 2 with all deadline diagnostics."""
     recursive_query = (
-        "WITH RECURSIVE r(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM r WHERE i < 1000000) "
+        "WITH RECURSIVE r(i) AS (VALUES(0) UNION ALL SELECT i+1 FROM r WHERE i < 9223372036854775806) "
         "SELECT count(*) FROM r"
     )
     res_timeout = runner.invoke(
