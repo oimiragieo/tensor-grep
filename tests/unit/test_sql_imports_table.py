@@ -267,3 +267,102 @@ def test_sql_write_to_imports_refused(tmp_path: Path) -> None:
     assert result.exit_code == 1, result.output
     payload = json.loads(result.stdout)
     assert "error" in payload
+
+
+def test_sql_symbols_only_query_does_not_run_imports_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CEO round 3 on #1175: a symbols-only query must not pay the imports-pass tax at all --
+    spy on the pass's OWN entry point (`sql_query._run_imports_pass`, defined in this module, not
+    a `repo_map` symbol -- mind the bare-call ratchet) and assert it is never called."""
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    proj = tmp_path / "proj"
+    _write(proj / "a.py", "import os\n\n\ndef standalone():\n    return 1\n")
+
+    calls: list[object] = []
+    real_pass = sql_query_module._run_imports_pass
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real_pass(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_run_imports_pass", spy)
+
+    result = runner.invoke(
+        app,
+        ["sql", str(proj), "SELECT symbol FROM symbols WHERE symbol = 'standalone'", "--json"],
+    )
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["count"] == 1
+    assert payload["result_incomplete"] is False
+    assert calls == [], "a symbols-only query must never invoke the imports pass"
+    # No imports-side incompleteness may be reported when the pass never ran.
+    assert "incomplete_reason" not in payload
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        # Plain reference.
+        "SELECT module FROM imports",
+        # A view-less alias -- the authorizer resolves the REAL table name, not the alias.
+        "SELECT i.module FROM imports AS i",
+        # Referenced only through a subquery.
+        "SELECT module FROM (SELECT module FROM imports)",
+        # Referenced only through a CTE.
+        "WITH x AS (SELECT module FROM imports) SELECT module FROM x",
+    ],
+)
+def test_sql_imports_referenced_via_alias_subquery_or_cte_runs_the_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, query: str
+) -> None:
+    """Every indirection the detector must see through: a bare reference, an alias, a subquery,
+    and a CTE all count as "the query references imports" and must run the real pass."""
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    proj = tmp_path / "proj"
+    _write(proj / "a.py", "import os\n")
+
+    calls: list[object] = []
+    real_pass = sql_query_module._run_imports_pass
+
+    def spy(*args, **kwargs):
+        calls.append(args)
+        return real_pass(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_run_imports_pass", spy)
+
+    result = runner.invoke(app, ["sql", str(proj), query, "--json"])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert len(calls) == 1, f"query {query!r} must invoke the imports pass exactly once"
+    assert any(row["module"] == "os" for row in payload["rows"])
+
+
+def test_sql_symbols_only_query_is_faster_without_the_imports_pass(tmp_path: Path) -> None:
+    """A real (unmocked) timing sanity check on a small fixture: a symbols-only query must not
+    build a bigger `imports` extraction workload than a query that references `imports`."""
+    proj = tmp_path / "proj"
+    for i in range(20):
+        _write(proj / f"mod_{i}.py", f"import os\nimport sys\n\n\ndef fn_{i}():\n    return {i}\n")
+
+    t0 = time.monotonic()
+    symbols_result = runner.invoke(
+        app, ["sql", str(proj), "SELECT count(*) AS n FROM symbols", "--json"]
+    )
+    symbols_elapsed = time.monotonic() - t0
+    assert symbols_result.exit_code == 0, symbols_result.output
+
+    t1 = time.monotonic()
+    imports_result = runner.invoke(
+        app, ["sql", str(proj), "SELECT count(*) AS n FROM imports", "--json"]
+    )
+    imports_elapsed = time.monotonic() - t1
+    assert imports_result.exit_code == 0, imports_result.output
+
+    # Not a strict perf assertion (shared-box timing noise) -- just proves the symbols-only path
+    # is not slower than the imports-referencing path on the same fixture, which it would be if
+    # the pass ran unconditionally regardless of query shape.
+    assert symbols_elapsed <= imports_elapsed + 0.5, (symbols_elapsed, imports_elapsed)

@@ -160,6 +160,145 @@ def _sql_read_only_authorizer(
 MAX_SQL_PAYLOAD_BYTES: int = 5 * 1024 * 1024
 
 
+def _detect_imports_referenced(conn: Any, query: str) -> bool:
+    """Prepare-only pass: does *query* actually touch the ``imports`` table?
+
+    Perf finding (CEO round 3 on PR #1175): the imports pass added a +90% latency tax to EVERY
+    `tg sql` call, including a bare ``SELECT * FROM symbols`` that never looks at `imports`. A
+    substring/regex check on the query text would be a parser the real SQL grammar can always
+    outrun (a CTE, a subquery, a comment containing the word "imports", a case difference). This
+    instead asks SQLite itself: compile *query* with ``EXPLAIN`` (compiles the real statement,
+    including every subquery/CTE/alias it references, but does not execute the resulting VDBE
+    program) against a connection that already has the `imports` SCHEMA (empty) in place, with an
+    authorizer that records every ``SQLITE_READ`` on table ``"imports"``. The authorizer callback
+    receives SQLite's own resolved table name -- never an alias -- so `FROM imports AS i`, a CTE
+    that selects from `imports`, and a sub-SELECT all resolve to the same `param1 == "imports"`
+    check. Deliberately permissive (always returns ``SQLITE_OK``): this is pure detection, not
+    enforcement -- the real run's `_sql_read_only_authorizer` still gates execution.
+
+    A query that fails to even compile (bad syntax, or some `EXPLAIN`-incompatible shape) is
+    reported as referencing `imports` -- fail TOWARD building the table, never toward silently
+    skipping a real dependency; the real run below will raise the identical error either way.
+    """
+    import sqlite3
+
+    explain_query = query if query.strip().upper().startswith("EXPLAIN") else f"EXPLAIN {query}"
+    referenced = {"hit": False}
+
+    def _detect_authorizer(
+        action: int,
+        param1: str | None,
+        param2: str | None,
+        db_name: str | None,
+        trigger_or_view: str | None,
+    ) -> int:
+        if action == sqlite3.SQLITE_READ and param1 == "imports":
+            referenced["hit"] = True
+        return sqlite3.SQLITE_OK
+
+    conn.set_authorizer(_detect_authorizer)
+    try:
+        conn.execute(explain_query)
+    except sqlite3.Error:
+        referenced["hit"] = True
+    finally:
+        conn.set_authorizer(None)
+    return referenced["hit"]
+
+
+def _run_imports_pass(
+    repo_map: dict[str, Any],
+    deadline_monotonic: float,
+    *,
+    lang_registry_module: Any,
+    imports_with_lines_for_path: Any,
+    infer_project_root: Any,
+    max_parse_bytes: Any,
+    resolve_raw_import_entry: Any,
+    supported_languages: frozenset[str],
+    norm_path: Any,
+) -> tuple[list[tuple[str, str, int, str | None]], bool, bool]:
+    """The actual `imports` extraction+resolution pass -- ONLY called when
+    `_detect_imports_referenced` says the query needs it (perf finding, CEO round 3 on #1175).
+
+    Defined as a MODULE-LEVEL function in `sql_query.py` (not `repo_map.py`) precisely so a test
+    can spy on ITS entry point directly (`monkeypatch.setattr(sql_query, "_run_imports_pass",
+    spy)`) without touching a `repo_map`/`main`/`mcp_server` symbol -- patching one of those three
+    files' own attributes is what `test_bare_call_ratchet.py`'s retired-to-zero pins guard
+    against (a prior round of this same PR re-tripped that ratchet exactly this way).
+
+    Returns ``(import_records, imports_deadline_hit, imports_unsupported_files_hit)``. Line-aware
+    raw extraction comes from `repo_map._imports_with_lines_for_path` (10 supported languages);
+    resolution to a target file comes from `repo_map._resolve_raw_import_entry`, which reports
+    honestly-unresolved (NULL) rather than guessing. Sol audit round 2, finding 4: resolution
+    itself is memoized per (importing-dir, repo-root, language, module, level, dynamic flags) --
+    the same shape recurs constantly across a repo (every file importing `os`/`json`/a shared
+    internal package).
+    """
+    import time
+
+    resolve_cache: dict[tuple[str, str, str, str, int, bool, bool], dict[str, Any]] = {}
+    imports_deadline_hit = False
+    imports_unsupported_files_hit = False
+    import_records: list[tuple[str, str, int, str | None]] = []
+    for file_str in repo_map.get("files", []):
+        if time.monotonic() >= deadline_monotonic:
+            imports_deadline_hit = True
+            break
+        file_path = Path(str(file_str))
+        spec = lang_registry_module.spec_for_path(file_path)
+        if spec is None:
+            # Honestly-unsupported (e.g. Kotlin, or any non-registered-language file) -- never
+            # silently read as "this file has zero imports" (mirrors `build_file_imports`).
+            imports_unsupported_files_hit = True
+            continue
+        if spec.language_id not in supported_languages:
+            imports_unsupported_files_hit = True
+            continue
+        try:
+            file_size = file_path.stat().st_size
+        except OSError:
+            file_size = 0
+        if file_size > max_parse_bytes():
+            imports_unsupported_files_hit = True
+            continue
+        repo_root = infer_project_root(file_path)
+        raw_entries = imports_with_lines_for_path(file_path)
+        file_deadline_hit = False
+        for raw_entry in raw_entries:
+            if time.monotonic() >= deadline_monotonic:
+                imports_deadline_hit = True
+                file_deadline_hit = True
+                break
+            cache_key = (
+                str(file_path.parent),
+                str(repo_root),
+                str(spec.language_id),
+                str(raw_entry.get("module", "")),
+                int(raw_entry.get("level", 0) or 0),
+                bool(raw_entry.get("dynamic", False)),
+                bool(raw_entry.get("dynamic_unresolved", False)),
+            )
+            cached = resolve_cache.get(cache_key)
+            if cached is not None:
+                resolved_entry = cached
+            else:
+                resolved_entry = resolve_raw_import_entry(
+                    file_path, raw_entry, repo_root, str(spec.language_id)
+                )
+                resolve_cache[cache_key] = resolved_entry
+            resolved_file = resolved_entry.get("resolved")
+            import_records.append((
+                norm_path(str(file_path)),
+                str(resolved_entry.get("module", "")),
+                int(raw_entry.get("line", 0) or 0),
+                norm_path(str(resolved_file)) if resolved_file else None,
+            ))
+        if file_deadline_hit:
+            break
+    return import_records, imports_deadline_hit, imports_unsupported_files_hit
+
+
 def sql_command(
     arg1: str = typer.Argument(..., help="Path to search, or SQL query string."),
     arg2: str | None = typer.Argument(None, help="SQL query string (if path was first argument)."),
@@ -359,101 +498,6 @@ def sql_command(
             sig_val,
         ))
 
-    # Task resilient-cooking-cupcake, slice 4: `imports(file, module, line, resolved_file)`.
-    # Owned entirely by this module (Sol R3 finding 2: the shared repo-map payload gains no new
-    # keys) -- a second pass over `repo_map["files"]`, reusing the SAME `deadline_monotonic` the
-    # symbols scan above already respects. Line-aware raw extraction comes from
-    # `repo_map._imports_with_lines_for_path` (10 supported languages); resolution to a target
-    # file comes from `repo_map._resolve_raw_import_entry`, which reports honestly-unresolved
-    # (NULL) rather than guessing.
-    #
-    # Sol audit round 2, finding 4: `_resolve_raw_import_entry` does real filesystem candidate
-    # probing per call, and the same (directory, language, module, level) shape recurs constantly
-    # across a repo (every file importing `os`/`json`/a shared internal package). Memoize the
-    # resolution itself -- not just a cache the caller has to know to consult -- keyed on the
-    # inputs that actually change its answer (the raw entry never carries the importer's own
-    # identity, only its containing directory and inferred project root do).
-    resolve_cache: dict[tuple[str, str, str, str, int, bool, bool], dict[str, Any]] = {}
-    imports_deadline_hit = False
-    imports_unsupported_files_hit = False
-    import_records: list[tuple[str, str, int, str | None]] = []
-    for file_str in repo_map.get("files", []):
-        if time.monotonic() >= deadline_monotonic:
-            imports_deadline_hit = True
-            break
-        file_path = Path(str(file_str))
-        spec = lang_registry.spec_for_path(file_path)
-        if spec is None:
-            # Honestly-unsupported (e.g. Kotlin, or any non-registered-language file) -- never
-            # silently read as "this file has zero imports" (mirrors `build_file_imports`).
-            imports_unsupported_files_hit = True
-            continue
-        if spec.language_id not in _SUPPORTED_FILE_DEPENDENCY_LANGUAGES:
-            imports_unsupported_files_hit = True
-            continue
-        try:
-            file_size = file_path.stat().st_size
-        except OSError:
-            file_size = 0
-        if file_size > _max_parse_bytes():
-            imports_unsupported_files_hit = True
-            continue
-        repo_root = _infer_project_root(file_path)
-        raw_entries = _imports_with_lines_for_path(file_path)
-        file_deadline_hit = False
-        for raw_entry in raw_entries:
-            if time.monotonic() >= deadline_monotonic:
-                imports_deadline_hit = True
-                file_deadline_hit = True
-                break
-            cache_key = (
-                str(file_path.parent),
-                str(repo_root),
-                str(spec.language_id),
-                str(raw_entry.get("module", "")),
-                int(raw_entry.get("level", 0) or 0),
-                bool(raw_entry.get("dynamic", False)),
-                bool(raw_entry.get("dynamic_unresolved", False)),
-            )
-            cached = resolve_cache.get(cache_key)
-            if cached is not None:
-                resolved_entry = cached
-            else:
-                resolved_entry = resolve_raw_import_entry(
-                    file_path, raw_entry, repo_root, str(spec.language_id)
-                )
-                resolve_cache[cache_key] = resolved_entry
-            resolved_file = resolved_entry.get("resolved")
-            import_records.append((
-                _norm_path(str(file_path)),
-                str(resolved_entry.get("module", "")),
-                int(raw_entry.get("line", 0) or 0),
-                _norm_path(str(resolved_file)) if resolved_file else None,
-            ))
-        if file_deadline_hit:
-            break
-
-    imports_incomplete = imports_deadline_hit or imports_unsupported_files_hit
-
-    # Sol R4: combine BEFORE the text banner, the JSON flag, and the exit-2 gate below -- an
-    # imports-only cutoff must read exactly like any other scan incompleteness, not a silent
-    # partial `imports` table under a `result_incomplete: false` payload.
-    scan_incomplete = map_scan_incomplete or imports_incomplete
-
-    # Sol audit round 2, finding 1: a machine-readable `incomplete_reason` list, not just the
-    # human text banner -- an agent branching on JSON must be able to tell "the repo scan itself
-    # was capped" apart from "the imports pass specifically hit its deadline" apart from "some
-    # files were honestly unscannable for imports", since each implies a different remediation.
-    incomplete_reasons: list[str] = []
-    if map_scan_incomplete:
-        incomplete_reasons.append(
-            cli_main._scan_truncation_warning(repo_map) or "repository scan was incomplete"
-        )
-    if imports_deadline_hit:
-        incomplete_reasons.append("imports_deadline")
-    if imports_unsupported_files_hit:
-        incomplete_reasons.append("imports_unsupported_files")
-
     conn = sqlite3.connect(":memory:")
     try:
         conn.execute("""
@@ -486,12 +530,56 @@ def sql_command(
         """)
         conn.execute("CREATE INDEX idx_imports_file ON imports(file);")
         conn.execute("CREATE INDEX idx_imports_module ON imports(module);")
-
-        conn.executemany(
-            "INSERT INTO imports (file, module, line, resolved_file) VALUES (?, ?, ?, ?)",
-            import_records,
-        )
         conn.commit()
+
+        # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
+        # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
+        # `_detect_imports_referenced` asks SQLite's own authorizer whether *query* actually
+        # touches `imports` (through any subquery/CTE/alias) BEFORE running the extraction pass;
+        # `_run_imports_pass` -- the pass itself -- only runs when it does. Per-instruction:
+        # imports incompleteness is reported ONLY when the pass actually ran.
+        imports_referenced = _detect_imports_referenced(conn, query)
+        imports_deadline_hit = False
+        imports_unsupported_files_hit = False
+        if imports_referenced:
+            import_records, imports_deadline_hit, imports_unsupported_files_hit = _run_imports_pass(
+                repo_map,
+                deadline_monotonic,
+                lang_registry_module=lang_registry,
+                imports_with_lines_for_path=_imports_with_lines_for_path,
+                infer_project_root=_infer_project_root,
+                max_parse_bytes=_max_parse_bytes,
+                resolve_raw_import_entry=resolve_raw_import_entry,
+                supported_languages=_SUPPORTED_FILE_DEPENDENCY_LANGUAGES,
+                norm_path=_norm_path,
+            )
+            conn.executemany(
+                "INSERT INTO imports (file, module, line, resolved_file) VALUES (?, ?, ?, ?)",
+                import_records,
+            )
+            conn.commit()
+
+        imports_incomplete = imports_deadline_hit or imports_unsupported_files_hit
+
+        # Sol R4: combine BEFORE the text banner, the JSON flag, and the exit-2 gate below -- an
+        # imports-only cutoff must read exactly like any other scan incompleteness, not a silent
+        # partial `imports` table under a `result_incomplete: false` payload.
+        scan_incomplete = map_scan_incomplete or imports_incomplete
+
+        # Sol audit round 2, finding 1: a machine-readable `incomplete_reason` list, not just the
+        # human text banner -- an agent branching on JSON must be able to tell "the repo scan
+        # itself was capped" apart from "the imports pass specifically hit its deadline" apart
+        # from "some files were honestly unscannable for imports", since each implies a different
+        # remediation.
+        incomplete_reasons: list[str] = []
+        if map_scan_incomplete:
+            incomplete_reasons.append(
+                cli_main._scan_truncation_warning(repo_map) or "repository scan was incomplete"
+            )
+        if imports_deadline_hit:
+            incomplete_reasons.append("imports_deadline")
+        if imports_unsupported_files_hit:
+            incomplete_reasons.append("imports_unsupported_files")
 
         conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
