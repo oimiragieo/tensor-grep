@@ -1,5 +1,49 @@
 # tensor-grep — Project Backlog & PR Tracker
 
+## Dogfood v1.122.1 report remediation -- SHIPPED v1.122.2 / v1.123.0 / v1.123.1 (2026-09-24)
+
+A dogfood report on v1.122.1 was premise-checked against `ff1ba2e` before any build.
+- **Refuted:** `repair-env` "exit 0 with status failed" (it exited 1).
+- **Confirmed:**
+  - dogfood 170s outer timeout < one inner check;
+  - `--symbol` still taught in live docs;
+  - `tg sql` had no imports table.
+
+The plan went through 5 Codex Sol rounds and 2 thinktank rounds before build.
+
+| Item | PR -> commit | Release | Receipt |
+|---|---|---|---|
+| `repair-env` on a wheel install: `status: not_applicable`, `reason: no_source_checkout`, exit 0 (in-checkout failures stay exit 1) | #1173 -> `3e1c980` | 1.122.2 | wheel dogfooded: exit 0, `not_applicable` |
+| `tg dogfood` outer timeout derived out-of-process from the checkout's own check plan (`agent_readiness.py --print-timeout-budget`, retries + validator-only `budget_s`), fail-closed on a bad budget | #1176 -> `cb6abfe` | 1.122.2 | ci-local caught a Linux-only census KeyError; fixed platform-hermetic |
+| Flaky `test_sql_cooperative_deadline_interruption` (1M-row CTE could beat 0.1s) failed main run 35952079622 | #1177 -> `7a0b0cc` | none (`test:`) | query now bounded only by the deadline |
+| Live docs teach positional SYMBOL; drift test guards it; `native_embeddings.md` records model2vec-rs (not tract/ONNX) | #1174 -> `42f6818` | none (`docs:`) | 62 docs/skill gates |
+| `tg sql` `imports(file, module, line, resolved_file)` table, joinable with `symbols` | #1175 -> `49bc89f` | 1.123.0 | 13 Sol rounds; see below |
+| Non-code files (docs/config/text) no longer mark the imports table INCOMPLETE | #1178 -> `6f1d702` | 1.123.1 | found dogfooding the 1.123.0 wheel: one `commands.txt` made every imports query exit 2 |
+
+**What the #1175 audit rounds caught.** Each was a real defect, and the list is kept so the next
+SQL-surface change starts from it:
+- the imports pass added ~90% latency to every query (now built only when the SQLite authorizer
+  sees a read of `imports`);
+- the query `--deadline` clock covered the probe and the table build;
+- limits were applied after the reference probe compiled;
+- files the pass could not read were dropped silently, in two places (stat and read);
+- Linux `ENAMETOOLONG` from `Path.exists()` on an over-length query emptied stdout;
+- a `PermissionError` was reported as "not found".
+
+**Overruled and recorded:** a path through a regular file (`a.txt/b`) reports `path_not_found`
+with exit 1. It does not exist, and `tg search` reports it the same way.
+
+**OPEN from this campaign:**
+1. The repo map does not walk `.sh`/`.rb`/`.scala`, so `tg sql` imports (and `symbols`) never see
+   them. `_IMPORT_BEARING_SUFFIXES` already discloses them if the walk ever does.
+2. Research outcomes, recorded rather than built:
+   - A `--focus` goal-conditioned skimmer (SWE-Pruner, arXiv 2601.16746) is a trained 0.6B
+     model. No paper shows a lexical or AST skim competitive with it, so it is demand-gated.
+   - CodeComp (arXiv 2604.10235) compresses the KV cache and is not portable to a CLI.
+   - model2vec-rs (MIT on GitHub, "non-standard" on crates.io) needs a license check before it
+     is adopted.
+3. The earlier OPEN items 1-5 below are unchanged.
+
 ## Dogfood v1.121.3 remediation -- SHIPPED v1.122.0 / v1.122.1; closeout state (2026-09-23)
 
 **Shipped (verified on the final SHA):**
