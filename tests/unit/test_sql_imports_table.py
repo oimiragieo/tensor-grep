@@ -492,3 +492,48 @@ def test_sql_slow_query_still_interrupted_after_the_deadline_reset(
     payload = json.loads(result.stdout)
     assert payload["error"] == "query_deadline_exceeded"
     assert payload["deadline_exceeded"] is True
+
+
+def test_sql_large_imports_insert_is_never_interrupted_by_the_query_deadline(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sol audit round 6: NO query-deadline progress handler may be live during the imports
+    pass's `executemany`/`commit`. Proof: inject a clock into `_install_query_deadline_handler`
+    that is ALREADY EXPIRED on its very first call. If a handler using that clock were installed
+    before the imports pass (round 5's design), a large INSERT (empirically ~2 real
+    progress-handler ticks for 300 rows, measured with a positive-control script) would raise an
+    UNCAUGHT `sqlite3.OperationalError` from inside the pass -- outside the query's own
+    `except sqlite3.Error` block, which only wraps `conn.execute(query)` below. With the handler
+    installed exactly once, immediately before the real query, this clock cannot affect the pass
+    at all: only the (fast) real query's own execution is bounded by it."""
+    proj = tmp_path / "proj"
+    lines = "\n".join(f"import mod_{i}" for i in range(300))
+    _write(proj / "many_imports.py", lines + "\n")
+
+    def already_expired_clock() -> float:
+        return float("inf")
+
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    real_install = sql_query_module._install_query_deadline_handler
+
+    def wrapped_install(*args, **kwargs):
+        kwargs["clock"] = already_expired_clock
+        return real_install(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_install_query_deadline_handler", wrapped_install)
+
+    # Fast enough to invoke the progress handler ~0 times during the REAL query itself; the point
+    # is to prove the large INSERT (which ran before this handler was even installed) was
+    # unaffected, not to also test the query's own deadline enforcement (that is
+    # `test_sql_slow_query_still_interrupted_after_the_deadline_reset`, above).
+    fast_query = "SELECT count(*) AS n FROM imports"
+    result = runner.invoke(
+        app,
+        ["sql", str(proj), fast_query, "--json", "--deadline", "0.1", "--scan-deadline", "30"],
+    )
+    assert result.exception is None, result.output
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["rows"][0]["n"] == 300
+    assert payload.get("error") is None

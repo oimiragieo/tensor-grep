@@ -173,12 +173,16 @@ def _install_query_deadline_handler(
     ``test_sql_cooperative_deadline_interruption`` (a real recursive CTE against a tight
     ``--deadline``, asserting the exact ``query_deadline_exceeded`` JSON shape and exit 2).
 
-    Sol audit round 5: the caller calls this TWICE on the same connection -- once (discarded
-    result) before the imports-reference probe/pass so THAT work stays bounded, and again right
-    before the real query executes, to give the query its OWN fresh clock baseline. ``clock``
-    (default ``time.monotonic``) is the same test seam `_run_imports_pass` uses, so a test can
-    inject one deterministic counter shared across both this function and `_run_imports_pass` to
-    prove the reset actually happens, without any real wall-clock sleep.
+    Sol audit round 6: the caller installs this EXACTLY ONCE per connection, immediately before
+    the real query runs, and removes it (``conn.set_progress_handler(None, 0)``) right after --
+    never while the imports-reference probe or the imports pass are running (round 5's approach
+    of installing a bounding handler before them, then re-installing a fresh one, still left the
+    FIRST handler live during the imports pass's `executemany`/`commit`, so a large `imports`
+    INSERT could be interrupted by a stale query-deadline clock outside the query's own error
+    handler). The probe is bounded by the `SQL_LENGTH`/`COLUMN` limits instead (it never executes,
+    only compiles); the imports pass is bounded by its own `--scan-deadline` checks. ``clock``
+    (default ``time.monotonic``) is a test seam so a test can inject a deterministic counter
+    without any real wall-clock sleep.
     """
     import time
 
@@ -585,21 +589,24 @@ def sql_command(
         # be in place BEFORE ANY statement is compiled on this connection -- including the
         # `EXPLAIN`-only detection probe below. Applying them only before the REAL execution left
         # `_detect_imports_referenced`'s compile running under SQLite's much larger DEFAULT
-        # limits (unbounded `SQLITE_LIMIT_SQL_LENGTH`, 2000-column `SQLITE_LIMIT_COLUMN`) and with
-        # no progress-handler interrupt at all, so a resource-shaped query could make the
-        # detection compile itself do unbounded work before the connection was ever constrained.
+        # limits (unbounded `SQLITE_LIMIT_SQL_LENGTH`, 2000-column `SQLITE_LIMIT_COLUMN`).
         conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1_000_000)
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
         conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
 
-        # Sol audit round 5: this FIRST install exists only to bound the detection probe and the
-        # imports pass below (so neither can run unbounded on this connection) -- its own
-        # `deadline_tripped` flag is discarded. The REAL query gets a FRESH clock, re-installed
-        # right before it runs (see the second `_install_query_deadline_handler` call below):
-        # otherwise `--deadline` would silently also have to cover the probe's compile time and
-        # the imports pass's row INSERTs (real SQLite VM steps), shrinking the query's own budget
-        # by however long those happened to take.
-        _install_query_deadline_handler(conn, deadline)
+        # Sol audit round 6: NO query-deadline progress handler is installed for the probe or the
+        # imports pass. Round 5's approach (install a handler before the probe to bound it, then
+        # re-install a fresh one before the real query) still left that FIRST handler live during
+        # the imports pass's `executemany`/`commit` -- a large `imports` INSERT is real SQLite VM
+        # work, so it could still be interrupted by a stale query-deadline clock OUTSIDE the
+        # query's own error handler (an uncaught `sqlite3.OperationalError`, not the
+        # `query_deadline_exceeded` JSON shape). The probe needs no progress handler at all: it is
+        # an `EXPLAIN` compile, already bounded by the `SQL_LENGTH`/`COLUMN` limits above (no VM
+        # execution happens). The imports pass needs no progress handler either: it is bounded by
+        # its OWN `deadline_monotonic` (`--scan-deadline`) checks in `_run_imports_pass`, checked
+        # before every file and every resolve call. The query-deadline handler is installed
+        # EXACTLY ONCE, immediately before `conn.execute(query)` below, and removed right after --
+        # so `--deadline` can only ever affect the query it names.
 
         # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
         # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
@@ -652,13 +659,10 @@ def sql_command(
 
         conn.set_authorizer(_sql_read_only_authorizer)
 
-        # Sol audit round 5: the guard handler installed above (before the detection probe and
-        # the imports pass, so THAT compile stays bounded) was also the one the REAL query's
-        # `--deadline` was measured against -- so the probe's own compile time, and the imports
-        # pass's row INSERTs (real SQLite VM steps), silently ate into the query's budget before
-        # the query itself ever ran. Re-installing it HERE resets `query_deadline_monotonic` to
-        # start fresh at the moment the real query begins, so `--deadline` bounds only the query,
-        # never the work that happens to run before it on the same connection.
+        # Sol audit round 6: the query-deadline handler is installed EXACTLY ONCE, immediately
+        # before the real query runs, and removed right after (in the `finally` below) -- never
+        # live during the probe or the imports pass (see the comment above their call sites).
+        # `--deadline` can therefore only ever interrupt the query it names.
         deadline_tripped = _install_query_deadline_handler(conn, deadline)
 
         try:
@@ -764,6 +768,11 @@ def sql_command(
                 else:
                     typer.echo(f"SQL error: {err_msg}", err=True)
                 raise typer.Exit(code=1) from exc
+
+        finally:
+            # Sol audit round 6: remove the handler immediately after the query, regardless of
+            # outcome, so it can never linger and affect anything else on this connection.
+            conn.set_progress_handler(None, 0)
 
     finally:
         conn.close()
