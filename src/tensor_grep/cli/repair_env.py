@@ -68,6 +68,21 @@ def _fail(json_output: bool, start: float, error: str, **extra: Any) -> NoReturn
     raise typer.Exit(code=1)
 
 
+def _not_applicable(json_output: bool, start: float, reason: str, message: str) -> NoReturn:
+    """A wheel/PyPI install has nothing to repair. This is a normal state, not a failure."""
+    if json_output:
+        payload = {
+            "status": "not_applicable",
+            "reason": reason,
+            "message": message,
+            "duration_seconds": round(time.perf_counter() - start, 3),
+        }
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        typer.echo(message)
+    raise typer.Exit(code=0)
+
+
 def repair_env_command(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
@@ -76,9 +91,10 @@ def repair_env_command(
     repo_root = runtime_paths._repo_root()
     if not (repo_root / "pyproject.toml").exists():
         # The normal case for a PyPI/wheel install: there is no source checkout to re-sync.
-        _fail(
+        _not_applicable(
             json_output,
             start,
+            "no_source_checkout",
             "Nothing to repair: tg repair-env re-syncs an EDITABLE source checkout "
             "(`uv pip install -e .`), and this tensor-grep is not one (no pyproject.toml at "
             f"{repo_root}). For a PyPI install, upgrade with `tg upgrade` instead.",
