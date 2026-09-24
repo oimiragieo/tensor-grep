@@ -12,7 +12,43 @@ from typing import Any
 
 import typer
 
-from tensor_grep.cli.inventory import _CODE_SUFFIXES
+from tensor_grep.cli.docs_coverage import _SOURCE_SUFFIXES as _DOCS_SOURCE_SUFFIXES
+from tensor_grep.cli.inventory import _CODE_SUFFIXES as _INVENTORY_CODE_SUFFIXES
+
+# Suffixes of files that can carry imports. A file with no registered language spec counts as
+# an undetermined import set ONLY when it is one of these; docs, config, data and binaries have
+# no imports at all. Union of the repo's existing code-suffix sets plus common scripting and
+# functional languages neither lists (Sol audit on PR #1178: .sh and .rb were missing).
+_IMPORT_BEARING_SUFFIXES = (
+    _INVENTORY_CODE_SUFFIXES
+    | _DOCS_SOURCE_SUFFIXES
+    | frozenset({
+        ".sh",
+        ".bash",
+        ".zsh",
+        ".ps1",
+        ".rb",
+        ".pl",
+        ".pm",
+        ".r",
+        ".jl",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".hs",
+        ".ml",
+        ".clj",
+        ".groovy",
+        ".zig",
+        ".nim",
+        ".elm",
+        ".fs",
+        ".vb",
+        ".sql",
+        ".proto",
+    })
+)
 
 # Mirrors main._DEFAULT_AGENT_REPO_SCAN_LIMIT (asserted equal in the unit tests).
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 2000
@@ -316,7 +352,7 @@ def _run_imports_pass(
             # extract -- disclose it, never read it as "zero imports". A doc/config/text file
             # (README.md, commands.txt, pyproject.toml) has no imports at all: it is outside the
             # table's universe, and flagging it made nearly every real repo report INCOMPLETE.
-            if file_path.suffix.lower() in _CODE_SUFFIXES:
+            if file_path.suffix.lower() in _IMPORT_BEARING_SUFFIXES:
                 imports_unsupported_files_hit = True
             continue
         if spec.language_id not in supported_languages:
