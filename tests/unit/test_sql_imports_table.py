@@ -607,3 +607,67 @@ def test_sql_imports_unreadable_file_is_disclosed_not_silently_zero(
     assert text_result.exit_code == 2
     assert "INCOMPLETE" in text_result.stdout
     assert "imports table holds" in text_result.stdout
+
+
+def _deny_read_bytes_from_sql_query_only(
+    monkeypatch: pytest.MonkeyPatch, denied_path: Path
+) -> None:
+    """Second silent-loss path (Sol follow-up on 844e07f): `repo_map._imports_with_lines_for_path`
+    reads the file itself and returns `[]` on `OSError` -- indistinguishable, to a caller, from
+    "genuinely has zero imports". `stat()` can succeed while the SUBSEQUENT read still fails
+    (TOCTOU, a permission change, a vanished file) -- this fixture denies ONLY `Path.read_bytes`,
+    never `Path.stat`, so the precondition ("stat succeeds but read raises") is real, not assumed.
+    Scoped to the calling frame (`sql_query.py`) exactly like `_deny_stat_from_sql_query_only`, so
+    it cannot poison the repo-map SCAN's own file reads.
+    """
+    import os as _os
+    import sys as _sys
+
+    real_read_bytes = Path.read_bytes
+    target = _os.path.abspath(_os.fspath(denied_path))
+
+    def _fake_read_bytes(self, *args, **kwargs):
+        caller = _sys._getframe(1).f_code.co_filename
+        if _os.path.abspath(_os.fspath(self)) == target and caller.endswith("sql_query.py"):
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_read_bytes(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", _fake_read_bytes)
+
+
+def test_sql_imports_read_failure_after_successful_stat_is_disclosed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Sol follow-up on 844e07f: a read failure AFTER a successful `stat()` must be disclosed
+    exactly like a stat failure -- `_imports_with_lines_for_path`'s own internal `OSError` ->
+    `[]` fallback is invisible to `_run_imports_pass`'s caller, so this pass reads the file
+    itself first (inside the same `OSError` -> `_UnreadablePathFlag` handling) and never reaches
+    the shared helper for a file it could not read."""
+    proj = tmp_path / "proj"
+    _write(proj / "good.py", "import os\n")
+    denied = proj / "denied.py"
+    _write(denied, "import sys\n")
+
+    # CONTROL ARM -- both files' imports present, nothing incomplete.
+    clean_result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports", "--json"])
+    assert clean_result.exit_code == 0, clean_result.output
+    clean_payload = json.loads(clean_result.stdout)
+    assert {row["module"] for row in clean_payload["rows"]} == {"os", "sys"}
+    assert clean_payload["result_incomplete"] is False
+
+    _deny_read_bytes_from_sql_query_only(monkeypatch, denied)
+
+    json_result = runner.invoke(app, ["sql", str(proj), "SELECT module FROM imports", "--json"])
+    assert json_result.exit_code == 2, json_result.output
+    payload = json.loads(json_result.stdout)
+    modules = {row["module"] for row in payload["rows"]}
+    assert modules == {"os"}, (
+        "precondition: stat succeeded (the file is not size-capped/unsupported) but the read "
+        f"still failed and dropped its import, otherwise the disclosure below is untested "
+        f"(got {modules})"
+    )
+    assert payload["result_incomplete"] is True
+    assert payload.get("scan_incomplete") is True
+    assert "imports_unreadable_files" in payload["incomplete_reason"]
+    assert payload["unreadable_paths_count"] == 1
+    assert any(Path(p).name == "denied.py" for p in payload["unreadable_paths"])

@@ -331,6 +331,24 @@ def _run_imports_pass(
         if file_size > max_parse_bytes():
             imports_unsupported_files_hit = True
             continue
+        try:
+            # Sol audit (second silent-loss path): `_imports_with_lines_for_path` (repo_map.py)
+            # reads the file itself and returns `[]` on `OSError` -- indistinguishable from
+            # "genuinely has zero imports" to this caller, and changing that shared helper's
+            # contract would affect its OTHER callers (`build_file_imports`, `tg imports`) that
+            # already handle its `[]` differently. Instead, read the file OURSELVES first, inside
+            # THIS pass's own `OSError` -> `_UnreadablePathFlag` handling (mirrors the `stat()`
+            # probe two lines above -- same failure family, a read succeeding right after a
+            # successful stat is not guaranteed: TOCTOU, a permission change, a vanished file). A
+            # successful read here means the shared helper's OWN internal read will also succeed
+            # (nothing changes the file between the two), so this never masks a genuine parse
+            # failure inside the helper -- it only catches the read failing before the helper
+            # even gets to try.
+            file_path.read_bytes()
+        except OSError as exc:
+            if unreadable_hit is not None:
+                unreadable_hit.record(exc)
+            continue
         repo_root = infer_project_root(file_path)
         raw_entries = imports_with_lines_for_path(file_path)
         file_deadline_hit = False
