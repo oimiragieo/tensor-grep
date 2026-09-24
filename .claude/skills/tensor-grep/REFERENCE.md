@@ -29,6 +29,7 @@ tg route-test REPO_PATH "task query"
 tg prepare REPO_PATH/src "task" --json
 tg ledger claim REPO_PATH --symbol SYMBOL --agent-id AGENT --json
 tg doctor --json
+tg sql REPO_PATH "SELECT symbol, kind FROM symbols WHERE kind='class'" --json
 ```
 
 ## Useful Variants
@@ -162,6 +163,27 @@ tg ledger claim REPO_PATH --symbol SYMBOL --agent-id AGENT --json
 tg ledger list REPO_PATH --json                  # rolls UP to the same canonical store from any subtree PATH
 tg ledger release REPO_PATH --symbol SYMBOL --agent-id AGENT --json   # zero-match release with --claim-id/--symbol emits unmatched_reason + live_claims_elsewhere; bare-path release fails closed
 ```
+
+## Structured SQL (`tg sql`)
+
+`tg sql` runs read-only SQL over an in-memory SQLite sandbox built from the repo scan: a
+`symbols(file, symbol, kind, line, end_line, language, signature)` table and an
+`imports(file, module, line, resolved_file)` table (`resolved_file` is NULL when the import is
+external, or the language's resolver has no manifest to resolve against, e.g. a bare
+`#include <foo.h>`). A read-only authorizer blocks INSERT/DDL/ATTACH and unsafe SQL functions on
+both tables.
+
+```powershell
+tg sql REPO_PATH "SELECT symbol, kind FROM symbols WHERE kind='class'" --json
+tg sql REPO_PATH "SELECT module, count(*) FROM imports GROUP BY module ORDER BY count(*) DESC" --json
+# JOIN symbols and imports on `file` to find which of a file's own symbols use a given import:
+tg sql REPO_PATH "SELECT s.symbol, i.module FROM symbols s JOIN imports i ON s.file = i.file WHERE i.module LIKE '%some_dependency%'" --json
+```
+
+`--scan-deadline` (repo scan, default 30s) bounds BOTH the symbols scan and the imports
+extraction pass; `--deadline` (default 2s) bounds query execution. A deadline hit during either
+scan reports `result_incomplete: true` / `scan_incomplete: true` and exits 2 -- never a silently
+partial table.
 
 ## Known Issues
 
