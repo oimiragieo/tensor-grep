@@ -12,7 +12,6 @@ SAME `--scan-deadline` the symbols pass already respects (Sol R4/R5).
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -149,36 +148,51 @@ def test_sql_imports_unsupported_language_file_flagged(tmp_path: Path) -> None:
     assert "symbols table holds" not in text_result.stdout
 
 
+def _clock_expiring_after(n_unexpired_calls: int):
+    """A deterministic counter clock: returns ``0.0`` (never expired, since `deadline_monotonic`
+    is always a positive real number) for the first *n_unexpired_calls* calls, then ``inf``
+    (always expired) forever after. Independent of `deadline_monotonic`'s actual magnitude, so
+    the test never has to know or control it -- only the CALL COUNT at which the cutoff lands.
+    """
+    state = {"n": 0}
+
+    def clock() -> float:
+        state["n"] += 1
+        return 0.0 if state["n"] <= n_unexpired_calls else float("inf")
+
+    return clock
+
+
+def _inject_imports_clock(monkeypatch: pytest.MonkeyPatch, clock) -> None:
+    """Sol audit round 3 (tests-only): inject the clock ONLY into `_run_imports_pass`, not into
+    `time.monotonic` globally -- a global patch also slows/derails the repo-map SCAN this pass
+    runs after, making "did the cutoff land mid-file" a function of real wall-clock timing rather
+    than of the exact resolve call the test means to control. Wraps `_run_imports_pass` itself
+    (this module's own entry point, not a `repo_map` symbol -- mind the bare-call ratchet) so the
+    real pass logic still runs, just against the deterministic clock instead of `time.monotonic`.
+    """
+    import tensor_grep.cli.sql_query as sql_query_module
+
+    real_pass = sql_query_module._run_imports_pass
+
+    def wrapped(*args, **kwargs):
+        kwargs["clock"] = clock
+        return real_pass(*args, **kwargs)
+
+    monkeypatch.setattr(sql_query_module, "_run_imports_pass", wrapped)
+
+
 def test_sql_imports_deadline_hit_mid_import_pass_is_incomplete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A fake clock that expires AFTER the repo-map build but mid-import-pass must still surface
-    as INCOMPLETE (banner on text, flag on JSON, exit 2 on both) -- Sol R4."""
+    """A clock that is ALREADY expired when the import pass starts (the repo-map build itself
+    runs on the real clock, unaffected) must still surface as INCOMPLETE (banner on text, flag on
+    JSON, exit 2 on both) -- Sol R4."""
     proj = tmp_path / "proj"
     _write(proj / "a.py", "import os\n")
     _write(proj / "b.py", "import sys\n")
 
-    import tensor_grep.cli.repo_map as repo_map_module
-
-    real_monotonic = time.monotonic
-    state = {"map_built": False}
-    # First N calls (repo-map build + the scan-deadline setup) behave normally; once the map is
-    # built, the clock jumps past scan_deadline so the import pass sees it as already expired.
-    real_build_repo_map = repo_map_module.build_repo_map
-
-    def fake_build_repo_map(*args, **kwargs):
-        result = real_build_repo_map(*args, **kwargs)
-        state["map_built"] = True
-        return result
-
-    monkeypatch.setattr(repo_map_module, "build_repo_map", fake_build_repo_map)
-
-    def fake_monotonic() -> float:
-        if state["map_built"]:
-            return real_monotonic() + 10_000.0
-        return real_monotonic()
-
-    monkeypatch.setattr(time, "monotonic", fake_monotonic)
+    _inject_imports_clock(monkeypatch, _clock_expiring_after(0))
 
     json_result = runner.invoke(
         app,
@@ -189,8 +203,9 @@ def test_sql_imports_deadline_hit_mid_import_pass_is_incomplete(
     assert payload["result_incomplete"] is True
     assert payload.get("scan_incomplete") is True
     assert "imports_deadline" in payload["incomplete_reason"]
+    # The pass expired before resolving anything.
+    assert payload["count"] == 0
 
-    state["map_built"] = False
     text_result = runner.invoke(
         app, ["sql", str(proj), "SELECT * FROM imports", "--scan-deadline", "30"]
     )
@@ -201,37 +216,31 @@ def test_sql_imports_deadline_hit_mid_import_pass_is_incomplete(
 def test_sql_imports_deadline_hit_within_a_single_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A cutoff can land WITHIN one file's own import list (between two
-    `_resolve_raw_import_entry` calls for the SAME file), not only between files (Sol R5)."""
+    """A cutoff can land WITHIN one file's own import list (between two resolve calls for the
+    SAME file), not only between files (Sol R5) -- driven by an exact, deterministic call count,
+    not a real sleep racing a real deadline (Sol audit round 3)."""
     proj = tmp_path / "proj"
     lines = "\n".join(f"import mod_{i}" for i in range(60))
     _write(proj / "many_imports.py", lines + "\ndef marker_symbol():\n    pass\n")
 
-    # A real wall-clock cost is charged to EVERY `time.monotonic()` call (not to any repo_map
-    # symbol -- patching `_resolve_raw_import_entry` directly re-trips
-    # `test_bare_call_ratchet.py`'s retired-to-zero pin for `repo_map.py`, since
-    # `build_file_imports` still calls it as a bare name; `time.monotonic` is stdlib and
-    # untouched by that ratchet). The import loop below calls `time.monotonic()` once per raw
-    # entry, so this reliably lands the cutoff partway through the ONE file's 60 imports, not
-    # between files.
-    real_monotonic = time.monotonic
-
-    def slow_monotonic() -> float:
-        time.sleep(0.03)
-        return real_monotonic()
-
-    monkeypatch.setattr(time, "monotonic", slow_monotonic)
+    # Call sequence inside `_run_imports_pass` for this ONE-file fixture: call #1 is the
+    # file-level deadline check, then one call per raw entry BEFORE it is resolved. Allowing
+    # exactly 21 unexpired calls (the file check + 20 per-entry checks) lets entries 0..19
+    # resolve, then expires on the 21st entry's check (raw index 20) -- landing the cutoff
+    # provably mid-file, never at a file boundary.
+    _inject_imports_clock(monkeypatch, _clock_expiring_after(21))
 
     json_result = runner.invoke(
         app,
-        ["sql", str(proj), "SELECT * FROM imports", "--json", "--scan-deadline", "1"],
+        ["sql", str(proj), "SELECT * FROM imports", "--json", "--scan-deadline", "30"],
     )
     assert json_result.exit_code == 2, json_result.output
     payload = json.loads(json_result.stdout)
     assert payload["result_incomplete"] is True
-    # Proves the repo-map BUILD (which runs before the import pass, and is unaffected by the
-    # patched resolver) reached this file at all -- `marker_symbol` only exists in the payload if
-    # the symbols scan of `many_imports.py` completed before the cutoff hit the import pass.
+    assert "imports_deadline" in payload["incomplete_reason"]
+    # Proves the repo-map BUILD (which runs on the REAL clock, before the import pass, and is
+    # never touched by the injected clock) reached this file at all -- `marker_symbol` only
+    # exists in the payload if the symbols scan of `many_imports.py` completed.
     symbols_result = runner.invoke(
         app,
         [
@@ -245,9 +254,8 @@ def test_sql_imports_deadline_hit_within_a_single_file(
     )
     symbols_payload = json.loads(symbols_result.stdout)
     assert symbols_payload["count"] == 1, symbols_payload
-    # Because the cutoff landed mid-file, resolution STARTED (>=1 row) but did not finish
-    # (<60 rows) -- neither "never began" nor "ran to completion" would satisfy both bounds.
-    assert 0 < payload["count"] < 60, payload
+    # Deterministic, exact: 20 of the 60 entries resolved before the cutoff -- not merely "some".
+    assert payload["count"] == 20, payload
 
 
 def test_sql_write_to_imports_refused(tmp_path: Path) -> None:
@@ -339,30 +347,3 @@ def test_sql_imports_referenced_via_alias_subquery_or_cte_runs_the_pass(
     payload = json.loads(result.stdout)
     assert len(calls) == 1, f"query {query!r} must invoke the imports pass exactly once"
     assert any(row["module"] == "os" for row in payload["rows"])
-
-
-def test_sql_symbols_only_query_is_faster_without_the_imports_pass(tmp_path: Path) -> None:
-    """A real (unmocked) timing sanity check on a small fixture: a symbols-only query must not
-    build a bigger `imports` extraction workload than a query that references `imports`."""
-    proj = tmp_path / "proj"
-    for i in range(20):
-        _write(proj / f"mod_{i}.py", f"import os\nimport sys\n\n\ndef fn_{i}():\n    return {i}\n")
-
-    t0 = time.monotonic()
-    symbols_result = runner.invoke(
-        app, ["sql", str(proj), "SELECT count(*) AS n FROM symbols", "--json"]
-    )
-    symbols_elapsed = time.monotonic() - t0
-    assert symbols_result.exit_code == 0, symbols_result.output
-
-    t1 = time.monotonic()
-    imports_result = runner.invoke(
-        app, ["sql", str(proj), "SELECT count(*) AS n FROM imports", "--json"]
-    )
-    imports_elapsed = time.monotonic() - t1
-    assert imports_result.exit_code == 0, imports_result.output
-
-    # Not a strict perf assertion (shared-box timing noise) -- just proves the symbols-only path
-    # is not slower than the imports-referencing path on the same fixture, which it would be if
-    # the pass ran unconditionally regardless of query shape.
-    assert symbols_elapsed <= imports_elapsed + 0.5, (symbols_elapsed, imports_elapsed)

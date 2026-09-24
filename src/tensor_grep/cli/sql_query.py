@@ -217,6 +217,7 @@ def _run_imports_pass(
     resolve_raw_import_entry: Any,
     supported_languages: frozenset[str],
     norm_path: Any,
+    clock: Any = None,
 ) -> tuple[list[tuple[str, str, int, str | None]], bool, bool]:
     """The actual `imports` extraction+resolution pass -- ONLY called when
     `_detect_imports_referenced` says the query needs it (perf finding, CEO round 3 on #1175).
@@ -234,15 +235,25 @@ def _run_imports_pass(
     itself is memoized per (importing-dir, repo-root, language, module, level, dynamic flags) --
     the same shape recurs constantly across a repo (every file importing `os`/`json`/a shared
     internal package).
+
+    ``clock`` (Sol audit round 3, tests-only finding): a zero-arg callable returning a float,
+    defaulting to `time.monotonic`. Injecting the clock HERE -- scoped to only this pass -- lets a
+    test drive a deterministic counter (expire after exactly N resolve calls) without also
+    slowing the repo-map SCAN this function is called after; a global `time.monotonic` patch
+    (the prior round's approach) taxed both and made "did the cutoff land mid-file" a function of
+    real wall-clock timing, not of the exact call the test meant to control.
     """
     import time
+
+    if clock is None:
+        clock = time.monotonic
 
     resolve_cache: dict[tuple[str, str, str, str, int, bool, bool], dict[str, Any]] = {}
     imports_deadline_hit = False
     imports_unsupported_files_hit = False
     import_records: list[tuple[str, str, int, str | None]] = []
     for file_str in repo_map.get("files", []):
-        if time.monotonic() >= deadline_monotonic:
+        if clock() >= deadline_monotonic:
             imports_deadline_hit = True
             break
         file_path = Path(str(file_str))
@@ -266,7 +277,7 @@ def _run_imports_pass(
         raw_entries = imports_with_lines_for_path(file_path)
         file_deadline_hit = False
         for raw_entry in raw_entries:
-            if time.monotonic() >= deadline_monotonic:
+            if clock() >= deadline_monotonic:
                 imports_deadline_hit = True
                 file_deadline_hit = True
                 break
