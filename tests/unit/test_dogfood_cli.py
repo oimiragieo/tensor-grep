@@ -8,6 +8,17 @@ from typer.testing import CliRunner
 from tensor_grep.cli import dogfood as dogfood_module
 from tensor_grep.cli.main import app
 
+# Every fake agent_readiness.py fixture below must answer `--print-timeout-budget` (dogfood
+# derives its outer timeout from this before running the real invocation), or the derive step
+# fails closed and the fixture's real assertions never get exercised.
+_FAKE_READINESS_BUDGET_PRELUDE = [
+    "import sys",
+    "if '--print-timeout-budget' in sys.argv:",
+    "    import json as _json",
+    "    print(_json.dumps({'budget_s': 5}))",
+    "    raise SystemExit(0)",
+]
+
 
 def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
     scripts_dir = tmp_path / "scripts"
@@ -15,8 +26,8 @@ def test_dogfood_command_wraps_agent_readiness_report(tmp_path: Path) -> None:
     script = scripts_dir / "agent_readiness.py"
     script.write_text(
         "\n".join([
+            *_FAKE_READINESS_BUDGET_PRELUDE,
             "import json",
-            "import sys",
             "payload = {",
             "  'artifact': 'agent_readiness_report',",
             "  'expected_version': '9.9.9',",
@@ -136,6 +147,7 @@ def test_dogfood_command_returns_failure_when_readiness_fails(tmp_path: Path) ->
     script = scripts_dir / "agent_readiness.py"
     script.write_text(
         "\n".join([
+            *_FAKE_READINESS_BUDGET_PRELUDE,
             "import json",
             "payload = {",
             "  'artifact': 'agent_readiness_report',",
@@ -228,6 +240,7 @@ def test_dogfood_timeout_writes_partial_report_and_kills_process_tree(
     assert timeout_result["name"] == "agent-readiness-timeout"
     assert "timed out after 0.01s" in timeout_result["message"]
     assert timeout_result["killed_process_ids"] == [4242, 5000]
+    assert payload["timeout_source"] == "explicit"
 
 
 def test_dogfood_non_repo_root_uses_public_self_check(tmp_path: Path) -> None:
@@ -270,6 +283,7 @@ def test_dogfood_json_progress_always_uses_stderr_only(tmp_path: Path) -> None:
     script = scripts_dir / "agent_readiness.py"
     script.write_text(
         "\n".join([
+            *_FAKE_READINESS_BUDGET_PRELUDE,
             "import json",
             "payload = {",
             "  'artifact': 'agent_readiness_report',",
@@ -313,7 +327,7 @@ def test_dogfood_command_caps_nested_readiness_tails(tmp_path: Path) -> None:
     giant = "z" * 9000
     script.write_text(
         "\n".join([
-            "import sys",
+            *_FAKE_READINESS_BUDGET_PRELUDE,
             f"print({giant!r})",
             f"print({giant!r}, file=sys.stderr)",
         ]),
@@ -407,3 +421,159 @@ def test_write_json_atomic_overwrite_of_a_regular_file_still_succeeds(tmp_path: 
     dogfood_module._write_json_atomic(dest, {"new": True})
 
     assert json.loads(dest.read_text(encoding="utf-8")) == {"new": True}
+
+
+# ---------------------------------------------------------------------------
+# dogfood v1.122.1 remediation slice 1: the outer timeout must be DERIVED from
+# `scripts/agent_readiness.py --print-timeout-budget`, never a fixed 170s, and dogfood
+# must fail CLOSED (never fall back to a hard-coded floor) when that derivation fails.
+# ---------------------------------------------------------------------------
+
+
+def test_run_dogfood_readiness_derives_timeout_from_the_readiness_script(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    script.write_text(
+        "\n".join([
+            "import json",
+            "import sys",
+            "if '--print-timeout-budget' in sys.argv:",
+            "    print(json.dumps({'budget_s': 12.5}))",
+            "    raise SystemExit(0)",
+            "payload = {",
+            "  'artifact': 'agent_readiness_report',",
+            "  'expected_version': '9.9.9',",
+            "  'root': sys.argv[sys.argv.index('--root') + 1],",
+            "  'summary': {'passed': 1, 'failed': 0, 'skipped': 0},",
+            "  'results': [],",
+            "}",
+            "print(json.dumps(payload))",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+    )
+
+    assert exit_code == 0
+    assert report["timeout_source"] == "derived"
+    assert report["verdict"]["status"] == "PASS"
+
+
+def test_run_dogfood_readiness_fails_closed_when_the_budget_child_exits_nonzero(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    script.write_text(
+        "\n".join([
+            "import sys",
+            "if '--print-timeout-budget' in sys.argv:",
+            "    sys.exit(3)",
+            "sys.exit(0)",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+    )
+
+    assert exit_code == 1
+    assert report["timeout_source"] == "derived"
+    assert report["agent_readiness"]["status"] == "error"
+    failed = report["agent_readiness"]["results"][0]
+    assert failed["reason"] == "timeout_budget_unavailable"
+    assert "--timeout-s" in failed["hint"]
+    assert report["verdict"]["status"] == "FAIL"
+
+
+def test_run_dogfood_readiness_fails_closed_when_the_budget_child_emits_bad_json(
+    tmp_path: Path,
+) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    script.write_text(
+        "\n".join([
+            "import sys",
+            "if '--print-timeout-budget' in sys.argv:",
+            "    print('not json')",
+            "    sys.exit(0)",
+            "sys.exit(0)",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+    )
+
+    assert exit_code == 1
+    assert report["agent_readiness"]["results"][0]["reason"] == "timeout_budget_unavailable"
+
+
+def test_explicit_timeout_s_skips_derivation_entirely(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    script = scripts_dir / "agent_readiness.py"
+    # No --print-timeout-budget handling at all: if the derive step were invoked, this
+    # would crash the child and dogfood would fail closed. Explicit timeout_s must never
+    # reach it.
+    script.write_text(
+        "\n".join([
+            "import json",
+            "payload = {",
+            "  'artifact': 'agent_readiness_report',",
+            "  'expected_version': '9.9.9',",
+            "  'root': '.',",
+            "  'summary': {'passed': 1, 'failed': 0, 'skipped': 0},",
+            "  'results': [],",
+            "}",
+            "print(json.dumps(payload))",
+        ]),
+        encoding="utf-8",
+    )
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=tmp_path,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+        timeout_s=45.0,
+    )
+
+    assert exit_code == 0
+    assert report["timeout_source"] == "explicit"
+
+
+def test_public_self_check_path_reports_timeout_source(tmp_path: Path) -> None:
+    non_repo_root = tmp_path / "user-project"
+    non_repo_root.mkdir()
+
+    exit_code, report = dogfood_module.run_dogfood_readiness(
+        root=non_repo_root,
+        include_shell_probes=False,
+        include_wsl_probe=False,
+        progress_mode="never",
+        json_output=True,
+    )
+
+    assert exit_code == 0
+    assert report["timeout_source"] == "public_self_check"
