@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.122.1 (2026-09-24)
+
+### Bug Fixes
+
+- **repair-env**: Explain that a wheel install has nothing to repair
+  ([#1170](https://github.com/oimiragieo/tensor-grep/pull/1170),
+  [`0be685f`](https://github.com/oimiragieo/tensor-grep/commit/0be685fedb29482804c1d80b69d7eaa15ed5f5fc))
+
+Dogfooding the published 1.122.0 wheel: `tg repair-env` on a normal PyPI install refused with
+  "pyproject.toml not found at <site-packages>/..", which reads like a broken environment. A wheel
+  install is the ordinary case -- repair-env only applies to an editable source checkout -- so the
+  refusal now says so and points at `tg upgrade`. Behaviour (fail-closed, exit 1) is unchanged.
+  Regression test was RED on the old message, GREEN after.
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.122.0 (2026-09-23)
 
 ### Documentation
