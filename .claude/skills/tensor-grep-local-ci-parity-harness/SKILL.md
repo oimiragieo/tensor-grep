@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-local-ci-parity-harness
-description: Use when you need to run a CI lane locally that this repo's shared-box rules forbid (cargo test, tests/e2e/test_routing_parity.py, a full pytest matrix), when building or debugging scripts/ci-local/, when a local container run and the GitHub run disagree, or when deciding between nektos/act and a hand-written harness. Covers the twelve measured container-vs-runner divergences, the CPU-cap discipline that makes local lanes acceptable on a shared machine, and the anti-drift gate that keeps a second CI definition honest. DO NOT USE for diagnosing a genuinely red CI job (tensor-grep-debugging-playbook), for deciding what counts as proof a change works (tensor-grep-validation-and-qa), or for release/publish mechanics (tensor-grep-release-and-positioning).
+description: Use when you need to run a CI lane locally that this repo's shared-box rules forbid (cargo test, tests/e2e/test_routing_parity.py, a full pytest matrix), when building or debugging scripts/ci-local/, when a local container run and the GitHub run disagree, or when deciding between nektos/act and a hand-written harness. Covers the measured container-vs-runner divergences (count deliberately not stated -- it grows), the CPU-cap discipline that makes local lanes acceptable on a shared machine, and the anti-drift gate that keeps a second CI definition honest. DO NOT USE for diagnosing a genuinely red CI job (tensor-grep-debugging-playbook), for deciding what counts as proof a change works (tensor-grep-validation-and-qa), or for release/publish mechanics (tensor-grep-release-and-positioning).
 ---
 
 # tensor-grep: local CI-parity harness
@@ -26,11 +26,17 @@ use it, why each piece is shaped the way it is, and the ways a local harness lie
 ## 1. Run it
 
 ```bash
-scripts/ci-local/run.sh            # both lanes
+scripts/ci-local/run.sh            # lint + rust + python (`all`)
+scripts/ci-local/run.sh lint       # ruff check/format, mypy, cargo fmt, clippy (ci.yml's lint job)
 scripts/ci-local/run.sh rust       # cargo test only
 scripts/ci-local/run.sh python     # pytest only
 TG_CI_CPUS=2 scripts/ci-local/run.sh   # lower the cap while someone else needs the box
 ```
+
+**pyproject's `addopts` carries `-x`**, so a python lane STOPS at its first failure -- on
+2026-09-23 that meant 12% of the suite ran and "1 failed" hid 12 real gate regressions. For
+a full census run the container directly with
+`-e PYTEST_ADDOPTS=--maxfail=100000` (run.sh does not forward env).
 
 Default cap is **4 of 16 cores**. The cap is a REAL but PARTIAL mitigation: a cgroup CPU quota
 bounds CPU time only — **not** disk I/O, page-cache pressure, memory bandwidth, or Docker
@@ -60,7 +66,7 @@ fidelity problem rather than removing it, and the primary sources say so:
 Whichever you use, the divergence catalogue in §3 still applies — every entry was measured in a
 container, and most are properties of containers, not of this particular harness.
 
-## 3. The twelve measured divergences (a container-vs-runner checklist)
+## 3. The measured divergences (a container-vs-runner checklist)
 
 Each was hit while getting this harness green. Phrased as the general trap, with the general tell.
 
@@ -78,11 +84,21 @@ Each was hit while getting this harness green. Phrased as the general trap, with
 | 10 | **An out-of-tree `CARGO_TARGET_DIR` breaks path-relative product logic** | `PYTHONPATH=[]`; `resolve_repo_source_root_relative_to_exe` walks up FROM THE BINARY | keep the target dir repo-relative; mount a volume OVER it |
 | 11 | **An ambient env var turns a fail-closed test green** | a test that must exit 2 exits 0 | export nothing the CI job does not export |
 | 12 | A shared cargo-target volume makes a native binary visible to the PYTHON lane | tests CI SKIPS (`_skip_if_native_binary_missing`) suddenly RUN, then fail on a missing tool | expect it; scope any extra install to the lane that needs it |
+| 13 | **Docker Desktop runs the WSL2 kernel** | `/proc/version` says `microsoft-standard-WSL2`, so `is_wsl_host()` is true in EVERY container; 11 non-WSL tests failed (`path_domain_mismatch`) | `tests/conftest.py` pins `runtime_paths._kernel_reports_wsl` off; tests of the fallback opt back into the real function |
+| 14 | **Windows `autocrlf` writes CRLF into the bind-mounted tree** | byte-exact fixtures stop applying (patch bakeoff 7/12); `ruff format --preview .` flags CRLF Markdown the committed LF blob does not have | pin to LF in `.gitattributes` (`*.md`, `benchmarks/patch_fixtures/**`), then re-checkout the files |
+| 15 | The image lacks a tool the GitHub runner ships (Node) | `node --test` validations score 0 | install it in the Dockerfile (`nodejs`) |
+| 16 | **Your own `PYTEST_ADDOPTS` leaks into a NESTED pytest** | a subprocess `pytest -q` inherits your `-k` and collects nothing (exit 5), or re-runs your suite | code that shells out to pytest strips `PYTEST_ADDOPTS` (the bakeoff now does) |
+| 17 | A `git worktree` is useless inside the container | its `.git` is a pointer FILE to a Windows path -> every git-dependent test errors at collection | compare against HEAD with `git clone --no-local` instead |
+| 18 | The default lanes never ran Formatting & Linting | a green `all` shipped a `cargo fmt` failure to a PR | the `lint` lane (now part of `all`) mirrors ci.yml's lint job, incl. mypy |
 
 **The meta-lesson:** every one of these produced a WRONG VERDICT, not an error message —
 green-when-CI-would-be-red, or red-when-CI-is-green. A local harness is an instrument, and
 [[tensor-grep-validation-and-qa]]'s rule applies to it: *what would this show if the thing it
 verifies were broken?*
+
+**"Fails on clean HEAD too" proves PRE-EXISTING, not UNFIXABLE.** On 2026-09-23 all 13 such
+container-only failures had fixable causes (rows 13-17) and one was a real product bug
+(task #24, the `--stats` scope note).
 
 ## 4. Known local-only failures (do NOT "fix" the product for these)
 
