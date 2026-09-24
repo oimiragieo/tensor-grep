@@ -10537,10 +10537,10 @@ def dogfood(
         "--progress-interval-s",
         help="Seconds between progress heartbeats for the active phase.",
     ),
-    timeout_s: float = typer.Option(
-        170.0,
+    timeout_s: float | None = typer.Option(
+        None,
         "--timeout-s",
-        help="Maximum seconds for the nested agent-readiness process before partial failure output.",
+        help="Maximum seconds for the nested readiness process; defaults to a derived budget.",
     ),
     no_shell_probes: bool = typer.Option(
         False, "--no-shell-probes", help="Skip public shell version probes."
@@ -10555,7 +10555,7 @@ def dogfood(
         progress_mode = normalize_progress_mode(progress)
         if progress_interval_s <= 0:
             raise ValueError("progress interval must be greater than 0")
-        if timeout_s <= 0:
+        if timeout_s is not None and timeout_s <= 0:
             raise ValueError("dogfood timeout must be greater than 0")
     except ValueError as exc:
         typer.echo(str(exc), err=True)
