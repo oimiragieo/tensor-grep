@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.123.1 (2026-09-24)
+
+### Bug Fixes
+
+- **sql**: Non-code files no longer mark the imports table incomplete
+  ([#1178](https://github.com/oimiragieo/tensor-grep/pull/1178),
+  [`6f1d702`](https://github.com/oimiragieo/tensor-grep/commit/6f1d702ef9849cf9a2a66e925fa86caa914cb711))
+
+* fix(sql): non-code files no longer mark the imports table incomplete
+
+Dogfooding the published 1.123.0 wheel against src/tensor_grep/cli: one commands.txt made every
+  imports query report result_incomplete with incomplete_reason imports_unsupported_files and exit
+  2, so nearly every real repository read as partial. A file with no registered language spec now
+  counts as unsupported only when its suffix is a code suffix (inventory._CODE_SUFFIXES, e.g. .kt);
+  README/config/text files have no imports and are outside the table's universe.
+
+Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+* fix(sql): widen the import-bearing suffix set
+
+Sol audit on #1178: a code file in an unregistered language whose suffix was missing from
+  inventory._CODE_SUFFIXES (e.g. .rb) would read as zero imports. Use the union of the repo's
+  code-suffix sets plus common scripting languages. (The repo map does not currently walk
+  .sh/.rb/.scala, so this is defensive for when it does.)
+
+---------
+
+Co-authored-by: Claude Opus 5.5 (1M context) <noreply@anthropic.com>
+
+
 ## v1.123.0 (2026-09-24)
 
 ### Documentation
