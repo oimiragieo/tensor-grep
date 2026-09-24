@@ -460,6 +460,30 @@ def sql_command(
         except OSError:
             return False
 
+    def _classify_target_path_error(exc: OSError) -> str:
+        # Sol audit follow-up: split the final target-path `OSError` by errno rather than
+        # reporting every non-ENOENT failure as "unreadable" -- a permission failure and a
+        # malformed path string are different problems with different fixes (chmod/sudo vs.
+        # "that path is not valid on this OS"), and lumping them together would send the reader
+        # to fix permissions on a path that was never going to resolve regardless.
+        import errno as _errno
+
+        access_errnos = {_errno.EACCES, _errno.EPERM}
+        invalid_errnos = {_errno.ENAMETOOLONG, _errno.EINVAL, _errno.ELOOP, _errno.ENOTDIR}
+        if exc.errno in access_errnos:
+            return "path_unreadable"
+        if exc.errno in invalid_errnos:
+            return "invalid_path"
+        # Windows reports the same "malformed path string" family through `winerror`, not
+        # `errno`: 123 = ERROR_INVALID_NAME, 206 = ERROR_FILENAME_EXCED_RANGE.
+        if getattr(exc, "winerror", None) in (123, 206):
+            return "invalid_path"
+        # An OSError this classification doesn't recognize is still a real access-class failure
+        # (not a genuine non-existence -- ENOENT never reaches this handler at all, see below)
+        # -- fail toward disclosing it with its own errno/strerror rather than guessing which
+        # bucket it belongs in.
+        return "path_unreadable"
+
     if arg2 is None:
         path, query = ".", arg1
     else:
@@ -494,12 +518,14 @@ def sql_command(
         target_path_unreadable_exc = exc
     if target_path_unreadable_exc is not None:
         unreadable_exc = target_path_unreadable_exc
-        err_msg = f"Path unreadable: {path} ({unreadable_exc.strerror or unreadable_exc})"
+        error_code = _classify_target_path_error(unreadable_exc)
+        label = "Path unreadable" if error_code == "path_unreadable" else "Invalid path"
+        err_msg = f"{label}: {path} ({unreadable_exc.strerror or unreadable_exc})"
         if json_output:
             typer.echo(
                 json.dumps(
                     {
-                        "error": "path_unreadable",
+                        "error": error_code,
                         "path": str(path),
                         "errno": unreadable_exc.errno,
                         "strerror": unreadable_exc.strerror or str(unreadable_exc),

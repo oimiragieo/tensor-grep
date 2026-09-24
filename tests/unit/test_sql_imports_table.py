@@ -445,18 +445,61 @@ def test_sql_target_path_not_found_stays_exit_1_with_path_not_found(tmp_path: Pa
     assert "errno" not in payload
 
 
-def test_sql_target_path_permission_denied_is_reported_distinctly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Sol audit follow-up on e784229: the FINAL target-path check previously mapped ANY
-    `OSError` (including `PermissionError`) to the same `path_not_found` message as a path that
-    plain doesn't exist -- hiding a real access failure behind wrong-knob advice ("try a
-    different path" instead of "fix permissions"). Hermetic (no real chmod, which the routing
-    probe's OWN denial pattern already avoids for the same Windows/root-CI reasons): inject
-    `PermissionError` for `Path.exists()` on the exact resolved target path, scoped to the
-    calling frame (`sql_query.py` only, not the routing probe's `_safe_path_exists`, which stays
-    on the OSError->False fallback deliberately -- see the finding's own instruction)."""
+def _errno_classification_cases():
     import errno
+
+    return [
+        pytest.param(errno.EACCES, "Permission denied", "path_unreadable", None, id="EACCES"),
+        pytest.param(errno.EPERM, "Operation not permitted", "path_unreadable", None, id="EPERM"),
+        pytest.param(
+            errno.ENAMETOOLONG, "File name too long", "invalid_path", None, id="ENAMETOOLONG"
+        ),
+        pytest.param(errno.EINVAL, "Invalid argument", "invalid_path", None, id="EINVAL"),
+        pytest.param(
+            errno.ELOOP, "Too many levels of symbolic links", "invalid_path", None, id="ELOOP"
+        ),
+        pytest.param(errno.ENOTDIR, "Not a directory", "invalid_path", None, id="ENOTDIR"),
+        pytest.param(
+            None,
+            "The filename, directory name, or volume label syntax is incorrect",
+            "invalid_path",
+            123,
+            id="winerror-123-invalid-name",
+        ),
+        pytest.param(
+            None,
+            "The filename or extension is too long",
+            "invalid_path",
+            206,
+            id="winerror-206-too-long",
+        ),
+        # An errno this classification doesn't recognize (e.g. EIO, a hardware-level read
+        # failure) must still be disclosed -- fail TOWARD `path_unreadable` with its own
+        # errno/strerror, never silently swallowed or misclassified as `invalid_path`.
+        pytest.param(errno.EIO, "Input/output error", "path_unreadable", None, id="EIO-fallback"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "errno_value, strerror, expected_error_code, winerror_value", _errno_classification_cases()
+)
+def test_sql_target_path_error_classified_by_errno(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    errno_value: int | None,
+    strerror: str,
+    expected_error_code: str,
+    winerror_value: int | None,
+) -> None:
+    """Sol audit follow-up (final): the final target-path `OSError` is classified by errno --
+    EACCES/EPERM (a real access-control failure) -> `path_unreadable`; ENAMETOOLONG/EINVAL/
+    ELOOP/ENOTDIR (the path STRING is malformed for this OS) -- plus the Windows-only winerror
+    123/206 for the identical shape -- -> `invalid_path`; anything else stays `path_unreadable`
+    with its own errno/strerror rather than guessing. ALL exit 2, ALL structured JSON, ALL a
+    clear text message. Hermetic (no real chmod / no real 10,000+ char path on disk): inject the
+    exact `OSError` for `Path.exists()` on the resolved target path, scoped to the calling frame
+    (`sql_query.py` only -- the routing probe's `_safe_path_exists` deliberately keeps its own
+    blanket OSError->False fallback, per the finding's own instruction)."""
     import sys
 
     denied = tmp_path / "denied-dir"
@@ -468,7 +511,10 @@ def test_sql_target_path_permission_denied_is_reported_distinctly(
     def _fake_exists(self, *args, **kwargs):
         caller = sys._getframe(1).f_code.co_filename
         if str(self) == resolved_target and caller.endswith("sql_query.py"):
-            raise PermissionError(errno.EACCES, "Permission denied")
+            exc = OSError(errno_value, strerror)
+            if winerror_value is not None:
+                exc.winerror = winerror_value  # type: ignore[attr-defined]
+            raise exc
         return real_exists(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "exists", _fake_exists)
@@ -477,16 +523,19 @@ def test_sql_target_path_permission_denied_is_reported_distinctly(
     assert json_result.exit_code == 2, (json_result.output, json_result.exception)
     assert json_result.stdout, f"stdout is EMPTY; exception={json_result.exception!r}"
     payload = json.loads(json_result.stdout)
-    assert payload["error"] == "path_unreadable"
+    assert payload["error"] == expected_error_code
     assert payload["path"] == str(denied)
-    assert payload["errno"] == errno.EACCES
-    assert payload["strerror"] == "Permission denied"
+    assert payload["errno"] == errno_value
+    assert payload["strerror"] == strerror
     assert payload["result_incomplete"] is True
 
     text_result = runner.invoke(app, ["sql", str(denied), "SELECT 1"])
     assert text_result.exit_code == 2, (text_result.output, text_result.exception)
-    assert "Path unreadable" in text_result.output
-    assert "Permission denied" in text_result.output
+    expected_label = (
+        "Path unreadable" if expected_error_code == "path_unreadable" else "Invalid path"
+    )
+    assert expected_label in text_result.output
+    assert strerror in text_result.output
 
 
 def _make_shared_counter_clock(increment: float = 1.0):
