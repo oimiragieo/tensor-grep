@@ -15,6 +15,9 @@ Use this skill when you need to locate code precisely, understand likely edit im
 - You are preparing a patch and want a smaller, more accurate context bundle.
 - You need a fast codebase orientation capsule (central files, entry points, symbol map) before diving into symbol lookup.
 - You need to find code by text/content relevance rather than an exact symbol name.
+- You need structured, cross-cutting questions over symbols and imports (e.g. "which files
+  defining a `class` import module X?") that a single grep/`tg search` can't express — see
+  `tg sql` (`symbols` JOIN `imports`) in REFERENCE.md.
 - You need to resume or persist cross-session repo-map context — use `tg session` to cache the repo-map, then call session-scoped commands (`tg session context-render`, `tg session edit-plan`, `tg session blast-radius-render`) without re-indexing on each invocation.
 
 ## Argument Order

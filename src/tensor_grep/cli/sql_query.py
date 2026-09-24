@@ -184,11 +184,26 @@ def sql_command(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
-    """Query AST symbols across a codebase using structured SQL in a read-only sandbox."""
+    """Query AST symbols and imports across a codebase using structured SQL in a read-only sandbox.
+
+    Two tables: ``symbols(file, symbol, kind, line, end_line, language, signature)`` and
+    ``imports(file, module, line, resolved_file)`` (``resolved_file`` is NULL when the import is
+    external or the language's resolver has no manifest to resolve against). JOIN them on
+    ``file`` to find, e.g., which of a file's own symbols use a given import:
+    ``SELECT s.symbol, i.module FROM symbols s JOIN imports i ON s.file = i.file``.
+    """
     import sqlite3
     import time
 
-    from tensor_grep.cli.repo_map import build_repo_map
+    from tensor_grep.cli import lang_registry
+    from tensor_grep.cli.repo_map import (
+        _SUPPORTED_FILE_DEPENDENCY_LANGUAGES,
+        _imports_with_lines_for_path,
+        _infer_project_root,
+        _max_parse_bytes,
+        build_repo_map,
+    )
+    from tensor_grep.cli.repo_map import _resolve_raw_import_entry as resolve_raw_import_entry
 
     def _looks_like_sql(text: str) -> bool:
         t = text.strip()
@@ -285,7 +300,9 @@ def sql_command(
 
     # The shared predicate also catches a --max-repo-files cap (scan_limit.possibly_truncated),
     # which a bare partial/result_incomplete read misses.
-    scan_incomplete = cli_main._scan_incomplete(repo_map) or bool(repo_map.get("result_incomplete"))
+    map_scan_incomplete = cli_main._scan_incomplete(repo_map) or bool(
+        repo_map.get("result_incomplete")
+    )
 
     raw_symbols = repo_map.get("symbols", [])
     symbol_records = []
@@ -328,6 +345,61 @@ def sql_command(
             sig_val,
         ))
 
+    # Task resilient-cooking-cupcake, slice 4: `imports(file, module, line, resolved_file)`.
+    # Owned entirely by this module (Sol R3 finding 2: the shared repo-map payload gains no new
+    # keys) -- a second pass over `repo_map["files"]`, reusing the SAME `deadline_monotonic` the
+    # symbols scan above already respects. Line-aware raw extraction comes from
+    # `repo_map._imports_with_lines_for_path` (10 supported languages); resolution to a target
+    # file comes from `repo_map._resolve_raw_import_entry`, which reports honestly-unresolved
+    # (NULL) rather than guessing.
+    imports_incomplete = False
+    import_records: list[tuple[str, str, int, str | None]] = []
+    for file_str in repo_map.get("files", []):
+        if time.monotonic() >= deadline_monotonic:
+            imports_incomplete = True
+            break
+        file_path = Path(str(file_str))
+        spec = lang_registry.spec_for_path(file_path)
+        if spec is None:
+            # Honestly-unsupported (e.g. Kotlin, or any non-registered-language file) -- never
+            # silently read as "this file has zero imports" (mirrors `build_file_imports`).
+            imports_incomplete = True
+            continue
+        if spec.language_id not in _SUPPORTED_FILE_DEPENDENCY_LANGUAGES:
+            imports_incomplete = True
+            continue
+        try:
+            file_size = file_path.stat().st_size
+        except OSError:
+            file_size = 0
+        if file_size > _max_parse_bytes():
+            imports_incomplete = True
+            continue
+        repo_root = _infer_project_root(file_path)
+        raw_entries = _imports_with_lines_for_path(file_path)
+        file_deadline_hit = False
+        for raw_entry in raw_entries:
+            if time.monotonic() >= deadline_monotonic:
+                imports_incomplete = True
+                file_deadline_hit = True
+                break
+            resolved_entry = resolve_raw_import_entry(
+                file_path, raw_entry, repo_root, str(spec.language_id)
+            )
+            import_records.append((
+                str(file_path),
+                str(resolved_entry.get("module", "")),
+                int(resolved_entry.get("line", 0) or 0),
+                resolved_entry.get("resolved"),
+            ))
+        if file_deadline_hit:
+            break
+
+    # Sol R4: combine BEFORE the text banner, the JSON flag, and the exit-2 gate below -- an
+    # imports-only cutoff must read exactly like any other scan incompleteness, not a silent
+    # partial `imports` table under a `result_incomplete: false` payload.
+    scan_incomplete = map_scan_incomplete or imports_incomplete
+
     conn = sqlite3.connect(":memory:")
     try:
         conn.execute("""
@@ -348,6 +420,22 @@ def sql_command(
         conn.executemany(
             "INSERT INTO symbols (file, symbol, kind, line, end_line, language, signature) VALUES (?, ?, ?, ?, ?, ?, ?)",
             symbol_records,
+        )
+
+        conn.execute("""
+            CREATE TABLE imports (
+                file TEXT NOT NULL,
+                module TEXT NOT NULL,
+                line INTEGER NOT NULL,
+                resolved_file TEXT
+            );
+        """)
+        conn.execute("CREATE INDEX idx_imports_file ON imports(file);")
+        conn.execute("CREATE INDEX idx_imports_module ON imports(module);")
+
+        conn.executemany(
+            "INSERT INTO imports (file, module, line, resolved_file) VALUES (?, ?, ?, ?)",
+            import_records,
         )
         conn.commit()
 
