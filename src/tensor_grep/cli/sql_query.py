@@ -12,6 +12,8 @@ from typing import Any
 
 import typer
 
+from tensor_grep.cli.inventory import _CODE_SUFFIXES
+
 # Mirrors main._DEFAULT_AGENT_REPO_SCAN_LIMIT (asserted equal in the unit tests).
 _DEFAULT_AGENT_REPO_SCAN_LIMIT = 2000
 
@@ -310,9 +312,12 @@ def _run_imports_pass(
         file_path = Path(str(file_str))
         spec = lang_registry_module.spec_for_path(file_path)
         if spec is None:
-            # Honestly-unsupported (e.g. Kotlin, or any non-registered-language file) -- never
-            # silently read as "this file has zero imports" (mirrors `build_file_imports`).
-            imports_unsupported_files_hit = True
+            # A CODE file in an unregistered language (e.g. Kotlin) has imports we cannot
+            # extract -- disclose it, never read it as "zero imports". A doc/config/text file
+            # (README.md, commands.txt, pyproject.toml) has no imports at all: it is outside the
+            # table's universe, and flagging it made nearly every real repo report INCOMPLETE.
+            if file_path.suffix.lower() in _CODE_SUFFIXES:
+                imports_unsupported_files_hit = True
             continue
         if spec.language_id not in supported_languages:
             imports_unsupported_files_hit = True
