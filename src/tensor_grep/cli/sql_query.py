@@ -160,6 +160,32 @@ def _sql_read_only_authorizer(
 MAX_SQL_PAYLOAD_BYTES: int = 5 * 1024 * 1024
 
 
+def _install_query_deadline_handler(conn: Any, deadline: float) -> dict[str, bool]:
+    """Install the query-execution deadline as a SQLite progress handler and return the mutable
+    ``deadline_tripped`` flag the caller checks after the query completes or raises.
+
+    Factored into its OWN module-level function (cleanup after Sol's audit) so this module has
+    exactly ONE textual declaration of the progress-handler callback -- never two
+    ``def progress_handler(): ...`` blocks that a diff-based static-analysis pass over an
+    intermediate patch could read as a redeclaration/obscured-declaration.  Exercised by
+    ``test_sql_cooperative_deadline_interruption`` (a real recursive CTE against a tight
+    ``--deadline``, asserting the exact ``query_deadline_exceeded`` JSON shape and exit 2).
+    """
+    import time
+
+    query_deadline_monotonic = time.monotonic() + deadline
+    deadline_tripped = {"hit": False}
+
+    def progress_handler() -> int:
+        if time.monotonic() >= query_deadline_monotonic:
+            deadline_tripped["hit"] = True
+            return 1
+        return 0
+
+    conn.set_progress_handler(progress_handler, 1000)
+    return deadline_tripped
+
+
 def _detect_imports_referenced(conn: Any, query: str) -> bool:
     """Prepare-only pass: does *query* actually touch the ``imports`` table?
 
@@ -554,16 +580,7 @@ def sql_command(
         conn.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 100)
         conn.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 10_000)
 
-        query_deadline_monotonic = time.monotonic() + deadline
-        deadline_tripped = {"hit": False}
-
-        def progress_handler() -> int:
-            if time.monotonic() >= query_deadline_monotonic:
-                deadline_tripped["hit"] = True
-                return 1
-            return 0
-
-        conn.set_progress_handler(progress_handler, 1000)
+        deadline_tripped = _install_query_deadline_handler(conn, deadline)
 
         # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
         # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
