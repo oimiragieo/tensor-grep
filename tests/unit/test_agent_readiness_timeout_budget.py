@@ -32,14 +32,33 @@ def _plan_sum(module, checks) -> float:
     )
 
 
+_VALIDATOR_ONLY_WORST_CASE = {
+    "public-search-advertised-flag-sweep": lambda module: (
+        (len(module._public_search_flag_sweep_cases(Path("."))) + 1)
+        * module._READINESS_SUBPROCESS_CASE_TIMEOUT_S
+    ),
+    "public-windows-launcher-quoted-patterns": lambda module: (
+        len(module._WINDOWS_LAUNCHER_QUOTED_CASE_LABELS)
+        * module._READINESS_SUBPROCESS_CASE_TIMEOUT_S
+    ),
+}
+
+
+@pytest.mark.parametrize("is_windows", [True, False])
 def test_validator_only_checks_declare_a_budget_covering_their_subprocess_case_count(
-    tmp_path,
+    monkeypatch, tmp_path, is_windows
 ) -> None:
     """A command=[] check's budget_s must cover its validator's own worst-case subprocess
     time (case count x per-case timeout), never just `timeout_s`. PRE-FIX RED: the sweep has
     ~29 cases x 30s against timeout_s=60; the launcher has 2 cases x 30s against timeout_s=30.
+
+    Hermetic under BOTH `IS_WINDOWS` branches (A85): `public-windows-launcher-quoted-patterns`
+    only EXISTS in the plan built with `IS_WINDOWS=True` (`build_check_plan` gates it behind
+    `if IS_WINDOWS:`), so this must force the platform seam rather than key on a check name a
+    Linux-built plan (e.g. tensor-grep's own ci-local container) will never contain.
     """
     module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", is_windows)
     checks = module.build_check_plan(
         repo_root=tmp_path,
         expected_version="1.122.1",
@@ -47,20 +66,24 @@ def test_validator_only_checks_declare_a_budget_covering_their_subprocess_case_c
         include_wsl_probe=False,
         only_shell_probes=True,
     )
-    by_name = {check.name: check for check in checks if check.command == []}
+    validator_only = [check for check in checks if check.command == []]
+    checked_names = {
+        name
+        for name in _VALIDATOR_ONLY_WORST_CASE
+        if name in {check.name for check in validator_only}
+    }
+    # The census itself must not be vacuous: on IS_WINDOWS=True both known validator-only
+    # checks with a hand-computable worst case must be present and asserted on.
+    if is_windows:
+        assert checked_names == set(_VALIDATOR_ONLY_WORST_CASE)
+    else:
+        assert "public-windows-launcher-quoted-patterns" not in checked_names
 
-    sweep = by_name["public-search-advertised-flag-sweep"]
-    sweep_worst_case = (
-        len(module._public_search_flag_sweep_cases(Path("."))) + 1
-    ) * module._READINESS_SUBPROCESS_CASE_TIMEOUT_S
-    assert module.effective_budget_s(sweep) >= sweep_worst_case
-
-    launcher = by_name["public-windows-launcher-quoted-patterns"]
-    launcher_worst_case = (
-        len(module._WINDOWS_LAUNCHER_QUOTED_CASE_LABELS)
-        * module._READINESS_SUBPROCESS_CASE_TIMEOUT_S
-    )
-    assert module.effective_budget_s(launcher) >= launcher_worst_case
+    for check in validator_only:
+        worst_case_fn = _VALIDATOR_ONLY_WORST_CASE.get(check.name)
+        if worst_case_fn is None:
+            continue
+        assert module.effective_budget_s(check) >= worst_case_fn(module), check.name
 
 
 @pytest.mark.parametrize("is_windows", [True, False])
@@ -77,9 +100,14 @@ def test_total_timeout_budget_covers_the_full_check_plan(monkeypatch, tmp_path, 
     assert module.total_timeout_budget_s(checks) >= _plan_sum(module, checks)
 
 
-def test_fixed_170s_dogfood_timeout_is_below_the_real_check_plan_sum(tmp_path) -> None:
-    """RED control: the OLD hardcoded 170s must be provably too small for a real plan."""
+@pytest.mark.parametrize("is_windows", [True, False])
+def test_fixed_170s_dogfood_timeout_is_below_the_real_check_plan_sum(
+    monkeypatch, tmp_path, is_windows
+) -> None:
+    """RED control: the OLD hardcoded 170s must be provably too small for a real plan, on
+    BOTH platforms (forced via `IS_WINDOWS` rather than the host running this test)."""
     module = _load_script_module()
+    monkeypatch.setattr(module, "IS_WINDOWS", is_windows)
     checks = module.build_check_plan(
         repo_root=tmp_path,
         expected_version="1.122.1",
