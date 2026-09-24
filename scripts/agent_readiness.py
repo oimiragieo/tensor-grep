@@ -56,6 +56,12 @@ class Check(NamedTuple):
     # exit or a validator failure -- a wrong version must fail on the first attempt.
     # Default 0 so a blanket retry can never mask a real regression.
     retry_on_timeout: int = 0
+    # dogfood v1.122.1 remediation slice 1: a validator-only check (command=[]) issues its
+    # own subprocess calls inside the validator, so `timeout_s` alone under-declares its real
+    # worst case. `budget_s`, when set, is the declared worst-case wall time an OUTER caller
+    # (tg dogfood) must budget for this check; it is derived from the validator's own case
+    # list, never hand-typed. `effective_budget_s` below is what callers should sum.
+    budget_s: float | None = None
 
 
 # A101 (codex W2A-01): retry_on_timeout is caller-controlled, so the runner clamps it at
@@ -63,6 +69,39 @@ class Check(NamedTuple):
 # effectively infinite readiness hang. 3 is deliberately small: the point of the field
 # is distinguishing a transient timeout from a persistent hang, not burn-in testing.
 _MAX_TIMEOUT_RETRIES = 3
+
+# The per-subprocess timeout every validator-only check's own case loop uses (see
+# `validate_public_search_advertised_flag_sweep` and `validate_windows_launcher_quoted_patterns`).
+# One named constant so a validator's declared `budget_s` is derived FROM the same number its
+# subprocess calls are bounded by, instead of two independently-typed literals drifting apart.
+_READINESS_SUBPROCESS_CASE_TIMEOUT_S = 30
+
+
+def effective_budget_s(check: Check) -> float:
+    """The worst-case wall time an outer caller must budget for one check attempt."""
+    return check.budget_s if check.budget_s is not None else float(check.timeout_s)
+
+
+def total_timeout_budget_s(checks: list[Check]) -> float:
+    """Sum each check's effective budget across its bounded timeout retries."""
+    total = 0.0
+    for check in checks:
+        attempts = 1 + min(max(0, check.retry_on_timeout), _MAX_TIMEOUT_RETRIES)
+        total += effective_budget_s(check) * attempts
+    return total
+
+
+def _search_flag_sweep_case_count() -> int:
+    # +1 for the `tg search --help` read the validator issues before the sweep itself.
+    return len(_public_search_flag_sweep_cases(Path("."))) + 1
+
+
+def _search_flag_sweep_budget_s() -> float:
+    return _search_flag_sweep_case_count() * _READINESS_SUBPROCESS_CASE_TIMEOUT_S
+
+
+def _windows_launcher_quoted_budget_s() -> float:
+    return len(_WINDOWS_LAUNCHER_QUOTED_CASE_LABELS) * _READINESS_SUBPROCESS_CASE_TIMEOUT_S
 
 
 _PYTHON_SUBPROCESS_TG_VERSION_PROBE = (
@@ -119,6 +158,12 @@ def validate_repo_cli_warmup_version_output(
         ) from exc
 
 
+_WINDOWS_LAUNCHER_QUOTED_CASE_LABELS = (
+    "cmd /c tg via Python subprocess.run([...])",
+    "direct tg.cmd via Python subprocess.run([...])",
+)
+
+
 def validate_windows_launcher_quoted_patterns(
     _stdout: str, repo_root: Path, _expected_version: str
 ) -> None:
@@ -135,15 +180,10 @@ def validate_windows_launcher_quoted_patterns(
     if not tg_cmd:
         raise ReadinessError("could not resolve public tg.cmd for quoted-argument probe")
 
+    cmd_case, direct_case = _WINDOWS_LAUNCHER_QUOTED_CASE_LABELS
     cases = [
-        (
-            "cmd /c tg via Python subprocess.run([...])",
-            ["cmd", "/c", "tg", "search", pattern, str(probe_file)],
-        ),
-        (
-            "direct tg.cmd via Python subprocess.run([...])",
-            [tg_cmd, "search", pattern, str(probe_file)],
-        ),
+        (cmd_case, ["cmd", "/c", "tg", "search", pattern, str(probe_file)]),
+        (direct_case, [tg_cmd, "search", pattern, str(probe_file)]),
     ]
     for label, command in cases:
         completed = subprocess.run(
@@ -153,7 +193,7 @@ def validate_windows_launcher_quoted_patterns(
             encoding="utf-8",
             errors="replace",
             capture_output=True,
-            timeout=30,
+            timeout=_READINESS_SUBPROCESS_CASE_TIMEOUT_S,
             check=False,
         )
         stdout = completed.stdout.strip()
@@ -435,7 +475,7 @@ def validate_public_search_advertised_flag_sweep(
         encoding="utf-8",
         errors="replace",
         capture_output=True,
-        timeout=30,
+        timeout=_READINESS_SUBPROCESS_CASE_TIMEOUT_S,
         check=False,
     )
     if help_result.returncode != 0:
@@ -469,7 +509,7 @@ def validate_public_search_advertised_flag_sweep(
             encoding="utf-8",
             errors="replace",
             capture_output=True,
-            timeout=30,
+            timeout=_READINESS_SUBPROCESS_CASE_TIMEOUT_S,
             check=False,
         )
         stderr = completed.stderr.strip()
@@ -957,6 +997,7 @@ def build_check_plan(
                     ),
                     timeout_s=30,
                     validator=validate_windows_launcher_quoted_patterns,
+                    budget_s=_windows_launcher_quoted_budget_s(),
                 ),
             ])
         checks.append(
@@ -969,6 +1010,7 @@ def build_check_plan(
                 ),
                 timeout_s=60,
                 validator=validate_public_search_advertised_flag_sweep,
+                budget_s=_search_flag_sweep_budget_s(),
             )
         )
 
@@ -1363,6 +1405,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Run only public shell/installation probes and skip repo-local trust checks.",
     )
     parser.add_argument("--no-wsl-probe", action="store_true", help="Skip the optional WSL probe.")
+    parser.add_argument(
+        "--print-timeout-budget",
+        action="store_true",
+        help=(
+            'Print {"budget_s": <derived worst-case timeout>} for the check plan built from '
+            "these SAME flags, and exit -- runs no checks."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.no_shell_probes and args.only_shell_probes:
@@ -1377,6 +1427,10 @@ def main(argv: list[str] | None = None) -> int:
         include_wsl_probe=not args.no_wsl_probe,
         only_shell_probes=args.only_shell_probes,
     )
+
+    if args.print_timeout_budget:
+        print(json.dumps({"budget_s": total_timeout_budget_s(checks)}, sort_keys=True))
+        return 0
 
     progress = ProgressReporter(
         mode=args.progress,

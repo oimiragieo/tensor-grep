@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import signal
 import subprocess
@@ -421,6 +422,113 @@ def _build_public_self_check_readiness(
     }
 
 
+# dogfood v1.122.1 remediation slice 1: the outer timeout must bound the WHOLE invoked
+# agent_readiness.py sequence, not an arbitrary fixed number shorter than one of its own
+# steps. The budget is computed by running the script itself with `--print-timeout-budget`
+# (never by importing it into this process -- Sol R2 finding 4) using the SAME flags the
+# real run below will pass, so the derived number always matches the plan that actually runs.
+TIMEOUT_BUDGET_CHILD_TIMEOUT_S = 30.0
+TIMEOUT_BUDGET_OVERHEAD_S = 60.0
+
+
+def _timeout_budget_command(
+    *,
+    readiness_script: Path,
+    repo_root: Path,
+    expected_version: str | None,
+    include_shell_probes: bool,
+    include_wsl_probe: bool,
+) -> list[str]:
+    command = [
+        sys.executable,
+        str(readiness_script),
+        "--root",
+        str(repo_root),
+        "--print-timeout-budget",
+    ]
+    if expected_version:
+        command.extend(["--expected-version", expected_version])
+    if not include_shell_probes:
+        command.append("--no-shell-probes")
+    if not include_wsl_probe:
+        command.append("--no-wsl-probe")
+    return command
+
+
+def _derive_readiness_timeout_s(
+    *,
+    readiness_script: Path,
+    repo_root: Path,
+    expected_version: str | None,
+    include_shell_probes: bool,
+    include_wsl_probe: bool,
+) -> tuple[float | None, str | None]:
+    """Return (derived_timeout_s, error_message); never imports the readiness script."""
+    command = _timeout_budget_command(
+        readiness_script=readiness_script,
+        repo_root=repo_root,
+        expected_version=expected_version,
+        include_shell_probes=include_shell_probes,
+        include_wsl_probe=include_wsl_probe,
+    )
+    env = dict(os.environ)
+    env.setdefault("PYTHONUTF8", "1")
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=repo_root,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=TIMEOUT_BUDGET_CHILD_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, str(exc)
+    if completed.returncode != 0:
+        return None, f"exit {completed.returncode}: {completed.stderr.strip() or '<empty>'}"
+    try:
+        raw_budget_s = _json_from_stdout(completed.stdout)["budget_s"]
+    except (ValueError, KeyError, TypeError) as exc:
+        return None, str(exc)
+    # Codex Sol PR #1176 R1: `budget_s` must be a genuine JSON number, never `bool` (a
+    # subclass of `int`), a numeric-looking string, NaN, or +/-inf -- any of those would
+    # otherwise pass `float(...)` and either add a garbage overhead or crash later.
+    if isinstance(raw_budget_s, bool) or not isinstance(raw_budget_s, (int, float)):
+        return None, f"budget_s must be a JSON number, got {raw_budget_s!r}"
+    budget_s = float(raw_budget_s)
+    if not math.isfinite(budget_s) or budget_s <= 0:
+        return None, f"budget_s must be a finite positive number, got {raw_budget_s!r}"
+    return budget_s + TIMEOUT_BUDGET_OVERHEAD_S, None
+
+
+def _timeout_budget_unavailable_report(
+    *, repo_root: Path, expected_version: str | None, error: str | None
+) -> dict[str, Any]:
+    message = (
+        f"could not derive an agent-readiness timeout budget: {error or '<unknown>'}; "
+        "pass --timeout-s to set one explicitly"
+    )
+    return {
+        "artifact": "agent_readiness_report",
+        "status": "error",
+        "root": str(repo_root),
+        "expected_version": expected_version,
+        "summary": {"passed": 0, "failed": 1, "skipped": 0},
+        "results": [
+            {
+                "name": "timeout-budget-unavailable",
+                "status": "failed",
+                "message": message,
+                "reason": "timeout_budget_unavailable",
+                "hint": "pass --timeout-s",
+            }
+        ],
+    }
+
+
 def run_dogfood_readiness(
     *,
     root: Path,
@@ -431,7 +539,7 @@ def run_dogfood_readiness(
     progress_mode: str = "auto",
     progress_interval_s: float = 30.0,
     json_output: bool = False,
-    timeout_s: float = DEFAULT_DOGFOOD_TIMEOUT_SECONDS,
+    timeout_s: float | None = None,
 ) -> tuple[int, dict[str, Any]]:
     repo_root = root.expanduser().resolve()
     readiness_script = repo_root / "scripts" / "agent_readiness.py"
@@ -451,6 +559,43 @@ def run_dogfood_readiness(
         command.append("--no-shell-probes")
     if not include_wsl_probe:
         command.append("--no-wsl-probe")
+
+    timeout_source = "public_self_check"
+    effective_timeout_s = DEFAULT_DOGFOOD_TIMEOUT_SECONDS
+    if readiness_script.exists():
+        if timeout_s is not None:
+            effective_timeout_s = timeout_s
+            timeout_source = "explicit"
+        else:
+            derived_timeout_s, budget_error = _derive_readiness_timeout_s(
+                readiness_script=readiness_script,
+                repo_root=repo_root,
+                expected_version=expected_version,
+                include_shell_probes=include_shell_probes,
+                include_wsl_probe=include_wsl_probe,
+            )
+            if derived_timeout_s is None:
+                agent_readiness = _timeout_budget_unavailable_report(
+                    repo_root=repo_root, expected_version=expected_version, error=budget_error
+                )
+                report = {
+                    "artifact": "dogfood_readiness_report",
+                    "dogfood_version": 1,
+                    "root": str(repo_root),
+                    "command": [],
+                    "agent_readiness": agent_readiness,
+                    "verdict": _build_verdict(agent_readiness, 1),
+                    "world_class_readiness": _build_world_class_readiness(),
+                    "write_policy": _build_write_policy(repo_root, output, child_output),
+                    "release_docs_worktree": _build_release_docs_worktree_status(repo_root),
+                    "stderr_tail": [],
+                    "timeout_source": "derived",
+                }
+                if output is not None:
+                    _write_json_atomic(output, report)
+                return 1, report
+            effective_timeout_s = derived_timeout_s
+            timeout_source = "derived"
 
     progress = ProgressReporter(
         mode=progress_mode,
@@ -489,7 +634,7 @@ def run_dogfood_readiness(
                 popen_kwargs["start_new_session"] = True
             process = subprocess.Popen(command, **popen_kwargs)
             try:
-                stdout, stderr = process.communicate(timeout=timeout_s)
+                stdout, stderr = process.communicate(timeout=effective_timeout_s)
                 returncode = int(process.returncode or 0)
                 try:
                     agent_readiness = _json_from_stdout(stdout)
@@ -529,7 +674,7 @@ def run_dogfood_readiness(
                     repo_root=repo_root,
                     expected_version=expected_version,
                     partial_output=child_output,
-                    timeout_s=timeout_s,
+                    timeout_s=effective_timeout_s,
                     stdout=stdout,
                     stderr=stderr,
                     killed_process_ids=killed_process_ids,
@@ -562,6 +707,7 @@ def run_dogfood_readiness(
         "write_policy": _build_write_policy(repo_root, output, child_output),
         "release_docs_worktree": _build_release_docs_worktree_status(repo_root),
         "stderr_tail": _bounded_tail_lines(stderr),
+        "timeout_source": timeout_source,
     }
     if output is not None:
         _write_json_atomic(output, report)
