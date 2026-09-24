@@ -641,12 +641,31 @@ def test_repair_env_on_a_wheel_install_explains_instead_of_blaming_a_missing_fil
 def test_repair_env_on_a_wheel_install_text_mode_is_not_a_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Text-mode mirrors the JSON contract: a wheel install exits 0, not 1."""
+    """Text-mode mirrors the JSON contract: a wheel install exits 0, not 1, and prints plain text
+    (not JSON) carrying the same 'Nothing to repair' / 'tg upgrade' content."""
     monkeypatch.setattr("tensor_grep.cli.runtime_paths._repo_root", lambda: tmp_path)
     result = runner.invoke(app, ["repair-env"])
     assert result.exit_code == 0, result.stdout
     assert "Nothing to repair" in result.stdout
     assert "tg upgrade" in result.stdout
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(result.stdout)
+
+
+def test_repair_env_non_editable_install_in_a_checkout_still_fails_text_mode(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Text-mode mirrors the JSON contract for the in-checkout non-editable branch too: it stays
+    a hard failure (exit 1) with the same refusal message, unlike the wheel-install branch above."""
+    (tmp_path / "pyproject.toml").write_text("[project]\nname='tensor-grep'\n", encoding="utf-8")
+    monkeypatch.setattr("tensor_grep.cli.runtime_paths._repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        "tensor_grep.cli.repair_env.editable_install_points_at",
+        lambda repo_root: (False, "1.0.0"),
+    )
+    result = runner.invoke(app, ["repair-env"])
+    assert result.exit_code == 1, result.output
+    assert "not installed in editable mode" in result.output
 
 
 def test_repair_env_non_editable_install_in_a_checkout_still_fails(
