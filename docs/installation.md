@@ -6,7 +6,12 @@
 
 - **Individual developers who want `tg update` / `tg upgrade`:** use the install scripts or `pip` / `uv`.
 - **Managed workstation rollout:** use GitHub release binaries, Homebrew, or Winget.
-- **Node-centric invocation:** use `npx`.
+- **Node-centric invocation:** `npx` is **not published yet** (see Option 2); use the install script or `uvx` for now.
+
+> **Channel status (verified 2026-09-25).** Live today: **PyPI** (`pip` / `uv`), **GitHub Release
+> binaries**, and the **install scripts** (which download those binaries). **Not yet published:**
+> npm/`npx`, Homebrew, and winget. The manifests for them exist in this repository, but nothing
+> has been pushed to those registries, so their install commands currently fail.
 - **Experimental features:** review [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) instead of assuming hidden commands are stable/public.
 
 ## Option 1: Install Scripts (Recommended)
@@ -42,9 +47,14 @@ curl -LsSf https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts
 > checksum before running. As with any `curl | sh` installer, review the script before piping it to a
 > shell.
 
-## Option 2: Using `npx`
+## Option 2: Using `npx` (not yet published)
 
-If you have Node.js installed, you can use `npx` to download and run the correct binary for your platform automatically:
+> **Not on the npm registry yet.** `npm install -g tensor-grep` and `npx tensor-grep` currently
+> return **404** because the package has never been published. Until it is, use Option 1 (install
+> script), `uvx tensor-grep`, or `pip install tensor-grep`. The wrapper in `npm/` works from a
+> source checkout: `npm install -g ./npm` (it downloads and SHA-256-verifies the release binary).
+
+Once published, if you have Node.js installed you will be able to use `npx` to download and run the correct binary for your platform automatically:
 
 ```bash
 npx tensor-grep search "ERROR" app.log
@@ -99,9 +109,14 @@ On Windows, the Python package installs a launcher shim under a Python `Scripts`
 
 ## Option 5: Package Managers
 
-- **Homebrew:** use the published formula for macOS and Linux rollout.
-- **Winget:** use the published manifest for Windows rollout.
-- **PyPI:** use for Python integration or self-managed virtual environments.
+- **Homebrew:** **not yet published.** The formula lives at `scripts/tensor-grep.rb`, but the
+  `oimiragieo/homebrew-tap` repository does not exist yet, so `brew tap oimiragieo/tap` fails.
+- **Winget:** **not yet published.** The manifest lives at `scripts/oimiragieo.tensor-grep.yaml`,
+  but it has not been submitted to `microsoft/winget-pkgs`, so `winget install` finds nothing.
+- **PyPI:** live. Use it for Python integration or self-managed virtual environments.
+
+For managed rollout today, use the GitHub Release binaries (Option 3) and verify them against
+`CHECKSUMS.txt`.
 
 ## Maintainer Notes: Package Manager Publish Flow
 
