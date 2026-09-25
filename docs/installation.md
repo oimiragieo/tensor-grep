@@ -5,7 +5,7 @@
 ## Recommended Channel by Use Case
 
 - **Individual developers who want `tg update` / `tg upgrade`:** use the install scripts or `pip` / `uv`.
-- **Managed workstation rollout:** use GitHub release binaries, Homebrew, or Winget.
+- **Managed workstation rollout:** use GitHub release binaries (Homebrew and Winget are not published yet).
 - **Node-centric invocation:** `npx` is **not published yet** (see Option 2); use the install script or `uvx` for now.
 
 > **Channel status (verified 2026-09-25).** Live today: **PyPI** (`pip` / `uv`), **GitHub Release
