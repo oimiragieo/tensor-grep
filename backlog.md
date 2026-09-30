@@ -12,7 +12,17 @@ Opens: → "unlocked once this completes"
 
 ## READY_TO_SHIP 🚀
 
-*(no items currently in staging; W2-c verified)*
+### DEEP-AUDIT-VERIFY (3 missing verifications from audit gate, verification-first execution)
+- **Status:** PLANNED (draft, awaiting Tier-0 re-derivation + plan-audit gate)
+- **Audit Receipt:** 2026-09-30 Consolidated 4-agent audit (UNGATED — agents ran unpinned, findings are hypotheses)
+- **Components:** 
+  1. **Import-graph truth** — Run pydeps/import-linter, classify 6 backends→cli imports (true cycle vs one-way vs TYPE_CHECKING-only), verify existing CI boundary gates
+  2. **Security beyond patterns** — Full-history secret scan (gitleaks), dependency advisories (pip-audit, cargo audit), handler-disposition census vs "50+ files use logging"
+  3. **Duplication/dead-code** — AST-diff 15+ error payloads by symbol, classify 50-site path-op sample by intent, test-patching search (monkeypatch/patch targets)
+- **Depends:** None (parallel with other work)
+- **Opens:** ARCH-SPLIT (once import-graph is understood), SIMPLIFY-PAYLOADS, SIMPLIFY-PATHS (once duplication is verified)
+- **Effort:** Medium (2-3 sprints for all three)
+- **Why:** Codex Sol flagged several zero-result sweep claims as false-green. These verifications distinguish real gaps from unproven hypotheses before any refactoring or deletion.
 
 ---
 
