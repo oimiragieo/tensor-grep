@@ -16,7 +16,9 @@ $ git rev-list --all --no-merges --count
 3147
 ```
 
-Note: Prior report incorrectly documented 3154 commits. Actual verified count is 3147 non-merge commits scanned by gitleaks.
+**Note:** Prior report incorrectly documented 3154 commits. Actual verified count is 3147 non-merge commits scanned by gitleaks.
+
+**LIMITATION (Codex finding #14):** The `--no-merges` flag omits merge commits from the scan. Credentials introduced in merge resolutions (e.g., during conflict resolution) would evade this scan. A complete scan would require running `gitleaks detect --source git --log-opts "--all"` (without `--no-merges`) to cover all commits including merges. This scope decision limits the audit to non-merge commit history.
 
 ## Gitleaks Execution Summary
 
@@ -71,8 +73,9 @@ All 15 findings are classified as false positives for security purposes:
    - Example Secret Key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
 2. Ran gitleaks on full history (temporary branch with example AWS credentials)
 3. **Result:** Exit code 1, findings detected
-4. **Rules fired:** `aws-access-key-id` (detected AKIA... example), `aws-secret-access-key` (detected secret format)
-5. **Conclusion:** Gitleaks detection is functioning correctly; absence of real credentials on main is genuine (control test proves detector would catch them)
+4. **Rules fired:** Default gitleaks v8.30.1 rules `aws-access-token` detected the example credentials.
+   - **Note (Codex finding #74):** The initial report claimed rules `aws-access-key-id` and `aws-secret-access-key`, which do not exist in gitleaks v8.30.1 default config. The actual rule is `aws-access-token`. This discrepancy limits reproducibility of the positive control.
+5. **Conclusion:** Gitleaks detected example credentials with its default rules. Real credential absence on main is genuine (to the extent the --no-merges limitation permits).
 
 **Positive Control Conclusion:** PASSED  
 The 15 findings documented in this report are consistent with gitleaks' detection capabilities and represent test data / documentation examples, not active secrets.
