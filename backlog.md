@@ -13,8 +13,11 @@ Opens: → "unlocked once this completes"
 ## READY_TO_SHIP 🚀
 
 ### DEEP-AUDIT-VERIFY (verified-gap closeout from the 2026-09-30 audit; plan v2)
-- **Status:** PLANNED (plan v2 awaiting the xhigh plan-audit gate: `.build/DEEP-AUDIT-PLAN.md`)
-- **Audit Receipt:** 2026-09-30 consolidated 4-agent audit (UNGATED -- findings are hypotheses) + premise check `docs/audits/2026-09-30-premise-check.md` (4/5 claims refuted)
+- **Status:** VERIFY_GATE (all execution complete, SHA 722df38 pushed; awaiting Codex Sol final-SHA audit verdict 2026-09-30 23:55 UTC)
+- **Audit Receipt:** 
+  - ✅ Sonnet intent verification: VERIFIED (all 3 checks passed)
+  - ✅ Droid adversarial audit: AUDIT_CLEAR (R1 gaps found → R2 remediation → R3 verified)
+  - ⏳ Codex Sol security gate: In progress (retry with GitHub access after push)
 - **Components (only what is not already shipped):**
   1. **P13 mutation-control fix** -- OWNED BY P13 (`docs/BACKLOG.md` P13), listed here as a pointer only: `tests/unit/test_import_edges_baseline.py::test_a_new_backward_import_would_be_caught` does set arithmetic and never runs the walker; replace with a planted-file run of `compute_violation_module_edges`, and record the 6-edge classification under P13.
   2. **One-time full-history secret scan** -- gitleaks, redacted, with a planted positive control and a commit-count coverage check. No workflow runs one today.
