@@ -122,24 +122,66 @@ def test_violation_baseline_only_lists_declared_violation_pairs() -> None:
 
 
 def test_a_new_backward_import_would_be_caught() -> None:
-    """MUTATION CONTROL. A gate never observed failing is not a gate.
+    """MUTATION CONTROL. Real planted violation in source tree, run walker against it.
 
-    Simulates one additional ``core -> cli`` import and asserts the comparison the real test
-    performs rejects it -- proving the module-granularity freeze catches what the package-pair
-    freeze lets through. The package-pair check is asserted to ACCEPT the same mutation, which
-    is the whole reason this second gate exists.
+    Plants a backward import (``core -> cli``) into a temp source tree, runs
+    ``compute_violation_module_edges()`` against the sabotaged tree, and verifies it detects
+    the new violation. A gate never observed failing is not a gate; this test proves the
+    walker catches violations at module granularity.
+
+    Also verifies the test passes on the clean tree (no false positives).
     """
-    baseline = _load_violation_baseline()
-    mutated = baseline | {("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")}
+    import shutil
+    import tempfile
 
-    assert mutated - baseline, "module-granularity freeze must reject a new backward import"
-
-    # ...and the existing package-pair gate would NOT have caught it: ("core", "cli") is
-    # already an accepted edge, so the package-level edge set is unchanged by the mutation.
-    package_edges = _load_baseline()
-    assert ("core", "cli") in package_edges
-    mutated_package_edges = package_edges | {("core", "cli")}
-    assert mutated_package_edges == package_edges, (
-        "the package-pair freeze is blind to this mutation -- that blindness is what "
-        "test_declared_layering_violations_can_only_shrink covers"
+    # Step 1: Clean tree baseline (GREEN case)
+    clean_baseline = _load_violation_baseline()
+    clean_current = compute_violation_module_edges(_SRC_ROOT)
+    assert clean_current == clean_baseline, (
+        "Clean tree must match baseline before mutation"
     )
+
+    # Step 2: Plant violation in temp tree (RED case)
+    with tempfile.TemporaryDirectory() as temp_root_str:
+        temp_root = Path(temp_root_str)
+        temp_src = temp_root / "tensor_grep"
+
+        # Copy the entire src tree to temp
+        shutil.copytree(_SRC_ROOT, temp_src, dirs_exist_ok=True)
+
+        # Plant a backward import: core.pipeline imports from cli.runtime_paths
+        core_pipeline = temp_src / "core" / "pipeline.py"
+        assert core_pipeline.exists(), "fixture missing: core/pipeline.py required for mutation test"
+
+        original_content = core_pipeline.read_text(encoding="utf-8")
+        # Add import after logger setup line
+        lines = original_content.split("\n")
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            if "logger = logging.getLogger" in line:
+                insert_idx = i + 1
+                break
+
+        # Insert the mutation import
+        planted_import = "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION"
+        lines.insert(insert_idx, planted_import)
+        mutated_content = "\n".join(lines)
+        core_pipeline.write_text(mutated_content, encoding="utf-8")
+
+        # Run walker on mutated tree
+        mutated_edges = compute_violation_module_edges(temp_src)
+
+        # Verify new edge was detected
+        planted_edge = ("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")
+        assert planted_edge in mutated_edges, (
+            f"Mutation control failed: planted violation {planted_edge} was not detected. "
+            f"Got edges: {sorted(mutated_edges)}"
+        )
+
+        # Verify it's actually a NEW edge (not in clean baseline)
+        assert planted_edge not in clean_baseline, (
+            "Planted edge should not exist in clean baseline"
+        )
+        assert mutated_edges - clean_baseline, (
+            "Module-granularity freeze must reject the new backward import"
+        )
