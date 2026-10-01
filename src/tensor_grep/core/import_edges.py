@@ -85,8 +85,10 @@ def _dynamic_import_literal(node: ast.Call) -> str | None:
     """
     func = node.func
     if isinstance(func, ast.Attribute):
-        # Any receiver alias (`import importlib as il`) -- `.import_module(` is distinctive.
-        is_dynamic = func.attr == "import_module"
+        # Any receiver alias (`import importlib as il`, `builtins.__import__`). Deliberately
+        # receiver-agnostic: an unrelated `registry.import_module("tensor_grep.cli.x")` also
+        # matches (a false edge) -- accepted over missing a real alias.
+        is_dynamic = func.attr in {"import_module", "__import__"}
     elif isinstance(func, ast.Name):
         is_dynamic = func.id in {"import_module", "__import__"}
     else:
@@ -95,7 +97,7 @@ def _dynamic_import_literal(node: ast.Call) -> str | None:
         return None
     first = node.args[0]
     if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return first.value
+        return None if first.value.startswith(".") else first.value
     return None
 
 

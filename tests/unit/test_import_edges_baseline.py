@@ -8,11 +8,15 @@ an enforced direction), tracked in docs/BACKLOG.md.
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
+import pytest
+
 from tensor_grep.core.import_edges import (
     VIOLATION_PACKAGE_EDGES,
+    _dynamic_import_literal,
     _resolve_relative_import,
     compute_import_edges,
     compute_violation_module_edges,
@@ -193,3 +197,23 @@ def test_a_new_backward_import_would_be_caught() -> None:
             "Module-granularity freeze must reject exactly the two planted backward imports; "
             f"got extra/missing: {sorted(mutated_edges - clean_baseline)}"
         )
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ('importlib.import_module("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('il.import_module("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('import_module("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('__import__("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('builtins.__import__("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        # Known, documented gaps: not statically resolvable, reported as no edge.
+        ("importlib.import_module(name)", None),
+        ('getattr(importlib, "import_module")("tensor_grep.cli.x")', None),
+        ('importlib.import_module(".sibling")', None),
+    ],
+)
+def test_dynamic_import_literal_forms(source: str, expected: str | None) -> None:
+    call = ast.parse(source).body[0].value  # type: ignore[attr-defined]
+    assert isinstance(call, ast.Call)
+    assert _dynamic_import_literal(call) == expected
