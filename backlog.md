@@ -25,6 +25,19 @@ Opens: → "unlocked once this completes"
   3. **Independent audit of `1a9de6a`/`533c178`/`648843e`** -- no Codex Sol/Droid seat has run. Specific questions: is `.import_module(` matching any receiver too permissive; does `__import__` via attribute (`builtins.__import__`) escape; handler-census "87 unaudited others" is a subtraction (142-36-19), not an enumerated list.
   4. **Stale plan text**: `docs/superpowers/plans/2026-10-01-wave-2-design-packet.md` still lists the 34-char key that can never match; superseded by `648843e` (append-only note added).
 - **Wave 3 (HANDLER-CENSUS-W3) unblock:** CONDITIONAL on open item 3; the census reconciliation it consumes is done but unaudited.
+- **Local gitleaks v8 for the positive-control test:** `C:\tmp\tensor-grep\KEEP-gitleaks-8.30.1-verified\gitleaks.exe` (sha256 of the zip matches `gitleaks_8.30.1_checksums.txt`, re-verified 2026-10-01). Run: `GITLEAKS_BIN=C:\tmp\tensor-grep\KEEP-gitleaks-8.30.1-verified\gitleaks.exe pytest tests/unit/test_gitleaks_positive_control_validation.py`.
+- **Closeout 2026-10-01 receipts:** pushed `f5f55ee` (drop red-by-design test) and `7335bd9` (TASK_BOARD reconcile to v1.123.1, size gate 79,863/80,000); closed superseded PRs #1182 (tip `abc58469`) and #1183 (tip `59649793`) -- merging either would have reverted Wave 2; `abc5846` (stray `.test_credential.py`, fake creds at repo root) intentionally NOT merged.
+- **Open, not mine to change:** PR #1184 (Dependabot, PyJWT 2.13.0->2.15.0, uv group) -- repo law: a fixable advisory bump must be applied across direct floors, lock and validators, then re-audited; not auto-merged.
+- **UNVERIFIED board rows:** `docs/TASK_BOARD.md` AGT-07 (#1167 `cff35c7` may touch its remaining slice) and AGT-01 were not checked against v1.121.3..v1.123.1. The stamp is current; those two rows' CONTENT is not proven current.
+- **CI verdict is NOT recorded here** (it would be stale the moment it is written). Read it for the SHA you care about: `gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"` -- not `gh run list`, which has intermittently returned another repo's runs. Every push to main runs the FULL suite (`changes` job forces `code=true` on `main-push`), ~13 min; the pre-fix failures were exactly 1 test per lane (gitleaks demo, then the board stamp).
+
+## NEXT-SESSION IMPROVEMENTS (ideas, not started)
+
+1. **Pre-push CI-red guard for committed tests:** a repo check that fails when a test under `tests/unit/` has no `skip`/`importorskip` guard yet shells out to a non-vendored binary (`gitleaks`, `curl`). The red-by-design test reddened main for 4 pushes. Seat: Sonnet builder + Opus gate; Pool: Claude. Dep: none.
+2. **Post-push CI verdict as a gate in closeout:** `scripts/` helper printing the push-run conclusion + failing test NAMES for HEAD, so "done" cannot be written over a red run. Seat: Sonnet. Dep: none.
+3. **Gitleaks lane in CI (pinned v8.30.1 + checksum) running the positive control and a no-`--no-merges` history scan**, closing open items 1 and 2 together. Needs operator go (Actions minutes). Seat: Sonnet + Codex Sol audit. Dep: operator decision on the deferred merge-commit scan.
+4. **Census-by-enumeration for the handler gap:** replace the "87 unaudited others" subtraction with an enumerated, AST-derived module list checked into `docs/audits/`. Seat: Sonnet. Dep: Wave 3.
+5. **Walker hardening follow-ups for `import_edges.py`:** `builtins.__import__`, `importlib.util.spec_from_file_location`, and non-literal `import_module(var)` are undetected; decide whether to report non-literal calls as UNRESOLVED instead of silently skipping. Seat: Sonnet + adversarial verify. Dep: audit of `1a9de6a`.
 
 ---
 
