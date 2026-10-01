@@ -12,17 +12,19 @@ Opens: → "unlocked once this completes"
 
 ## READY_TO_SHIP 🚀
 
-### DEEP-AUDIT-VERIFY (3 missing verifications from audit gate, verification-first execution)
-- **Status:** PLANNED (draft, awaiting Tier-0 re-derivation + plan-audit gate)
-- **Audit Receipt:** 2026-09-30 Consolidated 4-agent audit (UNGATED — agents ran unpinned, findings are hypotheses)
-- **Components:** 
-  1. **Import-graph truth** — Run pydeps/import-linter, classify 6 backends→cli imports (true cycle vs one-way vs TYPE_CHECKING-only), verify existing CI boundary gates
-  2. **Security beyond patterns** — Full-history secret scan (gitleaks), dependency advisories (pip-audit, cargo audit), handler-disposition census vs "50+ files use logging"
-  3. **Duplication/dead-code** — AST-diff 15+ error payloads by symbol, classify 50-site path-op sample by intent, test-patching search (monkeypatch/patch targets)
-- **Depends:** None (parallel with other work)
-- **Opens:** ARCH-SPLIT (once import-graph is understood), SIMPLIFY-PAYLOADS, SIMPLIFY-PATHS (once duplication is verified)
-- **Effort:** Medium (2-3 sprints for all three)
-- **Why:** Codex Sol flagged several zero-result sweep claims as false-green. These verifications distinguish real gaps from unproven hypotheses before any refactoring or deletion.
+### DEEP-AUDIT-VERIFY (verified-gap closeout from the 2026-09-30 audit; plan v2)
+- **Status:** PLANNED (plan v2 awaiting the xhigh plan-audit gate: `.build/DEEP-AUDIT-PLAN.md`)
+- **Audit Receipt:** 2026-09-30 consolidated 4-agent audit (UNGATED -- findings are hypotheses) + premise check `docs/audits/2026-09-30-premise-check.md` (4/5 claims refuted)
+- **Components (only what is not already shipped):**
+  1. **P13 mutation-control fix** -- OWNED BY P13 (`docs/BACKLOG.md` P13), listed here as a pointer only: `tests/unit/test_import_edges_baseline.py::test_a_new_backward_import_would_be_caught` does set arithmetic and never runs the walker; replace with a planted-file run of `compute_violation_module_edges`, and record the 6-edge classification under P13.
+  2. **One-time full-history secret scan** -- gitleaks, redacted, with a planted positive control and a commit-count coverage check. No workflow runs one today.
+  3. **Broad-handler census gap list** -- RECEIVED 2026-09-30 (Codex Luna + verification seat): 27 unaudited modules with ~100 broad handlers; 9 audited backend modules with 46 handlers pending Wave 2 classification; 0 tuple handlers with broad parent exceptions; ledger completeness: 248 records across 21/28 audited modules. Report: `docs/audits/handler-census-gaps-2026-09-30.md`. (PR in flight: T3 of Wave 1 execution.)
+- **Closed as already shipped (not work):** import-linter-gate -- the module-granularity violation ratchet shipped in P13 (`552dea5`); dependency advisories -- `.github/workflows/audit.yml` runs pip-audit, cargo audit, cargo deny; import-graph truth -- the 6 frozen `->cli` edges are one-way imports into leaf modules (5 module-level, 1 function-local, 0 TYPE_CHECKING-only), no module-level cycle.
+- **Dropped:** duplication/dead-code verification (error payloads and path ops are security-sensitive; simplification is out of scope).
+- **Depends:** None
+- **Opens:** HANDLER-CENSUS-W3 (dispositions for the census gap list); a secret-remediation incident only if the scan finds a live credential.
+- **Effort:** Small (3 independent PRs, ~1 week; no release)
+- **Why:** The audit's zero-result sweeps were false-green candidates. Only these three gaps survived verification; everything else was already shipped or out of scope.
 
 ---
 
@@ -174,6 +176,14 @@ Opens: → "unlocked once this completes"
 - **Deps:** Scoping authorization
 - **Opens:** sub-millisecond warm search latency
 
+### CALL-CHAIN — Transitive incoming callers (`tg callers --transitive`)
+- **Status:** DEMAND_GATED
+- **AI-Doable:** YES (after authorization)
+- **Trigger Condition:** Bounded demand probe SATISFIED or a CEO demand waiver (A93: the audit's competitor comparison is not demand), then design packet + Sol exact-commit APPROVE, then a deliberate build go (A117/A122 ladder). The only real product gap left by `docs/audits/2026-09-30-premise-check.md` (Findings 2 and 5).
+- **Spec:** `.build/DEEP-AUDIT-PLAN.md` section 3 (plan v2): bounded depth/fan-out, cycle-aware, per-edge `match_basis` honesty, ambiguous names not expanded, one shared deadline, exit 2 on cut-short; the Rust door is an unchanged passthrough; MCP contract 1.8.0 -> 1.9.0.
+- **Deps:** None code-wise; P14 vocabulary alignment for edge provenance.
+- **Opens:** a possible consumer for docs/BACKLOG F5 (2026-09-10) centrality ranking (not root F5).
+
 ### RUST-REPLACE-TOCTOU — Residual TOCTOU races in replace_in_place
 - **Status:** DEMAND_GATED
 - **AI-Doable:** YES
@@ -268,6 +278,7 @@ Opens: → "unlocked once this completes"
 [DEMAND TRIGGERS]
   CEO Build Authorization ────► DD-006 (Concurrent Daemon DoS Hardening)
   RUST-REPLACE-SYMLINK (✓) ───► RUST-REPLACE-TOCTOU (Pin Inversion Acceptance)
+  Demand probe | CEO waiver ──► CALL-CHAIN design packet ──► Sol APPROVE ──► build go ──► S1 ──► S2
 ========================================================================================
 ```
 
