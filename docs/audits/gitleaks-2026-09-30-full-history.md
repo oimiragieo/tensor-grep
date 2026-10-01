@@ -64,21 +64,27 @@ All 15 findings are classified as false positives for security purposes:
 
 ## Positive Control Verification
 
-**Control Objective:** Verify gitleaks correctly detects credentials when present  
-**Control Test:** Temporary file with example AWS credentials  
+**Control Objective:** Verify gitleaks detects credentials that are NOT allowlisted.
+**History:** The Wave 1 control used `...EXAMPLE` credentials, which gitleaks v8.30.1 allowlists, so it did not prove detection (Codex Sol CRITICAL finding #69). Wave 2 replaces it.
 
-**Execution Receipt:**
-1. Created test file in temporary branch with example credentials:
-   - Example Access Key ID: AKIAIOSFODNN7EXAMPLE (from AWS documentation)
-   - Example Secret Key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-2. Ran gitleaks on full history (temporary branch with example AWS credentials)
-3. **Result:** Exit code 1, findings detected
-4. **Rules fired:** Default gitleaks v8.30.1 rules `aws-access-token` detected the example credentials.
-   - **Note (Codex finding #74):** The initial report claimed rules `aws-access-key-id` and `aws-secret-access-key`, which do not exist in gitleaks v8.30.1 default config. The actual rule is `aws-access-token`. This discrepancy limits reproducibility of the positive control.
-5. **Conclusion:** Gitleaks detected example credentials with its default rules. Real credential absence on main is genuine (to the extent the --no-merges limitation permits).
+**Credentials planted (temporary git repo, no EXAMPLE marker):**
+- AWS Access Key ID: `AKIAIOSFODNN7ZXCVBNM` (20 chars)
+- AWS Secret Key: `wJalrXUtnFEMI/K7MDENG+bPxRfiCYFAKETESTKEY`
 
-**Positive Control Conclusion:** PASSED  
-The 15 findings documented in this report are consistent with gitleaks' detection capabilities and represent test data / documentation examples, not active secrets.
+**Deviation from the Wave 2 plan's key (measured, not assumed):** the plan specified `AKIAIOSFODNN7THISISAFAKEKEYFORTEST` (34 chars). The `aws-access-token` rule requires a 4-char prefix plus exactly 16 characters of `[A-Z2-7]` bounded by `\b`, so a 34-char key can never match. Scanning it with gitleaks 8.30.1 returned "no leaks found" (exit 0), which would have failed the control for the wrong reason. The 20-char key above is detected.
+
+**Detection proof (gitleaks 8.30.1, binary sha256 `d29144de...332afc4e` verified against the release checksums file):**
+- Baseline: clean history scans exit 0 (control against a scanner that always flags).
+- Planted: `gitleaks git --log-opts="--all --no-merges"` exit code 1.
+- Rule fired: `aws-access-token`, asserted from the JSON report `RuleID` field, not from free text.
+- Reversibility: credential commit removed from history (a plain removal commit would leave the secret in history and still be detected), reflog expired and gc pruned, rescan exit code 0.
+
+**Environment note:** the WSL `/usr/bin/gitleaks` on this machine is v7.5.0 (Kali package), not v8.30.1; it has no `git`/`version` subcommands. The test requires a v8 binary via `GITLEAKS_BIN` or PATH and SKIPS (never passes) otherwise.
+
+**Proof test:** `tests/unit/test_gitleaks_positive_control_validation.py::test_gitleaks_detects_non_allowlisted_aws_credentials`
+
+**Positive Control Conclusion:** PASSED
+Gitleaks 8.30.1 default rules detect non-allowlisted AWS credentials via `aws-access-token`, so the absence of findings of that class on main is meaningful (subject to the `--no-merges` limitation documented above). The 15 findings in this report remain test data / documentation examples.
 
 ## Redaction Verification
 
