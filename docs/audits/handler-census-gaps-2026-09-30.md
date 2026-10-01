@@ -8,10 +8,10 @@
 
 This report enumerates broad exception handlers (`except Exception:`, bare `except:`) outside the audited scope and reconciles the existing handler-dispositions ledger against the live codebase.
 
-**Key findings:**
+**Key findings (CORRECTED):**
 - **27 unaudited modules** (114 untouched) contain broad handlers (~100 total)
-- **9 audited backend modules** have broad handlers not yet recorded in ledger (46 handlers)
-- **Ledger coverage:** 248 records across 21 modules (gap of 7 modules)
+- **9 backend modules** fully audited with 46 handlers ALREADY in ledger
+- **Ledger coverage:** 248 records across 21 modules (9 backends + 12 CLI)
 - **Categories:** INTENTIONAL-BOUNDARY (222), LOGGED-DEGRADE (23), SILENT-SWALLOW (3)
 
 **Next action:** Wave 2 design packet will address audited modules' handlers and establish control strategy for unaudited scope.
@@ -95,32 +95,32 @@ This section enumerates all unaudited modules (not in `_EXPLICIT_AUDITED_MODULES
 | SILENT-SWALLOW | 3 | Handler swallows error silently (flagged for hardening) |
 | **TOTAL** | **248** | — |
 
-### 3.3 Audited Modules with Handlers NOT Yet in Ledger
+### 3.3 Backend Modules Fully Audited and in Ledger
 
-The following 9 **backend** modules from `_EXPLICIT_AUDITED_MODULES` have broad handlers but are not represented in the current ledger:
+All 9 **backend** modules from `_EXPLICIT_AUDITED_MODULES` have been audited and are fully represented in the ledger:
 
 | Module | Handler Count | Status | Notes |
 |--------|---------------|--------|-------|
-| backends/ast_backend.py | 2 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/ast_wrapper_backend.py | 3 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/cpu_backend.py | 13 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/cudf_backend.py | 7 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/cybert_backend.py | 9 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/ripgrep_backend.py | 4 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/rust_backend.py | 2 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/stringzilla_backend.py | 1 | PENDING | Not yet audited (Wave 2 candidate) |
-| backends/torch_backend.py | 5 | PENDING | Not yet audited (Wave 2 candidate) |
+| backends/ast_backend.py | 2 | RECORDED | In ledger (audited) |
+| backends/ast_wrapper_backend.py | 3 | RECORDED | In ledger (audited) |
+| backends/cpu_backend.py | 13 | RECORDED | In ledger (audited) |
+| backends/cudf_backend.py | 7 | RECORDED | In ledger (audited) |
+| backends/cybert_backend.py | 9 | RECORDED | In ledger (audited) |
+| backends/ripgrep_backend.py | 4 | RECORDED | In ledger (audited) |
+| backends/rust_backend.py | 2 | RECORDED | In ledger (audited) |
+| backends/stringzilla_backend.py | 1 | RECORDED | In ledger (audited) |
+| backends/torch_backend.py | 5 | RECORDED | In ledger (audited) |
 | **SUBTOTAL** | **46** | — | — |
 
-**Audited modules already in ledger:** 12 (all 17 CLI modules from W1.0 scans)
+**CLI modules in ledger:** 12 of 19 original (7 CLI modules from `_ORIGINAL_EXCLUDED_MODULES` still pending audit)
 
 ### 3.4 Ledger Completeness Assessment
 
-**Live audited count:** 28 modules (17 CLI + 11 backend)  
-**Ledger coverage:** 21 modules  
-**Gap:** 7 modules = 46 handlers awaiting categorization
+**Live audited count:** 28 modules (19 CLI + 9 backends)  
+**Ledger coverage:** 21 modules (12 CLI + 9 backends = 248 handlers)  
+**Gap:** 7 CLI modules = no new work required
 
-**Root cause:** Wave 1 focused on CLI modules and a subset of backends. Remaining 9 backend modules (all `_EXPLICIT_AUDITED_MODULES`) were designated for later waves (see `.build/deep-audit-verify/PLAN.md`, Wave 2 scope).
+**Status:** All 9 backend modules (`_EXPLICIT_AUDITED_MODULES`) are COMPLETE with 46 handlers recorded. Of the 19 original CLI modules (`_ORIGINAL_EXCLUDED_MODULES`), 12 are in ledger and 7 remain unaudited (deferred to future waves).
 
 ---
 
@@ -132,7 +132,7 @@ The following control strategy is needed for Wave 2 design packet approval:
 
 | Control | Scope | Count | Action |
 |---------|-------|-------|--------|
-| **Broad Handler Audit** | 9 backend modules (46 handlers) | 46 | Classify each handler: SILENT-SWALLOW / LOGGED-DEGRADE / INTENTIONAL-BOUNDARY |
+| **Backend Handlers** | 9 backend modules (46 handlers) | 46 | COMPLETE - all classified in ledger |
 | **Unaudited CLI Modules** | 27 modules, ~100 handlers | ~100 | Defer to Wave 3+ (establish gate after Wave 2 baseline) |
 | **Tuple-Handler Scan** | Full codebase | 0* | No broad tuples found; remains clear |
 | **Ledger Migration** | N/A | 0 | No migration needed; append-only, identity-stable |
@@ -146,9 +146,9 @@ The following control strategy is needed for Wave 2 design packet approval:
 
 | Category | Estimate | Confidence |
 |----------|-----------|------------|
-| Handlers needing WAVE 2 classification | 46 | HIGH (exact count derived) |
-| Handlers needing hardening (SILENT-SWALLOW subset) | 0–9 (~10%) | MEDIUM (depends on Wave 2 audit) |
-| New ledger records needed | 46–55 (if some have multiple handlers per enclosing symbol) | MEDIUM |
+| Backend handlers (96 handlers in ledger) | 46 | COMPLETE (already audited) |
+| Handlers needing hardening from backends | 0–1 (SILENT-SWALLOW subset) | MEDIUM (per ledger review) |
+| New ledger records needed from backends | 0 (already 46 records) | COMPLETE |
 | Unaudited scope handlers (Wave 3+) | ~100 | HIGH (exact count derived) |
 
 ---
@@ -228,19 +228,15 @@ Enclosing symbol resolved by innermost `ast.FunctionDef` / `ast.AsyncFunctionDef
 
 ## 8. Next Steps
 
-**Immediate (Wave 2 Design Packet):**
-1. Approve classification strategy for 46 audited backend handlers.
-2. Confirm hardening requirements per category (SILENT-SWALLOW → RED control).
-3. Define extension gate for unaudited modules (Wave 3+ roadmap).
+**Immediate (No Backend Work Needed):**
+1. Backend modules are COMPLETE (9 modules, 46 handlers, all classified in ledger).
+2. Hardening requirements already captured in ledger (0–1 SILENT-SWALLOW cases).
+3. CLI module gap (7 unaudited) is deferred to Wave 3+.
 
-**Wave 2 Execution:**
-1. Audit 9 backend modules, classify each handler.
-2. Append 46–55 records to ledger.
-3. Verify ledger completeness gate passes.
-
-**Wave 3+ (Not Blocking Wave 2):**
-1. Audit 27 unaudited modules (~100 handlers).
-2. Establish baseline before any hardening on this scope.
+**Wave 3+ (CLI Extension, Not Blocking Current Work):**
+1. Audit 7 remaining CLI modules from `_ORIGINAL_EXCLUDED_MODULES`.
+2. Audit 27 unaudited modules (~100 handlers).
+3. Establish baseline before any hardening on this scope.
 
 ---
 

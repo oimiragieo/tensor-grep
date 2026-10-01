@@ -151,36 +151,37 @@ def test_a_new_backward_import_would_be_caught() -> None:
 
         # Plant a backward import: core.pipeline imports from cli.runtime_paths
         core_pipeline = temp_src / "core" / "pipeline.py"
-        if core_pipeline.exists():
-            original_content = core_pipeline.read_text(encoding="utf-8")
-            # Add import after logger setup line
-            lines = original_content.split("\n")
-            insert_idx = 0
-            for i, line in enumerate(lines):
-                if "logger = logging.getLogger" in line:
-                    insert_idx = i + 1
-                    break
+        assert core_pipeline.exists(), "fixture missing: core/pipeline.py required for mutation test"
 
-            # Insert the mutation import
-            planted_import = "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION"
-            lines.insert(insert_idx, planted_import)
-            mutated_content = "\n".join(lines)
-            core_pipeline.write_text(mutated_content, encoding="utf-8")
+        original_content = core_pipeline.read_text(encoding="utf-8")
+        # Add import after logger setup line
+        lines = original_content.split("\n")
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            if "logger = logging.getLogger" in line:
+                insert_idx = i + 1
+                break
 
-            # Run walker on mutated tree
-            mutated_edges = compute_violation_module_edges(temp_src)
+        # Insert the mutation import
+        planted_import = "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION"
+        lines.insert(insert_idx, planted_import)
+        mutated_content = "\n".join(lines)
+        core_pipeline.write_text(mutated_content, encoding="utf-8")
 
-            # Verify new edge was detected
-            planted_edge = ("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")
-            assert planted_edge in mutated_edges, (
-                f"Mutation control failed: planted violation {planted_edge} was not detected. "
-                f"Got edges: {sorted(mutated_edges)}"
-            )
+        # Run walker on mutated tree
+        mutated_edges = compute_violation_module_edges(temp_src)
 
-            # Verify it's actually a NEW edge (not in clean baseline)
-            assert planted_edge not in clean_baseline, (
-                "Planted edge should not exist in clean baseline"
-            )
-            assert mutated_edges - clean_baseline, (
-                "Module-granularity freeze must reject the new backward import"
-            )
+        # Verify new edge was detected
+        planted_edge = ("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")
+        assert planted_edge in mutated_edges, (
+            f"Mutation control failed: planted violation {planted_edge} was not detected. "
+            f"Got edges: {sorted(mutated_edges)}"
+        )
+
+        # Verify it's actually a NEW edge (not in clean baseline)
+        assert planted_edge not in clean_baseline, (
+            "Planted edge should not exist in clean baseline"
+        )
+        assert mutated_edges - clean_baseline, (
+            "Module-granularity freeze must reject the new backward import"
+        )
