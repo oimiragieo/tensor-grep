@@ -12,16 +12,19 @@ Opens: → "unlocked once this completes"
 
 ## READY_TO_SHIP 🚀
 
-### WAVE-2-DESIGN-PACKET (gitleaks re-scan, mutation-test expansion, handler-census reconciliation)
-- **Status:** READY (Wave 1 audit closure unblocks; explicit scope to address Codex findings)
-- **Dependencies:** Wave 1 audit complete (Sonnet VERIFIED + Droid AUDIT_CLEAR)
-- **Scope:** Address Codex Sol identified gaps in Wave 2:
-  1. Gitleaks re-scan without `--no-merges` (merge-commit coverage)
-  2. Mutation test expansion (dynamic imports, not just static)
-  3. Handler census reconciliation (142 vs 150 module denominator)
-  4. AWS positive-control re-validation (use non-EXAMPLE credentials)
-- **Effort:** Medium (4-5 days; 2 audit rounds expected)
-- **Why:** Wave 1 delivered three core work items. Codex identified scope limitations discoverable in Wave 2. Proceeding with audit gaps documented maintains forward momentum.
+### WAVE-2-DESIGN-PACKET (IMPLEMENTED 2026-10-01; independent audit + one deferred item open)
+- **Status:** IMPLEMENTED, NOT YET INDEPENDENTLY AUDITED. Receipts below; no Codex re-audit has run on these SHAs.
+- **Done (SHA + verify command):**
+  - Mutation test, static + dynamic: `1a9de6a` (also teaches `core/import_edges.py` to report string-literal `import_module()`/`__import__()`). Verify: `pytest tests/unit/test_import_edges_baseline.py`; red-arm seen: with the pre-`1a9de6a` walker the test fails "Mutation control (dynamic) ... not detected".
+  - Handler census denominator (106 excluded, 9+27+106=142): `533c178`. Verify: read `docs/audits/handler-census-gaps-2026-09-30.md` scan-coverage section.
+  - AWS positive control with a detectable non-EXAMPLE key (`AKIAIOSFODNN7ZXCVBNM`, 20 chars): `648843e`. Verify: `GITLEAKS_BIN=<gitleaks v8.30.1> pytest tests/unit/test_gitleaks_positive_control_validation.py` (1 passed); WITHOUT a v8 binary it SKIPS, which is not a pass.
+  - Red-CI fix (this closeout): removed the deliberately-red `tests/unit/test_gitleaks_scan_completeness.py` committed in `00695cd`; it failed every ci.yml test lane (`FileNotFoundError: gitleaks`) and ruff since that push. Verify after push: `gh run list --workflow ci.yml --event push --limit 3` (last 3 push runs before the fix: all `failure`, run 36819097882 at `03b8153`).
+- **Open:**
+  1. **Gitleaks re-scan WITHOUT `--no-merges`** -- DEFERRED by operator decision 2026-10-01 ("no need for gitleaks right now"). Still a real coverage gap: credentials introduced in merge-commit resolutions are not scanned. Owner: next session if the operator re-opens it.
+  2. **CI has no gitleaks binary** (no `.github/` reference to gitleaks) so the positive-control test skips in CI and guards nothing there. Fix = install v8.30.1 with a pinned checksum in a CI lane, or accept it as a local-only audit proof and say so.
+  3. **Independent audit of `1a9de6a`/`533c178`/`648843e`** -- no Codex Sol/Droid seat has run. Specific questions: is `.import_module(` matching any receiver too permissive; does `__import__` via attribute (`builtins.__import__`) escape; handler-census "87 unaudited others" is a subtraction (142-36-19), not an enumerated list.
+  4. **Stale plan text**: `docs/superpowers/plans/2026-10-01-wave-2-design-packet.md` still lists the 34-char key that can never match; superseded by `648843e` (append-only note added).
+- **Wave 3 (HANDLER-CENSUS-W3) unblock:** CONDITIONAL on open item 3; the census reconciliation it consumes is done but unaudited.
 
 ---
 
