@@ -9,7 +9,7 @@
 This report enumerates broad exception handlers (`except Exception:`, bare `except:`) outside the audited scope and reconciles the existing handler-dispositions ledger against the live codebase.
 
 **Key findings (CORRECTED):**
-- **27 unaudited modules** (114 untouched) contain broad handlers (~100 total)
+- **27 unaudited modules** (106 untouched) contain broad handlers (~100 total)
 - **9 backend modules** fully audited with 46 handlers ALREADY in ledger
 - **Ledger coverage:** 248 records across 21 modules (9 backends + 12 CLI)
 - **Categories:** INTENTIONAL-BOUNDARY (222), LOGGED-DEGRADE (23), SILENT-SWALLOW (3)
@@ -72,7 +72,9 @@ This section enumerates all unaudited modules (not in `_EXPLICIT_AUDITED_MODULES
 **Scan Coverage by Module Tier:**
 - **Audited modules (9 backend):** Scanned; no tuple-Exception handlers found
 - **Unaudited modules (27 CLI/core):** Scanned; no tuple-Exception handlers found
-- **Excluded modules (114 others):** Not scanned (pre-excluded from Wave 1 scope)
+- **Excluded modules (106 others):** Not scanned (pre-excluded from Wave 1 scope)
+  - 19 originally excluded from `_ORIGINAL_EXCLUDED_MODULES` (deferred)
+  - 87 unaudited others not yet categorized
 
 **Finding:** Zero tuple handlers with broad parent exception types across all scanned modules (36 of 142 total). This category remains clear for future auditing in excluded modules.
 
@@ -126,6 +128,15 @@ All 9 **backend** modules from `_EXPLICIT_AUDITED_MODULES` have been audited and
 **Gap:** 7 CLI modules = no new work required
 
 **Status:** All 9 backend modules (`_EXPLICIT_AUDITED_MODULES`) are COMPLETE with 46 handlers recorded. Of the 19 original CLI modules (`_ORIGINAL_EXCLUDED_MODULES`), 12 are in ledger and 7 remain unaudited (deferred to future waves).
+
+**Reconciliation Note (Denominator Correction):**
+The codebase contains **142 total Python modules**. Wave 1 scope covered:
+- **9 audited backend modules** (fully enumerated)
+- **27 unaudited CLI/core modules** (broad handlers enumerated)
+- **Total scanned:** 36 modules
+- **Excluded from Wave 1:** 142 − 36 = **106 modules** (corrected from 114)
+  - 19 were originally deferred in `_ORIGINAL_EXCLUDED_MODULES`
+  - 87 are unaudited others not yet categorized
 
 ---
 
