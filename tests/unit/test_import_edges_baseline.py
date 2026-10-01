@@ -162,6 +162,12 @@ def test_a_new_backward_import_would_be_caught() -> None:
                 insert_idx = i + 1
                 break
 
+        # Validate fixture: logger line must be found (guards against silent mutation failure)
+        assert insert_idx > 0, (
+            "Fixture validation: logger line 'logger = logging.getLogger' not found in core/pipeline.py. "
+            "Mutation insertion point is undefined; test cannot proceed."
+        )
+
         # Insert the mutation import
         planted_import = "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION"
         lines.insert(insert_idx, planted_import)

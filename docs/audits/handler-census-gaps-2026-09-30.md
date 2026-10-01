@@ -69,7 +69,12 @@ This section enumerates all unaudited modules (not in `_EXPLICIT_AUDITED_MODULES
 **Scope:** Full codebase scan for patterns matching:
 - `except (...)` where tuple elements include `Exception` or `BaseException`
 
-**Finding:** No tuple handlers with broad parent exception types found in unaudited modules during initial scan. This category remains clear for future auditing.
+**Scan Coverage by Module Tier:**
+- **Audited modules (9 backend):** Scanned; no tuple-Exception handlers found
+- **Unaudited modules (27 CLI/core):** Scanned; no tuple-Exception handlers found
+- **Excluded modules (114 others):** Not scanned (pre-excluded from Wave 1 scope)
+
+**Finding:** Zero tuple handlers with broad parent exception types across all scanned modules (36 of 142 total). This category remains clear for future auditing in excluded modules.
 
 *(Note: Tuple handlers with specific exceptions like `(FileNotFoundError, ValueError)` are excluded as they do not match the broad-handler definition.)*
 

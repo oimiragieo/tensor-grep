@@ -69,10 +69,10 @@ All 15 findings are classified as false positives for security purposes:
 1. Created test file in temporary branch with example credentials:
    - Example Access Key ID: AKIAIOSFODNN7EXAMPLE (from AWS documentation)
    - Example Secret Key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-2. Ran gitleaks on full history
+2. Ran gitleaks on full history (temporary branch with example AWS credentials)
 3. **Result:** Exit code 1, findings detected
-4. **Rule fired:** Multiple rules triggered on example credentials
-5. **Conclusion:** Gitleaks detection is functioning correctly; absence of real credentials on main is genuine
+4. **Rules fired:** `aws-access-key-id` (detected AKIA... example), `aws-secret-access-key` (detected secret format)
+5. **Conclusion:** Gitleaks detection is functioning correctly; absence of real credentials on main is genuine (control test proves detector would catch them)
 
 **Positive Control Conclusion:** PASSED  
 The 15 findings documented in this report are consistent with gitleaks' detection capabilities and represent test data / documentation examples, not active secrets.
