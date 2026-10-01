@@ -122,14 +122,15 @@ def test_violation_baseline_only_lists_declared_violation_pairs() -> None:
 
 
 def test_a_new_backward_import_would_be_caught() -> None:
-    """MUTATION CONTROL. Real planted violation in source tree, run walker against it.
+    """MUTATION CONTROL. Real planted violations in a source tree, run the walker against it.
 
-    Plants a backward import (``core -> cli``) into a temp source tree, runs
-    ``compute_violation_module_edges()`` against the sabotaged tree, and verifies it detects
-    the new violation. A gate never observed failing is not a gate; this test proves the
-    walker catches violations at module granularity.
+    Plants BOTH a static backward import (``from X import Y``) and a dynamic one
+    (``importlib.import_module("X")``) -- each in its OWN module so the two detections are
+    independent (a shared from-module would let one edge mask the other's absence) -- runs
+    ``compute_violation_module_edges()`` on the sabotaged tree and verifies both appear.
+    A gate never observed failing is not a gate.
 
-    Also verifies the test passes on the clean tree (no false positives).
+    Also verifies the walker reports exactly the baseline on the clean tree (no false positives).
     """
     import shutil
     import tempfile
@@ -137,57 +138,58 @@ def test_a_new_backward_import_would_be_caught() -> None:
     # Step 1: Clean tree baseline (GREEN case)
     clean_baseline = _load_violation_baseline()
     clean_current = compute_violation_module_edges(_SRC_ROOT)
-    assert clean_current == clean_baseline, (
-        "Clean tree must match baseline before mutation"
-    )
+    assert clean_current == clean_baseline, "Clean tree must match baseline before mutation"
 
-    # Step 2: Plant violation in temp tree (RED case)
+    static_edge = ("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")
+    dynamic_edge = ("tensor_grep.core.result", "tensor_grep.cli.runtime_paths")
+    assert static_edge not in clean_baseline, "Planted static edge must not pre-exist"
+    assert dynamic_edge not in clean_baseline, "Planted dynamic edge must not pre-exist"
+
+    # Step 2: Plant violations in a temp tree (RED case)
     with tempfile.TemporaryDirectory() as temp_root_str:
-        temp_root = Path(temp_root_str)
-        temp_src = temp_root / "tensor_grep"
-
-        # Copy the entire src tree to temp
+        temp_src = Path(temp_root_str) / "tensor_grep"
         shutil.copytree(_SRC_ROOT, temp_src, dirs_exist_ok=True)
 
-        # Plant a backward import: core.pipeline imports from cli.runtime_paths
+        # Static mutation: core.pipeline gains `from tensor_grep.cli.runtime_paths import ...`
         core_pipeline = temp_src / "core" / "pipeline.py"
-        assert core_pipeline.exists(), "fixture missing: core/pipeline.py required for mutation test"
-
-        original_content = core_pipeline.read_text(encoding="utf-8")
-        # Add import after logger setup line
-        lines = original_content.split("\n")
-        insert_idx = 0
-        for i, line in enumerate(lines):
-            if "logger = logging.getLogger" in line:
-                insert_idx = i + 1
-                break
-
-        # Validate fixture: logger line must be found (guards against silent mutation failure)
+        assert core_pipeline.exists(), "fixture missing: core/pipeline.py required"
+        lines = core_pipeline.read_text(encoding="utf-8").split("\n")
+        insert_idx = next(
+            (i + 1 for i, line in enumerate(lines) if "logger = logging.getLogger" in line), 0
+        )
         assert insert_idx > 0, (
-            "Fixture validation: logger line 'logger = logging.getLogger' not found in core/pipeline.py. "
+            "Fixture validation: 'logger = logging.getLogger' not found in core/pipeline.py. "
             "Mutation insertion point is undefined; test cannot proceed."
         )
+        lines.insert(
+            insert_idx,
+            "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION_STATIC",
+        )
+        core_pipeline.write_text("\n".join(lines), encoding="utf-8")
 
-        # Insert the mutation import
-        planted_import = "from tensor_grep.cli.runtime_paths import get_work_root  # noqa: F401 MUTATION"
-        lines.insert(insert_idx, planted_import)
-        mutated_content = "\n".join(lines)
-        core_pipeline.write_text(mutated_content, encoding="utf-8")
+        # Dynamic mutation: core.result gains importlib.import_module("tensor_grep.cli....")
+        # appended at EOF (a complete top-level statement, so it cannot split another one).
+        core_result = temp_src / "core" / "result.py"
+        assert core_result.exists(), "fixture missing: core/result.py required"
+        original = core_result.read_text(encoding="utf-8")
+        core_result.write_text(
+            original.rstrip("\n")
+            + "\n\nimport importlib as _mut_importlib  # MUTATION_DYNAMIC\n"
+            + "_mut_dynamic = _mut_importlib.import_module('tensor_grep.cli.runtime_paths')\n",
+            encoding="utf-8",
+        )
 
-        # Run walker on mutated tree
         mutated_edges = compute_violation_module_edges(temp_src)
 
-        # Verify new edge was detected
-        planted_edge = ("tensor_grep.core.pipeline", "tensor_grep.cli.runtime_paths")
-        assert planted_edge in mutated_edges, (
-            f"Mutation control failed: planted violation {planted_edge} was not detected. "
+        assert static_edge in mutated_edges, (
+            f"Mutation control (static) failed: planted {static_edge} was not detected. "
             f"Got edges: {sorted(mutated_edges)}"
         )
-
-        # Verify it's actually a NEW edge (not in clean baseline)
-        assert planted_edge not in clean_baseline, (
-            "Planted edge should not exist in clean baseline"
+        assert dynamic_edge in mutated_edges, (
+            f"Mutation control (dynamic) failed: planted {dynamic_edge} was not detected. "
+            f"Got edges: {sorted(mutated_edges)}"
         )
-        assert mutated_edges - clean_baseline, (
-            "Module-granularity freeze must reject the new backward import"
+        assert mutated_edges - clean_baseline == {static_edge, dynamic_edge}, (
+            "Module-granularity freeze must reject exactly the two planted backward imports; "
+            f"got extra/missing: {sorted(mutated_edges - clean_baseline)}"
         )

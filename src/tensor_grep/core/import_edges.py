@@ -76,6 +76,29 @@ def _resolve_relative_import(from_module: str, level: int, target: str | None) -
     return f"{base}.{target}" if base else target
 
 
+def _dynamic_import_literal(node: ast.Call) -> str | None:
+    """Module name of ``importlib.import_module("x")``, bare ``import_module("x")`` or
+    ``__import__("x")`` when the first argument is a string literal, else ``None``.
+
+    Non-literal arguments (variables, f-strings) and relative literals cannot be resolved
+    statically and are deliberately not reported here.
+    """
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        # Any receiver alias (`import importlib as il`) -- `.import_module(` is distinctive.
+        is_dynamic = func.attr == "import_module"
+    elif isinstance(func, ast.Name):
+        is_dynamic = func.id in {"import_module", "__import__"}
+    else:
+        is_dynamic = False
+    if not is_dynamic or not node.args:
+        return None
+    first = node.args[0]
+    if isinstance(first, ast.Constant) and isinstance(first.value, str):
+        return first.value
+    return None
+
+
 def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str, str]]:
     """Yield ``(from_package, from_module, to_package, to_module)`` for every static
     cross-package import under ``src_root``.
@@ -107,6 +130,10 @@ def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str,
                     targets = [resolved] if resolved is not None else []
                 elif node.module is not None:
                     targets = [node.module]
+            elif isinstance(node, ast.Call):
+                literal = _dynamic_import_literal(node)
+                if literal is not None:
+                    targets = [literal]
             for target in targets:
                 to_pkg = _imported_top_level_package(target)
                 if to_pkg is not None and to_pkg != from_pkg:
@@ -136,11 +163,11 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
     repo's layering convention names. Edges are (source_package, imported_package); a package
     importing itself is excluded.
 
-    Known gap (documented, not silently claimed complete): this walks ``ast.Import`` /
-    ``ast.ImportFrom`` nodes only. A dynamic import (``importlib.import_module(...)``,
-    ``__import__(...)``) that names a cross-package module by a string literal is NOT detected.
-    Static import statements are this repo's overwhelming convention; a dynamic-import scanner
-    is separate, unstarted scope for a future P13 slice.
+    Walks ``ast.Import`` / ``ast.ImportFrom`` nodes plus dynamic imports whose module name is a
+    string literal (``importlib.import_module("x")``, ``import_module("x")``, ``__import__("x")``).
+    Known gap (documented, not silently claimed complete): a dynamic import with a NON-literal
+    argument (variable, f-string) or a relative literal cannot be resolved statically and is
+    NOT detected.
     """
     return {
         (from_pkg, to_pkg)
