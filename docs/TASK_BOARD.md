@@ -1,16 +1,22 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-09-22)
+## Live reconciliation (2026-10-01)
 
-At `origin/main` `14b11d44fc77e23ddddbdd28400c574f4939946f`, `pyproject.toml` and the newest
-`CHANGELOG.md` heading both identify v1.121.2. The PyPI version-specific JSON lists four
-v1.121.2 artifacts by filename (macOS arm64, manylinux x86_64, Windows amd64 wheels, and
-sdist); this establishes publication, not a fresh installed-wheel dogfood verdict. The live
-GitHub open-PR query returned only #1166 (`ci: restore governance size and deadline test
-gates`, base `main`, head `695a345eeb4080e16a81b631b484bb36c831e5a2`); it is a CI
-hotfix in progress, not a shipped board item. Main CI run `35733459530` failed, and PR
-run `35747027820` has not earned a completed-green verdict at this snapshot. Do not treat
-the dated open-PR tables below as live.
+At `origin/main` `f5f55ee`, `pyproject.toml` identifies v1.123.1 (release commit `88bed17`). The PyPI
+version-specific JSON lists four v1.123.1 artifacts (three wheels + sdist): publication, not an
+installed-wheel dogfood verdict. Releases since the prior stamp (v1.121.2): v1.121.3 (`ed116de`), v1.122.0 (`59f2d86`),
+v1.122.1 (`552ba8b`), v1.122.2 (`43e5e28`), v1.123.0 (`1e656e9`), v1.123.1 (`88bed17`). Merged since
+then, by squash SHA: #1166 CI size/deadline gate restore (`6e77050`, the hotfix the prior snapshot listed
+as open, now MERGED), #1167 pagination vs incomplete-scan distinction (`cff35c7`), #1169 dogfood
+remediation: sql / repair-env / scoped checkpoints (`3b436fd`), #1175 `tg sql` imports table
+(`49bc89f`), #1178 non-code files no longer mark the imports table incomplete (`6f1d702`), #1180
+install docs stop advertising npm/Homebrew/winget as live (`c2967cc`; only PyPI and GitHub binaries
+are live). None of these merges is owned by a canonical row below, so no row's Status changed. The
+live GitHub open-PR query now returns #1182 (handler census gaps), #1183 (gitleaks scan report) and
+#1184 (pyjwt bump); all docs/deps. Main push-CI (`gh run list --workflow ci.yml --event push`):
+`722df38`, `00695cd`, `03b8153` all `failure` (a red-by-design gitleaks demo test, removed in
+`f5f55ee`); run `36926131387` at `f5f55ee` had one failing test left (this stamp), so no green main
+verdict is claimed. Do not treat the dated open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
@@ -223,7 +229,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-09-22** (stamp `post-**v1.121.2**`; live release/PR census and canonical
+Last reconciled: **2026-10-01** (stamp `post-**v1.123.1**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior or clear the red main CI gate.)
 
