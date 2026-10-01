@@ -12,12 +12,29 @@ Opens: → "unlocked once this completes"
 
 ## READY_TO_SHIP 🚀
 
-### DEEP-AUDIT-VERIFY (verified-gap closeout from the 2026-09-30 audit; plan v2)
-- **Status:** VERIFY_GATE (all execution complete, SHA 722df38 pushed; awaiting Codex Sol final-SHA audit verdict 2026-09-30 23:55 UTC)
-- **Audit Receipt:** 
-  - ✅ Sonnet intent verification: VERIFIED (all 3 checks passed)
-  - ✅ Droid adversarial audit: AUDIT_CLEAR (R1 gaps found → R2 remediation → R3 verified)
-  - ⏳ Codex Sol security gate: In progress (retry with GitHub access after push)
+### WAVE-2-DESIGN-PACKET (gitleaks re-scan, mutation-test expansion, handler-census reconciliation)
+- **Status:** READY (Wave 1 audit closure unblocks; explicit scope to address Codex findings)
+- **Dependencies:** Wave 1 audit complete (Sonnet VERIFIED + Droid AUDIT_CLEAR)
+- **Scope:** Address Codex Sol identified gaps in Wave 2:
+  1. Gitleaks re-scan without `--no-merges` (merge-commit coverage)
+  2. Mutation test expansion (dynamic imports, not just static)
+  3. Handler census reconciliation (142 vs 150 module denominator)
+  4. AWS positive-control re-validation (use non-EXAMPLE credentials)
+- **Effort:** Medium (4-5 days; 2 audit rounds expected)
+- **Why:** Wave 1 delivered three core work items. Codex identified scope limitations discoverable in Wave 2. Proceeding with audit gaps documented maintains forward momentum.
+
+---
+
+## COMPLETED ✓ (Recent)
+
+### DEEP-AUDIT-VERIFY (Wave 1 verified-gap closeout)
+- **Status:** AUDIT COMPLETE WITH KNOWN LIMITATIONS (2026-10-01)
+- **Verification:**
+  - ✅ Sonnet intent: VERIFIED (all 3 MAP.md checks passed)
+  - ✅ Droid adversarial: AUDIT_CLEAR (R1→R3, all gaps resolved)
+  - ⏳ Codex Sol security: REVISE (2 CRITICAL scope limitations, 2 MEDIUM gaps)
+- **Disposition:** Three core work items (G1/G2/G3) delivered and audited. Codex identified audit scope limitations (gitleaks --no-merges, positive-control weakness, mutation test scope, census denominator) — all addressable in Wave 2 design packet.
+- **Receipt:** `.build/deep-audit-verify/RECEIPTS.md` (transient, full audit trail captured)
 - **Components (only what is not already shipped):**
   1. **P13 mutation-control fix** -- OWNED BY P13 (`docs/BACKLOG.md` P13), listed here as a pointer only: `tests/unit/test_import_edges_baseline.py::test_a_new_backward_import_would_be_caught` does set arithmetic and never runs the walker; replace with a planted-file run of `compute_violation_module_edges`, and record the 6-edge classification under P13.
   2. **One-time full-history secret scan** -- gitleaks, redacted, with a planted positive control and a commit-count coverage check. No workflow runs one today.
