@@ -260,3 +260,41 @@ Enclosing symbol resolved by innermost `ast.FunctionDef` / `ast.AsyncFunctionDef
 **Date:** 2026-09-30  
 **Ledger state:** 248 records, 21 modules  
 **Codebase state:** 142 Python modules, 27 unaudited with broad handlers
+
+---
+
+## ERRATUM (2026-10-02, append-only) -- corrected counts, measured
+
+Re-counted with the project's own scanner (`tests/unit/test_handler_dispositions.py::
+_real_handlers_for_module`, bare `except:` and `except Exception`) against the ledger keys
+`(module, enclosing_symbol, handler_index_within_symbol)`. The figures above that this supersedes:
+
+| This report said | Measured |
+|---|---|
+| 27 unaudited modules | **26** -- `cli/rg_replacement.py` already has a ledger record (it was counted as unaudited) |
+| ~100 unaudited handlers | **95** (343 live broad handlers - 248 ledger records; 0 stale records) |
+| "Audit 7 remaining CLI modules from `_ORIGINAL_EXCLUDED_MODULES`" (Wave 3+ item 1) | **Already done**: all 19 original excluded modules are covered -- 11 have ledger records, 8 have zero broad handlers |
+| 9 backend modules / 46 handlers "pending Wave 2" | **Done**: 46 backend records exist and match the live code (this report's own section on backends already says COMPLETE) |
+| "87 unaudited others" (a subtraction) | still unverified as a module list; not needed for the handler work |
+
+Unledgered handlers per module at the time of this erratum (95 total):
+`cli/lsp_external_provider` 14, `cli/session_daemon` 11, `cli/lsp_server` 8, `core/hardware/device_detect` 7,
+`cli/dogfood` 4, `cli/lsp_provider_setup` 4, `cli/prepare_service` 4, `core/retrieval_dense` 4,
+`core/retrieval_late` 4, `cli/ast_workflows` 3, `cli/evidence_receipt` 3, `cli/freshness` 3,
+`cli/runtime_paths` 3, `core/hardware/memory_manager` 3, `sidecar` 3, `cli/agent_capsule_call_sites` 2,
+`cli/bootstrap` 2, `cli/evidence_signing` 2, `cli/session_resume_service` 2, `cli/session_store` 2,
+`core/retrieval_chunker` 2, `cli/agent_capsule` 1, `cli/audit_manifest` 1, `cli/checkpoint_store` 1,
+`core/hardware/device_inventory` 1, `core/observability` 1.
+
+**Scanner blind spot (not in this report's counts, found while re-counting):** the gate ignores
+`except BaseException` -- 12 such handlers exist (`cli/_index_lock` 2, `cli/mcp_server` 4,
+`cli/checkpoint_store`, `cli/lsp_provider_setup`, `cli/native_frontdoor`, `cli/progress`,
+`cli/session_daemon`, `core/reranker`, 1 each) -- and tuple handlers containing `Exception` (0 today).
+A recon agent reported 14; 12 is the AST count of `ExceptHandler` nodes whose type is the bare name
+`BaseException`. Whether they belong in this ledger or get their own census is an open question.
+
+**Enforcement hole (why Wave 3 exists):** `tests/unit/test_silent_failure_hardening.py` pins
+`TOTAL_BROAD_HANDLERS_CEILING = 343` (slack 0, so a NEW handler fails) but nothing requires a ledger
+record for it and the ceiling can simply be bumped; `test_handler_dispositions.py` requires
+completeness only for the modules in `_audited_modules_so_far()` (28), and allows records for other
+modules (which is how `rg_replacement` got one).

@@ -7,6 +7,8 @@ class MemoryManager:
     def __init__(self) -> None:
         self.detector = DeviceDetector()
         self._cached_detected_device_ids: list[int] | None = None
+        # True when the cached IDs are a guessed contiguous range because enumeration RAISED.
+        self._detected_ids_are_guessed = False
 
     def get_vram_budget_mb(self, device_id: int = 0) -> int:
         if not self.detector.has_gpu():
@@ -67,14 +69,19 @@ class MemoryManager:
                     self._cached_detected_device_ids = list(legacy_ids)
                     return list(legacy_ids)
 
-            devices = self.detector.list_devices()
-            device_ids = [device.device_id for device in devices]
-            if device_ids:
-                self._cached_detected_device_ids = list(device_ids)
-                return list(device_ids)
+            # A legacy detector is one that LACKS the method (capability), not one that raised an
+            # AttributeError: an AttributeError from inside a method that exists is a real failure.
+            if callable(getattr(self.detector, "list_devices", None)):
+                devices = self.detector.list_devices()
+                device_ids = [device.device_id for device in devices]
+                if device_ids:
+                    self._cached_detected_device_ids = list(device_ids)
+                    return list(device_ids)
         except Exception:
-            # Backward-compatible fallback when detector does not expose IDs.
-            pass
+            # An ID API that EXISTS raised: the contiguous range below is a guess, not detected IDs.
+            # Remember that so an explicit preferred-ID request fails closed instead of validating
+            # against it (real IDs may be non-contiguous, e.g. [3, 5]).
+            self._detected_ids_are_guessed = True
 
         try:
             raw_count = self.detector.get_device_count()
@@ -98,6 +105,11 @@ class MemoryManager:
             return []
         if not preferred_ids:
             return detected_ids
+
+        # Fail closed: IDs guessed after a failed enumeration cannot validate an explicit request
+        # (real IDs may be non-contiguous), so refuse rather than route to a possibly-wrong GPU.
+        if self._detected_ids_are_guessed:
+            return []
 
         detected_set = set(detected_ids)
         # De-dup requested IDs, preserving order.

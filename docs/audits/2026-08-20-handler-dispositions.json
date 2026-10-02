@@ -2478,5 +2478,125 @@
     "evidence": "SEC-007: cli/mcp_rewrite_tools.py:execute_rewrite_apply_json post-rewrite policy evaluation handler catches Exception, logs to sys.stderr via _log_tool_exception, and returns sanitized policy evaluation error payload.",
     "reason": "Fail-closed boundary for policy evaluation failure after rewrite edits applied.",
     "hardened_in": "SEC-007"
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 99,
+    "enclosing_symbol": "has_gpu",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass around the Windows nvml.dll probe (WinDLL load, nvmlInit_v2, device-count call). A failed or absent NVML leaves the cache unset and execution falls through to the torch.cuda.is_available() probe, which itself ends in False on ImportError.",
+    "reason": "has_gpu is a hardware probe whose contract is a boolean 'is a GPU usable'; an NVML failure is evidence of absence, not an error to surface. The handler is one rung of a deliberate NVML-then-torch-then-False ladder, and the only thing a caller can do with a degraded answer (take the CPU route) is the safe direction.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 119,
+    "enclosing_symbol": "has_gpu",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass around the Linux/WSL libnvidia-ml.so probe (CDLL load, init, count). It is followed by a bare break so only the first existing library path is tried, then the same torch fallback as the Windows arm.",
+    "reason": "Same probe-ladder boundary as the Windows arm, differing only in the loader. A broken NVML library means 'cannot prove a GPU here' and must degrade to the torch probe and finally to False rather than abort capability detection for the whole process.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 168,
+    "enclosing_symbol": "get_device_count",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass around the fast NVML count path (it also raises a bare Exception('NVML not found') when no library path exists). The failure is not reported; control continues to the torch.cuda.device_count() path below.",
+    "reason": "The handler is the fast-path half of a two-path cascade, and the slow path still gets a full attempt, so no information is lost by moving on. The count that eventually results is still produced by a real probe, never invented.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 176,
+    "enclosing_symbol": "get_device_count",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception on the torch.cuda.device_count() fallback: caches 0 and returns 0 even though has_gpu() already returned True, so a transient failure is remembered for the life of the detector and looks like a machine with no routable GPUs.",
+    "reason": "Classified a boundary on the strength of its direction, not its disclosure: a zero count yields no device IDs, so an explicit --gpu-device-ids request is refused by the pipeline and automatic routing stays on CPU; nothing is fabricated. Lower-confidence call -- the cached 0 hides the cause and the has_gpu()/count disagreement, so a follow-up could surface a reason without changing the safe value.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 272,
+    "enclosing_symbol": "get_vram_capacity_mb",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: pass around the NVML memory-info query (handle lookup and nvmlDeviceGetMemoryInfo into a ctypes struct). On failure nothing is cached and control proceeds to torch.cuda.get_device_properties.",
+    "reason": "Fast-path-then-fallback again: the NVML read is an optimisation over torch and the fallback gets a genuine attempt before any degraded value is produced. Swallowing here cannot turn into a wrong number, only into a second measurement.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 282,
+    "enclosing_symbol": "get_vram_capacity_mb",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception: return 0 after both NVML and torch failed to read VRAM. The value is not cached, and 0 is also the legitimate answer for 'no GPU', so a caller (get_vram_budget_mb, then get_recommended_chunk_size_mb) cannot tell a failed read from an empty device.",
+    "reason": "SILENT-SWALLOW, left as is and justified rather than hardened: the error is discarded and the caller sees a normal-looking 0, but the 0 budget is the conservative direction (chunk size falls back to the system-RAM estimate bounded to 256-1024 MB) and cannot route work to a different device. Hardening would mean a visible reason on the budget; that is a follow-up, not a change made in this slice.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_detect.py",
+    "lineno": 293,
+    "enclosing_symbol": "has_gds",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return False around importing kvikio and reading DriverProperties().is_gds_available. A missing kvikio, a driver error, or an unexpected attribute all collapse to False.",
+    "reason": "A feature-probe whose contract is 'False unless GDS is positively confirmed'. Reporting False only keeps the reader on the ordinary pinned-memory path (should_use_pinned_memory is experimental with no production caller), so the failure costs speed at most and never correctness.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/memory_manager.py",
+    "lineno": 28,
+    "enclosing_symbol": "get_recommended_chunk_size_mb",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around psutil.virtual_memory().total: substitutes a fixed 8192 MB RAM figure with a comment that it is a safe estimate, then the result is clamped to the 256-1024 MB per-process window.",
+    "reason": "This sizes a buffer, not a result: a wrong RAM figure moves chunk size inside a tightly bounded window and cannot change what is matched. The substitute is a documented conservative constant rather than a guessed device identity, which is why it is a boundary and not a swallow.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/memory_manager.py",
+    "lineno": 80,
+    "enclosing_symbol": "_get_detected_device_ids",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "PRE-FIX the body was `except Exception: pass` covering two different situations: a legacy detector lacking the ID APIs (AttributeError, the compatibility path test fakes rely on) and a detector whose enumeration RAISED at runtime. Both fell through to range(get_device_count()), so after a runtime enumeration failure get_device_ids([1]) validated against guessed contiguous IDs and could route to the wrong GPU when real IDs were non-contiguous (e.g. [3, 5]). HARDENED: a detector that LACKS an ID API (a capability check, not a caught AttributeError) keeps the contiguous fallback; any exception from an API that EXISTS -- including an AttributeError raised from inside it -- still falls back for the no-preferred-IDs path but sets _detected_ids_are_guessed, and get_device_ids returns [] for an explicit preferred_ids request so the pipeline raises its configuration error. RED arm: tests/unit/test_memory_manager_enumeration_failure.py::test_explicit_ids_fail_closed_when_enumeration_raised fails on the pre-fix bytes with `[1] == []`.",
+    "reason": "SILENT-SWALLOW and not INTENTIONAL-BOUNDARY: the handler discarded the reason and returned a fabricated value indistinguishable from detected IDs, on a path where an explicit user request is validated against it. The fix is fail-closed for the explicit-ID request rather than a raise, because the auto-routing caller still legitimately wants a best-effort contiguous range. The handler stays broad on purpose; the narrowing is that AttributeError is split out as the compatibility path.",
+    "hardened_in": "HANDLER-CENSUS-W3-a"
+  },
+  {
+    "module": "core/hardware/memory_manager.py",
+    "lineno": 88,
+    "enclosing_symbol": "_get_detected_device_ids",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: count = 0 around detector.get_device_count() on the final fallback, after which fallback_ids is [] and that empty list is cached.",
+    "reason": "Reaching this point means every enumeration route failed or yielded nothing; an empty ID list is the fail-closed answer (get_device_ids returns [], the explicit-GPU pipeline refuses, auto-routing uses CPU). Nothing is invented. The cached empty list hides the cause, so this is a boundary by direction and not by disclosure.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/hardware/device_inventory.py",
+    "lineno": 39,
+    "enclosing_symbol": "collect_device_inventory",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception: routable_device_ids = [] around enumerate_device_ids()/get_device_ids(). used_enumeration_contract is assigned only after the call returns, so after a raise it is still False and the code falls to the list_devices() branch and reports those devices as routable. The failure itself appears nowhere in the returned DeviceInventory.",
+    "reason": "SILENT-SWALLOW, left as is and justified: this builds a diagnostic inventory, not a routing decision, and the substitute comes from a real second API (list_devices) whose own exceptions propagate uncaught, so it is not a guessed range. The gap is that a doctor/inventory reader sees a healthy-looking device list after an enumeration failure; surfacing the reason is a follow-up and is not changed here.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/observability.py",
+    "lineno": 15,
+    "enclosing_symbol": "nvtx_range",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception: return nullcontext() around importing nvtx and constructing nvtx.annotate(...). Absent or misbehaving NVTX yields a no-op context manager.",
+    "reason": "NVTX ranges are optional profiling annotations around search calls; the context manager has no effect on results, so degrading to a no-op is the intended behaviour whenever the optional dependency is missing or fails. Raising would make a profiling aid able to break a search, which is the wrong direction.",
+    "hardened_in": null
   }
 ]

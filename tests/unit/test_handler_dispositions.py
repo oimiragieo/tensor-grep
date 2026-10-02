@@ -68,6 +68,11 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "backends/cudf_backend.py",
     "backends/torch_backend.py",
     "backends/cybert_backend.py",
+    # HANDLER-CENSUS-W3-a: core hardware probes + NVTX shim (12 handlers).
+    "core/hardware/device_detect.py",
+    "core/hardware/memory_manager.py",
+    "core/hardware/device_inventory.py",
+    "core/observability.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})
