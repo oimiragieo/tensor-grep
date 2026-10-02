@@ -1,21 +1,23 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-10-01)
+## Live reconciliation (2026-10-02)
 
-At `origin/main` `f5f55ee`, `pyproject.toml` identifies v1.123.1 (release commit `88bed17`). The PyPI
-version-specific JSON lists four v1.123.1 artifacts (three wheels + sdist): publication, not an
-installed-wheel dogfood verdict. Releases since the prior stamp (v1.121.2): v1.121.3 (`ed116de`), v1.122.0 (`59f2d86`),
-v1.122.1 (`552ba8b`), v1.122.2 (`43e5e28`), v1.123.0 (`1e656e9`), v1.123.1 (`88bed17`). Merged since
-then, by squash SHA: #1166 CI size/deadline gate restore (`6e77050`, the hotfix the prior snapshot listed
-as open, now MERGED), #1167 pagination vs incomplete-scan distinction (`cff35c7`), #1169 dogfood
-remediation: sql / repair-env / scoped checkpoints (`3b436fd`), #1175 `tg sql` imports table
-(`49bc89f`), #1178 non-code files no longer mark the imports table incomplete (`6f1d702`), #1180
-install docs stop advertising npm/Homebrew/winget as live (`c2967cc`; only PyPI and GitHub binaries
-are live). None of these merges is owned by a canonical row below, so no row's Status changed. The
-open-PR set is empty: #1182/#1183 were closed as superseded, #1184 (pyjwt) is superseded by the
-main fix that also bumps urllib3 (pip-audit had 16 findings). Main push-CI: `722df38`, `00695cd`,
-`03b8153` all `failure` (a red-by-design gitleaks demo test, removed in `f5f55ee`); `b139f39` and
-`d93d8a0` green on attempt 2 (crates.io flakes). Do not treat the dated open-PR tables below as live.
+At `origin/main` `1e6121c`, `pyproject.toml` identifies v1.123.7 (release commit `62ee850`). PyPI lists
+four v1.123.7 artifacts (three wheels + sdist) and the published win_amd64 wheel was opened and checked
+for that release's fixes: publication plus content, not a full installed-wheel dogfood verdict. Releases
+since the prior stamp (v1.123.1): v1.123.2 (`b40ead0`), v1.123.3 (`8ede6fc`), v1.123.4 (`b2990da`),
+v1.123.5 (`456d29c`), v1.123.6 (`603f0aa`), v1.123.7 (`62ee850`). Before that, v1.121.3..v1.123.1 (git
+tags) carried #1166 (`6e77050`), #1167 (`cff35c7`), #1169 (`3b436fd`), #1175 (`49bc89f`),
+#1178 (`6f1d702`) and #1180 (`c2967cc`; only PyPI and GitHub binaries are live). Merged since v1.123.1,
+all direct-main with no PR: the PyJWT/urllib3 published floors (`7330b93`, `87a921d`) and the
+artifact-requirements publish gate (`c399b4c`); the import-edge walker hardening (`c1bea5a`..`b139f39`,
+owned by P13, Status stays READY); GPU device-ID fail-closed (`6936269`); evidence/audit-manifest chain
+integrity (`a1264b5`); three silent-degradation disclosures (`6471b51`, `fec716c`); and Wave 3
+handler-ledger slices 1-5 (unledgered 95 -> 39, ceiling 341), tracked in `backlog.md`, not as board
+rows. No canonical row's Status changed. The open-PR set is empty (queried 2026-10-02). Main push-CI:
+`fec716c` passed every lane and published v1.123.7; `2a720a2` failed its file-size ratchet, fixed by
+`fec716c`; the earlier red-by-design gitleaks failures were removed in `f5f55ee`. Do not treat the
+dated open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
@@ -228,7 +230,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-01** (stamp `post-**v1.123.1**`; live release/PR census and canonical
+Last reconciled: **2026-10-02** (stamp `post-**v1.123.7**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior or clear the red main CI gate.)
 
