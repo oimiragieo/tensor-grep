@@ -5,8 +5,63 @@ import hashlib
 import io
 import re
 import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
+
+DEFAULT_PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
+
+# (normalised name, sorted bracket extras, normalised specifier, extra the requirement belongs to)
+RequirementKey = tuple[str, tuple[str, ...], str, str | None]
+
+_REQUIREMENT_RE = re.compile(
+    r"^\s*(?P<name>[A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[(?P<extras>[^\]]*)\])?\s*"
+    r"(?P<spec>[^;]*?)\s*(?:;\s*(?P<marker>.*?))?\s*$"
+)
+_EXTRA_MARKER_RE = re.compile(r"""extra\s*==\s*['"]([^'"]+)['"]""")
+
+
+def _requirement_key(raw: str, *, extra: str | None = None) -> RequirementKey:
+    """Normalise one PEP 508 requirement so pyproject's spelling and a wheel's ``Requires-Dist``
+    spelling (``name>=1 ; extra == 'nlp'``: a space before the semicolon, single quotes) compare
+    equal. Environment markers other than ``extra`` are deliberately NOT compared: the point is
+    that the name, specifier and extra reach the installer, not that marker text round-trips.
+    """
+    match = _REQUIREMENT_RE.match(raw)
+    if match is None:
+        raise ValueError(f"unparseable requirement: {raw!r}")
+    name = re.sub(r"[-_.]+", "-", match["name"]).lower()
+    extras = tuple(
+        sorted(e.strip().lower() for e in (match["extras"] or "").split(",") if e.strip())
+    )
+    specifier = ",".join(
+        sorted(part.replace(" ", "") for part in match["spec"].split(",") if part.strip())
+    )
+    marker_extra = _EXTRA_MARKER_RE.search(match["marker"] or "")
+    return name, extras, specifier, extra or (marker_extra.group(1) if marker_extra else None)
+
+
+def _declared_requirements(pyproject_path: Path) -> list[tuple[str, RequirementKey]]:
+    project = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))["project"]
+    declared = [(raw, _requirement_key(raw)) for raw in project.get("dependencies", [])]
+    for extra, entries in project.get("optional-dependencies", {}).items():
+        declared += [(raw, _requirement_key(raw, extra=extra)) for raw in entries]
+    return declared
+
+
+def _missing_requirements(
+    declared: list[tuple[str, RequirementKey]], metadata_text: str
+) -> list[str]:
+    present = {
+        _requirement_key(line.split(":", 1)[1])
+        for line in metadata_text.splitlines()
+        if line.startswith("Requires-Dist:")
+    }
+    return [
+        raw if key[3] is None else f"{raw} (extra '{key[3]}')"
+        for raw, key in declared
+        if key not in present
+    ]
 
 
 def _parse_metadata_version(metadata_text: str) -> str:
@@ -16,13 +71,16 @@ def _parse_metadata_version(metadata_text: str) -> str:
     raise ValueError("Metadata is missing Version field")
 
 
-def _wheel_metadata_version(wheel_path: Path) -> str:
+def _wheel_metadata_text(wheel_path: Path) -> str:
     with zipfile.ZipFile(wheel_path) as zf:
         metadata_members = [name for name in zf.namelist() if name.endswith(".dist-info/METADATA")]
         if not metadata_members:
             raise ValueError(f"{wheel_path.name} is missing METADATA")
-        metadata_text = zf.read(metadata_members[0]).decode("utf-8")
-        return _parse_metadata_version(metadata_text)
+        return zf.read(metadata_members[0]).decode("utf-8")
+
+
+def _wheel_metadata_version(wheel_path: Path) -> str:
+    return _parse_metadata_version(_wheel_metadata_text(wheel_path))
 
 
 def _wheel_has_tg_console_script(wheel_path: Path) -> bool:
@@ -49,7 +107,7 @@ def _wheel_has_tg_console_script(wheel_path: Path) -> bool:
     return False
 
 
-def _sdist_metadata_version(sdist_path: Path) -> str:
+def _sdist_metadata_text(sdist_path: Path) -> str:
     with tarfile.open(sdist_path, mode="r:gz") as tf:
         pkg_info_members = [m for m in tf.getmembers() if m.name.endswith("/PKG-INFO")]
         if not pkg_info_members:
@@ -57,8 +115,11 @@ def _sdist_metadata_version(sdist_path: Path) -> str:
         data = tf.extractfile(pkg_info_members[0])
         if data is None:
             raise ValueError(f"{sdist_path.name} contains unreadable PKG-INFO")
-        metadata_text = data.read().decode("utf-8")
-        return _parse_metadata_version(metadata_text)
+        return data.read().decode("utf-8")
+
+
+def _sdist_metadata_version(sdist_path: Path) -> str:
+    return _parse_metadata_version(_sdist_metadata_text(sdist_path))
 
 
 def build_hash_matrix(dist_dir: Path) -> dict[str, str]:
@@ -76,10 +137,21 @@ def validate(
     dist_dir: Path,
     version: str,
     require_platforms: list[str] | None = None,
+    pyproject_path: Path | None = None,
 ) -> list[str]:
     errors: list[str] = []
     wheels = sorted(dist_dir.glob("tensor_grep-*.whl"))
     sdists = sorted(dist_dir.glob("tensor_grep-*.tar.gz"))
+
+    # A floor declared in pyproject.toml that never reaches the BUILT artifact reaches no user
+    # while every source-level gate stays green (a `[tool.uv]` constraint is lock-only, and a
+    # dropped Requires-Dist looks identical in a green summary). Check what installers will read.
+    declared: list[tuple[str, RequirementKey]] | None = None
+    if pyproject_path is not None:
+        try:
+            declared = _declared_requirements(pyproject_path)
+        except Exception as exc:
+            errors.append(f"Failed to read declared requirements from {pyproject_path}: {exc}")
 
     if not wheels:
         errors.append("No wheel artifacts found in dist directory")
@@ -105,6 +177,12 @@ def validate(
             )
         if not _wheel_has_tg_console_script(wheel):
             errors.append(f"Wheel missing tg console script entry point: {wheel.name}")
+        if declared is not None:
+            for missing in _missing_requirements(declared, _wheel_metadata_text(wheel)):
+                errors.append(
+                    f"Wheel METADATA missing declared requirement {missing}: {wheel.name} "
+                    "(pyproject.toml declares it, so installers must be told)"
+                )
 
     for sdist in sdists:
         if sdist.name != expected_sdist_name:
@@ -118,6 +196,12 @@ def validate(
             errors.append(
                 f"sdist metadata version mismatch: {sdist.name} has {sdist_version}, expected {version}"
             )
+        if declared is not None:
+            for missing in _missing_requirements(declared, _sdist_metadata_text(sdist)):
+                errors.append(
+                    f"sdist PKG-INFO missing declared requirement {missing}: {sdist.name} "
+                    "(pyproject.toml declares it, so installers must be told)"
+                )
 
     if require_platforms:
         wheel_names = [p.name.lower() for p in wheels]
@@ -159,6 +243,12 @@ def main() -> int:
         default="linux,macos,windows",
         help="Comma-separated platform tags that must be represented in wheel filenames",
     )
+    parser.add_argument(
+        "--pyproject",
+        type=Path,
+        default=DEFAULT_PYPROJECT_PATH,
+        help="pyproject.toml whose declared requirements every built artifact must carry",
+    )
     args = parser.parse_args()
 
     required_platforms = [
@@ -168,6 +258,7 @@ def main() -> int:
         dist_dir=args.dist_dir,
         version=args.version,
         require_platforms=required_platforms,
+        pyproject_path=args.pyproject,
     )
     if errors:
         for err in errors:
