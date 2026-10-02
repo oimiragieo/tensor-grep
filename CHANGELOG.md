@@ -1,6 +1,182 @@
 # CHANGELOG
 
 
+## v1.123.3 (2026-10-02)
+
+### Bug Fixes
+
+- **deps**: Bump PyJWT to 2.15.1 and urllib3 to 2.8.0 -- 16 pip-audit findings had reddened
+  audit.yml on main for 3+ days
+  ([`7330b93`](https://github.com/oimiragieo/tensor-grep/commit/7330b931f21e96732e971975f264e3ddcd3ec8d5))
+
+The scheduled audit.yml pip-audit gate failed on main (c2967cc 09-30 and 10-01, aa79844 10-02) with
+  16 known vulnerabilities in 2 packages: PyJWT 2.13.0 (13 PYSEC-2026-41xx, fixed in 2.14.0 /
+  2.15.0) and urllib3 2.7.0 (PYSEC-2026-4175/4176/4177, fixed in 2.8.0). Dependabot PR #1184 covered
+  only PyJWT and sat behind main's old reds; it is superseded.
+
+Fixed across the repo's whole floor chain, not just the lock: - [tool.uv].constraint-dependencies:
+  pyjwt>=2.15.0, NEW urllib3>=2.8.0 - uv.lock: PyJWT 2.15.1, urllib3 2.8.0 and the two [manifest]
+  constraint lines. Hand-spliced (14 lines): the local uv 0.10.7 also rewrites unrelated
+  cuda-pathfinder/pywin32/numpy markers, which would be 137 lines of noise. - release validator
+  expected_constraints, its test fixtures, and tests/unit/test_security_dependency_floors.py (3
+  tests, RED first).
+
+Verified by re-running CI's own invocation: pip-audit now reports "No known vulnerabilities found, 2
+  ignored" (16 on the old lock); uv export --locked rc=0; validate_release_assets.py passes; 87
+  dependent tests pass.
+
+Also: the gitleaks positive-control test now fails instead of skipping when TG_REQUIRE_GITLEAKS=1
+  and no v8 binary exists (a skipped control looks green); a switch test runs without a binary so it
+  executes in CI. Board and backlog corrected (open-PR set, main CI history).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Chores
+
+- **import-edges**: Act on the scoped re-review of the R5 fix; bind `from pkgutil import *`
+  ([`b139f39`](https://github.com/oimiragieo/tensor-grep/commit/b139f39fe17eb165dc643216a8ad40f07f2e1f0a))
+
+The scoped re-review of 945cc7d..aa79844 returned F1 ADDRESSED and F2 ADDRESSED, and one issue
+  introduced by that diff: the pkgutil alias scope is file-wide, so an unrelated rebinding of the
+  same alias name in another function can read as an import (a false edge).
+
+Ruled deliberate: it is a false POSITIVE that fails loud for a human to review (the safe direction
+  for a ratchet), the same trade-off already accepted for the receiver-agnostic match, and
+  lexical-scope tracking risks the opposite error of hiding a real import. Documented in
+  _pkgutil_scope and pinned by test_pkgutil_alias_scope_is_file_wide_by_design.
+
+The seat also could not verify `from pkgutil import *`; that is a real, cheap gap (pkgutil.__all__
+  exports resolve_name), now closed with test_star_import_from_pkgutil_binds_resolve_name. Red arm
+  seen: the previously committed walker misses the star-bound call, the fixed one catches it. 234
+  consumer tests pass; real tree unchanged.
+
+The review loop is capped (5 rounds + 1 scoped re-review): no AUDIT_CLEAR was ever returned.
+  backlog.md records that Wave 3 is unblocked by judgment, not by an independent clearance.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **import-edges**: Close builtins.__import__ escape found by Codex Sol R1; record audit
+  ([`c1bea5a`](https://github.com/oimiragieo/tensor-grep/commit/c1bea5a66a55be71f94781f4897ff48ee459a6b5))
+
+Codex Sol R1 on the Wave 2 commits returned REVISE (critical=1 high=1 medium=2). Probed each
+  finding: builtins.__import__("tensor_grep.cli.x") produced no edge (confirmed) -- the walker now
+  matches attribute __import__ as well as import_module. Also fixed a docstring-vs-code mismatch:
+  relative string literals were returned although the docstring said they are not reported (the
+  downstream package filter already dropped them, so no behaviour change there).
+
+New parametrized test_dynamic_import_literal_forms pins every form, RED first for the
+  builtins.__import__ and relative-literal rows; the getattr(...)(...) form and non-literal
+  arguments stay documented gaps. Clean-tree baseline unchanged (151 consumer tests pass).
+
+backlog.md records each finding's disposition; the Wave 2 audit spec and the Wave 1 spec are
+  committed with a run record. No AUDIT_CLEAR yet.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **import-edges**: Close six HIGH gaps Codex Sol R3 found in the ratchet walker
+  ([`473d025`](https://github.com/oimiragieo/tensor-grep/commit/473d02583b1477e4d4622a284bb7fbc48877448c))
+
+R3 on ed0150e returned REVISE (high=6, each a new class). Every finding was probed on a temp tree
+  first; all six reproduced:
+
+- Relative imports from a package __init__.py resolved one level too high (from .. import cli in
+  core/__init__.py gave no edge) -- the oldest bug. _resolve_relative_import now takes is_package. -
+  from tensor_grep.cli import runtime_paths recorded only the parent, so a child could hide behind a
+  frozen parent edge; the child is now recorded when it is a real module on disk (non-modules invent
+  no edge). - A root star import was invisible; __import__ with a relative level was read as
+  absolute; runpy.run_module bypassed both checks. All now resolved or surfaced as unresolved sites.
+  - Unresolved modules were frozen by NAME, so a second opaque call in a frozen module passed. Now
+  frozen as {module: count} (unresolved_import_sites), replacing the R2 name list.
+
+Ten new tests were RED on assertions first. The real tree is unchanged: no previously masked edge
+  appeared, same 3 unresolved modules at count 1 (each reviewed). Not covered, by design: path-based
+  loaders, exec/eval, ctypes, alias assignment. No AUDIT_CLEAR yet; R4 next, R5 is the cap.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **import-edges**: Close the three HIGH gaps Codex Sol R2 found in the ratchet walker
+  ([`ed0150e`](https://github.com/oimiragieo/tensor-grep/commit/ed0150e5df6e1619eefa35f8b33da796132fa91c))
+
+R2 on c1bea5a returned REVISE (high=3). Each probed first, all confirmed:
+
+- Static root import escaped: `from tensor_grep import cli` and `from .. import cli` produced no
+  edge because only node.module was read. Names are now expanded when the module is the package
+  root; a control test shows `from tensor_grep import __version__` invents no edge. - Resolvable
+  dynamic forms were dropped: import_module(name="x") and import_module(".x", package="pkg") now
+  resolve (importlib.util.resolve_name). - Opaque import calls (non-literal, getattr indirection)
+  passed as "no edge". New compute_unresolved_dynamic_import_modules surfaces them; the baseline
+  JSON freezes the 3 existing modules by name after reviewing each (_EXPORTS targets stay inside
+  backends/core; _main_binding imports the literal tensor_grep.cli.main).
+
+Ten new tests were RED on assertions first. Real-tree edge baselines are unchanged. Still undetected
+  and recorded: alias assignment (imp = importlib.import_module; imp("...")). No AUDIT_CLEAR yet; R3
+  needed.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **import-edges**: Close the two live escapes Codex Sol R5 (cap) found; freeze opaque sites by
+  source text
+  ([`aa79844`](https://github.com/oimiragieo/tensor-grep/commit/aa798449f7a6b5ab87092ae89a26966fbf70efac))
+
+R5 on 945cc7d returned REVISE (high=2), both live with no precondition. Both reproduced on temp
+  trees before any change:
+
+- pkgutil.resolve_name("tensor_grep.cli") imports a module and the walker did not see it. It is now
+  recognised when bound from pkgutil (import pkgutil [as x] / from pkgutil import resolve_name [as
+  y]); the pkg.mod:attr form is handled. Control: importlib.util.resolve_name -- the walker's own
+  call, which only resolves a relative name and imports nothing -- is deliberately NOT matched. - An
+  existing opaque call could be re-targeted while the frozen COUNT stayed 1 (import_module(_E[name])
+  edited to import tensor_grep.cli.runtime_paths: every baseline stayed green). Unresolved sites are
+  now frozen by their ast.unparse SOURCE TEXT ({module: [text]}), not a count. ast.unparse, not
+  ast.dump, because dump's output changed in Python 3.13 and would differ across CI lanes.
+
+Mutation control seen: editing the real core/__init__.py call target (leaving _EXPORTS untouched)
+  turned both baseline guards RED, naming the exact site; restored with git checkout. 10 tests RED
+  on assertions first; 50 pass; real tree unchanged. Five rounds, five new classes, no AUDIT_CLEAR:
+  one scoped re-review of this diff remains; residual classes (alias assignment, path loaders,
+  exec/eval/ctypes) are parked with rulings in backlog.md.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **import-edges**: Close three HIGH gaps Codex Sol R4 found; pin reviewed opaque targets
+  ([`945cc7d`](https://github.com/oimiragieo/tensor-grep/commit/945cc7d117719610e552534b2106b1a787156dac))
+
+R4 on 473d025 returned REVISE (high=3). Probed each on temp trees and the real tree:
+
+- An opaque import call could change TARGET without changing the frozen count (a retargeted _EXPORTS
+  entry stays green). The reviewed targets are now pinned: backends 16/16 and core 9/9 lazy-export
+  targets must stay inside their own layer, and _MAIN_MODULE must stay tensor_grep.cli.main.
+  Mutation control seen: retargeting a real core/__init__.py entry to tensor_grep.cli.main turned
+  the guard RED; restored with git checkout. - A star import from another layer package can pull
+  children via __all__; it is now an unresolved site (own-package star is not). - Importable
+  namespace packages and compiled .pyd/.so children hid behind the parent edge; _is_submodule now
+  recognises them.
+
+Two new tests RED on assertions first; real tree unchanged (no star imports in src, extension
+  modules only at root-level rust_core). 42 tests pass. No AUDIT_CLEAR yet; R5 is the cap.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- Correct stale AGT-07 wording on TASK_BOARD; record the AGT-01/AGT-07 check
+  ([`d93d8a0`](https://github.com/oimiragieo/tensor-grep/commit/d93d8a0c72484a659009893812d402872848abd8))
+
+The 2026-10-01 reconcile left AGT-07 and AGT-01 unverified. Checked both:
+
+- AGT-01 is accurate: dd3c594, bb635941 (#1159) and cc833b06 (#1160) exist with the stated subjects
+  and nothing touching its files landed after v1.121.2. - AGT-07's READY status is right but its
+  wording was stale: it listed "migrate one producer/consumer" as remaining, yet that landed
+  2026-09-09 as 756769f (#1137, mcp_server builds CompletenessEvidence and projects it back, with
+  tests). #1167 does not touch CompletenessEvidence. The real remainder per the plan's Task 09 is
+  the sibling CLI consumer (cli/main.py has no CompletenessEvidence use).
+
+Row reworded size-neutrally (board 79,881 / 80,000 bytes); backlog.md records the evidence and that
+  the plan's mutation-control checkbox was not verified either way.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.2 (2026-10-01)
 
 ### Bug Fixes
