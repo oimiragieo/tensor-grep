@@ -579,17 +579,18 @@ class ExternalLSPClient:
                 process.terminate()
             except Exception:
                 pass
+        stop_errors: list[str] = []
         try:
             process.wait(timeout=stop_timeout_seconds)
         except subprocess.TimeoutExpired:
             try:
                 process.kill()
-            except Exception:
-                pass
+            except Exception as exc:
+                stop_errors.append(f"kill failed: {exc}")
             try:
                 process.wait(timeout=stop_timeout_seconds)
-            except Exception:
-                pass
+            except Exception as exc:
+                stop_errors.append(f"did not exit after kill: {exc!r}")
         finally:
             for stream in (process.stdout, process.stderr):
                 try:
@@ -597,6 +598,8 @@ class ExternalLSPClient:
                         stream.close()
                 except Exception:
                     pass
+        if stop_errors:  # the handle is dropped below; keep the pid and the root cause visible
+            self.last_error = f"LSP child pid {process.pid} not stopped ({'; '.join(stop_errors)})"
         if reader_thread is not None and reader_thread.is_alive():
             reader_thread.join(timeout=stop_timeout_seconds)
         if stderr_thread is not None and stderr_thread.is_alive():
@@ -943,6 +946,7 @@ class ExternalLSPClient:
                 if message is None:
                     self._record_debug_trace(event="process_stdout_closed")
                     self._broadcast_closed()
+                    self._terminate_after_reader_exit(process)
                     return
                 if self._handle_server_request(message):
                     continue
@@ -960,6 +964,19 @@ class ExternalLSPClient:
             self.last_error = str(exc)
             self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
             self._broadcast_closed()
+            self._terminate_after_reader_exit(process)
+
+    def _terminate_after_reader_exit(self, process: Any) -> None:
+        # Nothing drains the child's stdout or routes its replies any more, so it is unusable. A
+        # live child here made start() (poll() is None) reuse it: status() said running, and every
+        # request waited out its full timeout. Terminating makes poll() truthful so the existing
+        # restart path respawns; it also stops an undrained pipe from blocking the child.
+        terminate = getattr(process, "terminate", None)
+        if callable(terminate):
+            try:
+                terminate()
+            except OSError:
+                pass  # already gone (or not ours to signal); stop() owns the escalation
 
     def _note_progress_started(self, token: str) -> None:
         with self._lock:
