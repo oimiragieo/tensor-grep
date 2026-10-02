@@ -2958,5 +2958,65 @@
     "evidence": "except Exception around the importlib.metadata.version lookup for tensor-grep: any failure falls through to _read_project_version_fallback, so the banner is built from the pyproject value, or the explicit 0.0.0-unavailable sentinel if that also fails (a bare 0.0.0 before 2026-10-02). The exception is not reported. It runs only in the --version path (called from main at the version flag branch) and leaves the search routing path untouched.",
     "reason": "The metadata failure is discarded and the banner looks normal. This is a deliberate two-step version fallback for source checkouts and editable installs where the distribution is not registered, so the first swallow is expected to fire there. It is still a swallow because a degraded value is printed without disclosure; the consequence is a wrong version string, not wrong search behaviour or a misrouted command.",
     "hardened_in": null
+  },
+  {
+    "module": "sidecar.py",
+    "lineno": 148,
+    "enclosing_symbol": "_classify_lines_with_metadata",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the lazy CybertBackend import, construction and classify / classify_with_metadata call (stdout and stderr redirected into StringIO while it runs): on any failure the lines are classified by _heuristic_classify_lines and the returned metadata says provider_requested as asked, provider_used heuristic, provider_status fallback, and fallback_reason = _fallback_reason(exc), which is the exception type name plus its message.",
+    "reason": "The substitution is disclosed in-band: a consumer comparing provider_requested to provider_used, or reading provider_status fallback and fallback_reason, can tell the model provider did not run and that the labels are heuristic. It is a degrade rather than a boundary because the call still succeeds with a different engine, and the cause is kept rather than dropped. The weak point is that a consumer that ignores the metadata sees ordinary classification results.",
+    "hardened_in": null
+  },
+  {
+    "module": "sidecar.py",
+    "lineno": 492,
+    "enclosing_symbol": "_gpu_search",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the DirectoryScanner walk and the per-file, per-pattern backend.search loop (the earlier ImportError clause is a separate narrow handler): it returns an empty stdout, stderr built by _gpu_runtime_error as 'GPU search failed for requested GPU device IDs <ids>: <exc>', and exit code 1. No partial matches are emitted.",
+    "reason": "A deliberate conversion of a backend crash into the sidecar's defined (stdout, stderr, exit_code) failure triple. It fails closed: no partial or empty result set is returned as success, the requested GPU ids and the exception text reach stderr, and the exit code is 1. It does not fall back to a different engine, which would break the explicit-GPU contract.",
+    "hardened_in": null
+  },
+  {
+    "module": "sidecar.py",
+    "lineno": 566,
+    "enclosing_symbol": "main",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around _read_request and _dispatch_request: stdout_text is set to empty, stderr_text to traceback.format_exc() and exit_code to 1. main then always writes a JSON response carrying stdout, stderr, exit_code and pid and returns 0, so the failure travels in the response envelope rather than the process exit status.",
+    "reason": "The outermost containment point of the sidecar protocol: the parent process reads one JSON object, so an unhandled exception must be reported as exit_code 1 plus a full traceback instead of a crashed child with no envelope. The failure is not hidden. A parent that only checks the process return code and not response.exit_code would miss it, but that is the protocol contract, and the traceback is kept in full.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_resume_service.py",
+    "lineno": 122,
+    "enclosing_symbol": "dispatch_session_prepare_cli",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around session_prepare(session_id, query, path): it echoes str(exc) to stderr with typer.echo(err=True) and raises typer.Exit(1) from exc. The success output is only reached when no exception occurred.",
+    "reason": "Converts any prepare failure into a defined non-zero CLI exit with the message on stderr, so a failed prepare is never reported as 'Prepared session <id>'. An exception with an empty message would print a blank line, but the exit status is still 1, so this is the standard CLI error boundary, not a swallow.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_resume_service.py",
+    "lineno": 139,
+    "enclosing_symbol": "dispatch_session_resume_cli",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around session_resume(session_id, path): it echoes str(exc) to stderr and raises typer.Exit(1) from exc. Resumed output is printed only on success.",
+    "reason": "Same CLI error boundary as the prepare dispatcher: a missing or corrupt session becomes exit 1 with the message on stderr, and success output is not printed. A consumer cannot mistake a failed resume for a resumed session.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/checkpoint_store.py",
+    "lineno": 1413,
+    "enclosing_symbol": "undo_checkpoint",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the commit phase of an undo (removing files absent from the snapshot, then swapping staged copies into the tree): it best-effort restores the already-applied overwrites and removals from the bytes captured before each mutation, using atomic_write_bytes, then re-raises with a bare raise. The staging directory is cleaned up in the enclosing finally.",
+    "reason": "A rollback-then-re-raise boundary: the caller still receives the original exception, so an undo is never reported as successful when it was not. The restore loops use narrow except OSError: pass clauses, so a failed rollback write is not disclosed. That residual is a separate narrow handler outside this record, and the primary failure is still raised.",
+    "hardened_in": null
   }
 ]

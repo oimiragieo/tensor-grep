@@ -89,6 +89,10 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "cli/lsp_provider_setup.py",
     "cli/ast_workflows.py",
     "cli/bootstrap.py",
+    # HANDLER-CENSUS-W3-e: sidecar / session-resume / checkpoint-store modules (6 handlers).
+    "sidecar.py",
+    "cli/session_resume_service.py",
+    "cli/checkpoint_store.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})
