@@ -3268,5 +3268,145 @@
     "evidence": "except Exception around client.close_document(uri=uri) in the non-native provider modes: any failure is discarded with pass.",
     "reason": "Effectively a defensive backstop: ExternalLSPClient.close_document already pops the URI from _opened_documents before notifying and _notify_document_closed catches its own notify failure and records a debug trace, so this outer handler is reachable only for an unexpected error outside that path. A failure leaves the provider with a stale open document until LRU eviction; no response is produced, no client is told anything false, and no process or file handle is held.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 554,
+    "enclosing_symbol": "_start_locked",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around self.notify('workspace/didChangeConfiguration', ...) as the last step of a successful start, after initialize returned, 'initialized' was notified and self.initialized was set True: any failure (a broken stdin pipe, a start() cooldown LSPTransportError) is discarded with pass. Nothing is logged and last_error is not set.",
+    "reason": "The failed settings push is invisible: the client reports initialized=True and the provider keeps running without the pushed configuration. Mitigated, not removed: the server can still pull settings through workspace/configuration, which _handle_server_request answers from the same _configuration_settings. A write failure here normally means the child already died, and the next request() re-enters start(), sees poll() is not None and respawns, so a dead child is not treated as alive for long. No response is produced, so no client is told a result that is false, and nothing is leaked: the process and both reader threads are already owned by the client and are torn down by stop().",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 571,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around self._write_notification('exit', None) inside stop(), under self._lock: a failure (BrokenPipeError on a child that already exited, or LSPTransportError when stdin is gone) is discarded with pass.",
+    "reason": "Deliberate best-effort step of a teardown ladder: the next statements close stdin and call terminate(), then wait() with a bounded timeout and kill() on expiry. Skipping the courtesy exit notification cannot leave the child running because the ladder continues. A client is told nothing here (stop returns None) and no resource is held by this handler.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 576,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around process.stdin.close() inside stop(), under self._lock: any failure (typically BrokenPipeError raised while BufferedWriter.close() flushes into a pipe whose reader is gone) is discarded with pass.",
+    "reason": "Best-effort rung of the same teardown ladder. BufferedWriter.close() closes the underlying descriptor even when its flush raises, so the handle is not leaked by the swallow, and terminate() follows immediately. No client-visible result is produced.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 580,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around process.terminate() inside stop(), under self._lock: any failure (for example PermissionError, or the child already gone) is discarded with pass.",
+    "reason": "The failure is contained because the very next step is process.wait(timeout=stop_timeout_seconds), and a TimeoutExpired there escalates to kill(). A child that exited on its own is correctly not an error. The escalation path is where an unkillable child would be lost, see stop idx 3 and 4; this rung itself cannot strand a child.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 588,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 3,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around process.kill() on the escalation path of stop(), reached only after terminate() plus a full wait(timeout) failed to end the child: any failure (for example PermissionError from TerminateProcess/SIGKILL) is now collected into stop_errors and surfaced through last_error together with the child pid (HARDENED 2026-10-02; it used to be discarded with pass).",
+    "reason": "This is the only forced-kill in the module; a failure of it is no longer silent. If kill raises, the child is still running and execution continues to the second bounded wait and then to the unconditional 'self.process = None' further down, so the client still drops its only handle to a live external server process and stop() still returns normally, but last_error now names the pid and the cause (e.g. 'LSP child pid N not stopped (kill failed: ...)'), so status() shows it. Residual (the handle is still dropped; nothing more can be done in-process): a leaked child (and its still-open stdin/stdout/stderr pipes until the streams are closed) that nothing will ever terminate, and the next start() spawns a second server for the same workspace. Probed with a stub process whose terminate/kill raise and whose wait always times out: stop() returned cleanly and process was None (not run against a real unkillable child).",
+    "hardened_in": "HANDLER-CENSUS-W3-i"
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 592,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 4,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the second process.wait(timeout=stop_timeout_seconds) after kill() in stop(): both subprocess.TimeoutExpired and any other error are now collected into stop_errors and surfaced through last_error with the pid (HARDENED 2026-10-02; they used to be discarded with pass).",
+    "reason": "A child that survives kill() for the bounded timeout (or whose wait raises) is no longer undisclosed (still not retried): stop() proceeds to clear self.process and mark the client stopped. A POSIX child that is never reaped stays a zombie, and a child that really did not die is orphaned and invisible to status(), which then reports running=False. last_error now records it, merged with stop idx 3's message so the first root cause is not overwritten. Same unconditional 'self.process = None' as stop idx 3, so the two together are one proven leak mechanism that needs terminate and kill to both fail or time out, which is rare but unobservable when it happens.",
+    "hardened_in": "HANDLER-CENSUS-W3-i"
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 599,
+    "enclosing_symbol": "stop",
+    "handler_index_within_symbol": 5,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around closing process.stdout and process.stderr in the finally block of stop(): any failure on either stream is discarded with pass and the loop continues to the other stream.",
+    "reason": "Closing the read ends so the reader and stderr threads can unblock is best effort. read-side BufferedReader.close() rarely raises, and the file objects are released by the garbage collector when the Popen object is dropped, so the worst case is a descriptor that lives a little longer rather than a stranded process. The handler is per-stream, so one failed close does not skip the other. A stuck reader thread is bounded by the following join(timeout) calls, which are not themselves handlers. Confidence MEDIUM: not exercised with a failing close.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 645,
+    "enclosing_symbol": "_request_shutdown_for_stop",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around registering the shutdown slot and writing the 'shutdown' request under self._lock: any failure (stdin closed, BrokenPipeError) returns early without waiting for a response.",
+    "reason": "Containment of a courtesy handshake. When the graceful shutdown cannot even be written, stop() continues to the exit notification, stdin close, terminate and kill ladder, so no child is left running by this return. The orphaned pending slot, if one was registered before the failure, is discarded by stop(), which resets _pending_requests after the child is gone. No caller depends on the shutdown response.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 769,
+    "enclosing_symbol": "_notify_document_closed",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around self.notify('textDocument/didClose', ...) for an LRU-evicted or explicitly closed document: any failure (a cooldown LSPTransportError, a broken pipe) is swallowed and only an optional debug-trace entry is appended. The trace is off unless enable_debug_trace() was called, which is not the default, so by default nothing is recorded. The per-URI version counter is popped before the notify, so it does not leak.",
+    "reason": "didClose is a notification with no response, so no client is told anything false. The provider is left holding the document open until the process restarts. Residual: notify() calls start() first, so a close for an evicted document after the child died respawns the server just to send didClose. No handle or thread is leaked by the swallow.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 929,
+    "enclosing_symbol": "_handle_server_request",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around building and writing the reply to a server-to-client request (workspace/configuration, workspaceFolders, registerCapability, workDoneProgress/create): any failure while computing or writing the result is converted into a JSON-RPC error response with code -32603 carrying str(exc), and the function returns True so the reader loop continues.",
+    "reason": "A defined boundary: the server is answered with a structured error instead of the reader thread dying, and the message is not mistaken for a response to a client request. The server (a different process, not the client's caller) is told the truth that the request failed. The reply is written under self._lock and no resource is held.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 933,
+    "enclosing_symbol": "_handle_server_request",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the -32603 error reply itself, inside the handler of the first exception: if even the error response cannot be written, the failure is discarded with pass and the function still returns True.",
+    "reason": "The server's request goes unanswered and nothing is recorded. A server that blocks on that reply stalls until the client's request() calls time out, and the client then reports a timeout with a last_error that hides the real cause. A failed write normally means the pipe is gone, so the reader thread hits EOF next and broadcasts closed to pending callers. Low impact: no client is told a result that is false, no resource leaks.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 963,
+    "enclosing_symbol": "_reader_loop",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the whole stdout read/dispatch loop of the reader thread: any exception (json.loads on a malformed body, a closed pipe) sets last_error, appends an optional debug-trace entry, calls _broadcast_closed(), then (since 2026-10-02) _terminate_after_reader_exit() on the child, and ends the thread. _read_message returning None for an oversized, malformed-header or empty frame ends the loop the same way.",
+    "reason": "Proven by reading and by a probe (fake server that answers initialize and then sends a frame with an invalid JSON body): the request in flight gets 'LSP process closed during request' (the pending callers are told), and, BEFORE 2026-10-02, the CHILD KEPT RUNNING with no reader thread left. start() only checks process.poll(), status() reports running=True and initialized=True, and every later request() reuses the same child, writes its request and waits the full request_timeout_seconds for a response nobody reads (second request in the probe: 'timeout waiting for LSP response' after 1.52s, same pid, reader_thread dead). HARDENED 2026-10-02 (HANDLER-CENSUS-W3-i): the reader now terminates the child it can no longer serve, so poll() becomes truthful and the existing restart path respawns it. Before that a dead reader was treated as a live healthy client until stop() or LRU eviction; the root cause in last_error is overwritten by the next timeout, and the unread stdout pipe can eventually fill and block the child. Callers are given errors not wrong results, so this is a persistent availability fail-open (a client reported alive that cannot answer), not a wrong-answer path. Not a leak: stop() still reaps the child. Residual: the handler still discards the exception type beyond last_error, and the terminate is best-effort (OSError is ignored; stop() owns the escalation).",
+    "hardened_in": "HANDLER-CENSUS-W3-i"
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 1050,
+    "enclosing_symbol": "wait_until_ready",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around calling the caller-supplied probe() (a workspace/symbol hit-count function) while no progress notifications have been seen: any failure sets current_probe_value to None.",
+    "reason": "The probe error is discarded but the result is degraded in the safe direction. None can never equal a previous value, so a failing probe is read as 'index not settled' and the loop keeps polling until the deadline, then returns False. The caller is told the server was not demonstrably ready rather than being handed a false ready. A probe that fails once and then returns the same value twice still reaches ready, which is the intended behavior. The failure reason itself is not recorded. No resource is held.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_external_provider.py",
+    "lineno": 1121,
+    "enclosing_symbol": "_stderr_loop",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the per-line read/decode/append loop over process.stderr in the stderr thread: any failure appends an optional debug-trace entry (off by default, so nothing is recorded by default) and ends the thread. stop() closing the pipe from another thread lands here too and is the expected case.",
+    "reason": "Not a wrong-answer path: stderr is diagnostics only (stderr_tail in status()). Residual: after a read failure that is not caused by stop(), the stderr pipe is no longer drained, stderr_tail silently stops updating, and a server that keeps writing to stderr can fill the pipe buffer and block. That child would then stall and surface as request timeouts. No handle is leaked, stop() closes the stream.",
+    "hardened_in": null
   }
 ]
