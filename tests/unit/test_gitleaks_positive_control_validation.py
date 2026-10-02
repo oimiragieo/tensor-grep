@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -32,14 +33,24 @@ SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYFAKETESTKEY"
 EXPECTED_RULE = "aws-access-token"
 
 
+def _unavailable(reason: str) -> NoReturn:
+    """Skip when no usable gitleaks exists -- unless ``TG_REQUIRE_GITLEAKS=1``, in which case a
+    missing binary is a FAILURE. A lane that is supposed to run the control must set it, because
+    a skipped control is indistinguishable from a passing one in a green summary.
+    """
+    if os.environ.get("TG_REQUIRE_GITLEAKS") == "1":
+        pytest.fail(f"TG_REQUIRE_GITLEAKS=1 but {reason}")
+    pytest.skip(reason)
+
+
 def _gitleaks_bin() -> str:
     """Locate a gitleaks v8 binary (GITLEAKS_BIN override, else PATH)."""
     exe = os.environ.get("GITLEAKS_BIN") or shutil.which("gitleaks")
     if not exe:
-        pytest.skip("gitleaks not on PATH (set GITLEAKS_BIN)")
+        _unavailable("gitleaks not on PATH (set GITLEAKS_BIN)")
     ver = subprocess.run([exe, "version"], capture_output=True, text=True, timeout=60)
     if ver.returncode != 0 or not ver.stdout.strip().startswith("8."):
-        pytest.skip(f"gitleaks v8 required (rc={ver.returncode}, out={ver.stdout.strip()!r})")
+        _unavailable(f"gitleaks v8 required (rc={ver.returncode}, out={ver.stdout.strip()!r})")
     return exe
 
 
@@ -114,3 +125,22 @@ def test_gitleaks_detects_non_allowlisted_aws_credentials() -> None:
             "Reversibility FAILED: findings remain after credentials removed from history. "
             f"rc={clean.returncode} (expected 0). {clean.stdout}{clean.stderr}"
         )
+
+
+def test_a_missing_gitleaks_skips_by_default_and_fails_when_required(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Needs no gitleaks binary, so it runs everywhere: it proves the switch that makes the
+    positive control enforceable. A skipped control looks green; a lane that must run it sets
+    ``TG_REQUIRE_GITLEAKS=1`` and a missing binary then FAILS instead of skipping.
+    """
+    monkeypatch.delenv("GITLEAKS_BIN", raising=False)
+    monkeypatch.setenv("PATH", "")  # no gitleaks can be found on PATH
+
+    monkeypatch.delenv("TG_REQUIRE_GITLEAKS", raising=False)
+    with pytest.raises(pytest.skip.Exception):
+        _gitleaks_bin()
+
+    monkeypatch.setenv("TG_REQUIRE_GITLEAKS", "1")
+    with pytest.raises(pytest.fail.Exception, match="TG_REQUIRE_GITLEAKS=1"):
+        _gitleaks_bin()

@@ -12,11 +12,10 @@ remediation: sql / repair-env / scoped checkpoints (`3b436fd`), #1175 `tg sql` i
 (`49bc89f`), #1178 non-code files no longer mark the imports table incomplete (`6f1d702`), #1180
 install docs stop advertising npm/Homebrew/winget as live (`c2967cc`; only PyPI and GitHub binaries
 are live). None of these merges is owned by a canonical row below, so no row's Status changed. The
-live GitHub open-PR query now returns #1182 (handler census gaps), #1183 (gitleaks scan report) and
-#1184 (pyjwt bump); all docs/deps. Main push-CI (`gh run list --workflow ci.yml --event push`):
-`722df38`, `00695cd`, `03b8153` all `failure` (a red-by-design gitleaks demo test, removed in
-`f5f55ee`); run `36926131387` at `f5f55ee` had one failing test left (this stamp), so no green main
-verdict is claimed. Do not treat the dated open-PR tables below as live.
+open-PR set is empty: #1182/#1183 were closed as superseded, #1184 (pyjwt) is superseded by the
+main fix that also bumps urllib3 (pip-audit had 16 findings). Main push-CI: `722df38`, `00695cd`,
+`03b8153` all `failure` (a red-by-design gitleaks demo test, removed in `f5f55ee`); `b139f39` and
+`d93d8a0` green on attempt 2 (crates.io flakes). Do not treat the dated open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted

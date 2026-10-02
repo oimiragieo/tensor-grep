@@ -551,13 +551,14 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
     expected_constraints = {
         "aiohttp>=3.14.3",
         "cryptography>=50.0.0",
-        "pyjwt>=2.13.0",
+        "pyjwt>=2.15.0",
         "pygments>=2.20.0",
         "python-multipart>=0.0.31",
         "python-dotenv>=1.2.2",
         "requests>=2.33.0",
         "starlette>=1.3.1",
         "pydantic-settings>=2.14.2",
+        "urllib3>=2.8.0",
     }
     missing_constraints = sorted(
         expected_constraints - {str(entry) for entry in constraint_dependencies}
