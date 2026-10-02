@@ -93,6 +93,10 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "sidecar.py",
     "cli/session_resume_service.py",
     "cli/checkpoint_store.py",
+    # HANDLER-CENSUS-W3-f: evidence receipt / signing / session-store modules (6 handlers).
+    "cli/evidence_receipt.py",
+    "cli/evidence_signing.py",
+    "cli/session_store.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

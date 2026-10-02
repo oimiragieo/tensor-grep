@@ -3018,5 +3018,65 @@
     "evidence": "except Exception around the commit phase of an undo (removing files absent from the snapshot, then swapping staged copies into the tree): it best-effort restores the already-applied overwrites and removals from the bytes captured before each mutation, using atomic_write_bytes, then re-raises with a bare raise. The staging directory is cleaned up in the enclosing finally.",
     "reason": "A rollback-then-re-raise boundary: the caller still receives the original exception, so an undo is never reported as successful when it was not. The restore loops use narrow except OSError: pass clauses, so a failed rollback write is not disclosed. That residual is a separate narrow handler outside this record, and the primary failure is still raised.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/evidence_receipt.py",
+    "lineno": 76,
+    "enclosing_symbol": "_read_project_version_fallback",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around reading pyproject.toml (located three parents above the module) and scanning for the line starting 'version = ': any failure (missing file in an installed wheel, unreadable file, malformed line with no quote) is discarded with pass and the function returns the explicit sentinel '0.0.0-unavailable' (HARDENED 2026-10-02; it used to return a bare '0.0.0', out of step with cli/main.py's hardened copy it claims to mirror). Nothing is logged and no reason is kept.",
+    "reason": "The error is discarded, but the value is now distinguishable in-band: a test pins it equal to cli/main.py's _VERSION_UNAVAILABLE_SENTINEL, so a failed lookup no longer reads as a real, very old version. It is only reached when importlib.metadata also failed (see _cli_package_version), and the value is the tool-version string stamped into the receipt tool block, not a verification input: no signature, digest or completeness decision depends on it, so an unverified or unsigned receipt cannot be mistaken for a verified one through this swallow. Residual: a signed receipt can still carry the sentinel as its tool version, which now says the version was unavailable rather than posing as a real one.",
+    "hardened_in": "HANDLER-CENSUS-W3-f"
+  },
+  {
+    "module": "cli/evidence_receipt.py",
+    "lineno": 87,
+    "enclosing_symbol": "_cli_package_version",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around importlib.metadata.version('tensor-grep'): on any failure (package not installed, broken metadata) it silently falls back to _read_project_version_fallback(), which can itself return the explicit '0.0.0-unavailable' sentinel (a bare '0.0.0' before 2026-10-02). The reason for the fallback is not recorded.",
+    "reason": "A silent source substitution: the receipt tool version may come from pyproject.toml or the sentinel rather than installed metadata and nothing in the receipt says which source was used (only the terminal no-source case is now visible, via the sentinel). It is not a trust decision: the string is informational provenance, the receipt is still signed and verified over whatever value was written, and no gate keys off it. Classified SILENT-SWALLOW rather than LOGGED-DEGRADE because no in-band marker or log line discloses the fallback.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/evidence_receipt.py",
+    "lineno": 525,
+    "enclosing_symbol": "_blast_radius_block_recomputed",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around repo_map.build_symbol_blast_radius(query, path) on the opt-in --recompute path: on any failure the blast_radius block becomes {status: 'unavailable', reason: 'recompute failed: <exc>'}; the receipt is still built. A no_match result is a separate branch returning unavailable with its own reason.",
+    "reason": "The failure is disclosed in-band: the block carries status 'unavailable' plus the exception text, the same fail-closed shape every other receipt block uses for a missing source, so a consumer can see that the blast radius was not computed and must not read the absent callers as 'no callers'. It is a degrade rather than a boundary because the receipt is still emitted and signed with that block marked unavailable. Residual: a consumer that ignores block status could read an empty callers list as complete, but the block does not emit a callers key on this path.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/evidence_signing.py",
+    "lineno": 206,
+    "enclosing_symbol": "load_private_key",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around Ed25519PrivateKey.from_private_bytes(raw): any parse failure is converted to EvidenceSigningError('Evidence signing key at <path> is not a valid raw 32-byte Ed25519 private key: <exc>') raised from the original exception. The earlier missing-file check and the OSError read handler are separate and also raise EvidenceSigningError.",
+    "reason": "A deliberate conversion of an arbitrary cryptography-library exception into the module's defined error type, with the cause chained and the path and library message kept. It fails closed: no key object is returned, so no receipt can be signed with a malformed key and a caller cannot proceed as if signing succeeded. Confidence note: the only code that follows is the raise, so there is no path from this handler to an unsigned artifact being treated as signed.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_store.py",
+    "lineno": 828,
+    "enclosing_symbol": "refresh_session",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around build_repo_map_incremental(existing repo_map, changeset, ...): the failure is logged with logger.warning (session id and exception), the session is rebuilt with a full build_repo_map, refresh_type is set to 'full' and the payload gains refresh_fallback_reason 'incremental_failed', which is persisted to the session file and returned in SessionRefreshResult.",
+    "reason": "The degrade is both logged and recorded in the persisted payload, so a consumer can tell that an incremental refresh failed and a full rebuild ran. The result is not stale or partial: a full rebuild is what the non-incremental path would have produced, and the snapshot and generation are captured after it, so the refreshed session cannot pass off an unrefreshed map as fresh. A failure of the fallback full build itself is not caught here and propagates.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_store.py",
+    "lineno": 1819,
+    "enclosing_symbol": "serve_session_stream",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the per-request body of the stream serve loop (including serve_session_request and the refresh_on_stale recovery path): the request gets an error response {version, session_id, error: {code: 'invalid_request', message: str(exc)}} written to the response stream and flushed, and the loop continues with the next line. SessionStaleError is caught by an earlier handler that returns code stale_session or refreshes.",
+    "reason": "A per-request containment point of a long-lived stream protocol: one malformed or failing request must not kill the serve loop, and the failure is returned to that client as a structured error response with the message, so a request that failed is never answered as if it succeeded. The failure is not logged server-side, so an operator relies on the client seeing the error code. A client that does not check the error key would treat the response as data, which is the protocol contract.",
+    "hardened_in": null
   }
 ]
