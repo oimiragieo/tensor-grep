@@ -37,10 +37,16 @@ def test_banner_says_unavailable_when_no_version_source_is_readable(
     assert capsys.readouterr().out.startswith("tensor-grep 0.0.0-unavailable")
 
 
-def test_the_two_front_doors_share_one_unavailable_sentinel() -> None:
+def test_the_two_front_doors_share_one_unavailable_sentinel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # bootstrap cannot import main (it must stay light), so the literal is duplicated; this pins
+    # the duplicate to main's constant so the two cannot drift apart.
     from tensor_grep.cli import main
 
-    assert bootstrap._VERSION_UNAVAILABLE_SENTINEL == main._VERSION_UNAVAILABLE_SENTINEL
+    _break_both_version_sources(monkeypatch)
+
+    assert bootstrap._read_project_version_fallback() == main._VERSION_UNAVAILABLE_SENTINEL
 
 
 def test_a_readable_project_version_is_still_reported(

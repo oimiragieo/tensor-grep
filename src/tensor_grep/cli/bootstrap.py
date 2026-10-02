@@ -344,12 +344,6 @@ def _prefer_rust_first_search() -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-# Kept equal to `cli/main.py::_VERSION_UNAVAILABLE_SENTINEL` (bootstrap must stay light and cannot
-# import main); `tests/unit/test_bootstrap_version_unavailable_sentinel.py` pins the equality. A bare
-# "0.0.0" would read as a real, very old version in the `--version` banner.
-_VERSION_UNAVAILABLE_SENTINEL = "0.0.0-unavailable"
-
-
 def _read_project_version_fallback() -> str:
     try:
         pyproject_path = Path(__file__).resolve().parents[3] / "pyproject.toml"
@@ -359,7 +353,7 @@ def _read_project_version_fallback() -> str:
                 return stripped.split('"', 2)[1]
     except Exception:
         pass
-    return _VERSION_UNAVAILABLE_SENTINEL
+    return "0.0.0-unavailable"  # == main._VERSION_UNAVAILABLE_SENTINEL (test-pinned)
 
 
 def _print_version() -> None:
