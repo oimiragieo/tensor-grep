@@ -75,7 +75,7 @@ def _read_project_version_fallback() -> str:
                 return stripped.split('"', 2)[1]
     except Exception:
         pass
-    return "0.0.0"
+    return "0.0.0-unavailable"  # == main._VERSION_UNAVAILABLE_SENTINEL (test-pinned)
 
 
 def _cli_package_version() -> str:
