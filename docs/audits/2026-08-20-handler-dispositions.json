@@ -3171,13 +3171,13 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1947,
+    "lineno": 1948,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
-    "category": "SILENT-SWALLOW",
-    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again. A failure of the rebuild or of the second serve is not caught and propagates to the outer handler.",
-    "reason": "The original exception is discarded and not logged, and the response carries no in-band marker that a rebuild happened (only the server-side refresh_count in the stats command moves), so this is a silent swallow. It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as an invalid_request error carrying the second error, and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug is masked by a full rebuild, and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
-    "hardened_in": null
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again; since 2026-10-02 the response's serve_cache.refresh_trigger names the exception class that caused the rebuild. A failure of the rebuild or of the second serve is not caught and propagates to the outer handler.",
+    "reason": "The original exception object is still discarded and not logged, but HARDENED 2026-10-02 (HANDLER-CENSUS-W3-j): the response now carries an in-band marker, serve_cache.refresh_trigger, with the exception class name (absent on the normal path; narrowing the catch was rejected because the set of errors that legitimately warrant a refresh, e.g. a missing or corrupt payload, is not enumerable). It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as an invalid_request error carrying the second error, and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug still triggers a full rebuild (now visible as refresh_trigger), and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
+    "hardened_in": "HANDLER-CENSUS-W3-j"
   },
   {
     "module": "cli/session_daemon.py",
