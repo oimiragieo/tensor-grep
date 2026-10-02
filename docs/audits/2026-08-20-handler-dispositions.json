@@ -2598,5 +2598,125 @@
     "evidence": "except Exception: return nullcontext() around importing nvtx and constructing nvtx.annotate(...). Absent or misbehaving NVTX yields a no-op context manager.",
     "reason": "NVTX ranges are optional profiling annotations around search calls; the context manager has no effect on results, so degrading to a no-op is the intended behaviour whenever the optional dependency is missing or fails. Raising would make a profiling aid able to break a search, which is the wrong direction.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/runtime_paths.py",
+    "lineno": 89,
+    "enclosing_symbol": "_read_project_version_fallback",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around reading and splitting the `version = \"...\"` line of the checkout's pyproject.toml returns the literal sentinel \"0.0.0\". An installed wheel has no pyproject.toml at _repo_root(), so a missing file is the ROUTINE case, as is a malformed version line (IndexError from the quote split).",
+    "reason": "\"0.0.0\" is a recognised no-source sentinel, not a guessed version, and every comparing consumer treats it that way or fails closed: _expected_tg_version discards it in favour of the installed distribution, doctor_payload skips the stale_editable/version_mismatch verdict when it is \"0.0.0\", and repair_env compares it against the installed version and refuses (Verification failed) on mismatch. The only place it can surface as text is `tg --version` when importlib.metadata also failed, where it prints an obviously-placeholder 0.0.0.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/runtime_paths.py",
+    "lineno": 107,
+    "enclosing_symbol": "_expected_tg_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around importlib.metadata.version(\"tensor-grep\") returns the pyproject (source_version) value when the distribution metadata cannot be read, for example a bare checkout run via PYTHONPATH. The result is lru_cached for the process lifetime.",
+    "reason": "Falling back to the checkout's own declared version is the correct identity for a non-installed run, and a total failure yields \"0.0.0\" which every consumer rejects safely: _native_tg_version_matches needs the version text to contain it (so no native binary is accepted), and the session-daemon package_version check returns None (no daemon, cold path). The failure direction is refuse/cold, never reuse of a mismatched binary or stale daemon; the cause is not disclosed, which is why this is a boundary by direction rather than by logging.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/runtime_paths.py",
+    "lineno": 122,
+    "enclosing_symbol": "_native_tg_version",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around subprocess.run([binary, \"--version\"], timeout=2) returns None for a spawn error, timeout, or permission failure; a nonzero exit or empty stdout also returns None.",
+    "reason": "None is the explicit unknown answer and every caller treats it as not-a-match: _native_tg_version_matches returns False for None, native_frontdoor install smoke-test and post-install verification reject the asset and roll back, windows_launcher reinstalls or raises on the refreshed bridge, and doctor lists the candidate as skipped with a mismatched version. A binary that cannot prove its version is never selected, so the failure is in the safe direction.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/freshness.py",
+    "lineno": 39,
+    "enclosing_symbol": "_session_status",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception (after the specific SessionStaleError arm) around _ensure_session_not_stale(payload, detect_added_files=True) maps any unexpected staleness-check failure to status \"unknown\" with a detail string of the exception type and message. Pinned by test_an_unexpected_staleness_error_is_unknown_never_current.",
+    "reason": "The surface exists to answer whether persisted state is current, so the only safe outcome of a check that could not run is unknown, never current. The unknown status is counted in unknown_count, forces result_incomplete with incomplete_reason session_state_unreadable and exit code 2, and carries the exception text, so nothing is swallowed from the reader; it is a deliberate last-resort boundary failing toward UNRESOLVED.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/freshness.py",
+    "lineno": 60,
+    "enclosing_symbol": "check_freshness",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around list_sessions(root) returns the payload early with result_incomplete=True, incomplete_reason \"session_index_unreadable\", and a remediation string naming the exception type and stating freshness is UNRESOLVED, not proven current. session_count stays 0 and the command exits 2.",
+    "reason": "The degradation is fully disclosed in the structured result and the exit code: an unreadable session index is reported as an incomplete answer rather than as zero sessions or a clean bill of health. That visible incomplete flag, not the broad catch, is what makes it LOGGED-DEGRADE.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/freshness.py",
+    "lineno": 80,
+    "enclosing_symbol": "check_freshness",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around get_session(session_id, root) inside the per-session loop records that session as status \"unknown\" with detail `ExcType: message` and continues with the remaining sessions instead of aborting the whole report.",
+    "reason": "One corrupt or unreadable session must not hide the others, and its entry appears in the output with its own unknown status and error text. It increments unknown_count, which the post-loop block turns into result_incomplete session_state_unreadable and exit 2, so the degradation is both per-entry and report-level visible.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/agent_capsule.py",
+    "lineno": 282,
+    "enclosing_symbol": "_collect_outbound_dependencies",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around repo_map._imports_and_symbols_for_path(Path(primary_file)) returns ([], {}), the same shape as every other early exit in DAR. The caller then omits BOTH outbound_dependencies and outbound_dependency_evidence, so a parser or IO failure leaves no trace in the capsule and reads the same as a primary file with no outbound dependencies. The collector only runs when the opt-in DAR switch is enabled.",
+    "reason": "SILENT-SWALLOW by definition: the error is discarded and the capsule looks normal. It is tolerated because DAR is an opt-in, additive, advisory section with a documented byte-identical fail-safe contract (absent keys never assert there are no dependencies), it carries no confidence, consistency or trust state, and the capsule's required evidence (target, snippets, call sites) is produced elsewhere. The cost is a silent miss of optional dependency hints; an evidence status of error here, as the call-site collectors emit, would be the disclosing alternative.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/agent_capsule_call_sites.py",
+    "lineno": 113,
+    "enclosing_symbol": "_collect_capsule_call_site_evidence",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the cold-path rescue scan repo_map.build_symbol_blast_radius(...) returns ([], {status: \"error\", reason: \"call-site evidence collection failed\", error: str(exc)}). The capsule keeps related_call_sites empty and stores that dict as call_site_evidence.",
+    "reason": "The failure is surfaced in the capsule: call_site_evidence.status is \"error\" with the reason and exception text, so a reader can tell collection failed from the other states (skipped, collected_no_call_sites). It is not escalated to result_incomplete or partial, so a consumer that only inspects related_call_sites == [] cannot tell; hence LOGGED-DEGRADE with that caveat.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/agent_capsule_call_sites.py",
+    "lineno": 253,
+    "enclosing_symbol": "_collect_capsule_call_site_evidence_from_map",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around build_symbol_blast_radius_from_map(...) and _apply_blast_radius_output_limits(...) on the warm/daemon path returns ([], {status: \"error\", reason, error: str(exc)}, False). The trailing False is the daemon_unreliable flag, so an error does NOT trigger the cold-path fallback that a truncated no_match does.",
+    "reason": "Disclosed the same way as the cold collector, through call_site_evidence.status \"error\" plus the exception text, with no silent empty-success. Unlike the no_match branch below it, an exception does not mark the daemon response unreliable, so the warm capsule ships with an error-status evidence block rather than being retried cold; it is visible but not incomplete-flagged, so LOGGED-DEGRADE with a stated gap.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/audit_manifest.py",
+    "lineno": 1034,
+    "enclosing_symbol": "_previous_manifest_digest",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around json.loads(raw.decode(\"utf-8\")) of the previous manifest file falls back to the SHA-256 of the raw bytes. A JSON object with a non-empty string manifest_sha256 returns that stored value; any other shape also falls back to the raw-bytes digest.",
+    "reason": "The result feeds an equality check against the current manifest's previous_manifest_sha256, so an unparseable or non-manifest predecessor yields a digest that matches only if the chain was recorded against exactly those bytes, and any corruption or substitution makes chain_valid False with a mismatch error. The fallback therefore fails in the safe direction (chain broken), not toward accepting. Separate observation, not this handler: for parseable JSON the stored manifest_sha256 field is trusted without recomputing the canonical digest.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_chunker.py",
+    "lineno": 99,
+    "enclosing_symbol": "chunk_file",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around chunk_file_structural(...), reached only when TG_CHUNKER=structural is set, discards any error and continues to the line-window chunker. The caller receives valid chunks of the same file with different boundaries, and no signal that the structural pass failed. The MAX_CHUNKS RuntimeError is preserved because the line-window path re-raises it outside this handler.",
+    "reason": "SILENT-SWALLOW: the exception is discarded and the output looks normal. It is tolerable because the structural chunker is an opt-in experimental mode that already fails open for every expected condition by design, the substituted output is the exact default-mode chunker for that file (complete and correct, only differently split), and nothing can be returned empty or wrong. The cost is retrieval-quality only, plus a silent defect in the structural path going unnoticed; there is no disclosure channel for it.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_chunker.py",
+    "lineno": 393,
+    "enclosing_symbol": "chunk_file_structural",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the tree-sitter parse, text re-read, leaf-unit extraction, merge and chunk materialisation falls back to _chunk_file_line_windows(file_path) with no record of the cause. The docstring documents FAIL-OPEN (never raises). Sibling fallbacks in the same function (no grammar, has_error parse, empty units, over MAX_CHUNKS) are expected conditions; this one also absorbs genuine bugs.",
+    "reason": "SILENT-SWALLOW: a programming error in the structural path becomes indistinguishable from an ordinary parse-error fallback. Accepted because the mode is opt-in, the fallback produces complete correct line-window chunks, and the index records the chunker mode as a whole, so quality degrades but correctness holds. The line-window MAX_CHUNKS RuntimeError, if it fires inside this try, is re-raised by the second line-window call, so the loud guard still holds.",
+    "hardened_in": null
   }
 ]

@@ -73,6 +73,13 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "core/hardware/memory_manager.py",
     "core/hardware/device_inventory.py",
     "core/observability.py",
+    # HANDLER-CENSUS-W3-b: leaf CLI/core modules (12 handlers).
+    "cli/runtime_paths.py",
+    "cli/freshness.py",
+    "cli/agent_capsule.py",
+    "cli/agent_capsule_call_sites.py",
+    "cli/audit_manifest.py",
+    "core/retrieval_chunker.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})
