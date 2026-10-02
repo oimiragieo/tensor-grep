@@ -80,6 +80,10 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "cli/agent_capsule_call_sites.py",
     "cli/audit_manifest.py",
     "core/retrieval_chunker.py",
+    # HANDLER-CENSUS-W3-c: retrieval + dogfood modules (12 handlers).
+    "core/retrieval_dense.py",
+    "core/retrieval_late.py",
+    "cli/dogfood.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

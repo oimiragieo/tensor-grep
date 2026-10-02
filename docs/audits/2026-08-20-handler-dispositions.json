@@ -2708,5 +2708,125 @@
     "evidence": "except Exception around the tree-sitter parse, text re-read, leaf-unit extraction, merge and chunk materialisation falls back to _chunk_file_line_windows(file_path) with no record of the cause. The docstring documents FAIL-OPEN (never raises). Sibling fallbacks in the same function (no grammar, has_error parse, empty units, over MAX_CHUNKS) are expected conditions; this one also absorbs genuine bugs.",
     "reason": "SILENT-SWALLOW: a programming error in the structural path becomes indistinguishable from an ordinary parse-error fallback. Accepted because the mode is opt-in, the fallback produces complete correct line-window chunks, and the index records the chunker mode as a whole, so quality degrades but correctness holds. The line-window MAX_CHUNKS RuntimeError, if it fires inside this try, is re-raised by the second line-window call, so the loud guard still holds.",
     "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_dense.py",
+    "lineno": 123,
+    "enclosing_symbol": "load_dense_model",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around importing model2vec and StaticModel.from_pretrained(path) for a directory that exists; any failure is re-raised as BackendExecutionError('dense model ... failed to load (corrupt or incompatible)') chained from the original exception. The absent-directory case is handled before the try and raises the distinct recoverable DenseUnavailableError.",
+    "reason": "Last-resort boundary that converts an arbitrary third-party load fault into the typed unrecoverable error the Backend Fail-Closed Contract demands, so a corrupt model can never produce a clean-empty or lower-quality ranking. main.py's dense-leg callers catch only DenseUnavailableError and let this propagate to the CLI boundary. Fails in the safe direction (raise).",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_dense.py",
+    "lineno": 145,
+    "enclosing_symbol": "_encode_matrix",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around model.encode(texts) and np.asarray(raw, dtype=float32); any raw RuntimeError or numpy ValueError (ragged nested sequence) is re-raised as BackendExecutionError('dense model encode failed for N input(s)') from the original. The recoverable malformed-shape case is a separate DenseUnavailableError raised after the try.",
+    "reason": "Encode is a third-party call that can raise anything; the module contract classifies that as a genuine unrecoverable backend fault rather than the deliberately-degradable shape mismatch, so the handler narrows an open-ended failure set into one typed error. It never returns an empty or partial matrix, so the semantic leg cannot silently vanish from a ranking.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_dense.py",
+    "lineno": 408,
+    "enclosing_symbol": "fetch_dense_model",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around _download_bounded(url, ...) for each pinned model file; any network, timeout or size-cap failure is re-raised as BackendExecutionError naming the file and URL, chained from the original. The surrounding finally removes the temp download directory, and nothing is moved into dest before every file has passed the sha256 and size check.",
+    "reason": "An explicit user-invoked fetch (never run at query time) must fail loudly and leave no partial install: the handler adds file and URL context and keeps the failure typed. The pinned-checksum gate that follows means a failed download can never be installed as if it were the model. Safe direction: raise, no install.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_dense.py",
+    "lineno": 458,
+    "enclosing_symbol": "_fetch_cli",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around fetch_dense_model(args.model_dir) in the module's --fetch entry point; prints 'tg: dense model fetch failed: <exc>' to stderr and returns exit code 1 (success returns 0, a missing --fetch flag returns 2).",
+    "reason": "Process-boundary handler for a command-line entry point: the error is reported with its message and surfaces as a non-zero exit status, so no caller or script can mistake a failed fetch for success. This is the CLI's last-resort exit mapping, not a degrade.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_late.py",
+    "lineno": 285,
+    "enclosing_symbol": "load_late_model",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around importing onnxruntime and tokenizers, reading onnx_config.json (json.loads plus int/str coercion of required keys), loading tokenizer.json and creating the InferenceSession; any failure, including a missing config key, is re-raised as BackendExecutionError('late rerank model ... failed to load (corrupt or incompatible)') chained from the original. The absent-directory case is handled before the try and raises the recoverable LateRerankUnavailableError.",
+    "reason": "Same fail-closed shape as the dense loader: a corrupt or version-skewed model directory is a genuine backend fault and must not degrade to an unreranked ordering without a typed error. main.py catches only LateRerankUnavailableError at both call sites, so this propagates to the CLI boundary rather than silently dropping the late stage. Safe direction (raise).",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_late.py",
+    "lineno": 327,
+    "enclosing_symbol": "_encode_tokens",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around tokenizer.enable_truncation/encode, building int64 id and mask arrays, session.run on the ONNX model and np.asarray of the first output; any failure is re-raised as BackendExecutionError('late rerank encode failed for a N-char input') from the original. The malformed-shape check that follows raises the separate recoverable LateRerankUnavailableError.",
+    "reason": "Tokenizer and ONNX runtime calls can raise arbitrary exception types; mapping them all to the typed unrecoverable error keeps a mid-rerank fault from yielding a partially scored candidate list that looks like a normal late-rerank ordering. It never returns a placeholder matrix. Safe direction (raise).",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_late.py",
+    "lineno": 476,
+    "enclosing_symbol": "fetch_late_model",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around _download_bounded(url, ...) for each pinned late-rerank model file; any failure is re-raised as BackendExecutionError naming the file and URL, chained from the original. The surrounding finally removes the temp directory and install only happens after every file passes the pinned sha256 and size check.",
+    "reason": "Explicit user-invoked fetch that must fail loudly and atomically: the typed re-raise keeps the cause, and the checksum gate plus finally-cleanup guarantee a failed download is never left installed. It mirrors fetch_dense_model on purpose but is a separate site with its own temp prefix and message. Safe direction: raise, no install.",
+    "hardened_in": null
+  },
+  {
+    "module": "core/retrieval_late.py",
+    "lineno": 526,
+    "enclosing_symbol": "_fetch_cli",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around fetch_late_model(args.model_dir) in the module's --fetch entry point; prints 'tg: late rerank model fetch failed: <exc>' to stderr and returns exit code 1 (success 0, missing --fetch flag 2).",
+    "reason": "CLI process boundary: the exception text is shown and the process exits non-zero, so a failed late-rerank model fetch cannot be read as success by scripts. Last-resort exit mapping for a user-run command, not a silent degrade.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/dogfood.py",
+    "lineno": 100,
+    "enclosing_symbol": "_terminate_process_tree",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception wraps the whole psutil path (import psutil, Process(pid), enumerate children, terminate, wait_procs, kill survivors) and falls through with pass to the OS-native killer (taskkill /T /F on Windows, killpg/os.kill elsewhere). An ImportError for the optional psutil, NoSuchProcess for an already-exited child, or any mid-sequence psutil fault all take that route. On the Windows fallback the return value is [pid] whether or not taskkill succeeded, because check=False discards its exit status.",
+    "reason": "Best-effort cleanup of a timed-out readiness child where psutil is an optional dependency: falling back to the platform killer is the intended redundancy, and the caller's verdict (returncode forced to 1, timeout report) does not depend on the kill succeeding. Caveat recorded: killed_process_ids can over-report on the Windows fallback; it is a diagnostic field, not a safety signal, so this is not treated as a fail-open.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/dogfood.py",
+    "lineno": 124,
+    "enclosing_symbol": "_terminate_process_tree",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the POSIX killpg(pid, SIGTERM), sleep, killpg(pid, SIGKILL) sequence (also reached when os.killpg is absent via the deliberate AttributeError); any failure, such as ProcessLookupError because the group already exited or PermissionError, falls through to a per-pid os.kill(pid, SIGKILL) attempt.",
+    "reason": "Escalation ladder for stopping a runaway child: group kill first, single-process kill second. Both steps are idempotent, a group that is already gone is the success case rather than an error, and the next rung is guarded by its own handler. Nothing downstream consumes a result that this fallthrough could corrupt.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/dogfood.py",
+    "lineno": 128,
+    "enclosing_symbol": "_terminate_process_tree",
+    "handler_index_within_symbol": 2,
+    "category": "SILENT-SWALLOW",
+    "evidence": "Inner except Exception around os.kill(pid, SIGKILL) is pass: when the last-resort kill fails (ProcessLookupError for an already-dead pid, PermissionError for a foreign one) the function returns whatever pids were recorded so far, possibly an empty list. The caller stores that list as killed_process_ids in the timeout report with no flag distinguishing 'nothing to kill' from 'could not kill'.",
+    "reason": "Discarded on purpose because the process usually has already exited and the timeout verdict is failed regardless, so no result is made to look better. It is still a swallow: a surviving orphan child would be indistinguishable from a clean exit apart from an empty killed_process_ids list. Accepted for a diagnostic-only field in a dogfood harness; a future hardening could record a kill_failed marker.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/dogfood.py",
+    "lineno": 671,
+    "enclosing_symbol": "run_dogfood_readiness",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "After a subprocess.TimeoutExpired and tree termination, except Exception around process.communicate(timeout=POST_TIMEOUT_COMMUNICATE_SECONDS) is pass: if draining the dead child's pipes fails or times out, stdout and stderr keep the partial text captured from the TimeoutExpired exception (possibly empty) and the timeout report is built from them. The report still sets returncode = 1 and a failed timeout result.",
+    "reason": "The verdict is already failed and fixed before this handler runs, so the swallow can only lose diagnostic tail lines, never turn a failure into a pass. It stays a silent swallow because the report does not say the post-kill drain failed, so empty stdout_tail and stderr_tail look like 'child produced no output'. Safe direction for the verdict; diagnostics are best-effort.",
+    "hardened_in": null
   }
 ]
