@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LEDGER_PATH = REPO_ROOT / "docs" / "audits" / "2026-08-20-handler-dispositions.json"
@@ -203,6 +204,55 @@ def test_ledger_completeness_scoped_to_audited_modules() -> None:
     unaudited_records = {ident for ident in ledger_identities if ident[0] in still_excluded}
     assert not unaudited_records, (
         f"ledger has records for modules not yet removed from _EXCLUDED_MODULES: {sorted(unaudited_records)}"
+    )
+
+
+def _all_src_modules() -> list[str]:
+    return sorted(
+        path.relative_to(PY_SRC).as_posix()
+        for path in PY_SRC.rglob("*.py")
+        if "__pycache__" not in path.parts
+    )
+
+
+def _live_identities(modules: list[str] | frozenset[str]) -> set[tuple[str, str, int]]:
+    return {
+        (module, symbol, idx)
+        for module in modules
+        for symbol, idx, _lineno, _start, _end in _real_handlers_for_module(module)
+    }
+
+
+def _ledger_identities(ledger: list[dict[str, Any]]) -> set[tuple[str, str, int]]:
+    return {(r["module"], r["enclosing_symbol"], r["handler_index_within_symbol"]) for r in ledger}
+
+
+def test_ledger_completeness_over_the_whole_tree() -> None:
+    """Closes the opt-in hole in the scoped test above. That test only checks the modules on an
+    explicit list (`_audited_modules_so_far`), so a NEW module with broad handlers, or any module
+    nobody remembered to add, was invisible -- and the ceiling in test_silent_failure_hardening.py
+    can say a handler was added but not WHICH one is unledgered. Every broad handler anywhere under
+    src/tensor_grep must have a ledger record."""
+
+    missing = _live_identities(_all_src_modules()) - _ledger_identities(_load_ledger())
+    assert not missing, (
+        f"broad handlers with no ledger record (add one, or narrow the handler): {sorted(missing)}"
+    )
+
+
+def test_perturbation_arm_whole_tree_catches_a_module_the_scoped_check_never_lists() -> None:
+    # Drop one module's records. The whole-tree check must flag it; a scoped check over an audited
+    # list that omits that module must NOT -- which is the blind spot the whole-tree test closes.
+    victim = "sidecar.py"
+    ledger = _load_ledger()
+    assert any(r["module"] == victim for r in ledger), "arm needs a module that has ledger records"
+    broken = _ledger_identities([r for r in ledger if r["module"] != victim])
+
+    assert _live_identities(_all_src_modules()) - broken, (
+        "whole-tree check missed the dropped module"
+    )
+    assert not (_live_identities(_audited_modules_so_far() - {victim}) - broken), (
+        "the scoped check was expected to be blind to a module absent from its list"
     )
 
 
