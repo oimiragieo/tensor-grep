@@ -898,13 +898,13 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
         if _probe_daemon(root) is None:
+            if stop_method == "none" and _terminate_daemon_by_pid(metadata):
+                stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
             break
         time.sleep(0.05)
     else:
-        # audit I7: cooperative stop did not take effect within the deadline; escalate to a
-        # validated pid terminate so a wedged daemon is not left running.
-        if _terminate_daemon_by_pid(metadata):
-            stop_method = "pid"
+        # audit I7: no effect within the deadline; escalate to a validated pid terminate.
+        stop_method = "pid" if _terminate_daemon_by_pid(metadata) else "none"
     # Task #143a-a: only remove daemon.json if it still identifies the SAME daemon this call
     # targeted (captured in `metadata` above) -- a replacement may have spawned and published its
     # own metadata in the window since. See _remove_daemon_metadata's docstring for the full race.
@@ -913,7 +913,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         _remove_daemon_metadata(root, expected_pid=target_pid, expected_port=target_port)
     response["running"] = False
     response["root"] = str(root)
-    response["stopped"] = True
+    response["stopped"] = stop_method != "none"  # "none": no evidence it ended
     response["stop_method"] = stop_method
     return response
 
