@@ -119,7 +119,11 @@ def _build_prepare_blast_radius_floor(
             "source": source,
             "graph_trust_summary": graph_trust_summary,
             "resolution_gaps": resolution_gaps,
-            "possibly_incomplete": bool(deadline_partial or omitted),
+            # A scan that RAISED did not complete, so "0 callers" is unknown, not a finding. It is
+            # reported here (wider than `deadline_partial`, which stays deadline-only and so leaves
+            # exit codes alone) instead of reading as "no callers, complete" with only an `error`
+            # string to notice.
+            "possibly_incomplete": bool(deadline_partial or omitted or error is not None),
         }
         if error is not None:
             floor["error"] = error

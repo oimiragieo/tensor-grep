@@ -429,3 +429,75 @@ def test_prepare_recall_preserved_on_large_truncated_repo(tmp_path: Path, monkey
         f"build_repo_map invoked {call_count['n']} times -- expected exactly 2 (the explicit "
         "capped build above + the preserved uncapped fallback rescan) on a possibly_truncated rm"
     )
+
+
+# --- A FAILED scan must not read as "no callers, complete" ---------------------------------------
+# Both exception handlers in `_build_prepare_blast_radius_floor` returned `callers_count: 0` and
+# `possibly_incomplete: False` with only an `error` string. A consumer checking the count and the flag
+# (the documented honesty signals) read that as "no callers" when the scan had not completed.
+
+
+def _call_floor(rm: dict[str, object]):
+    return _build_prepare_blast_radius_floor(
+        path="/repo",
+        rm=rm,
+        target={"symbol": "my_symbol"},
+        call_site_evidence=_skipped_not_requested_evidence(),
+        related_call_sites=[],
+        deadline_monotonic=None,
+    )
+
+
+def test_a_failed_map_reuse_scan_is_possibly_incomplete_not_zero_callers_complete(
+    monkeypatch,
+) -> None:
+    def _boom(rm, symbol, **kwargs):
+        raise RuntimeError("symbol index exploded")
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_from_map", _boom)
+    rm = {"path": "/repo", "scan_limit": {"possibly_truncated": False}}
+
+    floor, deadline_partial = _call_floor(rm)
+
+    assert floor["callers_count"] == 0
+    assert "symbol index exploded" in floor["error"]
+    assert floor["possibly_incomplete"] is True, floor
+    # the exit-2 gate stays DEADLINE-only: a scan error is disclosed, it does not change exit codes
+    assert deadline_partial is False
+
+
+def test_a_failed_fs_rescan_is_possibly_incomplete_not_zero_callers_complete(monkeypatch) -> None:
+    def _boom(symbol, path, **kwargs):
+        raise OSError("disk went away")
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius", _boom)
+    rm = {"path": "/repo", "scan_limit": {"possibly_truncated": True}}
+
+    floor, deadline_partial = _call_floor(rm)
+
+    assert floor["callers_count"] == 0
+    assert "disk went away" in floor["error"]
+    assert floor["possibly_incomplete"] is True, floor
+    assert deadline_partial is False
+
+
+def test_a_scan_that_succeeds_with_no_callers_stays_complete(monkeypatch) -> None:
+    # CONTROL: "no callers" from a scan that actually ran must still read as complete.
+    def _no_match(rm, symbol, **kwargs):
+        return {
+            "no_match": True,
+            "callers": [],
+            "output_limit": {"omitted_callers": 0},
+            "graph_trust_summary": {},
+            "resolution_gaps": [],
+            "partial": False,
+        }
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_from_map", _no_match)
+    rm = {"path": "/repo", "scan_limit": {"possibly_truncated": False}}
+
+    floor, _ = _call_floor(rm)
+
+    assert floor["callers_count"] == 0
+    assert "error" not in floor
+    assert floor["possibly_incomplete"] is False

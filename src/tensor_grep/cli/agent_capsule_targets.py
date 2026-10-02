@@ -659,7 +659,6 @@ def _maybe_fuse_semantic_dense_target(
         from tensor_grep.core.retrieval_chunker import Chunk
         from tensor_grep.core.retrieval_dense import (
             DenseIndex,
-            DenseUnavailableError,
             default_model_dir,
             dense_available,
             load_dense_model,
@@ -711,8 +710,15 @@ def _maybe_fuse_semantic_dense_target(
                     new_alternatives.append(cand)
             return promoted, new_alternatives
 
-    except (DenseUnavailableError, ImportError, RuntimeError, ValueError, OSError):
-        # Fail-closed / fail-safe: never crash agent capsule on optional dense model faults
-        return target, alternatives
+    except (ImportError, RuntimeError, ValueError, OSError) as exc:
+        # Fail-safe: never crash the agent capsule on an optional dense-leg FAULT (the extra is
+        # installed but loading/encoding failed -- `BackendExecutionError` and
+        # `DenseUnavailableError` are both RuntimeErrors). But DISCLOSE it: a silent fallback is
+        # indistinguishable from "fusion ran and kept the lexical order", which is the normal case
+        # and sets no `semantic_fused` either. An EXPECTED absence (extra not installed) returns
+        # earlier and stays silent. The caller's dict is copied, never mutated.
+        disclosed = dict(target)
+        disclosed["semantic_fusion_unavailable"] = f"{type(exc).__name__}: {str(exc)[:200]}"
+        return disclosed, alternatives
 
     return target, alternatives
