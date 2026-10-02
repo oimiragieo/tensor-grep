@@ -1927,6 +1927,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
             else:
                 overall_started_at = monotonic()
                 response_cache_status = "bypass"
+                refresh_trigger = ""
                 try:
                     load_started_at = monotonic()
                     payload, cache_status = _load_payload_with_status_retry(
@@ -1944,22 +1945,20 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         payload=payload,
                     )
                     served_at = monotonic()
-                except Exception:
+                except Exception as exc:
                     refresh_on_stale = bool(request.get("refresh_on_stale", False))
                     if not refresh_on_stale:
                         raise
+                    refresh_trigger = type(exc).__name__  # ANY error rebuilds; name it (disclosed)
                     load_started_at = monotonic()
                     # Task #304: bound the staleness-triggered rebuild with the SAME budget the
                     # warm daemon already applies to `agent`/`orient`/context-render
-                    # (session_store.py:1327, :1349). This was the last unbounded
-                    # `build_repo_map` reachable from a client request: the rebuild ran with no
-                    # time limit, the client gave up at its own 60s, and the cold path then
-                    # anchored a FRESH 60s -- so one stated deadline could be exceeded roughly
-                    # twofold, with the truncation disclosed nowhere.
-                    #
-                    # Reusing the existing constant rather than inventing a second one is the
-                    # point: two independently-chosen daemon budgets would drift, and a reader
-                    # could not tell which one applied to a given request.
+                    # (session_store.py:1327, :1349). It was the last unbounded `build_repo_map`
+                    # reachable from a client request: no time limit, the client gave up at its
+                    # own 60s, and the cold path anchored a FRESH 60s -- so one stated deadline
+                    # could be exceeded roughly twofold, the truncation disclosed nowhere. Reusing
+                    # the existing constant (not a second one) keeps the daemon budgets from
+                    # drifting, so a reader can tell which one applied to a request.
                     refresh_session(
                         request_session_id,
                         request_path,
@@ -1986,6 +1985,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     "status": cache_status,
                     "session_count": server.payload_cache.session_count,
                     "root_count": server.payload_cache.root_count,
+                    **({"refresh_trigger": refresh_trigger} if refresh_trigger else {}),
                 }
                 # audit #113 (task #108: extended to 9): observability now covers all 9
                 # response-cacheable commands (the original context_render/context_edit_plan, the
