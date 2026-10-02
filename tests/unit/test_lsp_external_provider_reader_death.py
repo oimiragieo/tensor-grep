@@ -23,6 +23,16 @@ import pytest
 
 from tensor_grep.cli import lsp_external_provider as provider
 
+
+@pytest.fixture(autouse=True)
+def _independent_of_installed_language_servers(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The constructor resolves a provider binary (pyright-langserver for "python") and raises
+    # FileNotFoundError where none is installed -- the CI GPU runner, but not this dev box, which
+    # is how these tests first went red only in CI. They supply their own command, so resolution
+    # must not depend on the machine.
+    monkeypatch.setattr(provider, "_provider_command", lambda _language: ["unused-fake-lsp"])
+
+
 # Answers `initialize`; on the FIRST workspace/symbol it emits a frame whose body is not JSON, which
 # kills the client's reader thread while leaving the child running.
 _FAKE_SERVER = r"""
