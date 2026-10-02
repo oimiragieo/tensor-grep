@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import json
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -303,7 +304,7 @@ def test_a_child_module_import_is_recorded_as_the_child_not_only_the_parent(
     assert ("tensor_grep.core.m", "tensor_grep.cli.not_a_module") not in edges
 
 
-def test_unresolved_import_sites_are_counted_per_module(tmp_path: Path) -> None:
+def test_unresolved_import_sites_record_each_sites_source_text(tmp_path: Path) -> None:
     root = _make_src_tree(
         tmp_path,
         {
@@ -316,41 +317,114 @@ def test_unresolved_import_sites_are_counted_per_module(tmp_path: Path) -> None:
             "g": "from tensor_grep.core import *\n",
         },
     )
-    # `c` is resolvable (an edge, not unresolved); `a` has TWO opaque calls and counts 2. A star
-    # import from ANOTHER layer package (`f`) loads whatever its __all__ names, so it is opaque
-    # (Codex Sol R4); a star import from the importer's OWN package (`g`) crosses nothing.
+    # `c` is resolvable (an edge, not unresolved); `a` has TWO opaque calls. A star import from
+    # ANOTHER layer package (`f`) loads whatever its __all__ names, so it is opaque (Codex Sol
+    # R4); a star import from the importer's OWN package (`g`) crosses nothing. Each site is
+    # recorded by its SOURCE TEXT, not a count (Codex Sol R5), so editing a frozen call's target
+    # expression changes what is recorded.
     assert compute_unresolved_import_sites(root) == {
-        "tensor_grep.core.a": 2,
-        "tensor_grep.core.b": 1,
-        "tensor_grep.core.d": 1,
-        "tensor_grep.core.e": 1,
-        "tensor_grep.core.f": 1,
+        "tensor_grep.core.a": [
+            "importlib.import_module(name)",
+            "importlib.import_module(other)",
+        ],
+        "tensor_grep.core.b": ["getattr(importlib, 'import_module')('tensor_grep.cli.x')"],
+        "tensor_grep.core.d": ["from tensor_grep import *"],
+        "tensor_grep.core.e": ["__import__('cli.x', globals(), locals(), [], 2)"],
+        "tensor_grep.core.f": ["from tensor_grep.cli import *"],
     }
 
 
-def _load_unresolved_baseline() -> dict[str, int]:
+def test_retargeting_a_frozen_opaque_call_changes_the_recorded_site(tmp_path: Path) -> None:
+    # Codex Sol R5 (HIGH): the count stayed 1 when `import_module(_E[name])` was edited to import
+    # `tensor_grep.cli.runtime_paths` for one name, so every baseline stayed green.
+    template = (
+        "from importlib import import_module\n_E = {}\ndef f(name):\n    return import_module(%s)\n"
+    )
+    safe = _make_src_tree(tmp_path / "safe", {"a": template % "_E[name]"})
+    retargeted = _make_src_tree(
+        tmp_path / "retargeted",
+        {"a": template % "'tensor_grep.cli.runtime_paths' if name == 'x' else _E[name]"},
+    )
+    assert compute_unresolved_import_sites(safe) == {
+        "tensor_grep.core.a": ["import_module(_E[name])"]
+    }
+    assert compute_unresolved_import_sites(retargeted) == {
+        "tensor_grep.core.a": [
+            "import_module('tensor_grep.cli.runtime_paths' if name == 'x' else _E[name])"
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("from pkgutil import resolve_name\nresolve_name('tensor_grep.cli')\n", "tensor_grep.cli"),
+        ("import pkgutil\npkgutil.resolve_name('tensor_grep.cli.main')\n", "tensor_grep.cli.main"),
+        ("import pkgutil as pk\npk.resolve_name('tensor_grep.cli.main')\n", "tensor_grep.cli.main"),
+        (
+            "from pkgutil import resolve_name as rn\nrn('tensor_grep.cli.main')\n",
+            "tensor_grep.cli.main",
+        ),
+        # pkgutil's `pkg.mod:attr` form names the module before the colon.
+        (
+            "import pkgutil\npkgutil.resolve_name('tensor_grep.cli.main:run')\n",
+            "tensor_grep.cli.main",
+        ),
+    ],
+)
+def test_pkgutil_resolve_name_is_a_dynamic_import(tmp_path: Path, source: str, target: str) -> None:
+    # Codex Sol R5 (HIGH): pkgutil.resolve_name IMPORTS the named module; the walker only knew
+    # import_module / __import__ / run_module.
+    root = _make_src_tree(tmp_path, {"m": source})
+    assert ("tensor_grep.core.m", target) in compute_violation_module_edges(root)
+
+
+def test_pkgutil_resolve_name_with_an_opaque_name_is_an_unresolved_site(tmp_path: Path) -> None:
+    root = _make_src_tree(tmp_path, {"m": "import pkgutil\npkgutil.resolve_name(spec)\n"})
+    assert compute_unresolved_import_sites(root) == {
+        "tensor_grep.core.m": ["pkgutil.resolve_name(spec)"]
+    }
+
+
+def test_importlib_util_resolve_name_is_not_an_import(tmp_path: Path) -> None:
+    # Control: importlib.util.resolve_name only RESOLVES a relative name -- it imports nothing
+    # (the walker itself calls it), so matching any `resolve_name` would be a false positive.
+    root = _make_src_tree(
+        tmp_path,
+        {"m": "import importlib.util\nimportlib.util.resolve_name('.x', 'tensor_grep.cli')\n"},
+    )
+    assert compute_unresolved_import_sites(root) == {}
+    assert not {e for e in compute_violation_module_edges(root) if e[0] == "tensor_grep.core.m"}
+
+
+def _load_unresolved_baseline() -> dict[str, list[str]]:
     data = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
-    return dict(data["unresolved_import_sites"])
+    return {module: list(sites) for module, sites in data["unresolved_import_sites"].items()}
+
+
+def _site_multiset(sites: dict[str, list[str]]) -> Counter[tuple[str, str]]:
+    return Counter((module, text) for module, texts in sites.items() for text in texts)
 
 
 def test_unresolved_import_sites_can_only_shrink() -> None:
-    """An import whose target cannot be resolved statically hides a possible edge, so the COUNT
-    per module is frozen: a second opaque call inside an already-frozen module fails too.
+    """An import whose target cannot be resolved statically hides a possible edge, so each such
+    site is frozen by its SOURCE TEXT: a new site, a second site in a frozen module, or an EDIT
+    to a frozen call's arguments all show up as a site the baseline does not list.
     """
-    baseline = _load_unresolved_baseline()
-    current = compute_unresolved_import_sites(_SRC_ROOT)
-    grown = {m: n for m, n in current.items() if n > baseline.get(m, 0)}
-    assert not grown, (
-        f"New unresolvable import site(s): {grown} (baseline {baseline}). Resolve the target to "
-        f"a literal or justify raising the count in {_BASELINE_PATH}."
+    added = _site_multiset(compute_unresolved_import_sites(_SRC_ROOT)) - _site_multiset(
+        _load_unresolved_baseline()
+    )
+    assert not added, (
+        f"New or changed unresolvable import site(s): {sorted(added)}. Resolve the target to a "
+        f"literal, or re-review it and update {_BASELINE_PATH}."
     )
 
 
 def test_unresolved_import_site_baseline_is_not_stale() -> None:
-    baseline = _load_unresolved_baseline()
-    current = compute_unresolved_import_sites(_SRC_ROOT)
-    shrunk = {m: n for m, n in baseline.items() if current.get(m, 0) < n}
-    assert not shrunk, f"Fewer sites than frozen; tighten {_BASELINE_PATH}: {shrunk}"
+    gone = _site_multiset(_load_unresolved_baseline()) - _site_multiset(
+        compute_unresolved_import_sites(_SRC_ROOT)
+    )
+    assert not gone, f"Frozen site(s) no longer present; tighten {_BASELINE_PATH}: {sorted(gone)}"
 
 
 def test_namespace_and_extension_children_are_recorded_as_children(tmp_path: Path) -> None:

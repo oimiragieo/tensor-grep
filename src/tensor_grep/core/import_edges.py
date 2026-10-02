@@ -87,9 +87,42 @@ def _resolve_relative_import(
 _DYNAMIC_CALLEES = frozenset({"import_module", "__import__", "run_module"})
 
 
-def _is_dynamic_import_call(node: ast.Call) -> bool:
+#: ``(module aliases, function aliases)`` through which a module binds ``pkgutil`` and
+#: ``pkgutil.resolve_name``. ``pkgutil.resolve_name`` IMPORTS the named module, but a bare
+#: ``resolve_name`` is only that function when it came from pkgutil -- ``importlib.util
+#: .resolve_name`` merely resolves a relative name and imports nothing -- so it is matched by
+#: binding, not by name.
+PkgutilScope = tuple[frozenset[str], frozenset[str]]
+_NO_PKGUTIL: PkgutilScope = (frozenset(), frozenset())
+
+
+def _pkgutil_scope(tree: ast.AST) -> PkgutilScope:
+    modules: set[str] = set()
+    functions: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            modules.update(a.asname or a.name for a in node.names if a.name == "pkgutil")
+        elif isinstance(node, ast.ImportFrom) and node.module == "pkgutil" and not node.level:
+            functions.update(a.asname or a.name for a in node.names if a.name == "resolve_name")
+    return frozenset(modules), frozenset(functions)
+
+
+def _is_pkgutil_resolve_call(node: ast.Call, scope: PkgutilScope) -> bool:
+    modules, functions = scope
+    func = node.func
+    if isinstance(func, ast.Attribute):
+        return (
+            func.attr == "resolve_name"
+            and isinstance(func.value, ast.Name)
+            and func.value.id in modules
+        )
+    return isinstance(func, ast.Name) and func.id in functions
+
+
+def _is_dynamic_import_call(node: ast.Call, scope: PkgutilScope = _NO_PKGUTIL) -> bool:
     """True for ``import_module(...)`` / ``__import__(...)`` / ``runpy.run_module(...)`` under
-    any receiver, and for the ``getattr(x, "import_module")(...)`` indirection.
+    any receiver, for ``pkgutil.resolve_name(...)`` (see :data:`PkgutilScope`), and for the
+    ``getattr(x, "import_module")(...)`` indirection.
 
     Deliberately receiver-agnostic: an unrelated ``registry.import_module("tensor_grep.cli.x")``
     also matches (a false edge) -- accepted over missing a real alias such as
@@ -99,6 +132,8 @@ def _is_dynamic_import_call(node: ast.Call) -> bool:
     and ``ctypes`` -- they take no module name to resolve.
     """
     func = node.func
+    if _is_pkgutil_resolve_call(node, scope):
+        return True
     if isinstance(func, ast.Attribute):
         return func.attr in _DYNAMIC_CALLEES
     if isinstance(func, ast.Name):
@@ -127,7 +162,7 @@ def _string_arg(node: ast.Call, index: int, keywords: tuple[str, ...]) -> str | 
     return None
 
 
-def _dynamic_import_literal(node: ast.Call) -> str | None:
+def _dynamic_import_literal(node: ast.Call, scope: PkgutilScope = _NO_PKGUTIL) -> str | None:
     """Absolute module name of a dynamic import whose target is statically known, else ``None``.
 
     Resolves ``importlib.import_module("x")`` / ``import_module(name="x")`` / ``__import__("x")`` /
@@ -139,12 +174,16 @@ def _dynamic_import_literal(node: ast.Call) -> str | None:
     "no edge".
     """
     func = node.func
-    if isinstance(func, ast.Call) or not _is_dynamic_import_call(node):
+    if isinstance(func, ast.Call) or not _is_dynamic_import_call(node, scope):
         return None
     callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     name = _string_arg(node, 0, ("name", "mod_name"))
     if name is None:
         return None
+    if _is_pkgutil_resolve_call(node, scope):
+        # pkgutil's `pkg.mod:attr` form names the module before the colon; it takes no relative
+        # names, so a leading dot is unresolved.
+        return None if name.startswith(".") else name.split(":", 1)[0]
     if callee == "__import__":
         level = _arg(node, 4, ("level",))
         if level is not None and not (isinstance(level, ast.Constant) and level.value == 0):
@@ -213,6 +252,7 @@ def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str,
     module-pair violation gate can never disagree about what an edge is.
     """
     for from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
+        scope = _pkgutil_scope(tree)
         for node in ast.walk(tree):
             targets: list[str] = []
             if isinstance(node, ast.Import):
@@ -229,7 +269,7 @@ def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str,
                         if alias.name != "*" and _is_submodule(src_root, child):
                             targets.append(child)
             elif isinstance(node, ast.Call):
-                literal = _dynamic_import_literal(node)
+                literal = _dynamic_import_literal(node, scope)
                 if literal is not None:
                     targets = [literal]
             for target in targets:
@@ -273,23 +313,29 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
     }
 
 
-def compute_unresolved_import_sites(src_root: Path) -> dict[str, int]:
-    """``{dotted module: count}`` of import sites the walker cannot resolve to a module name:
-    dynamic import calls with a non-literal or relative-without-package target (and the
-    ``getattr(...)`` indirection), and a star import from the package ROOT (which imports
-    whatever ``tensor_grep.__all__`` names).
+def compute_unresolved_import_sites(src_root: Path) -> dict[str, list[str]]:
+    """``{dotted module: sorted source text of each site}`` for import sites the walker cannot
+    resolve to a module name: dynamic import calls with a non-literal or relative-without-package
+    target (and the ``getattr(...)`` indirection), and a star import from the package ROOT or from
+    ANOTHER layer package (which imports whatever ``__all__`` names).
 
-    Such a site may hide a layering edge, so "no edge found" is not "no dependency". Freezing the
-    COUNT per module (not just the name) means a second opaque call inside an already-frozen
-    module fails too.
+    Such a site may hide a layering edge, so "no edge found" is not "no dependency". Each site is
+    recorded by its ``ast.unparse`` text, not a count: a count stays at 1 while the call's target
+    expression is edited to import another layer, so freezing the TEXT makes any edit to a frozen
+    site (as well as a new one) show up as a site the baseline does not list. The text is also
+    what a reviewer reads. (``ast.unparse``, not ``ast.dump``: dump's output changed in 3.13.)
     """
-    sites: dict[str, int] = {}
+    sites: dict[str, list[str]] = {}
     layer_modules = {f"tensor_grep.{pkg}" for pkg in TOP_LEVEL_PACKAGES}
     for from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
+        scope = _pkgutil_scope(tree)
         for node in ast.walk(tree):
             opaque = False
             if isinstance(node, ast.Call):
-                opaque = _is_dynamic_import_call(node) and _dynamic_import_literal(node) is None
+                opaque = (
+                    _is_dynamic_import_call(node, scope)
+                    and _dynamic_import_literal(node, scope) is None
+                )
             elif isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
                 resolved = _resolved_from_module(node, from_module, is_package)
                 # A star import loads whatever `__all__` names: the package root or ANOTHER layer
@@ -299,5 +345,5 @@ def compute_unresolved_import_sites(src_root: Path) -> dict[str, int]:
                     resolved in layer_modules and resolved != f"tensor_grep.{from_pkg}"
                 )
             if opaque:
-                sites[from_module] = sites.get(from_module, 0) + 1
-    return sites
+                sites.setdefault(from_module, []).append(ast.unparse(node))
+    return {module: sorted(texts) for module, texts in sites.items()}
