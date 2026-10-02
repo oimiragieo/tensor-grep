@@ -33,9 +33,22 @@ def test_uv_lock_should_pin_urllib3_above_security_release_floor() -> None:
 
 
 def test_uv_constraint_floors_match_the_locked_security_releases() -> None:
-    # The repo's security floors are `[tool.uv].constraint-dependencies` entries (neither package
-    # is a direct dependency), so the floor must be stated there as well as satisfied by the lock.
+    # `[tool.uv].constraint-dependencies` governs this repo's own resolution (lock/CI audit); the
+    # floors that reach PyPI users are asserted separately below. Both are required.
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     constraints = set(pyproject["tool"]["uv"]["constraint-dependencies"])
 
     assert {"pyjwt>=2.15.0", "urllib3>=2.8.0"} <= constraints
+
+
+def test_published_metadata_carries_the_pyjwt_and_urllib3_security_floors() -> None:
+    """A `[tool.uv]` constraint is lock-only and never reaches `pip install tensor-grep`, so an
+    environment that already holds PyJWT 2.13.0 / urllib3 2.7.0 would keep the vulnerable build
+    while every gate stayed green. PyJWT is reachable from the BASE install (mcp[crypto] ->
+    pyjwt), urllib3 only through the `nlp` extra (tritonclient[http] -> geventhttpclient), so each
+    floor belongs in the metadata that actually pulls it.
+    """
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+
+    assert "pyjwt>=2.15.0" in project["dependencies"]
+    assert "urllib3>=2.8.0" in project["optional-dependencies"]["nlp"]

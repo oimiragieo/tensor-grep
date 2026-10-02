@@ -4134,6 +4134,7 @@ dependencies = [
     { name = "mcp" },
     { name = "opentelemetry-api" },
     { name = "pathspec" },
+    { name = "pyjwt" },
     { name = "pyyaml" },
     { name = "rich" },
     { name = "typer" },
@@ -4212,6 +4213,7 @@ nlp = [
     { name = "aiohttp" },
     { name = "transformers" },
     { name = "tritonclient", extra = ["http"] },
+    { name = "urllib3" },
 ]
 rerank = [
     { name = "model2vec" },
@@ -4249,6 +4251,7 @@ requires-dist = [
     { name = "psutil", marker = "extra == 'dev'" },
     { name = "pyarrow", marker = "extra == 'gpu'", specifier = ">=23.0.1" },
     { name = "pygls", marker = "extra == 'ast'", specifier = ">=2.0" },
+    { name = "pyjwt", specifier = ">=2.15.0" },
     { name = "pytest", marker = "extra == 'bench'", specifier = ">=9.0.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.3" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
@@ -4302,6 +4305,7 @@ requires-dist = [
     { name = "tritonclient", extras = ["http"], marker = "extra == 'nlp'" },
     { name = "typer", specifier = ">=0.12,<0.26" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },
+    { name = "urllib3", marker = "extra == 'nlp'", specifier = ">=2.8.0" },
 ]
 provides-extras = ["gpu", "gpu-win", "nlp", "ast", "scan", "semantic", "rerank", "dev", "bench"]
 

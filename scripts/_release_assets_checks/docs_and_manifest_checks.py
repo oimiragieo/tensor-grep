@@ -573,34 +573,42 @@ def validate_uv_security_constraints(*, pyproject_content: str) -> list[str]:
     if not isinstance(project_config, dict):
         project_config = {}
     project_dependencies = project_config.get("dependencies", [])
-    required_direct_dependency = "cryptography>=50.0.0"
-    if not isinstance(project_dependencies, list) or required_direct_dependency not in {
-        str(entry) for entry in project_dependencies
-    }:
-        errors.append(
-            "pyproject.toml [project].dependencies missing direct security floor: "
-            + required_direct_dependency
-        )
+    # PyJWT is reachable from the BASE install (mcp[crypto] -> pyjwt), exactly like cryptography.
+    required_direct_dependencies = ("cryptography>=50.0.0", "pyjwt>=2.15.0")
+    published_direct = (
+        {str(entry) for entry in project_dependencies}
+        if isinstance(project_dependencies, list)
+        else set()
+    )
+    for required_direct_dependency in required_direct_dependencies:
+        if required_direct_dependency not in published_direct:
+            errors.append(
+                "pyproject.toml [project].dependencies missing direct security floor: "
+                + required_direct_dependency
+            )
 
     # A `[tool.uv] constraint-dependencies` entry governs THIS repo's local resolution only. It is
     # NOT published metadata, so it does nothing for `pip install tensor-grep[...]`. Any advisory
     # floor whose package is reachable from a PUBLISHED extra must therefore ALSO be declared in
     # that extra, or the floor silently fails to reach users while every gate still reports green.
     # `nlp` pulls `tritonclient[http]`, whose own metadata permits `aiohttp>=3.8.1,<4`.
-    required_extra_floors = {"nlp": "aiohttp>=3.14.3"}
+    # urllib3 is reachable only through nlp (tritonclient[http] -> geventhttpclient).
+    required_extra_floors = {"nlp": ("aiohttp>=3.14.3", "urllib3>=2.8.0")}
     optional_dependencies = project_config.get("optional-dependencies", {})
     if not isinstance(optional_dependencies, dict):
         optional_dependencies = {}
-    for extra_name, required_floor in sorted(required_extra_floors.items()):
+    for extra_name, required_floors in sorted(required_extra_floors.items()):
         extra_entries = optional_dependencies.get(extra_name, [])
-        if not isinstance(extra_entries, list) or required_floor not in {
-            str(entry) for entry in extra_entries
-        }:
-            errors.append(
-                f"pyproject.toml [project.optional-dependencies].{extra_name} missing published "
-                f"security floor: {required_floor} (a [tool.uv] constraint is lock-only and does "
-                "not reach a PyPI installer)"
-            )
+        published_extra = (
+            {str(entry) for entry in extra_entries} if isinstance(extra_entries, list) else set()
+        )
+        for required_floor in required_floors:
+            if required_floor not in published_extra:
+                errors.append(
+                    f"pyproject.toml [project.optional-dependencies].{extra_name} missing "
+                    f"published security floor: {required_floor} (a [tool.uv] constraint is "
+                    "lock-only and does not reach a PyPI installer)"
+                )
     return errors
 
 

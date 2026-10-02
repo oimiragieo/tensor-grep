@@ -540,10 +540,10 @@ def test_should_accept_uv_security_floor_constraints_when_all_required_entries_p
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0"]
+    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -576,10 +576,10 @@ def test_should_reject_stale_direct_cryptography_floor_when_uv_constraint_is_sec
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=48.0.1"]
+    dependencies = ["cryptography>=48.0.1", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -622,10 +622,10 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
     [project]
     name = "tensor-grep"
     version = "1.3.2"
-    dependencies = ["cryptography>=50.0.0"]
+    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
 
     [project.optional-dependencies]
-    nlp = ["tritonclient[http]"]
+    nlp = ["tritonclient[http]", "urllib3>=2.8.0"]
 
     [tool.uv]
     constraint-dependencies = [
@@ -645,6 +645,88 @@ def test_should_reject_lock_only_aiohttp_floor_absent_from_the_published_nlp_ext
     assert errors == [
         "pyproject.toml [project.optional-dependencies].nlp missing published security floor: "
         "aiohttp>=3.14.3 (a [tool.uv] constraint is lock-only and does not reach a PyPI installer)"
+    ]
+
+
+def test_should_reject_lock_only_pyjwt_floor_absent_from_the_published_base_dependencies():
+    """PyJWT is reachable from the BASE install (mcp[crypto] -> pyjwt). A `[tool.uv]` constraint
+    is lock-only, so without a direct floor an environment already holding PyJWT 2.13.0 keeps it
+    (16 pip-audit findings were red on main for days with every other gate green).
+    """
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+    dependencies = ["cryptography>=50.0.0"]
+
+    [project.optional-dependencies]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3", "urllib3>=2.8.0"]
+
+    [tool.uv]
+    constraint-dependencies = [
+      "cryptography>=50.0.0",
+      "pygments>=2.20.0",
+      "python-multipart>=0.0.31",
+      "python-dotenv>=1.2.2",
+      "requests>=2.33.0",
+      "aiohttp>=3.14.3",
+      "pyjwt>=2.15.0",
+      "starlette>=1.3.1",
+      "pydantic-settings>=2.14.2",
+      "urllib3>=2.8.0",
+    ]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == [
+        "pyproject.toml [project].dependencies missing direct security floor: pyjwt>=2.15.0"
+    ]
+
+
+def test_should_reject_lock_only_urllib3_floor_absent_from_the_published_nlp_extra():
+    """urllib3 is reachable only through nlp (tritonclient[http] -> geventhttpclient)."""
+    root = Path(__file__).resolve().parents[2]
+    script_path = root / "scripts" / "validate_release_assets.py"
+    spec = importlib.util.spec_from_file_location("validate_release_assets", script_path)
+    assert spec is not None and spec.loader is not None
+
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    pyproject = """
+    [project]
+    name = "tensor-grep"
+    version = "1.3.2"
+    dependencies = ["cryptography>=50.0.0", "pyjwt>=2.15.0"]
+
+    [project.optional-dependencies]
+    nlp = ["tritonclient[http]", "aiohttp>=3.14.3"]
+
+    [tool.uv]
+    constraint-dependencies = [
+      "cryptography>=50.0.0",
+      "pygments>=2.20.0",
+      "python-multipart>=0.0.31",
+      "python-dotenv>=1.2.2",
+      "requests>=2.33.0",
+      "aiohttp>=3.14.3",
+      "pyjwt>=2.15.0",
+      "starlette>=1.3.1",
+      "pydantic-settings>=2.14.2",
+      "urllib3>=2.8.0",
+    ]
+    """
+    errors = module.validate_uv_security_constraints(pyproject_content=textwrap.dedent(pyproject))
+    assert errors == [
+        "pyproject.toml [project.optional-dependencies].nlp missing published security floor: "
+        "urllib3>=2.8.0 (a [tool.uv] constraint is lock-only and does not reach a PyPI installer)"
     ]
 
 
