@@ -1,6 +1,106 @@
 # CHANGELOG
 
 
+## v1.123.7 (2026-10-02)
+
+### Bug Fixes
+
+- **bootstrap**: Return the unavailable-version sentinel without growing bootstrap.py
+  ([`fec716c`](https://github.com/oimiragieo/tensor-grep/commit/fec716cae9025927977b6b4d81011a3de0893ba1))
+
+The previous commit added a module constant and comment to cli/bootstrap.py, which grew it 1703 ->
+  1709 lines and tripped the file-size ratchet (`scripts/file_size_budget.py`: an allowlisted file
+  may shrink, never grow), so the Formatting & Linting job failed on 2a720a2. I verified the 6-line
+  growth locally (it reproduced exactly), and did NOT raise the pin.
+
+Inline the literal at its one use (net zero lines, back at the pinned 1703) and re-point the drift
+  guard: the test now drives the REAL fallback with both version sources unreadable and compares its
+  output to cli/main.py's _VERSION_UNAVAILABLE_SENTINEL, which pins the duplicated literal to main's
+  constant without bootstrap importing main.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **capsule,prepare,bootstrap**: Disclose three silent degradations found while classifying handlers
+  ([`6471b51`](https://github.com/oimiragieo/tensor-grep/commit/6471b51315979fce4648956f064c3ac8f78e33aa))
+
+Three places degraded without telling the caller; each was reproduced by a failing test first.
+
+- capsule: agent_capsule_targets._maybe_fuse_semantic_dense_target caught a tuple that includes
+  RuntimeError, and BackendExecutionError / DenseUnavailableError are RuntimeErrors, so a corrupt
+  dense model silently kept the lexical order -- indistinguishable from "fusion ran and kept the
+  lexical order", the normal case. Kept fail-safe (the dense leg must not crash the capsule) but
+  DISCLOSED, matching how `tg find` discloses its BM25 fallback: a fault returns a copy of the
+  target with
+
+semantic_fusion_unavailable "<ExcClass>: <msg[:200]>". An expected absence (extra not installed) and
+  a normal non-promotion stay silent. Also dropped DenseUnavailableError from the except tuple and
+  the in-try import (redundant subclass of RuntimeError; naming an in-try import in the except tuple
+  raises UnboundLocalError if that import ever fails). - prepare: _build_prepare_blast_radius_floor
+  returned callers_count 0 and possibly_incomplete False with only an `error` string when the scan
+  raised, i.e. "no callers, complete". possibly_incomplete is now True when error is set;
+  deadline_partial (the exit-2 gate) stays deadline-only, so exit codes are unchanged. - bootstrap:
+  --version printed a bare `0.0.0` when neither package metadata nor pyproject was readable (it
+  reads like a real version) while cli/main.py uses the explicit 0.0.0-unavailable sentinel.
+  bootstrap now shares it (it cannot import main), with a test pinning the two equal.
+
+12 new tests (7 red on assertions first, the rest are controls that must stay quiet); 203
+  prepare/capsule/cross-file-caller tests and 205 bootstrap/front-door tests pass; ruff --preview
+  and mypy clean.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Record the v1.123.6 release receipts for the chain-integrity fix
+  ([`428a240`](https://github.com/oimiragieo/tensor-grep/commit/428a2408048fd59871b58d5734de5870c881f046))
+
+The fix shipped as a1264b5 -> v1.123.6 (603f0aa): CI run 36990890939 green on attempt 1, the
+  validate-pypi-artifacts gate passed again on that release's builds, and the published win_amd64
+  wheel contains both chain-link helpers and both never-raising digest comparers (the dead wrapper
+  is gone) with the pyjwt/urllib3 floors intact in requires_dist.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Wave 3 slice 3 -- record 12 retrieval and dogfood broad handlers (70 -> 58 unledgered)
+  ([`af28473`](https://github.com/oimiragieo/tensor-grep/commit/af28473c4e19b841bed6f4aa880bcaf6cffdca01))
+
+Record-only; no source behaviour changes. Records the broad handlers of core/retrieval_dense (4),
+  core/retrieval_late (4) and cli/dogfood (4) and adds the three modules to the audited set.
+  Unledgered 70 -> 58, ledger 271 -> 283, 0 stale, ceiling unchanged at 341; ledger CRLF preserved.
+
+All 8 retrieval handlers are INTENTIONAL-BOUNDARY (re-raise BackendExecutionError or exit 1);
+  dogfood._terminate_process_tree #0/#1 are boundaries and #2 plus run_dogfood_readiness #0 are
+  SILENT-SWALLOW that can only lose diagnostics (the verdict is already forced to failed).
+  Low-confidence records are named in backlog.md.
+
+Also recorded, not acted on (a decision is needed): agent_capsule_targets.py catches a TUPLE that
+  includes RuntimeError, and BackendExecutionError is a RuntimeError, so a corrupt dense model
+  silently leaves the capsule on its lexical ordering with nothing to distinguish "fusion ran" from
+  "fusion failed". It is a tuple, so the handler ledger does not track it; the backlog entry has the
+  acceptance test.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **audit**: Wave 3 slice 4 -- record 13 prepare/lsp-setup/ast/bootstrap broad handlers (58 -> 45
+  unledgered)
+  ([`2a720a2`](https://github.com/oimiragieo/tensor-grep/commit/2a720a2c645b6afc901f1d7afed58069a1ce564b))
+
+Record-only classification of the broad handlers of cli/prepare_service (4), cli/lsp_provider_setup
+  (4), cli/ast_workflows (3) and cli/bootstrap (2), and the four modules join the audited set.
+  Unledgered 58 -> 45, ledger 283 -> 296, 0 stale, ceiling unchanged at 341; ledger CRLF preserved.
+  lsp_provider_setup's `except BaseException` is deliberately not recorded (the scanner ignores it).
+
+The records for the prepare floor and the bootstrap version fallback are written to match the
+  hardening in the preceding fix commit (hardened_in HANDLER-CENSUS-W3-d; the bootstrap fallback
+  moves SILENT-SWALLOW -> LOGGED-DEGRADE now that it prints a visible sentinel). backlog.md also
+  records the capsule design decision and rewrites the remaining-slices list from the scanner's own
+  count (45 handlers in 9 modules).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.6 (2026-10-02)
 
 ### Bug Fixes
