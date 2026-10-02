@@ -1,6 +1,112 @@
 # CHANGELOG
 
 
+## v1.123.10 (2026-10-02)
+
+### Bug Fixes
+
+- **lsp**: A language-server reader that dies now terminates its child; stop() discloses a child it
+  could not kill
+  ([`dad3031`](https://github.com/oimiragieo/tensor-grep/commit/dad303130ed5ddef261bc9aad216f22a2d91beef))
+
+Found while classifying lsp_external_provider's broad handlers (Wave 3 slice 9, the last module).
+  Both defects were reproduced by me before fixing (I re-ran the classifying agent's probe against a
+  fake server).
+
+1. Dead reader, live child. ExternalLSPClient._reader_loop ends on any unreadable frame
+  (_read_message returns None for an oversized frame, bad header or empty body, or json decoding
+  raises) after telling the in-flight request "closed", but it never stopped the child. start()'s
+  fast path only asks `process.poll() is None`, so the client was reused: status() said
+  running=True/initialized=True and every later request waited its full timeout on the same pid (an
+  undrained stdout pipe can also block the child). The reader now terminates the child it can no
+  longer serve (_terminate_after_reader_exit, a narrow `except OSError`, so no new broad handler
+  enters the census), which makes poll() truthful and lets the existing restart path respawn it. 2.
+  stop() swallowed a failed kill() and a failed post-kill wait() with `pass`, then dropped its only
+  handle to a possibly-live child with nothing recorded. Both are now collected and surfaced through
+  last_error with the pid and cause ("LSP child pid N not stopped (kill failed: ...; did not exit
+  after kill: ...)").
+
+A first approach (make start() treat a dead reader as not-running) was wrong and backed out: it hung
+  test_lsp_start_race and test_lsp_external_provider, whose fake processes report poll()==None with
+  an empty stdout, so the handshake's own request() -> start() re-entered and respawned
+  mid-handshake. I attributed the hang to my change by running both files against pristine source
+  (patch-file arm, no stash) before touching anything.
+
+4 new tests drive a REAL child process (a tiny fake language server): 3 red with the fix removed on
+  the final bytes, plus a control that a healthy client keeps its pid. 185 LSP tests pass (13s), the
+  two previously hanging files pass in 1-3s; ruff --preview, full mypy, registration, bare-call and
+  file-size ratchets clean (lsp_external_provider.py 1469 lines, under its 1500 limit).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Wave 3 final slice -- whole-tree ledger completeness + a gate for except BaseException
+  ([`e0ef7df`](https://github.com/oimiragieo/tensor-grep/commit/e0ef7dfd904a17a13c08d51cab0d9f30a4517aad))
+
+Closes the two holes the broad-handler census itself had.
+
+1. test_ledger_completeness_over_the_whole_tree. The existing completeness test only checks the
+  modules on an explicit opt-in list (_audited_modules_so_far), so a NEW module with broad handlers
+  -- or any module nobody remembered to add -- was invisible, and the ceiling can say a handler was
+  added but not WHICH one is unledgered. Every broad handler anywhere under src/tensor_grep now
+  needs a ledger record. A perturbation arm drops one module's records and shows the whole-tree
+  check catches it while a scoped check over a list that omits the module does not (the blind spot,
+  demonstrated). 2. tests/unit/test_baseexception_handlers_reviewed.py decides the 12 `except
+  BaseException` handlers the scanner ignores. Not 12 ledger records (7 are cleanup-then-raise,
+  which are not swallows): every `except BaseException` (bare name or inside a tuple) must END IN A
+  `raise`, or be on a reviewed allowlist with a written reason. The 5 that do not re-raise are
+  deliberate: three in mcp_server._log_tool_exception (strictly non-throwing diagnostics of an
+  already-caught error), mcp_server._safe_exception_class_name (introspection hardened against
+  hostile exceptions), and core/reranker._run_late_rerank (worker-thread capture, re-raised on the
+  caller thread). Mutation-checked on the real tree: dropping any one allowlist entry flags exactly
+  that handler; synthetic arms cover a swallow, a tuple handler, a re-raising cleanup (control), a
+  plain `except Exception` (control), and index stability; a stale-entry test retires rows whose
+  handler is gone.
+
+13 ledger tests + 8 BaseException tests pass; ruff, ruff format --preview and the file-size ratchet
+  clean; the one new mypy complaint in the test file was mine and is fixed (the two that were
+  already there remain). backlog.md records Wave 3 as complete (95 unledgered handlers in 26 modules
+  -> 0) with its totals.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **audit**: Wave 3 slice 9 -- record 14 lsp_external_provider broad handlers (14 -> 0 unledgered;
+  census complete)
+  ([`8c2acf6`](https://github.com/oimiragieo/tensor-grep/commit/8c2acf6b2eee0c7d93279eeaa7b53b4d0fd5b9f5))
+
+Record-only classification of cli/lsp_external_provider's broad handlers, the last module with
+  unledgered handlers; it joins the audited set. Unledgered 14 -> 0, ledger 327 -> 341 = the 341
+  live broad handlers, 0 stale, ceiling unchanged at 341; ledger CRLF preserved. 7 SILENT-SWALLOW /
+  6 INTENTIONAL-BOUNDARY / 1 LOGGED-DEGRADE as classified; the three records for the handlers
+  hardened in the preceding fix commit (_reader_loop#0, stop#3, stop#4) move SILENT-SWALLOW ->
+  LOGGED-DEGRADE with hardened_in HANDLER-CENSUS-W3-i, and every lineno is recomputed from the
+  scanner (the ledger test requires each to lie inside its enclosing function's span). backlog.md
+  records the two defects and the wrong first fix, the known limits left alone, and that the
+  remaining Wave 3 work is the final completeness slice only.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **lsp**: Make the reader-death tests independent of installed language servers
+  ([`607bb50`](https://github.com/oimiragieo/tensor-grep/commit/607bb506c5a0b5b675b8e40499c83d3d0b1a1a2a))
+
+The new tests in test_lsp_external_provider_reader_death.py passed on the dev box and FAILED on the
+  `test-gpu-nvidia (ubuntu-latest, cuDF)` runner with `FileNotFoundError: pyright-langserver binary
+  not found`: ExternalLSPClient's constructor resolves a provider binary for the language and raises
+  where none is installed. This box has pyright; the runner does not, so the tests only went red in
+  CI (the repo's environment-independence law, A85). That red job also blocked Semantic Release for
+  the v1.123.10 fix(lsp) already on main.
+
+The tests supply their own command, so an autouse fixture now patches _provider_command and
+  construction no longer depends on the machine. Reproduced faithfully before fixing: a scratch
+  pytest plugin making resolved_provider_command return None (what the runner sees) fails the
+  unfixed file with exactly that FileNotFoundError; the fixed file passes under that plugin and in
+  the normal environment. Every other test added in this wave (35) was re-run under the same plugin
+  and passes.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.9 (2026-10-02)
 
 ### Bug Fixes
