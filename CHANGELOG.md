@@ -1,6 +1,36 @@
 # CHANGELOG
 
 
+## v1.123.4 (2026-10-02)
+
+### Bug Fixes
+
+- **deps**: Publish the PyJWT and urllib3 security floors (the previous commit only fixed the lock)
+  ([`87a921d`](https://github.com/oimiragieo/tensor-grep/commit/87a921ddcfaaa4acbd31c76d50057cd44e449626))
+
+Correction to 7330b93: its message claimed the published metadata floor changed. It did not.
+  [tool.uv].constraint-dependencies is lock-only -- the validator's own comment says "NOT published
+  metadata, so it does nothing for `pip install tensor-grep`" -- and PyPI v1.123.3 requires_dist
+  carried only cryptography>=50.0.0. 7330b93 repaired this repo's lock and the audit gate, but an
+  existing environment holding PyJWT 2.13.0 / urllib3 2.7.0 would have kept the vulnerable build.
+
+Reachability (uv tree --invert): PyJWT is in the BASE install (tensor-grep -> mcp[crypto] -> pyjwt);
+  urllib3 only through the nlp extra (tritonclient[http] -> geventhttpclient -> urllib3). So:
+
+- [project].dependencies gains pyjwt>=2.15.0 (like the existing direct cryptography>=50.0.0 floor).
+  - the nlp extra gains urllib3>=2.8.0 (like aiohttp>=3.14.3). - the release validator now enforces
+  EVERY published floor; it previously checked one string per category, so adding a floor silently
+  did nothing. - uv.lock: the tensor-grep entry gains the 4 matching lines (spliced; a full uv lock
+  rewrite adds unrelated marker churn).
+
+Tests: 3 validator fixtures updated; 2 new validator tests that are RED against the old validator
+  (seen) and a published-metadata test in test_security_dependency_floors.py (RED first). pip-audit
+  on the locked export: no known vulnerabilities; uv export --locked rc=0;
+  validate_release_assets.py passes; 91 dependent tests pass.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.3 (2026-10-02)
 
 ### Bug Fixes
