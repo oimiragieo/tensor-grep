@@ -558,6 +558,24 @@ def _kind_to_symbol_kind(kind: str) -> SymbolKind:
     return SymbolKind.Object
 
 
+def _symbol_columns(line_text: str, symbol: str) -> list[tuple[int, int]]:
+    """Codepoint ``(start, end)`` of each whole-identifier occurrence of ``symbol`` in the line.
+
+    Uses the same identifier rule as ``_word_range_at_position`` (alnum or ``_``), so
+    ``create_invoice`` is not found inside ``create_invoice_total``.
+    """
+    found: list[tuple[int, int]] = []
+    at = line_text.find(symbol) if symbol else -1
+    while at != -1:
+        end = at + len(symbol)
+        before_ok = at == 0 or not (line_text[at - 1].isalnum() or line_text[at - 1] == "_")
+        after_ok = end == len(line_text) or not (line_text[end].isalnum() or line_text[end] == "_")
+        if before_ok and after_ok:
+            found.append((at, end))
+        at = line_text.find(symbol, at + 1)
+    return found
+
+
 def _location_from_entry(entry: dict[str, Any]) -> Location:
     start_line = max(0, int(entry.get("line", 1)) - 1)
     end_line = max(start_line, int(entry.get("end_line", entry.get("line", 1))) - 1)
@@ -976,20 +994,37 @@ def _workspace_edit_for_symbol(
             continue  # never emit an edit for a file outside the workspace root
         edits: list[TextEdit] = []
         seen_ranges: set[tuple[int, int, int, int]] = set()
+        lines = _document_text(ls, _path_to_uri(current_file)).split("\n")
         for entry in sorted(
             entries, key=lambda item: (int(item.get("line", 0)), str(item.get("text", "")))
         ):
-            location = _location_from_entry(entry)
-            current_range = (
-                int(location.range.start.line),
-                int(location.range.start.character),
-                int(location.range.end.line),
-                int(location.range.end.character),
-            )
-            if current_range in seen_ranges:
-                continue
-            seen_ranges.add(current_range)
-            edits.append(TextEdit(range=location.range, new_text=new_name))
+            # Edit ONLY the symbol's own columns. `_location_from_entry` is a NAVIGATION range
+            # (col 0..len(line.strip()), or a definition's whole body) and, used here with
+            # `new_text=new_name`, replaced the entire statement. All-or-nothing: an entry whose
+            # line does not contain the symbol would leave a half-renamed program, so refuse.
+            line_no = int(entry.get("line", 1)) - 1
+            columns = _symbol_columns(lines[line_no], symbol) if 0 <= line_no < len(lines) else []
+            if not columns:
+                return None
+            for start_cp, end_cp in columns:
+                current_range = (
+                    line_no,
+                    _from_cp_col(ls, lines[line_no], start_cp),
+                    line_no,
+                    _from_cp_col(ls, lines[line_no], end_cp),
+                )
+                if current_range in seen_ranges:
+                    continue
+                seen_ranges.add(current_range)
+                edits.append(
+                    TextEdit(
+                        range=Range(
+                            start=Position(line=current_range[0], character=current_range[1]),
+                            end=Position(line=current_range[2], character=current_range[3]),
+                        ),
+                        new_text=new_name,
+                    )
+                )
         if edits:
             document_changes.append(
                 TextDocumentEdit(
