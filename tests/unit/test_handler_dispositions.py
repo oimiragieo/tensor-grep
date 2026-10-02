@@ -99,6 +99,8 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "cli/session_store.py",
     # HANDLER-CENSUS-W3-g: session daemon (11 handlers).
     "cli/session_daemon.py",
+    # HANDLER-CENSUS-W3-h: LSP server (8 handlers).
+    "cli/lsp_server.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

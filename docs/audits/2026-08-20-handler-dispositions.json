@@ -3188,5 +3188,85 @@
     "evidence": "except Exception around the whole authenticated request body in _SessionDaemonHandler.handle: the exception is converted into a {version, session_id, error: {code: 'invalid_request', message: str(exc)}} response, the finally block decrements inflight_requests under the request lock, and the response is written and flushed to the client socket after the try. Unauthorized requests return earlier with an 'unauthorized' error and never reach this handler.",
     "reason": "A deliberate per-request containment point of a long-lived threaded daemon: one failing request must not kill the handler thread or the server, and the client receives a structured error with the message instead of a success-shaped result, so a request that was not served is never reported as served. The inflight counter is released in finally, so the lifecycle monitor cannot be pinned by a failed request. The failure is not logged server-side, and a client that ignores the error key would treat the response as data, which is the protocol contract.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 323,
+    "enclosing_symbol": "_invalidate_repo_map_cache",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around _resolve_repo_root(_uri_to_path(uri)) when invalidating the per-repo-root repo map cache on didOpen/didChange/didSave/didClose: on any failure (for example the ValueError _uri_to_path raises for a non-file URI scheme, or an OSError from the marker probe) the function returns without popping repo_map_cache. Nothing is logged.",
+    "reason": "The error is discarded and the caller cannot tell the cache entry was left in place. It cannot make a request answer falsely for the same URI, because every analysis path (_get_repo_map, _external_client_for_uri, _workspace_edit_for_symbol) re-runs the same unguarded _uri_to_path/_resolve_repo_root and raises for it. Residual: after a transient resolution failure on one document, a sibling document of the same repo root resolves fine and is served the pre-edit cached repo map until the next successful invalidation or LRU eviction, so definitions/references/rename ranges can be computed from stale symbols. Not an out-of-root or refused-edit path; no resource is held.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 609,
+    "enclosing_symbol": "_location_from_external_payload",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around building a Location from an external provider payload (missing range/start/end keys, non-numeric line/character, non-dict members): any failure returns None and the callers (workspace/symbol, definition, references result loops) skip that entry. Nothing is logged or counted.",
+    "reason": "A malformed provider entry is dropped without trace, so the client receives a list that silently omits it and cannot tell. In lsp mode a list whose entries were all dropped is empty and falls back to the native locations (external_locations or native_locations) with no marker that the provider answer was discarded; hybrid mode merges native results in. The values are read-only navigation results: this helper is not on the rename/WorkspaceEdit path, no URI from it is forwarded as an edit target, and no resource is held. Residual: a provider that sends one bad field per location makes tg present native-only results as the provider's.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 718,
+    "enclosing_symbol": "_resolve_workspace_root",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around resolving the root from the explicit path_hint URI: on failure (non-file scheme ValueError, OSError) the exception is discarded with pass and resolution continues to the open-documents fallback and then cwd.",
+    "reason": "The failure of the most specific input is discarded and a different root is substituted, with no in-band marker: workspace/symbol is answered from the first open document's repo or the process cwd instead of the hinted workspace. The result is read-only symbol information, not an edit, and is documented as a deliberate fallback chain (audit B16), but a consumer cannot tell its hint was ignored. No resource is held.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 723,
+    "enclosing_symbol": "_resolve_workspace_root",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around resolving the root from the first document in documents_cache (next(iter(...))): on failure the exception is discarded with pass and resolution falls through to cwd.",
+    "reason": "The same silent substitution one step down the documented chain: an unresolvable cached document URI is skipped and the cwd repo is used, with nothing disclosed. Read-only workspace/symbol only; no edit or resource is involved. Note it inspects the oldest-inserted cache entry rather than the most recently used one, so the root can be a stale document's repo.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 728,
+    "enclosing_symbol": "_resolve_workspace_root",
+    "handler_index_within_symbol": 2,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around _resolve_repo_root(Path.cwd()) as the last resort (for example FileNotFoundError when the process cwd was deleted): the function returns None and _workspace_symbols then returns [].",
+    "reason": "A failed root lookup is reported to the IDE as an empty workspace/symbol result, indistinguishable from a workspace with no matching symbols: a failed analysis presented as empty-but-complete. It needs the hint, the open documents and the cwd to all be unresolvable, and the result is read-only navigation, so it is a degraded search answer and not a refused edit forwarded or an out-of-root target treated as in-root. Not a leak. Classified SILENT-SWALLOW because nothing distinguishes the failure from a legitimate empty result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 982,
+    "enclosing_symbol": "_workspace_edit_for_symbol",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around WorkspaceEdit(**result) for an external provider rename result that has ALREADY passed _workspace_edit_refused (every target URI valid, absolute, in-root and no opaque member): on failure (the documented lsprotocol snake_case mismatch: a standard camelCase documentChanges key raises TypeError) the error is discarded with pass and control falls through to the native repo-map rename branch.",
+    "reason": "The provider's confined edit is dropped silently and replaced by the native name-based edit, so the client is not told that its provider's rename was not used. The fallback stays confined: the native branch skips every file outside workspace_root via _path_within_root, and a refused (out-of-root or opaque) edit never reaches this handler because the refusal check runs first, so no refused edit is forwarded and no out-of-root target is emitted. This is the pre-existing LSP-EDIT-CONSTRUCTION mismatch recorded in the code comment (owner lsp-change-control), not introduced here. Residual (read from code, not executed: lsprotocol is not installed in this venv): native TextEdit ranges come from _location_from_entry, which spans character 0 to len(line.strip()) of the matched line, so the substituted edit may overwrite more than the symbol token; that is a fidelity defect of the native branch that this swallow routes the standard provider shape into.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 1075,
+    "enclosing_symbol": "did_close",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around inferring the language, resolving the repo root and ls.external_providers.get_client(...) for the closed document in non-native provider modes: on failure the exception is discarded with pass and client stays None, so close_document is skipped. get_client only constructs or returns a cached, lazily started client in a bounded manager cache; it does not spawn a process.",
+    "reason": "A failed lookup silently skips the didClose to the external provider, so the provider keeps the document open until the client's bounded _opened_documents LRU evicts it (which then sends didClose). didClose is a notification with no response, so no client is told anything false. No process, pipe or thread is leaked here: get_client starts nothing and the open-document and version maps are bounded. The cost is a stale open document and an undisclosed failure.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_server.py",
+    "lineno": 1080,
+    "enclosing_symbol": "did_close",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around client.close_document(uri=uri) in the non-native provider modes: any failure is discarded with pass.",
+    "reason": "Effectively a defensive backstop: ExternalLSPClient.close_document already pops the URI from _opened_documents before notifying and _notify_document_closed catches its own notify failure and records a debug trace, so this outer handler is reachable only for an unexpected error outside that path. A failure leaves the provider with a stale open document until LRU eviction; no response is produced, no client is told anything false, and no process or file handle is held.",
+    "hardened_in": null
   }
 ]
