@@ -85,7 +85,7 @@ def main():
         assert res.returncode == 0, "Failed context-render"
 
         res = run_cmd(
-            ["uv", "run", "tg", "blast-radius-render", str(deep_dir), "--symbol", "hello_3_1"],
+            ["uv", "run", "tg", "blast-radius-render", str(deep_dir), "hello_3_1"],
             env=env,
         )
         assert res.returncode == 0, "Failed blast-radius-render"
