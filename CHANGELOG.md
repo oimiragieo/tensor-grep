@@ -1,6 +1,86 @@
 # CHANGELOG
 
 
+## v1.123.8 (2026-10-02)
+
+### Bug Fixes
+
+- **evidence**: A signed receipt's tool.version no longer falls back to a bare 0.0.0
+  ([`f0342ac`](https://github.com/oimiragieo/tensor-grep/commit/f0342ac01f78fe575bc6f9eca5e59c03e23430af))
+
+evidence_receipt._read_project_version_fallback says it mirrors
+  cli/main.py::_read_project_version_fallback "exactly", but main.py was hardened to return the
+  explicit `0.0.0-unavailable` sentinel (A3 / W1-c) while this copy kept a bare `0.0.0`. That string
+  is stamped into a SIGNED receipt's `tool.version` and into codemap's `tool_version`, where it
+  reads as a real, very old version. Same defect class as the bootstrap `--version` banner fixed in
+  v1.123.7 -- the twin that fix did not sweep.
+
+Now the same sentinel (a literal swap: net 0 lines in a 989-line file, no pin touched).
+  cli/evidence_receipt cannot import cli/main (layering), so the literal is duplicated and a
+  drift-guard test pins it: it drives BOTH version sources unreadable and compares the real
+  fallback's output with main._VERSION_UNAVAILABLE_SENTINEL (red on the exact assertion first, plus
+  a control that a readable package version is still reported). 159 receipt/codemap/ version tests
+  pass; ruff --preview, mypy and the file-size ratchet are clean.
+
+Not changed: runtime_paths._read_project_version_fallback and doctor_payload compare against a bare
+  "0.0.0" deliberately as their own "unknown" marker.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.123.7 (the release put the stamp 6 releases behind)
+  ([`2315da8`](https://github.com/oimiragieo/tensor-grep/commit/2315da86529f245bee5b45634aa4af992b311dc9))
+
+The v1.123.7 release commit pushed the board's stamp past the freshness gate's tolerance of 5 (it
+  read v1.123.1), which would have failed the unit suite on every lane. Reconciled against reality
+  first, then bumped: the 30 commits since the last reconcile (six releases; direct-main floors,
+  publish gate, import-edge walker hardening owned by P13, GPU fail-closed, chain integrity, three
+  silent-degradation disclosures, Wave 3 slices 1-5), the open-PR set (empty, queried), and main's
+  CI history including the file-size-ratchet miss. No canonical row's Status changed. Older release
+  SHAs collapsed to a tag range to stay under the 80,000-byte cap (79,952).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **backlog**: Record the v1.123.7 release receipts and the size-ratchet miss
+  ([`f472df2`](https://github.com/oimiragieo/tensor-grep/commit/f472df270fd41a9bb9ca033a9924fea94744ba02))
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Wave 3 slice 5 -- record 6 sidecar/session-resume/checkpoint broad handlers (45 -> 39
+  unledgered)
+  ([`1e6121c`](https://github.com/oimiragieo/tensor-grep/commit/1e6121c2cabd1bec87b19dbd1c126ea69624742f))
+
+Record-only classification of the broad handlers of sidecar (3), cli/session_resume_service (2) and
+  cli/checkpoint_store (1); the three modules join the audited set. Unledgered 45 -> 39, ledger 296
+  -> 302, 0 stale, ceiling unchanged at 341; ledger CRLF preserved. One LOGGED-DEGRADE (heuristic
+  classifier fallback with fallback_reason), five INTENTIONAL-BOUNDARY, no proven fail-open.
+  backlog.md records two unfixed notes: sidecar.main reports failure only in the JSON body (process
+  exit 0, by protocol), and undo_checkpoint's rollback has two narrow `except OSError: pass` clauses
+  outside this ledger.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **audit**: Wave 3 slice 6 -- record 6 evidence-receipt/session-store/signing broad handlers (39 ->
+  33 unledgered)
+  ([`8510917`](https://github.com/oimiragieo/tensor-grep/commit/8510917a3ea3e6d13406ab402da6847e5ab9386e))
+
+Record-only classification of the broad handlers of cli/evidence_receipt (3), cli/session_store (2)
+  and cli/evidence_signing (the 1 left); the three modules join the audited set. Unledgered 39 ->
+  33, ledger 302 -> 308, 0 stale, ceiling unchanged at 341; ledger CRLF preserved. Each handler was
+  asked whether unverified/unsigned/unwritten data could be treated as verified/signed/persisted;
+  none can. The two receipt version handlers are written to match the preceding fix commit
+  (hardened_in HANDLER-CENSUS-W3-f; `_read_project_version_fallback` moves SILENT-SWALLOW ->
+  LOGGED-DEGRADE, `_cli_package_version` stays SILENT-SWALLOW because its pyproject-for-metadata
+  substitution is still undisclosed). backlog.md also records the v1.123.7 release receipts and
+  rewrites the remaining-slices list from the scanner's own count (33 handlers, all in
+  session_daemon / lsp_server / lsp_external_provider).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.7 (2026-10-02)
 
 ### Bug Fixes
