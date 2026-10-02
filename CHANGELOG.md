@@ -1,6 +1,61 @@
 # CHANGELOG
 
 
+## v1.123.11 (2026-10-02)
+
+### Bug Fixes
+
+- **daemon**: Disclose which error triggered a refresh_on_stale rebuild
+  (serve_cache.refresh_trigger)
+  ([`378d2ce`](https://github.com/oimiragieo/tensor-grep/commit/378d2cef50d8b7a1253c7194eafaeaa5d6008e5f))
+
+With refresh_on_stale, the session daemon's request handler caught ANY exception from the first
+  serve attempt (not only SessionStaleError), rebuilt the session and served again -- logging
+  nothing and marking nothing in the response. A non-staleness bug was masked by a full rebuild, and
+  a persistently failing serve silently cost one rebuild per request. (Residual left by Wave 3 slice
+  7.)
+
+The behaviour is kept: narrowing the catch was rejected because the errors that legitimately warrant
+  a refresh (a missing or corrupt payload) are not enumerable and a wrong guess regresses
+  recoveries. It is now disclosed instead: serve_cache.refresh_trigger names the exception class
+  that caused the rebuild; the key is absent on the normal path and the dict is otherwise unchanged.
+
+Net 0 lines in session_daemon.py (2139, its pinned size): the 3 added lines are paid for by
+  tightening the adjacent Task #304 comment without dropping content. 2 new tests through a real
+  in-process daemon (1 red on the missing key, 1 control: no marker and the same shape on the normal
+  path); 150 daemon/session tests pass; ruff --preview, full mypy, bare-call and file-size ratchets
+  clean.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- Reconcile TASK_BOARD to v1.123.10 (stamp was 3 releases behind)
+  ([`56957f9`](https://github.com/oimiragieo/tensor-grep/commit/56957f9a4c0a9dd83e1dff2bfdad648bc65b61b6))
+
+Reconciled against the releases and merges since the v1.123.7 stamp; open-PR set empty (queried); no
+  canonical row's Status changed. 79,988 of 80,000 bytes.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **backlog**: Record the v1.123.9 and v1.123.10 release receipts and the CI-only test failure
+  ([`65cf2f6`](https://github.com/oimiragieo/tensor-grep/commit/65cf2f6dd1678a4cb4dcc003d272766f5d0bfee8))
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Record the session_daemon refresh-disclosure hardening (handle#1 -> LOGGED-DEGRADE)
+  ([`1c1590a`](https://github.com/oimiragieo/tensor-grep/commit/1c1590a5c024b2eebccb59f093251902d04e55b8))
+
+The ledger record for session_daemon.handle#1 moves SILENT-SWALLOW -> LOGGED-DEGRADE with
+  hardened_in HANDLER-CENSUS-W3-j to match the preceding fix, and its lineno is re-synced.
+  backlog.md records the follow-up and what remains (a persistently failing serve still costs one
+  rebuild per request, now visible).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.10 (2026-10-02)
 
 ### Bug Fixes
