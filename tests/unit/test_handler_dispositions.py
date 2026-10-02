@@ -97,6 +97,8 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "cli/evidence_receipt.py",
     "cli/evidence_signing.py",
     "cli/session_store.py",
+    # HANDLER-CENSUS-W3-g: session daemon (11 handlers).
+    "cli/session_daemon.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

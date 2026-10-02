@@ -3078,5 +3078,115 @@
     "evidence": "except Exception around the per-request body of the stream serve loop (including serve_session_request and the refresh_on_stale recovery path): the request gets an error response {version, session_id, error: {code: 'invalid_request', message: str(exc)}} written to the response stream and flushed, and the loop continues with the next line. SessionStaleError is caught by an earlier handler that returns code stale_session or refreshes.",
     "reason": "A per-request containment point of a long-lived stream protocol: one malformed or failing request must not kill the serve loop, and the failure is returned to that client as a structured error response with the message, so a request that failed is never answered as if it succeeded. The failure is not logged server-side, so an operator relies on the client seeing the error code. A client that does not check the error key would treat the response as data, which is the protocol contract.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 313,
+    "enclosing_symbol": "_restrict_windows_file_to_current_user",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around resolving the current user name (os.environ USERNAME or getpass.getuser()) inside the best-effort Windows ACL lockdown of the daemon token file: on any failure the function returns without running icacls. Nothing is logged and no marker is recorded. The later icacls subprocess has its own narrow (OSError, SubprocessError) handler.",
+    "reason": "The error is discarded and neither the daemon nor a client can tell the token file kept its inherited ACL. It is a documented fail-open defence in depth (the HMAC compare_digest gate in is_authorized stays the enforced control and the token is still written with the 0600 mode), so no served response is affected and no resource leaks. Classified SILENT-SWALLOW rather than INTENTIONAL-BOUNDARY because nothing is surfaced anywhere. Residual: on Windows a failed user lookup leaves the token file readable by other local accounts that can reach the session root.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 482,
+    "enclosing_symbol": "_pid_looks_like_tg_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around 'import psutil' (an optional dependency): when psutil cannot be imported the function returns False, which makes _terminate_daemon_by_pid skip the kill.",
+    "reason": "A deliberate fail-safe: identity of the pid cannot be proven, so the pid-kill fallback refuses to terminate an arbitrary process that may have reused the recorded pid. It fails closed with respect to killing. Residual: it also removes the escalation that stop_session_daemon relies on for a wedged daemon (see stop_session_daemon handler 0).",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 486,
+    "enclosing_symbol": "_pid_looks_like_tg_daemon",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around psutil.Process(pid).cmdline() (NoSuchProcess, AccessDenied or any psutil error): the function returns False and the caller does not kill the pid.",
+    "reason": "The same deliberate fail-closed identity check: any inability to read the command line is treated as 'not provably a tensor-grep daemon', so an unrelated or unreadable process is never signalled. Nothing is reported to the caller beyond False. Residual as for handler 0: a real but unreadable daemon is not terminated.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 581,
+    "enclosing_symbol": "_probe_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the 'ping' _daemon_request to the daemon recorded in daemon.json (connect refused, timeout, bad response, unauthorized): the probe returns None, the module's defined 'no live daemon' value. Callers treat None as unreachable: get_session_daemon_status reports running False with stale_metadata True, start_session_daemon spawns under the start lock, request paths fall back to the cold path.",
+    "reason": "A deliberate containment point that converts every probe failure into one defined sentinel the callers are written around (the version-mismatch return just below relies on the same contract). A client is never served a result from an unreachable daemon through this path. The cause (timeout versus refused versus wrong token) is lost, and a busy daemon that misses the short connect timeout can be treated as absent, which can spawn a duplicate daemon; that residual is documented in start_session_daemon (ephemeral ports, atomic daemon.json, idle-shutdown self-reap) and bounded.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 636,
+    "enclosing_symbol": "_merge_live_daemon_stats",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the 'stats' _daemon_request used to enrich the status payload: on failure status['stats_unavailable'] is set to str(exc) and the status is returned without the live counters.",
+    "reason": "The failure is disclosed in-band: the status carries stats_unavailable with the exception text next to running/host/port, and the live-counter keys are simply absent rather than defaulted, so a consumer cannot read a missing counter as zero. The result is degraded (no live stats) but not false.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 895,
+    "enclosing_symbol": "stop_session_daemon",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the cooperative {'command': 'stop'} _daemon_request: the exception is discarded and response is set to {'version', 'ok': False} with stop_method 'none'. Control then continues to the probe-wait loop. BEFORE 2026-10-02 the function, whatever happened, removed daemon.json and unconditionally set response['stopped'] = True; NOW a None probe after a failed stop request escalates to the identity-validated _terminate_daemon_by_pid, the while-else branch reports 'none' when its terminate also fails, and 'stopped' is False whenever stop_method is 'none'. daemon.json is still removed (as in the probe-is-None branch).",
+    "reason": "The failure cause is still discarded, but the returned report is no longer false: HARDENED 2026-10-02 (HANDLER-CENSUS-W3-g). It used to stamp stopped True even when the stop request failed and the daemon was still alive. If the daemon is wedged, _probe_daemon returns None on the first loop iteration, the while-else escalation (_terminate_daemon_by_pid) never runs, and if psutil is missing or the pid lookup fails the pid kill is skipped as well. daemon.json is then removed, leaving a live but undiscoverable daemon until its idle/max-uptime self-shutdown. Only ok False and stop_method none hint at it in-band, and they contradict the stopped flag. Recorded in slice 7 as a proven fail-open (false 'stopped' report) and FIXED the same day with red-first tests (tests/unit/test_session_daemon_stop_honesty.py: 2 red on the real assertion, 1 control that a successful cooperative stop terminates nothing). Residual: with psutil missing the pid terminate cannot validate identity, so such a daemon is now honestly reported stopped False rather than hidden; it is also left undiscoverable once daemon.json is removed, which is the unchanged behaviour of the sibling branch.",
+    "hardened_in": "HANDLER-CENSUS-W3-g"
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 1566,
+    "enclosing_symbol": "_flush_demand_metrics_if_dirty",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around _write_demand_metrics (atomic JSON write of the demand-metrics file), called from the lifecycle monitor poll loop and at shutdown: any failure is discarded with pass. consume_dirty() has already cleared the dirty flag, so that interval's counters are not retried until a later record() marks the state dirty again.",
+    "reason": "The error is discarded and not logged, so a persistent write failure is invisible and the metrics file silently goes stale. The data is observability for the tg-ledger demand gate only: no served response, session or lifecycle decision reads it, and the atomic writer unlinks its own temp file on failure so nothing leaks. Residual: tg doctor and the daemon status demand_metrics block can report an older rollup than the live daemon holds.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 1643,
+    "enclosing_symbol": "_attach_demand_metrics",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around _demand_metrics_status_payload(metrics_root) when decorating the daemon status payload: on failure status['demand_metrics'] is set to {'error': 'unavailable'}.",
+    "reason": "The failure is disclosed in-band with an explicit error marker in place of the metrics block, so a reader cannot take the rollup as present or zero. The cause is not carried and nothing is logged, but the rest of the status payload is unaffected and correct.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 1862,
+    "enclosing_symbol": "handle",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around server.demand_metrics.record(command, client_pid, request) in _SessionDaemonHandler.handle: any failure (including a malformed client_pid) is discarded with pass and request dispatch continues normally.",
+    "reason": "The error is discarded and unlogged, but the call is instrumentation that runs after authentication and path resolution and before dispatch: the request is still served in full from the real session state, so no client is told anything false and no lock, socket or thread is held across it. The only loss is an uncounted request in the demand metrics.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 1947,
+    "enclosing_symbol": "handle",
+    "handler_index_within_symbol": 1,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again. A failure of the rebuild or of the second serve is not caught and propagates to the outer handler.",
+    "reason": "The original exception is discarded and not logged, and the response carries no in-band marker that a rebuild happened (only the server-side refresh_count in the stats command moves), so this is a silent swallow. It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as an invalid_request error carrying the second error, and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug is masked by a full rebuild, and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 2021,
+    "enclosing_symbol": "handle",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the whole authenticated request body in _SessionDaemonHandler.handle: the exception is converted into a {version, session_id, error: {code: 'invalid_request', message: str(exc)}} response, the finally block decrements inflight_requests under the request lock, and the response is written and flushed to the client socket after the try. Unauthorized requests return earlier with an 'unauthorized' error and never reach this handler.",
+    "reason": "A deliberate per-request containment point of a long-lived threaded daemon: one failing request must not kill the handler thread or the server, and the client receives a structured error with the message instead of a success-shaped result, so a request that was not served is never reported as served. The inflight counter is released in finally, so the lifecycle monitor cannot be pinned by a failed request. The failure is not logged server-side, and a client that ignores the error key would treat the response as data, which is the protocol contract.",
+    "hardened_in": null
   }
 ]
