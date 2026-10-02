@@ -97,13 +97,24 @@ _NO_PKGUTIL: PkgutilScope = (frozenset(), frozenset())
 
 
 def _pkgutil_scope(tree: ast.AST) -> PkgutilScope:
+    """Names a FILE binds to ``pkgutil`` / ``pkgutil.resolve_name``.
+
+    File-wide by design: aliases are not tracked per lexical scope, so an unrelated rebinding of
+    the same name elsewhere in the file (``p = registry; p.resolve_name("tensor_grep.cli")``) can
+    produce a false edge. That fails LOUD and a human reviews it -- the safe direction for a
+    ratchet -- whereas tracking scopes risks the opposite error of hiding a real import.
+    """
     modules: set[str] = set()
     functions: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             modules.update(a.asname or a.name for a in node.names if a.name == "pkgutil")
         elif isinstance(node, ast.ImportFrom) and node.module == "pkgutil" and not node.level:
-            functions.update(a.asname or a.name for a in node.names if a.name == "resolve_name")
+            for alias in node.names:
+                if alias.name == "resolve_name":
+                    functions.add(alias.asname or alias.name)
+                elif alias.name == "*":
+                    functions.add("resolve_name")  # pkgutil.__all__ exports it
     return frozenset(modules), frozenset(functions)
 
 

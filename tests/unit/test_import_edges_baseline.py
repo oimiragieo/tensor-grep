@@ -484,3 +484,25 @@ def test_main_binding_late_import_targets_the_reviewed_cli_main_module() -> None
         and isinstance(n.value, ast.Constant)
     ]
     assert values == ["tensor_grep.cli.main"], f"_MAIN_MODULE changed: {values}"
+
+
+def test_star_import_from_pkgutil_binds_resolve_name(tmp_path: Path) -> None:
+    # Codex Sol re-review: `from pkgutil import *` exports resolve_name (pkgutil.__all__).
+    root = _make_src_tree(
+        tmp_path, {"m": "from pkgutil import *\nresolve_name('tensor_grep.cli.main')\n"}
+    )
+    assert ("tensor_grep.core.m", "tensor_grep.cli.main") in compute_violation_module_edges(root)
+
+
+def test_pkgutil_alias_scope_is_file_wide_by_design(tmp_path: Path) -> None:
+    """DOCUMENTED over-match, pinned so changing it is a conscious decision: an alias bound to
+    pkgutil in one function applies file-wide, so an unrelated rebinding of the same name in
+    another function reads as an import. It fails loud (a human reviews it) rather than hiding
+    a real import; tracking lexical scope risks the opposite error.
+    """
+    source = (
+        "def a():\n    import pkgutil as p\n\n"
+        "def b(registry):\n    p = registry\n    return p.resolve_name('tensor_grep.cli.x')\n"
+    )
+    root = _make_src_tree(tmp_path, {"m": source})
+    assert ("tensor_grep.core.m", "tensor_grep.cli.x") in compute_violation_module_edges(root)
