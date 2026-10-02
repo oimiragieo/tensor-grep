@@ -313,14 +313,18 @@ def test_unresolved_import_sites_are_counted_per_module(tmp_path: Path) -> None:
             "d": "from tensor_grep import *\n",
             "e": 'import builtins\n__import__("cli.x", globals(), locals(), [], 2)\n',
             "f": "from tensor_grep.cli import *\n",
+            "g": "from tensor_grep.core import *\n",
         },
     )
-    # `c` and `f` are resolvable (edges, not unresolved); `a` has TWO opaque calls and counts 2.
+    # `c` is resolvable (an edge, not unresolved); `a` has TWO opaque calls and counts 2. A star
+    # import from ANOTHER layer package (`f`) loads whatever its __all__ names, so it is opaque
+    # (Codex Sol R4); a star import from the importer's OWN package (`g`) crosses nothing.
     assert compute_unresolved_import_sites(root) == {
         "tensor_grep.core.a": 2,
         "tensor_grep.core.b": 1,
         "tensor_grep.core.d": 1,
         "tensor_grep.core.e": 1,
+        "tensor_grep.core.f": 1,
     }
 
 
@@ -347,3 +351,62 @@ def test_unresolved_import_site_baseline_is_not_stale() -> None:
     current = compute_unresolved_import_sites(_SRC_ROOT)
     shrunk = {m: n for m, n in baseline.items() if current.get(m, 0) < n}
     assert not shrunk, f"Fewer sites than frozen; tighten {_BASELINE_PATH}: {shrunk}"
+
+
+def test_namespace_and_extension_children_are_recorded_as_children(tmp_path: Path) -> None:
+    # Codex Sol R4 (HIGH): `_is_submodule` only knew `.py` files and dirs with an __init__.py,
+    # so an importable namespace package or compiled extension hid behind its parent edge.
+    root = _make_src_tree(tmp_path, {"m": "from tensor_grep.cli import ns, ext, nothing\n"})
+    (root / "cli" / "ns").mkdir()
+    (root / "cli" / "ext.pyd").write_bytes(b"")
+    edges = {e for e in compute_violation_module_edges(root) if e[0] == "tensor_grep.core.m"}
+    assert ("tensor_grep.core.m", "tensor_grep.cli.ns") in edges
+    assert ("tensor_grep.core.m", "tensor_grep.cli.ext") in edges
+    assert ("tensor_grep.core.m", "tensor_grep.cli.nothing") not in edges  # control
+
+
+def _reviewed_export_targets(relative: str) -> list[str]:
+    tree = ast.parse((_SRC_ROOT / relative).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign | ast.AnnAssign):
+            target = node.targets[0] if isinstance(node, ast.Assign) else node.target
+            if getattr(target, "id", "") == "_EXPORTS" and isinstance(node.value, ast.Dict):
+                return [
+                    v.value
+                    for v in node.value.values
+                    if isinstance(v, ast.Constant) and isinstance(v.value, str)
+                ]
+    raise AssertionError(f"no _EXPORTS dict found in {relative}")
+
+
+@pytest.mark.parametrize(
+    ("relative", "layer", "expected_count"),
+    [("backends/__init__.py", "backends", 16), ("core/__init__.py", "core", 9)],
+)
+def test_reviewed_opaque_import_targets_stay_inside_their_layer(
+    relative: str, layer: str, expected_count: int
+) -> None:
+    """The unresolved-site baseline pins the COUNT of opaque calls, not where they point
+    (Codex Sol R4, HIGH): retargeting one `_EXPORTS` entry across layers would keep every
+    baseline green. These two modules' lazy `import_module(_EXPORTS[name])` targets were
+    reviewed as in-layer, so pin exactly that.
+    """
+    targets = _reviewed_export_targets(relative)
+    assert len(targets) == expected_count, (
+        f"{relative}: _EXPORTS now has {len(targets)} targets (reviewed: {expected_count}); "
+        "re-review every new target for a cross-layer import before changing this number"
+    )
+    outside = [t for t in targets if not t.startswith(f"tensor_grep.{layer}.")]
+    assert not outside, f"{relative} lazily imports across layers: {outside}"
+
+
+def test_main_binding_late_import_targets_the_reviewed_cli_main_module() -> None:
+    tree = ast.parse((_SRC_ROOT / "cli" / "_main_binding.py").read_text(encoding="utf-8"))
+    values = [
+        n.value.value
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Assign)
+        and any(getattr(t, "id", "") == "_MAIN_MODULE" for t in n.targets)
+        and isinstance(n.value, ast.Constant)
+    ]
+    assert values == ["tensor_grep.cli.main"], f"_MAIN_MODULE changed: {values}"

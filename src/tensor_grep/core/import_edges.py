@@ -163,15 +163,21 @@ def _dynamic_import_literal(node: ast.Call) -> str | None:
 
 
 def _is_submodule(src_root: Path, dotted: str) -> bool:
-    """True when ``dotted`` (``tensor_grep.cli.runtime_paths``) is a real module or package on
-    disk under ``src_root`` -- so ``from tensor_grep.cli import runtime_paths`` can be told apart
-    from ``from tensor_grep.cli import some_function``.
+    """True when ``dotted`` (``tensor_grep.cli.runtime_paths``) is something Python can import
+    on disk under ``src_root`` -- a ``.py`` module, a package (with or without ``__init__.py``,
+    i.e. a namespace package) or a compiled ``.pyd``/``.so`` extension -- so
+    ``from tensor_grep.cli import runtime_paths`` can be told apart from
+    ``from tensor_grep.cli import some_function``.
     """
     prefix = "tensor_grep."
     if not dotted.startswith(prefix):
         return False
     rel = src_root / dotted[len(prefix) :].replace(".", "/")
-    return rel.with_suffix(".py").is_file() or (rel / "__init__.py").is_file()
+    if rel.is_dir():
+        return True
+    return any(
+        candidate.suffix in {".py", ".pyd", ".so"} for candidate in rel.parent.glob(f"{rel.name}.*")
+    )
 
 
 def _iter_parsed_modules(src_root: Path) -> Iterator[tuple[str, str, bool, ast.Module]]:
@@ -278,13 +284,20 @@ def compute_unresolved_import_sites(src_root: Path) -> dict[str, int]:
     module fails too.
     """
     sites: dict[str, int] = {}
-    for _from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
+    layer_modules = {f"tensor_grep.{pkg}" for pkg in TOP_LEVEL_PACKAGES}
+    for from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
         for node in ast.walk(tree):
             opaque = False
             if isinstance(node, ast.Call):
                 opaque = _is_dynamic_import_call(node) and _dynamic_import_literal(node) is None
             elif isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
-                opaque = _resolved_from_module(node, from_module, is_package) == "tensor_grep"
+                resolved = _resolved_from_module(node, from_module, is_package)
+                # A star import loads whatever `__all__` names: the package root or ANOTHER layer
+                # package may pull in children the walker cannot enumerate. Its own package is
+                # not a crossing.
+                opaque = resolved == "tensor_grep" or (
+                    resolved in layer_modules and resolved != f"tensor_grep.{from_pkg}"
+                )
             if opaque:
                 sites[from_module] = sites.get(from_module, 0) + 1
     return sites
