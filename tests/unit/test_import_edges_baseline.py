@@ -19,6 +19,7 @@ from tensor_grep.core.import_edges import (
     _dynamic_import_literal,
     _resolve_relative_import,
     compute_import_edges,
+    compute_unresolved_dynamic_import_modules,
     compute_violation_module_edges,
 )
 
@@ -211,9 +212,87 @@ def test_a_new_backward_import_would_be_caught() -> None:
         ("importlib.import_module(name)", None),
         ('getattr(importlib, "import_module")("tensor_grep.cli.x")', None),
         ('importlib.import_module(".sibling")', None),
+        # Resolvable keyword / package forms (Codex Sol R2).
+        ('importlib.import_module(name="tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('importlib.import_module(".x", package="tensor_grep.cli")', "tensor_grep.cli.x"),
+        ('importlib.import_module(".x", "tensor_grep.cli")', "tensor_grep.cli.x"),
+        ('importlib.import_module("..cli.x", "tensor_grep.core")', "tensor_grep.cli.x"),
+        ('__import__(".x")', None),
     ],
 )
 def test_dynamic_import_literal_forms(source: str, expected: str | None) -> None:
     call = ast.parse(source).body[0].value  # type: ignore[attr-defined]
     assert isinstance(call, ast.Call)
     assert _dynamic_import_literal(call) == expected
+
+
+def _make_src_tree(tmp_path: Path, core_sources: dict[str, str]) -> Path:
+    root = tmp_path / "tensor_grep"
+    for pkg in ("cli", "core", "backends", "io"):
+        (root / pkg).mkdir(parents=True)
+        (root / pkg / "__init__.py").write_text("", encoding="utf-8")
+    (root / "__init__.py").write_text("", encoding="utf-8")
+    (root / "cli" / "runtime_paths.py").write_text("", encoding="utf-8")
+    for name, source in core_sources.items():
+        (root / "core" / f"{name}.py").write_text(source, encoding="utf-8")
+    return root
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from tensor_grep import cli\n",
+        "from .. import cli\n",
+        "from tensor_grep import core, cli as _c\n",
+    ],
+)
+def test_root_from_import_of_a_package_is_a_cross_package_edge(tmp_path: Path, source: str) -> None:
+    # Codex Sol R2 (HIGH): `from tensor_grep import cli` imports the cli PACKAGE but the walker
+    # only looked at node.module ("tensor_grep"), so the edge was invisible.
+    root = _make_src_tree(tmp_path, {"m": source})
+    assert ("tensor_grep.core.m", "tensor_grep.cli") in compute_violation_module_edges(root)
+
+
+def test_root_from_import_of_a_non_package_name_is_not_an_edge(tmp_path: Path) -> None:
+    # Control: the name expansion must not invent edges for ordinary root attributes.
+    root = _make_src_tree(tmp_path, {"m": "from tensor_grep import __version__\n"})
+    assert not {e for e in compute_violation_module_edges(root) if e[0] == "tensor_grep.core.m"}
+
+
+def test_unresolved_dynamic_imports_are_surfaced(tmp_path: Path) -> None:
+    root = _make_src_tree(
+        tmp_path,
+        {
+            "a": "import importlib\nimportlib.import_module(name)\n",
+            "b": 'import importlib\ngetattr(importlib, "import_module")("tensor_grep.cli.x")\n',
+            "c": 'import importlib\nimportlib.import_module("tensor_grep.cli.x")\n',
+            "d": "import importlib\nimportlib.import_module(name=pick())\n",
+        },
+    )
+    # `c` is resolvable (reported as an edge, not unresolved); the other three are opaque.
+    assert compute_unresolved_dynamic_import_modules(root) == {
+        "tensor_grep.core.a",
+        "tensor_grep.core.b",
+        "tensor_grep.core.d",
+    }
+
+
+def _load_unresolved_baseline() -> set[str]:
+    data = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
+    return set(data["unresolved_dynamic_import_modules"])
+
+
+def test_unresolved_dynamic_imports_can_only_shrink() -> None:
+    """An import call whose target cannot be resolved statically hides a possible edge, so each
+    such module is frozen by name: a NEW one fails until someone reviews or waives it.
+    """
+    added = compute_unresolved_dynamic_import_modules(_SRC_ROOT) - _load_unresolved_baseline()
+    assert not added, (
+        f"New dynamic import call(s) with an unresolvable target in: {sorted(added)}. Resolve "
+        f"the target to a literal or justify adding the module to {_BASELINE_PATH}."
+    )
+
+
+def test_unresolved_dynamic_import_baseline_is_not_stale() -> None:
+    removed = _load_unresolved_baseline() - compute_unresolved_dynamic_import_modules(_SRC_ROOT)
+    assert not removed, f"No longer unresolved; drop from {_BASELINE_PATH}: {sorted(removed)}"

@@ -66,5 +66,11 @@
       "tensor_grep.core.query_analyzer",
       "tensor_grep.cli.runtime_paths"
     ]
+  ],
+  "_unresolved_dynamic_import_modules_comment": "Modules containing a dynamic import call (import_module / __import__ / getattr indirection) whose target is NOT statically resolvable, so the walker cannot see what they import. Frozen BY NAME so a NEW opaque import call fails tests/unit/test_import_edges_baseline.py until it is resolved to a literal or consciously waived here. Reviewed 2026-10-01: backends/__init__ (16 lazy-export targets, all inside backends) and core/__init__ (9, all inside core) are __getattr__ re-export tables; cli/_main_binding imports the literal constant tensor_grep.cli.main late. None crosses a layer.",
+  "unresolved_dynamic_import_modules": [
+    "tensor_grep.backends",
+    "tensor_grep.cli._main_binding",
+    "tensor_grep.core"
   ]
 }

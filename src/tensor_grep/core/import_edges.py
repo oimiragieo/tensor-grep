@@ -12,6 +12,7 @@ cross-package dependency will fail this check even before import-linter itself l
 from __future__ import annotations
 
 import ast
+import importlib.util
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -76,29 +77,69 @@ def _resolve_relative_import(from_module: str, level: int, target: str | None) -
     return f"{base}.{target}" if base else target
 
 
-def _dynamic_import_literal(node: ast.Call) -> str | None:
-    """Module name of ``importlib.import_module("x")``, bare ``import_module("x")`` or
-    ``__import__("x")`` when the first argument is a string literal, else ``None``.
+_DYNAMIC_CALLEES = frozenset({"import_module", "__import__"})
 
-    Non-literal arguments (variables, f-strings) and relative literals cannot be resolved
-    statically and are deliberately not reported here.
+
+def _is_dynamic_import_call(node: ast.Call) -> bool:
+    """True for ``import_module(...)`` / ``__import__(...)`` under any receiver, and for the
+    ``getattr(x, "import_module")(...)`` indirection.
+
+    Deliberately receiver-agnostic: an unrelated ``registry.import_module("tensor_grep.cli.x")``
+    also matches (a false edge) -- accepted over missing a real alias such as
+    ``import importlib as il`` or ``builtins.__import__``.
     """
     func = node.func
     if isinstance(func, ast.Attribute):
-        # Any receiver alias (`import importlib as il`, `builtins.__import__`). Deliberately
-        # receiver-agnostic: an unrelated `registry.import_module("tensor_grep.cli.x")` also
-        # matches (a false edge) -- accepted over missing a real alias.
-        is_dynamic = func.attr in {"import_module", "__import__"}
-    elif isinstance(func, ast.Name):
-        is_dynamic = func.id in {"import_module", "__import__"}
-    else:
-        is_dynamic = False
-    if not is_dynamic or not node.args:
-        return None
-    first = node.args[0]
-    if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return None if first.value.startswith(".") else first.value
+        return func.attr in _DYNAMIC_CALLEES
+    if isinstance(func, ast.Name):
+        return func.id in _DYNAMIC_CALLEES
+    if isinstance(func, ast.Call) and isinstance(func.func, ast.Name) and func.func.id == "getattr":
+        name_arg = func.args[1] if len(func.args) > 1 else None
+        return (
+            isinstance(name_arg, ast.Constant)
+            and isinstance(name_arg.value, str)
+            and name_arg.value in _DYNAMIC_CALLEES
+        )
+    return False
+
+
+def _string_arg(node: ast.Call, index: int, keyword: str) -> str | None:
+    """Positional ``index`` or keyword ``keyword`` argument when it is a string literal."""
+    value: ast.expr | None = node.args[index] if len(node.args) > index else None
+    if value is None:
+        value = next((kw.value for kw in node.keywords if kw.arg == keyword), None)
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        return value.value
     return None
+
+
+def _dynamic_import_literal(node: ast.Call) -> str | None:
+    """Absolute module name of a dynamic import whose target is statically known, else ``None``.
+
+    Resolves ``importlib.import_module("x")`` / ``import_module(name="x")`` / ``__import__("x")``
+    and a relative ``import_module(".x", package="pkg")`` (resolved against the literal package).
+    Non-literal targets, a relative literal with no literal package, and the ``getattr``
+    indirection return ``None``; :func:`compute_unresolved_dynamic_import_modules` surfaces those
+    instead of letting them pass as "no edge".
+    """
+    func = node.func
+    if isinstance(func, ast.Call) or not _is_dynamic_import_call(node):
+        return None
+    name = _string_arg(node, 0, "name")
+    if name is None:
+        return None
+    if not name.startswith("."):
+        return name
+    callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    if callee != "import_module":
+        return None  # __import__'s relativity is a separate `level` argument, not a leading dot
+    package = _string_arg(node, 1, "package")
+    if package is None:
+        return None
+    try:
+        return importlib.util.resolve_name(name, package)
+    except (ValueError, ImportError):
+        return None
 
 
 def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str, str]]:
@@ -127,11 +168,16 @@ def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str,
             if isinstance(node, ast.Import):
                 targets = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
+                resolved = None
                 if node.level and node.level > 0:
                     resolved = _resolve_relative_import(from_module, node.level, node.module)
-                    targets = [resolved] if resolved is not None else []
                 elif node.module is not None:
-                    targets = [node.module]
+                    resolved = node.module
+                targets = [resolved] if resolved is not None else []
+                if resolved == "tensor_grep":
+                    # `from tensor_grep import cli` / `from .. import cli` import the cli PACKAGE;
+                    # the module alone ("tensor_grep") names no layer, so expand the names.
+                    targets += [f"tensor_grep.{alias.name}" for alias in node.names]
             elif isinstance(node, ast.Call):
                 literal = _dynamic_import_literal(node)
                 if literal is not None:
@@ -167,11 +213,40 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
 
     Walks ``ast.Import`` / ``ast.ImportFrom`` nodes plus dynamic imports whose module name is a
     string literal (``importlib.import_module("x")``, ``import_module("x")``, ``__import__("x")``).
-    Known gap (documented, not silently claimed complete): a dynamic import with a NON-literal
-    argument (variable, f-string) or a relative literal cannot be resolved statically and is
-    NOT detected.
+    A dynamic import with a NON-literal target cannot be resolved statically and yields no edge
+    here; :func:`compute_unresolved_dynamic_import_modules` surfaces those modules so the gap is
+    frozen and reviewed rather than silently passing as "no edge".
     """
     return {
         (from_pkg, to_pkg)
         for from_pkg, _from_module, to_pkg, _to_module in _iter_cross_package_imports(src_root)
     }
+
+
+def compute_unresolved_dynamic_import_modules(src_root: Path) -> set[str]:
+    """Dotted names of modules containing a dynamic import call whose target is NOT statically
+    resolvable (variable / f-string argument, relative literal without a literal package, or the
+    ``getattr(...)`` indirection).
+
+    Such a call may hide a layering edge the walker cannot see, so "no edge found" is not "no
+    dependency". Freezing this set by module name makes a NEW opaque import call fail until it is
+    resolved to a literal or consciously waived.
+    """
+    unresolved: set[str] = set()
+    for path in src_root.rglob("*.py"):
+        if "__pycache__" in path.parts or _module_top_level_package(src_root, path) is None:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (SyntaxError, UnicodeDecodeError) as exc:
+            raise RuntimeError(f"import_edges: cannot parse {path}: {exc}") from exc
+        module = _module_dotted_name(src_root, path)
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and _is_dynamic_import_call(node)
+                and _dynamic_import_literal(node) is None
+            ):
+                unresolved.add(module)
+                break
+    return unresolved
