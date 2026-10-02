@@ -84,6 +84,11 @@ _EXPLICIT_AUDITED_MODULES = frozenset({
     "core/retrieval_dense.py",
     "core/retrieval_late.py",
     "cli/dogfood.py",
+    # HANDLER-CENSUS-W3-d: prepare / lsp-setup / ast-workflows / bootstrap modules (13 handlers).
+    "cli/prepare_service.py",
+    "cli/lsp_provider_setup.py",
+    "cli/ast_workflows.py",
+    "cli/bootstrap.py",
 })
 
 _VALID_CATEGORIES = frozenset({"SILENT-SWALLOW", "LOGGED-DEGRADE", "INTENTIONAL-BOUNDARY"})

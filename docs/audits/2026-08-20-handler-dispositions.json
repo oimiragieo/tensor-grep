@@ -2828,5 +2828,135 @@
     "evidence": "After a subprocess.TimeoutExpired and tree termination, except Exception around process.communicate(timeout=POST_TIMEOUT_COMMUNICATE_SECONDS) is pass: if draining the dead child's pipes fails or times out, stdout and stderr keep the partial text captured from the TimeoutExpired exception (possibly empty) and the timeout report is built from them. The report still sets returncode = 1 and a failed timeout result.",
     "reason": "The verdict is already failed and fixed before this handler runs, so the swallow can only lose diagnostic tail lines, never turn a failure into a pass. It stays a silent swallow because the report does not say the post-kill drain failed, so empty stdout_tail and stderr_tail look like 'child produced no output'. Safe direction for the verdict; diagnostics are best-effort.",
     "hardened_in": null
+  },
+  {
+    "module": "cli/prepare_service.py",
+    "lineno": 221,
+    "enclosing_symbol": "_build_prepare_blast_radius_floor",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the map-reusing build_symbol_blast_radius_from_map call (plus the output-limit and partial-signal copy): on failure it returns a blast-radius floor with source supplementary_blast_radius, zero callers, empty trust summary and resolution gaps, deadline_partial False and omitted 0, and carries error = str(exc) in the floor dict; since 2026-10-02 the floor also reports possibly_incomplete True on this path. The exception text is surfaced in the returned payload, not dropped.",
+    "reason": "The failure is disclosed in-band through the floor's error key, so a reader of blast_radius_floor can see the scan broke rather than found nothing, and the primary prepare read still succeeds as an advisory floor should. HARDENED 2026-10-02: the floor now reports possibly_incomplete True here, so a consumer reading only callers_count and possibly_incomplete no longer sees a safe-looking zero; deadline_partial stays False so exit codes are unchanged. It is degrade rather than boundary because it still reports zero callers next to the error key.",
+    "hardened_in": "HANDLER-CENSUS-W3-d"
+  },
+  {
+    "module": "cli/prepare_service.py",
+    "lineno": 254,
+    "enclosing_symbol": "_build_prepare_blast_radius_floor",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around the uncapped filesystem build_symbol_blast_radius rescan used when the repo map was possibly truncated: on failure it returns the same zero-caller floor with error = str(exc), deadline_partial False and omitted 0, and (since 2026-10-02) possibly_incomplete True. The deadline-partial signal is only read from a successful payload, so it is not set on this path.",
+    "reason": "Same disclosed-error shape as the map-reuse branch: the exception string reaches the payload so the floor is not silently complete. It is the rescan branch (large repos), where a scan crash is more likely than on the reuse branch, and HARDENED 2026-10-02: possibly_incomplete is now True on this path, so the zero callers_count is no longer silently complete.",
+    "hardened_in": "HANDLER-CENSUS-W3-d"
+  },
+  {
+    "module": "cli/prepare_service.py",
+    "lineno": 372,
+    "enclosing_symbol": "_build_prepare_payload",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the ledger_store.resolve_agent_id and list_claims probe for foreign claims: on any failure _foreign is set to an empty list, so the foreign_claims and foreign_claim_count keys are simply not emitted. The inline comment states this is deliberate so that a broken probe is indistinguishable from nothing claimed.",
+    "reason": "A real swallow: if the ledger probe breaks (corrupt ledger file, permission error), another agent's live claim on the same symbol is hidden and the output looks exactly like an unclaimed target. It is tolerated only because the claim hook is advisory coordination, not a gate, and failing prepare's primary read over it would be worse; the cost is a missed coordination warning, not a wrong edit target.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/prepare_service.py",
+    "lineno": 391,
+    "enclosing_symbol": "_build_prepare_payload",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around ledger_store.submit_claim when the caller passed claim: the exception text is stored in claim_hook[error], submitted stays unset, and the payload continues. The else branch only marks submitted True and records the claim and overlaps on success.",
+    "reason": "The user explicitly asked for a claim, and a failure is reported back in the claim hook's error field instead of being dropped, so the caller can tell the claim was not recorded. Not failing the whole prepare read is the documented advisory contract (submit_claim itself never blocks), which makes this a visible degrade, not a swallow.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_provider_setup.py",
+    "lineno": 421,
+    "enclosing_symbol": "_ensure_node_runtime",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the atomic swap of the staged Node runtime into place and the check that the node executable exists: it removes the half-installed runtime directory, restores the backed-up previous runtime when one existed, and then re-raises with a bare raise. The caller still sees the original exception.",
+    "reason": "A rollback boundary, not a swallow: it exists so a failed install cannot brick a previously working managed runtime, and it fails in the safe direction by re-raising so the install is reported as failed. It catches Exception rather than BaseException on purpose; interrupts are not rolled back here, which is a separate matter from this record.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_provider_setup.py",
+    "lineno": 960,
+    "enclosing_symbol": "install_managed_lsp_providers",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around _ensure_node_packages: the message is stored in errors[node]. Later the payload sets node.installed to False when errors[node] is set, copies the message into install_error for the python, javascript, typescript and php providers, and adds an install_errors map to the returned payload.",
+    "reason": "The install failure is recorded and disclosed per provider and at the payload top level, so no provider is shown as healthy because of it, and available is computed from whether a command actually resolves. It degrades rather than raises so the other languages and the toolchain installers can still be attempted in the same run.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_provider_setup.py",
+    "lineno": 965,
+    "enclosing_symbol": "install_managed_lsp_providers",
+    "handler_index_within_symbol": 1,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around _ensure_rust_analyzer, guarded by include_toolchain_providers: the message is stored in errors[rust], which flows into the rust provider's install_error and the payload's install_errors map. The rust provider's available flag is still derived from command resolution.",
+    "reason": "Opt-in toolchain install; a failure is surfaced as install_error on the rust entry and in install_errors, so the caller can see why rust is unavailable. Continuing instead of aborting lets one failed toolchain download leave the other providers installable.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/lsp_provider_setup.py",
+    "lineno": 971,
+    "enclosing_symbol": "install_managed_lsp_providers",
+    "handler_index_within_symbol": 2,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception inside the loop over the go (_ensure_gopls) and csharp (_ensure_csharp_ls) installers: the message is stored in errors[language] and reaches that language's install_error and the payload's install_errors map. The loop continues to the next installer.",
+    "reason": "Per-language failure isolation with disclosure: one failing toolchain must not stop the other installer, and each failure is attributed to its own language key rather than lost. The error is reported, not hidden, so this is a logged degrade with the failure visible in the structured result.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/ast_workflows.py",
+    "lineno": 911,
+    "enclosing_symbol": "scan_command",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around wrapper_backend.search_project(root, config_path): the exception is discarded without a log, a note or a flag, and every rule in wrapper_rules is appended to other_resolved bound to the same wrapper backend, so it is re-run one rule at a time through the per-rule search path. A failure of that fallback is not caught here and surfaces from the normal per-rule path.",
+    "reason": "The first error is genuinely lost: the scan reports no sign that the project-level call failed, and the per-rule path may not behave identically to project-level search (project-config path handling and ignore rules), so results could differ without disclosure. It is tolerated because the fallback runs the same backend and its own failures still propagate, so a rule is not silently skipped; this is a swallow of the cause, not of the outcome.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/ast_workflows.py",
+    "lineno": 1271,
+    "enclosing_symbol": "test_command",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the per-snippet backend.search loop used when the backend has no search_many: the error is appended to failures as 'test_file:case_id: backend error: <exc>'. After all cases, any failure is printed to stderr with a [test] FAIL line and the command returns exit code 1.",
+    "reason": "A last-resort boundary that fails in the safe direction: a backend crash becomes a named test failure and a non-zero exit, so an AST rule test can never pass because the backend errored. The exception text is kept in the failure line and the broad catch lets the remaining cases still run and be reported.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/ast_workflows.py",
+    "lineno": 1297,
+    "enclosing_symbol": "test_command",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around _batch_search_snippets for a batch of rule cases: the error is appended to failures as one 'backend error: <exc>' entry per case in the batch, so every affected case is reported. Any failure makes test_command print [test] FAIL and return exit code 1.",
+    "reason": "Same fail-safe contract as the per-snippet path, applied to the batched route: a backend error marks every case in the batch as failed rather than counting it as passed, and the process exits 1. Reporting the exception text per case keeps the cause visible.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/bootstrap.py",
+    "lineno": 354,
+    "enclosing_symbol": "_read_project_version_fallback",
+    "handler_index_within_symbol": 0,
+    "category": "LOGGED-DEGRADE",
+    "evidence": "except Exception around reading pyproject.toml from the source tree and parsing the version line: any failure (missing file in an installed wheel, unreadable file, malformed line causing an IndexError in the split) is swallowed and the function returns the explicit 0.0.0-unavailable sentinel (HARDENED 2026-10-02; it used to return a bare 0.0.0). It is only called from the --version printer when the installed-distribution lookup already failed. It does not choose a route or touch argv.",
+    "reason": "The error is discarded, but the banner now prints 'tensor-grep 0.0.0-unavailable', the same distinguishable sentinel cli/main.py returns for exactly this case (A3, PR #1070); a test pins the two sentinels equal, so the bootstrap copy can no longer read like a real version. It cannot misroute a command or hide a search failure because it runs only for the version banner, which is why it is recorded as a version-display swallow and not a routing hazard.",
+    "hardened_in": "HANDLER-CENSUS-W3-d"
+  },
+  {
+    "module": "cli/bootstrap.py",
+    "lineno": 364,
+    "enclosing_symbol": "_print_version",
+    "handler_index_within_symbol": 0,
+    "category": "SILENT-SWALLOW",
+    "evidence": "except Exception around the importlib.metadata.version lookup for tensor-grep: any failure falls through to _read_project_version_fallback, so the banner is built from the pyproject value, or the explicit 0.0.0-unavailable sentinel if that also fails (a bare 0.0.0 before 2026-10-02). The exception is not reported. It runs only in the --version path (called from main at the version flag branch) and leaves the search routing path untouched.",
+    "reason": "The metadata failure is discarded and the banner looks normal. This is a deliberate two-step version fallback for source checkouts and editable installs where the distribution is not registered, so the first swallow is expected to fire there. It is still a swallow because a degraded value is printed without disclosure; the consequence is a wrong version string, not wrong search behaviour or a misrouted command.",
+    "hardened_in": null
   }
 ]
