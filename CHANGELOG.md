@@ -1,6 +1,81 @@
 # CHANGELOG
 
 
+## v1.123.6 (2026-10-02)
+
+### Bug Fixes
+
+- **evidence**: Chain verification now binds the previous record's body; verifiers no longer crash
+  on hostile digests
+  ([`a1264b5`](https://github.com/oimiragieo/tensor-grep/commit/a1264b58f9d027e15fabfababe793a4a7adc3eac))
+
+Found while classifying Wave 3 slice 2 and reproduced first: a previous audit manifest whose BODY
+  was edited (digest field left as is) still verified `valid: true` with `chain_valid: true` and no
+  errors, because the chain compared the current record's link against the previous record's STORED
+  digest without recomputing it from the body. The evidence-receipt twin (previous_receipt_digest /
+  verify_receipt_chain) had the same shape.
+
+Fixed in both twins: - one read of the previous record returns (link digest, body_intact); a stored
+  digest that does not match the digest recomputed from the body now FAILS the chain. Records that
+  are not JSON, not objects, or predate the digest field keep the raw-bytes link, so historical
+  chains still verify. - `tg evidence emit --previous` (previous_receipt_digest) refuses a corrupt
+  predecessor instead of minting a link that would lie. - two broad `except Exception` handlers
+  narrowed to the exceptions their try blocks can raise (ValueError, RecursionError, TypeError):
+  ceiling 343 -> 341, the retired handler's ledger record removed (272 -> 271).
+
+Three independent Codex Sol gate rounds, each finding the NEXT adjacent crash on hostile input, all
+  pre-existing in the same verifiers: - R1: hmac.compare_digest raises TypeError on a non-ASCII str,
+  so a hostile stored/claimed digest crashed the verifier (my own new code did it too). - R2: the
+  same class at a second site (manifest signature.value). Swept EVERY attacker-reachable
+  compare_digest into a never-raising _digests_equal helper per module (UTF-8 bytes, surrogatepass;
+  still constant-time). - R3: verify_receipt raised on a NaN body (json.loads accepts NaN, the
+  canonicaliser refuses it) -> a canonicalisation failure is now an invalid digest and an
+  unverifiable signature, never an exception.
+
+Parked with recorded rulings (R2 agreed): editing ONLY the predecessor's signature leaves a chain
+  valid (the signature is excluded from the digest by design and is checked when the predecessor is
+  verified; closing it changes what a chain attests), and rewriting an unsigned head together with
+  its predecessor needs an external anchor.
+
+22 new tests, RED against the committed bytes (seen), green now; 195 evidence/manifest/history tests
+  pass; ruff --preview, mypy clean.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Record the v1.123.5 release receipts and the artifact gate's first live run
+  ([`ce145e6`](https://github.com/oimiragieo/tensor-grep/commit/ce145e6e49b9137da25926b089d3459c65a67b40))
+
+Wave 3 slice 1 shipped as 6936269 -> v1.123.5 (456d29c): CI run 36976442920 green on attempt 1, and
+  the PUBLISHED win_amd64 wheel contains the memory_manager fix while its requires_dist still
+  carries pyjwt>=2.15.0 and urllib3>=2.8.0 (nlp). The new validate-pypi-artifacts requirements check
+  had its first live run on that release's freshly built wheels and sdist and passed (no false
+  positive on a live build).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Wave 3 slice 2 -- record 12 leaf-module broad handlers (95 -> 71 unledgered)
+  ([`6e3046e`](https://github.com/oimiragieo/tensor-grep/commit/6e3046efc38f578e7e5ece3333dbb3df9d408c2f))
+
+Record-only; no source behaviour changes. Records the broad handlers of cli/runtime_paths (3),
+  cli/freshness (3), cli/agent_capsule (1), cli/agent_capsule_call_sites (2), cli/audit_manifest (1)
+  and core/retrieval_chunker (2) and adds the six modules to the audited set. Unledgered 83 -> 71,
+  ledger 260 -> 272, 0 stale, ceiling unchanged at 343; ledger CRLF preserved. 6
+  INTENTIONAL-BOUNDARY, 4 LOGGED-DEGRADE, 3 SILENT-SWALLOW; low-confidence ones are named in
+  backlog.md.
+
+Two observations surfaced while classifying, recorded in backlog.md and not yet acted on: the
+  audit-manifest chain check compares the link against the previous manifest's STORED digest without
+  recomputing it from its body (security-shaped; needs a red test and the adversarial gate), and the
+  call-site collectors disclose failure in call_site_evidence.status without escalating to
+  partial/result_incomplete.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.5 (2026-10-02)
 
 ### Bug Fixes
