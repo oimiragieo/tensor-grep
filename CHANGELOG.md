@@ -1,6 +1,111 @@
 # CHANGELOG
 
 
+## v1.123.9 (2026-10-02)
+
+### Bug Fixes
+
+- **daemon**: Stop_session_daemon no longer reports stopped for a daemon it has no evidence ended
+  ([`048b6e8`](https://github.com/oimiragieo/tensor-grep/commit/048b6e8501c5bcaab75305077df1958ca5a63dfa))
+
+Found while classifying session_daemon's broad handlers (Wave 3 slice 7) and verified by reading the
+  function before fixing it.
+
+The cooperative path dispatches a `stop` request and then polls _probe_daemon until it returns None.
+  A None probe is ambiguous: the daemon exited, OR it stopped answering (wedged). The `while ...
+  else` escalation to a pid terminate only ran when the poll EXHAUSTED the deadline, so when the
+  stop REQUEST itself failed and the daemon then went unresponsive, the loop broke on the first None
+  probe and the function returned `stopped: True`, `stop_method: "none"` -- while the process was
+  still alive and its daemon.json had just been removed (undiscoverable until its idle/max-uptime
+  shutdown). The sibling branch for "probe is None up front" already reports `stopped: <did we
+  terminate it>`.
+
+Fix, and the class swept in the same pass: - a None probe after a failed stop request now escalates
+  to the identity-validated _terminate_daemon_by_pid instead of being read as success; - the
+  while-else branch (daemon kept answering for the whole deadline) now reports stop_method "none"
+  when its terminate also fails (it said "stopped" before, e.g. with psutil missing); - `stopped` is
+  `stop_method != "none"`.
+
+Net 0 lines in session_daemon.py (2139, its pinned size); a first attempt grew it by 5 and was
+  caught locally by file_size_budget.py, then compressed. 3 new tests (2 red on the real assertion
+  `[] == [4321]` first, 1 control that a successful cooperative stop terminates nothing); the 21
+  existing daemon metadata/version-skew tests and 93 daemon + session-CLI tests pass; ruff --preview
+  and mypy clean.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **lsp**: Native rename edits only the symbol, not the whole line it sits on
+  ([`bb4810f`](https://github.com/oimiragieo/tensor-grep/commit/bb4810f695970a09e5be26e5f319054583f77b36))
+
+Found while classifying lsp_server's broad handlers (Wave 3 slice 8): the classifying agent flagged,
+  with low confidence and unrun, that the native rename range might overwrite more than the symbol.
+  I verified it on the real repo map before fixing, and it is destructive.
+
+The native branch of _workspace_edit_for_symbol built every TextEdit from _location_from_entry, a
+  NAVIGATION range (columns 0..len(line.strip()), or a definition's whole body via end_line). Used
+  as a rename edit with new_text=new_name it replaced the ENTIRE STATEMENT: `result =
+  create_invoice(3)` became `issue_invoice`, and the def line was cut mid-identifier into the next
+  line (`issue_invoiceal + 1`). The existing native-rename test asserted only new_text, never a
+  range, so it passed throughout; and the LSP tests could not run locally at all (lsprotocol is not
+  in the repo venv -- they only ran in CI).
+
+Fix: edit only the symbol's own columns. New _symbol_columns uses the module's own identifier rule
+  (alnum or `_`, as _word_range_at_position), and columns are converted with _from_cp_col so
+  UTF-16/UTF-8 clients get correct offsets. The change is ALL-OR-NOTHING: an entry whose line does
+  not contain the symbol returns no edit rather than a half-renamed program.
+
+3 new tests that APPLY the returned edits to real source text and check the resulting program: all 3
+  red with the fix removed (on the final test bytes, via a patch file, no stash) and green with it;
+  one control for an identifier that merely contains the symbol (`create_invoice_total`), one for a
+  non-BMP character shifting UTF-16 columns. Verified with the lock-pinned lsprotocol 2025.0.0 /
+  pygls 2.0.1 installed into an isolated --target dir (the shared venv untouched): 181 LSP tests
+  pass; ruff --preview, mypy and the file-size ratchet are clean.
+
+Known limits, not changed: the repo map's references do not include IMPORT statements, so `from
+  service import create_invoice` is left behind after a native rename (non-destructive, incomplete);
+  recorded in backlog.md.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Record the v1.123.8 release receipts and the board-stamp hold
+  ([`7ec3e95`](https://github.com/oimiragieo/tensor-grep/commit/7ec3e9589144d04671dd71d7c57c384bb95c7155))
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **audit**: Wave 3 slice 7 -- record 11 session_daemon broad handlers (33 -> 22 unledgered)
+  ([`5e8731b`](https://github.com/oimiragieo/tensor-grep/commit/5e8731b5fdcf9d08bf17e949a1e9bc3ca616bdb7))
+
+Record-only classification of cli/session_daemon's broad handlers; the module joins the audited set.
+  Unledgered 33 -> 22, ledger 308 -> 319, 0 stale, ceiling unchanged at 341; ledger CRLF preserved.
+  4 SILENT-SWALLOW / 4 INTENTIONAL-BOUNDARY / 3 LOGGED-DEGRADE, no resource leak. The
+  stop_session_daemon record is written to match the preceding fix commit (hardened_in
+  HANDLER-CENSUS-W3-g, moved SILENT-SWALLOW -> LOGGED-DEGRADE). backlog.md records the residuals
+  deliberately left alone (the :1947 rebuild-on-error path discards any exception and logs nothing;
+  the Windows ACL tightening is a documented fail-open; _probe_daemon collapses every failure to "no
+  daemon") and rewrites the remaining-slices list from the scanner's own count (22 handlers in
+  lsp_server and lsp_external_provider).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **audit**: Wave 3 slice 8 -- record 8 lsp_server broad handlers (22 -> 14 unledgered)
+  ([`a9f7306`](https://github.com/oimiragieo/tensor-grep/commit/a9f73061f7de1201fadaa9ca56e70cb9e25fdb0f))
+
+Record-only classification of cli/lsp_server's broad handlers; the module joins the audited set.
+  Unledgered 22 -> 14, ledger 319 -> 327, 0 stale, ceiling unchanged at 341; ledger CRLF preserved.
+  All 8 are SILENT-SWALLOW (none discloses the failure to the client); none is a fail-open or leak.
+  The records' lineno values are recomputed from the scanner after the preceding fix commit shifted
+  the module (the ledger test requires each lineno to lie inside its enclosing function's span).
+  backlog.md records the native-rename defect found while classifying and fixed in the preceding
+  commit, three known limits deliberately left alone, and rewrites the remaining-slices list from
+  the scanner's own count (14 handlers, all in lsp_external_provider).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.8 (2026-10-02)
 
 ### Bug Fixes
