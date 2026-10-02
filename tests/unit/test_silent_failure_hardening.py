@@ -191,7 +191,14 @@ _EXCLUDED_MODULES = frozenset({
 #     test_an_unreadable_session_index_is_unresolved
 #     test_a_session_that_cannot_be_read_is_unknown_not_current
 #     340 + 3 (cli/freshness.py disclosure boundaries, INTENTIONAL-BOUNDARY)          343
-TOTAL_BROAD_HANDLERS_CEILING = 343
+# - 2026-10-02 (chain-verification hardening): 343 -> 341 (-2). Two broad handlers were NARROWED to
+#   the exceptions their try block can actually raise (ValueError for bad JSON / bad UTF-8,
+#   RecursionError for a pathologically nested file): audit_manifest._previous_manifest_link and
+#   evidence_signing._previous_receipt_link. Behaviour for those inputs is unchanged (the link falls
+#   back to the raw-bytes digest); what changed is that a previous record whose body no longer
+#   matches its own stored digest now FAILS the chain instead of verifying.
+#     343 - 2 (narrowed, no longer broad)                                              341
+TOTAL_BROAD_HANDLERS_CEILING = 341
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:

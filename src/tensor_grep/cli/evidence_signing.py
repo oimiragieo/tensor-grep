@@ -119,6 +119,19 @@ def receipt_digest(receipt: dict[str, Any]) -> str:
     return hashlib.sha256(canonical_receipt_bytes(receipt)).hexdigest()
 
 
+def _digests_equal(left: str, right: str) -> bool:
+    """Constant-time equality for two digest strings that NEVER raises.
+
+    `hmac.compare_digest` raises TypeError on a non-ASCII `str`, and every digest read from a receipt
+    file is attacker-controlled JSON, so a hostile `{"receipt_sha256": "é"}` used to crash the
+    verifier. Comparing the UTF-8 bytes (`surrogatepass`, so a lone surrogate cannot raise either)
+    keeps the constant-time property and turns a hostile value into an ordinary "not equal".
+    (`audit_manifest._digests_equal` is the manifest-side twin.)"""
+    return hmac.compare_digest(
+        left.encode("utf-8", "surrogatepass"), right.encode("utf-8", "surrogatepass")
+    )
+
+
 # ---------------------------------------------------------------------------
 # Key resolution
 # ---------------------------------------------------------------------------
@@ -298,10 +311,17 @@ def _read_bounded_file_bytes(resolved: Path, *, max_bytes: int, description: str
     return raw
 
 
-def previous_receipt_digest(path: str | Path, *, max_bytes: int = _MAX_RECEIPT_FILE_BYTES) -> str:
-    """Mirrors `audit_manifest._previous_manifest_digest`: prefer the prior receipt's own stored
-    `receipt_sha256`, else fall back to the sha256 of its raw file bytes (covers a pre-P2 receipt
-    that predates this field).
+def _previous_receipt_link(
+    path: str | Path, *, max_bytes: int = _MAX_RECEIPT_FILE_BYTES
+) -> tuple[str, bool]:
+    """``(digest to link against, body_intact)`` for the previous receipt, from ONE bounded read.
+
+    Mirrors `audit_manifest._previous_manifest_link`: the link is the prior receipt's own stored
+    `receipt_sha256`, else the sha256 of its raw file bytes (covers a pre-P2 receipt that predates
+    the field, or a file that is not JSON). `body_intact` is False only when a stored digest exists
+    AND does not match the digest recomputed from the body -- a link that merely repeats the stored
+    field would still verify after the body was edited, so the chain would not be tamper-evident
+    for the record it links to.
 
     Reachable from BOTH `tg evidence emit --previous` and `tg evidence verify --previous`, so the
     file read is bounded (`_read_bounded_file_bytes`) exactly like the primary receipt read -- an
@@ -313,13 +333,37 @@ def previous_receipt_digest(path: str | Path, *, max_bytes: int = _MAX_RECEIPT_F
     )
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return hashlib.sha256(raw).hexdigest()
+    except (ValueError, RecursionError):
+        # ValueError covers bad JSON and bad UTF-8; RecursionError a pathologically nested file.
+        return hashlib.sha256(raw).hexdigest(), True
     if isinstance(payload, dict):
         digest = payload.get("receipt_sha256")
         if isinstance(digest, str) and digest:
-            return digest
-    return hashlib.sha256(raw).hexdigest()
+            try:
+                body_intact = _digests_equal(digest, receipt_digest(payload))
+            except (TypeError, ValueError, RecursionError):
+                # A body the canonicaliser rejects (NaN) or one nested deep enough to overflow on
+                # dump: this code never produced such a receipt, so it is not intact (fail closed,
+                # never crash the verifier). A hostile digest STRING cannot raise here.
+                body_intact = False
+            return digest, body_intact
+    return hashlib.sha256(raw).hexdigest(), True
+
+
+def previous_receipt_digest(path: str | Path, *, max_bytes: int = _MAX_RECEIPT_FILE_BYTES) -> str:
+    """The digest a chained receipt records for its predecessor (see `_previous_receipt_link`).
+
+    CREATION path (`tg evidence emit --previous`): refuses a predecessor whose body no longer
+    matches its own stored digest. Linking onto a record already known to be corrupt would mint a
+    chain that fails verification later and lies in the meantime. (`verify_receipt_chain` reads
+    `_previous_receipt_link` directly and REPORTS the same condition instead of raising.)"""
+    digest, body_intact = _previous_receipt_link(path, max_bytes=max_bytes)
+    if not body_intact:
+        raise EvidenceSigningError(
+            "The previous evidence receipt body does not match its own receipt_sha256 "
+            "(tampered or corrupt); refusing to chain onto it."
+        )
+    return digest
 
 
 def verify_receipt_chain(receipt: dict[str, Any], *, previous_path: str | Path) -> dict[str, Any]:
@@ -338,16 +382,24 @@ def verify_receipt_chain(receipt: dict[str, Any], *, previous_path: str | Path) 
             "chain_error": "previous_receipt_sha256 must be a non-empty string when present.",
         }
     try:
-        actual = previous_receipt_digest(previous_path)
+        actual, previous_body_intact = _previous_receipt_link(previous_path)
     except EvidenceSigningError as exc:
         return {"chain_valid": False, "chain_error": str(exc)}
-    chain_valid = hmac.compare_digest(claimed, actual)
-    return {
-        "chain_valid": chain_valid,
-        "chain_error": (
-            None if chain_valid else "previous_receipt_sha256 does not match the --previous digest."
-        ),
-    }
+    # Both sides are attacker-controlled JSON; `_digests_equal` never raises on non-ASCII text.
+    if not _digests_equal(claimed, actual):
+        return {
+            "chain_valid": False,
+            "chain_error": "previous_receipt_sha256 does not match the --previous digest.",
+        }
+    if not previous_body_intact:
+        return {
+            "chain_valid": False,
+            "chain_error": (
+                "The --previous receipt body does not match its own receipt_sha256 "
+                "(tampered or corrupt)."
+            ),
+        }
+    return {"chain_valid": True, "chain_error": None}
 
 
 # ---------------------------------------------------------------------------
@@ -418,11 +470,23 @@ def verify_receipt(
     """
     errors: list[str] = []
 
-    canonical_bytes = canonical_receipt_bytes(receipt)
-    expected_digest = hashlib.sha256(canonical_bytes).hexdigest()
+    canonical_bytes: bytes | None
+    try:
+        canonical_bytes = canonical_receipt_bytes(receipt)
+    except (TypeError, ValueError, RecursionError):
+        # The canonicaliser refuses NaN/Infinity (`allow_nan=False`) and a body nested deep enough
+        # to overflow on dump, yet `json.loads` happily ACCEPTS the text `NaN`. Such a receipt is
+        # not one this code produced; report it invalid instead of raising (the never-raises
+        # contract in the docstring above).
+        canonical_bytes = None
+        expected_digest = ""
+    else:
+        expected_digest = hashlib.sha256(canonical_bytes).hexdigest()
     stored_digest = receipt.get("receipt_sha256")
-    digest_valid = isinstance(stored_digest, str) and hmac.compare_digest(
-        stored_digest, expected_digest
+    digest_valid = (
+        canonical_bytes is not None
+        and isinstance(stored_digest, str)
+        and _digests_equal(stored_digest, expected_digest)
     )
     if not digest_valid:
         errors.append("Receipt digest does not match receipt_sha256 (tampered or malformed).")
@@ -467,7 +531,13 @@ def verify_receipt(
         elif not isinstance(signature_value, str) or not signature_value:
             signature_valid = False
             errors.append("Signature block is missing a value.")
+        elif canonical_bytes is None:
+            signature_valid = False
+            errors.append(
+                "Receipt body cannot be canonicalised, so its signature cannot be verified."
+            )
         else:
+            assert canonical_bytes is not None  # true by construction: the elif above handled None
             # M7 audit: `key_id_from_public_b64` raises EvidenceSigningError on a malformed
             # embedded public key, and it used to sit OUTSIDE this try -- one corrupt receipt
             # aborted a whole review-bundle verify as a raw error instead of recording a normal
@@ -487,7 +557,7 @@ def verify_receipt(
         if trusted_set:
             key_trusted = fingerprint is not None and any(
                 candidate_fingerprint is not None
-                and hmac.compare_digest(fingerprint, candidate_fingerprint)
+                and _digests_equal(fingerprint, candidate_fingerprint)
                 for candidate_fingerprint in (
                     _fingerprint_of_trusted_candidate(candidate) for candidate in trusted_set
                 )

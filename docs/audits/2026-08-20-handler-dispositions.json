@@ -2690,16 +2690,6 @@
     "hardened_in": null
   },
   {
-    "module": "cli/audit_manifest.py",
-    "lineno": 1034,
-    "enclosing_symbol": "_previous_manifest_digest",
-    "handler_index_within_symbol": 0,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around json.loads(raw.decode(\"utf-8\")) of the previous manifest file falls back to the SHA-256 of the raw bytes. A JSON object with a non-empty string manifest_sha256 returns that stored value; any other shape also falls back to the raw-bytes digest.",
-    "reason": "The result feeds an equality check against the current manifest's previous_manifest_sha256, so an unparseable or non-manifest predecessor yields a digest that matches only if the chain was recorded against exactly those bytes, and any corruption or substitution makes chain_valid False with a mismatch error. The fallback therefore fails in the safe direction (chain broken), not toward accepting. Separate observation, not this handler: for parseable JSON the stored manifest_sha256 field is trusted without recomputing the canonical digest.",
-    "hardened_in": null
-  },
-  {
     "module": "core/retrieval_chunker.py",
     "lineno": 99,
     "enclosing_symbol": "chunk_file",

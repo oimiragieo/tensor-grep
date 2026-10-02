@@ -69,6 +69,19 @@ def _canonical_manifest_bytes(manifest: dict[str, Any]) -> bytes:
     return json.dumps(canonical, indent=2, sort_keys=True).encode("utf-8")
 
 
+def _digests_equal(left: str, right: str) -> bool:
+    """Constant-time equality for two digest strings that NEVER raises.
+
+    `hmac.compare_digest` raises TypeError on a non-ASCII `str`; a manifest's `signature.value` is
+    attacker-controlled JSON that is EXCLUDED from the digest, so `{"signature": {"value": "é"}}`
+    used to crash the verifier whenever a signing key was supplied. Comparing UTF-8 bytes
+    (`surrogatepass`, so a lone surrogate cannot raise either) turns a hostile value into an
+    ordinary "not equal". (`evidence_signing._digests_equal` is the receipt-side twin.)"""
+    return hmac.compare_digest(
+        left.encode("utf-8", "surrogatepass"), right.encode("utf-8", "surrogatepass")
+    )
+
+
 def _sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -1027,17 +1040,32 @@ def list_audit_history_json(path: str | Path = ".") -> str:
     return json.dumps(list_audit_history(path), indent=2)
 
 
-def _previous_manifest_digest(path: Path) -> str:
+def _previous_manifest_link(path: Path) -> tuple[str, bool]:
+    """``(digest to link against, body_intact)`` for the previous manifest, from ONE read.
+
+    The link is the previous manifest's own stored ``manifest_sha256`` when it has one, else the
+    sha256 of its raw bytes (a manifest that is not JSON, or predates the field). ``body_intact`` is
+    False only when a stored digest exists AND does not match the digest recomputed from the body:
+    a link that merely repeats the stored field would still verify after the body was edited, so
+    the chain would not be tamper-evident for the record it links to.
+    """
     raw = path.read_bytes()
     try:
         payload = json.loads(raw.decode("utf-8"))
-    except Exception:
-        return _sha256_hex(raw)
+    except (ValueError, RecursionError):
+        # ValueError covers bad JSON and bad UTF-8; RecursionError a pathologically nested file.
+        return _sha256_hex(raw), True
     if isinstance(payload, dict):
         digest = payload.get("manifest_sha256")
         if isinstance(digest, str) and digest:
-            return digest
-    return _sha256_hex(raw)
+            try:
+                body_intact = digest == _sha256_hex(_canonical_manifest_bytes(payload))
+            except (TypeError, ValueError, RecursionError):
+                # Parses but cannot be re-serialised (e.g. nesting deep enough to overflow on
+                # dump): this code never wrote such a manifest, so fail closed -- not intact.
+                body_intact = False
+            return digest, body_intact
+    return _sha256_hex(raw), True
 
 
 def verify_audit_manifest(
@@ -1082,10 +1110,17 @@ def verify_audit_manifest(
                 chain_valid = False
                 chain_error = f"Previous manifest not found: {previous_path}"
             else:
-                chain_valid = previous_manifest_sha256 == _previous_manifest_digest(previous_path)
+                linked_digest, previous_body_intact = _previous_manifest_link(previous_path)
+                chain_valid = previous_manifest_sha256 == linked_digest
                 if not chain_valid:
                     chain_error = (
                         "Previous manifest digest does not match previous_manifest_sha256."
+                    )
+                elif not previous_body_intact:
+                    chain_valid = False
+                    chain_error = (
+                        "Previous manifest body does not match its own manifest_sha256 "
+                        "(tampered or corrupt)."
                     )
 
     signature = manifest.get("signature")
@@ -1129,7 +1164,7 @@ def verify_audit_manifest(
                         canonical_bytes,
                         hashlib.sha256,
                     ).hexdigest()
-                    signature_valid = hmac.compare_digest(signature_value, actual_signature)
+                    signature_valid = _digests_equal(signature_value, actual_signature)
                     if not signature_valid:
                         signature_error = (
                             "Manifest signature does not match the supplied signing key."
