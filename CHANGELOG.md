@@ -1,6 +1,92 @@
 # CHANGELOG
 
 
+## v1.123.5 (2026-10-02)
+
+### Bug Fixes
+
+- **hardware**: Explicit GPU device IDs fail closed when ID enumeration raised (Wave 3 slice 1)
+  ([`6936269`](https://github.com/oimiragieo/tensor-grep/commit/6936269086bb12afe2d571868b18fffbcf5bfdaf))
+
+memory_manager._get_detected_device_ids wrapped every enumeration route in `except Exception: pass`
+  and then fell back to range(get_device_count()). When an ID API that EXISTS raised at runtime,
+  that range was a guess, so an explicit get_device_ids([1]) validated against fabricated contiguous
+  IDs and could route to the wrong GPU when the real IDs are non-contiguous (e.g. [3, 5]).
+
+Now an exception from an ID API that exists sets _detected_ids_are_guessed and explicit preferred
+  IDs return [] (the explicit-GPU pipeline raises its configuration error); the no-preferred-IDs
+  path keeps the fallback. A legacy detector that merely LACKS the APIs is told apart by CAPABILITY,
+  not by exception type: my first draft caught AttributeError, which would have fabricated IDs again
+  for an AttributeError raised from inside a present method (red-first test added), and a first
+  refactor via _has_detector_method broke two existing MagicMock-based tests because getattr_static
+  cannot see a mock's dynamic attributes (caught by running the neighbours).
+
+Wave 3 slice 1 also records the 12 broad handlers of core/hardware/* and core/observability in the
+  disposition ledger: 95 -> 83 unledgered, 248 -> 260 records, audited set 28 -> 32 modules, ceiling
+  unchanged at 343.
+
+The census doc claimed 27 modules / ~100 handlers; measured with the project's own scanner it was 95
+  in 26 (cli/rg_replacement already had a record). Erratum appended, including 12 `except
+  BaseException` handlers the scanner ignores.
+
+Tests: 6 in test_memory_manager_enumeration_failure.py (3 fail against the committed bytes, seen;
+  all pass after); 279 tests in the 7 other files that use MemoryManager pass;
+  test_handler_dispositions and test_silent_failure_hardening pass.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Continuous Integration
+
+- **release**: Fail the publish gate when a built artifact drops a declared requirement
+  ([`c399b4c`](https://github.com/oimiragieo/tensor-grep/commit/c399b4c2c610dfb596b22d275227d0b35f6a7bee))
+
+7330b93 shipped v1.123.3 whose published metadata lacked the PyJWT and urllib3 security floors, and
+  nothing noticed: a [tool.uv] constraint is lock-only and a dropped Requires-Dist looks identical
+  in a green summary.
+
+validate_pypi_artifacts.py (the release-time validate-pypi-artifacts job, which already opened each
+  wheel's METADATA for the version) now also requires every [project].dependencies and extra
+  requirement from pyproject.toml to appear in each wheel METADATA and each sdist PKG-INFO with the
+  same name, specifier and extra. Other environment markers are compared leniently so marker
+  spelling cannot cause a false failure. main() enables it by default (--pyproject);
+  validate(pyproject_path=None) skips it for older callers.
+
+Proven on REAL published artifacts, not just fixtures: v1.123.4 wheel and sdist -> 0 of 75 declared
+  requirements missing (real maturin formatting: `x>=1 ; extra == 'nlp'`); v1.123.3 wheel and sdist
+  -> exactly pyjwt>=2.15.0 and urllib3>=2.8.0 (extra 'nlp') missing, i.e. the incident would have
+  been blocked before publish. 7 new tests, RED on assertions first. Caveat: it only runs on a
+  release and a wheel build needs cargo (banned locally), so its first live run is the next release.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Correct the stale Wave 3 status; record what is and is not started
+  ([`6a05f69`](https://github.com/oimiragieo/tensor-grep/commit/6a05f691b1470d7d9cd8ee5671f4006d389e3b1e))
+
+The entry still said Wave 3 was "CONDITIONAL on open item 3", but that audit ran to its cap with no
+  AUDIT_CLEAR, every live escape is fixed and test-pinned and the rest parked with rulings. Wave 3
+  is now stated as unblocked by judgment (not an independent clearance), with the 36/19 disjointness
+  still unverified, NOT STARTED (a new campaign whose first step is a design packet whose scope is
+  the operator's decision), and P13 noted as a multi-day item with no PR.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **backlog**: Record the pip-audit fix receipts and the published-artifact dogfood
+  ([`6093119`](https://github.com/oimiragieo/tensor-grep/commit/60931199b29de6a10b7f1d5c968f2b96f91f3cae))
+
+Closes the PyJWT/urllib3 entry with evidence instead of a pending "confirm the nightly": audit.yml
+  dispatched on main at 7330b93 passed; v1.123.4 (b2990da) publishes pyjwt>=2.15.0 (base) and
+  urllib3>=2.8.0 (nlp extra); CI on 87a921d green on attempt 1.
+
+Dogfooded the PUBLISHED artifact with pip into an environment holding PyJWT 2.13.0 + urllib3 2.7.0:
+  tensor-grep==1.123.3 (the lock-only fix) leaves both vulnerable, tensor-grep==1.123.4 installs
+  PyJWT-2.15.1 (and urllib3-2.8.0 with [nlp]). Also records the trap: the same test with `uv pip
+  install` upgraded PyJWT for both releases, so it cannot tell them apart.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.4 (2026-10-02)
 
 ### Bug Fixes
