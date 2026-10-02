@@ -60,14 +60,21 @@ def _module_dotted_name(src_root: Path, path: Path) -> str:
     return ".".join(parts)
 
 
-def _resolve_relative_import(from_module: str, level: int, target: str | None) -> str | None:
+def _resolve_relative_import(
+    from_module: str, level: int, target: str | None, *, is_package: bool = False
+) -> str | None:
     """Resolve a relative ``from ... import ...`` (``level`` dots) rooted at ``from_module``
     (the dotted name of the importing module itself) into an absolute dotted module name, per
     Python's own relative-import resolution rules (PEP 328): one dot climbs zero package levels
     beyond the immediate package, so ``level`` packages are stripped from ``from_module``'s
     dotted path before joining ``target``.
+
+    ``is_package`` is True when the importer is a package's ``__init__.py``: that file IS the
+    package, so its own dotted name is already the package (``tensor_grep.core``) and must not
+    have a leaf stripped, or ``from .. import cli`` there resolves one level too high.
     """
-    package_parts = from_module.split(".")[:-1]  # drop the module's own leaf name
+    parts = from_module.split(".")
+    package_parts = parts if is_package else parts[:-1]  # a plain module drops its own leaf
     climbed = package_parts[: len(package_parts) - (level - 1)] if level > 1 else package_parts
     if level > len(package_parts) + 1:
         return None  # climbs above the tensor_grep root -- not resolvable, not our concern
@@ -77,16 +84,19 @@ def _resolve_relative_import(from_module: str, level: int, target: str | None) -
     return f"{base}.{target}" if base else target
 
 
-_DYNAMIC_CALLEES = frozenset({"import_module", "__import__"})
+_DYNAMIC_CALLEES = frozenset({"import_module", "__import__", "run_module"})
 
 
 def _is_dynamic_import_call(node: ast.Call) -> bool:
-    """True for ``import_module(...)`` / ``__import__(...)`` under any receiver, and for the
-    ``getattr(x, "import_module")(...)`` indirection.
+    """True for ``import_module(...)`` / ``__import__(...)`` / ``runpy.run_module(...)`` under
+    any receiver, and for the ``getattr(x, "import_module")(...)`` indirection.
 
     Deliberately receiver-agnostic: an unrelated ``registry.import_module("tensor_grep.cli.x")``
     also matches (a false edge) -- accepted over missing a real alias such as
     ``import importlib as il`` or ``builtins.__import__``.
+
+    Not covered, by design: path-based loaders (``spec_from_file_location``), ``exec``/``eval``
+    and ``ctypes`` -- they take no module name to resolve.
     """
     func = node.func
     if isinstance(func, ast.Attribute):
@@ -103,11 +113,15 @@ def _is_dynamic_import_call(node: ast.Call) -> bool:
     return False
 
 
-def _string_arg(node: ast.Call, index: int, keyword: str) -> str | None:
-    """Positional ``index`` or keyword ``keyword`` argument when it is a string literal."""
-    value: ast.expr | None = node.args[index] if len(node.args) > index else None
-    if value is None:
-        value = next((kw.value for kw in node.keywords if kw.arg == keyword), None)
+def _arg(node: ast.Call, index: int, keywords: tuple[str, ...]) -> ast.expr | None:
+    """Positional ``index`` argument, else the first matching keyword argument."""
+    if len(node.args) > index:
+        return node.args[index]
+    return next((kw.value for kw in node.keywords if kw.arg in keywords), None)
+
+
+def _string_arg(node: ast.Call, index: int, keywords: tuple[str, ...]) -> str | None:
+    value = _arg(node, index, keywords)
     if isinstance(value, ast.Constant) and isinstance(value.value, str):
         return value.value
     return None
@@ -116,24 +130,30 @@ def _string_arg(node: ast.Call, index: int, keyword: str) -> str | None:
 def _dynamic_import_literal(node: ast.Call) -> str | None:
     """Absolute module name of a dynamic import whose target is statically known, else ``None``.
 
-    Resolves ``importlib.import_module("x")`` / ``import_module(name="x")`` / ``__import__("x")``
-    and a relative ``import_module(".x", package="pkg")`` (resolved against the literal package).
-    Non-literal targets, a relative literal with no literal package, and the ``getattr``
-    indirection return ``None``; :func:`compute_unresolved_dynamic_import_modules` surfaces those
-    instead of letting them pass as "no edge".
+    Resolves ``importlib.import_module("x")`` / ``import_module(name="x")`` / ``__import__("x")`` /
+    ``runpy.run_module("x")`` and a relative ``import_module(".x", package="pkg")`` (resolved
+    against the literal package). ``__import__`` with a non-zero ``level`` is relative to its
+    caller's globals and is NOT absolute, so it is unresolved. Non-literal targets, a relative
+    literal with no literal package, and the ``getattr`` indirection return ``None``;
+    :func:`compute_unresolved_import_sites` surfaces those instead of letting them pass as
+    "no edge".
     """
     func = node.func
     if isinstance(func, ast.Call) or not _is_dynamic_import_call(node):
         return None
-    name = _string_arg(node, 0, "name")
+    callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+    name = _string_arg(node, 0, ("name", "mod_name"))
     if name is None:
         return None
+    if callee == "__import__":
+        level = _arg(node, 4, ("level",))
+        if level is not None and not (isinstance(level, ast.Constant) and level.value == 0):
+            return None
     if not name.startswith("."):
         return name
-    callee = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
     if callee != "import_module":
-        return None  # __import__'s relativity is a separate `level` argument, not a leading dot
-    package = _string_arg(node, 1, "package")
+        return None
+    package = _string_arg(node, 1, ("package",))
     if package is None:
         return None
     try:
@@ -142,12 +162,21 @@ def _dynamic_import_literal(node: ast.Call) -> str | None:
         return None
 
 
-def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str, str]]:
-    """Yield ``(from_package, from_module, to_package, to_module)`` for every static
-    cross-package import under ``src_root``.
+def _is_submodule(src_root: Path, dotted: str) -> bool:
+    """True when ``dotted`` (``tensor_grep.cli.runtime_paths``) is a real module or package on
+    disk under ``src_root`` -- so ``from tensor_grep.cli import runtime_paths`` can be told apart
+    from ``from tensor_grep.cli import some_function``.
+    """
+    prefix = "tensor_grep."
+    if not dotted.startswith(prefix):
+        return False
+    rel = src_root / dotted[len(prefix) :].replace(".", "/")
+    return rel.with_suffix(".py").is_file() or (rel / "__init__.py").is_file()
 
-    Both freeze checks consume this one walk, so the package-pair gate and the
-    module-pair violation gate can never disagree about what an edge is.
+
+def _iter_parsed_modules(src_root: Path) -> Iterator[tuple[str, str, bool, ast.Module]]:
+    """Yield ``(from_package, from_module, is_package, tree)`` for every module under one of the
+    four top-level packages. Every check shares this one parse so none can disagree.
     """
     for path in src_root.rglob("*.py"):
         if "__pycache__" in path.parts:
@@ -156,28 +185,43 @@ def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str,
         if from_pkg is None:
             continue
         try:
-            source = path.read_text(encoding="utf-8")
-            tree = ast.parse(source, filename=str(path))
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         except (SyntaxError, UnicodeDecodeError) as exc:
             # A file this walker cannot parse is a silent false negative for the whole freeze
             # check, which defeats its purpose -- fail loud instead of skipping it.
             raise RuntimeError(f"import_edges: cannot parse {path}: {exc}") from exc
-        from_module = _module_dotted_name(src_root, path)
+        yield from_pkg, _module_dotted_name(src_root, path), path.name == "__init__.py", tree
+
+
+def _resolved_from_module(node: ast.ImportFrom, from_module: str, is_package: bool) -> str | None:
+    if node.level and node.level > 0:
+        return _resolve_relative_import(from_module, node.level, node.module, is_package=is_package)
+    return node.module
+
+
+def _iter_cross_package_imports(src_root: Path) -> Iterator[tuple[str, str, str, str]]:
+    """Yield ``(from_package, from_module, to_package, to_module)`` for every cross-package
+    import under ``src_root``.
+
+    Both freeze checks consume this one walk, so the package-pair gate and the
+    module-pair violation gate can never disagree about what an edge is.
+    """
+    for from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
         for node in ast.walk(tree):
             targets: list[str] = []
             if isinstance(node, ast.Import):
                 targets = [alias.name for alias in node.names]
             elif isinstance(node, ast.ImportFrom):
-                resolved = None
-                if node.level and node.level > 0:
-                    resolved = _resolve_relative_import(from_module, node.level, node.module)
-                elif node.module is not None:
-                    resolved = node.module
-                targets = [resolved] if resolved is not None else []
-                if resolved == "tensor_grep":
-                    # `from tensor_grep import cli` / `from .. import cli` import the cli PACKAGE;
-                    # the module alone ("tensor_grep") names no layer, so expand the names.
-                    targets += [f"tensor_grep.{alias.name}" for alias in node.names]
+                resolved = _resolved_from_module(node, from_module, is_package)
+                if resolved is not None:
+                    targets = [resolved]
+                    # `from tensor_grep.cli import runtime_paths` / `from tensor_grep import cli`
+                    # import a CHILD module; record it too, or it hides behind the parent edge
+                    # (or, for the package root, behind no edge at all).
+                    for alias in node.names:
+                        child = f"{resolved}.{alias.name}"
+                        if alias.name != "*" and _is_submodule(src_root, child):
+                            targets.append(child)
             elif isinstance(node, ast.Call):
                 literal = _dynamic_import_literal(node)
                 if literal is not None:
@@ -211,11 +255,11 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
     repo's layering convention names. Edges are (source_package, imported_package); a package
     importing itself is excluded.
 
-    Walks ``ast.Import`` / ``ast.ImportFrom`` nodes plus dynamic imports whose module name is a
-    string literal (``importlib.import_module("x")``, ``import_module("x")``, ``__import__("x")``).
-    A dynamic import with a NON-literal target cannot be resolved statically and yields no edge
-    here; :func:`compute_unresolved_dynamic_import_modules` surfaces those modules so the gap is
-    frozen and reviewed rather than silently passing as "no edge".
+    Walks ``ast.Import`` / ``ast.ImportFrom`` nodes (including the child module named by a
+    ``from pkg import child``) plus dynamic imports whose module name is a string literal. An
+    import whose target cannot be resolved statically yields no edge here;
+    :func:`compute_unresolved_import_sites` surfaces those so the gap is frozen and reviewed
+    rather than silently passing as "no edge".
     """
     return {
         (from_pkg, to_pkg)
@@ -223,30 +267,24 @@ def compute_import_edges(src_root: Path) -> set[tuple[str, str]]:
     }
 
 
-def compute_unresolved_dynamic_import_modules(src_root: Path) -> set[str]:
-    """Dotted names of modules containing a dynamic import call whose target is NOT statically
-    resolvable (variable / f-string argument, relative literal without a literal package, or the
-    ``getattr(...)`` indirection).
+def compute_unresolved_import_sites(src_root: Path) -> dict[str, int]:
+    """``{dotted module: count}`` of import sites the walker cannot resolve to a module name:
+    dynamic import calls with a non-literal or relative-without-package target (and the
+    ``getattr(...)`` indirection), and a star import from the package ROOT (which imports
+    whatever ``tensor_grep.__all__`` names).
 
-    Such a call may hide a layering edge the walker cannot see, so "no edge found" is not "no
-    dependency". Freezing this set by module name makes a NEW opaque import call fail until it is
-    resolved to a literal or consciously waived.
+    Such a site may hide a layering edge, so "no edge found" is not "no dependency". Freezing the
+    COUNT per module (not just the name) means a second opaque call inside an already-frozen
+    module fails too.
     """
-    unresolved: set[str] = set()
-    for path in src_root.rglob("*.py"):
-        if "__pycache__" in path.parts or _module_top_level_package(src_root, path) is None:
-            continue
-        try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        except (SyntaxError, UnicodeDecodeError) as exc:
-            raise RuntimeError(f"import_edges: cannot parse {path}: {exc}") from exc
-        module = _module_dotted_name(src_root, path)
+    sites: dict[str, int] = {}
+    for _from_pkg, from_module, is_package, tree in _iter_parsed_modules(src_root):
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Call)
-                and _is_dynamic_import_call(node)
-                and _dynamic_import_literal(node) is None
-            ):
-                unresolved.add(module)
-                break
-    return unresolved
+            opaque = False
+            if isinstance(node, ast.Call):
+                opaque = _is_dynamic_import_call(node) and _dynamic_import_literal(node) is None
+            elif isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+                opaque = _resolved_from_module(node, from_module, is_package) == "tensor_grep"
+            if opaque:
+                sites[from_module] = sites.get(from_module, 0) + 1
+    return sites

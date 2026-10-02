@@ -19,7 +19,7 @@ from tensor_grep.core.import_edges import (
     _dynamic_import_literal,
     _resolve_relative_import,
     compute_import_edges,
-    compute_unresolved_dynamic_import_modules,
+    compute_unresolved_import_sites,
     compute_violation_module_edges,
 )
 
@@ -218,6 +218,13 @@ def test_a_new_backward_import_would_be_caught() -> None:
         ('importlib.import_module(".x", "tensor_grep.cli")', "tensor_grep.cli.x"),
         ('importlib.import_module("..cli.x", "tensor_grep.core")', "tensor_grep.cli.x"),
         ('__import__(".x")', None),
+        # Round 3: runpy loads a module by name; __import__ with a relative `level` is not absolute.
+        ('runpy.run_module("tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('run_module(mod_name="tensor_grep.cli.x")', "tensor_grep.cli.x"),
+        ('__import__("cli.x", globals(), locals(), ["n"], 2)', None),
+        ('__import__("cli.x", level=1)', None),
+        ('__import__("tensor_grep.cli.x", globals(), locals(), [], 0)', "tensor_grep.cli.x"),
+        ('__import__("tensor_grep.cli.x", level=0)', "tensor_grep.cli.x"),
     ],
 )
 def test_dynamic_import_literal_forms(source: str, expected: str | None) -> None:
@@ -259,40 +266,84 @@ def test_root_from_import_of_a_non_package_name_is_not_an_edge(tmp_path: Path) -
     assert not {e for e in compute_violation_module_edges(root) if e[0] == "tensor_grep.core.m"}
 
 
-def test_unresolved_dynamic_imports_are_surfaced(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("rel_path", "source", "to_module"),
+    [
+        ("core/__init__.py", "from .. import cli\n", "tensor_grep.cli"),
+        ("core/__init__.py", "from ..cli import runtime_paths\n", "tensor_grep.cli"),
+        ("core/m.py", "from ..cli import runtime_paths\n", "tensor_grep.cli"),
+    ],
+)
+def test_relative_imports_resolve_the_same_from_a_package_init_and_a_plain_module(
+    tmp_path: Path, rel_path: str, source: str, to_module: str
+) -> None:
+    # Codex Sol R3 (HIGH): a package's __init__.py IS the package, so one dot means the package
+    # itself, not its parent -- the old arithmetic treated it as a leaf module and lost the edge.
+    root = _make_src_tree(tmp_path, {})
+    target = root / rel_path
+    target.write_text(source, encoding="utf-8")
+    from_module = "tensor_grep." + rel_path.removesuffix(".py").removesuffix("/__init__").replace(
+        "/", "."
+    )
+    assert (from_module, to_module) in compute_violation_module_edges(root)
+
+
+def test_a_child_module_import_is_recorded_as_the_child_not_only_the_parent(
+    tmp_path: Path,
+) -> None:
+    # Codex Sol R3 (HIGH): `from tensor_grep.cli import runtime_paths` recorded only the coarse
+    # `tensor_grep.cli`, so it could hide behind an already-frozen edge to that parent.
+    root = _make_src_tree(
+        tmp_path,
+        {"m": "from tensor_grep.cli import runtime_paths, not_a_module\n"},
+    )
+    edges = {e for e in compute_violation_module_edges(root) if e[0] == "tensor_grep.core.m"}
+    assert ("tensor_grep.core.m", "tensor_grep.cli.runtime_paths") in edges
+    # Control: a name that is not a submodule must not invent a child edge.
+    assert ("tensor_grep.core.m", "tensor_grep.cli.not_a_module") not in edges
+
+
+def test_unresolved_import_sites_are_counted_per_module(tmp_path: Path) -> None:
     root = _make_src_tree(
         tmp_path,
         {
-            "a": "import importlib\nimportlib.import_module(name)\n",
+            "a": "import importlib\nimportlib.import_module(name)\nimportlib.import_module(other)\n",
             "b": 'import importlib\ngetattr(importlib, "import_module")("tensor_grep.cli.x")\n',
             "c": 'import importlib\nimportlib.import_module("tensor_grep.cli.x")\n',
-            "d": "import importlib\nimportlib.import_module(name=pick())\n",
+            "d": "from tensor_grep import *\n",
+            "e": 'import builtins\n__import__("cli.x", globals(), locals(), [], 2)\n',
+            "f": "from tensor_grep.cli import *\n",
         },
     )
-    # `c` is resolvable (reported as an edge, not unresolved); the other three are opaque.
-    assert compute_unresolved_dynamic_import_modules(root) == {
-        "tensor_grep.core.a",
-        "tensor_grep.core.b",
-        "tensor_grep.core.d",
+    # `c` and `f` are resolvable (edges, not unresolved); `a` has TWO opaque calls and counts 2.
+    assert compute_unresolved_import_sites(root) == {
+        "tensor_grep.core.a": 2,
+        "tensor_grep.core.b": 1,
+        "tensor_grep.core.d": 1,
+        "tensor_grep.core.e": 1,
     }
 
 
-def _load_unresolved_baseline() -> set[str]:
+def _load_unresolved_baseline() -> dict[str, int]:
     data = json.loads(_BASELINE_PATH.read_text(encoding="utf-8"))
-    return set(data["unresolved_dynamic_import_modules"])
+    return dict(data["unresolved_import_sites"])
 
 
-def test_unresolved_dynamic_imports_can_only_shrink() -> None:
-    """An import call whose target cannot be resolved statically hides a possible edge, so each
-    such module is frozen by name: a NEW one fails until someone reviews or waives it.
+def test_unresolved_import_sites_can_only_shrink() -> None:
+    """An import whose target cannot be resolved statically hides a possible edge, so the COUNT
+    per module is frozen: a second opaque call inside an already-frozen module fails too.
     """
-    added = compute_unresolved_dynamic_import_modules(_SRC_ROOT) - _load_unresolved_baseline()
-    assert not added, (
-        f"New dynamic import call(s) with an unresolvable target in: {sorted(added)}. Resolve "
-        f"the target to a literal or justify adding the module to {_BASELINE_PATH}."
+    baseline = _load_unresolved_baseline()
+    current = compute_unresolved_import_sites(_SRC_ROOT)
+    grown = {m: n for m, n in current.items() if n > baseline.get(m, 0)}
+    assert not grown, (
+        f"New unresolvable import site(s): {grown} (baseline {baseline}). Resolve the target to "
+        f"a literal or justify raising the count in {_BASELINE_PATH}."
     )
 
 
-def test_unresolved_dynamic_import_baseline_is_not_stale() -> None:
-    removed = _load_unresolved_baseline() - compute_unresolved_dynamic_import_modules(_SRC_ROOT)
-    assert not removed, f"No longer unresolved; drop from {_BASELINE_PATH}: {sorted(removed)}"
+def test_unresolved_import_site_baseline_is_not_stale() -> None:
+    baseline = _load_unresolved_baseline()
+    current = compute_unresolved_import_sites(_SRC_ROOT)
+    shrunk = {m: n for m, n in baseline.items() if current.get(m, 0) < n}
+    assert not shrunk, f"Fewer sites than frozen; tighten {_BASELINE_PATH}: {shrunk}"
