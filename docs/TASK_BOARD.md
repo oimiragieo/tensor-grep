@@ -2,19 +2,18 @@
 
 ## Live reconciliation (2026-10-02)
 
-At `origin/main` `1e6121c`, `pyproject.toml` identifies v1.123.7 (release commit `62ee850`). PyPI lists
-four v1.123.7 artifacts (three wheels + sdist) and the published win_amd64 wheel was opened and checked
-for that release's fixes: publication plus content, not a full installed-wheel dogfood verdict. Releases
-since the prior stamp (v1.123.1): v1.123.2 (`b40ead0`), v1.123.3 (`8ede6fc`), v1.123.4 (`b2990da`),
-v1.123.5 (`456d29c`), v1.123.6 (`603f0aa`), v1.123.7 (`62ee850`). Before that, v1.121.3..v1.123.1 (git
-tags) carried #1166 (`6e77050`), #1167 (`cff35c7`), #1169 (`3b436fd`), #1175 (`49bc89f`),
+At `origin/main` `65cf2f6`, `pyproject.toml` identifies v1.123.10 (release commit `03a17c5`). PyPI lists
+four v1.123.10 artifacts (3 wheels + sdist); each release's published win_amd64 wheel was opened and
+checked for its fixes (publication plus content, not a full dogfood verdict). Releases since the prior
+stamp (v1.123.1): v1.123.2 (`b40ead0`) .3 (`8ede6fc`) .4 (`b2990da`) .5 (`456d29c`) .6 (`603f0aa`) .7
+(`62ee850`) .8 (`bd287c2`) .9 (`4bc53c7`) .10 (`03a17c5`). Before that, v1.121.3..v1.123.1 (git tags) carried #1166 (`6e77050`), #1167 (`cff35c7`), #1169 (`3b436fd`), #1175 (`49bc89f`),
 #1178 (`6f1d702`) and #1180 (`c2967cc`; only PyPI and GitHub binaries are live). Merged since v1.123.1,
 all direct-main with no PR: the PyJWT/urllib3 published floors (`7330b93`, `87a921d`) and the
 artifact-requirements publish gate (`c399b4c`); the import-edge walker hardening (`c1bea5a`..`b139f39`,
 owned by P13, Status stays READY); GPU device-ID fail-closed (`6936269`); evidence/audit-manifest chain
 integrity (`a1264b5`); three silent-degradation disclosures (`6471b51`, `fec716c`); and Wave 3
-handler-ledger slices 1-5 (unledgered 95 -> 39, ceiling 341), tracked in `backlog.md`, not as board
-rows. No canonical row's Status changed. The open-PR set is empty (queried 2026-10-02). Main push-CI:
+handler-ledger slices 1-9 + final (95 -> 0 unledgered; native LSP rename, daemon stop, LSP reader fixes),
+tracked in `backlog.md`, not as board rows. No canonical row's Status changed. The open-PR set is empty (queried 2026-10-02). Main push-CI:
 `fec716c` passed every lane and published v1.123.7; `2a720a2` failed its file-size ratchet, fixed by
 `fec716c`; the earlier red-by-design gitleaks failures were removed in `f5f55ee`. Do not treat the
 dated open-PR tables below as live.
@@ -230,7 +229,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-02** (stamp `post-**v1.123.7**`; live release/PR census and canonical
+Last reconciled: **2026-10-02** (stamp `post-**v1.123.10**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior or clear the red main CI gate.)
 
