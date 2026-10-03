@@ -1,6 +1,201 @@
 # CHANGELOG
 
 
+## v1.123.12 (2026-10-03)
+
+### Bug Fixes
+
+- **mcp**: Correct and complete MCP tool descriptions; document legacy-tool deprecation
+  ([#1186](https://github.com/oimiragieo/tensor-grep/pull/1186),
+  [`33faafd`](https://github.com/oimiragieo/tensor-grep/commit/33faafd8da748f028f96cf742da4f65ecdd6f4da))
+
+* fix(mcp): correct and complete MCP tool descriptions; document legacy-tool deprecation
+
+- Apply the audited docstring corrections for mcp_server.py, mcp_audit_tools.py and
+  mcp_symbol_tools.py. - tg_orient: replace the "Call FIRST for orientation" booster with a plain
+  when-to-use statement; the pinning test now asserts the new phrase. - Legacy tools stay advertised
+  by default (TG_MCP_LEGACY_TOOLS default ON). After the meta tools are defined, each registered
+  legacy tool's description gains a note naming its covering meta-tool and action, derived from the
+  meta-tool docstring "(= tg_xxx)" bullets (FastMCP's tool() accepts description=, but the
+  meta-tools are defined after the legacy ones, so the note is applied to the registered Tool
+  objects). Flag OFF: unchanged. - Docs: "legacy vs meta surface" note in README and
+  docs/harness_api.md. - _TG_MCP_SERVER_CONTRACT_VERSION not bumped: its convention covers breaking
+  changes and tool-set/param shape changes, not description text. - mcp_server.py stays within its
+  5701-line pin by compacting obsolete comments. - Tests: all 46 legacy descriptions end with the
+  note and name an existing meta-tool; meta and singleton tools carry none; flag-off subprocess
+  shows 12 tools and no note.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+* fix(mcp): address review -- checkpoint undo deletes, provenance-qualified symbol claims, explicit
+  legacy map
+
+- tg_checkpoint_undo (and the tg_checkpoint undo bullet): state that undo also DELETES files created
+  in the checkpoint scope since (or recorded absent in the snapshot). - tg_symbol_refs /
+  tg_symbol_callers / tg_navigate bullets and docs/harness_api.md: drop the unqualified
+  "AST-verified for every language" and Python-first claims; rows are tree-sitter-verified with the
+  `ast` extra, else `provenance` is regex-heuristic/grammar-missing. - tg_search: state the real
+  routing (rg default, count -> Rust, -F -> StringZilla, no-rg fallbacks) while keeping "when
+  applicable". - tg_session: max_sources applies to edit_plan/context_render/blast_radius_render
+  only. - Legacy-tool note now iterates the explicit _META_MCP_TOOL_CAPABILITIES composes map
+  (docstring bullets only supply the action label) and is guarded so a missing private FastMCP API
+  cannot break import. Test asserts note meta == the meta whose composes holds it. - tg_scan
+  inline_rules: 65536 characters, at most 100 rules. - harness_api.md tg_orient wording aligned with
+  the new docstring.
+
+* fix(mcp): re-derive handler-disposition ledger linenos after docstring edits
+
+The MCP docstring and comment edits shifted lines in mcp_server.py, mcp_audit_tools.py and
+  mcp_symbol_tools.py, so test_ledger_locatability failed on every pinned handler lineno. Re-derived
+  all 118 shifted linenos from the AST using the test's own locator (_real_handlers_for_module); no
+  disposition, category, evidence or reason field changed.
+
+* fix(mcp): refs/callers descriptions state real provenance values and the
+  empty-result-with-resolution_gaps case
+
+- tg_symbol_refs, tg_symbol_callers, the tg_navigate refs/callers bullets and docs/harness_api.md:
+  rows carry `provenance` of `python-ast`, `tree-sitter` or `regex-heuristic` (there is no
+  `tree-sitter-verified` or row-level `grammar-missing`). Without the `ast` extra JS/TS/Rust degrade
+  to `regex-heuristic` rows; languages with a missing grammar return no rows and appear only in
+  top-level `resolution_gaps`, so an empty result with non-empty `resolution_gaps` is UNKNOWN. -
+  Legacy-note test also asserts each action label is in the meta-tool's
+  `_META_MCP_TOOL_CAPABILITIES[meta]["actions"]`. - Re-derived 12 shifted handler-disposition ledger
+  linenos from the AST (lineno-only).
+
+---------
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Chores
+
+- **scripts**: Use positional SYMBOL in the stress gauntlet; guard scripts/ against the deprecated
+  --symbol flag
+  ([`255402f`](https://github.com/oimiragieo/tensor-grep/commit/255402f3af4d161d6f71ae62835460923dc43c57))
+
+The v1.123.10 dogfood report's one confirmed finding (3.2): stress_test_gauntlet.py ran `tg
+  blast-radius-render <dir> --symbol X`, which works but warns on every run. The existing guard only
+  scans live docs, so scripts were uncovered. Now positional, plus an AST scan of scripts/**/*.py
+  (ledger exempt) with perturbation arms: red on exactly that line before the fix. backlog.md
+  records every dogfood claim's disposition: 3.1 refuted (the warmup syncs on purpose), 4.x
+  demand-gated, 5.x rejected on premise (model2vec / file-api / hybrid find already ship).
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **workflows**: Fix audit-fix-loop verdict holes; parameterize session-capture; script the
+  skill-audit ledger ([#1185](https://github.com/oimiragieo/tensor-grep/pull/1185),
+  [`c366da3`](https://github.com/oimiragieo/tensor-grep/commit/c366da351d3168ca521355548eb1903003b14c27))
+
+* chore(workflows): fix audit-fix-loop verdict holes; parameterize session-capture; script the
+  skill-audit ledger
+
+- tg-audit-fix-loop.js: null seam result now yields FIX-FIRST, and the Verify phase gates SHIP (base
+  audit patch). - tg-session-capture.js: parameterized per run (base audit patch). - M46:
+  scripts/skill_audit_ledger.py runs the fixed ledger commands (list argv, bounded timeouts) and
+  prints JSON matching LEDGER_SCHEMA; the tg-skill-audit.js ledger seat now just runs it and returns
+  the JSON. - tests/unit/test_skill_audit_ledger.py: keys mirror the schema parsed from the .js;
+  blob OID positive control against git ls-files -s. - Removed A-ID/receipt parentheticals from the
+  prompts, replaced the two Rust handshake rules with a pointer to
+  tensor-grep-hermetic-hostile-tests, and renamed the "verbatim, non-negotiable" house headers.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+* chore(workflows): address review -- verify gates SHIP on a real fix, fail closed on empty
+  RED/GREEN/ledger, harden ledger test
+
+- audit-fix-loop: Verify now receives the gate findings, the RED test and the files changed, and
+  must re-run the RED test (fix_confirmed + non-empty probes). SHIP/SHIP-WITH-NITS stands only on a
+  confirmed verify; unreproduced FIX-FIRST findings bank as nits. A VERIFY-FAILURE continues to a
+  repair round. Empty RED/GREEN seats return FIX-FIRST. nothing_to_fix returns NOTHING_TO_FIX and
+  needs a 40-hex origin_main_sha. - skill-audit: coverage_exact requires a valid ledger (40-hex
+  head_sha, non-empty manifest); HOUSE restored in the ledger seat prompt. - skill_audit_ledger.py:
+  exits non-zero on an invalid ledger, utf-8/replace decoding, skips dot-folders, adds --offline. -
+  test: asserts head_sha, git_status and the full manifest against independent git output; hermetic
+  via --offline. Mutation-verified (HEAD~1 and manifest[:1] both fail). - Workflow args guards trim
+  whitespace.
+
+* chore(workflows): only the gate's own SHIP ends the audit-fix loop
+
+An unreproduced gate finding (e.g. a POSIX-only defect probed on Windows) now flows back into the
+  next gate round as a verify note instead of downgrading FIX-FIRST to SHIP-WITH-NITS. The repair
+  prompt names the RED test, and the docs-artifact meaning of fix_confirmed is stated.
+
+* chore(workflows): route the unreproduced-finding note to the gate only
+
+---------
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **backlog**: Record the v1.123.11 release receipts and the crates.io flake rerun
+  ([`4cefe91`](https://github.com/oimiragieo/tensor-grep/commit/4cefe916b763ca5a1f2a0c5b5c739bb3e21d5609))
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **skills**: Apply prompt-audit fixes to instruction files and skills
+  ([#1187](https://github.com/oimiragieo/tensor-grep/pull/1187),
+  [`7527e8f`](https://github.com/oimiragieo/tensor-grep/commit/7527e8f43a5757a8eebb4f0f0532dc0fb5a531f9))
+
+* docs(skills): apply prompt-audit fixes to instruction files and skills
+
+Applies the 2026-10-03 prompt-audit slice (42 files) plus the policy flags and report-only items
+  that the exported patch left out.
+
+Flag resolutions: - F1: one merge rule everywhere ("burst, then hold"): when no release-bearing main
+  run exists merge every green PR in one burst, then merge nothing until that run's chore(release)
+  commit and PyPI publish land; the window is the whole run from creation, so a pending/jobs=0 run
+  still pushes last. Applied to change-control (description, section 10, Part 7, Part 10),
+  CLAUDE.md, AGENTS.md (workflow line, A2, A13, A133, A142, Push Discipline) and the sibling skills
+  that restated it. - F2: the merge gate is "newest main run completed", not completed-green. - F3:
+  agents merge their own verified-green PRs after independent review and the push-race check (CEO
+  directive 2026-07-23); the draft-PR-only wording is removed from backlog-campaign, change-control
+  and the pointer rows. - F4: local pre-push runs targeted suites plus ruff, mypy and the ratchets;
+  the full pytest -q is CI / scripts/ci-local only. - F5: security-adversarial passes are stated by
+  role (Opus seat); Sonnet-5 pin and the A74 wording removed. - F6: rg#3364 open upstream, rg#3131
+  closed upstream, neither has a tg fixture. - F7/F8: neutral audience framing; "Sol" written as an
+  independent adversarial gate (Sol seat) outside the A-laws.
+
+Low items: "written in blood" register, validation-qa and debugging-playbook descriptions as intent
+  categories, codex-gated skill_rules TODO, version-check hedge in architecture-contract, CI-only
+  note on the AST benchmark, conftest duplicate in AGENTS.md, wip/diff-docs-precision -> commit
+  90b7042.
+
+M49: dated Retention sections in validation-qa, change-control and debugging-playbook folded into
+  topical Parts (one sentence plus A-number each); off-topic A120-A122 removed from change-control.
+
+Skipped slices: release-drift-check receipts chain condensed; bare repo_map.py/inventory.py line
+  anchors in config-and-flags and large-repo replaced by symbol greps (and the
+  _mtime_aware_cache/_resolved_path_str greps repointed to repo_map_cache.py).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+* docs(skills): address review -- push-race checks match the rule, no hold deadlock, fix dead greps
+  and F1/F3/F4/F5 survivors
+
+- Push-race checks: any run status other than completed is an open window; poll the burst's run by
+  ID, never --limit 1 (A133, A142). - Hold cannot deadlock: wherever the burst-then-hold rule is
+  stated, a run that completes without publishing closes the window (A32 governs the hotfix);
+  release-bearing is defined by the fix/feat/perf commits since the last tag. - Dead greps fixed
+  (native_frontdoor flavor, PCRE2 phrase, the AGENTS.md "hangs ~600 s" clauses in large-repo);
+  diff-docs references cite archive/diff-docs-precision. - F1/F3/F4/F5 survivors:
+  draft-PR/never-auto-merge wording in AGENTS.md and codex-gated-audit-loop, one-per-publish
+  wording, full pytest -q in root SKILL.md/build-and-env/semantic-search-campaign, Fable audit line.
+  - Root SKILL.md installer-checksum bullet matches README (npm/Homebrew/winget not published);
+  release-drift-check and A94 get the append-only scope rule. - Flag-table anchor for
+  SEARCH_PYTHON_PASSTHROUGH_FLAGS, single-commit squash rule in change-control and CONTRIBUTING,
+  onboarding "four verified sites". - test_skill_library_drift floor comment records the measured
+  count (199).
+
+* docs(skills): close review round 2 -- last one-per-publish lines, fresh-clone archive ref,
+  onboarding targeted tests
+
+* docs(skills): drain-cron pseudocode bursts and gates on every recent run, not --limit 1
+
+---------
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.11 (2026-10-02)
 
 ### Bug Fixes
