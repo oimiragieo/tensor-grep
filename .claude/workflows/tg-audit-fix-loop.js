@@ -325,7 +325,8 @@ for the right reason (${red.reason_class}); set fix_confirmed=true only if it do
 probe's command + verbatim result, how many gate findings you reproduced
 (findings_reproduced_count), and all_findings_reproduced.
 - For a docs artifact, re-probe means re-deriving the doc's counts/claims with your own commands
-  against the edited bytes and comparing to the round's recorded artifact_sha256.`,
+  against the edited bytes and comparing to the round's recorded artifact_sha256; there
+  fix_confirmed=true means every re-derived claim matches the edited doc.`,
     { label: `verify:r${round}`, phase: 'Verify', schema: VERIFY_SCHEMA, model: 'sonnet' },
   )
 
@@ -346,30 +347,25 @@ probe's command + verbatim result, how many gate findings you reproduced
       file: '-',
       fix: 're-run gate + verify; a SHIP is accepted only when the independent verify confirms it',
     })
-  } else if (verifyOk && verify.findings_reproduced_count === 0 && verify.all_findings_reproduced === false) {
-    // Unreproduced gate findings must not force FIX-FIRST: bank them as nits.
-    verdict = 'SHIP-WITH-NITS'
-    allRounds.push({
-      round,
-      severity: 'NIT',
-      area: 'gate FIX-FIRST findings were not reproduced by the independent verify; banked as nits',
-      file: '-',
-      fix: 'none required',
-    })
-    break
+  } else if (verifyOk && verify.findings_reproduced_count === 0) {
+    // Only the gate's own SHIP ends the loop. An unreproduced finding is evidence for the next gate
+    // round to weigh (a POSIX-only defect cannot reproduce on this Windows box), never a verdict.
+    verifyNote =
+      'the independent verify reproduced none of these findings on this host; re-assess each ' +
+      '(withdraw it, or explain why it cannot reproduce here) rather than repair blindly'
   }
 
   if (round < MAX_ROUNDS) {
     repairContext = `
 PRIOR GATE FINDINGS TO REPAIR (round ${round}):
 ${JSON.stringify(gate.rounds || [], null, 1)}
-${verifyNote ? `VERIFY FAILURE: ${verifyNote}\n` : ''}VERIFY PROBES:
+${verifyNote ? `VERIFY NOTE: ${verifyNote}\n` : ''}VERIFY PROBES:
 ${verify ? JSON.stringify(verify.probes, null, 1) : '(verify seat returned nothing)'}
 `
     phase('GREEN')
     const repaired = await agent(
       `${HOUSE}
-${SEAM_TEXT}
+${SEAM_TEXT}${fixText()}
 TASK: repair ONLY the gate findings listed below, minimally, then re-run the RED test and the
 narrow suites around the touched files; paste verbatim output.
 ${repairContext}`,
