@@ -33,6 +33,7 @@ def run(
     path: str = ".github/workflows/ci.yml",
     sha: str = SHA,
     attempt: int = 1,
+    event: str = "push",
 ) -> dict[str, Any]:
     return {
         "id": rid,
@@ -42,7 +43,7 @@ def run(
         "conclusion": conclusion,
         "path": path,
         "head_sha": sha,
-        "event": "push",
+        "event": event,
     }
 
 
@@ -50,8 +51,13 @@ def payload(*runs: dict[str, Any], total: int | None = None) -> dict[str, Any]:
     return {"total_count": len(runs) if total is None else total, "workflow_runs": list(runs)}
 
 
-def jobs(*pairs: tuple[str, str]) -> dict[str, Any]:
+def job_payload(*pairs: tuple[str, str]) -> dict[str, Any]:
     return {"total_count": len(pairs), "jobs": [{"name": n, "conclusion": c} for n, c in pairs]}
+
+
+def jobs(*pairs: tuple[str, str]) -> dict[int, dict[str, Any]]:
+    """Same jobs payload for every run id 1..29 (tests needing per-run jobs build the dict)."""
+    return {i: job_payload(*pairs) for i in range(1, 30)}
 
 
 def test_success() -> None:
@@ -163,7 +169,10 @@ def test_truncated_listing_is_cannot_measure() -> None:
 
 def test_success_without_jobs_is_not_green() -> None:
     assert cv.classify(SHA, "ci.yml", payload(run(1, 10)), None).state == cv.CANNOT_MEASURE
-    assert cv.classify(SHA, "ci.yml", payload(run(1, 10)), {"jobs": []}).state == cv.CANNOT_MEASURE
+    assert (
+        cv.classify(SHA, "ci.yml", payload(run(1, 10)), {1: {"jobs": []}}).state
+        == cv.CANNOT_MEASURE
+    )
 
 
 def test_skipped_or_neutral_conclusion_is_not_green() -> None:
@@ -186,3 +195,129 @@ def test_extract_failed_tests_bounded_and_deduped() -> None:
     got = cv.extract_failed_tests(log, 5)
     assert len(got) == 5 and got[0] == "FAILED tests/unit/test_a.py::t1"
     assert cv.extract_failed_tests("nothing here", 5) == []
+
+
+def test_push_failure_then_schedule_success_is_not_success() -> None:
+    """Different events never supersede each other (live: 03b81539 push #4100 + schedule #4101)."""
+    runs = payload(
+        run(1, 10, conclusion="failure", event="push"),
+        run(2, 11, conclusion="success", event="schedule"),
+    )
+    by_run = {1: job_payload(("Test", "failure")), 2: job_payload(("Test", "success"))}
+    v = cv.classify(SHA, "ci.yml", runs, by_run)
+    assert v.state == cv.FAILURE and v.exit_code == 1
+    assert v.failed_run_ids == [1]
+    text = "\n".join(v.detail)
+    assert "[push] FAILURE" in text and "[schedule] SUCCESS" in text and "WORST" in text
+
+
+def test_push_rerun_attempt2_failure_after_schedule_success_is_failure() -> None:
+    runs = payload(
+        run(1, 10, conclusion="success", event="schedule"),
+        run(2, 11, conclusion="success", event="push", attempt=1),
+        run(2, 11, conclusion="failure", event="push", attempt=2),
+    )
+    by_run = {1: job_payload(("t", "success")), 2: job_payload(("t", "failure"))}
+    assert cv.classify(SHA, "ci.yml", runs, by_run).state == cv.FAILURE
+
+
+def test_event_filter_restricts_deliberately() -> None:
+    runs = payload(
+        run(1, 10, conclusion="failure", event="push"),
+        run(2, 11, conclusion="success", event="schedule"),
+    )
+    by_run = {1: job_payload(("t", "failure")), 2: job_payload(("t", "success"))}
+    assert cv.classify(SHA, "ci.yml", runs, by_run, event="schedule").state == cv.SUCCESS
+    assert cv.classify(SHA, "ci.yml", runs, by_run, event="push").state == cv.FAILURE
+
+
+def test_worst_ordering_across_events() -> None:
+    runs = payload(
+        run(1, 10, conclusion="cancelled", event="push"),
+        run(2, 11, conclusion="success", event="schedule"),
+    )
+    by_run = {1: job_payload(("t", "cancelled")), 2: job_payload(("t", "success"))}
+    assert cv.classify(SHA, "ci.yml", runs, by_run).state == cv.CANCELLED
+    runs = payload(
+        run(1, 10, conclusion="cancelled", event="push"),
+        run(2, 11, conclusion="skipped", event="schedule"),
+    )
+    assert cv.classify(SHA, "ci.yml", runs, by_run).state == cv.CANNOT_MEASURE
+
+
+def test_open_run_in_any_event_is_in_progress() -> None:
+    runs = payload(
+        run(1, 10, conclusion="failure", event="push"),
+        run(2, 11, status="queued", conclusion=None, event="schedule"),
+    )
+    assert cv.classify(SHA, "ci.yml", runs).state == cv.IN_PROGRESS
+
+
+def test_jobs_truncation_is_noted() -> None:
+    big = {"total_count": 150, "jobs": [{"name": "t", "conclusion": "success"}]}
+    v = cv.classify(SHA, "ci.yml", payload(run(1, 10)), {1: big})
+    assert v.state == cv.SUCCESS and "jobs truncated" in "\n".join(v.detail)
+
+
+def test_malformed_entries_never_raise_in_classify() -> None:
+    bad = payload(run(1, 10))
+    bad["workflow_runs"][0]["run_number"] = "abc"
+    assert cv.classify(SHA, "ci.yml", bad).state == cv.CANNOT_MEASURE
+    assert cv.classify(SHA, "ci.yml", {"total_count": 1, "workflow_runs": [None]}).state == (
+        cv.CANNOT_MEASURE
+    )
+
+
+def _patch_main(monkeypatch: Any, runs: Any, jobs_for: Any = None) -> None:
+    def fake_gh(args: list[str]) -> Any:
+        if args[:2] == ["repo", "view"]:
+            return {"nameWithOwner": "o/r"}
+        if "/jobs" in args[1]:
+            return jobs_for if jobs_for is not None else job_payload(("t", "success"))
+        return runs
+
+    monkeypatch.setattr(cv, "_gh_json", fake_gh)
+    monkeypatch.setattr(cv, "resolve_sha", lambda sha: SHA)
+    monkeypatch.setattr(cv, "_commit_message", lambda sha: "")
+
+
+def test_main_malformed_run_number_is_cannot_measure(monkeypatch: Any, capsys: Any) -> None:
+    bad = payload(run(1, 10))
+    bad["workflow_runs"][0]["run_number"] = "abc"
+    _patch_main(monkeypatch, bad)
+    assert cv.main(["--sha", SHA]) == cv.EXIT_CODES[cv.CANNOT_MEASURE]
+    assert "CI_VERDICT: CANNOT_MEASURE" in capsys.readouterr().out
+
+
+def test_main_null_run_entry_is_cannot_measure(monkeypatch: Any, capsys: Any) -> None:
+    _patch_main(monkeypatch, {"total_count": 1, "workflow_runs": [None]})
+    assert cv.main(["--sha", SHA]) == cv.EXIT_CODES[cv.CANNOT_MEASURE]
+    assert "CI_VERDICT: CANNOT_MEASURE" in capsys.readouterr().out
+
+
+def test_main_mixed_events_reports_failure_with_log_lines(monkeypatch: Any, capsys: Any) -> None:
+    runs = payload(
+        run(1, 10, conclusion="failure", event="push"),
+        run(2, 11, conclusion="success", event="schedule"),
+    )
+
+    def fake_gh(args: list[str]) -> Any:
+        if args[:2] == ["repo", "view"]:
+            return {"nameWithOwner": "o/r"}
+        if "/runs/1/jobs" in args[1]:
+            return job_payload(("Test", "failure"))
+        if "/jobs" in args[1]:
+            return job_payload(("Test", "success"))
+        return runs
+
+    monkeypatch.setattr(cv, "_gh_json", fake_gh)
+    monkeypatch.setattr(cv, "resolve_sha", lambda sha: SHA)
+    monkeypatch.setattr(cv, "_commit_message", lambda sha: "")
+    monkeypatch.setattr(cv, "_run", lambda argv, timeout: "x FAILED tests/unit/test_a.py::t1\n")
+    assert cv.main(["--sha", SHA]) == 1
+    out = capsys.readouterr().out
+    assert "CI_VERDICT: FAILURE" in out and "run 1: FAILED tests/unit/test_a.py::t1" in out
+
+
+def test_parser_has_no_docstring_dependency() -> None:
+    assert "commit SHA" in cv.build_parser().description
