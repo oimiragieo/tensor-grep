@@ -13,9 +13,11 @@ GUARDS ARE BOUND TO THE BINARY. A guard counts only if it is in the call's enclo
 (incl. decorators), enclosing class (decorators and non-method statements only), or module top
 level, and is one of: ``shutil.which("<same literal>")``; a ``skipif`` whose condition contains that
 ``which`` call or the binary name as a string; an unconditional ``pytest.skip(...)`` /
-``mark.skip`` / constant-condition ``skipif``; or, ONLY for OS-native binaries
+``mark.skip`` / truthy-constant ``skipif`` (``skipif(False)`` is NOT a guard); or, ONLY for OS-native binaries
 (``_OS_NATIVE_BINARIES``), a platform check (``sys.platform`` / ``os.name`` /
-``platform.system``). A platform check or an unrelated ``which`` does not exempt ``gitleaks``.
+``platform.system``). A platform check or an unrelated ``which`` does not exempt ``gitleaks``. A ``pytest.skip(...)`` inside
+an ``if`` counts only when that ``if`` test binds the binary (or, for OS-native binaries, is a
+platform check), or inside ``except FileNotFoundError/OSError``.
 
 A guard-less helper is accepted only when it is never referenced except as a direct call target and
 EVERY call site in the module is guarded (one level).
@@ -23,7 +25,8 @@ EVERY call site in the module is guarded (one level).
 KNOWN LIMITS (do not read a green as more than this). A non-literal argv[0] (``[exe, ...]``,
 ``[_bin(), ...]``, ``shutil.which(var)``) is invisible to / does not bind in the scan; the guard
 check is lexical, so it proves a guard EXISTS nearby, not that it dominates the call; a helper chain
-deeper than one level is flagged.
+deeper than one level is flagged. Not recognised as shell-outs at all: ``asyncio.create_subprocess_*``,
+``os.exec*``, ``os.popen``, ``subprocess.getoutput`` / ``getstatusoutput``.
 """
 
 from __future__ import annotations
@@ -78,6 +81,8 @@ class _Aliases:
         self.os_mods = {"os"}
         self.sub_funcs: set[str] = set()
         self.system_funcs: set[str] = set()
+        self.pytest_mods = {"pytest"}
+        self.pytest_skip_names: set[str] = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for a in node.names:
@@ -85,12 +90,20 @@ class _Aliases:
                         self.sub_mods.add(a.asname or a.name)
                     elif a.name == "os":
                         self.os_mods.add(a.asname or a.name)
+                    elif a.name == "pytest":
+                        self.pytest_mods.add(a.asname or a.name)
             elif isinstance(node, ast.ImportFrom):
                 for a in node.names:
                     if node.module == "subprocess" and a.name in _SUBPROCESS_FUNCS:
                         self.sub_funcs.add(a.asname or a.name)
                     elif node.module == "os" and a.name == "system":
                         self.system_funcs.add(a.asname or a.name)
+                    elif node.module == "pytest" and a.name == "skip":
+                        self.pytest_skip_names.add(a.asname or a.name)
+        # a locally DEFINED `def skip` is not pytest's
+        for node in ast.walk(tree):
+            if isinstance(node, _FUNC_TYPES):
+                self.pytest_skip_names.discard(node.name)
 
 
 def _literal_binary(call: ast.Call, al: _Aliases) -> str | None:
@@ -140,7 +153,7 @@ def _cond_binds(cond: ast.AST | None, binary: str) -> bool:
     if cond is None:
         return False
     if isinstance(cond, ast.Constant) and not isinstance(cond.value, str):
-        return True  # constant condition: unconditional
+        return bool(cond.value)  # only a TRUTHY constant skips; skipif(False/0/None) never does
     for n in ast.walk(cond):
         if isinstance(n, ast.Call) and _is_which(n) and _which_binds(n, binary):
             return True
@@ -150,7 +163,50 @@ def _cond_binds(cond: ast.AST | None, binary: str) -> bool:
     return False
 
 
-def _has_guard(nodes: Sequence[ast.AST], binary: str) -> bool:
+def _is_platform_test(test: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Name)
+        and (n.value.id, n.attr) in _PLATFORM_CHECKS
+        for n in ast.walk(test)
+    )
+
+
+def _skip_is_effective(
+    call: ast.Call,
+    root_ids: set[int],
+    parents: dict[ast.AST, ast.AST],
+    binary: str,
+) -> bool:
+    """A skip(...) call guards ``binary`` only if it is unconditional or its condition binds."""
+    cur: ast.AST | None = call
+    nearest_cond: ast.AST | None = None
+    while cur is not None:
+        cur = parents.get(cur)
+        if cur is None:
+            break
+        if isinstance(cur, ast.ExceptHandler):
+            names = {getattr(n, "id", None) for n in ast.walk(cur.type)} if cur.type else set()
+            if names & {"FileNotFoundError", "OSError"}:
+                return True
+        if nearest_cond is None and isinstance(cur, (ast.If, ast.IfExp, ast.While)):
+            nearest_cond = cur.test
+        if id(cur) in root_ids:
+            break
+    if nearest_cond is None:
+        return True
+    if _cond_binds(nearest_cond, binary):
+        return True
+    return binary in _OS_NATIVE_BINARIES and _is_platform_test(nearest_cond)
+
+
+def _has_guard(
+    nodes: Sequence[ast.AST],
+    binary: str,
+    al: _Aliases,
+    parents: dict[ast.AST, ast.AST],
+) -> bool:
+    root_ids = {id(n) for n in nodes}
     for root in nodes:
         for node in ast.walk(root):
             if isinstance(node, ast.Attribute):
@@ -160,18 +216,30 @@ def _has_guard(nodes: Sequence[ast.AST], binary: str) -> bool:
                     and (node.value.id, node.attr) in _PLATFORM_CHECKS
                 ):
                     return True
-                # `@pytest.mark.skip` used as a bare decorator / mark expression
-                if node.attr == "skip" and isinstance(node.value, ast.Attribute):
+                # bare `@pytest.mark.skip` decorator / mark expression (no call)
+                if (
+                    node.attr == "skip"
+                    and isinstance(node.value, ast.Attribute)
+                    and node.value.attr == "mark"
+                    and not isinstance(parents.get(node), ast.Call)
+                ):
                     return True
             if not isinstance(node, ast.Call):
                 continue
             f = node.func
-            fname = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
             if _is_which(node) and _which_binds(node, binary):
                 return True
-            if fname == "skip":
-                return True  # pytest.skip(...) / mark.skip(...) / `from pytest import skip`
-            if fname == "skipif":
+            is_skip = (
+                isinstance(f, ast.Attribute)
+                and f.attr == "skip"
+                and (
+                    (isinstance(f.value, ast.Name) and f.value.id in al.pytest_mods)
+                    or (isinstance(f.value, ast.Attribute) and f.value.attr == "mark")
+                )
+            ) or (isinstance(f, ast.Name) and f.id in al.pytest_skip_names)
+            if is_skip and _skip_is_effective(node, root_ids, parents, binary):
+                return True
+            if isinstance(f, ast.Attribute) and f.attr == "skipif":
                 cond = node.args[0] if node.args else None
                 for kw in node.keywords:
                     if kw.arg == "condition":
@@ -195,6 +263,7 @@ def find_unguarded_external_binaries(source: str) -> list[tuple[int, str]]:
     """Return ``(lineno, binary)`` for each unguarded call to a non-CI-provided binary."""
     tree = ast.parse(source)
     aliases = _Aliases(tree)
+    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
     top_level = [n for n in tree.body if not isinstance(n, (*_FUNC_TYPES, ast.ClassDef))]
     candidates: list[tuple[int, str, str | None, list[ast.AST]]] = []
     call_sites: dict[str, list[list[ast.AST]]] = {}
@@ -202,7 +271,7 @@ def find_unguarded_external_binaries(source: str) -> list[tuple[int, str]]:
 
     def guarded(scopes: list[ast.AST], binary: str) -> bool:
         nodes = [*top_level, *(n for sc in scopes for n in _scope_nodes(sc))]
-        return _has_guard(nodes, binary)
+        return _has_guard(nodes, binary, aliases, parents)
 
     def visit(node: ast.AST, scopes: list[ast.AST]) -> None:
         skip_child: ast.AST | None = None
@@ -459,6 +528,116 @@ def test_a():
 """
 
 
+_SKIPIF_FALSE_DECORATOR = """
+import subprocess
+import pytest
+
+@pytest.mark.skipif(False, reason="x")
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_SKIPIF_FALSE_KW = """
+import subprocess
+import pytest
+
+@pytest.mark.skipif(condition=False, reason="x")
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_SKIPIF_FALSE_MODULE = """
+import subprocess
+import pytest
+
+pytestmark = pytest.mark.skipif(False, reason="x")
+
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_INLINE_PLATFORM_SKIP = """
+import subprocess, sys
+import pytest
+
+def test_a():
+    if sys.platform == "win32":
+        pytest.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_INLINE_ENV_SKIP = """
+import os, subprocess
+import pytest
+
+def test_a():
+    if not os.environ.get("CI"):
+        pytest.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_MODULE_PLATFORM_SKIP = """
+import subprocess, sys
+import pytest
+
+if sys.platform == "win32":
+    pytest.skip("x", allow_module_level=True)
+
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_INLINE_WHICH_SKIP_OK = """
+import shutil, subprocess
+import pytest
+
+def test_a():
+    if shutil.which("gitleaks") is None:
+        pytest.skip("no gitleaks")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_INLINE_PLATFORM_SKIP_NATIVE_OK = """
+import subprocess, sys
+import pytest
+
+def test_a():
+    if sys.platform != "win32":
+        pytest.skip("windows only")
+    subprocess.run(["icacls", "x"])
+"""
+
+_EXCEPT_FNF_SKIP_OK = """
+import subprocess
+import pytest
+
+def test_a():
+    try:
+        subprocess.run(["gitleaks", "version"])
+    except FileNotFoundError:
+        pytest.skip("no gitleaks")
+"""
+
+_LOCAL_SKIP_DEF = """
+import subprocess
+
+def skip(*a):
+    return None
+
+def test_a():
+    skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_UNRELATED_ATTR_SKIP = """
+import subprocess
+
+def test_a():
+    logger.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+
 def _bins(src: str) -> list[str]:
     return [b for _, b in find_unguarded_external_binaries(src)]
 
@@ -487,6 +666,22 @@ def test_guard_must_bind_to_the_binary() -> None:
     assert _bins(_MODULE_WHICH_UNRELATED) == ["gitleaks"]
     assert _bins(_SIBLING_GUARD) == ["gitleaks"]
     for ok in (_PLATFORM_OS_NATIVE_OK, _SKIPIF_WHICH_OK, _UNCONDITIONAL_SKIP_OK):
+        assert _bins(ok) == [], ok
+
+
+def test_falsy_skipif_and_conditional_skips_are_not_guards() -> None:
+    for src in (
+        _SKIPIF_FALSE_DECORATOR,
+        _SKIPIF_FALSE_KW,
+        _SKIPIF_FALSE_MODULE,
+        _INLINE_PLATFORM_SKIP,
+        _INLINE_ENV_SKIP,
+        _MODULE_PLATFORM_SKIP,
+        _LOCAL_SKIP_DEF,
+        _UNRELATED_ATTR_SKIP,
+    ):
+        assert _bins(src) == ["gitleaks"], src
+    for ok in (_INLINE_WHICH_SKIP_OK, _INLINE_PLATFORM_SKIP_NATIVE_OK, _EXCEPT_FNF_SKIP_OK):
         assert _bins(ok) == [], ok
 
 
