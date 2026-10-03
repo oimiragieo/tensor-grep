@@ -100,6 +100,23 @@ Opens: → "unlocked once this completes"
 
 ## SHIPPED ✓ (Recent)
 
+### PROMPT-AUDIT CLOSEOUT -- 2026-10-03, release v1.123.12 (`faea630`)
+- **Source:** `/claude-api prompt-audit` against Claude Opus 5.5 over AGENTS.md, CLAUDE.md, 38 skills, 3 workflows and
+  the MCP tool descriptions. The dominant finding class was STALE FACTS (moved symbols, closed issues described as
+  open, ~400 hand-restamped line anchors), not dated prompting idioms.
+- **Merged (each reviewed by an independent Opus seat until SHIP, 3-4 rounds):** #1187 (`7527e8f`, docs/skills;
+  F1-F8 policy resolutions incl. the single burst-then-hold merge rule), #1185 (`c366da3`, audit-fix-loop no longer
+  SHIPs on an empty seam/RED/GREEN or without a verify-confirmed fix; `scripts/skill_audit_ledger.py`), #1186
+  (`33faafd`, MCP descriptions + 46 legacy-tool deprecation notes, `TG_MCP_LEGACY_TOOLS` default kept ON by operator
+  decision), #1188 (`cc8bbc9`, AGENTS.md 3,904 -> 2,261 lines; receipts verbatim in `docs/agent-laws-receipts.md`).
+- **Verify:** published-wheel stdio dogfood `uvx --from tensor-grep==1.123.12 --with "mcp>=1.29,<2" python
+  <tools/list checker>` = 12/12 PASS; the same checker on 1.123.11 = 9/12 FAIL (control). CI per SHA:
+  `33faafd` run 37148803857 success (released), `cc8bbc9` run 37153065688 success.
+- **Kept:** unreachable `90b7042` (`tg diff-docs` foundation) now lives on pushed branch `archive/diff-docs-precision`.
+- **Left open (deliberately):** `.claude/skill_rules.json` still lists the legacy `FIX-BEFORE-MERGE` alias (harmless);
+  undated `###` AGENTS.md sections were not restructured; the `tg_orient` "call FIRST" design decision
+  (`docs/plans/design-tensor-grep-95-...`) was reversed in the docstring and recorded in PR #1186.
+
 ### HANDLER-CENSUS-W2-b — GPU backend handler census & error hardening (cudf, torch, cybert)
 - **Status:** SHIPPED (Verified on 5816afe by Sonnet 5 + Codex Sol dual GO)
 - **Components:** In-slice hardening: narrowed `deobfuscate_payload` in `cybert_backend.py` from broad `except Exception:` to `(ValueError, binascii.Error)` (ceiling ratcheted 267 -> 266 per Rule A137); added logging disclosures to RMM fallbacks and CuPy capability probe in `cudf_backend.py` and traced inference retry in `cybert_backend.py`. Appended 21 records to `docs/audits/2026-08-20-handler-dispositions.json` (176 total: 11 LOGGED-DEGRADE, 10 INTENTIONAL-BOUNDARY, 0 SILENT-SWALLOW). Enrolled `backends/cudf_backend.py`, `backends/torch_backend.py`, `backends/cybert_backend.py` in `_EXPLICIT_AUDITED_MODULES`.
