@@ -105,7 +105,7 @@ const CLUSTERS = [
 ]
 
 const HOUSE = `
-HOUSE CONSTRAINTS (verbatim, non-negotiable):
+HOUSE CONSTRAINTS (shared dev box; these apply to every step):
 - CPU-SAFE: NEVER run cargo build/test/check/clippy, and NEVER run tests/e2e/test_routing_parity.py
   (it invokes cargo run). This is a shared desktop and CPU-heavy work is forbidden on it.
 - READ-ONLY. Report findings; do not edit any file.
@@ -143,28 +143,26 @@ phase('Ledger')
 const ledger = await agent(
   `${HOUSE}
 
-TASK: derive ARTIFACT IDENTITY and ground-truth facts for a skill-library audit by RUNNING these
-commands in the repository checkout you are invoked in. Report each command's RAW output. Do not
-summarise from memory, and do not answer from any doc -- the docs are the thing being audited.
-
-  0a. git rev-parse --show-toplevel      (repo_root)
-  0b. git rev-parse HEAD                 (head_sha)
-  0c. git status --porcelain             (git_status; empty string = clean)
-  0d. git ls-files -s -- .claude/skills/ (skill_manifest: path + blob OID for EVERY tracked file)
-  1. python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
-  2. grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py
-  3. python -c "import json,urllib.request;print(json.load(urllib.request.urlopen('https://pypi.org/pypi/tensor-grep/json'))['info']['version'])"
-  4. tg --version          (report it AND note it may lag PyPI -- say which answered)
-  5. ls -1d .claude/skills/*/ | wc -l
-  6. grep -oE "^\\*\\*Form [0-9]+" AGENTS.md | sort -u | wc -l
-  7. wc -l .github/workflows/ci.yml
-  8. python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import mcp_server as m;print(m._TG_MCP_SERVER_CONTRACT_VERSION)"
-
-For each, return name, value, and the exact command as its derivation. A fact without its
-derivation is not a fact -- downstream agents must be able to re-run it. If the tree is dirty,
-list every dirty path in raw_output; a dirty audit target must be declared in the final receipt.`,
+TASK: run \`python scripts/skill_audit_ledger.py\` in the repository checkout you are invoked in,
+and return its JSON output unchanged. Do not edit, summarise, or re-derive any field; the script
+runs the fixed ledger commands itself. If it fails, return the error text in raw_output and leave
+the other fields empty.`,
   { label: 'ledger', phase: 'Ledger', schema: LEDGER_SCHEMA, model: 'haiku' },
 )
+
+// A missing or malformed ledger means the audited population is unknown. The frozen CLUSTERS
+// map below still runs so the audit is not wasted, but it can never be reported as covered.
+const ledgerProblems = []
+if (!ledger) ledgerProblems.push('ledger seat returned nothing')
+else {
+  if (!/^[0-9a-f]{40}$/.test(ledger.head_sha || '')) ledgerProblems.push('head_sha is not 40-hex')
+  if (!Array.isArray(ledger.skill_manifest) || ledger.skill_manifest.length === 0) {
+    ledgerProblems.push('skill_manifest is empty')
+  }
+}
+if (ledgerProblems.length > 0) {
+  log(`LEDGER INVALID (${ledgerProblems.join('; ')}) -- falling back to the frozen cluster map; coverage_exact will be false`)
+}
 
 // ---------------------------------------------------------------------------
 // DYNAMIC SKILL ENUMERATION (2026-08-14, W6 retention wave).
@@ -244,8 +242,8 @@ For every LOAD-BEARING claim, RE-DERIVE it:
   * narrative        -> a stale "this is broken" is worse than a stale line number; flag anything
                         the current code contradicts
 
-ALSO CHECK THE FILE AGAINST ITSELF -- no gate we own does this, and it is how the 8th
-self-contradiction in this repo shipped (2026-08-02):
+ALSO CHECK THE FILE AGAINST ITSELF -- no gate we own does this, and it is how a
+self-contradiction in this repo shipped:
   * SELF-CONTRADICTION -> does this file assert a claim AND its refutation? The tell is a
                         correction that landed at ONE site while a duplicate 100+ lines away kept
                         the refuted version. Grep the file for every anchor/number it states MORE
@@ -351,7 +349,9 @@ return {
   not_covered: finalMissing,
   unexpected_skills: extras,
   dynamic_skills: unassigned,
-  coverage_exact: finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
+  coverage_exact:
+    ledgerProblems.length === 0 && finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
+  coverage_reason: ledgerProblems.length > 0 ? `ledger invalid: ${ledgerProblems.join('; ')}` : null,
   total_findings: findings.length,
   ledger,
   audits: covered,
