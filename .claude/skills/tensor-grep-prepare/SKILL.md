@@ -5,7 +5,7 @@ description: Use when an agent needs one-call edit readiness before changing cod
 
 # tensor-grep prepare (one-call edit readiness)
 
-Verified against **tg 1.110.14** — honesty note (2026-08-13): this stamp was bumped from 1.110.13
+Last verified: **tg 1.110.14** -- not re-run since; re-verify on the current release before citing. Honesty note (2026-08-13): this stamp was bumped from 1.110.13
 by the 2026-08-11 drift sweep (`docs/audits/2026-08-11-skill-audit-findings.md` item 6), but the
 dogfood table below records **no dated 1.110.14 row** — its newest rows are **1.110.13**, and the
 ~5s saddle / ~22s `--out`/`--claim` numbers this header previously presented as a LIVE 1.110.14 run

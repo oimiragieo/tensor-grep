@@ -1,21 +1,18 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-10-02)
+## Live reconciliation (2026-10-03)
 
-At `origin/main` `65cf2f6`, `pyproject.toml` identifies v1.123.10 (release commit `03a17c5`). PyPI lists
-four v1.123.10 artifacts (3 wheels + sdist); each release's published win_amd64 wheel was opened and
-checked for its fixes (publication plus content, not a full dogfood verdict). Releases since the prior
-stamp (v1.123.1): v1.123.2 (`b40ead0`) .3 (`8ede6fc`) .4 (`b2990da`) .5 (`456d29c`) .6 (`603f0aa`) .7
-(`62ee850`) .8 (`bd287c2`) .9 (`4bc53c7`) .10 (`03a17c5`). Before that, v1.121.3..v1.123.1 (git tags) carried #1166 (`6e77050`), #1167 (`cff35c7`), #1169 (`3b436fd`), #1175 (`49bc89f`),
-#1178 (`6f1d702`) and #1180 (`c2967cc`; only PyPI and GitHub binaries are live). Merged since v1.123.1,
-all direct-main with no PR: the PyJWT/urllib3 published floors (`7330b93`, `87a921d`) and the
-artifact-requirements publish gate (`c399b4c`); the import-edge walker hardening (`c1bea5a`..`b139f39`,
-owned by P13, Status stays READY); GPU device-ID fail-closed (`6936269`); evidence/audit-manifest chain
-integrity (`a1264b5`); three silent-degradation disclosures (`6471b51`, `fec716c`); and Wave 3
-handler-ledger slices 1-9 + final (95 -> 0 unledgered; native LSP rename, daemon stop, LSP reader fixes),
-tracked in `backlog.md`, not as board rows. No canonical row's Status changed. The open-PR set is empty (queried 2026-10-02). Main push-CI:
-`fec716c` passed every lane and published v1.123.7; `2a720a2` failed its file-size ratchet, fixed by
-`fec716c`; the earlier red-by-design gitleaks failures were removed in `f5f55ee`. Do not treat the
+At `origin/main` `cc8bbc9`, `pyproject.toml` identifies v1.123.12 (release commit `faea630`; PyPI
+serves 1.123.12; every publish job succeeded). Releases since the prior stamp (v1.123.10):
+v1.123.11 (`2f8bb9a`, `serve_cache.refresh_trigger`) and v1.123.12 (`faea630`, MCP tool descriptions).
+Merged since, from the 2026-10-03 prompt audit: #1187 (`7527e8f`, instruction-file and skill fixes;
+one burst-then-hold merge rule), #1185 (`c366da3`, audit-fix-loop verdict holes, skill-audit ledger
+script), #1186 (`33faafd`, MCP descriptions + legacy-tool deprecation notes; published wheel's stdio
+tools/list dogfooded 12/12, 9/12 fail on 1.123.11 as the control), #1188 (`cc8bbc9`, AGENTS.md laws
+lead with the current rule; receipts in `docs/agent-laws-receipts.md`). Earlier work since v1.123.1
+(Wave 3 handler census 95 -> 0, chain integrity, silent-degradation disclosures) is in `backlog.md`.
+No canonical row's Status changed. The open-PR set is empty (queried 2026-10-03). Read CI verdicts
+per SHA (`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not treat the
 dated open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
@@ -229,9 +226,9 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-02** (stamp `post-**v1.123.10**`; live release/PR census and canonical
+Last reconciled: **2026-10-03** (stamp `post-**v1.123.12**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
-underlying product behavior or clear the red main CI gate.)
+underlying product behavior.)
 
 Historical reconciliation: **2026-09-13** (stamp `post-v1.119.14` ONLY -- prior stamp
 `post-v1.119.8` went 6 releases stale from that session's #1154/#1141/#1150 merge cascade,
