@@ -39,6 +39,7 @@ exclude_docs: |
   audits/
   investigations/
   superpowers/
+  agent-laws-receipts.md
 
 nav:
   - Home: index.md
