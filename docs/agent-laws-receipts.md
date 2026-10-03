@@ -1,5 +1,7 @@
 # Agent laws: receipts
 
+Anchors on this page follow GitHub heading slugging.
+
 Incident receipts, run IDs, commit chains and first-person narratives behind the laws in
 [AGENTS.md](../AGENTS.md). AGENTS.md states each law's current rule; this file holds the
 original text of every law, Form and dated section (verbatim, in AGENTS.md order) so the
@@ -1433,7 +1435,7 @@ default-OFF, NOT the flip. BM25-only degrade is visible/legitimate (`rank_fallba
 Contract violation, fixed `045fadc`), and a missed MCP contract-version bump (fixed `3fcca06`; see the
 5th-registration-site note below).
 
-## Release history: 2026-07-22 session-capture wave (v1.91.1 -> v1.93.2)
+## Release history: 2026-07-22 session-capture wave (v1.91.1 to v1.93.2)
 
 **2026-07-22 Current-Handoff addendum -- session-capture wave (v1.91.1 -> v1.93.2, 15 shipped items,
 A1-A15 in `scratchpad/ground_truth_v1932.md`).** Headline shape: a cold-path SLA fix, a ranking-accuracy
@@ -1580,7 +1582,7 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Public launcher dogfood: `cmd /c tg`, direct managed `tg.cmd`, native `tg.exe`, and Python `subprocess.run([...])` preserve fresh quoted no-match phrases and return exit `1` without false-positive stdout.
 - Post-`v1.9.6` local dogfood: native CUDA release search passes exact match/file-set correctness on both RTX 4070 (`sm_89`) and RTX 5070 (`sm_120`) smoke corpora plus 1GB/5GB scale gates, but remains slower than both `rg` and `tg_cpu`; GPU sidecar rows are marked unsupported for native CUDA scale gates unless the benchmark uses a CUDA-enabled native binary; root `tg --help` advertises current agent/GPU/launcher/validation settings; and `tg doctor --json` classifies unrelated first-PATH `tg` commands such as Together CLI as `foreign` with explicit remediation. On this host, local fresh-shell dogfood was repaired non-destructively by placing a tensor-grep `tg.com` bridge ahead of the foreign `tg.exe` in the same directory after `tg update` moved from 1.9.5 to 1.9.6, because Machine PATH ordering was not writable.
 
-## The Verification-Oracle Family — ten forms (2026-07-25; 7th + 8th 2026-07-26, 9th 2026-07-27, 10th 2026-07-28)
+## The Verification-Oracle Family: ten forms (2026-07-25, 7th and 8th 2026-07-26, 9th 2026-07-27, 10th 2026-07-28)
 
 
 **The single most repeated failure mode this project has.** Every form shares one shape: *something that
@@ -2093,7 +2095,7 @@ Two lessons from building it, both from the control arm rather than from review:
   gets switched off, and a switched-off gate is worse than none, which is also why this is a maintenance
   command rather than a pytest: pinning these numbers in CI would red every PR that adds a line to `main.py`.
 
-## A Field That Is `""` Instead Of `null` Defeats Your Default (2026-07-28, four instances in one session)
+## A Field That Is an Empty String Instead Of null Defeats Your Default (2026-07-28, four instances in one session)
 
 
 `gh`'s check API returns `conclusion: ""` — an EMPTY STRING, not `null` — while a `CheckRun` is still
