@@ -316,7 +316,7 @@ Pass subagents Phase-1 spec verbatim + relevant BACKLOG item + carry-forward aud
 Exit only on `task-completion-verifier` PASS with receipts **you** reproduced in the real venv.
 
 ### 8 — Ship + document
-- Merge via the **self-firing drain-cron** pattern (one PR at a time; see push-race below) — never a
+- Merge via the **self-firing drain-cron** pattern (at most one burst per fire, then hold; see push-race below) — never a
   long-lived backgrounded drain loop.
 - Update `docs/BACKLOG.md`, memory anchor, `docs/SESSION_HANDOFF.md`, `AGENTS.md` if practice changed.
 - Record proven Workflow recipes in `workflow-ledger` if used.
@@ -363,20 +363,24 @@ watch for "tell me the instant this ONE release publishes so I can act."
 **One-shot logic per fire** (pseudocode; adapt the `gh` calls to the live PR queue):
 
 ```bash
-# ONE fire = ONE merge attempt, then exit. No internal loop, no backgrounding.
+# ONE fire = at most ONE burst, then exit. No internal loop, no backgrounding.
 latest_tag_on_pypi() { ... }                    # compare latest git tag vs PyPI's latest version
-main_ci_completed()  { [ "$(gh run list --branch main --workflow ci.yml --limit 1 \
-                             --json status -q '.[].status')" = "completed" ]; }
+# Every recent main run must be completed: a queued/pending run still pushes last (never --limit 1).
+main_ci_completed()  { gh run list --branch main --workflow ci.yml --limit 5 --json status \
+                         -q '[.[].status] | all(. == "completed")' | grep -qx true; }
 
 # Push-race check FIRST: refuse to merge into an in-flight release window.
 latest_tag_on_pypi && main_ci_completed || { echo "release in flight, skip this fire"; exit 0; }
 
-# Pick the lowest-numbered CLEAN, mergeable PR (WIP-cap-respecting: Hard Rule 10).
-pr=$(gh pr list --state open --json number,mergeStateStatus \
-      -q 'map(select(.mergeStateStatus=="CLEAN")) | sort_by(.number) | .[0].number')
-[ -n "$pr" ] || { echo "nothing CLEAN to merge"; exit 0; }
+# Burst: every CLEAN, mergeable PR, lowest number first (WIP-cap-respecting: Hard Rule 10).
+prs=$(gh pr list --state open --json number,mergeStateStatus \
+      -q 'map(select(.mergeStateStatus=="CLEAN")) | sort_by(.number) | .[].number')
+[ -n "$prs" ] || { echo "nothing CLEAN to merge"; exit 0; }
 
-gh pr merge "$pr" --squash --delete-branch
+for pr in $prs; do   # re-poll mergeable between merges (Hard Rule 12)
+  [ "$(gh pr view "$pr" --json mergeStateStatus -q .mergeStateStatus)" = CLEAN ] || continue
+  gh pr merge "$pr" --squash --delete-branch
+done
 ```
 
 - **Burst, then hold, per fire** — a fire that finds NO release-bearing `main` run merges every

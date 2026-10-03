@@ -99,15 +99,15 @@ uv run python -c "import tensor_grep.rust_core; print('rust_core OK')"
 uv run pytest tests/unit/test_rust_core.py -q
 ```
 
-Then run the four-step local gate once, so you know your environment can pass it:
+Then run the local gate once, so you know your environment can pass it:
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
 uv run pytest -q tests/unit/<files covering your change>   # targeted; the full suite runs in CI
-python scripts/file_size_budget.py --report
-python scripts/bare_call_ratchet.py --report
+uv run python scripts/file_size_budget.py --report
+uv run python scripts/bare_call_ratchet.py --report
 ```
 
 ### 2.2 Traps you WILL hit in week one
