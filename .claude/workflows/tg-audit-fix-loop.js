@@ -332,6 +332,7 @@ probe's command + verbatim result, how many gate findings you reproduced
 
   const verifyOk = !!verify && verify.fix_confirmed === true && (verify.probes || []).length > 0
   let verifyNote = ''
+  let gateNote = ''
   if (verdict === 'SHIP' || verdict === 'SHIP-WITH-NITS') {
     // The Verify phase gates SHIP: it stands only on an independent verify that re-ran the RED
     // test and confirmed the fix.
@@ -350,25 +351,27 @@ probe's command + verbatim result, how many gate findings you reproduced
   } else if (verifyOk && verify.findings_reproduced_count === 0) {
     // Only the gate's own SHIP ends the loop. An unreproduced finding is evidence for the next gate
     // round to weigh (a POSIX-only defect cannot reproduce on this Windows box), never a verdict.
-    verifyNote =
+    gateNote =
       'the independent verify reproduced none of these findings on this host; re-assess each ' +
       '(withdraw it, or explain why it cannot reproduce here) rather than repair blindly'
   }
 
   if (round < MAX_ROUNDS) {
-    repairContext = `
+    const repairFindings = `
 PRIOR GATE FINDINGS TO REPAIR (round ${round}):
 ${JSON.stringify(gate.rounds || [], null, 1)}
 ${verifyNote ? `VERIFY NOTE: ${verifyNote}\n` : ''}VERIFY PROBES:
 ${verify ? JSON.stringify(verify.probes, null, 1) : '(verify seat returned nothing)'}
 `
+    // The gate alone may withdraw a finding, so the unreproduced-finding note goes to it only.
+    repairContext = repairFindings + (gateNote ? `GATE NOTE: ${gateNote}\n` : '')
     phase('GREEN')
     const repaired = await agent(
       `${HOUSE}
 ${SEAM_TEXT}${fixText()}
 TASK: repair ONLY the gate findings listed below, minimally, then re-run the RED test and the
 narrow suites around the touched files; paste verbatim output.
-${repairContext}`,
+${repairFindings}`,
       { label: `repair:r${round}`, phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
     )
     if (repaired) latestGreen = repaired
