@@ -150,12 +150,9 @@ def _mcp_server_version() -> str:
 # inline_rules + ruleset now optional). Every existing caller's behavior is unchanged when
 # the new params are simply not passed; bumped anyway because `tg_mcp_capabilities()`'s
 # `tools[]` array itself grew, which a version-pinning client may reasonably want to detect.
-# 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change, same shape/rationale as the
-# round-9 bump above -- 1 new tool (tg_find, the agent-callable form of `tg find`). Every
-# existing caller's behavior is unchanged (no existing tool's signature moved); bumped because
-# `tg_mcp_capabilities()`'s `tools[]` array grew again, which a version-pinning client may want
-# to detect (else two different tool sets would both report 1.2.0 and a pinning client would
-# not re-fetch tools[] to discover tg_find).
+# 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change -- 1 new tool (tg_find, the
+# agent-callable form of `tg find`); no existing signature moved. Bumped because `tools[]`
+# grew, which a version-pinning client may want to detect.
 # 1.3.0 -> 1.4.0 (MCP consolidation Phase-1, #98): additive tool-set shape change -- 10 new
 # task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/tg_session/
 # tg_scan/tg_audit/tg_checkpoint/tg_rewrite) are ALWAYS registered, composing the 46 legacy
@@ -174,20 +171,12 @@ def _mcp_server_version() -> str:
 # way to tell "raise the limit" from "the limit is irrelevant". Every field is additive and
 # emitted ONLY when the scan was actually truncated, so a complete scan stays byte-identical
 # and no existing caller breaks; bumped so a version-pinning client can discover them.
-# 1.6.0 -> 1.7.0 (task 336, retroactive): `budget_remediable` reached the wire on a SECOND family
-# of tools without a bump. #826 added it to `build_repo_map`, `build_repo_map_incremental` and
-# `apply_repo_map_output_limits` in `repo_map.py` -- a CLI-shaped change -- but `tg_repo_map`
-# returns `json.dumps(build_repo_map(...))` VERBATIM, so every `scan_limit` field the CLI gains,
-# MCP gains in the same commit. Measured on `origin/main` before this bump:
-# `build_repo_map(<dir>, max_repo_files=3)` -> `scan_limit` carrying
-# `{..., "truncation_cause": "project-files", "budget_remediable": True}`, served at contract
-# 1.6.0, which promised only `tg_search`'s copy of that field (see the 1.5.0 note above).
-#
-# The lesson is the reason this note is long: the repo treats "a new MCP tool" as a registration
-# site needing a bump, and #826 added no tool -- it edited a CLI helper. But a pass-through
-# handler makes any producer it wraps an MCP wire surface, so the site that owed the bump was in
-# a file that never mentions MCP. When editing a payload builder, grep for a handler that returns
-# it verbatim before concluding the change is CLI-only.
+# 1.6.0 -> 1.7.0 (task 336, retroactive): `budget_remediable` reached the wire on a SECOND tool
+# family without a bump: #826 added it in `repo_map.py`, and `tg_repo_map` returns
+# `json.dumps(build_repo_map(...))` VERBATIM, so every `scan_limit` field the CLI gains, MCP
+# gains in the same commit (served at 1.6.0, which promised only `tg_search`'s copy).
+# Lesson: a pass-through handler makes any producer it wraps an MCP wire surface; grep for a
+# handler returning a builder's payload verbatim before calling a change CLI-only.
 #
 # Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
 # existing caller breaks; bumped so a version-pinning client can discover the field.
@@ -233,12 +222,9 @@ def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
     installed FastMCP -- the decorator's only side effect is registering `fn` in the server's
     internal tool table), so `fn` is safe to keep calling directly in either flag state.
 
-    Deliberately evaluated once per decoration (import time), not per call: registration and
-    `_MCP_TOOL_CAPABILITIES` (built further below) must both be bound to the SAME flag read so
-    they can never disagree within one running server process -- see the flag-OFF invariant
-    test's subprocess-isolation rationale (`test_mcp_legacy_tools_flag_off_deregisters_
-    legacy_tools_subprocess` in test_mcp_server_meta_dispatch.py) for why a same-process `importlib.reload`
-    is not an equivalent way to exercise the other flag state.
+    Evaluated once per decoration (import time) so registration and `_MCP_TOOL_CAPABILITIES`
+    share the SAME flag read. Each registered tool's description gains a covering-meta-tool
+    note after the meta tools are defined (see `_LEGACY_NOTE`).
     """
     if _legacy_tools_enabled():
         return mcp.tool()(fn)  # type: ignore[no-any-return]
@@ -1684,13 +1670,12 @@ def tg_orient(
     ignore: list[str] | None = None,
 ) -> str:
     """
-    Call FIRST for orientation: return a one-call codebase orientation capsule.
+    Return a one-call orientation capsule for an unfamiliar repository.
 
     Mirrors `tg orient` (build_orient_capsule_json): the most central files by import-graph
     centrality, heuristically detected entry points, a symbol map, and bounded AST-boundary
-    source snippets within a token budget. Pure-CPU, no API key, no GPU. Prefer this before
-    tg_repo_map/tg_context_pack/tg_agent_capsule when orienting on an unfamiliar repo for the
-    first time -- it answers "what is this codebase and where do I start" in one call.
+    source snippets within a token budget. Pure-CPU, no API key, no GPU. Use it when you need
+    "what is this codebase and where do I start", before tg_repo_map/tg_context_pack.
 
     Args:
         path: File or directory to orient on. Confined to the MCP server root (cwd, or
@@ -2012,7 +1997,12 @@ def tg_context_render(
         query: Query text used to rank and render repo context.
         path: File or directory to inventory.
         max_repo_files: Maximum repository files to scan before ranking context.
+        max_files / max_sources / max_symbols_per_file / max_render_chars: bundle size caps.
+        max_tokens: Bundle bound (default ~16000; 0/None = unbounded); model: token-estimation
+            model; optimize_context: strip blank/comment-only source lines.
+        render_profile: full, compact, or llm.
         provider: Semantic provider for primary target proof: native, lsp, or hybrid.
+        profile: Include a render profiling breakdown.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -2109,9 +2099,9 @@ def tg_agent_capsule(
         gpu_device_ids: Optional selected GPU IDs for native route evidence.
         gpu_timeout_s: Maximum seconds for each opt-in GPU evidence command.
         deadline: Optional wall-clock budget in seconds for the underlying repo-map build
-            and capsule render/ranking pass (#98/W1b parity: mirrors `tg agent --deadline` /
-            `tg codemap --deadline`, previously undefined on this MCP tool). When exceeded,
-            the scan stops and returns a flagged partial result instead of running unbounded.
+            and capsule render/ranking pass (mirrors `tg agent --deadline` /
+            `tg codemap --deadline`). When exceeded, the scan stops and returns a flagged
+            partial result instead of running unbounded.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
     # before any scan -- see tg_repo_map for the systemic-finding rationale.
@@ -2308,6 +2298,7 @@ def tg_session_context_render(
         max_render_chars: Maximum characters to emit in rendered_context.
         optimize_context: Strip blank lines and comment-only lines from rendered source blocks.
         render_profile: Render profile to use: full, compact, or llm.
+        max_tokens: Bundle bound (default ~16000; 0/None = unbounded).
     """
     try:
         from tensor_grep.cli.session_store import SessionStaleError, session_context_render
@@ -2832,7 +2823,7 @@ def tg_find(
 ) -> str:
     """
     Whole-repo hybrid semantic search (BM25 + local CPU dense-embedding relevance, RRF-fused
-    [+ optional MaxSim late rerank]) -- the agent-callable form of `tg find` (Wave 2d, #189).
+    [+ optional MaxSim late rerank]) -- the agent-callable form of `tg find`.
 
     Unlike `tg_search`/`tg_ast_search` (which re-rank an EXISTING pattern match set), `tg_find`
     walks and ranks the WHOLE repo -- no pattern pre-filter, so it can surface content a
@@ -2845,9 +2836,9 @@ def tg_find(
 
     Args:
         query: Natural-language or keyword query to rank the corpus against.
-        path: Root directory (or single file) to search. Confined to the project root (cwd);
-            a path that legitimately lives outside the project must be copied in first
-            (fail-closed, not a silent drop).
+        path: Root directory (or single file) to search. Confined to the MCP server root
+            (cwd, or TG_MCP_ROOT if set); a path that legitimately lives outside it must be
+            copied in first (fail-closed, not a silent drop).
         limit: Maximum ranked chunks to return.
         max_repo_files: Maximum repo files to scan before ranking.
         max_tokens: Bound the result set to ~N tokens, dropping the lowest-ranked matches
@@ -2975,7 +2966,9 @@ def tg_search(
     semantic: bool = False,
 ) -> str:
     """
-    Search files for a regex pattern, with GPU acceleration when applicable.
+    Search files for a regex or literal pattern and return bounded structured JSON: ripgrep-
+    backed when rg is available, else a Python fallback (or, when applicable, an experimental
+    GPU path); optionally re-ranked by BM25 (`rank`) or hybrid relevance (`semantic`).
 
     Args:
         pattern: A regular expression or exact string used for searching.
@@ -3794,8 +3787,8 @@ def tg_classify_logs(file_path: str, structured_json: bool = True) -> str:
 
     Args:
         file_path: The absolute path to the log file to classify. Confined to the
-            project root (cwd); a log file that legitimately lives outside the project
-            must be copied in first (fail-closed, not a silent drop).
+            MCP server root (cwd, or TG_MCP_ROOT if set); a log file that legitimately
+            lives outside it must be copied in first (fail-closed, not a silent drop).
         structured_json: Return bounded structured JSON (default true). Set to false for
             plain-text output.
     """
@@ -4280,12 +4273,12 @@ def tg_navigate(
     deadline: float | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: symbol/file navigation (#98). Composes 6 legacy tools by `action`:
+    Task-shaped meta-tool: symbol/file navigation. Composes 6 legacy tools by `action`:
 
     - action="defs": exact definition locations for `symbol` (= tg_symbol_defs)
     - action="source": exact source blocks for `symbol`'s definition (= tg_symbol_source)
-    - action="refs": Python-first symbol references for `symbol` (= tg_symbol_refs)
-    - action="callers": Python-first call sites + likely impacted tests for `symbol`
+    - action="refs": AST-verified references to `symbol` across tg's languages (= tg_symbol_refs)
+    - action="callers": AST-verified call sites + likely impacted tests for `symbol`
       (= tg_symbol_callers)
     - action="imports": what `file` imports, O(1) single-file parse (= tg_file_imports)
     - action="importers": the files that import `file` (= tg_file_importers)
@@ -4387,7 +4380,7 @@ def tg_impact(
     deadline: float | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: symbol change-impact analysis (#98). Composes 4 legacy tools:
+    Task-shaped meta-tool: symbol change-impact analysis. Composes 4 legacy tools:
 
     - action="impact": likely impacted files/tests for `symbol` (= tg_symbol_impact)
     - action="blast_radius": exact callers + transitive file/test blast radius
@@ -4600,7 +4593,7 @@ def tg_query(
     workspace_roots: list[str] | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search (#98).
+    Task-shaped meta-tool: pattern/AST/whole-repo-semantic/trigram-index search.
     Composes 4 legacy tools by `action`:
 
     - action="text": regex/literal pattern search, optional BM25/hybrid re-rank (= tg_search)
@@ -4617,9 +4610,11 @@ def tg_query(
         lang: Tree-sitter language name. Required for action="ast".
         path: File or directory to search. Confined to the MCP server root as the first
             operation, regardless of action.
-        case_sensitive, ignore_case, fixed_strings, word_regexp, context, max_count,
-            max_results, max_files, count_matches, glob, type_filter, rank, semantic:
-            action="text" options; see tg_search.
+        action="text" only -- ripgrep-style: case_sensitive, ignore_case (-i), fixed_strings
+            (-F), word_regexp (-w), context (-C), max_count (-m), count_matches (-c), glob,
+            type_filter; max_results (default 150) / max_files (default 15) bound output;
+            rank re-ranks by BM25; semantic re-ranks by BM25 + local dense embeddings (wins
+            over rank; falls back to BM25 visibly via rank_fallback_reason).
         structured_json: Return bounded structured JSON (default true). text/ast only.
         max_repo_files: Maximum repository files to scan/walk before the scan is capped.
         limit: Maximum ranked chunks to return (action="find").
@@ -4628,8 +4623,8 @@ def tg_query(
             explicitly unbounded.
         deadline: Optional wall-clock budget in seconds (action="find"). Partial results are
             flagged via result_incomplete, never silently truncated.
-        workspace_roots: Optional list of additional workspace roots (max
-            _MAX_WORKSPACE_ROOTS). When supplied (non-empty), EACH element is independently
+        workspace_roots: Optional list of additional workspace roots (at most 8; a longer
+            list is refused). When supplied (non-empty), EACH element is independently
             confined to the MCP server root; if ANY element escapes, or the list exceeds the
             cap, the WHOLE call is refused fail-closed (no partial/best-effort root list). The
             SAME action then runs once per confined root, and results are aggregated under a
@@ -4798,13 +4793,16 @@ def tg_context(
     deadline: float | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: repository context for edit planning (#98). Composes 4 legacy tools:
+    Task-shaped meta-tool: repository context for edit planning. Composes 4 legacy tools:
 
     - action="pack": ranked repository context pack (= tg_context_pack)
     - action="edit_plan": machine-readable edit-planning bundle, no rendered source
       (= tg_edit_plan)
     - action="render": prompt-ready repository context bundle (= tg_context_render)
     - action="capsule": Actionable Context Capsule for agent edit planning (= tg_agent_capsule)
+
+    Pick by output: capsule = smallest answer (1200 tokens); edit_plan = targets, no source;
+    pack = ranked files/symbols/tests (~16000); render = same + source. Repeat: tg_session.
 
     Args:
         action: One of "pack", "edit_plan", "render", "capsule".
@@ -4912,10 +4910,10 @@ def tg_explore(
     json_output: bool = True,
 ) -> str:
     """
-    Task-shaped meta-tool: codebase orientation and diagnostics (#98). Composes 4 legacy tools:
+    Task-shaped meta-tool: codebase orientation and diagnostics. Composes 4 legacy tools:
 
-    - action="orient": one-call codebase orientation capsule; call FIRST on an unfamiliar
-      repo (= tg_orient)
+    - action="orient": one-call codebase orientation capsule for an unfamiliar repo
+      (= tg_orient)
     - action="repo_map": deterministic repository inventory (= tg_repo_map)
     - action="doctor": system/GPU/cache/AST/daemon/LSP diagnostics (= tg_doctor)
     - action="devices": routable GPU inventory (= tg_devices)
@@ -5006,7 +5004,7 @@ def tg_session(
 ) -> str:
     """
     Task-shaped meta-tool: cached repository-map session lifecycle and session-scoped
-    queries (#98). Composes 11 legacy tools by `action`:
+    queries. Composes 11 legacy tools by `action`:
 
     - action="open": create a cached session (= tg_session_open) [writes the session cache]
     - action="list": list cached sessions (= tg_session_list)
@@ -5035,10 +5033,13 @@ def tg_session(
         file: File to find importers of. Required for file_importers. Confined to the MCP
             server root; the delegated legacy tool re-confines it to the session root.
         path: File or directory rooted at the session scope. Confined to the MCP server root.
-        max_repo_files: Maximum repo files to scan into a new/refreshed session (open).
-        max_files, max_sources, max_symbols, max_symbols_per_file, max_render_chars, model,
-            optimize_context, render_profile, profile: render/plan bundle options; see the
-            composed tool's own docstring for which action(s) use each.
+        max_repo_files: repo files to scan (open) or cached files to score (edit_plan/
+            context_render). Size caps: max_files, max_sources (edit_plan/context_render/
+            blast_radius_*), max_symbols (edit_plan/blast_radius_plan), max_symbols_per_file,
+            max_render_chars (context_render/blast_radius_render).
+        model (token estimation), profile (render profiling): context_render.
+            optimize_context (strip blank/comment-only lines), render_profile (full, compact,
+            llm): context_render/blast_radius_render.
         max_tokens: Bound the output for prompt injection (context/context_render). None
             uses the composed action's own default; pass 0 for explicitly unbounded.
         max_depth: Maximum reverse-import depth (blast_radius* actions).
@@ -5201,7 +5202,7 @@ def tg_scan(
     max_evidence_snippet_chars: int = 120,
 ) -> str:
     """
-    Task-shaped meta-tool: built-in/inline ast-grep ruleset scanning (#98). Composes 2
+    Task-shaped meta-tool: built-in/inline ast-grep ruleset scanning. Composes 2
     legacy tools:
 
     - action="scan": execute a ruleset scan (= tg_ruleset_scan). Read-only by default;
@@ -5210,12 +5211,17 @@ def tg_scan(
 
     Args:
         action: One of "scan", "rulesets".
-        ruleset, inline_rules, path, language, glob, file_type, max_depth,
-            allow_broad_generated_scan, baseline_path, write_baseline, suppressions_path,
-            write_suppressions, justification, include_evidence_snippets,
-            max_evidence_snippets_per_file, max_evidence_snippet_chars: forwarded verbatim
-            to tg_ruleset_scan for action="scan"; see that tool's docstring. Exactly one of
-            ruleset/inline_rules is required for action="scan". Unused by action="rulesets".
+        For action="scan" only; exactly one of ruleset/inline_rules is required:
+        ruleset: built-in ruleset name. inline_rules: inline ast-grep YAML (`---`-separated
+            docs: id, rule.pattern, optional language/severity/message; <=64KiB; bad YAML or
+            language -> invalid_input). language: ruleset override / inline-rule default.
+        path, glob, file_type, max_depth: scan root (confined to the MCP server root) and
+            bounds; allow_broad_generated_scan opts in to temp/cache/system roots.
+        baseline_path / suppressions_path: read-only JSON confined to the scan root (marks
+            known / suppresses matching findings). write_baseline / write_suppressions:
+            WRITE that file; write_suppressions requires justification (recorded per entry).
+        include_evidence_snippets, max_evidence_snippets_per_file (default 1),
+            max_evidence_snippet_chars (default 120): bounded per-finding source evidence.
     """
     try:
         try:
@@ -5272,7 +5278,7 @@ def tg_audit(
     bundle_path: str | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: rewrite audit manifest and review bundle operations (#98).
+    Task-shaped meta-tool: rewrite audit manifest and review bundle operations.
     Composes 5 legacy tools:
 
     - action="manifest_verify": verify a rewrite audit manifest (= tg_audit_manifest_verify)
@@ -5372,7 +5378,7 @@ def tg_checkpoint(
     path: str = ".",
 ) -> str:
     """
-    Task-shaped meta-tool: edit checkpoint lifecycle (#98). Composes 3 legacy tools:
+    Task-shaped meta-tool: edit checkpoint lifecycle. Composes 3 legacy tools:
 
     - action="create": create an edit checkpoint rooted at `path` (= tg_checkpoint_create)
       [writes]
@@ -5432,7 +5438,7 @@ def tg_rewrite(
     expected_match_count: int | None = None,
 ) -> str:
     """
-    Task-shaped meta-tool: native AST rewrite plan/apply/diff (#98). Composes 3 legacy tools:
+    Task-shaped meta-tool: native AST rewrite plan/apply/diff. Composes 3 legacy tools:
 
     - action="plan": native AST rewrite plan JSON, preview only (= tg_rewrite_plan)
     - action="apply": apply native AST rewrites; THE MUTATION SURFACE (writes files)
@@ -5502,6 +5508,19 @@ def tg_rewrite(
     except Exception as exc:
         _log_tool_exception("tg_rewrite", exc)
         return _sanitized_tool_error_text("tg_rewrite", exc)
+
+
+_LEGACY_NOTE = (
+    "\n\nLegacy per-function tool; meta-tool `{}` (action={}) covers this operation. "
+    "Set TG_MCP_LEGACY_TOOLS=off to advertise only the consolidated surface."
+)
+for _meta in _META_MCP_TOOLS:  # legacy -> meta map, derived from each "(= tg_xxx)" docstring bullet
+    for _act, _old in re.findall(
+        r'action="(\w+)"(?:(?!\n\s*- action=)[\s\S])*?\(= (tg_\w+)\)',
+        globals()[_meta].__doc__ or "",
+    ):
+        if (_t := mcp._tool_manager.get_tool(_old)) is not None:
+            _t.description += _LEGACY_NOTE.format(_meta, _act)
 
 
 # Bound the Content-Length compatibility read. Official MCP stdio is newline-delimited; this framed

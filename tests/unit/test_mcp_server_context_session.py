@@ -706,12 +706,11 @@ def test_tg_orient_returns_json_capsule(tmp_path, monkeypatch):
     assert isinstance(payload["schema_version"], int)
 
 
-def test_tg_orient_docstring_directs_agent_to_call_first(tmp_path):
-    """Design instruction: the docstring must close the 'run orient first is unreachable via
-    MCP' gap by explicitly telling an agent to call this FIRST for orientation."""
+def test_tg_orient_docstring_states_when_to_use(tmp_path):
+    """The docstring states plainly when to use orient (no 'call FIRST' booster)."""
     from tensor_grep.cli import mcp_server
 
-    assert "call first for orientation" in (mcp_server.tg_orient.__doc__ or "").lower()
+    assert "where do i start" in (mcp_server.tg_orient.__doc__ or "").lower()
 
 
 def test_tg_orient_forwards_max_tokens_max_central_files_and_ignore(monkeypatch):
