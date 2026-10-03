@@ -48,11 +48,11 @@ prefer the canonical path-first form.
    - `tg prepare REPO_PATH/src "task" --out capsule.json --json`  # also persists the full capsule to FILE (byte-identical to stdout JSON; symlink/dangling-symlink/dir refused; feeds `tg evidence emit --capsule FILE` directly, no manual redirect)
    - `tg prepare REPO_PATH/src "task" --claim --json`  # also submit advisory ledger claim; anonymous claims stamp `coordination.claim.agent_id_hint` unless `TG_LEDGER_AGENT_ID` is set
    - Fallback loop: `tg agent` + `tg route-test` (budget 90s) if prepare unavailable
-   - Whole-repo: **explicit** `--deadline N` on prepare/agent; bare `tg agent REPO` still TIMEOUT empty @75s
+   - Whole-repo: pass an explicit `--deadline N` on prepare/agent. `--deadline` stops new work starting but is not a wall-clock cap, so set the caller's own timeout above it.
    - Mega-repos: narrow PATH; deadline partials often null symbol
-5a. Multi-agent ledger — see `tensor-grep-ledger`. Claim/release/list now canonicalize to the nearest
-   `.git` ancestor (worktree-aware, one store per repo) — `list` rolls scope UP, so the PATH-mismatch
-   footgun from earlier dogfood rounds is fixed:
+5a. Multi-agent ledger — see `tensor-grep-ledger`. Claim/release/list canonicalize to the nearest
+   `.git` entry (a worktree's `.git` FILE is a boundary: each worktree has its OWN store; sibling
+   worktrees do not see each other's claims) — `list` rolls scope UP within that store:
    - `tg ledger claim REPO --symbol SYM --agent-id AGENT --json`
    - `tg ledger list REPO --json`  # or any subtree PATH under REPO — rolls up to the same store
    - `tg ledger record REPO --receipt receipt.json --symbol SYM --agent-id AGENT --json`
@@ -64,7 +64,7 @@ prefer the canonical path-first form.
    - Note `TG_CAPSULE_INLINE_CALLERS` (default-OFF): when set, `tg agent`/`tg prepare` prepend
      `# tg: callers=N (top: a, b)` to the primary snippet and add `snippets[i].inline_structural_annotation`
      (~+2.8% tokens) — reuses already-collected blast-radius evidence, no new scan.
-5c. Skip `tg codemap` on WSL (TIMEOUT 90s)
+5c. `tg codemap` whole-repo takes ~30-40s natively; under WSL /mnt/c it is much slower (9p). Scope PATH or run from a native path.
 5d. GPU: see `tensor-grep-gpu` — default loops stay CPU
 6. Make the smallest correct edit from primary targets.
 7. Run only the returned validation commands.
@@ -104,8 +104,9 @@ A resolved zero-caller result is NOT dead code either — the call graph can't s
 
 ## Known Issues
 
-**Latest CUJ dogfood: v1.110.14 (unchanged through v1.110.16; re-run the CUJ on the published wheel before the next restamp)** (2026-08-11, Windows `uvx`, artifact
-`C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**). Core CUJ + M16/M17 still green.
+**Last CUJ dogfood: v1.110.13** (2026-08-11, Windows `uvx`, artifact
+`C:\Users\Public\tg-dogfood-111013.json` — **21/21 PASS**; not re-run since -- re-run the CUJ on the
+current published wheel before citing it as current). Core CUJ + M16/M17 green at that version.
 **A90 shipped:** reserved Phase-2 names `edit-ready` / `verify-edit` / `workspace` with a flag
 (`--help`/`--json`) fail closed — exit **2**, stderr `unknown_command` (JSON on stderr for
 `--json`, `nearest: []`). Typo + `--help` suggests nearest (`searhc` → search). Bare
@@ -120,7 +121,7 @@ exit 1 with zero matches = complete empty). Skill text that said parent class=`s
 **Historical:** last full workspace+GPU sweep was v1.91.0 (WSL). Language campaign closed through
 Task 10E + F7 Task 11 (#957). Prefer the 1.110.13 CUJ table over older 1.95.0 “7 of 10” prose.
 
-**Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol; bare agent TIMEOUT empty @75s.
+**Prefer `tg prepare REPO/src`** over the multi-step agent loop for routine edits. Whole-repo prepare/agent with `--deadline` still partial/null-symbol.
 
 **`tg install-dense`:** once per host; post-install `tg find` drops the BM25-only `rank_fallback_reason` (the fallback message itself now leads with `tg install-dense` when dense is absent).
 
@@ -131,7 +132,7 @@ Task 10E + F7 Task 11 (#957). Prefer the 1.110.13 CUJ table over older 1.95.0 �
 Escape hatches: explicit PATH, `--max-depth`, or `--allow-broad-generated-scan` — `--glob`/`--type`
 alone do NOT bypass the defaulted-PATH ceiling. Prefer per-repo for deep `--type ts`.
 
-**`tg codemap` still TIMEOUT on WSL** (90s). Importers/callers-at-root may be deadline-partial.
+**`tg codemap` on WSL /mnt/c is slow (9p filesystem), not a tg hang** -- native whole-repo runs complete in ~30-40s. Importers/callers-at-root may be deadline-partial.
 
 **CLI traps:** `tg classify` has no `--json`; scan ruleset names from `tg rulesets`; session
 `context-render` needs absolute session-root PATH; reserved+flag refuses (A90); bare unknown tokens may still search.

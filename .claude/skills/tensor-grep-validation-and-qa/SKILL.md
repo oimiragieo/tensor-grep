@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-validation-and-qa
-description: Use when deciding what counts as proof that a tensor-grep (tg) change works — before trusting a subagent's "tests pass", writing a new test, claiming a routing/docs/release fix is done, shipping a doc-drift/ranking/classification heuristic off green fixture tests, proving a red-green baseline on a reverted/pre-fix commit, reviewing a payload-byte/ratio governance test, de-flaking a timing-sensitive test, or running the pre-push gate. Covers TDD-first discipline, the CliRunner-vs-real-binary trap, the fixture-green-vs-real-corpus-dogfood trap for precision/heuristic features, the `capfd`-vs-`result.stdout` capture-surface trap on routing/delegation changes (needs `tests/integration/` run with the native `tg` binary rebuilt, not just `tests/unit/`), the `tests/conftest.py` `sys.path.insert`-outranks-`PYTHONPATH` trap that can falsify a red-green baseline even with `tensor_grep.__file__` verified, a shared-envelope field growth breaking a payload-ratio governance test plus its tmp-path-length platform sensitivity, the self-gate-suite-subset-is-not-full-CI-matrix trap, a new test that proves nothing until seen fail on the pre-fix baseline, a `max(baseline*N, floor)` timing ratio degenerating to its floor below clock resolution plus the profile-before-attributing-a-flake discipline, preferring a structural order-based assertion over any wall-clock form, the certified/golden inventory (routing parity, docs governance, release-asset validation), agent-readiness/`tg dogfood`, benchmark-gated speed claims, acceptance thresholds, and which suite/marker/fixture to use for a new test, plus the `--preview` / `--no-sync` / `-x` gotchas.
+description: Use when deciding what counts as proof that a tensor-grep (tg) change works: before trusting a subagent's "tests pass", writing or de-flaking a test, claiming a routing/docs/release/heuristic fix is done, proving a red-green baseline, reviewing a payload/ratio governance test, or running the pre-push gate. Covers TDD-first discipline, the real-binary vs CliRunner trap, fixture-green vs real-corpus dogfood, timing-assertion hygiene, the certified/golden inventories, agent-readiness and `tg dogfood`, acceptance thresholds, and which suite/marker/fixture a new test belongs in.
 ---
 
 # tensor-grep validation and QA
@@ -14,8 +14,7 @@ tests that fail on drift, and speed claims are gated by measured numbers, not re
 
 Two readers, written to the **lower bound** of each:
 
-- A **Sonnet-class AI** in a cheap autonomous session: copy-pasteable commands and hard gates so you
-  cannot silently skip validation.
+- An **agent working autonomously**: copy-pasteable commands and the gates that must not be skipped.
 - A **mid-level human engineer**: the *why* behind each gate, so you extend it correctly to new cases.
 
 ## When to use this skill vs a sibling
@@ -23,7 +22,7 @@ Two readers, written to the **lower bound** of each:
 | Your task | Use |
 |---|---|
 | "Is this proof good enough to claim done?" / adding or picking a test | **this skill** |
-| The non-negotiable gates (draft-PR-only, registration sites, fail-closed contract, push-race) | `tensor-grep-change-control` |
+| The non-negotiable gates (verified-green self-merge, registration sites, fail-closed contract, push-race) | `tensor-grep-change-control` |
 | Picking/reading a `benchmarks/*.py` script, the noise-floor rule for sub-10ms rows | `tensor-grep-benchmark-and-proof-toolkit` |
 | Interpreting a `tg doctor --json` / `tg dogfood` field — what it does and does NOT prove | `tensor-grep-diagnostics-and-tooling` |
 | A live bug/red-CI to triage | `tensor-grep-debugging-playbook` |
@@ -45,20 +44,6 @@ relax any gate in `tensor-grep-change-control`.
 **The single most repeated failure mode in this repo.** TEN distinct forms, most in ONE session
 (2026-07-25; forms 7 + 8 added 2026-07-26, form 9 2026-07-27, form 10 2026-07-28). Every form
 shares one shape: *something that looks like verification isn't.*
-
-(The count read NINE while ten forms were present, for three days. A header that miscounts the
-thing below it is the smallest possible instance of this Part's own subject -- and it was found by
-an audit that COUNTED the forms rather than reading the sentence. Re-derive the number when you add
-one; do not trust the header, including this one.
-
-**Both halves of that two-file edit were still wrong on 2026-08-01, in OPPOSITE directions.**
-`AGENTS.md`'s header kept saying "nine forms" for four more days -- the fix landed here and never
-crossed over -- while THIS file, which had the count right, misdated forms 8-9 to 2026-07-27 when
-Form 8's own text reads 2026-07-26. Each doc was half right, and reading either one alone
-confirmed it. The dates and the count are now derived from the `**Form N —**` headings
-themselves, which are the only authority, and `tests/unit/test_skill_library_drift.py` now fails
-if the stated count and the enumerated forms disagree in EITHER file -- because a rule that says
-"re-derive the number" had already been read, agreed with, and half-applied.)
 
 **The one question that catches all ten — before trusting any green signal, ask:
 "what would this check show if the thing it verifies were BROKEN?"
@@ -430,7 +415,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
 
 1. **A failing test written before the fix** (TDD-first). `CONTRIBUTING.md` "Performance Discipline":
    *"Start with a failing test when behavior changes."* Repeated in `AGENTS.md` Operating Rules #1
-   (`AGENTS.md:389`). If you cannot point to the test that failed before your diff, the fix is
+   (`AGENTS.md`). If you cannot point to the test that failed before your diff, the fix is
    unverified — see `superpowers:test-driven-development`.
 2. **A contract test**, not just a behavior test. This repo names them `test_*_contract*.py` /
    `test_*_contracts.py` (e.g. `tests/e2e/test_backend_contracts.py`,
@@ -445,7 +430,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    door (the layer that intercepts plain-text searches and forwards them to `rg` *before* Typer ever
    sees `argv`) is invisible to it. This is not hypothetical: the `tg search --rank` flag shipped
    broken to real users while every `CliRunner` test stayed green, because the flag was missing from
-   one of the two search-flag front doors (`CONTRIBUTING.md:73`, `AGENTS.md:411-418`). After any
+   one of the two search-flag front doors (`CONTRIBUTING.md:73`, `AGENTS.md`). After any
    command/flag/routing change, run the real binary: `python scripts/dogfood/dogfood_features.py`
    (installed `tg` on PATH) or the clean-room Docker path in `scripts/dogfood/README.md`. See
    `dogfood-the-shipped-artifact` (global skill) and `tensor-grep-change-control` Part 5.
@@ -454,7 +439,7 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    load-bearing gap in this discipline).** A dogfood/`tg orient` run mostly exercises a WARM, cached
    path — repo-map/AST-parse state already populated from a prior call — so it can misjudge a change
    whose effect is COLD-path-only. Receipt: a warm end-to-end `tg orient` dogfood read the
-   `_python_imports_and_symbols` walk-merge (`src/tensor_grep/cli/repo_map.py:2166` — re-derive with: grep -n '_python_imports_and_symbols' src/tensor_grep/cli/repo_map.py) as **−36% slower**;
+   `_python_imports_and_symbols` walk-merge (now in `src/tensor_grep/cli/repo_map_lang_python.py` — re-derive with: `grep -rn 'def _python_imports_and_symbols' src/tensor_grep/cli/`) as **−36% slower**;
    an isolated cold microbench of the same function (fresh process, single pass over distinct inputs)
    showed it is actually **~54% faster** (961ms→446ms) — the warm run never exercised the changed code
    path. To validate a cold-path optimization, microbench the target function directly or clear the
@@ -466,8 +451,8 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    heuristic tends to only contain the cases the author already thought of; the failure mode that
    actually matters (flooding false positives) never shows up until the heuristic meets a real, larger
    corpus. Receipt (2026-07-03): the `tg diff-docs` MVP (round-4 design-council build, commit
-   `90b7042` "wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)" on
-   `wip/diff-docs-precision`, **not merged to `main`**) shipped with 17 green tests in
+   `90b7042` "wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)", preserved as
+   branch `archive/diff-docs-precision`, **not merged to `main`**) shipped with 17 green tests in
    `tests/unit/test_diff_docs.py` (`grep -c "def test_"` on that commit) — every fixture passed — but a
    dogfood run against this repo's real `docs/` vs `src/` corpus produced on the order of 20,000
    findings, the large majority flagging language/stdlib types (`String`, `Option`, `Vec`) as
@@ -573,9 +558,9 @@ Ranked by how hard each is to fake, cheapest-to-check first:
     native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596
     (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending
     before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading
-    `doctor` probe status is a security-relevant integrity failure, not a UX nit. Route security-review
-    model selection through `feedback-fable5-cyber-classifier-audit-on-opus` (global memory) — run
-    vuln-hunting turns on Opus/Sonnet, not Fable (its cyber classifier silently falls back mid-turn).
+    `doctor` probe status is a security-relevant integrity failure, not a UX nit. Explicit security-adversarial
+    passes run on an Opus seat (Fable's cyber classifier can decline or reroute vuln-hunting turns);
+    other audits route per the `model-router` skill.
     Verdict is binary: `SHIP` or `FIX-FIRST(file:line + repro + fix)`, never a rubber stamp.
 11. **A test that exercises a hang-class bug (ReDoS, deadlock, lock-race, unbounded subprocess/loop)
     must itself be unhangable, or it just relocates the hang into your test run.** Wrap it in an outer
@@ -716,13 +701,13 @@ Ranked by how hard each is to fake, cheapest-to-check first:
 
 ## Part 2 — Required local validation (run before push)
 
-From `CONTRIBUTING.md:5-14` and `AGENTS.md:654-698`:
+From `CONTRIBUTING.md` and `AGENTS.md` (locally the targeted suites for the touched areas; the full `pytest -q` is CI's or the `scripts/ci-local` container's, per A12):
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q <targeted tests/unit files>
 ```
 
 For release/workflow/package-manager changes, also:
@@ -745,12 +730,12 @@ Gotchas that each cost a real CI cycle when missed:
   and can report false CR. (`CONTRIBUTING.md:24`)
 - **Markdown `ruff format --check --preview` on Windows disk is not a blob defect.** `*.md` is not in `.gitattributes` `eol=lf`. A working-tree FAIL with `core.autocrlf=true` can be CRLF-only; pipe the git blob (`git show origin/main:path | ruff format --check --preview --stdin-filename path -`) before opening a format PR. HYGIENE-FORMAT 2026-08-30 retired on this: 15/15 blobs passed, disk failed. (`detect-the-false-green`)
 - **`mypy` runs in `strict = true` mode** targeting `python_version = "3.11"` syntax even though the
-  repo's CI-tested floor is 3.11-3.12 (`pyproject.toml:559`, `requires-python = ">=3.11"`) — new functions need full type
+  repo's CI-tested floor is 3.11-3.12 (`[tool.mypy]` in `pyproject.toml`, `requires-python = ">=3.11"`) — new functions need full type
   annotations (`disallow_untyped_defs = true`); do not rely on inference alone.
 - **`uv run` alone re-syncs the environment to default deps and silently drops optional extras**
   (e.g. `[dev]`'s tree-sitter). If a prior step installed extras deliberately, use `uv run --no-sync`
   to keep them — this is exactly what CI's `agent-readiness` job does before running the readiness
-  gate (`.github/workflows/ci.yml:150-153`). Forgetting `--no-sync` after an extras install is how a
+  gate (`grep -n "no-sync" .github/workflows/ci.yml`). Forgetting `--no-sync` after an extras install is how a
   "clean" local run diverges from what CI actually validated.
 - **A raw `uv lock` churns ~280 unrelated lines — hand-splice a new dependency instead.** Running
   `uv lock` after adding a package reformats GPU/CUDA marker expressions across the whole file (a
@@ -760,14 +745,14 @@ Gotchas that each cost a real CI cycle when missed:
   `uv export --format requirements.txt --all-extras --no-emit-project --locked` (must exit 0) — the
   exact check the `Dependency & License Audit` gate runs (`.github/workflows/audit.yml:12,51`), which
   reds every new-dependency PR that skips it.
-- **`pytest` addopts include `-x`** (stop at first failure) — `pyproject.toml:47-52`. Useful for fast
+- **`pytest` addopts include `-x`** (stop at first failure) — `grep -n addopts -A5 pyproject.toml`. Useful for fast
   local iteration, but it means one early failure hides every later one in the same run. For a
   full-suite pass with no early exit, override on the command line:
   `uv run pytest -q --maxfail=0` (the last `--maxfail` value wins over the `-x` baked into `addopts`;
   verified empirically 2026-07-02).
 - **The full suite is slow on Windows.** `uv run pytest -q` can exceed 70-90s when the full
-  JS/TS/e2e surface is hot; budget at least 120s for narrow suites and much more for the full run
-  under automation (`AGENTS.md:667`). Run a narrow suite first for a focused change, e.g.:
+  JS/TS/e2e surface is hot; budget at least 120s for narrow suites, and run the full suite only in CI
+  or the `scripts/ci-local` container, never locally on the shared box (`AGENTS.md`, A12). Run a narrow suite first for a focused change, e.g.:
   ```powershell
   uv run pytest tests/unit/test_cli_bootstrap.py -q
   uv run pytest tests/unit/test_cpu_backend.py -q
@@ -801,22 +786,22 @@ certified truth, not advisory tests.
 
 - `tests/e2e/test_routing_parity.py` runs the **same argv** through three launchers —
   `python -m tensor_grep`, the compiled native `tg` binary, and `bootstrap.py` — and asserts matching
-  exit code / stdout / stderr (`run_command`, `LAUNCHERS = ["python-m", "native", "bootstrap"]`,
-  `test_routing_parity.py:146-160,163,404-489`). It also pins `PUBLIC_TOP_LEVEL_COMMANDS`
-  (`test_routing_parity.py:18-69`) against both Python's and native's visible `--help` command lists
-  (`test_top_level_help_visible_commands_match_public_contract`, `:554-564`) and pins
+  exit code / stdout / stderr (`run_command`, `LAUNCHERS = ["python-m", "native", "bootstrap"]`;
+  grep those names in `test_routing_parity.py`). It also pins `PUBLIC_TOP_LEVEL_COMMANDS`
+  against both Python's and native's visible `--help` command lists
+  (`test_top_level_help_visible_commands_match_public_contract`) and pins
   `PUBLIC_SEARCH_HELP_FLAGS` (from `src/tensor_grep/cli/rg_contract.py:388`) against both
-  `search --help` outputs (`:525-537`).
+  `search --help` outputs.
 - `rust_core/tests/test_search_golden.rs` is a **Windows-only** (`#![cfg(windows)]`) Rust integration
   test that runs the built native `tg` binary against fixture data in `tests/golden/fixture_data/` and
   diffs the output against committed golden files (`tests/golden/*.txt`, e.g.
   `simple_string_match.txt`, `case_insensitive_match.txt`, `regex_match.txt`).
 - CI wires this as the **`search-golden-parity` (windows-latest)** job, which runs
-  `cargo test --test test_search_golden` (`.github/workflows/ci.yml:522-547`), and separately the
+  `cargo test --test test_search_golden` (`grep -n "search-golden-parity" -A25 .github/workflows/ci.yml`), and separately the
   cross-platform `test-python` matrix job runs the full `tests/` tree including
   `tests/e2e/test_routing_parity.py` (`uv run pytest tests -v --tb=short -m "not eval"`,
-  `.github/workflows/ci.yml:406-413`). Both are required by the `Semantic Release` job
-  (`needs: [..., search-golden-parity, ...]`, `.github/workflows/ci.yml:942-943`) — a routing-parity
+  in the `test-python:` job). Both are required by the `Semantic Release` job
+  (`needs: [..., search-golden-parity, ...]`, `grep -n -A2 '^  release:' .github/workflows/ci.yml`) — a routing-parity
   regression blocks the release, not just the PR.
 - This is the concrete enforcement mechanism behind the "4 registration sites for a command / 2 front
   doors for a search flag" rule in `tensor-grep-change-control` Part 3 — when you add a site, add it
@@ -879,16 +864,15 @@ of drifting unnoticed:
 
 ### Golden/snapshot output tests (a fourth, smaller certified surface)
 
-- `tests/e2e/test_output_golden_contract.py` — **21** `GOLDEN_CASES` (derived 2026-08-12; this
-  spot was stamped "20" — recount the `GOLDEN_CASES = [` list entries, which live at `:56-89`
-  now, was cited `:28-60`; locate with `grep -n "GOLDEN_CASES = \[" tests/e2e/test_output_golden_contract.py`).
+- `tests/e2e/test_output_golden_contract.py` — **21** `GOLDEN_CASES` (derived 2026-08-12 — recount
+  the `GOLDEN_CASES = [` list entries; locate with `grep -n "GOLDEN_CASES = \[" tests/e2e/test_output_golden_contract.py`).
   default/`--cpu`/`-o`/`-c`/`-r`/`-n`/binary/`--json`/`--ndjson` combinations run through both
   `python-m` and `native` launchers and compared for output parity.
 - `tests/e2e/test_output_snapshots.py` uses the `pytest-snapshot` plugin's `snapshot.assert_match`
-  fixture (`pyproject.toml:637`, dev dependency) to pin exact JSON-formatter output, with file-path
+  fixture (a dev dependency in `pyproject.toml`) to pin exact JSON-formatter output, with file-path
   normalization to `<FILE>` so the snapshot stays host-independent
   (`test_output_snapshots.py:5-46`). Marker: `pytest.mark.snapshot` (registered in
-  `pyproject.toml:43`).
+  `pyproject.toml`'s `markers`).
 
 ### Per-task-pinned agent-accuracy gate (a fifth certified surface, `tests/eval/`, new directory)
 
@@ -908,7 +892,7 @@ symptom.
 ## Part 4 — Agent-readiness / `tg dogfood`
 
 `scripts/agent_readiness.py` is a fast (3-5 minute) CI-blocking dogfood gate for agent-critical
-surfaces — separate from, and complementary to, the full local-validation gate (`AGENTS.md:684`).
+surfaces — separate from, and complementary to, the full local-validation gate (`AGENTS.md`).
 `tg dogfood` (`dogfood()` in `src/tensor_grep/cli/main.py`, deliberately with NO line number — the one
 that used to sit here drifted past the end of the file when main.py was split on 2026-08-20; find it
 with `grep -n "^def dogfood" src/tensor_grep/cli/main.py`)
@@ -922,23 +906,23 @@ python scripts/agent_readiness.py --output artifacts/agent_readiness.json
 tg dogfood --output artifacts/dogfood_readiness.json
 ```
 
-Useful flags on `scripts/agent_readiness.py` (`main()`, `:1258` (re-derive with: grep -n '^def main' scripts/agent_readiness.py)): `--json` (machine-readable
+Useful flags on `scripts/agent_readiness.py` (`main()`; re-derive with: `grep -n '^def main' scripts/agent_readiness.py`): `--json` (machine-readable
 report to stdout), `--no-shell-probes` (skip public shell version probes — used by CI's Linux
 `agent-readiness` job), `--only-shell-probes` (Windows-only shell probes, mutually exclusive with
 `--no-shell-probes` — used by CI's `windows-agent-readiness` job), `--no-wsl-probe`.
 
 **Acceptance semantics:** the script's exit code is `1 if report["summary"]["failed"] else 0`
-(`:1336` — re-derive with: grep -n 'summary.*failed' scripts/agent_readiness.py) — any failed check fails the whole gate; there is no partial-credit threshold. CI wires two
+(re-derive with: `grep -n 'summary.*failed' scripts/agent_readiness.py`) — any failed check fails the whole gate; there is no partial-credit threshold. CI wires two
 blocking jobs off it — `agent-readiness` (Ubuntu, `--no-shell-probes --no-wsl-probe`,
-`.github/workflows/ci.yml:121-157`) and `windows-agent-readiness` (Windows,
-`--only-shell-probes`, `:159-193`) — and both are `needs:` of `Semantic Release`
-(`release:` job at `ci.yml:1121`, `needs:` at `:1123` — re-derive with: grep -n '^  release:' .github/workflows/ci.yml), so a readiness regression blocks the release the same as a routing-parity regression.
+`grep -n 'agent-readiness:' .github/workflows/ci.yml`) and `windows-agent-readiness` (Windows,
+`--only-shell-probes`) — and both are `needs:` of `Semantic Release`
+(re-derive with: `grep -n -A2 '^  release:' .github/workflows/ci.yml`), so a readiness regression blocks the release the same as a routing-parity regression.
 
-Checks currently in the plan (`build_check_plan`, names verified at
-`scripts/agent_readiness.py:698-1009`): `public-version-{powershell,cmd,pwsh-noprofile,git-bash,wsl,
+Checks currently in the plan (`build_check_plan` in
+`scripts/agent_readiness.py`): `public-version-{powershell,cmd,pwsh-noprofile,git-bash,wsl,
 python-subprocess}`, `public-doctor-{cmd,pwsh-noprofile}`, `public-windows-launcher-quoted-patterns`,
 `public-search-advertised-flag-sweep`, `repo-cli-build-warmup`, `repo-doctor`,
-`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md:821,848`),
+`context-render-trust` (the `context_consistency` agent-trust check — `AGENTS.md`),
 `rg-parity-edges`, `broad-generated-scan-guard`, `ast-info-json`, `ast-run-smoke`,
 `mcp-context-render-smoke`, `mcp-stdio-protocol-smoke`, `agent-capsule`,
 `agent-capsule-mixed-language`, `agent-capsule-hardcases`, `docs-claim-check`. This list drifts with
@@ -952,7 +936,7 @@ CI evidence surface**, not field-by-field diagnostic interpretation.
 
 ## Part 5 — Benchmark-gated speed claims (summary; depth lives in the sibling)
 
-Never claim a speedup without a measured line vs the accepted baseline (`AGENTS.md:702`,
+Never claim a speedup without a measured line vs the accepted baseline (`AGENTS.md`,
 `CONTRIBUTING.md:37-42`). The **which-script decision table**, the fair-baseline rule, and the
 launcher-attribution/stale-binary-refusal rules live in `tensor-grep-benchmark-and-proof-toolkit` —
 load that skill before running or reviewing a benchmark. This skill records only the acceptance
@@ -963,7 +947,7 @@ load that skill before running or reviewing a benchmark. This skill records only
 | `benchmarks/check_regression.py` CLI | `--max-regression-pct` default **5.0%** slowdown fails | `check_regression.py:64,66` (CLI arg) |
 | `perf_guard.check_regressions()` (library default, used when no CLI override) | `max_regression_pct` **10.0%** | `src/tensor_grep/perf_guard.py:48-53` |
 | Noise-floor filter | rows with `baseline_time_s < min_baseline_time_s` (CLI default **0.1s**, library default 0.2s) are skipped entirely — avoids false regressions from scheduler jitter on tiny durations | `check_regression.py:70,72`, `perf_guard.py:52,76-77` |
-| Sub-10ms hot-query rows | use an **absolute** jitter tolerance in addition to the ratio check (a 5% ratio on a 2ms row is noise) | `AGENTS.md:731` |
+| Sub-10ms hot-query rows | use an **absolute** jitter tolerance in addition to the ratio check (a 5% ratio on a 2ms row is noise) | `AGENTS.md` |
 | CI blocking gate | `benchmark-regression` job runs a same-runner base-vs-head comparison on every PR and every push to `main`, and is a blocking gate before `Semantic Release`, not advisory | `docs/CI_PIPELINE.md:23,42-43` |
 
 If a candidate is correct but slower: **revert it and record the attempt** in `docs/PAPER.md` so no
@@ -979,12 +963,12 @@ future agent (human or model) retries the losing idea — see `tensor-grep-resea
 |---|---|---|
 | `tests/unit/` (**re-run `ls tests/unit/*.py | wc -l`** -- 291 on 2026-07-27; do not cite the stamp) | Fast, isolated; heavy `CliRunner` usage (400+ call sites) — good for flag-parsing/formatter/validator logic, **not sufficient alone for routing changes** (Part 1 point 3) | seconds each |
 | `tests/e2e/` (**derive: `ls tests/e2e/test_*.py \| wc -l`** — was stamped 16, then 21, derived **22** at v1.110.14 on 2026-08-12; do not re-stamp the number here) | Cross-launcher parity (`python-m`/`native`/`bootstrap`), golden/snapshot output, backend/IO contracts, rg characterization, hypothesis property tests, throughput floors | seconds-minutes; some spawn real subprocesses |
-| `tests/integration/` (16 files as of 2026-07-22, up from 11) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
+| `tests/integration/` (**derive:** `ls tests/integration/test_*.py \| wc -l`) | Needs real external state — GPU/cuDF, MCP stdio protocol, cross-backend runs, the harness-adoption smoke, `tg orient`/pipeline end-to-end, the `tg prepare` one-shot CUJ (`test_prepare_oneshot_cuj.py`) | slow, sometimes GPU-gated |
 | `tests/eval/` (2 files as of 2026-07-24 — `test_agent_accuracy.py`, `test_retrieval_quality_regression.py`) | The per-task-pinned capability-regression gate (Part 1 point 13) — a distinct evidence tier from a contract test, opt-in via its own marker (`-m eval`), not run by a bare `pytest tests` collection the same way as `unit`/`e2e`/`integration` | seconds-minutes; requires a built repo-map over real fixtures |
 | `tests/golden/` | Committed golden-output fixtures consumed by `rust_core/tests/test_search_golden.rs`, not itself a pytest dir | n/a |
 | `tests/fixtures/`, `tests/schemas/`, `tests/helpers/` | Shared fixture data (`ast_smoke`, `retrieval`), `tg_output.schema.json`, `rg_parity.py` helper (ripgrep binary resolution + `RGContractRow`) | n/a |
 
-`pyproject.toml:34-46` registers `testpaths = ["tests"]` and these markers (apply with
+`pyproject.toml`'s `[tool.pytest.ini_options]` registers `testpaths = ["tests"]` and these markers (apply with
 `@pytest.mark.<name>` or a module-level `pytestmark = pytest.mark.<name>`, `--strict-markers` is on so
 an unregistered marker is a collection error):
 
@@ -994,7 +978,9 @@ an unregistered marker is a collection error):
 `tests/e2e/test_output_snapshots.py`), `performance` (see `tests/e2e/test_throughput.py`, which also
 stacks `slow` and defines an OS-aware throughput floor that returns `None`/skip on Windows), `eval`
 (the agent-accuracy/capsule-ranking golden-set gate — `tests/eval/`, opt-in via `-m eval`, deliberately
-excluded from the plain `pytest tests` collection).
+excluded from the plain `pytest tests` collection), `requires_grammar` (needs a tree-sitter grammar from the
+optional `ast` extra — see `tests/conftest.py`). Re-derive the full list with
+`grep -n "markers = \[" -A 12 pyproject.toml`.
 
 ### Step 2 — pick the shape
 
@@ -1040,8 +1026,8 @@ excluded from the plain `pytest tests` collection).
   logic for why naive string replace breaks on Windows JSON escaping).
 - **rg-compatibility claim**: add a case to `tests/e2e/test_ripgrep_parity.py` /
   `tests/e2e/test_rg_parity_edges.py` / `tests/e2e/test_rg_parity_matrix.py` — these call the real
-  installed `tg` and `rg` binaries via subprocess (`rg_path`/`sample_log_file` fixtures,
-  `tests/conftest.py:38,51`) and diff sorted output lines; this is a **dogfood-shaped** test, not a
+  installed `tg` and `rg` binaries via subprocess (`rg_path`/`sample_log_file` fixtures in
+  `tests/conftest.py`) and diff sorted output lines; this is a **dogfood-shaped** test, not a
   `CliRunner` test, precisely because rg-parity claims must survive the real front door.
 - **Docs claim**: add or extend an assertion in the matching `test_*_docs_governance.py` /
   `test_*_docs.py` file (Part 3.2) — do not just edit the doc; the assertion is the enforcement.
@@ -1058,6 +1044,17 @@ was never observed to fail cannot be trusted to catch a regression.
 
 ---
 
+### Step 4 — Rules that keep a new or reshaped test honest
+
+- **A file split reproduces its baseline PASS and SKIP counts.** Record "N passed, M skipped" before and after (`pytest <file> -q -o addopts=`); a post-split failure is reported, never silenced with an environment probe or an invented `pytest.skip` (a bare worktree has no native extension, so native arms fail there and pass in CI) (AGENTS.md A126).
+- **An acceptance test runs against the PUBLISHED artifact in a clean container** (`scripts/dogfood/Dockerfile`, `Dockerfile.source`), because a maintainer's machine has capabilities a stock `pip install tensor-grep` lacks (AGENTS.md A125); read `docker build` exit codes unpiped and confirm with `docker images <tag>` (A127).
+- **Resolve a caller's module namespace by LEAF name.** Under `--import-mode=importlib` pytest names test modules by basename (`test_cli_modes_blast_radius`, not `tests.unit.…`), so a dotted-prefix match falls through to `globals()` and reads a stale copy silently (AGENTS.md A129).
+- **A replacement for a retired flaky assertion is a new instrument.** Probe the failing condition on the exact surface the test uses (text vs `--json`), write the assertion against what the probe showed, and perturb it until it fails before trusting it (AGENTS.md A138).
+- **A verifier is bound to the artifact it audits.** Record the audited root, HEAD SHA and a path/blob manifest, require exact set equality between expected and reported coverage, and never accept clean-on-empty (AGENTS.md A99).
+- **Advertised capability must be executed.** An unconsumed schema or un-run workflow phase is a false advertisement; wire it or label the stub (AGENTS.md A100).
+- **A gate bounds ONE failure mode, not its family.** `test_skill_library_drift` fails a citation past end-of-file but cannot see one that still resolves and now points at the wrong code; a `for i in 1 2 3` retry loop exits 0 on exhaustion unless you assert the postcondition; a ratchet re-pinned in the same commit reports clean. Name the property a gate asserts before trusting its silence (AGENTS.md, "A Green Gate Bounds One Failure Mode, Never The Family It Belongs To").
+- **A shell timeout must exceed the probe duration plus grace**, otherwise the harness creates the timeout rather than the subject (AGENTS.md A120).
+
 ## Part 7 — Pre-claim checklist
 
 - [ ] Behavior change has a test that was **observed failing** before the fix.
@@ -1073,8 +1070,7 @@ was never observed to fail cannot be trusted to catch a regression.
       5% regression gate.
 - [ ] If it touches docs/release/CI contracts: the matching **governance/validator test** was updated,
       not just the doc.
-- [ ] `ruff check .` + `ruff format --check --preview .` + `mypy src/tensor_grep` + `pytest -q` (or the
-      narrower targeted suite) are green **in the real venv**, not a subagent's self-report.
+- [ ] `ruff check .` + `ruff format --check --preview .` + `mypy src/tensor_grep` + targeted `pytest -q` are green **in the real venv**, not a subagent's self-report.
 - [ ] `scripts/agent_readiness.py` / `tg dogfood` run clean if the change touches an agent-critical
       surface (routing, capsule, MCP, docs-claim strings).
 - [ ] For release/workflow/package-manager changes: `uv run python scripts/validate_release_assets.py`
@@ -1113,145 +1109,9 @@ was never observed to fail cannot be trusted to catch a regression.
 
 ---
 
-## Retention folds (2026-08-21)
-
-### A file split must reproduce its baseline PASS *and* SKIP counts
-
-Capture BOTH numbers before touching anything:
-
-```bash
-uv run python -m pytest <the file> -q -o addopts=      # record "N passed, M skipped"
-```
-
-A 2026-08-21 split of `test_mcp_server.py` reported **"484 passed, 5 skipped"** and looked green.
-The pre-split baseline was **489 passed, 0 skipped**. It had invented three
-`pytest.skip("embedded native rewrite unavailable in this environment")` guards, which would have
-permanently disabled three tests that pass in CI. Collected-node-count parity (489 → 489) did NOT
-catch it — the tests were still collected, just no longer run.
-
-- **Never silence a post-split failure with an environment probe.** A failure after a split is a
-  finding to report, not to guard around.
-- **A bare git worktree has no compiled native extension**, so native/embedded arms fail there and
-  pass in CI. That is an environment artifact — report it, let CI adjudicate, and do not add a
-  skip. (Confirmed: the three guarded tests failed in the worktree even in isolation, and the PR
-  went green at 49 checks in CI once the guards were removed.)
-- **Watch for the ratchet interaction:** removing a guard can leave an import unused (`F401`), and
-  lint is often the only thing that notices a stated intention was deleted.
-
-Law: **A126**.
-
-### An acceptance test must run against the PUBLISHED artifact, in a clean container
-
-A maintainer's machine is the wrong population. `tg scan --ruleset` works on a dev box that has a
-separately-installed native `tg` binary, and **fails on a stock `pip install tensor-grep`** — exit
-1, `ast-grep wrapper backend … not available` — because `ast_grep_py` is in no dependency and no
-extra and the wheel bundles no native binary. `tg rulesets` advertises six security rulesets with
-rule counts and no availability caveat.
-
-Every earlier check of that feature ran on a machine that happened to have the capability, so the
-measurement was taken from the wrong population until the same commands ran here:
-
-```bash
-docker build --build-arg TG_VERSION=<published> -f scripts/dogfood/Dockerfile -t tg-dog scripts/dogfood
-docker run --rm tg-dog                      # published-wheel battery (the customer path)
-
-docker build -f scripts/dogfood/Dockerfile.source -t tg-dog-src .   # WORKING TREE (beta path)
-docker run --rm tg-dog-src
-```
-
-**Read the build's exit code UNPIPED and verify the artifact.** `docker build … | tail` reports
-*tail's* status: a failing build read through a pipe looked like `exit 0` while producing **no
-image at all**. Use `docker build … > build.log 2>&1; echo $?` and confirm with
-`docker images <tag>` — the one claim a misread pipe cannot fake. (A127)
-
-Laws: **A125**, **A127**.
-
-### Resolve a caller's module namespace by LEAF name, not a dotted prefix
-
-`tests/` has no `__init__.py`, so pytest's prepend import mode names modules by **basename**.
-Measured with a `pytest_runtest_setup` probe: `test_cli_modes_blast_radius`, **not**
-`tests.unit.test_cli_modes_blast_radius`. A helper matching
-`startswith("tests.unit.test_cli_modes")` therefore matched nothing, its stack walk fell through to
-`return globals()`, and shared fakes read a stale copy — **the exact failure the shim existed to
-prevent, silently**, because falling back to a real namespace looks like success.
-
-If you write anything that resolves a caller's namespace by name, match the final dotted component
-and prove it with a probe rather than assuming the import path. Law: **A129**.
-
-### A replacement assertion must be PROBE-VERIFIED to discriminate (2026-08-21)
-
-When you retire a flaky assertion, the replacement is a NEW instrument and inherits none of the old
-one's credibility. Prove it can fail before trusting it.
-
-**Worked example, including the wrong turn.** A guard test asserted
-`elapsed < 1.0, "probe is not bounded"`. It was flaky (windows-latest failed at 1.175s) and it
-measured the wrong thing entirely: the guard runs no probe of its own —
-`_should_refuse_unbounded_large_root_scan` is "checked using the candidate count the real search
-ALREADY collected (never a second walk)" — so `elapsed` was just the time to walk 2,000 stub files.
-
-The first replacement asserted the ABSENCE of `partial` / `result_incomplete` in the output. It
-looked principled and was **vacuous**: a probe of a real deadline-truncated PLAIN-TEXT run showed
-neither string EVER appears on that surface. It would have passed in both arms and proven nothing —
-the exact failure class this file exists to prevent, reintroduced while fixing a different one.
-
-**The probe is what found the real discriminator.** A deadline-BURNING run prints matches
-(observed: `f98.py:# TODO item 98`); a REFUSAL prints none. And crucially **both exit 2**, so the
-exit code alone cannot separate them. The final assertion — no match output — is therefore
-*stronger* than the timer it replaced: it proves the search stopped BEFORE emitting results, on any
-machine at any load.
-
-**The procedure:**
-
-1. Before writing the replacement, PROBE the failing condition on the exact surface the test uses
-   (text vs `--json` behave differently — that is what made the first attempt vacuous).
-2. Write the assertion against what the probe actually showed, not what you expect it to show.
-3. **Perturb it**: invert or break the assertion and confirm it FAILS. Measured here: inverted →
-   1 failed / 103 passed; reverted → 104 passed with the file byte-identical.
-4. Expect the lint fallout — removing the timing code left `time` unused (`F401`). Lint is often the
-   only witness that a stated intention stopped executing.
-
-Law **A138**. Related: the wall-clock guidance above, and A123/A135 on absent gates reading as
-passes.
-
 ## Provenance and maintenance
 
-Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the 2nd fixture-blind-spot receipt
-(Part 1 pt 4), the vacuous-truth-oracle checklist item (Part 1 pt 12), and the test-file counts were
-re-verified **2026-07-16, release `v1.78.1`**. A further pass **2026-07-22, release `v1.93.2`**
-re-verified test-file counts (unit 263 / e2e 16 / integration 16, up from 239/16/11), added the new
-`tests/eval/` directory (Part 3 + Part 6), and added Part 1 points 13-15 (per-task-pinned accuracy gate,
-scheduler-independent concurrency tests, published-wheel verdict-table dogfood). A further pass
-**2026-07-24, release `v1.96.0`** re-verified and corrected every `file:line` citation in this skill
-against `origin/main` (CONTRIBUTING.md/AGENTS.md/`.github/workflows/ci.yml`/`test_routing_parity.py`/
-`scripts/agent_readiness.py`/`scripts/validate_release_assets.py`/`pyproject.toml` had all drifted
-since the prior pass), refreshed the test-file counts, then DE-STAMPED them on 2026-07-27 after the number was wrong in three consecutive passes (267 -> a mid-flight 282 -> the real 291) — the row now carries only the command (historical values unit 267 / e2e 16 / integration 16 / eval 2 —
-the new `test_retrieval_quality_regression.py` and the registered `eval` pytest marker), added the
-cold-path dogfood caveat to Part 1 point 3 and the byte-identical-optimization-proof technique plus the
-clean-rebase corollary to Part 1 point 9, added the `uv.lock` hand-splice gotcha to Part 2, and added
-the new-language/grammar test shape to Part 6 (tracking the Java/C#/PHP symbol-graph expansion,
-#724/#725/#726). A same-day second pass **2026-07-24, release `v1.98.2`** added Part 1 points 16-17
-(the shared-envelope payload-ratio governance-test trap plus its tmp-path-length platform sensitivity,
-and the self-gate-suite-subset-is-not-full-CI-matrix trap, both from #733/#734) and the PYTHONPATH/
-`conftest.py` red-green-baseline amendment to Part 1 point 9 (an independent gate's false "passed on
-main" result, caught the same day). A third same-day pass **2026-07-24, release `v1.98.3`** added
-Part 1 points 18-20 (a test proving nothing until seen fail on the pre-fix baseline, #737; a ratio
-timing assertion degenerating to its floor below clock resolution plus the profile-before-fixing
-discipline, #739; preferring a structural order-based assertion over any wall-clock form, #739) and
-their checklist items. A coordinator review of that same pass added the concrete clock-resolution
-number (`time.get_clock_info('monotonic').resolution` = 0.015625s on Windows) to point 19's mechanism.
-A further pass **2026-07-31, release `v1.101.24`** appended six oracle-adjacent bullets to Part 0's
-"rules that fall out" list -- a control that reproduces a failure without being proven the operative
-one; a source-scanning census satisfied by a comment; presence vs position of a placement guard; a
-census member that names a branch it cannot structurally fail on; a count blind to an order swap; and
-an unapplied mutation reading as a passing control arm -- deliberately as unnumbered bullets, not new
-Forms (the Forms table is mirrored in `AGENTS.md`; adding a Form there is a two-file edit owned
-separately).
-A same-day follow-up pass **2026-07-31** appended two more unnumbered bullets to the same list from
-the `-q` shared-builder regression (#876, fixed #880): a control arm stating what the callee accepts
-rather than what the consumer does with the value, and a probe built at the seam the defect was
-introduced (`_build_cmd`) instead of the seam the value crosses (`run_subprocess`). It also corrected
-"catches all nine" to "all ten" in Part 0's opening -- the header's own miscount recurring one
-sentence below the parenthetical warning about it; re-derive the count whenever a form is added.
+Change history for this skill: `git log --format='%h %ad %s' --date=short -- .claude/skills/tensor-grep-validation-and-qa/SKILL.md`.
 Re-verify before relying on them:
 
 | Claim | Re-verify command |
@@ -1273,56 +1133,16 @@ Re-verify before relying on them:
 | mypy strict-mode config | `grep -n "\[tool.mypy\]" -A6 pyproject.toml` |
 | `--no-sync` rationale | `grep -n "no-sync" -B2 -A2 .github/workflows/ci.yml` |
 | Current release tag | `grep -n "^version" pyproject.toml` |
-| `tg diff-docs` still deferred/unmerged (2026-07-03) | `git log --oneline --all -- src/tensor_grep/cli/diff_docs.py` (should show only the `wip/diff-docs-precision` commit `90b7042`, nothing on `main`) |
+| `tg diff-docs` still deferred/unmerged (2026-07-03) | `git log --oneline --all -- src/tensor_grep/cli/diff_docs.py` (should show only commit `90b7042` = `archive/diff-docs-precision`, nothing on `main`) |
 | Native-binary discovery order for parity/integration tests (2026-07-03) | `grep -n "_in_tree_native_tg_candidates\|def resolve_native_tg_binary" -A5 src/tensor_grep/cli/runtime_paths.py` |
 | Native-delegation field-coverage ratchet test still present (2026-07-03) | `grep -n "class Test" tests/unit/test_native_delegation_field_coverage.py` |
 | `--rank`/`capfd` capture-surface receipt (2026-07-03) | `git show ab717a1 -s --format=%B` (contains both the `#342` refuse-delegation fix and the `#342 follow-up` capture fix in one squashed message) |
 | Language-registry 5-seam checklist + `test_lang_registry.py` parity assertion (2026-07-24) | `grep -n "_imports_and_symbols_for_path\|_imports_with_lines_for_path\|_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py`; `grep -n "test_spec_for_path_resolves_every_registered_suffix" tests/unit/test_lang_registry.py` |
-| Cold-path dogfood receipt (`_python_imports_and_symbols` walk-merge, 2026-07-24) | `grep -n "^def _python_imports_and_symbols" src/tensor_grep/cli/repo_map.py` |
+| Cold-path dogfood receipt (`_python_imports_and_symbols` walk-merge, 2026-07-24) | `grep -rn "^def _python_imports_and_symbols" src/tensor_grep/cli/` |
 | `uv.lock` hand-splice check / `Dependency & License Audit` gate (2026-07-24) | `grep -n "Dependency & License Audit\|uv export" .github/workflows/audit.yml` |
 | Shape-9/9a/9b member-fn-ptr test split (Part 1 point 18, #737) | `grep -n "shape9a_filescope_member_fn_ptr_variable\|shape9b_inclass_member_fn_ptr_variable" tests/unit/test_lang_cpp.py` |
 | Structural ENTER/EXIT marker-order assertion (Part 1 point 20, #739) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
 | Windows clock-resolution / degenerate-ratio incident (Part 1 point 19, #739) | `gh pr view 739 --json body -q .body` (search for "baseline_elapsed measured" and "cProfile") |
 
-## Retention folds (2026-08-13)
-
-- **A99 — a verifier must be bound to the artifact it audits.** Record audited root + HEAD SHA + a
-  path/blob manifest, and require EXACT set equality between the expected population and reported
-  coverage; a truthy response that omits members is PARTIAL, a null lane is CANNOT_VERIFY, and a
-  CLEAN verdict needs non-zero sampled evidence (never clean-on-empty). The pre-hardening
-  `tg-skill-audit.js` could audit the wrong checkout and still report 6/6 covered.
-- **A100 — advertised capability must be executed.** An unconsumed schema or un-run phase is a false
-  advertisement of capability (`tg-audit-fix-loop.js` advertised five phases with zero execution
-  statements). Wire structure to execution, or label the stub, before anything depends on it.
-
 If any command above no longer matches, update this skill in the same change — a wrong runbook is
 worse than none.
-
-### A gate bounds ONE failure mode, not the family it belongs to (2026-08-19)
-
-Not a new Form — the ten Forms are about a check that cannot discriminate. This is the
-neighbouring problem: a check that discriminates **correctly**, on a narrower property than
-its name suggests, so its silence is read as covering the whole family.
-
-Canonical write-up with the full table: `AGENTS.md`, "A Green Gate Bounds One Failure Mode,
-Never The Family It Belongs To".
-
-The three that bite hardest here:
-
-- **`test_skill_library_drift` fails a citation past END-OF-FILE. It cannot see a citation
-  that still resolves and now points at the wrong code.** After wave 4 shrank
-  `agent_capsule.py` 3,652 → 926, CI failed six citations and stayed silent on a seventh at
-  `:294` — inside the file, and no longer describing the symbol it named. Grep every citation
-  into a file you shrink; the gate's silence covers exactly the ones it cannot judge. A split
-  also moves symbols between FILES, so grep the SYMBOL across `src/`.
-- **A retry loop reports success on exhaustion.** `for i in 1 2 3; do … done` exits 0 on its
-  last iteration whatever the body did. A retry added to fix a hang therefore reintroduces the
-  silent-skip it was protecting against, unless you assert the POSTCONDITION rather than the
-  loop's status.
-- **A ratchet that gets re-pinned in the same commit reports clean.** Re-pinning is sometimes
-  correct, but it is the weakest outcome available; write down the residual and why it was not
-  avoidable, or the gate degrades into a comment.
-
-**Before trusting a gate's silence, say out loud which property it actually asserts, then ask
-what the NEIGHBOURING failure looks like.** If the neighbour is indistinguishable from silence,
-you need a second probe, not more confidence in the first.

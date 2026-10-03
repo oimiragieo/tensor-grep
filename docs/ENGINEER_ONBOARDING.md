@@ -99,13 +99,15 @@ uv run python -c "import tensor_grep.rust_core; print('rust_core OK')"
 uv run pytest tests/unit/test_rust_core.py -q
 ```
 
-Then run the four-step local gate once, so you know your environment can pass it:
+Then run the local gate once, so you know your environment can pass it:
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q tests/unit/<files covering your change>   # targeted; the full suite runs in CI
+uv run python scripts/file_size_budget.py --report
+uv run python scripts/bare_call_ratchet.py --report
 ```
 
 ### 2.2 Traps you WILL hit in week one
@@ -258,7 +260,7 @@ from default" kills the fast path entirely, because `query_pattern` differs on e
 `tg run`/`tg scan`/MCP `tg_ast_search` can be served by `AstGrepWrapperBackend` (shells out to
 `ast-grep`; full pattern DSL incl. `$NAME`/`$$$ARGS` metavariables) or `AstBackend` (in-process
 tree-sitter; bare identifiers and s-expressions only, no metavariables). A metavariable pattern
-with the wrapper absent raises `ConfigurationError` at three verified sites -- it must never
+with the wrapper absent raises `ConfigurationError` at four verified sites -- it must never
 silently mis-route to the native engine. The reverse fallback (native-shaped pattern, ast-grep
 absent -> tree-sitter) is DELIBERATE, so a CPU-only box still gets some AST capability; do not
 "fix" it into a refusal. Full DSL parity is task #141 and stays demand-gated.
@@ -355,7 +357,7 @@ CliRunner tests passed):
 
 | # | Site | File |
 |---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/search_flag_registry.rs` |
 | 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
 A new MCP tool is a FIFTH registration site: bump `_TG_MCP_SERVER_CONTRACT_VERSION` in
@@ -512,8 +514,9 @@ The real publish is the `Semantic Release` job inside `.github/workflows/ci.yml`
 non-fast-forward and **that version never publishes**. Receipt: v1.17.23 (a security batch)
 lost its publish to a docs PR merged mid-window.
 
-- Merge ONE release-bearing PR per publish cycle; wait for the `chore(release)` commit on
-  `main` AND PyPI serving the new version before the next release-bearing merge.
+- Burst, then hold: when no release-bearing run exists, merge every green PR in one burst; then
+  merge nothing until that run's `chore(release)` commit and PyPI publish land (if it completes
+  without publishing, the window closes at completion; A32 governs the hotfix).
 - **The only safe merge gate is "the newest ci.yml run on main has reached COMPLETED".**
   `tag == PyPI` is NOT a gate -- it cannot distinguish "released" from "not started" from
   "died", and reading it as "gate open" cost a release (2026-07-28). `release-intent` being

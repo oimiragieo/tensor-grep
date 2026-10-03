@@ -11,8 +11,8 @@ and not *"what should we work on?"* (that is `tensor-grep-research-frontier`), b
 before a hunch is allowed to be called a result — and what do we do with the hunch when it loses?"**
 
 `tensor-grep` is described in its own docs as a **benchmark-governed, contract-heavy codebase** where you
-**do not optimize by guesswork** (`AGENTS.md:15`, `grep -n "benchmark-governed" AGENTS.md` — verified unchanged). The whole product wedge is trustworthy context for an
-agent — "the product wedge is **not** 'faster grep.'" (`grep -n 'not "faster grep' AGENTS.md` — no closing quote in the pattern: the tree text is `not "faster grep."` with the period INSIDE the quotes, so a pattern ending in `grep"` matches nothing; was `:377`, then `:473`, grep the heading (do not trust stamped lines) — AGENTS.md keeps growing above this citation, cite the grep not the number) — so a result that *looks* right but
+**do not optimize by guesswork** (`grep -n "benchmark-governed" AGENTS.md`). The whole product wedge is trustworthy context for an
+agent — "the product wedge is **not** 'faster grep.'" (`grep -n 'not "faster grep' AGENTS.md`; leave the closing quote off the pattern, because the tree text puts the period inside the quotes) — so a result that *looks* right but
 was never actually proven is not a small sin here; it is the exact failure the product exists to prevent.
 This skill is the discipline that keeps hunches honest.
 
@@ -20,8 +20,8 @@ This skill is the discipline that keeps hunches honest.
 
 Two readers at once — write and act to the **lower bound** of each:
 
-- A **Sonnet-class AI** in a cheap autonomous session: you need the hard gates and copy-pasteable checks so
-  you cannot rationalize noise into a win or ship your first-guess mechanism.
+- An **agent working autonomously**: the hard gates and copy-pasteable checks that keep noise from being
+  rationalized into a win and a first-guess mechanism from shipping.
 - A **mid-level human engineer** with zero repo context: you need the *why* — the theory of evidence — so
   you apply the bar to a new idea you have never seen before.
 
@@ -41,7 +41,7 @@ Two readers at once — write and act to the **lower bound** of each:
 
 **This skill does not route around change-control.** It tells you when a result is *believable*; it never
 tells you a change is *shippable*. A believable result still passes every gate in `tensor-grep-change-control`
-(TDD-first, dogfood the real binary, one-merge-per-tick, autonomy stops at a draft PR). If this skill and
+(TDD-first, dogfood the real binary, burst-then-hold merging, self-merge only after independent review). If this skill and
 change-control ever seem to conflict, change-control wins — stop and reconcile.
 
 ---
@@ -59,14 +59,14 @@ observations it must account for — and deliberately include the ones that woul
 
 - **The negative controls.** A no-match is a real outcome your mechanism must survive, not an error to hide.
   GPU/search benchmarks treat `rg` exit code `1` with empty output as a **valid comparator outcome** when
-  `tg` also returns zero matches (`grep -n "no-match as a real comparator" AGENTS.md`; was `:373`, grep the heading (do not trust stamped lines)) — a mechanism that only "works" on matching inputs and
+  `tg` also returns zero matches (`grep -n "no-match as a real comparator" AGENTS.md`) — a mechanism that only "works" on matching inputs and
   silently mis-handles the empty case has not been proven, it has been cherry-picked.
 - **The edge/adversarial inputs.** CRLF, invalid UTF-8, BOM, binary/NUL-byte files, multiline. `rg`'s
   default engine matches invalid UTF-8 but **PCRE2 requires valid UTF-8 and transcodes** — so a mechanism
   that swaps engines changes *results*, not just speed (`AGENTS.md` Backend Fail-Closed Contract —
-  `grep -n "## Backend Fail-Closed Contract" AGENTS.md`, was `:496-506`, then `:1672`, grep the heading (do not trust stamped lines);
+  `grep -n "## Backend Fail-Closed Contract" AGENTS.md`;
   the `--pcre2` fail-closed example is the "Fail closed for any flag/contract the fallback cannot
-  preserve" bullet — `grep -n "the fallback cannot preserve" AGENTS.md`, was `:502`, grep the heading (do not trust stamped lines)).
+  preserve" bullet — `grep -n "the fallback cannot preserve" AGENTS.md`).
 - **The disconfirming measurement.** If your mechanism predicts a win and the fair measurement shows a
   loss, the mechanism is wrong (or incomplete) — you do not get to keep the mechanism and blame the ruler.
 
@@ -78,7 +78,7 @@ Battle 7). The real mechanism was a *stack*: a flat no-IDF scorer **+** a hard t
 `file_score` flip **+** an alphabetical path tie-break. Lesson: your first single-cause story usually fails
 to explain one of the observations. Keep pulling until one mechanism covers them all — and note that the
 repo's rule for that surface is to **harden the tie/marker detection to be robust, not relax the failing
-test**, because relaxing masks the real degradation (`grep -n "IDF blast-radius" AGENTS.md`; was `:385`, grep the heading (do not trust stamped lines)).
+test**, because relaxing masks the real degradation (`grep -n "IDF blast-radius" AGENTS.md`).
 
 **Worked failure — declaring a lever "no clean path" by projection, not measurement.** The same discipline
 that Test A applies to a positive mechanism claim applies to a *negative* one: "this surface can't be
@@ -131,16 +131,16 @@ win can read back as its own opposite.
 A result you graded yourself is a hypothesis. The bar is that it survives a **distinct, adversarial** pass
 whose job is to break it — and in this repo that pass has a hard evidentiary rule:
 
-> **A finding or claim with no `file:line` citation is DISCARDED** (`grep -n "DISCARDED" AGENTS.md`; was `:494`, grep the heading (do not trust stamped lines) and `:1825` — the rule is stated twice, once in "Verify AI-Drafted Plans Against the Real Code Before Building" and once in the numbered ADVERSARIAL AUDIT step).
+> **A finding or claim with no `file:line` citation is DISCARDED** (`grep -n "DISCARDED" AGENTS.md` — the rule is stated twice, once in "Verify AI-Drafted Plans Against the Real Code Before Building" and once in the numbered ADVERSARIAL AUDIT step).
 
 Two named passes exist, and they are different stages, not one:
 
 1. **Pre-build planning review / council** — before you implement, an independent review cites `file:line`
-   for every seam claim in the plan; uncited claims are hypotheses, not facts (`grep -n "Verify AI-Drafted Plans Against the Real Code Before Building\|uncited claims are hypotheses" AGENTS.md`; was `:488,:627`, grep the heading (do not trust stamped lines) heading / `:1820` numbered-step echo). A
+   for every seam claim in the plan; uncited claims are hypotheses, not facts (`grep -n "Verify AI-Drafted Plans Against the Real Code Before Building\|uncited claims are hypotheses" AGENTS.md`). A
    citation-enforced review of this kind **caught 5 blockers in two unverified plans in a single session**.
 2. **Post-build adversarial audit** — a mandatory, *separately named* stage that adversarially reviews the
    integrated diff, re-audit -> fix-wave -> re-audit **until ZERO must-fix findings remain**; that
-   zero-finding state is the convergence gate before a draft PR (`grep -n "ADVERSARIAL AUDIT" AGENTS.md`; was `:494,:632`, grep the heading (do not trust stamped lines)). This stage once
+   zero-finding state is the convergence gate before a draft PR (`grep -n "ADVERSARIAL AUDIT" AGENTS.md`). This stage once
    **caught a HIGH CUDA-fork hazard that 203 passing tests missed** — which is the whole point: green tests
    are not the adversary; a hostile reader with citations is.
 
@@ -151,7 +151,7 @@ actively trying to show it is wrong or off-strategy*, not just survive not being
 **Worked failure — the fair-baseline refutation.** "Aho-Corasick single-pass beats N sequential scans" is
 true against the wrong comparator (N separate `rg` process spawns) and **false** against the right one: `rg`
 has its *own* batched primitive, `rg -F -e pat1 -e pat2 ...`, and against that the batched `tg` route was
-~2.3x slower (`tensor-grep-benchmark-and-proof-toolkit` worked example; `grep -n "fair-baseline" AGENTS.md`; was `:549`, grep the heading (do not trust stamped lines) names the fair
+~2.3x slower (`tensor-grep-benchmark-and-proof-toolkit` worked example; `grep -n "fair-baseline" AGENTS.md` names the fair
 baseline). The mechanism did not survive an adversary who insisted on the comparator's own batched form. The
 repo kept the (correct) code but **marked the row diagnostic, not release-gating** — see Part 5's retirement
 discipline.
@@ -174,7 +174,7 @@ alone leaves a gap an adversarial reader can walk through.
 ## Part 2 — Verify an AI-drafted plan against the real code (before you build)
 
 Most ideas now arrive as an AI/subagent-drafted plan. Treat **every factual claim in that plan as a
-hypothesis until it cites a `file:line` that actually resolves** (`grep -n "Verify AI-Drafted Plans Against the Real Code Before Building" AGENTS.md`; was `:486-490`, grep the heading (do not trust stamped lines) onward). AI plans have a
+hypothesis until it cites a `file:line` that actually resolves** (`grep -n "Verify AI-Drafted Plans Against the Real Code Before Building" AGENTS.md` onward). AI plans have a
 consistent failure mode: plausible-sounding edit locations that do not match the real structure — dead code
 paths, renamed symbols, already-fixed lines. Reading the real files before you implement is not overhead; it
 is the gate that prevents wasted cycles.
@@ -184,13 +184,13 @@ Three research-specific traps, all hard-won here:
 - **Never trust a self-report.** A subagent's "tests pass" / "N green" is a hypothesis until *external state*
   confirms it — an exit code, a real-binary dogfood, or a citation that resolves. Re-run any validation a
   subagent claims to have passed; worktree fan-out branches have no `.venv`, so their "tests pass" is
-  literally un-runnable in their own tree (`grep -n "worktree-fanout-verification-gate\|worktrees have no" AGENTS.md`; was `:492,:630`, grep the heading (do not trust stamped lines)/`:1823`; `tensor-grep-change-control` Part 1).
+  literally un-runnable in their own tree (`grep -n "worktree-fanout-verification-gate\|worktrees have no" AGENTS.md`; `tensor-grep-change-control` Part 1).
 - **Green ≠ working when the test never touches the real boundary.** Mock-based FFI tests were green while
   the real PyO3 bridge was **dead** and dropped every forwarded flag (`tensor-grep-failure-archaeology`
   Battle 8). Prove an FFI/bridge mechanism with a **live call into the built extension** (`maturin develop`,
   then confirm the flag actually reached `rg`), and prove generated/detached code by **executing** it
   (`compile()` + `exec()` the string and assert the behavior, e.g. the checksum gate fires *before*
-  `os.replace`), not by reading substrings (`grep -n "checksum gate fires BEFORE" AGENTS.md`; was `:492,:1001`, grep the heading (do not trust stamped lines)).
+  `os.replace`), not by reading substrings (`grep -n "checksum gate fires BEFORE" AGENTS.md`).
 - **A stale mental model of the codebase is a plausible-sounding claim too.** A plan can cite a real symbol
   or pattern that used to be correct and no longer is — not just a wrong line number. An onboarding brief
   for a new tree-sitter language extractor said "mirror the inline `_rust_*` functions"; that was accurate
@@ -217,14 +217,14 @@ next agent re-discovers it and re-loses the same day.
 | 2. **Experimental / default-OFF** | Build behind a flag or an opt-in path; **ships default-OFF**. GPU, LSP, semantic, provider-`classify` all live here. | Behavior-change starts with a **failing test**; the flag defaults off. | `tensor-grep-change-control` (Part 1, rule 4) |
 | 3. **Dogfood / benchmark** | Prove it on the **real published binary** and/or the **right benchmark** vs the accepted baseline. | Passes the measured bar you predicted; artifact carries launcher mode/kind; no stale in-tree binary. | `dogfood-the-shipped-artifact`, `tensor-grep-benchmark-and-proof-toolkit` |
 | 4. **Council-verify** | Pre-build council + **post-build adversarial audit** (Test C), re-audit until zero must-fix findings. | Zero uncited/unresolved must-fix findings. | this skill (Test C) + `use-thinktank` |
-| 5a. **Adopted (conscious flag-flip)** | A **human** flips the default on — never an agent, never auto-merge. Endpoint of any autonomous fan-out is a **draft PR**. | The flip is a deliberate act after 3+4, not a side effect of a merge. | `tensor-grep-change-control` (Part 1, rule 1) |
+| 5a. **Adopted (conscious flag-flip)** | A **human** signs off the default flip — never an agent alone, never admin-merge. The flip PR waits for that sign-off. | The flip is a deliberate act after 3+4, not a side effect of a merge. | `tensor-grep-change-control` (Part 1, rule 1) |
 | 5b. **Retired (written down)** | The idea lost (regressed, or the gain was not stable enough to justify merge). **Record the attempt in `docs/PAPER.md`** so no future agent retries it. | The dead end is in the ledger with the number that killed it. | this skill (Part 5) |
 
 Experimental-until-proven is a hard rule, not a preference: **GPU, LSP, semantic-search, and
 provider-`classify` (`cybert`) stay default-OFF and labeled experimental until correctness AND speed AND UX
 are all proven** — never market an unproven wedge (`tensor-grep-change-control` Part 1, rule 4; GPU remains
 *slower* than `rg`/`tg_cpu` at every scale tested and public CUDA-asset publishing is on a deliberate
-**HOLD**, `grep -n "deliberate \*\*HOLD" AGENTS.md` — the old `deliberate .HOLD` pattern is dead: BRE `.` matches exactly one char and the tree text is `deliberate **HOLD` with two; was `:541,:552-553`, then `:1728`, grep the heading (do not trust stamped lines)). "Experimental" is a lifecycle stage with an exit gate, not a permanent
+**HOLD**, `grep -n "deliberate \*\*HOLD" AGENTS.md`). "Experimental" is a lifecycle stage with an exit gate, not a permanent
 excuse.
 
 ### The instrumented-build-gate fork (C12, added 2026-07-08) — for a speculative idea with appeal but no demand proof
@@ -232,7 +232,7 @@ excuse.
 Some ideas fail Test B differently than a mis-measured speed claim: the mechanism is plausible, the
 build is cheap enough, but there is **no evidence anyone actually needs it** — a hunch about future
 value, not a validated user ask (contrast with "local hybrid semantic search," which *is* a validated
-#1 ask, `grep -n "the #1 validated user ask" AGENTS.md`; was `:562`, grep the heading (do not trust stamped lines)). Forcing a straight build-vs-drop choice on that kind of idea is a false
+#1 ask, `grep -n "the #1 validated user ask" AGENTS.md`). Forcing a straight build-vs-drop choice on that kind of idea is a false
 binary. Load the global skill **`instrumented-build-gate`** (folds into this stage of the lifecycle,
 does not replace it) for the discipline: (1) **three** options, not two — build-now / do-nothing /
 document-the-already-shipped-adjacent-value-and-instrument-to-measure; (2) capture any already-shipped
@@ -301,10 +301,9 @@ arXiv abs-page re-verification (HTTP 200; date derived from the ID), inline unce
 honest nulls per row ("no paper found shipping X" is itself a result, stated as one). A receipt
 missing these is a claim, not evidence.
 
-### Worked example — a fresh default-OFF -> proven -> pending-flip lifecycle (`TG_FIND_DENSE_WEIGHT`, #189/#628/#630, 2026-07-16)
+### Worked example — default-OFF -> proven -> adopted (`TG_FIND_DENSE_WEIGHT`, #189/#628/#630/#634)
 
-A clean, in-progress instance of stages 2-3 (the "adopted" stage 5a has NOT fired yet — do not describe
-this knob as flipped). `tg find`'s golden-set sweep (`benchmarks/eval_late_rerank_quality.py`) measured
+A clean instance of stages 2, 3, and 5a. `tg find`'s golden-set sweep (`benchmarks/eval_late_rerank_quality.py`) measured
 a real ndcg@10/recall@10 lift from a 1:5 bm25:dense fusion weight, with zero per-category regression, on
 the 40-query NL golden set — that is Test B's "predict the number, then measure" working as designed.
 But the sweep is 100% NL queries and cannot see the opposite failure mode (a short/lexical query where
@@ -317,10 +316,10 @@ then failed its OWN Test A** on the first real-corpus dogfood: the original morp
 single-token identifier (`reciprocal_rank_fusion`, `_confine_mcp_path`) splits into 3+ morphemes — fixed
 by switching to a whitespace word-count gate (`#191`, commit `173e093`/`#630`), which also added a
 `math.isfinite` clamp so `TG_FIND_DENSE_WEIGHT=nan`/`inf` degrades to the safe default instead of
-poisoning `reciprocal_rank_fusion`'s sort. **Stage 3 (dogfood/benchmark) is now satisfied; stage 5a
-(conscious flag-flip to a non-1.0 default) is a separate, still-open CEO checkpoint** — evidence in hand
-does not itself authorize the flip. See `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 and
-`tensor-grep-config-and-flags` for the mechanics.
+poisoning `reciprocal_rank_fusion`'s sort. **Stage 5a fired as a separate, deliberate step:** the
+adaptive default (5.0 for multi-word queries, 1.0 for single tokens; explicit `=1.0` opts out) shipped
+in `c1d4ba4` (#634) — evidence in hand did not itself authorize the flip. See
+`tensor-grep-semantic-search-campaign` STATUS UPDATE 4 and `tensor-grep-config-and-flags` for the mechanics.
 
 ### Retirement is a deliverable — the ledger
 
@@ -377,15 +376,16 @@ evaluate an incoming idea, weight it by which source it came from.
 
 | Source | What it is | Repo receipts | How to mine it |
 |---|---|---|---|
-| **Dogfood** | Using the real `tg` binary on real work surfaces the highest-signal gaps. | `tg registration-check` is still an unshipped backlog item today, independent of GPU phase gating (`grep -n "tg registration-check.*productized" AGENTS.md`; was `:566-568`, grep the heading (do not trust stamped lines)); the `scripts/dogfood/` harness has repeatedly caught contract bugs `CliRunner` could not see. | Run the shipped binary on a real task (`dogfood-the-shipped-artifact`); log every friction point. |
-| **Competitive analysis** | Reading what peers/tools do and stealing the *idea* (not the code) with correct licensing. | The sequencing logic's first-shipped win cites a concrete reference architecture — MinishLab **`Semble`** (tree-sitter chunking + `potion-code-16M` Model2Vec + BM25 + RRF, CPU-only, MIT) (`grep -n "MinishLab .Semble." AGENTS.md`; was `:560-565`, grep the heading (do not trust stamped lines)); `docs/PAPER.md` benchmarks `tg` against Aider/Cody/Cursor-class peers and Gemini/Copilot. | Structured web research (`use-exa`); produce a "steal-list" of ideas with license notes; ideas are free, code import needs the upstream notice. |
-| **Audits** | A tiered adversarial read of already-committed code finds bugs no one re-verified. | The **Security Hardening (Round-3)** patterns are literally an **audit lens** — sweep targets to check proactively because the bugs lived in committed code where no one re-checked (`grep -n "Security Hardening Patterns" AGENTS.md`; was `:577-584`, grep the heading (do not trust stamped lines)). | Run `codebase-audit` / `omega-deep-dive-bughunt`; every finding cites `file:line` or is discarded. |
+| **Dogfood** | Using the real `tg` binary on real work surfaces the highest-signal gaps. | `tg registration-check` is still an unshipped backlog item today, independent of GPU phase gating (`grep -n "tg registration-check.*productized" AGENTS.md`); the `scripts/dogfood/` harness has repeatedly caught contract bugs `CliRunner` could not see. | Run the shipped binary on a real task (`dogfood-the-shipped-artifact`); log every friction point. |
+| **Competitive analysis** | Reading what peers/tools do and stealing the *idea* (not the code) with correct licensing. | The sequencing logic's first-shipped win cites a concrete reference architecture — MinishLab **`Semble`** (tree-sitter chunking + `potion-code-16M` Model2Vec + BM25 + RRF, CPU-only, MIT) (`grep -n "MinishLab .Semble." AGENTS.md`); `docs/PAPER.md` benchmarks `tg` against Aider/Cody/Cursor-class peers and Gemini/Copilot. | Structured web research (`use-exa`); produce a "steal-list" of ideas with license notes; ideas are free, code import needs the upstream notice. |
+| **Audits** | A tiered adversarial read of already-committed code finds bugs no one re-verified. | The **Security Hardening (Round-3)** patterns are literally an **audit lens** — sweep targets to check proactively because the bugs lived in committed code where no one re-checked (`grep -n "Security Hardening Patterns" AGENTS.md`). | Run `codebase-audit` / `omega-deep-dive-bughunt`; every finding cites `file:line` or is discarded. |
 
 **Worked example (C14) — a token-economy benchmark, not a speed benchmark, surfaced a moat gap.**
 The Dogfood row above is usually read as "run the binary and look for friction"; the 2026-07-08
 receipt shows a *benchmark* can be the dogfood instrument too, just measuring a different axis than
 wall-clock. The first oracle-validated tokens-per-correct-answer run (Sverklo `bench:primitives`,
-`express@4.21.1`, 25 tasks) found `tg` **7.5x better than grep on definition-lookup** — the expected
+`express@4.21.1`, 25 tasks) found `tg` **7.5x better than grep on definition-lookup** (a figure WITHDRAWN for publication on 2026-08-22:
+regime/baseline unrecoverable; see `tensor-grep-benchmark-and-proof-toolkit` "Summary statistics") — the expected
 moat win — but roughly an **order of magnitude worse on file-dependency questions** ("what does file
 X import"), because `tg` has no scoped file-dependency primitive and an agent pays a whole-repo
 `tg map` to answer a single-file question. This is Test A working as designed: the mechanism ("the
@@ -415,10 +415,10 @@ Two guardrails on idea *selection* (the frontier owns the full target list; this
 
 - **Weight ideas by the strategy, not by novelty.** Raw search speed is the **parity tier**; the moat is the
   **agent-native context layer** (`orient` / `callers` / blast-radius / the token-efficient capsule)
-  (`grep -n "the token-efficient capsule" AGENTS.md`; was `:571-573`, now `:1746-1749`). A clever idea that only makes cold grep marginally faster is off-strategy even
+  (`grep -n "the token-efficient capsule" AGENTS.md`). A clever idea that only makes cold grep marginally faster is off-strategy even
   if it works.
 - **A validated user ask outranks a speculative one.** "Local hybrid semantic search" was the top roadmap
-  item because it was the **#1 validated user ask and the biggest competitive gap** (`grep -n "the #1 validated user ask" AGENTS.md`; was `:560-563`, grep the heading (do not trust stamped lines)) —
+  item because it was the **#1 validated user ask and the biggest competitive gap** (`grep -n "the #1 validated user ask" AGENTS.md`) —
   not because it was the most novel — and it has since shipped as `tg search --semantic`, still
   default-OFF/experimental (Part 3).
 
@@ -439,10 +439,10 @@ Two guardrails on idea *selection* (the frontier owns the full target list; this
       findings**, every surviving claim citing a **`file:line` that resolves** (uncited = discarded).
 - [ ] The plan behind it was **verified against real code**; no subagent self-report was trusted un-re-run;
       any FFI/bridge proven with a **live extension call**, any generated code proven by **executing** it.
-- [ ] Terminal state chosen and **written down**: adopted via a **conscious human flag-flip** (endpoint =
-      draft PR), OR retired with the killing number recorded in **`docs/PAPER.md`** so it is never retried.
-- [ ] Nothing here skipped a gate in `tensor-grep-change-control` (TDD-first, dogfood, one-merge-per-tick,
-      no auto/admin-merge).
+- [ ] Terminal state chosen and **written down**: adopted via a **conscious human flag-flip** (its PR waits for
+      human sign-off), OR retired with the killing number recorded in **`docs/PAPER.md`** so it is never retried.
+- [ ] Nothing here skipped a gate in `tensor-grep-change-control` (TDD-first, dogfood, burst-then-hold merging,
+      no admin-merge).
 
 If you cannot tick a box, you have a **candidate**, not a result. Say "candidate" out loud.
 
@@ -450,64 +450,23 @@ If you cannot tick a box, you have a **candidate**, not a result. Say "candidate
 
 ## Provenance and maintenance
 
-Volatile facts were originally dated **2026-07-02, release `v1.17.25`**; AGENTS.md citations
-re-grepped and re-anchored **2026-07-08 against `v1.49.3`**; the C14 lifecycle extension and the
-`TG_FIND_DENSE_WEIGHT` worked example were added and verified **2026-07-16 against `v1.78.1`**; a
-fresh consolidated grep pass **2026-07-22 against `v1.93.2`** re-anchored every AGENTS.md citation
-below (every one had drifted +150-190 lines since the v1.49.3 pass — AGENTS.md keeps growing new
-sections above these) and added the B-META 5/5-mirage worked example (Part 3/4); a further
-consolidated grep pass **2026-07-24 against `v1.96.0`** re-anchored every AGENTS.md citation again
-(every one had drifted another +85-150 lines in just two days — the new "Adding a Language" (`:428`)
-and "Optimization Discipline" (`:804`) sections landed above them) and added three items from this
-session's own optimization/language-campaign work: the stale "mirror inline `_rust_*`" brief as a
-Part 2 worked example, the deferred-then-shipped validation-scan lever as a Part 1 Test A worked
-failure, and the warm-dogfood-hides-a-cold-win measurement trap as a Part 1 Test B worked failure,
-plus a Test C cross-reference to the enumerate + differential-fuzz byte-identical-proof technique.
-**A skill-library drift audit on 2026-08-01 against `v1.110.16` (re-verify; do not trust stamped tags)** found every inline `AGENTS.md:NNN`
-citation in Parts 1-4 (roughly a dozen) had drifted again — most by ~1150-1250 lines (the
-"Roadmap Sequencing" region moved `:525` -> `:1701`), a few by only ~95-100 lines (the earlier
-"product wedge"/"no-match comparator"/"IDF blast-radius" region moved `:373`-`:385` -> `:469`-`:481`),
-proving the growth is uneven across the file, not a uniform offset you can add once. Every body
-citation was converted from a hard line number to a `grep <quoted-phrase>` instruction with a
-`was -> now` drift receipt inline, per AGENTS.md's own "cite the SYMBOL, not the line — and never
-re-stamp" rule — do not re-introduce a bare `AGENTS.md:NNN` citation in this file's prose; put the
-grep and the drift receipt back if you must record a new number. This is the FOURTH time this file's
-AGENTS.md citations have drifted, not the third.
-
-**2026-08-12 retention pass.** Fixed two DEAD grep patterns — the `not "faster grep"` pattern (tree
-text is `not "faster grep."` with the period INSIDE the quotes, so a pattern ending in `grep"`
-matches nothing; grep the heading (do not trust stamped lines)) and the BRE `deliberate .HOLD` pattern (tree text is `deliberate
-**HOLD`; BRE `.` matches exactly one char, and there are two — grep the heading (do not trust stamped lines)). Converted the last bare
-`AGENTS.md:NNN` citation pair in Part 1 (Backend Fail-Closed Contract block, `:496-506`/`:502`) to
-grep-the-symbol form (grep the heading (do not trust stamped lines)/`:1979`), per this file's own no-bare-line rule and the table
-below. Corrected the #456 claim (MERGED as `fca77a4`, not "open, not merged"; the ledger it gated
-shipped experimental per `docs/multi_agent_context_plane.md`). Folded three 2026-08-12 lifecycle
-lessons + the Exa receipt format into Part 3 (sources: `docs/audits/2026-08-12-research-receipts.md`,
-`docs/TASK_BOARD.md`, `docs/BACKLOG.md` 2026-08-12 campaign note).
-
-Re-verify before relying on any of them — a wrong methodology runbook lets a bad result through,
-which is worse than none.
+Cite AGENTS.md and code by an exact-phrase or `grep -n "^def <symbol>"` grep, never by line number; if a
+command below no longer matches, fix this skill (and the sibling that owns the fact) in the same change.
 
 | Claim | Re-verify command |
 |---|---|
-| Current release tag | `grep -n release_docs_current_tag AGENTS.md` (was `v1.96.0`, now `v1.110.16` (re-verify; do not trust stamped tags) — 2026-08-01 pass) |
-| "Benchmark-governed, do not optimize by guesswork" | `grep -n "benchmark-governed" AGENTS.md` (`:15`, still unchanged 2026-08-01) |
-| Product wedge is not "faster grep" | `grep -n 'not "faster grep\|agentic code-intelligence' AGENTS.md` (no closing quote after `grep`: the tree text is `not "faster grep."` with the period inside the quotes; was `:377`, then `:473`, grep the heading (do not trust stamped lines)) |
-| Verify-plan + adversarial-audit + "no citation is DISCARDED" | `grep -n "DISCARDED\|ADVERSARIAL AUDIT\|caught 5 blockers\|CUDA-fork hazard" AGENTS.md` (was `:490,:494,:632`, grep the heading (do not trust stamped lines)/`:603`/`:1825`) |
-| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` (AGENTS.md block was `:496`, then `:1672`, grep the heading (do not trust stamped lines); `base.py:7`, unchanged) |
-| No-match is a valid comparator outcome; fair many-fixed-strings baseline | `grep -n "no-match as a real comparator\|many fixed strings" AGENTS.md` (was `:373,:374`, now `:469,:470`) |
-| Ranking flip: harden, don't relax the test | `grep -n "IDF blast-radius\|robust to IDF shifts" AGENTS.md` (was `:385`, grep the heading (do not trust stamped lines)) |
-| Roadmap sequencing (Semble; #1 user ask; registration-check) | `grep -n "Roadmap Sequencing" -A 45 AGENTS.md` (was `:525` onward with Semble `:565`/registration-check `:566`; grep the heading (do not trust stamped lines) onward with Semble `:1741`/registration-check `:1742` — this whole block drifted ~1176 lines in one week; cite the grep, never the number) |
-| Security round-3 as an audit lens | `grep -n "Security Hardening Patterns" -A 8 AGENTS.md` (was `:577`, grep the heading (do not trust stamped lines)) |
-| Retirement ledger (accepted wins + rejected dead ends, incl. cAST/GPU retirements) | `grep -n "Optimization Ledger\|Important rejected candidates\|Why Pure Python Traversals" docs/PAPER.md` (§3.7, §3.8, §3.10 — items 8/9, cAST + GPU-search, all still current, unchanged this pass) |
-| Lifecycle gates (autonomy draft-PR-only, self-report, no-claim-without-numbers, experimental-until-proven) | Read `tensor-grep-change-control` Part 1 |
+| Current release tag | `grep -n release_docs_current_tag AGENTS.md` |
+| "Benchmark-governed, do not optimize by guesswork" | `grep -n "benchmark-governed" AGENTS.md` |
+| Product wedge is not "faster grep" | `grep -n 'not "faster grep\|agentic code-intelligence' AGENTS.md` (no closing quote after `grep`: the tree text puts the period inside the quotes) |
+| Verify-plan + adversarial-audit + "no citation is DISCARDED" | `grep -n "DISCARDED\|ADVERSARIAL AUDIT\|caught 5 blockers\|CUDA-fork hazard" AGENTS.md` |
+| Backend fail-closed / PCRE2-changes-results | `grep -n "Backend Fail-Closed\|BackendExecutionError" AGENTS.md`; `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` |
+| No-match is a valid comparator outcome; fair many-fixed-strings baseline | `grep -n "no-match as a real comparator\|many fixed strings" AGENTS.md` |
+| Ranking flip: harden, don't relax the test | `grep -n "IDF blast-radius\|robust to IDF shifts" AGENTS.md` |
+| Roadmap sequencing (Semble; #1 user ask; registration-check) | `grep -n "Roadmap Sequencing" -A 45 AGENTS.md` |
+| Security round-3 as an audit lens | `grep -n "Security Hardening Patterns" -A 8 AGENTS.md` |
+| Retirement ledger (accepted wins + rejected dead ends, incl. cAST/GPU retirements) | `grep -n "Optimization Ledger\|Important rejected candidates\|Why Pure Python Traversals" docs/PAPER.md` (§3.7, §3.8, §3.10 — items 8/9, cAST + GPU-search) |
+| Lifecycle gates (verified-green self-merge, self-report, no-claim-without-numbers, experimental-until-proven) | Read `tensor-grep-change-control` Part 1 |
 | Noise-floor / jitter constants for the predict-the-number rule | Read `tensor-grep-benchmark-and-proof-toolkit` "Noise-floor / jitter discipline" |
 | Instrumented-build-gate discipline (Part 3, C12) | global skill `instrumented-build-gate`; worked example memory `tensor-grep-a2a-ledger-audit-2026-07-08` |
 | B-META 5/5-mirage worked example (Part 3/4) | `tensor-grep-failure-archaeology` Battle 22; `docs/BACKLOG.md` 2026-07-21 research-campaign entry |
 | Measure-first / byte-identical-proof receipts added 2026-07-24 (Test A, Test B, Test C) | `#719`/`v1.93.9` (ast.walk-merge, `docs/BACKLOG.md` v1.93.9 entry + `CHANGELOG.md`); `#723`/`v1.93.10` (validation-scan, `CHANGELOG.md` "Performance Improvements" under `v1.93.10`); the stale-brief receipt (Part 2) is detailed in `tensor-grep-add-language` |
-
-If any command above no longer matches, update this skill in the same change — and check whether the sibling
-that *owns* the fact (change-control, benchmark-toolkit, failure-archaeology, research-frontier) needs the
-same update. **Do not trust the numbers stamped here on a future session without re-running the greps** —
-AGENTS.md line numbers have already drifted THREE times this way now (a new section inserted upstream
-silently invalidated every downstream citation in this file simultaneously, every time).

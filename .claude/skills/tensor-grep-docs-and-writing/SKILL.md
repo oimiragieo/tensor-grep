@@ -11,7 +11,7 @@ This is the **docs-of-record runbook**: which file owns which contract, how vers
 
 Two readers at once — write and act to the **lower bound** of each:
 
-- A **Sonnet-class AI** editing docs autonomously: you need the exact file list, exact grep commands, and a hard stop before you delete a pinned sentence.
+- An **agent editing docs autonomously**: the exact file list, the exact grep commands, and the stop before you delete a pinned sentence.
 - A **mid-level human engineer**: you need to understand *why* this repo pins prose with `assert "..." in doc` instead of a single source-of-truth link, so you don't fight the system.
 
 ## When to use this skill vs a sibling
@@ -76,9 +76,9 @@ A50). Bump `Canonical status index version:` and mirror it in `docs/SESSION_HAND
 
 ### Layer A — Version stamping (automatic; do not hand-edit the stamped bits)
 
-Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`pyproject.toml:138`, `[tool.semantic_release]`):
+Two mechanisms fire together inside the `Semantic Release` job's `build_command` (`grep -n "^build_command" pyproject.toml`, `[tool.semantic_release]`):
 
-1. **`version_variables`** (python-semantic-release's built-in regex substitution of `name = "X"` / `name: X` style single-line patterns). Current entries (`pyproject.toml:142-154`):
+1. **`version_variables`** (python-semantic-release's built-in regex substitution of `name = "X"` / `name: X` style single-line patterns). Current entries (`grep -n "^version_variables" -A12 pyproject.toml`):
    - `src/tensor_grep/cli/main.py:pkg_version`
    - `npm/package.json:version`
    - `scripts/tensor-grep.rb:TENSOR_GREP_VERSION`
@@ -91,12 +91,11 @@ Two mechanisms fire together inside the `Semantic Release` job's `build_command`
 2. **`scripts/stamp_release_assets.py`** (a companion script this repo wrote, run as a plain step in `build_command` before the `git add`). `version_variables`' one-line regex can't rewrite multi-clause prose or derived URLs, so this script owns everything else: the Homebrew formula body (`scripts/tensor-grep.rb`, handles both a bare `TENSOR_GREP_VERSION = "..."` constant and a raw `version "..."` line), the winget manifest's comment header + `PackageVersion:` + `InstallerUrl:` (which embeds `vX` inside a GitHub download path), and roughly 18 distinct prose regexes across two doc groups (`scripts/stamp_release_assets.py:39-114`):
    - `RELEASE_DOC_PATHS` = `AGENTS.md`, `README.md`, `SKILL.md`, `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/CONTRACTS.md` — stamps "current tagged version is `vX`", "current `vX` (shell/version resolution|positioning|release line)", "latest complete public PyPI/release-asset distribution is also `vX`", "- Latest tagged version: `vX`", "- Current release tag: `vX`", "- GitHub release: <.../releases/tag/vX>", the PyPI pinned-install proof line, "- GitHub release assets: `vX` has uploaded", and the "Latest tagged/complete PyPI release: [`vX`](.../releases/tag/vX)" link pair.
    - `GPU_DOGFOOD_DOC_PATHS` = `README.md`, `docs/benchmarks.md`, `docs/gpu_crossover.md`, `docs/PAPER.md` — stamps the current tag into only the four **anchored** `` post-`vX` `` live-pointer shapes (a `## Current post-`vX` GPU dogfood Read` header, a `The post-`vX` …` sentence, `- Latest post-`vX` …` status bullets, and the workflow-benchmark pointer line). It deliberately does **not** rewrite bare `` post-`vX` `` occurrences inside dated historical notes — audit #71/#73 replaced a prior *unanchored* global sub that marched those notes' versions forward every release (a 2026-05 note ended up stamped with a July version). `docs/PAPER.md` is append-only and carries no live `` post-`vX` `` pointer, so it is now exempt from the `` post-`vX` `` requirement in both `scripts/agent_readiness.py`'s `validate_docs_claims` and `test_public_docs_governance.py`.
-   - Run it yourself: `python scripts/stamp_release_assets.py` (writes) or `python scripts/stamp_release_assets.py --check` (rc `1` if any stamped doc has drifted from `pyproject.toml`'s version) — a fast **local** drift pre-check, but **not** what CI runs. CI's `release-readiness` job instead runs `uv run python scripts/validate_release_assets.py` (`.github/workflows/ci.yml:119`), a much broader validator (winget manifest, CI-workflow gate list, dependabot config, native-CLI/npm-installer contract, README/benchmarks-docs contract, Homebrew formula, uv security constraints, `RELEASE_JOB_REQUIRED_GATES` — see `grep -n "^def validate_" scripts/validate_release_assets.py`) that happens to also catch stamp drift as one check among many. Run both locally before a release-bearing push; do not assume `stamp_release_assets.py --check` alone reproduces the CI gate.
+   - Run it yourself: `python scripts/stamp_release_assets.py` (writes) or `python scripts/stamp_release_assets.py --check` (rc `1` if any stamped doc has drifted from `pyproject.toml`'s version) — a fast **local** drift pre-check, but **not** what CI runs. CI's `release-readiness` job instead runs `uv run python scripts/validate_release_assets.py` (`grep -n "validate_release_assets" .github/workflows/ci.yml`), a much broader validator (winget manifest, CI-workflow gate list, dependabot config, native-CLI/npm-installer contract, README/benchmarks-docs contract, Homebrew formula, uv security constraints, `RELEASE_JOB_REQUIRED_GATES` — see `grep -n "^def validate_" scripts/validate_release_assets.py`) that happens to also catch stamp drift as one check among many. Run both locally before a release-bearing push; do not assume `stamp_release_assets.py --check` alone reproduces the CI gate.
    - `build_command` finishes with `git add AGENTS.md README.md SKILL.md docs/SESSION_HANDOFF.md docs/CONTINUATION_PLAN.md docs/CONTRACTS.md docs/benchmarks.md docs/gpu_crossover.md docs/PAPER.md ...` — **stamping a file on disk without adding it here means the commit never includes it.** (See Part 6 for what this means when adding a new governed doc.)
 
 **Do not hand-edit any of the stamped fragments above** (the `release_docs_current_tag:` line, "current tagged version is `vX`", the GitHub-release / PyPI-proof lines, the `` post-`vX` `` labels). They are overwritten on every release; a hand-edit just creates diff noise the next release clobbers. The one deliberate exception, already shipped (verify current line with
-`grep -n "a78e33c fix: harden post-release docs governance" docs/SESSION_HANDOFF.md` — it drifts as new
-release-line bullets are prepended above it, e.g. still `:42` as of `v1.95.0` — unchanged since `v1.49.3` because no new per-release `- Closed vX...` bullet has been prepended above it recently, though a future one would shift it): **"Latest verified release proof" blocks and "What `vX` closed:" narrative are kept SEPARATE from the auto-stamped current-tag labels** specifically so a release commit stays locally testable without a hand-authored proof block going stale the moment the tag line moves. See `tests/unit/test_stamp_release_assets.py::test_stamp_release_assets_preserves_verified_release_proof_blocks` for the exact contract this preserves.
+`grep -n "a78e33c fix: harden post-release docs governance" docs/SESSION_HANDOFF.md`): **"Latest verified release proof" blocks and "What `vX` closed:" narrative are kept SEPARATE from the auto-stamped current-tag labels** specifically so a release commit stays locally testable without a hand-authored proof block going stale the moment the tag line moves. See `tests/unit/test_stamp_release_assets.py::test_stamp_release_assets_preserves_verified_release_proof_blocks` for the exact contract this preserves.
 
 ### Layer B — Content-pinning tests (pytest string containment)
 
@@ -111,7 +110,7 @@ release-line bullets are prepended above it, e.g. still `:42` as of `v1.95.0` �
 
 ### Layer C — The fast agent-readiness gate (not pytest, runs in seconds)
 
-`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`, `scripts/agent_readiness.py:634`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
+`scripts/agent_readiness.py` has a `docs-claim-check` probe (`validate_docs_claims`; `grep -n "^def validate_docs_claims" scripts/agent_readiness.py`) that re-checks a **smaller** fragment set (`f"v{expected_version}"`, `"python scripts/agent_readiness.py"`, `"context_consistency"`, `"tg agent"`, `"agent-capsule-hardcases"`, `"validated compatibility set"`, `"broad generated-root scan"`, `` "rg` remains" ``, `"ast-grep"`) across the same six `RELEASE_DOC_PATHS`-shaped docs, plus a version-drift check using the same "current `vX` (shell/version resolution|positioning|release line)" pattern the stamping script writes. Run it locally as a fast pre-push smoke test:
 
 ```powershell
 python scripts/agent_readiness.py --output artifacts/agent_readiness.json
@@ -144,7 +143,7 @@ count names its population/denominator (`0/2 unchecked`, not merely `0`).
 
 ### Layer D — The published mkdocs site (a separate universe)
 
-`mkdocs.yml` defines a **subset** of `docs/*.md` as the published site nav (currently: `index.md`, `installation.md`, `CI_PIPELINE.md`, `SUPPORT_MATRIX.md`, `CONTRACTS.md`, `enterprise_review_bundle_ci.md`, `EXPERIMENTAL.md`, `RELEASE_CHECKLIST.md`, `HOTFIX_PROCEDURE.md`, `package_manager_publish.md`, `architecture.md`, `multi_agent_context_plane.md`, `benchmarks.md`, `tool_comparison.md` — verify with `grep -A2 '^nav:' mkdocs.yml`). CI's `release-readiness` job (`.github/workflows/ci.yml:98-101`) runs `mkdocs build --strict` (`:116`), which **fails the build on any broken internal link or nav reference**, not just missing content. `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/PAPER.md`, `docs/gpu_crossover.md`, `docs/routing_policy.md`, `docs/world_class_plan.md` are **repo-internal only** — they are pytest-governed (Layer B) but are NOT part of the published site and don't need mkdocs nav entries. Before editing a file that IS in the nav, run the strict build locally:
+`mkdocs.yml` defines a **subset** of `docs/*.md` as the published site nav (currently: `index.md`, `installation.md`, `CI_PIPELINE.md`, `SUPPORT_MATRIX.md`, `CONTRACTS.md`, `enterprise_review_bundle_ci.md`, `EXPERIMENTAL.md`, `RELEASE_CHECKLIST.md`, `HOTFIX_PROCEDURE.md`, `package_manager_publish.md`, `architecture.md`, `multi_agent_context_plane.md`, `benchmarks.md`, `tool_comparison.md` — verify with `grep -A2 '^nav:' mkdocs.yml`). CI's `release-readiness` job (`grep -n "release-readiness" -A25 .github/workflows/ci.yml`) runs `mkdocs build --strict`, which **fails the build on any broken internal link or nav reference**, not just missing content. `docs/SESSION_HANDOFF.md`, `docs/CONTINUATION_PLAN.md`, `docs/PAPER.md`, `docs/gpu_crossover.md`, `docs/routing_policy.md`, `docs/world_class_plan.md` are **repo-internal only** — they are pytest-governed (Layer B) but are NOT part of the published site and don't need mkdocs nav entries. Before editing a file that IS in the nav, run the strict build locally:
 
 ```powershell
 pip install mkdocs-material
@@ -158,8 +157,8 @@ mkdocs build --strict
 Three different files share (or nearly share) the name `SKILL.md`. Confusing them is the single most likely mistake this skill exists to prevent:
 
 1. **`SKILL.md`** (repo root) — a **governed release/product-positioning doc**, pinned heavily by `test_public_docs_governance.py` under the variable `SKILL_DOC_PATH = Path("SKILL.md")`. Auto-stamped (Part 2, Layer A). Treat edits here with the same discipline as `AGENTS.md`.
-2. **`.claude/skills/tensor-grep/SKILL.md`** — the **tg-usage skill**: command patterns, argument order, the registration-audit workflow, for an agent *driving* `tg`. Same basename, unrelated content and governance. It has **no release-state section and no `release_docs_current_tag:` line** — it is NOT part of the version-stamping set (Part 2, Layer A). Its only version reference is an inline `As of vX.Y.Z` note inside the Registration-Audit Workflow section (`.claude/skills/tensor-grep/SKILL.md:81`, currently `v1.17.1`), which is not machine-stamped and must be hand-updated if it goes stale; **do not assume the two `SKILL.md` files need the same edit.** Exactly one pytest reads it: `tests/unit/test_benchmark_scripts_part6.py::test_tensor_grep_claude_skill_should_require_non_interactive_action`, which asserts the file still contains `"do not ask for confirmation"` and `"make the change directly"` (Non-Interactive Mode section, `.claude/skills/tensor-grep/SKILL.md:87,89`) **and** `"want me to apply this?"` (separate Rules section, `.claude/skills/tensor-grep/SKILL.md:100`) (in `tests/unit/test_benchmark_scripts_part6.py` -- no line pin; grep the test name). AGENTS.md's own Skills section (`grep -n "Keep it in sync whenever commands/flags change" AGENTS.md` — was `:538`, now `:1789`; AGENTS.md grew ~1250 lines between these two re-verify passes) says to "Keep it in sync whenever commands/flags change" — that sync is currently **discipline, not full pytest coverage**; only those three literal fragments are machine-checked.
-3. **`.claude/skills/<topic>/SKILL.md`** (this file's siblings — `tensor-grep-change-control`, `tensor-grep-architecture-contract`, etc.) — narrow runbooks, one per topic. As of 2026-08-01, **seven test files reference this library** (`grep -rl '\.claude/skills' tests/ | grep -v __pycache__`): `test_skill_index_sync.py`, `test_pyproject_dependencies.py`, `test_orient_deweight_vendored.py`, `tests/eval/test_agent_accuracy.py`, `test_benchmark_scripts_part6.py` (the W4-d split's heir to the old monolith), plus two new arrivals since the "five" count above — `test_skill_library_drift.py` and `test_unstaged_skill_edit_guard.py`. The claim here used to be "none are pytest-pinned, only the old benchmark-scripts monolith matches" -- already false when it was last "re-verified" on 2026-07-23 (`test_skill_index_sync.py` landed 2026-07-14), then the "five" count itself went stale by 2026-08-01 as the same two new tests landed. Its own hedge ("if the count has moved again, this line is stale, not the tests") had already come true, twice. **What is still true**: no test pins the PROSE of an individual topic SKILL.md; `test_skill_index_sync.py` pins the folder SET against the AGENTS.md/CLAUDE.md indices, not the content; `test_skill_library_drift.py` (new) is a citation-freshness gate, not a content-correctness one. Re-run the grep -- and if the count has moved again, this line is stale, not the tests.
+2. **`.claude/skills/tensor-grep/SKILL.md`** — the **tg-usage skill**: command patterns, argument order, the registration-audit workflow, for an agent *driving* `tg`. Same basename, unrelated content and governance. It has **no release-state section and no `release_docs_current_tag:` line** — it is NOT part of the version-stamping set (Part 2, Layer A). Its only version reference is an inline `As of vX.Y.Z` note inside the Registration-Audit Workflow section (`grep -n "As of v" .claude/skills/tensor-grep/SKILL.md`), which is not machine-stamped and must be hand-updated if it goes stale; **do not assume the two `SKILL.md` files need the same edit.** Exactly one pytest reads it: `tests/unit/test_benchmark_scripts_part6.py::test_tensor_grep_claude_skill_should_require_non_interactive_action`, which asserts the file still contains `"do not ask for confirmation"` and `"make the change directly"` (Non-Interactive Mode section) **and** `"want me to apply this?"` (separate Rules section; `grep -n "do not ask for confirmation\|make the change directly\|want me to apply this" .claude/skills/tensor-grep/SKILL.md`) (in `tests/unit/test_benchmark_scripts_part6.py` -- no line pin; grep the test name). AGENTS.md's own Skills section (`grep -n "Keep it in sync whenever commands/flags change" AGENTS.md`) says to "Keep it in sync whenever commands/flags change" — that sync is currently **discipline, not full pytest coverage**; only those three literal fragments are machine-checked.
+3. **`.claude/skills/<topic>/SKILL.md`** (this file's siblings — `tensor-grep-change-control`, `tensor-grep-architecture-contract`, etc.) — narrow runbooks, one per topic. Several test files reference this library (`grep -rl '\.claude/skills' tests/ | grep -v __pycache__`). No test pins the PROSE of an individual topic SKILL.md; `test_skill_index_sync.py` pins the folder SET against the AGENTS.md/CLAUDE.md indices; `test_skill_library_drift.py` is a citation-freshness gate, not a content-correctness one.
 
 **Why this library deliberately does NOT carry independent per-skill SemVer frontmatter.** Each
 `SKILL.md` in this library stamps its own body prose with the CURRENT release tag (e.g. "Verified
@@ -198,7 +197,7 @@ The repo's own `CLAUDE.md` states its job explicitly: *"Claude Code auto-loads t
    uv run python scripts/validate_release_assets.py
    ```
    If you touched a file in mkdocs' nav (Part 2, Layer D), also run `mkdocs build --strict` — CI's `release-readiness`
-   job runs both `mkdocs build --strict` and `validate_release_assets.py` back to back (`ci.yml:113-119`), so a
+   job runs both `mkdocs build --strict` and `validate_release_assets.py` back to back (same grep as Part 2 Layer D), so a
    release-bearing docs change is not proven green until both pass locally.
 4. **Never hand-edit the auto-stamped fragments** (Part 2, Layer A). If a governance test is failing only because the stamped version looks wrong locally, run `python scripts/stamp_release_assets.py` (not a hand edit) and re-check — a genuinely wrong *pyproject.toml* version is a release-mechanics problem, not a docs problem (see `tensor-grep-release-and-positioning`).
 5. **Never add a banned marketing fragment** (Part 2, Layer B negative list) to `README.md`, `docs/benchmarks.md`, `docs/gpu_crossover.md`, or `docs/PAPER.md`, and never claim `"ast-grep parity"` anywhere.
@@ -252,7 +251,7 @@ several closing out a themed cluster (an audit blitz, a campaign phase), and the
 
 ### 7b. A dogfood-follow-up per-slice evidence-ledger entry
 
-Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` (was `:575`, now `:1829`) and pinned by `test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process`: PR order; slice scope; Exa research anchors (or `"not applicable"` **with a stated rationale**); thinktank/planning consensus; subagent ownership; Gemini review result; validation commands; PR CI; main CI; for release-bearing slices additionally semantic-release, release assets, PyPI, and public release dogfood evidence. Copy the shape of an existing entry in `AGENTS.md`'s "Current post-`vX` dogfood slice ledger" rather than inventing a new field order.
+Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` and pinned by `test_agent_workflow_docs_should_preserve_dogfood_research_pr_slice_process`: PR order; slice scope; Exa research anchors (or `"not applicable"` **with a stated rationale**); thinktank/planning consensus; subagent ownership; Gemini review result; validation commands; PR CI; main CI; for release-bearing slices additionally semantic-release, release assets, PyPI, and public release dogfood evidence. Copy the shape of an existing entry in `AGENTS.md`'s "Current post-`vX` dogfood slice ledger" rather than inventing a new field order.
 
 ### 7c. `docs/PAPER.md` — append, never rewrite
 
@@ -294,42 +293,13 @@ Required fields, per `grep -n "Maintain a per-slice evidence ledger" AGENTS.md` 
 - [ ] Touched a mkdocs-nav'd file → `mkdocs build --strict` green.
 - [ ] Ran `python scripts/agent_readiness.py` (the `docs-claim-check` probe) as a fast pre-push smoke test.
 - [ ] Release-bearing docs change → ran `uv run python scripts/validate_release_assets.py` locally (the actual
-  CI `release-readiness` gate, `ci.yml:119` — broader than `stamp_release_assets.py --check`, see Part 2 Layer A).
+  CI `release-readiness` gate — broader than `stamp_release_assets.py --check`, see Part 2 Layer A).
 
 ---
 
 ## Provenance and maintenance
 
-**2026-08-01 re-derivation.** Re-checked every `file:line` citation in this skill against
-`origin/main` again. Two `AGENTS.md` citations had drifted by ~1250 lines each — far more than any
-prior pass in this file — because `AGENTS.md` itself grew substantially between the 2026-07-23
-pass and this one: the "Keep it in sync whenever commands/flags change" sentence (Part 3, item 2)
-moved `:538`->`:1789`, and the "Maintain a per-slice evidence ledger" sentence (Part 7b) moved
-`:575`->`:1829`. Both are now cited via `grep -n "<exact phrase>" AGENTS.md` instead of a bare
-number. The "five test files reference this library" count (Part 3, item 3) had also gone stale
-again — two new test files landed since the 2026-07-29 count (`test_skill_library_drift.py`,
-`test_unstaged_skill_edit_guard.py`), bringing it to seven; this is the second time this exact
-line has gone stale, exactly as its own prior-pass hedge predicted. Deleted the version-pinned
-"Confirmed drifted by `v1.95.0`... 45+ releases" sentence in Part 8's `SESSION_HANDOFF.md`
-staleness bullet — re-deriving it this pass would have produced a THIRD dated snapshot (now
-`v1.101.27`, still `Last updated: 2026-07-07`) that would itself be stale by the next pass; kept
-the underlying finding (the gap is real and has stayed open across three re-verify passes) but
-replaced the specific "as of vX" figure with a standing check command. Everything else re-checked
-this pass — `pyproject.toml:138`/`:142-154`, the `scripts/stamp_release_assets.py` doc-path
-groups, `ci.yml`'s `release-readiness` gate lines, `test_public_docs_governance.py`'s cited
-ranges (`:400-434`, `:457-476`, `:63-70`, `:255-269`), the relocated skill test in `test_benchmark_scripts_part6.py` (grep the test name; the W4-d split retired the monolith), the
-mkdocs nav list (all 14 entries), and every citation into `.claude/skills/tensor-grep/SKILL.md`
-(`:81`, `:87`, `:89`, `:100`) — matched the live files exactly, byte-for-byte, with zero drift.
-
-Volatile facts re-verified **2026-07-08, release `v1.49.3`**; the `docs/BACKLOG.md` scope note and the
-per-skill-version-pins rationale added **2026-07-22, release `v1.93.2`** (governance mechanics
-themselves re-checked and found still accurate, no other change); all `file:line` citations in this
-skill re-verified against `origin/main` and the CRLF binary-preserve edit landmine (Part 4 step 6, Part
-9 checklist) added **2026-07-23, release `v1.95.0`** (several citations had drifted 5-263 lines as
-`AGENTS.md` / `pyproject.toml` / `ci.yml` / `test_public_docs_governance.py` grew — corrected line
-numbers are reflected throughout this file; the mkdocs nav list in Part 2 Layer D was also missing two
-docs, `enterprise_review_bundle_ci.md` and `multi_agent_context_plane.md`, now added). Re-verify
-anything below before relying on it — a wrong runbook is worse than none.
+Cite code by `grep -n "^def <symbol>"` (or an exact-phrase grep), never by line number; if a command below no longer matches, fix this skill in the same change.
 
 | Claim | Re-verify command |
 |---|---|
@@ -340,7 +310,7 @@ anything below before relying on it — a wrong runbook is worse than none.
 | `build_command`'s `git add` list stays in sync with the doc-path groups above | `grep -n "build_command" pyproject.toml` |
 | Root `SKILL.md` pytest variable name | `grep -n "SKILL_DOC_PATH" tests/unit/test_public_docs_governance.py` |
 | The one test pinning `.claude/skills/tensor-grep/SKILL.md` | `grep -rn "skills/tensor-grep" tests/unit/test_benchmark_scripts_part*.py` |
-| No test pins the PROSE of an individual `.claude/skills/<topic>/SKILL.md`; `test_skill_index_sync.py` DOES pin the folder set against both indices | `grep -rln "\.claude/skills" tests/` (expect 7 files as of 2026-08-02; derive again rather than trusting this count) |
+| No test pins the PROSE of an individual `.claude/skills/<topic>/SKILL.md`; `test_skill_index_sync.py` DOES pin the folder set against both indices | `grep -rln "\.claude/skills" tests/` (derive the count; do not trust a stamped number) |
 | Banned marketing fragments | `grep -n "banned_fragments" -A10 tests/unit/test_public_docs_governance.py` |
 | README ledger-regrowth negative guard | `grep -n "Latest complete public release" tests/unit/test_public_docs_governance.py` |
 | Enterprise doc set | `sed -n '1,20p' tests/unit/test_enterprise_docs_governance.py` |

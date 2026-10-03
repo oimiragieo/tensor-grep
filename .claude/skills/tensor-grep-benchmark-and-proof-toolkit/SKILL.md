@@ -55,8 +55,8 @@ Five corollaries, all stated in AGENTS.md:
 | `tg find` / `tg_find` ranking, `TG_FIND_DENSE_WEIGHT`, RRF channels, chunker, late-rerank | `benchmarks/eval_late_rerank_quality.py` | quality gate (ndcg@10/recall@10) on the NL golden set + literal/identifier golden slices — NOT a speed benchmark; see `tensor-grep-semantic-search-campaign` STATUS UPDATE 2 |
 | tokens-per-correct-answer / token-economy (the moat metric — CANDIDATE, not yet a committed script, gated on #72) | none committed yet — see "6. Token-economy" below | a task-level cost metric (tokens spent to reach a correct answer, oracle-validated), not a latency metric — do not conflate with any row above |
 
-Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (still 19 scripts as
-of v1.95.0, re-counted this pass — re-verify with the command in Provenance below, the list drifts).
+Full matrix with default artifact paths: `docs/benchmarks.md` § "Benchmark Matrix" (re-verify the count
+with the command in Provenance below; the list drifts).
 
 If your change does not obviously map to one row, run `benchmarks/run_benchmarks.py` first (the
 broadest cold-path net) and widen from there — do not invent a new ad hoc timing script.
@@ -146,7 +146,8 @@ what a fleet of agents actually pays for, not a lab F1 score.
 **First real run (2026-07-08, internal, oracle-validated, NOT YET a committed `benchmarks/` script)**:
 Sverklo `bench:primitives` (Zenodo 10.5281/zenodo.19802051) on `expressjs/express@4.21.1`, 25 tasks (10
 definition-lookup P1, 10 references P2, 5 file-deps P4). Gated tokens-per-correct-answer (F1>=0.8):
-**tg P1 = 1,243 tok vs rg = 9,328 tok -> tg 7.5x BETTER** (moat validated on definitions). **tg P4 file-deps
+**tg P1 = 1,243 tok vs rg = 9,328 tok (7.5x; WITHDRAWN 2026-08-22, regime/baseline unrecoverable; see
+"Summary statistics" below)**. **tg P4 file-deps
 = 53,631 tok vs rg = 5,367 tok -> tg ~10x WORSE (at the time)** — tg had no scoped "what does file X
 import / who imports X" primitive, only whole-repo `tg map`, so every P4 query paid the whole-repo
 capsule cost regardless of the single file asked (task #74).
@@ -154,8 +155,8 @@ capsule cost regardless of the single file asked (task #74).
 **P4 CLOSED AND RE-PROVEN (2026-07-16, `v1.76.12` #619).** `#460` (`05f49b8`) shipped the fix — scoped
 `tg imports FILE` / `tg importers FILE [ROOT]` — and the SAME Sverklo P4 slice was re-run independently
 (deterministic, $0, `scratchpad/bench/aggregate.py`): **53,631 tok -> 2,387 tok, ~10x WORSE -> ~2.24x
-BETTER than rg**, F1 preserved and improved (0.542 -> 0.606), bidirectional-oracle PASSED 25/25. **The
-moat is now proven on both P1 and P4.** Raw artifacts and scripts still live at `scratchpad/bench/`
+BETTER than rg**, F1 preserved and improved (0.542 -> 0.606), bidirectional-oracle PASSED 25/25. Directionally
+positive on P1 and P4; not a publishable or claim-quality result. Raw artifacts and scripts still live at `scratchpad/bench/`
 (`results.json`, `run_bench.py`, `score.py`, `validate_oracle.py`, `aggregate.py`) — **still not
 promoted to `benchmarks/` or `docs/benchmarks.md`**, so the harness-committal gap in the paragraph below
 is unchanged even though the P4 number itself is now closed; full memory:
@@ -228,9 +229,8 @@ this is systematic, not jitter.** Jitter (above) is random noise around the true
 regime mismatch is a **wrong measurement of the wrong code path** and can point the wrong direction
 entirely. A warm dogfood run measures the CACHED path, where the function you actually changed may not
 even execute on that request. Receipt: a `tg orient` warm end-to-end dogfood read showed **-36%** on a
-symbol-merge change (`_python_imports_and_symbols`, `src/tensor_grep/cli/repo_map.py` — locate via
-`grep -n "def _python_imports_and_symbols" src/tensor_grep/cli/repo_map.py`, was `:2126`, now
-`:2166` on 2026-08-13) that
+symbol-merge change (`_python_imports_and_symbols` — locate via
+`grep -rn "def _python_imports_and_symbols" src/tensor_grep/cli/`) that
 directly microbenchmarking the function then showed was actually **~54% faster** (961ms→446ms), because
 the warm run never re-parsed the file the change touched. This deepens corollary 3 above ("cold-start
 and repeated-query are different regimes") into a concrete verification recipe: to prove a cold-path
@@ -239,9 +239,8 @@ process per rep (cold cache by construction), a single pass over distinct inputs
 output-identity (`total == total` both sides) — or (b) explicitly clear the relevant cache between reps
 of an end-to-end run. Never trust a warm end-to-end number as evidence for or against a cold-path
 change. Second receipt, same shipped-wheel-microbench discipline applied to a different lever: a
-validation-scan pre-check (`_framework_test_pattern_bonus`, `src/tensor_grep/cli/repo_map.py` —
-locate via `grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`, was
-`:11112`, now `:11446` on 2026-08-13)
+validation-scan pre-check (`_framework_test_pattern_bonus` — locate via
+`grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`)
 measured **~68% faster** (3657ms→1172ms) this way, output byte-identical. The general profiling/proof
 pipeline this recipe belongs to (profile the shipped wheel → prove byte-identical output → warm/cold
 microbench) lives in the global skill `profile-guided-byte-identical-optimization`; this is the
@@ -460,17 +459,11 @@ flag-flip**, not a multi-week rebuild. That flip changes only whether the built 
 it does **not** promote GPU, change the CPU-default auto-recommendation, or prove a speed crossover.
 Keep the honesty floor: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays
 `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet
-(`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`; corrected
-2026-08-01 — the prior `:80-82` citation pointed at the unrelated ripgrep-flag-compatibility list a
-few dozen lines above the real promotion-contract paragraph, currently `:123`). Do not treat any GPU
+(`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`). Do not treat any GPU
 number you produce as promotion evidence; it is implementation history at best.
 
-**Re-verified current as of v1.95.0**: `docs/gpu_crossover.md` carries its own rotating
-"Current post-`<version>` GPU dogfood Read" heading section — the `<version>` in that heading is
-re-stamped per release (it was `v1.95.0` when this sentence was first written and has rotated
-since; `grep -n "GPU dogfood Read" docs/gpu_crossover.md` for the current one — this file
-previously embedded the literal `v1.95.0` heading text, a snapshot that goes stale every release),
-and the verdict above is unchanged in substance — still no
+`docs/gpu_crossover.md` carries its own rotating "Current post-`<version>` GPU dogfood Read"
+heading section, re-stamped per release (`grep -n "GPU dogfood Read" docs/gpu_crossover.md`), and the verdict above is unchanged in substance — still no
 single-pattern crossover, and the public managed binary still routes GPU requests through `GpuSidecar`
 (not `NativeGpuBackend`). Promotion has grown a more detailed contract since v1.75.4 (unchanged
 conclusion, more machinery): public promotion now additionally requires a managed NVIDIA front door
@@ -582,26 +575,10 @@ the row diagnostic (not release-gating) until it actually beats that number.
 
 ## Provenance and maintenance
 
-Facts here re-verified at tensor-grep **v1.49.3** (2026-07-08); the §6 P4 close-out, the new §7
-`tg find` retrieval-quality section, and the decision-table row were added and verified **v1.78.1**
-(2026-07-16); **v1.93.2** (2026-07-22) added the B-many-pattern dedup-bug caveat to the worked example
-(the "code is still correct" framing is now falsified for that path, #694), the static-replay caveat
-on the `run_repo_retrieval_benchmarks.py` decision-table row, and the A3 large-file
-`backend_cpu.rs`-vs-`native_search.rs` disclosure hazard; **v1.95.0** (2026-07-24) added the
-warm-vs-cold regime trap + shipped-wheel cold-microbench recipe to the noise-floor section and the
-byte-identical output-proof obligation (enumerate + differential-fuzz) to the fair-benchmark rules,
-re-verified the GPU-status block against the current `docs/gpu_crossover.md` top section and added the
-`tensor-grep-gpu` sibling-skill cross-reference, and re-counted the Benchmark Matrix (still 19). Every
-`file:line` citation in the Noise-floor, Fair-benchmark-rules, Recipe, and Regression-gate-mechanics
-sections was re-grepped this pass (`check_regression.py`, `perf_guard.py`,
-`run_hot_query_benchmarks.py`, `run_benchmarks.py`, `run_native_cpu_benchmarks.py`,
-`run_gpu_benchmarks.py`, `docs/CONTRACTS.md`) and all matched exactly — the Worked Example's historical
-commit hashes (`87d4ca4`, `27386f8`, `05f49b8`) were confirmed to still resolve but the prose around
-them was not re-walked. A candidate `benchmarks/run_ast_parity_check.py` decision-table row for the
-Java/C#/PHP language-registration work was considered and dropped: that script's 40 parity cases cover
-only python/javascript/typescript/rust (`benchmarks/gen_corpus.py` `AST_PARITY_CASES`), so it does not
-exercise the newly-registered languages — new-language correctness is a `test_lang_registry` pytest
-concern (see `tensor-grep-validation-and-qa`), not a `benchmarks/` one.
+Cite code by `grep -n "^def <symbol>"`, never by line number; if a command below no longer matches, fix
+this skill in the same change. (`benchmarks/run_ast_parity_check.py`'s parity cases cover only
+python/javascript/typescript/rust, so new-language correctness is a `test_lang_registry` pytest concern,
+not a `benchmarks/` one.)
 Re-verify before trusting a stale number:
 
 - Script inventory / artifact paths drift: `grep -n "| .* | \`benchmarks/run_" docs/benchmarks.md`
@@ -619,15 +596,6 @@ Re-verify before trusting a stale number:
   further -- no speed crossover is proven vs `rg`/`tg_cpu` regardless of publish-flag state
   (`grep -n 'GPU benchmark correctness\|managed GPU promotion' docs/CONTRACTS.md`).
 
-  This line cited `docs/CONTRACTS.md:80-82` until 2026-08-02. That anchor was corrected earlier in
-  THIS FILE (see the GPU section's `grep -n "Public managed GPU promotion additionally requires"
-  docs/CONTRACTS.md` note — pointer fixed 2026-08-13: this sentence previously pointed at "the GPU
-  section's `grep -n "gpu_evidence_status"` note", which does not exist anywhere in this file; the
-  only other `gpu_evidence_status` occurrence is the field name inside rule 2 of the GPU section,
-  not an anchor note) and the correction never
-  reached this duplicate 150 lines below, so the file shipped a fact and its refutation at once --
-  `:80-82` is a `--column`/`-c`/`--count-matches` flag list, not a promotion contract. **Fix a fact
-  -> grep the WHOLE doc for the old anchor**; a correction applied at one site is not applied.
 - GPU Phase-0/Phase-1 status: `grep -n "RELEASE_NATIVE_ASSET_PROFILE\|native-frontdoor-gpu" .github/workflows/ci.yml` and re-read `docs/gpu_crossover.md`'s current top section (it carries its own
   "Current post-`<version>` GPU dogfood Read" heading, updated per release) — cross-check the sibling
   skill `tensor-grep-gpu`'s own provenance stamp for the fuller current picture.

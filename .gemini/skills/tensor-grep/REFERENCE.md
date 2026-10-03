@@ -8,9 +8,9 @@ tg "PATTERN" REPO_PATH
 tg -t js "PATTERN" REPO_PATH
 tg --count-matches "PATTERN" REPO_PATH
 tg search --format rg "PATTERN" REPO_PATH
-tg agent REPO_PATH --query "change behavior" --json
-tg edit-plan REPO_PATH --query "change behavior" --json
-tg context-render REPO_PATH --query "feature flow" --json
+tg agent REPO_PATH "change behavior" --json
+tg edit-plan REPO_PATH "change behavior" --json
+tg context-render REPO_PATH "feature flow" --json
 tg source REPO_PATH SYMBOL
 tg defs REPO_PATH SYMBOL
 tg refs REPO_PATH SYMBOL
@@ -31,7 +31,7 @@ tg search --format rg --sort path "PATTERN" REPO_PATH
 tg search --json "PATTERN" REPO_PATH
 tg search --format rg --json "PATTERN" REPO_PATH
 tg session open REPO_PATH --json
-tg session edit-plan SESSION_ID REPO_PATH --query "change behavior" --daemon --json
+tg session edit-plan SESSION_ID REPO_PATH "change behavior" --daemon --json
 ```
 
 ## Practical Sequence

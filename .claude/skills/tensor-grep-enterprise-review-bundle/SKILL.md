@@ -5,7 +5,7 @@ description: Use when packaging tensor-grep outputs for enterprise change review
 
 # tensor-grep enterprise review bundle
 
-Verified against **tg 1.110.14** (2026-08-11).
+Last verified: **tg 1.110.14** (2026-08-11) -- not re-run since; re-verify on the current release before citing.
 
 `tg review-bundle` is the enterprise packaging surface for change review. It is **not** a substitute for `tg agent` / `tg evidence emit`.
 
@@ -61,10 +61,7 @@ these numbers are not worth re-stamping by hand).** Every flag claim below was p
 both drifted from the binary. The option parsing lives in `src/tensor_grep/cli/main.py`; re-derive
 with `grep -n '@review_bundle_app.command\|min_receipts: int = typer.Option\|expect_key: list' src/tensor_grep/cli/main.py`
 — these are command-tail line numbers, which drift with every new `tg` command (see
-`tensor-grep-diagnostics-and-tooling` Provenance), so trust the grep over any number written here:
-`@review_bundle_app.command("create")` was `:15896` now `:16514` (`review_bundle_create` was
-`:15897` now `:16515`), `@review_bundle_app.command("verify")` was `:16040` now `:16658`, with
-`min_receipts` was `:16071` now `:16689` and `expect_key` was `:16080` now `:16698`. Repo-wide,
+`tensor-grep-diagnostics-and-tooling` Provenance), so cite the grep, never a number. Repo-wide,
 `python .claude/skill_anchor_audit.py` re-checks every citation in the skill library at once.
 
 Both `--min-receipts` and `--expect-key` are default-OFF policy levers — a bundle with a stripped-empty

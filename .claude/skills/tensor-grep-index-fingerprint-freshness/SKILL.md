@@ -27,7 +27,7 @@ asks "is the stored root the queried root, canonically?".
 
 ## Part 1 — Identity-anchor-first: canonical root, never a raw path string
 
-The M17 structural fix (merged on origin/main as v1.110.12; current tag v1.110.16 (re-derive with: git describe --tags origin/main)) is the model:
+The M17 structural fix (merged on origin/main as v1.110.12) is the model:
 
 - [ ] Persist a **canonical** root at build: `canonical_root_of()` recorded once (format v6) —
       lexical AND canonical, so later path-spelling differences (case, `..`, junctions in the
@@ -131,7 +131,7 @@ Python parse/semantic caches:
 | **"Do not trust mtime alone for cache invalidation"** (general build-tool / ccache / ninja literature; the same reason `touch -r` defeats incremental builds) | File-system metadata timestamps are attacker-influenceable (or accidentally restorable) | Level 1's "NEVER a tree-level claim" + the 4 KiB-cap receipt. |
 | **Content-addressed / digest-bounded verification (general)** | A bounded digest is a decision about the threat's cost, not a correctness shortcut | Part 4's named sampling cap + reopen trigger discipline. |
 
-**Repo receipts to cite by symbol, not line:** `index.rs` `root` / `staleness_reason` /
+**Repo receipts to cite by symbol, not line:** `index.rs` `canonical_root` / `staleness_reason` /
 `compute_tree_fingerprint` / `TREE_FINGERPRINT_TOP_LEVEL_CAP` / `is_tg_index_owned_entry`;
 `main.rs` `resolve_index_path` / the reuse branch / `detect_warm_index_state`;
 `src/tensor_grep/core/semantic_index.py` (the SHA-256 mtime-path fingerprint + fallback);

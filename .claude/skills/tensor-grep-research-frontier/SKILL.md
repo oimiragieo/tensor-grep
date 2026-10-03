@@ -7,41 +7,11 @@ description: Use when scoping, pitching, planning, or judging a SOTA-advancing b
 
 The map of where `tg` could plausibly advance the state of the art (SOTA), and — for each — why current SOTA falls short, the specific `tg` asset already in this repo, the first three concrete steps here, and a falsifiable "you have a result when" milestone.
 
-**This skill is a compass, not a licence to build.** Every item below is labelled `open`, `candidate`, or `experimental`. Nothing here is a shipped win, and reading this skill does not authorise starting work. To actually attempt/merge any item you MUST go through `tensor-grep-change-control` (TDD-first, benchmark-hot-paths, no-speed-claim-without-measured-numbers, experimental-until-proven, draft-PR-only, one-merge-per-tick). No skill routes around change-control.
+**This skill is a compass, not a licence to build.** Every item below is labelled `open`, `candidate`, or `experimental`. Nothing here is a shipped win, and reading this skill does not authorise starting work. To actually attempt/merge any item you MUST go through `tensor-grep-change-control` (TDD-first, benchmark-hot-paths, no-speed-claim-without-measured-numbers, experimental-until-proven, verified-green self-merge, burst-then-hold merging). No skill routes around change-control.
 
-Date-stamped **2026-07-24, v1.96.0** (originally authored 2026-07-02 at v1.17.25; spot-checked 2026-07-08
-at v1.49.3; spot-checked 2026-07-16 at v1.78.1 for Problem 4b/Problem 1 GPU-funding; spot-checked
-2026-07-22 at v1.93.2 — rewrote Problem 4d to SHIPPED (`tg ledger`, #673/#675, hardened by #701/#706),
-hardened Problem 2 with the `_score_symbol`/#699 progress note + the H1 dead-end, added the
-B-warm-session retirement note to Problem 3, and added the B-GPU publish-HOLD one-liner to Problem 1).
-This pass added **Problem 6** (the C/C++ symbol-graph gap — the last hole in the top-10 language tier
-now that Go/Java/PHP/C# are shipped), a stale-brief receipt to Ground rule 5, reconciled Problem 1's
-funding note against the now-shipped CPU semantic search and the new `tensor-grep-gpu` operator skill,
-and refreshed four drifted `file:line` citations (`_score_symbol`, `ripgrep_operand_args`, the
-`repo_map.py` symbol-file-field example, `docs/CONTRACTS.md`'s promotion-gate line) — the rest of
-Problems 1-5 was not re-walked line-by-line this pass. Re-verify volatile facts with the commands in
-**Provenance and maintenance** before you cite them.
-
-**Skill-library drift audit, 2026-08-01, against `v1.101.27` (local `tg` build lags at 1.101.24 —
-irrelevant to this doc, which cites source, not the installed binary).** Two real defects found and
-fixed, beyond ordinary line drift: (1) Problem 6's "Honest framing of the coverage number" paragraph
-had re-invented a three-tier split ("full AST-backed caller support (4)... go is partial") that
-contradicts the product's own canonical `_symbol_navigation_descriptor()` binary split (parser-backed
-5 including go / foundational 5) — corrected in place, with the real within-tier hook gap (go lacks
-`provider_alias_calls`/`import_update_target`/`classify_ref_kind`) kept as a citable nuance, not a
-tier. (2) the **2026-07-24 pass's own claim to have refreshed `docs/CONTRACTS.md`'s promotion-gate
-line was itself wrong** — both that citation (Problem 1) and its Provenance-section twin pointed at
-`:80-82`/`:81`, the ripgrep-flag-compatibility list, not the GPU promotion-contract paragraph (now
-`:123`); fixed both, this time as a `grep`, not a number. Also re-anchored `_score_symbol`
-(`:8177`/`~7698` -> `:8194`, drift of ~500 lines in a week — `repo_map.py` is still growing fast).
-Everything else in Problems 1-5 and the fused-thesis section was spot-checked, not fully re-walked.
-
-**2026-08-09 pass (logged late, on 2026-08-12).** Problem 6 was SUPERSEDED against origin/main
-`e3feaf5`: Tasks 10D/10E plus the F7 Task 11 wave #957 shipped the full 10/10 parser-backed tier
-(descriptor 10 parser-backed / 0 foundational, tier EMPTY), so Problem 6's open scope narrowed to
-cross-file caller confirmation beyond the include-confirmed band, and the frontmatter's former
-"last language gap (C/C++)" program was retired with it — the still-open programs are the five
-named in the frontmatter plus that Problem-6 tail.
+Re-verify volatile facts with the commands in **Provenance and maintenance** before you cite them;
+prior verification passes are in git history
+(`git log -p -- .claude/skills/tensor-grep-research-frontier/SKILL.md`).
 
 ## When to use this skill — and when a sibling is the right door
 
@@ -56,8 +26,6 @@ named in the frontmatter plus that Problem-6 tail.
 | HOW to run the frontier research itself (Exa fan-out, adversarial claim-verification, cite `file:line`) | `tensor-grep-research-methodology` |
 | BM25 / IDF / PageRank / trigram / PFAC domain theory | `code-search-and-retrieval-reference` |
 | Flags, build/env, run/operate, diagnostics, validation/QA, docs, release mechanics | the matching `tensor-grep-*` operational sibling |
-
-Some sibling skills in this list are authored in the same batch and may not exist yet; reference them by name.
 
 ## Ground rules for frontier work (do not skip)
 
@@ -75,7 +43,7 @@ Some sibling skills in this list are authored in the same batch and may not exis
 
 **Why current SOTA fails.** Naive GPU grep loses. Single-pattern cold grep is dominated by CUDA startup + PCIe H2D transfer + output materialization: measured `rg = 73.8ms` vs `tg GPU = 1093.8ms` at 1GB, and 29–35x slower than `rg` at 5GB on RTX 4070 / RTX 5070 (`docs/gpu_crossover.md` "Current native evidence"). Against the *fair* single-invocation `rg -F -e … -e …` multi-pattern baseline (never sequential `rg`, which is a strawman), the public managed lane still falls back to `NativeCpuBackend` and loses. The only *candidate* wins are (a) **many** fixed strings resident over a large corpus, and (b) an **amortized resident** mode (compiled plan + corpus kept resident across queries) — and (b) is explicitly `candidate/not-measured until a benchmark exists` (`docs/CONTRACTS.md`).
 
-**Status:** GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set identity -- `docs/gpu_crossover.md`), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild, so the old "roadmap holds all GPU work until three CPU-only wins ship first" gate no longer describes reality (five GPU PRs shipped through v1.75.4 without waiting on it). **The honesty floor is unchanged and does not move with the flag:** flipping the CI var publishes assets only -- it does not promote GPU, does not change the CPU-default auto-recommendation, and does not prove a speed crossover. No speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`; corrected 2026-08-01 — the earlier `:81` citation pointed at the unrelated ripgrep-flag-compatibility list, not this promotion-contract paragraph, currently `:123`). The PFAC automaton itself, and the resident/many-pattern crossover this Problem targets, remain unbuilt/unproven -- that is still the open research question below, independent of the publish-flag decision.
+**Status:** GPU Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597) and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB match+file-set identity -- `docs/gpu_crossover.md`), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (publishing those already-built assets) is now a **reversible flag-flip**, not a multi-week rebuild, so the old "roadmap holds all GPU work until three CPU-only wins ship first" gate no longer describes reality (five GPU PRs shipped through v1.75.4 without waiting on it). **The honesty floor is unchanged and does not move with the flag:** flipping the CI var publishes assets only -- it does not promote GPU, does not change the CPU-default auto-recommendation, and does not prove a speed crossover. No speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion additionally requires" docs/CONTRACTS.md`). The PFAC automaton itself, and the resident/many-pattern crossover this Problem targets, remain unbuilt/unproven -- that is still the open research question below, independent of the publish-flag decision.
 
 **Funding note (2026-07-16, do not oversell):** `docs/BACKLOG.md`'s CEO desk now frames the CPU semantic
 direction (`tg find` / `--semantic`, campaign #189, see `tensor-grep-semantic-search-campaign`) as the
@@ -119,7 +87,7 @@ open crossover *research* question, the same split Problem 4d uses to hand its o
 **The tg asset.** `_score_text_terms` / `_symbol_rank_key` / `_score_file_path` in `repo_map.py`; the deterministic controlled-corpus fixture; the degrade-to-ask safety-floor pattern in `agent_capsule.py`.
 
 **Progress since (v1.92.2/#699/A7) — a SIBLING scorer hardened, the primary flat scorer unchanged.**
-`_score_symbol` (`grep -n "^def _score_symbol" src/tensor_grep/cli/repo_map.py`; was `:8177`, now `:8194`) — a THIRD scorer, distinct from both `_score_text_terms` above and
+`_score_symbol` (`grep -n "^def _score_symbol" src/tensor_grep/cli/repo_map.py`) — a THIRD scorer, distinct from both `_score_text_terms` above and
 the real IDF-weighted BM25 in `retrieval_bm25.py`, used only by the deadline-truncated best-effort-
 primary fallback path — gained an exact word-boundary bonus (+1, capped, subordinate to match-tier
 rank) and a test-file demotion (best-effort path only; the main path already drops test files
@@ -174,8 +142,8 @@ dropped it, then `#370` (v1.28.1) restored it as the extracted, unit-tested `rip
 helper (`rust_core/src/rg_passthrough.rs:581-599` — the sentinel is pushed unconditionally before
 the path loop whenever `!args.paths.is_empty()`). Verify before citing: `grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs`. The remaining adjacent
 **round-4 open correctness items** (distinct from speed, still open): rg-parsing edge cases rg#3364
-(`--multiline --pcre2 --json` emits one match with two submatches), rg#3131 (`rg -c` omits NUL-byte
-files), and BOM-in-`.gitignore`. Verify against the real binary — `tg search PATTERN -- <path>` vs
+(`--multiline --pcre2 --json` emits one match with two submatches; open upstream), rg#3131 (`rg -c` omits
+NUL-byte files; closed upstream), and BOM-in-`.gitignore`; none has a tg fixture. Verify against the real binary — `tg search PATTERN -- <path>` vs
 `tg search PATTERN <path>`.
 
 **You have a result when (falsifiable):** a native-control-plane experiment produces an accepted cold-path win — `benchmarks/check_regression.py` reports **no `tg` regression** against the frozen Windows baseline on the plain-search rows with a claim-quality launcher (native-exe route, clean `tg_binary_version_status`) — OR you re-confirm and record (a legitimate negative) that a larger native rewrite is still required. The `--` sentinel parity sub-result is already shipped (`#370`); it is no longer part of this milestone.
@@ -254,18 +222,18 @@ build_doc_drift("docs", code_path="src")  ->  20,072 findings / 2,727 "high conf
 3. **Rust builtin types leak through the curated denylist.** `_CURATED_STDLIB` in `diff_docs.py` is Python-only (`Path`, `Optional`, `Enum`, `Any`, `Dict`, `List`, `Tuple`, `Set`) — no Rust builtins. `String` produces **9 false positives even when `code_path="."` includes `rust_core/` in the scan** (this is the literal receipt behind round-4 item H's "flagging String/Option/Vec language types" note). The flip side is worse: `Option`/`Result` do NOT false-positive in a whole-repo scan, but only by accident — both names collide with unrelated `class Option` / `class Result` definitions vendored under `benchmarks/external_repos/{click,commander.js}/…`, which a flat repo-wide name set cannot tell apart from a real project symbol. A flat set is unreliable in *both* directions, not just the flagged one.
 4. **Historical-doc downgrade misses the biggest historical-ish source: plan docs.** `_is_historical_doc` only matches `paper.md` / `roadmap` / `changelog` / `history` in the path. `docs/superpowers/plans/` holds **30 dated implementation-plan documents** that routinely spell out helper names before (or instead of) they ship — e.g. `docs/superpowers/plans/2026-06-26-tg-session.md` documents `_append_retrieval_log_entry()` / `_query_retrieval_log()` in prose and pseudocode, and neither name exists anywhere under `src/` today (`grep -rn "_append_retrieval_log_entry" src/` returns nothing) — the plan was executed under different names or dropped. A plan doc is a proposal, not documentation of shipped behavior, yet it is scanned at full confidence like a reference doc.
 
-**Status:** PARKED. Foundation lives on branch `wip/diff-docs-precision`, commit `90b7042` ("wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)") — `src/tensor_grep/cli/diff_docs.py` (303 lines) + `tests/unit/test_diff_docs.py` (123 lines, 17 `def test_...` functions, all green). **Never merged to `main`**; `docs/SESSION_HANDOFF.md` records the deferral. Do not resurrect by merging as-is — 17/17 green is not the bar (see milestone below).
+**Status:** PARKED. Foundation survives only as commit `90b7042` (preserved as branch `archive/diff-docs-precision`) ("wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)") — `src/tensor_grep/cli/diff_docs.py` (303 lines) + `tests/unit/test_diff_docs.py` (123 lines, 17 `def test_...` functions, all green). **Never merged to `main`**; `docs/SESSION_HANDOFF.md` records the deferral. Do not resurrect by merging as-is — 17/17 green is not the bar (see milestone below).
 
 **The tg asset (already on the branch, not main).** `build_doc_drift()` / `render_doc_drift_text()`: a markdown code-span extractor (`_iter_code_span_tokens`, a line-state-machine over fenced + inline code that gives free line numbers), a fence-language scope gate (`_FENCE_LANGUAGE` / `_IN_SCOPE_LANGUAGES` — only python/js/ts/rust fences are resolved against symbols; every other fence language is counted in `coverage.docs_files_out_of_scope`, never silently folded into "0 findings = clean"), and four precision denylists (length floor `_MIN_TOKEN_LEN=4`, `_TG_COMMAND_NAMES`, `_COMMON_WORD_STOPLIST`, `_CURATED_STDLIB` + `_LANGUAGE_KEYWORDS` + `builtins`). The historical-doc downgrade and the "unresolved, never removed" wording discipline (the docstring is explicit: "tg has no git history, so it cannot assert a symbol was removed") are both real, keep-worthy design decisions — the gap is precision of the core "does it resolve" signal, not the scaffolding around it.
 
 **Ranked solution menu (highest-leverage first):**
-1. **Qualified in-repo-module signal (the real fix).** `known_symbols` today is a FLAT `{name}` set with no notion of origin — `repo_map` symbols already carry a `file` field (`src/tensor_grep/cli/repo_map.py:2411`, inside the `_symbol_record()` helper at `:2399`, e.g. `"file": str(file)`; re-verify with `grep -n '"file":' src/tensor_grep/cli/repo_map.py`) that is simply discarded when building the set. For a dotted reference like `tensor_grep.cli.session_store.foo`, resolve the module prefix to a real repo file path FIRST; only if that file exists among the scanned symbol files does an unresolved trailing segment count as a genuine finding, and only then raise its confidence. A bare, undotted `foo` with no resolvable module anchor should never reach "high." This alone kills false-positive class 2 (pytest fixtures / local variables are never expressed as `real_module.symbol` against an actual repo path) and closes the class-3 collision hole (a same-named symbol in an unrelated vendored file no longer masks a real Rust builtin, because the module path won't match).
+1. **Qualified in-repo-module signal (the real fix).** `known_symbols` today is a FLAT `{name}` set with no notion of origin — `repo_map` symbols already carry a `file` field (inside the `_symbol_record()` helper in `src/tensor_grep/cli/repo_map.py`, e.g. `"file": str(file)`; re-verify with `grep -n "^def _symbol_record" src/tensor_grep/cli/repo_map.py`) that is simply discarded when building the set. For a dotted reference like `tensor_grep.cli.session_store.foo`, resolve the module prefix to a real repo file path FIRST; only if that file exists among the scanned symbol files does an unresolved trailing segment count as a genuine finding, and only then raise its confidence. A bare, undotted `foo` with no resolvable module anchor should never reach "high." This alone kills false-positive class 2 (pytest fixtures / local variables are never expressed as `real_module.symbol` against an actual repo path) and closes the class-3 collision hole (a same-named symbol in an unrelated vendored file no longer masks a real Rust builtin, because the module path won't match).
 2. **Git-history removed-detection.** `diff_docs.py` currently has zero git access by design. `git log --all -S<symbol> -- <code_path>` (or a cheaper `git log -1 --diff-filter=D -- '**/*<symbol>*'` sweep) distinguishes "this name existed in the code and was deleted" (real drift — report it) from "this name never existed" (typo, pseudocode, or a plan-doc proposal — suppress or heavily downweight). This directly fixes false-positive class 4 (plan docs) without a path-pattern denylist arms race, and lets the tool honestly say "removed" instead of only ever "unresolved."
 3. **Curated per-language type denylists.** Cheapest, narrowest-scope fix: extend `_CURATED_STDLIB` with a `_RUST_BUILTINS` frozenset (`String`, `Vec`, `HashMap`, `HashSet`, `Box`, `Result`, `Option`, `Cow`, `Arc`, `Rc`, `str`, …) gated by `fence_language == "rust"`, mirroring the existing Python-only list. Kills false-positive class 3 outright, but a denylist is always one type behind — pair with #1, do not ship #3 alone and call it "the fix."
 4. **Cheap, bounded denylist patch** (do alongside #2, not instead of it): add a `plans/` / `superpowers/plans/` path-fragment marker to `_is_historical_doc`. Fast, but a pure path-pattern patch regresses again the moment a new plan-doc subdirectory appears — treat it as a stopgap for class 4, not a substitute for #2.
 
 **First three steps in THIS repo:**
-1. `git show wip/diff-docs-precision:src/tensor_grep/cli/diff_docs.py > <scratch>.py` (or check out the branch into a worktree — do not merge it), then re-run `build_doc_drift("docs", code_path="src")` against current `docs/`/`src/` to get a fresh baseline before touching anything, and diff the finding set against a prior run so you are not chasing doc-drift-in-the-drift-detector.
+1. `git show origin/archive/diff-docs-precision:src/tensor_grep/cli/diff_docs.py > <scratch>.py` (do not merge it), then re-run `build_doc_drift("docs", code_path="src")` against current `docs/`/`src/` to get a fresh baseline before touching anything, and diff the finding set against a prior run so you are not chasing doc-drift-in-the-drift-detector.
 2. Prototype solution #1 (qualified in-repo-module signal) first — it is the only menu item that fixes a false-positive *class*, not a finite token list. Build it as a second, stricter resolution pass: dotted references resolve module-then-member; bare references either drop to "low" unconditionally or require solution #2's git-history check to earn "high."
 3. Build the missing oracle before touching the heuristic again: a stratified, hand-labelled sample of findings (mix of "high"/"low", fenced/inline) with a human-verified true/false-positive label, so the next iteration has a measured precision number to beat instead of "the fixture suite is green."
 
@@ -286,17 +254,16 @@ with its status. (Caught 2026-07-27 by a skills-accuracy audit.)
 `lang_registry.register_language(LanguageSpec(...))` pattern the other module-shaped languages use
 — and, as of the Task 10D/10E waves plus the F7 Task 11 wave #957, the in-file call-graph seams are
 wired too: `references_and_calls` points at `lang_c.c_references_and_calls` /
-`lang_cpp.cpp_references_and_calls` (dispatch `repo_map.py:6433/:6446`; LanguageSpec hook sites
-`:6752/:6790/:6804/:6846`), and `file_imports_symbol_from_definition` is wired to the shared C/C++
+`lang_cpp.cpp_references_and_calls` (dispatch via `_c_references_and_calls_for_registry` /
+`_cpp_references_and_calls_for_registry` in `repo_map.py`), and `file_imports_symbol_from_definition` is wired to the shared C/C++
 include engine, giving C/C++ a `c-include-path-confirmation` cross-file confirmed band
 (`lang_c_cpp_include.py`: `resolve_include_target` / `file_includes_definition` /
 `include_resolves_into_definition_dirs`, used from `lang_c.py:748/:799`). The
 "self-labelled FOUNDATIONAL-TIER" framing this section used to carry in `repo_map.py` was the
 pre-10D/10E state — the descriptor is now **10 parser-backed / 0 foundational, the tier EMPTY**
-(2026-08-09 audit vs origin/main `e3feaf5`; the docstring's own "As of Task 10E ... this tier is
-EMPTY" note is at `repo_map.py:590-597`). Only `provider_alias_calls`, `import_update_target`,
+(the descriptor docstring's own note: `grep -n "this tier is EMPTY" src/tensor_grep/cli/repo_map.py`). Only `provider_alias_calls`, `import_update_target`,
 `prime_repo_context` and `classify_ref_kind` remain `None` on the C/C++ specs
-(`repo_map.py:6789-6793`, `:6845-6849`), reported by `_language_coverage_gaps_for_universe` as
+(read the c/cpp `LanguageSpec(...)` literals in `repo_map.py`), reported by `_language_coverage_gaps_for_universe` as
 honest `resolution_gaps` entries.
 
 **What is GENUINELY still open** (scope any new work here, not at the registration layer):
@@ -306,7 +273,7 @@ honest `resolution_gaps` entries.
    `file_imports_symbol_from_definition`, `import_update_target`, `prime_repo_context` and
    `classify_ref_kind` are all `None` on both specs, so `tg refs`/`callers`/`blast-radius` fall
    through to the regex heuristic path for C/C++" is FALSE since Tasks 10D/10E: the in-file AST
-   refs/callers path is wired for both (dispatch `repo_map.py:6433/:6446`), and cross-file edges
+   refs/callers path is wired for both (dispatch via the `_c_references_and_calls_for_registry` / `_cpp_references_and_calls_for_registry` wrappers), and cross-file edges
    that the `#include`-path engine confirms carry the `c-include-path-confirmation` band rather
    than the regex heuristic. What remains open is cross-file caller confirmation BEYOND that
    include-confirmed band, which falls back to the text prefilter pending a per-language
@@ -340,7 +307,7 @@ counts UPDATED 2026-08-04 by PR #927 (Java promoted foundational -> parser-backe
 again the same day by the Task 10B C# wave and the Task 10C PHP wave.**
 "10/10 languages" is REGISTRY membership, not caller-graph parity, but the product's OWN canonical
 split is a strict BINARY, not a hand-counted list. `_symbol_navigation_descriptor()`
-(`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py` -- was `:562`, now `:570`) partitions
+(`grep -n "_symbol_navigation_descriptor" src/tensor_grep/cli/repo_map.py`) partitions
 `LANGUAGE_REGISTRY` on exactly one field -- `LanguageSpec.references_and_calls is not None` -- into
 **parser-backed** (c, cpp, csharp, go, java, javascript, php, python, rust, typescript -- 10) vs
 **foundational** (-- 0). Java's/C#'s/PHP's refs/callers are AST-verified only in-file so far; cross-file caller
@@ -400,13 +367,13 @@ it must be rewritten from fresh receipts, not extended.
 
 Re-verify anything below before you cite it; line numbers drift.
 
-- **Version / date stamp** (`v1.96.0`, 2026-07-24): `grep -n '^version' pyproject.toml` and `grep -n 'release_docs_current_tag' AGENTS.md`.
+- **Version stamp:** `grep -n '^version' pyproject.toml` and `grep -n 'release_docs_current_tag' AGENTS.md`.
 - **GPU pause + the 3 gating CPU wins:** `grep -n "Roadmap Sequencing" -A 15 AGENTS.md`; `#319` in `CHANGELOG.md`. Promotion rule: `docs/gpu_crossover.md` "Required Promotion Rule" + "Supported semantics" (PFAC). **B-GPU publish=HOLD (2026-07-21):** `tensor-grep-failure-archaeology` Battle 20. **Semantic-search-shipped / GPU-operator-skill reconciliation (2026-07-24):** `grep -n '"--semantic"' src/tensor_grep/cli/main.py` and `ls src/tensor_grep/core/retrieval_dense.py src/tensor_grep/core/retrieval_fusion.py`; day-to-day GPU commands: `tensor-grep-gpu` skill.
 - **Problem 6 (C/C++ cross-file graph):** confirm the SHIPPED baseline with `grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (expect **10**) and `ls src/tensor_grep/cli/lang_*.py` (expect lang_c.py AND lang_cpp.py to EXIST -- an earlier revision told you to confirm they do not, which was wrong by 2026-07-27). Then read the c/cpp `LanguageSpec` literals and list which call-graph hooks are still `None` -- that set, not the registration, is the open work. The five seams' current definitions: `grep -n "^def _imports_and_symbols_for_path\|^def _imports_with_lines_for_path\|^def build_symbol_source_from_map\|^def _target_language_for_path" src/tensor_grep/cli/repo_map.py` and `grep -n "_SUPPORTED_FILE_DEPENDENCY_LANGUAGES = frozenset" src/tensor_grep/cli/repo_map.py`. Full scoping menu: `.claude/skills/tensor-grep-add-language/SKILL.md` section E1.
-- **Flat no-IDF scorer + fragility:** `grep -n "_score_text_terms\|_symbol_rank_key\|_score_file_path" src/tensor_grep/cli/repo_map.py`; safety floor `grep -n "_primary_target_is_unrequested_marker_helper\|_prefer_implementation_over_marker_helper\|_alternative_targets" src/tensor_grep/cli/agent_capsule.py`; AGENTS.md "BM25/IDF-ranked surfaces … sensitive to corpus changes". Disproof-of-IDF-as-fix: `tensor-grep-failure-archaeology`. **`_score_symbol` hardening (A7/#699):** `grep -n "def _score_symbol" src/tensor_grep/cli/repo_map.py` (was `~7698`, now `:8194` as of 2026-08-01 — repo_map.py grows fast, re-grep rather than trust either number); H1 dead-end: `grep -n '"symbols"' src/tensor_grep/cli/repo_map.py`.
+- **Flat no-IDF scorer + fragility:** `grep -n "_score_text_terms\|_symbol_rank_key\|_score_file_path" src/tensor_grep/cli/repo_map.py`; safety floor `grep -n "_primary_target_is_unrequested_marker_helper\|_prefer_implementation_over_marker_helper\|_alternative_targets" src/tensor_grep/cli/agent_capsule.py`; AGENTS.md "BM25/IDF-ranked surfaces … sensitive to corpus changes". Disproof-of-IDF-as-fix: `tensor-grep-failure-archaeology`. **`_score_symbol` hardening (A7/#699):** `grep -n "def _score_symbol" src/tensor_grep/cli/repo_map.py`; H1 dead-end: `grep -n '"symbols"' src/tensor_grep/cli/repo_map.py`.
 - **Raw-grep parity / native control-plane closed outcomes:** `docs/world_class_plan.md` Roadmap C + "Roadmap 1: Native Control Plane". Round-4 argv-injection item is **RESOLVED** (`#326`/`#370`) — verify with `grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs`, expect an unconditional `operands.push("--".to_string())` before the path loop. **B-warm-session retirement (2026-07-21):** `tensor-grep-failure-archaeology` Battle 19.
 - **Moat-deepener references (arXiv ids + which competitor gap):** the `tensor-grep-market-research-2026-06-25` memory. MCP surface + capability tiers: `grep -n "tg_mcp_capabilities" src/tensor_grep/**/mcp_server.py`.
 - **Problem 4d (`tg ledger`, SHIPPED) + Problem 4b sub-item (`#74` scoped file-deps):** design docs `tensor-grep-a2a-ledger-audit-2026-07-08` and `tensor-grep-benchmark-proofpoint-2026-07-08` memories; ship receipts `#673`(v1.82.0)/`#675`(v1.83.0), hardening `#701`/`#706`(v1.93.0) — `git log --oneline origin/main | grep -E "673|675|701|706"` to confirm. Day-to-day reference: `tensor-grep-ledger` skill.
-- **`tg diff-docs` parked foundation + false-positive receipts (Problem 5):** confirm the branch and commit still exist: `git log wip/diff-docs-precision -1` (expect `90b7042`, not on `main` — `git merge-base --is-ancestor 90b7042 main` should fail). Re-pull the file: `git show wip/diff-docs-precision:src/tensor_grep/cli/diff_docs.py` (303 lines) and `git show wip/diff-docs-precision:tests/unit/test_diff_docs.py` (123 lines / 17 tests — `grep -c "def test_"`). Re-run the flood measurement (copy the file out via `git show`, `sys.path.insert(0, "src")`, call `build_doc_drift("docs", code_path="src")`) before citing exact finding counts — they drift with the doc corpus. Retrospective: `tensor-grep-failure-archaeology` Battle 13; deferral note: `grep -n -A2 "diff-docs" docs/SESSION_HANDOFF.md`.
+- **`tg diff-docs` parked foundation + false-positive receipts (Problem 5):** confirm the commit still exists and is off `main`: `git cat-file -t 90b7042` (expect `commit`) and `git merge-base --is-ancestor 90b7042 main` (should fail). Re-pull the file: `git show origin/archive/diff-docs-precision:src/tensor_grep/cli/diff_docs.py` (303 lines) and `git show origin/archive/diff-docs-precision:tests/unit/test_diff_docs.py` (123 lines / 17 tests — `grep -c "def test_"`). Re-run the flood measurement (copy the file out via `git show`, `sys.path.insert(0, "src")`, call `build_doc_drift("docs", code_path="src")`) before citing exact finding counts — they drift with the doc corpus. Retrospective: `tensor-grep-failure-archaeology` Battle 13; deferral note: `grep -n -A2 "diff-docs" docs/SESSION_HANDOFF.md`.
 - **Fused-thesis anchors:** `docs/world_class_plan.md` "Definition Of Done"; patch bakeoff `1.0/1.0` line in `docs/PAPER.md` / `world_class_plan.md`; harness-evolution thesis in the workspace `CLAUDE.md`.
 - **Benchmark scripts referenced:** `benchmarks/run_gpu_native_benchmarks.py`, `benchmarks/run_benchmarks.py`, `benchmarks/check_regression.py` (`ls benchmarks/` to confirm). How to read them: `tensor-grep-benchmark-and-proof-toolkit`.

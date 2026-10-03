@@ -9,7 +9,7 @@ description: >-
 
 # tensor-grep backlog campaign
 
-**META-ORCHESTRATOR** for backlog drain. Sequences *which* sibling skill to load; **one home per fact** — do not re-derive procedures that live in the retiring-fellow library (Sonnet-class audience, ground-truth verified).
+**META-ORCHESTRATOR** for backlog drain. Sequences *which* sibling skill to load; **one home per fact** — do not re-derive procedures that live in the retiring-fellow library (ground-truth verified).
 
 End-to-end: audit → plan → research → implement → verify → ship. **Load `tensor-grep-change-control` before ANY edit, merge, or release claim.**
 
@@ -111,8 +111,8 @@ has told you to ask only about money.
 6. **Audit ≠ fix** — `codebase-audit` / `frontend-audit` are READ-ONLY; implementation is a separate gated loop.
 7. **Plans are hypotheses** — `verify-plan-against-code` BEFORE multi-file dispatch; `subagent-verification-workflow` + `worktree-fanout-verification-gate` AFTER.
 8. **Never trust a self-report** — re-run verification gates yourself in the real venv; worktree/subagent "tests pass" is a hypothesis.
-9. **Draft-PR-only autonomy** — endpoint is a draft PR a human merges. Never auto-merge.
-10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and one-merge-per-tick both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere). **Batch-merge exception (C-batch, v1.93.0/#703-706):** several INDEPENDENTLY already-CI-green PRs may land ~15-20s apart in one tight window and still produce ONE combined, fully-published release — this is not a WIP-cap or one-merge-per-tick violation, provided the operator watches the LAST run in the sequence to full completion (intermediate `cancelled`/rejected-push runs are benign). Do not confuse a monitored rapid batch with an accidental push-race collision (the v1.17.23/#318/#319 incident) — the discipline is watching the final run through, not merging blind. Full mechanism + the v1.93.0 receipt: `tensor-grep-change-control` Part 7 (C-batch).
+9. **Merge your own verified-green PRs** — CEO directive 2026-07-23 ("unmerged work is yours"): after an independent review is on the PR and the push-race check is clear, the agent merges it. The legitimate stops are failing or pending required CI, an explicit "I'll merge this myself", and anything irreversible beyond a revert. Never admin-merge past a required check.
+10. **WIP CAP (2026-07-08 receipt)** — do NOT dispatch a new BUILD while **>5 PRs are undrained** OR the **main gate is red**. Generating fixes faster than the ~40–66 min/publish drain empties the queue produces "churning, not completing" (backlog stays constant-size while PRs pile up). Design fork: complete-then-start, not start-then-hope. A red main gate is a drop-everything hotfix that jumps the queue ahead of any new build. Check `gh pr list` count and `gh run list --branch main` conclusion before authorizing a new fan-out. **Build-vs-merge decoupling:** the WIP cap and the hold both gate *merge* timing, not when work may *start* -- a PR sequenced "after vX publishes" purely for a CODE-COLLISION reason (it touches the same file, or wants vX's already-merged code as its base) may branch and build off the just-merged `main` in parallel with an in-flight release; only the final merge stays gated. This saves ~40 min/PR across a campaign. See `tensor-grep-change-control` Part 7 for the full pattern (named after merge-queue/speculative-CI, release-train, and build-once-promote-everywhere). **Batch-merge exception (C-batch, v1.93.0/#703-706):** several INDEPENDENTLY already-CI-green PRs may land ~15-20s apart in one tight window and still produce ONE combined, fully-published release — this is the burst half of burst-then-hold, not a WIP-cap violation, provided the operator watches the LAST run in the sequence to full completion (intermediate `cancelled`/rejected-push runs are benign). Do not confuse a monitored rapid batch with an accidental push-race collision (the v1.17.23/#318/#319 incident) — the discipline is watching the final run through, not merging blind. Full mechanism + the v1.93.0 receipt: `tensor-grep-change-control` Part 7 (C-batch).
 11. **Mandatory adversarial security gate before merge** — every security-class PR (`apply_policy` / `mcp_server` / `cpu_backend` / `index_lock`/`session_daemon` / auth / money / migration / **native asset, installer, or doctor-probe construction**) gets an adversarial "try-to-BREAK-it, cite `file:line`, default FIX-FIRST-if-uncertain" review **before merge**, in addition to (not instead of) the mandatory `codex` gate below. This is not a rubber stamp: on the 2026-07-08 session it returned SHIP on 3 PRs and caught real issues on 2 — a symlink-follow RCE bypass (`.resolve()` followed the symlink; fixed with `os.path.abspath`) and a lock-release TOCTOU (accepted-as-documented after proving a heartbeat thread makes it unreachable). The native-asset/installer/doctor-probe addition is the v1.75.2/v1.75.3 GPU Phase-0 precedent -- PR #596 (P0-5, loud nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge" per its council-reviewed plan, because a silent wrong-flavor install or a misleading `doctor` probe status is a security-relevant integrity failure, not a UX nit. `codex` is the nominal 2nd-vendor tool but its WSL path is unreliable on this box — an Opus **Agent** subagent (`model: opus`) is the reliable substitute when `codex` is dead, not a reason to skip the gate. Verdict shape: `SHIP` | `FIX-FIRST(+file:line+repro+minimal-fix)`.
 
     **Review-economy rider (2026-08-03):** if a broad model/council prompt times out, retry the exact
@@ -137,7 +137,7 @@ has told you to ask only about money.
     status-stamp PRs retarget governance pins; gate tip bytes not archaeological RED SHAs; HIGH
     receipts ≠ Sol SHIP; AMEND_SPINE when READY∩reconcile-BLOCKED.
 
-12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min — the GATE duration, i.e. the wait for that main run itself to complete; a DIFFERENT referent from the semantic-release-job-alone figure in the drain-cron section below) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
+12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min — the GATE duration, i.e. the wait for that main run itself to complete; a DIFFERENT referent from the semantic-release-job-alone figure in the drain-cron section below) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **The hold protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.
 14. **A concurrent agent's PR gets an INDEPENDENT gate, and the verdict goes on the PR (2026-07-26, #786).** A PR arriving from another session/worktree is not self-gated by definition, so gate it — then post the verdict as a PR comment with its evidence (what was probed, what the control arm showed). A gate that lives only in your transcript is lost work: the next session re-runs it or reaches a different conclusion, and the author cannot un-draft without waiting on you. Cost: one `gh pr comment`.
 15. **Verify the fix on the MERGED artifact, not only pre-merge (2026-07-26).** Pre-merge proves the BUG is real (control arm on the unpatched tree); it says nothing about whether the FIX behaves on `main` after a squash. Re-run the treatment arm against merged `main` — and check the guard is present *structurally* (e.g. `"_seen" in fn.__code__.co_varnames`) rather than by re-reading the diff.
@@ -157,8 +157,7 @@ has told you to ask only about money.
 `tensor-grep-worldclass-roadmap` — verified absent 2026-08-12). Derive the population instead:
 
 ```bash
-ls -1d .claude/skills/tensor-grep-*/ | wc -l      # every tensor-grep-* library skill (was 26/27 in
-                                                  # older passes; derived 34 at v1.110.14, 2026-08-12)
+ls -1d .claude/skills/tensor-grep-*/ | wc -l      # every tensor-grep-* library skill
 ls -1d .claude/skills/code-search-and-retrieval-reference   # +1: the domain-theory skill
 # the bare .claude/skills/tensor-grep/ usage skill is EXCLUDED by definition (usage docs for the
 # tool itself, not a library entry) — AGENTS.md's gated "**N skills**" sentence counts the same way
@@ -177,7 +176,7 @@ Extend / Orchestrate buckets and is pinned to the real folder set by
 **Also load:** `tensor-grep` (usage), global `~/.claude/skills/` (`verify-plan-against-code`, `dogfood-the-shipped-artifact`, …). **NO `docs/skill_index.md`** — use `AGENTS.md` skills section + the derive box above. **`.claude/skill_rules.json`** is a separate, harness-level mechanism: project-local keyword/intent triggers consumed by the global `skill_activation_gate.py` hook to auto-fire a skill on a matching prompt. It seeds only SOME of the library skills (count derived, never stamped — same derive box). **Do not trust a number or a name list here** -- this sentence enumerated 12 skills in prose and was wrong three ways by 2026-08-02: the real count was 14, and it named `tensor-grep-large-repo-scale-campaign` as having zero rule when it had since gained one. Derive it:
 
 ```bash
-python -c "import json,os; d=open('.claude/skill_rules.json').read(); \n  lib={x for x in os.listdir('.claude/skills') if x.startswith('tensor-grep-')}; \n  print(sorted(x for x in lib if x not in d))"
+python -c "import os; d=open('.claude/skill_rules.json').read(); lib={x for x in os.listdir('.claude/skills') if x.startswith('tensor-grep-')}; print(sorted(x for x in lib if x not in d))"
 ```
 
 Its silence on a topic is not evidence a skill doesn't apply; the AGENTS.md index-by-intent stays authoritative for manual routing.
@@ -190,9 +189,7 @@ Its silence on a topic is not evidence a skill doesn't apply; the AGENTS.md inde
   and shipped history. **Create it on session 0 if absent** (seed from memory anchor + `gh pr list` +
   session task store, then discard session store as SoT).
 - **`docs/TASK_BOARD.md` canonical status index** — the machine-parseable live state for the closed-world
-  canonical ID set. Historical prose in either document is not a live-status oracle. Until this index
-  exists, a dated reconciliation audit must derive live state from BACKLOG + SESSION_HANDOFF + GitHub and
-  say that it is an interim snapshot.
+  canonical ID set. Historical prose in either document is not a live-status oracle.
 - **GitHub (`gh pr list`)** — PR source of truth for open/merged work.
 - **Memory anchor** — on every backlog change, update via `MEMORY.md` / `~/.claude/projects/<slug>/memory/feedback_tensor_grep_backlog.md` with: P0 queue, in-flight PRs, last shipped tag, push-race waiter state, "resume here".
 - **Restart order:** memory anchor → `docs/BACKLOG.md` → `docs/SESSION_HANDOFF.md` → `AGENTS.md` → GitHub. Never use the ephemeral session task store as source of truth.
@@ -243,7 +240,7 @@ true; it is strictly worse than having no backstop at all.
 - Use **Agent subagent `model: fable`**. Do NOT rely on `claude -p --model claude-fable-5` headless.
 - **Workflow tool cannot reach Fable** — silently falls back to session model. Use Agent subagents for Fable; Workflow for haiku/sonnet file-grounded fan-out only.
 - **Fable is ~2× token cost.** Cap Fable parallel fan-out at **≤2–3** (vs ≤3–5 for sonnet/haiku).
-- Fable's classifier may route explicit vuln-hunting to Opus — frame audits as correctness/quality to stay on Fable; run explicit security audits on Opus.
+- Run explicit security audits on an Opus seat; route other audits per the `model-router` skill.
 
 **Resume-from-transcript, not re-dispatch (broadened 2026-07-08 — ANY transient failure, not just session-limit kills).** A background subagent (Fable or otherwise) that dies mid-task — a session-limit kill (`had-no-active-task`) **or** a transient `"Agent terminated early due to an API error: 500"` — is resumed via `SendMessage` to its agent ID, not re-dispatched fresh: the transcript carries the partial work forward. Message it plainly: *"you hit a transient error, your work is intact, continue + <the finish criteria>."* Receipt: happened 3x in one session (2 builds + 1 security-gate agent hit a transient API 500) and all 3 recovered cleanly with zero lost work. Re-dispatching fresh instead of resuming loses everything the agent had already done.
 
@@ -319,7 +316,7 @@ Pass subagents Phase-1 spec verbatim + relevant BACKLOG item + carry-forward aud
 Exit only on `task-completion-verifier` PASS with receipts **you** reproduced in the real venv.
 
 ### 8 — Ship + document
-- Merge via the **self-firing drain-cron** pattern (one PR at a time; see push-race below) — never a
+- Merge via the **self-firing drain-cron** pattern (at most one burst per fire, then hold; see push-race below) — never a
   long-lived backgrounded drain loop.
 - Update `docs/BACKLOG.md`, memory anchor, `docs/SESSION_HANDOFF.md`, `AGENTS.md` if practice changed.
 - Record proven Workflow recipes in `workflow-ledger` if used.
@@ -337,11 +334,11 @@ process to survive uninterrupted. Note there is no `scratchpad/drain_v2.sh` chec
 any ad hoc drain script an agent writes lives in the OS scratch/temp dir (session-ephemeral), never
 committed at that path; do not cite it as a repo-relative file.
 
-**The fix: a per-fire, short-lived cron/loop tick that does at most ONE merge, then exits.** Each
+**The fix: a per-fire, short-lived cron/loop tick that does at most ONE burst (only when no release-bearing run exists), then exits.** Each
 fire is cheap and stateless — nothing to be killed, because nothing stays running between fires.
 Arm it with the `loop` skill (`/loop 30m <the one-shot prompt below>`) or an equivalent external
 scheduler — never a backgrounded `&` shell loop. Cadence **~30 min** matches the achievable
-~1-PR-per-publish rate (a release-bearing merge's own wait window is ~40–66 min, so firing much
+~1-burst-per-publish rate (a release-bearing merge's own wait window is ~40–66 min, so firing much
 faster than that just re-checks a still-in-flight release).
 
 **`/loop` vs `CronCreate` — pick based on how long the drain needs to survive, not habit.** `/loop`
@@ -366,27 +363,32 @@ watch for "tell me the instant this ONE release publishes so I can act."
 **One-shot logic per fire** (pseudocode; adapt the `gh` calls to the live PR queue):
 
 ```bash
-# ONE fire = ONE merge attempt, then exit. No internal loop, no backgrounding.
+# ONE fire = at most ONE burst, then exit. No internal loop, no backgrounding.
 latest_tag_on_pypi() { ... }                    # compare latest git tag vs PyPI's latest version
-main_ci_completed()  { [ "$(gh run list --branch main --workflow ci.yml --limit 1 \
-                             --json status -q '.[].status')" = "completed" ]; }
+# Every recent main run must be completed: a queued/pending run still pushes last (never --limit 1).
+main_ci_completed()  { gh run list --branch main --workflow ci.yml --limit 5 --json status \
+                         -q '[.[].status] | all(. == "completed")' | grep -qx true; }
 
 # Push-race check FIRST: refuse to merge into an in-flight release window.
 latest_tag_on_pypi && main_ci_completed || { echo "release in flight, skip this fire"; exit 0; }
 
-# Pick the lowest-numbered CLEAN, mergeable PR (WIP-cap-respecting: Hard Rule 10).
-pr=$(gh pr list --state open --json number,mergeStateStatus \
-      -q 'map(select(.mergeStateStatus=="CLEAN")) | sort_by(.number) | .[0].number')
-[ -n "$pr" ] || { echo "nothing CLEAN to merge"; exit 0; }
+# Burst: every CLEAN, mergeable PR, lowest number first (WIP-cap-respecting: Hard Rule 10).
+prs=$(gh pr list --state open --json number,mergeStateStatus \
+      -q 'map(select(.mergeStateStatus=="CLEAN")) | sort_by(.number) | .[].number')
+[ -n "$prs" ] || { echo "nothing CLEAN to merge"; exit 0; }
 
-gh pr merge "$pr" --squash --delete-branch
+for pr in $prs; do   # re-poll mergeable between merges (Hard Rule 12)
+  [ "$(gh pr view "$pr" --json mergeStateStatus -q .mergeStateStatus)" = CLEAN ] || continue
+  gh pr merge "$pr" --squash --delete-branch
+done
 ```
 
-- **One merge per fire, one fire per cadence tick** — never merge two PRs in the same fire even if
-  both look CLEAN; the next fire will pick up the next one after the push-race check re-clears.
+- **Burst, then hold, per fire** — a fire that finds NO release-bearing `main` run merges every
+  independently-green PR in one burst and exits; a fire that finds one merges nothing; if that run completes without publishing (red, or semantic-release made no release), the window closes at completion (A32 governs the hotfix). The next fire
+  re-checks after the in-flight run's `chore(release)` commit and PyPI publish have landed.
 - **Push-race check is mandatory on every fire, not just the first**: the latest `chore(release): vX`
-  tag must be confirmed on PyPI AND the latest `main` CI run must show `conclusion: success` before
-  merging anything — including `docs:`/`chore:` PRs, which don't bump version but are still unsafe to
+  tag must be confirmed on PyPI AND the newest `main` run must be `completed` (Hard rule 13; not
+  completed-green) before merging anything — including `docs:`/`chore:` PRs, which don't bump version but are still unsafe to
   interleave mid-release.
 - **Real wait window ~40–66 min** per release-bearing merge (native-build-smoke + benchmark-regression
   + semantic-release + publish-pypi). The ~6-min figure here is only the **semantic-release job in
@@ -396,10 +398,9 @@ gh pr merge "$pr" --squash --delete-branch
 - **Green-gap batch merge (2026-08-12):** when NO release is in flight or planned, non-releasing
   `docs:`/`test:`/`chore:` PRs may merge back-to-back within ONE green gap — their only gate is the
   newest main run completed (Hard rule 12). This makes the referents of the two rules explicit:
-  "one merge per fire" above governs RELEASING PRs (one-per-fire stays for them outside a monitored
-  C-batch — Hard rule 10's exception); it does not serialize non-releasing PRs against each other in
-  a release-free gap. The moment a release is in flight or next in the queue, everything falls back
-  to the push-race wait (change-control Part 7 "Precedence").
+  the burst-then-hold rule above governs RELEASING PRs (they merge together in one burst, then hold);
+  it does not serialize non-releasing PRs against each other in a release-free gap. The moment a release is in flight or next in the queue, everything falls back
+  to the push-race wait (change-control Part 7 "One rule: burst, then hold").
 - Failed release **self-heals** on next push (tag-derived). Don't panic-rerun.
 - Respect **Hard Rule 10 (WIP CAP)**: if >5 PRs are undrained or the main gate is red, the fire should
   refuse to dispatch a *new build* (merging the existing queue is still fine/expected).
@@ -422,7 +423,7 @@ uv run --no-sync pytest tests/<targeted>.py    # scoped locally on this desktop
 
 - **`uv run --no-sync` is mandatory** — plain `uv run` re-syncs away the `[dev]` tree-sitter tree.
 - **`ruff format --preview` is a SEPARATE gate from `ruff check`** — check-only misses format CI (#424). Never pass `--preview` to `ruff check`. Bare `ruff format` without `--preview` reverts preview style.
-- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`grep -n "full pytest, full Rust test/clippy matrices" AGENTS.md`; was `AGENTS.md:385`, now `:487` — drifted +102 lines since the 2026-07-23 pass, see Provenance — high-memory; don't run full suite locally unless user explicitly approves).
+- **Full pytest + Rust test/clippy matrix + benchmarks + release-asset builds → PR/main CI only** (`grep -n "full pytest, full Rust test/clippy matrices" AGENTS.md` — high-memory; don't run full suite locally unless user explicitly approves).
 - Rust changes: `maturin develop` + `cargo test --manifest-path rust_core/Cargo.toml`.
 
 ### Concurrent shared-checkout
@@ -532,10 +533,10 @@ above is what found it; the gate is not a substitute. `/tg-skill-audit`
 
 | # | Site | File |
 |---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/search_flag_registry.rs` |
 | 2 | `_TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
-- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md`, `grep -n "cannot see set/list/decorator registrations" AGENTS.md`; was `:412`, now `:887` — drifted +102 lines since the 2026-07-23 pass, see Provenance).
+- `tg callers` for callables; **grep / `tg scan`** for sets/decorators/dispatch tables (`callers` cannot see them — `AGENTS.md`, `grep -n "cannot see set/list/decorator registrations" AGENTS.md`).
 - Change a pinned contract → update its governance test in the **same PR**.
 
 ### CLI hygiene
@@ -546,7 +547,7 @@ ASCII-only CLI output (emoji → cp1252 crash). `git commit -m` backticks → ba
 
 Profiler is the oracle: `tg … --profile` on the actual slow command before designing.
 
-**IDF blast-radius** (`grep -n "This IDF blast-radius is invisible to the call graph" AGENTS.md`; was `AGENTS.md:379`, now `:481` — drifted +102 lines since the 2026-07-23 pass, see Provenance): BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
+**IDF blast-radius** (`grep -n "This IDF blast-radius is invisible to the call graph" AGENTS.md`): BM25/IDF surfaces (`--rank`, agent-capsule, semantic search) are sensitive to corpus changes — adding query-adjacent terms lowers corpus-wide IDF and can silently flip rankings (invisible to call graph). Harden tie/marker detection for IDF shifts; **never relax a failing ranking test** (that masks real degradation). Tracked: capsule-hardening Task #4 (ledger B3).
 
 ### Dogfood
 
@@ -625,66 +626,10 @@ Exa competitive/prior-art scan → derive edge cases competitors handle or miss 
 
 ## Provenance and maintenance
 
-Process/orchestration facts re-verified **2026-07-08** against **v1.49.3** (`pyproject.toml`,
-`grep -n '^version' pyproject.toml`); the **skill-count table was re-verified 2026-07-14 against
-v1.75.4** (see the docs-accuracy PR that added this note); the **Steward-cron line was de-hardcoded
-2026-07-16 against v1.78.1** after three sources (this file, MEMORY.md, a handoff note) were each
-found citing a different stale cron id/schedule — the session-scoped nature of the tick means any
-recorded id is a landmine, not a fact to stamp; the **skill-count table was re-verified again
-2026-07-22 against v1.93.2**, registering 6 new skills (`tensor-grep-prepare`, `tensor-grep-ledger`,
-`tensor-grep-find-and-route`, `tensor-grep-multi-project-search`, `tensor-grep-enterprise-review-bundle`,
-`tensor-grep-gpu`) and adding the C-batch batch-merge exception + the `/loop`-vs-`CronCreate`
-reconciliation. This skill has no pinned `file:line` code
-citations of its own to drift — it indexes the library, which DOES carry code citations;
-re-verify the count by DERIVING it, never by trusting a stamped number:
-`ls -1d .claude/skills/tensor-grep-*/ | wc -l` for the `tensor-grep-*` folders, plus the one
-`code-search-and-retrieval-reference` folder; the bare `tensor-grep` usage skill is EXCLUDED by
-definition (usage docs for the tool itself, not a library entry). Receipt (recorded once, do not
-re-stamp): the figure was 26/27 in older passes and went stale three times (20→26→27); derived
-**34** at v1.110.14 (2026-08-12). The count is
-ALSO pinned by `tests/unit/test_skill_index_sync.py`, but that gate compares the NAME SET against
-AGENTS.md/CLAUDE.md and does NOT read this number -- so a stale figure here passes CI. Re-run the
-derive command, do not trust any stamp. Process
-receipts dated 2026-07-08 (WIP CAP, adversarial security gate, resume-from-transcript, don't-kill-
-on-staleness, harvest pattern, self-firing drain-cron) come from the same session's `session_learnings`
-ledger — treat them as durable orchestration discipline, not code facts that can be grep-verified.
-
-**Re-verified 2026-07-23 against v1.95.0** (`git cat-file blob origin/main:pyproject.toml` →
-`version = "1.95.0"`). Findings: (1) the "Skill library" heading had drifted to say **"20 skills"**
-while the table below it already listed 26 numbered rows and line 131-133 already said "#26... up
-from #20" — a stale leftover from before the 2026-07-22 table growth that nobody updated in the same
-pass; fixed the heading to **26**. (2) The skill-count table itself is unchanged and still accurate:
-`git ls-tree -r --name-only origin/main -- .claude/skills/` returns the same 27 folders (25
-`tensor-grep-*` + the bare `tensor-grep` usage row + `code-search-and-retrieval-reference`) as the
-2026-07-22/v1.93.2 count; the Java/PHP language-registry work (`#725`/`#724`, merged into v1.94.0 and
-v1.95.0) added no new skill directory. A candidate `tensor-grep-add-language` skill did **not** exist
-as of v1.95.0 — **it does now** (verified 2026-07-27, `ls .claude/skills/tensor-grep-add-language`),
-and it is row 27 above. Cite it freely; the v1.95.0 caveat is retained only to explain why an older
-reader was told otherwise. (3) Added a `.claude/skill_rules.json` pointer to the "Also load" line —
-the file exists on disk (confirmed via `git cat-file blob`) but wasn't referenced anywhere in this
-skill; it's a harness auto-trigger config, distinct from both this table and the (still-absent)
-`docs/skill_index.md`. (4) Fixed 3 stale `AGENTS.md:NNN` line citations that had drifted from unrelated
-insertions elsewhere in that file (930 lines at v1.95.0) — content at each anchor is unchanged, only
-the line number moved: the callers-blind-spot cite `:165`→`:412`, the IDF-blast-radius cite
-`:168`→`:379`, and the high-memory/full-suite cite `:174`→`:385`. Re-grep the phrase (not the number)
-before trusting any line cite into a fast-moving doc like `AGENTS.md` on a future pass.
-
-**Re-verified 2026-07-24 against v1.98.3** — added the "verify in BOTH directions" addendum to the
-Steward-cron section (AGENTS.md A26): the 2026-07-24 session found a presumed-dead cron was actually
-still alive alongside its replacement, firing a stale instruction. This is the mirror case to the
-already-documented "assumed alive, actually dead" direction (A25) — `CronList` and inspect every
-returned entry after a restart, don't just re-arm and assume the old one is gone.
-
-**Drift-gate pass (this pass): the three AGENTS.md line citations this skill fixed 2026-07-23 (`:165→:412`,
-`:168→:379`, `:174→:385`) had ALL drifted again, by the same +102 lines each** (`:412→:514`,
-`:379→:481`, `:385→:487` — confirmed by grepping the actual sentence, not by incrementing the old
-number). This is the exact "five previous maintenance passes re-stamped these by hand, and every one
-shipped anchors that were already wrong" pattern `AGENTS.md`'s own "Cite the SYMBOL, not the line"
-section warns about, now observed a sixth time on this skill's own citations. Per that section's rule,
-the three citations above were rewritten as `grep -n "<distinctive phrase>" AGENTS.md` instructions with
-the was→now drift kept as the receipt, rather than re-stamped with a fourth hardcoded number that will
-just as certainly go stale on the next `AGENTS.md` growth pass. Do not "fix" them back to bare
-`AGENTS.md:NNN` citations.
+Re-verify any fact here against the repo before citing it (skill count: the derive box above); prior
+verification passes are in git history (`git log -p -- .claude/skills/tensor-grep-backlog-campaign/SKILL.md`).
+Process receipts dated 2026-07-08 come from that session's `session_learnings` ledger — treat them as
+orchestration discipline, not grep-verifiable code facts.
 
 ## Tracker closeout (2026-08-06)
 

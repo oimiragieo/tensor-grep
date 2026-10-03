@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS: ``tg doctor --json`` emits 35-50+ top-level fields (more with
 ``--with-lsp``), and the human-readable ``tg doctor`` renderer
-(``_render_doctor_payload`` in ``src/tensor_grep/cli/main.py``) is a straight
+(``_render_doctor_payload`` in ``src/tensor_grep/cli/doctor_payload.py``) is a straight
 field dump -- it does not tell you which fields are load-bearing or what a
 bad value looks like. The only thing that DOES compute "is this doctor
 payload healthy" today is ``scripts/agent_readiness.py``'s internal
@@ -48,8 +48,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-# Ground-truthed against src/tensor_grep/cli/main.py as of v1.17.25 (2026-07-02).
-# Re-verify with: grep -n "search_acceleration_backend\"" src/tensor_grep/cli/main.py
+# Ground-truthed against the doctor payload builder (src/tensor_grep/cli/doctor_payload.py).
+# Re-verify with: grep -rn "search_acceleration_backend" src/tensor_grep/cli/doctor_payload.py
 KNOWN_BACKENDS = {
     "standalone-native-tg",
     "rust-core-extension",

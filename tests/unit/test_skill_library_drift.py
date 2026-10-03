@@ -154,9 +154,12 @@ def test_citation_scan_actually_examined_citations() -> None:
     # Bidirectional-oracle guard, mirroring test_skill_index_sync.py's folder-count floor. If the
     # citation regex stopped matching (a reformat, a changed convention) or SKILLS_DIR moved, every
     # assertion below would compare empty-to-empty and pass vacuously. A gate that examined nothing
-    # must fail loudly rather than report the silence as a clean library.
+    # must fail loudly rather than report the silence as a clean library. The floor tracks the
+    # library's deliberate move to symbol-grep citations ("cite the SYMBOL, not the line"), which
+    # dropped the bare `file:line` count from ~531 to 199 (measured 2026-10-03: 191 resolved + 8
+    # ambiguous); a broken regex still examines ~0.
     _, _, resolved, ambiguous = _scan_citations()
-    assert resolved + ambiguous >= 400, (
+    assert resolved + ambiguous >= 150, (
         f"Only {resolved + ambiguous} citations were examined across `.claude/skills/`. The scan "
         "found far fewer than this library carries, so the regex or SKILLS_DIR is probably broken "
         "-- do not read this run as a clean result."

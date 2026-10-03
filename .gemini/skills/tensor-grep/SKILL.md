@@ -18,14 +18,15 @@ Use this skill when you need to locate code precisely, understand likely edit im
 
 1. Confirm the installed CLI is available:
    - `tg --version`
+   - Unfamiliar repo: `tg orient REPO_PATH` (central files, entry points, symbol map).
 2. Start with direct text search when you need rg-shaped output:
    - `tg search --format rg "PATTERN" REPO_PATH`
    - `tg search --format rg --sort path "PATTERN" REPO_PATH`
    - Root shortcuts are also valid for common search flags: `tg "PATTERN" REPO_PATH`, `tg -t js "PATTERN" REPO_PATH`, and `tg --count-matches "PATTERN" REPO_PATH`.
-3. Use agent/context commands for task routing:
-   - `tg agent REPO_PATH --query "change invoice tax" --json`
-   - `tg edit-plan REPO_PATH --query "change invoice tax" --json`
-   - `tg context-render REPO_PATH --query "invoice flow" --json`
+3. Edit readiness: prefer `tg prepare REPO_PATH/src "change invoice tax" --json` (primary target, blast-radius floor, validation commands). Agent/context commands take the query as a positional argument:
+   - `tg agent REPO_PATH "change invoice tax" --json`
+   - `tg edit-plan REPO_PATH "change invoice tax" --json`
+   - `tg context-render REPO_PATH "invoice flow" --json`
 4. Use symbol commands in path-first order:
    - `tg defs REPO_PATH SYMBOL --json`
    - `tg source REPO_PATH SYMBOL --json`
@@ -35,8 +36,8 @@ Use this skill when you need to locate code precisely, understand likely edit im
    - `tg blast-radius-plan REPO_PATH SYMBOL --json`
 5. Use cached sessions for repeated edit loops:
    - `tg session open REPO_PATH --json`
-   - `tg session edit-plan SESSION_ID REPO_PATH --query "change behavior" --json`
-   - `tg session edit-plan SESSION_ID REPO_PATH --query "change behavior" --daemon --json`
+   - `tg session edit-plan SESSION_ID REPO_PATH "change behavior" --json`
+   - `tg session edit-plan SESSION_ID REPO_PATH "change behavior" --daemon --json`
 6. Use the returned file/span candidates to make the smallest correct edit.
 7. Run only the most relevant validation commands after the edit.
 
