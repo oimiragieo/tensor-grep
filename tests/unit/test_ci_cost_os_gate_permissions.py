@@ -37,6 +37,9 @@ _DEFAULT_OS_JSON = '["ubuntu-latest","windows-latest"]'
 _EXPECTED_WORKFLOW_ENV = {
     "CARGO_TERM_COLOR": "always",
     "PYO3_USE_ABI3_FORWARD_COMPATIBILITY": "1",
+    "CARGO_NET_RETRY": "10",
+    "CARGO_HTTP_TIMEOUT": "60",
+    "CARGO_HTTP_MULTIPLEXING": "false",
 }
 _EXPECTED_WORKFLOW_GLOBALS = {
     "name": "CI",
