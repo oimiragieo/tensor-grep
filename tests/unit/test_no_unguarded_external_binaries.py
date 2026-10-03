@@ -25,7 +25,10 @@ EVERY call site in the module is guarded (one level).
 KNOWN LIMITS (do not read a green as more than this). A non-literal argv[0] (``[exe, ...]``,
 ``[_bin(), ...]``, ``shutil.which(var)``) is invisible to / does not bind in the scan; the guard
 check is lexical, so it proves a guard EXISTS nearby, not that it dominates the call; a helper chain
-deeper than one level is flagged. Not recognised as shell-outs at all: ``asyncio.create_subprocess_*``,
+deeper than one level is flagged. A ``shutil.which("<binary>")`` call ANYWHERE in scope suffices on
+its own, regardless of branch or polarity (``if which("x"): ...`` guards just as well as
+``if which("x") is None: return``) -- the scan does not check what the code does with the answer.
+Not recognised as shell-outs at all: ``asyncio.create_subprocess_*``,
 ``os.exec*``, ``os.popen``, ``subprocess.getoutput`` / ``getstatusoutput``.
 """
 
@@ -185,7 +188,9 @@ def _skip_is_effective(
         cur = parents.get(cur)
         if cur is None:
             break
-        if isinstance(cur, ast.ExceptHandler):
+        if id(cur) not in root_ids and isinstance(cur, (*_FUNC_TYPES, ast.Lambda)):
+            return False  # skip lives in a nested def/lambda that may never run
+        if isinstance(cur, ast.ExceptHandler) and nearest_cond is None:
             names = {getattr(n, "id", None) for n in ast.walk(cur.type)} if cur.type else set()
             if names & {"FileNotFoundError", "OSError"}:
                 return True
@@ -638,6 +643,52 @@ def test_a():
 """
 
 
+_EXCEPT_THEN_NONBINDING_IF = """
+import os, subprocess
+import pytest
+
+def test_a():
+    try:
+        subprocess.run(["git", "init"])
+    except OSError:
+        if os.environ.get("X"):
+            pytest.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_EXCEPT_NEARER_NONBINDING_IF_AROUND_CALL = """
+import os, subprocess
+import pytest
+
+def test_a():
+    try:
+        pass
+    except OSError:
+        if os.environ.get("X"):
+            pytest.skip("x")
+        subprocess.run(["gitleaks", "version"])
+"""
+
+_NESTED_DEF_SKIP = """
+import subprocess
+import pytest
+
+def test_a():
+    def _never():
+        pytest.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_LAMBDA_SKIP = """
+import subprocess
+import pytest
+
+def test_a():
+    f = lambda: pytest.skip("x")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+
 def _bins(src: str) -> list[str]:
     return [b for _, b in find_unguarded_external_binaries(src)]
 
@@ -679,6 +730,10 @@ def test_falsy_skipif_and_conditional_skips_are_not_guards() -> None:
         _MODULE_PLATFORM_SKIP,
         _LOCAL_SKIP_DEF,
         _UNRELATED_ATTR_SKIP,
+        _EXCEPT_THEN_NONBINDING_IF,
+        _EXCEPT_NEARER_NONBINDING_IF_AROUND_CALL,
+        _NESTED_DEF_SKIP,
+        _LAMBDA_SKIP,
     ):
         assert _bins(src) == ["gitleaks"], src
     for ok in (_INLINE_WHICH_SKIP_OK, _INLINE_PLATFORM_SKIP_NATIVE_OK, _EXCEPT_FNF_SKIP_OK):
