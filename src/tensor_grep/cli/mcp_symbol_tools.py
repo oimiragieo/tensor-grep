@@ -361,8 +361,9 @@ def tg_symbol_refs(
     deadline: float | None = None,
 ) -> str:
     """
-    Return AST-verified references to a symbol across the inventory root, for every language
-    in tg's symbol graph.
+    Return references to a symbol across the inventory root, for every language in tg's symbol
+    graph: tree-sitter-verified when the `ast` extra is installed; each row's `provenance`
+    reports `regex-heuristic` or `grammar-missing` otherwise.
 
     Args:
         symbol: Exact symbol name to resolve.
@@ -440,8 +441,9 @@ def tg_symbol_callers(
     deadline: float | None = None,
 ) -> str:
     """
-    Return AST-verified call sites of a symbol and the tests likely impacted by changing it,
-    for every language in tg's symbol graph.
+    Return call sites of a symbol and the tests likely impacted by changing it, for every
+    language in tg's symbol graph: tree-sitter-verified when the `ast` extra is installed; each
+    row's `provenance` reports `regex-heuristic` or `grammar-missing` otherwise.
 
     Args:
         symbol: Exact symbol name to resolve.

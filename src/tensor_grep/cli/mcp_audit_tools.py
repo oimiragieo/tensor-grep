@@ -196,7 +196,7 @@ def tg_ruleset_scan(
             each with `id`/`rule.pattern`/optional `language`/`severity`/`message`) to
             execute WITHOUT a built-in pack or any file I/O -- mirrors the CLI's
             ``--inline-rules``. Mutually exclusive with ``ruleset``. Bounded to
-            64KiB to blunt a YAML anchor/alias expansion-bomb before it reaches the
+            65536 characters and 100 rules to blunt a YAML anchor/alias expansion-bomb before it reaches the
             parser; fails closed (a structured ``invalid_input`` error, never a raw
             traceback) on invalid YAML or a language ast-grep does not support.
         path: Root path to scan.
@@ -1242,11 +1242,12 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
     """
     Undo an edit checkpoint rooted at the given path.
 
-    Restores the files recorded in checkpoint ``checkpoint_id`` to their checkpointed state.
-    This WRITES: checkpointed files are overwritten with their saved contents, discarding any
-    edits made since the checkpoint. Use it to roll back a bad tg_rewrite_apply; get the id
-    from tg_checkpoint_create or tg_checkpoint_list. Returns the restore result JSON, or an
-    error envelope (e.g. invalid_input if path is outside the MCP server root).
+    Restores the checkpointed scope exactly. This WRITES and DELETES: files changed since the
+    checkpoint are overwritten with their saved contents, AND files created in that scope since
+    the checkpoint (or recorded as absent in it) are removed. Use it to roll back a bad
+    tg_rewrite_apply; get the id from tg_checkpoint_create or tg_checkpoint_list. Returns the
+    restore result JSON, or an error envelope (e.g. invalid_input if path is outside the MCP
+    server root).
 
     Args:
         checkpoint_id: Checkpoint ID to restore.

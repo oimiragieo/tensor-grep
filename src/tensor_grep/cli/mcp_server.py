@@ -139,30 +139,20 @@ def _mcp_server_version() -> str:
 # tool-SET shape change (new tools / new params) worth flagging to a version-pinning client.
 # CLI version is exposed separately via `tg_mcp_capabilities` -> `cli_version`.
 # 1.0.0 -> 1.1.0 (round-8, audit #95 Part 1): every tool's PRIMARY path/root param is now
-# confined to _mcp_root() (default cwd, override via TG_MCP_ROOT) -- a caller that
-# previously relied on an out-of-cwd path succeeding (e.g. a monorepo fleet pointing an
-# MCP tool at a sibling repo) now gets a structured invalid_input refusal instead of a
-# result, unless TG_MCP_ROOT is set to widen the anchor. Breaking-behavior change, not a
-# breaking shape change -- bump per the gate's should-fix.
-# 1.1.0 -> 1.2.0 (round-9, audit #95 Part 2): additive tool-set shape change, not a breaking
-# one -- 2 new tools (tg_orient, tg_doctor) and new optional params on existing tools
-# (tg_search rank/semantic, the 5 symbol/file-dependency tools' deadline, tg_ruleset_scan's
-# inline_rules + ruleset now optional). Every existing caller's behavior is unchanged when
-# the new params are simply not passed; bumped anyway because `tg_mcp_capabilities()`'s
-# `tools[]` array itself grew, which a version-pinning client may reasonably want to detect.
+# confined to _mcp_root() (default cwd, override via TG_MCP_ROOT); an out-of-root path gets a
+# structured invalid_input refusal. Breaking-behavior, not breaking-shape; bumped per the gate.
+# 1.1.0 -> 1.2.0 (round-9, audit #95 Part 2): additive tool-set shape change -- 2 new tools
+# (tg_orient, tg_doctor) and new optional params on existing tools; existing callers are
+# unchanged. Bumped because `tools[]` grew, which a version-pinning client may want to detect.
 # 1.2.0 -> 1.3.0 (Wave 2d, #189): additive tool-set shape change -- 1 new tool (tg_find, the
 # agent-callable form of `tg find`); no existing signature moved. Bumped because `tools[]`
 # grew, which a version-pinning client may want to detect.
 # 1.3.0 -> 1.4.0 (MCP consolidation Phase-1, #98): additive tool-set shape change -- 10 new
 # task-shaped meta-tools (tg_navigate/tg_impact/tg_query/tg_context/tg_explore/tg_session/
-# tg_scan/tg_audit/tg_checkpoint/tg_rewrite) are ALWAYS registered, composing the 46 legacy
-# tools by an `action` selector param (plus the 2 always-on singletons tg_mcp_capabilities/
-# tg_classify_logs -- 46 + 2 = the pre-existing 48). Every existing caller's behavior is
-# unchanged: all 48 legacy tool names stay individually registered and callable with identical
-# signatures by default (`TG_MCP_LEGACY_TOOLS` defaults ON). Bumped because `tools[]` grew by
-# 10, which a version-pinning client may want to detect. Flipping `TG_MCP_LEGACY_TOOLS` OFF
-# (de-advertising the 46 legacy names, keeping the 10 meta + 2 singletons) is a SEPARATE,
-# deliberate, documented operator/CEO decision -- never bundled into this default-ON PR.
+# tg_scan/tg_audit/tg_checkpoint/tg_rewrite), always registered, compose the 46 legacy tools by
+# an `action` selector (plus 2 always-on singletons). All 48 legacy names stay registered with
+# identical signatures (`TG_MCP_LEGACY_TOOLS` defaults ON); turning it OFF is a separate,
+# deliberate operator decision. Bumped because `tools[]` grew by 10.
 # 1.4.0 -> 1.5.0 (task #283): additive FIELDS on `tg_search`'s `scan_limit` payload --
 # `truncation_cause` ("scan_limit" | "unreadable_path" | "unknown"), `budget_remediable` (bool)
 # and, when non-zero, `unreadable_path_count`. Needed because #276 slice 1 widened
@@ -2966,9 +2956,10 @@ def tg_search(
     semantic: bool = False,
 ) -> str:
     """
-    Search files for a regex or literal pattern and return bounded structured JSON: ripgrep-
-    backed when rg is available, else a Python fallback (or, when applicable, an experimental
-    GPU path); optionally re-ranked by BM25 (`rank`) or hybrid relevance (`semantic`).
+    Search files for a regex or literal pattern and return bounded structured JSON. Routing,
+    when applicable: ripgrep by default; count_matches uses the Rust backend; fixed_strings may
+    use StringZilla when installed; without rg, the Rust backend, then a Python fallback
+    (experimental GPU heuristic only when rg is absent). Optional BM25 `rank` / `semantic` re-rank.
 
     Args:
         pattern: A regular expression or exact string used for searching.
@@ -4277,9 +4268,10 @@ def tg_navigate(
 
     - action="defs": exact definition locations for `symbol` (= tg_symbol_defs)
     - action="source": exact source blocks for `symbol`'s definition (= tg_symbol_source)
-    - action="refs": AST-verified references to `symbol` across tg's languages (= tg_symbol_refs)
-    - action="callers": AST-verified call sites + likely impacted tests for `symbol`
-      (= tg_symbol_callers)
+    - action="refs": references to `symbol`; tree-sitter-verified with the `ast` extra, else
+      `provenance` is regex-heuristic/grammar-missing (= tg_symbol_refs)
+    - action="callers": call sites + likely impacted tests for `symbol`, same `provenance`
+      caveat (= tg_symbol_callers)
     - action="imports": what `file` imports, O(1) single-file parse (= tg_file_imports)
     - action="importers": the files that import `file` (= tg_file_importers)
 
@@ -5035,7 +5027,7 @@ def tg_session(
         path: File or directory rooted at the session scope. Confined to the MCP server root.
         max_repo_files: repo files to scan (open) or cached files to score (edit_plan/
             context_render). Size caps: max_files, max_sources (edit_plan/context_render/
-            blast_radius_*), max_symbols (edit_plan/blast_radius_plan), max_symbols_per_file,
+            blast_radius_render), max_symbols (edit_plan/blast_radius_plan), max_symbols_per_file,
             max_render_chars (context_render/blast_radius_render).
         model (token estimation), profile (render profiling): context_render.
             optimize_context (strip blank/comment-only lines), render_profile (full, compact,
@@ -5213,7 +5205,7 @@ def tg_scan(
         action: One of "scan", "rulesets".
         For action="scan" only; exactly one of ruleset/inline_rules is required:
         ruleset: built-in ruleset name. inline_rules: inline ast-grep YAML (`---`-separated
-            docs: id, rule.pattern, optional language/severity/message; <=64KiB; bad YAML or
+            docs: id, rule.pattern, optional language/severity/message; <=65536 chars, <=100 rules; bad YAML or
             language -> invalid_input). language: ruleset override / inline-rule default.
         path, glob, file_type, max_depth: scan root (confined to the MCP server root) and
             bounds; allow_broad_generated_scan opts in to temp/cache/system roots.
@@ -5383,7 +5375,8 @@ def tg_checkpoint(
     - action="create": create an edit checkpoint rooted at `path` (= tg_checkpoint_create)
       [writes]
     - action="list": list checkpoints rooted at `path` (= tg_checkpoint_list)
-    - action="undo": restore a checkpoint (= tg_checkpoint_undo) [writes]
+    - action="undo": restore a checkpoint; also DELETES files created in scope since
+      (= tg_checkpoint_undo) [writes]
 
     Args:
         action: One of "create", "list", "undo".
@@ -5514,13 +5507,21 @@ _LEGACY_NOTE = (
     "\n\nLegacy per-function tool; meta-tool `{}` (action={}) covers this operation. "
     "Set TG_MCP_LEGACY_TOOLS=off to advertise only the consolidated surface."
 )
-for _meta in _META_MCP_TOOLS:  # legacy -> meta map, derived from each "(= tg_xxx)" docstring bullet
-    for _act, _old in re.findall(
-        r'action="(\w+)"(?:(?!\n\s*- action=)[\s\S])*?\(= (tg_\w+)\)',
-        globals()[_meta].__doc__ or "",
-    ):
-        if (_t := mcp._tool_manager.get_tool(_old)) is not None:
-            _t.description += _LEGACY_NOTE.format(_meta, _act)
+_ACTION_BULLET_RE = re.compile(r'action="(\w+)"(?:(?!\n\s*- action=)[\s\S])*?\(= (tg_\w+)\)')
+
+
+def _annotate_legacy_tools() -> None:
+    # Private FastMCP API: if absent, skip the note rather than break import.
+    get_tool = getattr(getattr(mcp, "_tool_manager", None), "get_tool", None)
+    for meta, spec in _META_MCP_TOOL_CAPABILITIES.items() if get_tool else ():
+        # `composes` is the source of truth; the docstring bullet only supplies the action label.
+        acts = {old: act for act, old in _ACTION_BULLET_RE.findall(globals()[meta].__doc__ or "")}
+        for old in cast("list[str]", spec["composes"]):
+            if (tool := get_tool(old)) is not None:  # type: ignore[misc]
+                tool.description += _LEGACY_NOTE.format(meta, acts.get(old, "?"))
+
+
+_annotate_legacy_tools()
 
 
 # Bound the Content-Length compatibility read. Official MCP stdio is newline-delimited; this framed

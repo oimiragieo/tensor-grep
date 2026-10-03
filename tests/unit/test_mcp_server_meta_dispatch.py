@@ -1324,6 +1324,15 @@ def test_legacy_tool_descriptions_name_their_covering_meta_tool():
         match = re.search(r"meta-tool `(tg_\w+)` \(action=(\w+)\)", desc)
         assert match is not None, name
         assert match.group(1) in _EXPECTED_META_TOOL_NAMES, name
+        # agreement with the explicit composes map, and exactly one note per tool
+        owners = {
+            meta
+            for meta, spec in mcp_server._META_MCP_TOOL_CAPABILITIES.items()
+            if name in spec["composes"]
+        }
+        assert owners == {match.group(1)}, name
+        assert match.group(2) != "?", name
+        assert desc.count(_LEGACY_NOTE_MARKER) == 1, name
     for name in _EXPECTED_META_TOOL_NAMES | _EXPECTED_SINGLETON_TOOL_NAMES:
         assert _LEGACY_NOTE_MARKER not in tools[name], name
         assert "TG_MCP_LEGACY_TOOLS=off" not in tools[name], name

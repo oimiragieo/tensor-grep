@@ -295,7 +295,7 @@ Optional top-level baseline fields:
 
 ## Orient Capsule JSON
 
-Emitted by `tg.exe orient <path> --json` and `tg_orient(...)` (MCP). Call this FIRST when
+Emitted by `tg.exe orient <path> --json` and `tg_orient(...)` (MCP). Use it when
 orienting on an unfamiliar repo -- it answers "what is this codebase and where do I start" in
 one bounded call, cheaper than a full `tg_repo_map`/`tg_context_pack` walk.
 
@@ -1176,7 +1176,7 @@ Emitted by `tg.exe refs <path> <name> --json`.
 
 Example: [`examples/refs.json`](examples/refs.json)
 
-This is currently a Python-first symbol navigation contract. It finds exact name/attribute references from Python ASTs and does not claim full cross-language semantic resolution.
+This resolves references for every language in tg's symbol graph. Rows are tree-sitter-verified when the `ast` extra is installed; otherwise each row's `provenance` reports `regex-heuristic` (JavaScript/TypeScript/Rust fallback) or `grammar-missing`. It does not claim full cross-language semantic resolution.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1192,7 +1192,7 @@ This is currently a Python-first symbol navigation contract. It finds exact name
 | `provider_status` | `object` | Provider health snapshot for reference discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
-| `references` | `array<object>` | Python-first reference rows. |
+| `references` | `array<object>` | Reference rows; each carries `provenance` (tree-sitter-verified, `regex-heuristic`, or `grammar-missing`). |
 | `files` | `array<string>` | Files containing reference rows. |
 | `related_paths` | `array<string>` | Stable union of definition files, reference files, and tests. |
 
@@ -1214,7 +1214,7 @@ Emitted by `tg.exe callers <path> <name> --json`.
 
 Example: [`examples/callers.json`](examples/callers.json)
 
-This is currently a Python-first symbol navigation contract. It finds exact Python call sites by name/attribute match and combines them with likely impacted tests.
+This resolves call sites for every language in tg's symbol graph by name/attribute match and combines them with likely impacted tests. Rows are tree-sitter-verified when the `ast` extra is installed; otherwise each row's `provenance` reports `regex-heuristic` or `grammar-missing`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1229,7 +1229,7 @@ This is currently a Python-first symbol navigation contract. It finds exact Pyth
 | `provider_agreement` | `object` | Native-vs-provider merge summary for caller discovery. |
 | `provider_status` | `object` | Provider health snapshot for caller discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
-| `callers` | `array<object>` | Python-first call rows. |
+| `callers` | `array<object>` | Call rows; each carries `provenance` (tree-sitter-verified, `regex-heuristic`, or `grammar-missing`). |
 | `files` | `array<string>` | Files containing call sites. |
 | `tests` | `array<string>` | Likely impacted tests. |
 | `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |
@@ -1515,7 +1515,7 @@ Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped met
 - `tg_rulesets()`
 - `tg_ruleset_scan(ruleset=None, inline_rules=None, path=".", language=None, glob=None, file_type=None, max_depth=None, allow_broad_generated_scan=False, baseline_path=None, write_baseline=None, suppressions_path=None, write_suppressions=None, justification=None, include_evidence_snippets=False, max_evidence_snippets_per_file=1, max_evidence_snippet_chars=120)` -- exactly one of `ruleset`/`inline_rules` is required; see "Inline Rules" below.
 - `tg_repo_map(path=".")`
-- `tg_orient(path=".", max_tokens=3000, max_central_files=10, ignore=None)` -- call FIRST for orientation; see "Orient Capsule JSON" below.
+- `tg_orient(path=".", max_tokens=3000, max_central_files=10, ignore=None)` -- one-call orientation capsule for an unfamiliar repository (use it for "what is this codebase and where do I start"); see "Orient Capsule JSON" below.
 - `tg_doctor(path=".", config="sgconfig.yml", with_lsp=True)`
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
