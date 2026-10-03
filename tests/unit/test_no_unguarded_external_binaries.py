@@ -1,32 +1,45 @@
-"""Gate: a unit test must not shell out to a binary CI does not install without a skip guard.
+"""Gate: a test must not shell out to a binary CI does not install without a skip guard.
 
 RECEIPT. Commit 00695cd added ``tests/unit/test_gitleaks_scan_completeness.py``, which ran
 ``gitleaks`` unguarded. ``test-python`` (ci.yml) does not install gitleaks, so every lane raised
 ``FileNotFoundError`` and main was red for four pushes (removed in f5f55ee).
 
-WHAT IT CHECKS. An AST scan of ``tests/unit/*.py`` for ``subprocess.*`` / ``os.system`` calls whose
-argv[0] is a string LITERAL naming a binary outside ``CI_PROVIDED_BINARIES``. Each such call needs a
-guard in its enclosing function (incl. decorators), enclosing class, or module top level: a
-``pytest.skip`` / ``importorskip`` / ``skipif`` / ``mark.skip``, a ``shutil.which`` probe, or a
-platform check (``sys.platform`` / ``os.name`` / ``platform.system``).
+WHAT IT CHECKS. An AST scan of every ``tests/**/*.py`` (CI runs ``pytest tests``; ``tests/fixtures``
+is skipped) for ``subprocess.*`` / ``os.system`` calls whose argv[0] is a string LITERAL naming a
+binary outside ``CI_PROVIDED_BINARIES``. ``subprocess``/``os`` import aliases, ``from subprocess
+import run`` and ``args=`` keywords are resolved; ``.exe`` suffixes are stripped.
 
-A guard-less helper is accepted when every call site of it in the same module is guarded (one
-level). KNOWN LIMITS (do not read a green as more than this). A non-literal argv[0] (``[exe, ...]``,
-``[_bin(), ...]``) is invisible to the scan; the guard test is lexical, so it proves a guard EXISTS
-nearby, not that it dominates the call. A helper chain deeper than one level, or a helper with any
-unguarded caller, is flagged.
+GUARDS ARE BOUND TO THE BINARY. A guard counts only if it is in the call's enclosing function
+(incl. decorators), enclosing class (decorators and non-method statements only), or module top
+level, and is one of: ``shutil.which("<same literal>")``; a ``skipif`` whose condition contains that
+``which`` call or the binary name as a string; an unconditional ``pytest.skip(...)`` /
+``mark.skip`` / constant-condition ``skipif``; or, ONLY for OS-native binaries
+(``_OS_NATIVE_BINARIES``), a platform check (``sys.platform`` / ``os.name`` /
+``platform.system``). A platform check or an unrelated ``which`` does not exempt ``gitleaks``.
+
+A guard-less helper is accepted only when it is never referenced except as a direct call target and
+EVERY call site in the module is guarded (one level).
+
+KNOWN LIMITS (do not read a green as more than this). A non-literal argv[0] (``[exe, ...]``,
+``[_bin(), ...]``, ``shutil.which(var)``) is invisible to / does not bind in the scan; the guard
+check is lexical, so it proves a guard EXISTS nearby, not that it dominates the call; a helper chain
+deeper than one level is flagged.
 """
 
 from __future__ import annotations
 
 import ast
+import re
+from collections.abc import Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-UNIT_DIR = REPO_ROOT / "tests" / "unit"
+TESTS_DIR = REPO_ROOT / "tests"
 
-# Binaries the `test-python` lane of .github/workflows/ci.yml provides on every matrix OS.
-# Anything else (gitleaks, curl, rg, ast-grep, sg, node, docker, wsl, ...) needs a skip guard.
+# Binaries a CI test lane provides. Trimmed to what the test tree actually shells out to; anything
+# else (gitleaks, curl, rg, ast-grep, sg, node, docker, wsl, cargo, ...) needs a guard bound to it.
+# NOTE: `native-build-smoke` (ci.yml) runs a unit test with plain pip+pytest, WITHOUT uv or tg --
+# the allowlist describes `test-python`, the lane that runs the whole tree.
 CI_PROVIDED_BINARIES = frozenset({
     # Preinstalled on every GitHub-hosted runner image and required by actions/checkout.
     "git",
@@ -35,102 +48,203 @@ CI_PROVIDED_BINARIES = frozenset({
     "tg",
     # ci.yml test-python: `python -m pip install uv==...` then `uv python install <ver>`.
     "python",
-    "python3",
     "uv",
-    # ci.yml test-python "Install Rust dependencies (for PyO3 fallback)": `rustup default 1.96.0`
-    # then `rustc --version` / `cargo --version`.
-    "cargo",
-    "rustc",
-    "rustup",
 })
 
+# OS-inbox binaries: a platform check is a sufficient guard for these (and only these).
+_OS_NATIVE_BINARIES = frozenset({"cmd", "icacls", "powershell", "reg"})
+
 _SUBPROCESS_FUNCS = frozenset({"run", "Popen", "check_output", "check_call", "call"})
-_GUARD_ATTRS = frozenset({"skip", "importorskip", "skipif", "which"})
-_GUARD_NAMES = frozenset({"importorskip", "which"})
 _PLATFORM_CHECKS = frozenset({("sys", "platform"), ("os", "name"), ("platform", "system")})
+_FUNC_TYPES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
-def _literal_binary(call: ast.Call) -> str | None:
-    """argv[0] when the call is a subprocess/os.system call with a literal command, else None."""
-    func = call.func
-    if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
-        return None
-    owner, name = func.value.id, func.attr
-    is_sub = owner == "subprocess" and name in _SUBPROCESS_FUNCS
-    is_system = owner == "os" and name == "system"
-    if not (is_sub or is_system) or not call.args:
-        return None
-    arg = call.args[0]
-    if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-        parts = arg.value.split()
-        return Path(parts[0]).name if parts else None
-    if isinstance(arg, (ast.List, ast.Tuple)) and arg.elts:
-        first = arg.elts[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            return Path(first.value).name
+def _norm(name: str) -> str:
+    base = re.split(r"[\\/]", name.strip())[-1].lower()
+    return base[:-4] if base.endswith(".exe") else base
+
+
+def _str_const(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
     return None
 
 
-def _has_guard(nodes: list[ast.AST]) -> bool:
+class _Aliases:
+    """Names bound to the subprocess / os modules and directly imported run/system functions."""
+
+    def __init__(self, tree: ast.AST) -> None:
+        self.sub_mods = {"subprocess"}
+        self.os_mods = {"os"}
+        self.sub_funcs: set[str] = set()
+        self.system_funcs: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    if a.name == "subprocess":
+                        self.sub_mods.add(a.asname or a.name)
+                    elif a.name == "os":
+                        self.os_mods.add(a.asname or a.name)
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    if node.module == "subprocess" and a.name in _SUBPROCESS_FUNCS:
+                        self.sub_funcs.add(a.asname or a.name)
+                    elif node.module == "os" and a.name == "system":
+                        self.system_funcs.add(a.asname or a.name)
+
+
+def _literal_binary(call: ast.Call, al: _Aliases) -> str | None:
+    """Normalized argv[0] when ``call`` is a subprocess/os.system call with a literal command."""
+    func = call.func
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        owner, name = func.value.id, func.attr
+        hit = (owner in al.sub_mods and name in _SUBPROCESS_FUNCS) or (
+            owner in al.os_mods and name == "system"
+        )
+    elif isinstance(func, ast.Name):
+        hit = func.id in al.sub_funcs or func.id in al.system_funcs
+    else:
+        hit = False
+    if not hit:
+        return None
+    arg: ast.AST | None = call.args[0] if call.args else None
+    if arg is None:
+        for kw in call.keywords:
+            if kw.arg in {"args", "command"}:
+                arg = kw.value
+    text = _str_const(arg)
+    if text is not None:
+        parts = text.split()
+        return _norm(parts[0]) if parts else None
+    if isinstance(arg, (ast.List, ast.Tuple)) and arg.elts:
+        first = _str_const(arg.elts[0])
+        if first is not None:
+            return _norm(first)
+    return None
+
+
+def _is_which(call: ast.Call) -> bool:
+    f = call.func
+    return (isinstance(f, ast.Attribute) and f.attr == "which") or (
+        isinstance(f, ast.Name) and f.id == "which"
+    )
+
+
+def _which_binds(call: ast.Call, binary: str) -> bool:
+    lit = _str_const(call.args[0]) if call.args else None
+    return lit is not None and _norm(lit) == binary
+
+
+def _cond_binds(cond: ast.AST | None, binary: str) -> bool:
+    """Does a skipif condition mention ``binary`` (a bound which() call or the name as a string)?"""
+    if cond is None:
+        return False
+    if isinstance(cond, ast.Constant) and not isinstance(cond.value, str):
+        return True  # constant condition: unconditional
+    for n in ast.walk(cond):
+        if isinstance(n, ast.Call) and _is_which(n) and _which_binds(n, binary):
+            return True
+        lit = _str_const(n)
+        if lit is not None and _norm(lit) == binary:
+            return True
+    return False
+
+
+def _has_guard(nodes: Sequence[ast.AST], binary: str) -> bool:
     for root in nodes:
         for node in ast.walk(root):
             if isinstance(node, ast.Attribute):
-                if node.attr in _GUARD_ATTRS:
-                    return True
                 if (
-                    isinstance(node.value, ast.Name)
+                    binary in _OS_NATIVE_BINARIES
+                    and isinstance(node.value, ast.Name)
                     and (node.value.id, node.attr) in _PLATFORM_CHECKS
                 ):
                     return True
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in _GUARD_NAMES:
+                # `@pytest.mark.skip` used as a bare decorator / mark expression
+                if node.attr == "skip" and isinstance(node.value, ast.Attribute):
+                    return True
+            if not isinstance(node, ast.Call):
+                continue
+            f = node.func
+            fname = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", None)
+            if _is_which(node) and _which_binds(node, binary):
+                return True
+            if fname == "skip":
+                return True  # pytest.skip(...) / mark.skip(...) / `from pytest import skip`
+            if fname == "skipif":
+                cond = node.args[0] if node.args else None
+                for kw in node.keywords:
+                    if kw.arg == "condition":
+                        cond = kw.value
+                if _cond_binds(cond, binary):
                     return True
     return False
+
+
+def _scope_nodes(scope: ast.AST) -> list[ast.AST]:
+    """Nodes of a scope that can guard calls inside it (a class excludes its sibling methods)."""
+    if isinstance(scope, ast.ClassDef):
+        return [
+            *scope.decorator_list,
+            *(n for n in scope.body if not isinstance(n, (*_FUNC_TYPES, ast.ClassDef))),
+        ]
+    return [scope]
 
 
 def find_unguarded_external_binaries(source: str) -> list[tuple[int, str]]:
     """Return ``(lineno, binary)`` for each unguarded call to a non-CI-provided binary."""
     tree = ast.parse(source)
-    top_level = [
-        n
-        for n in tree.body
-        if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
-    ]
-    module_guarded = _has_guard(top_level)
-    # (lineno, binary, innermost enclosing function name)
-    candidates: list[tuple[int, str, str | None]] = []
-    # function name -> guarded? for every call site of that name in the module
-    call_sites: dict[str, list[bool]] = {}
+    aliases = _Aliases(tree)
+    top_level = [n for n in tree.body if not isinstance(n, (*_FUNC_TYPES, ast.ClassDef))]
+    candidates: list[tuple[int, str, str | None, list[ast.AST]]] = []
+    call_sites: dict[str, list[list[ast.AST]]] = {}
+    escaped: set[str] = set()  # names referenced other than as a direct call target
+
+    def guarded(scopes: list[ast.AST], binary: str) -> bool:
+        nodes = [*top_level, *(n for sc in scopes for n in _scope_nodes(sc))]
+        return _has_guard(nodes, binary)
 
     def visit(node: ast.AST, scopes: list[ast.AST]) -> None:
+        skip_child: ast.AST | None = None
         if isinstance(node, ast.Call):
-            guarded = module_guarded or _has_guard(scopes)
             callee = node.func
             if isinstance(callee, ast.Name):
-                call_sites.setdefault(callee.id, []).append(guarded)
+                call_sites.setdefault(callee.id, []).append(scopes)
+                skip_child = callee
             elif isinstance(callee, ast.Attribute):
-                call_sites.setdefault(callee.attr, []).append(guarded)
-            binary = _literal_binary(node)
-            if binary is not None and binary not in CI_PROVIDED_BINARIES and not guarded:
-                funcs = [
-                    sc for sc in scopes if isinstance(sc, (ast.FunctionDef, ast.AsyncFunctionDef))
-                ]
-                candidates.append((node.lineno, binary, funcs[-1].name if funcs else None))
+                call_sites.setdefault(callee.attr, []).append(scopes)
+                skip_child = callee
+            binary = _literal_binary(node, aliases)
+            if binary is not None and binary not in CI_PROVIDED_BINARIES:
+                funcs = [sc for sc in scopes if isinstance(sc, _FUNC_TYPES)]
+                candidates.append((node.lineno, binary, funcs[-1].name if funcs else None, scopes))
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            escaped.add(node.id)
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            escaped.add(node.attr)
         child_scopes = scopes
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, (*_FUNC_TYPES, ast.ClassDef)):
             child_scopes = [*scopes, node]
         for child in ast.iter_child_nodes(node):
+            if child is skip_child:
+                # a direct call target is not an escape; still descend into `a.b.c()` receivers
+                if isinstance(child, ast.Attribute):
+                    visit(child.value, scopes)
+                continue
             visit(child, child_scopes)
 
     for top in tree.body:
         visit(top, [])
-    # A helper with no guard of its own is accepted when it is called, and EVERY call site is
-    # itself guarded (one level; a helper chain or an unguarded caller is still flagged).
-    return [
-        (lineno, binary)
-        for lineno, binary, func in candidates
-        if not (func and call_sites.get(func) and all(call_sites[func]))
-    ]
+
+    offenders: list[tuple[int, str]] = []
+    for lineno, binary, func, scopes in candidates:
+        if guarded(scopes, binary):
+            continue
+        sites = call_sites.get(func, []) if func else []
+        if func and func not in escaped and sites and all(guarded(s, binary) for s in sites):
+            continue  # guard-less helper, every caller guarded, never referenced otherwise
+        offenders.append((lineno, binary))
+    return offenders
 
 
 # --- controls -------------------------------------------------------------------------------
@@ -211,12 +325,149 @@ def test_it():
     os.system("rg foo")
 """
 
+_PLATFORM_ONLY_WRONG_BINARY = """
+import subprocess, sys
+import pytest
+
+@pytest.mark.skipif(sys.platform == "win32", reason="x")
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_WHICH_OTHER_BINARY = """
+import shutil, subprocess
+
+def test_a():
+    if shutil.which("rg") is None:
+        return
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_MODULE_WHICH_UNRELATED = """
+import shutil, subprocess
+
+GIT = shutil.which("git")
+
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+# Reduced copy of `git show 00695cd:tests/unit/test_gitleaks_scan_completeness.py`.
+_RECEIPT_00695CD = """
+import subprocess
+import tempfile
+from pathlib import Path
+
+def test_gitleaks_scan_includes_merge_commits():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        repo = Path(tmpdir)
+        subprocess.run(["git", "init"], cwd=repo, capture_output=True)
+        result = subprocess.run(
+            ["gitleaks", "detect", "--source", "git", "--json"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+        )
+        assert result is not None
+"""
+
+_ALIAS_MODULE = """
+import subprocess as sp
+
+def test_a():
+    sp.run(["gitleaks", "version"])
+"""
+
+_ALIAS_FROM = """
+from subprocess import run as r
+
+def test_a():
+    r(["gitleaks", "version"])
+"""
+
+_ARGS_KEYWORD = """
+import subprocess
+
+def test_a():
+    subprocess.run(args=["gitleaks", "version"])
+"""
+
+_EXE_SUFFIX = """
+import subprocess
+
+def test_a():
+    subprocess.run(["gitleaks.exe", "version"])
+"""
+
+_GIT_EXE_ALLOWED = """
+import subprocess
+
+def test_a():
+    subprocess.run(["git.exe", "init"])
+"""
+
+_HELPER_ESCAPES = """
+import subprocess
+import pytest
+
+def _run(*args):
+    return subprocess.run(["icacls", *args])
+
+@pytest.mark.skipif(True, reason="x")
+def test_a():
+    _run("a")
+    list(map(_run, ["b"]))
+"""
+
+_SIBLING_GUARD = """
+import shutil, subprocess
+
+class TestX:
+    def test_guarded(self):
+        if shutil.which("gitleaks") is None:
+            return
+
+    def test_unguarded(self):
+        subprocess.run(["gitleaks", "version"])
+"""
+
+_PLATFORM_OS_NATIVE_OK = """
+import subprocess, sys
+import pytest
+
+@pytest.mark.skipif(sys.platform != "win32", reason="icacls is Windows-only")
+def test_a():
+    subprocess.run(["icacls", "x"])
+"""
+
+_SKIPIF_WHICH_OK = """
+import shutil, subprocess
+import pytest
+
+@pytest.mark.skipif(shutil.which("gitleaks") is None, reason="no gitleaks")
+def test_a():
+    subprocess.run(["gitleaks", "version"])
+"""
+
+_UNCONDITIONAL_SKIP_OK = """
+import subprocess
+import pytest
+
+def test_a():
+    pytest.skip("not available in CI")
+    subprocess.run(["gitleaks", "version"])
+"""
+
+
+def _bins(src: str) -> list[str]:
+    return [b for _, b in find_unguarded_external_binaries(src)]
+
 
 def test_positive_control_unguarded_binary_is_flagged() -> None:
-    assert [b for _, b in find_unguarded_external_binaries(_UNGUARDED)] == ["gitleaks"]
-    assert [b for _, b in find_unguarded_external_binaries(_OS_SYSTEM)] == ["rg"]
+    assert _bins(_UNGUARDED) == ["gitleaks"]
+    assert _bins(_OS_SYSTEM) == ["rg"]
     # a helper with even one unguarded caller is still flagged
-    assert [b for _, b in find_unguarded_external_binaries(_HELPER_UNGUARDED_CALLER)] == ["icacls"]
+    assert _bins(_HELPER_UNGUARDED_CALLER) == ["icacls"]
 
 
 def test_negative_control_guarded_or_allowlisted_passes() -> None:
@@ -227,18 +478,50 @@ def test_negative_control_guarded_or_allowlisted_passes() -> None:
         _ALLOWED,
         _HELPER_GUARDED_CALLERS,
     ):
-        assert find_unguarded_external_binaries(src) == [], src
+        assert _bins(src) == [], src
 
 
-def test_no_unit_test_shells_out_to_a_binary_ci_lacks_without_a_guard() -> None:
+def test_guard_must_bind_to_the_binary() -> None:
+    assert _bins(_PLATFORM_ONLY_WRONG_BINARY) == ["gitleaks"]
+    assert _bins(_WHICH_OTHER_BINARY) == ["gitleaks"]
+    assert _bins(_MODULE_WHICH_UNRELATED) == ["gitleaks"]
+    assert _bins(_SIBLING_GUARD) == ["gitleaks"]
+    for ok in (_PLATFORM_OS_NATIVE_OK, _SKIPIF_WHICH_OK, _UNCONDITIONAL_SKIP_OK):
+        assert _bins(ok) == [], ok
+
+
+def test_receipt_00695cd_shape_is_flagged() -> None:
+    assert _bins(_RECEIPT_00695CD) == ["gitleaks"]
+
+
+def test_import_aliases_args_keyword_and_exe_suffix_are_resolved() -> None:
+    for src in (_ALIAS_MODULE, _ALIAS_FROM, _ARGS_KEYWORD, _EXE_SUFFIX):
+        assert _bins(src) == ["gitleaks"], src
+    assert _bins(_GIT_EXE_ALLOWED) == []
+
+
+def test_helper_referenced_other_than_by_direct_call_is_unguarded() -> None:
+    assert _bins(_HELPER_ESCAPES) == ["icacls"]
+
+
+def _scanned_files() -> list[Path]:
+    fixtures = TESTS_DIR / "fixtures"
+    return [
+        p
+        for p in sorted(TESTS_DIR.rglob("*.py"))
+        if fixtures not in p.parents and p.resolve() != Path(__file__).resolve()
+    ]
+
+
+def test_no_test_shells_out_to_a_binary_ci_lacks_without_a_guard() -> None:
+    files = _scanned_files()
+    assert len(files) >= 400, f"vacuity floor: only {len(files)} test files scanned"
     problems: list[str] = []
-    for path in sorted(UNIT_DIR.glob("*.py")):
-        if path.name == Path(__file__).name:
-            continue
+    for path in files:
         for lineno, binary in find_unguarded_external_binaries(path.read_text(encoding="utf-8")):
             problems.append(f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: {binary!r}")
     assert not problems, (
-        "unit tests shell out to binaries CI does not install, with no skip guard "
-        "(add shutil.which/pytest.skip/skipif, or extend CI_PROVIDED_BINARIES citing ci.yml):\n"
-        + "\n".join(problems)
+        "tests shell out to binaries CI does not install, with no guard bound to that binary "
+        "(add shutil.which('<bin>')/pytest.skip/skipif, or extend CI_PROVIDED_BINARIES citing "
+        "ci.yml):\n" + "\n".join(problems)
     )
