@@ -12,6 +12,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location(
     "ci_verdict", REPO_ROOT / "scripts" / "ci_verdict.py"
@@ -133,10 +135,47 @@ def test_no_runs_is_no_run() -> None:
     assert v.state == cv.NO_RUN and v.exit_code == 4
 
 
-def test_skip_ci_commit_is_named() -> None:
-    v = cv.classify(SHA, "ci.yml", payload(), commit_message="chore(release): v1 [skip ci]\n")
+@pytest.mark.parametrize(
+    "message",
+    [
+        "chore: x [skip ci]",
+        "chore: x [ci skip]",
+        "chore: x [no ci]",
+        "chore: x [skip actions]",
+        "chore: x [actions skip]",
+        "chore: x@@@@body@@@@skip-checks: true@@",
+    ],
+)
+def test_skip_ci_commit_is_named(message: str) -> None:
+    v = cv.classify(SHA, "ci.yml", payload(), commit_message=message.replace("@", chr(10)))
     assert v.state == cv.NO_RUN
-    assert "skip-ci" in "\n".join(v.detail)
+    assert "skip-ci" in chr(10).join(v.detail)
+
+
+def test_plain_message_is_not_skip_ci() -> None:
+    v = cv.classify(SHA, "ci.yml", payload(), commit_message="fix: x")
+    assert v.state == cv.NO_RUN and "skip-ci" not in chr(10).join(v.detail)
+
+
+def test_push_failure_plus_schedule_neutral_is_failure() -> None:
+    runs = payload(
+        run(1, 10, conclusion="failure", event="push"),
+        run(2, 11, conclusion="neutral", event="schedule"),
+    )
+    by_run = {1: job_payload(("t", "failure")), 2: job_payload(("t", "success"))}
+    assert cv.classify(SHA, "ci.yml", runs, by_run).state == cv.FAILURE
+
+
+def test_mistyped_event_filter_is_cannot_measure_naming_events() -> None:
+    runs = payload(run(1, 10, event="push"), run(2, 11, event="schedule"))
+    v = cv.classify(SHA, "ci.yml", runs, event="pushh")
+    assert v.state == cv.CANNOT_MEASURE
+    text = chr(10).join(v.detail)
+    assert "'pushh'" in text and "push, schedule" in text
+
+
+def test_event_filter_with_no_runs_at_all_is_still_no_run() -> None:
+    assert cv.classify(SHA, "ci.yml", payload(), event="push").state == cv.NO_RUN
 
 
 def test_other_workflows_and_other_shas_are_ignored() -> None:

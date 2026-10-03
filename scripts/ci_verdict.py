@@ -160,6 +160,16 @@ def classify(
         v.detail.append(f"malformed payload: {exc}")
         return v
 
+    if not mine and event is not None:
+        unfiltered, _ = _matching_runs(runs_payload, sha, workflow, None)
+        if unfiltered:
+            present = sorted({str(r.get("event")) for r in unfiltered})
+            v.detail.append(
+                f"--event {event!r} matches no run, but {len(unfiltered)} {workflow} run(s) exist "
+                f"for this SHA with event(s): {', '.join(present)} (mistyped filter?)"
+            )
+            return v  # CANNOT_MEASURE
+
     if not mine:
         v.state = NO_RUN
         if _skip_ci(commit_message):
