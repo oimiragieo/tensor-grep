@@ -1,11 +1,11 @@
 ---
 name: tensor-grep-change-control
-description: Use when about to change, review, merge, or release ANY code in tensor-grep — adding a tg command or search flag, touching a backend/router/pipeline, editing CI/release/docs contracts, merging a PR, claiming a fix or speedup is done, or deciding whether a follow-up commit is truly "docs-only"/"comment-only". Encodes the non-negotiable gates (draft-PR-only autonomy, never-trust-a-self-report, no-speed-claim-without-numbers, experimental-until-proven, TDD-first, smallest-change, benchmark-hot-paths, the 4 registration sites, one-merge-per-tick / the push-race, dogfood-the-real-binary, contract-changes-need-validator-tests, a test proving nothing until seen fail on the pre-fix baseline, gating comments/docstrings with the same rigor as code, diff-review-is-not-measurement-review, and the `ast.dump()` behavior-neutral proof technique) and the historical incident behind each.
+description: Use when about to change, review, merge, or release ANY code in tensor-grep — adding a tg command or search flag, touching a backend/router/pipeline, editing CI/release/docs contracts, merging a PR, claiming a fix or speedup is done, or deciding whether a follow-up commit is truly "docs-only"/"comment-only". Encodes the non-negotiable gates (merge-own-verified-green-PRs autonomy, never-trust-a-self-report, no-speed-claim-without-numbers, experimental-until-proven, TDD-first, smallest-change, benchmark-hot-paths, the 4 registration sites, burst-then-hold merging / the push-race, dogfood-the-real-binary, contract-changes-need-validator-tests, a test proving nothing until seen fail on the pre-fix baseline, gating comments/docstrings with the same rigor as code, diff-review-is-not-measurement-review, and the `ast.dump()` behavior-neutral proof technique) and the historical incident behind each.
 ---
 
 # tensor-grep change control
 
-This is the **gate-and-discipline runbook** for changing `tensor-grep` (the `tg` CLI). It answers: *what must be true before a change is allowed to land, and why.* Every rule here was written in blood — each traces to a real incident that shipped a bug, blocked a release, or wasted CI cycles. Read it before you edit, merge, or claim "done."
+This is the **gate-and-discipline runbook** for changing `tensor-grep` (the `tg` CLI). It answers: *what must be true before a change is allowed to land, and why.* Every rule here traces to a real incident that shipped a bug, blocked a release, or wasted CI cycles. Read it before you edit, merge, or claim "done."
 
 `tensor-grep` is described in its own docs as a **benchmark-governed, contract-heavy codebase** (`CONTRIBUTING.md`, `AGENTS.md:15`). "Contract-heavy" means many behaviors are pinned by tests that fail if you drift; "benchmark-governed" means speed claims are gated by measured numbers, not review opinion. Do not optimize by guesswork.
 
@@ -13,7 +13,7 @@ This is the **gate-and-discipline runbook** for changing `tensor-grep` (the `tg`
 
 Two readers at once — write and act to the **lower bound** of each:
 
-- A **Sonnet-class AI** in a cheap autonomous session: you need copy-pasteable commands and hard guardrails so you cannot silently skip a gate.
+- An **agent working autonomously**: copy-pasteable commands and the gates that must not be skipped.
 - A **mid-level human engineer** with zero repo context: you need the *why* and the domain theory so the rule makes sense and you apply it to new cases.
 
 ## When to use this skill vs a sibling
@@ -39,11 +39,13 @@ Two readers at once — write and act to the **lower bound** of each:
 
 These are not in a config file; they are CEO-confirmed law. Breaking one is a process failure even if the code is clean.
 
-### 1. Autonomy is draft-PR-only
+### 1. Autonomy: merge your own verified-green PRs, nothing less
 
-**Rule:** Never auto-merge, never admin-merge, never auto-restart a service unattended. Every self-acting behavior ships **default-OFF** and graduates only via: council-verify → dry-run (preview what it would do on real data) → a **conscious flag-flip** by a human. The endpoint of any autonomous fan-out is a **draft PR** a human reviews and clicks merge on.
+**Rule:** The agent that opens a PR owns getting it merged (CEO directive 2026-07-23, "unmerged work is yours"). Merge it yourself once it is **verified green**: required CI complete and green on the head SHA, an **independent** review recorded on the PR (not the build agent's own report), and the push-race check (Part 7) clear. Stop and do not merge when: required CI is failing or still pending; the user said they will merge it themselves; or the action cannot be undone by a revert. Never admin-merge past a required check, and never auto-restart a service unattended. Every self-acting behavior (watcher, daemon, self-upgrade) ships **default-OFF** and graduates only via: council-verify → dry-run (preview what it would do on real data) → a **conscious flag-flip** whose PR gets explicit human sign-off.
 
-**Why / incident:** The dogfood follow-up workflow ends every fan-out at a draft PR precisely because a post-build adversarial audit once caught a **HIGH CUDA-fork hazard that 203 passing green tests missed** (`AGENTS.md:436`, `AGENTS.md:571`). Green tests are not a merge signal for autonomous work. A model that merges its own PR removes the one gate that catches what the tests can't.
+**Why / incident:** A post-build adversarial audit once caught a **HIGH CUDA-fork hazard that 203 passing green tests missed** (`AGENTS.md`). Green tests alone are not a merge signal for autonomous work; the independent review is what catches what the tests cannot, so it is a precondition of the self-merge, not an optional extra.
+
+An operator's "skip Fable" waives that design-audit seat for the named docs packet only, not for product code, spend, or CEO_GATED flips (AGENTS.md A117).
 
 **Applies to:** any agent orchestration, self-upgrade helper, watcher, or "just merge it" impulse.
 
@@ -52,16 +54,18 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Rule:** A subagent's or model's "tests pass" / "N green" / "I fixed it" is a **hypothesis** until **external state** confirms it: an exit code, a real-binary dogfood, or a `file:line` that actually resolves. Re-run any validation a subagent claims to have passed.
 
 **Why / incidents:**
-- Subagents can assert success without executing (`AGENTS.md:434`). Worktree fan-out branches have **no `.venv`**, so an agent's "tests pass" is literally un-runnable in its own tree — you must re-run pytest/ruff/mypy in the real venv before integrating (`AGENTS.md:2212,2241`).
-- **Mock-based FFI tests passed GREEN while the real PyO3 bridge was DEAD** — it dropped every forwarded flag and silently fell back to the Python engine. Prove a bridge/FFI change with a **live runtime call into the built extension**, then confirm the flag actually reached `rg` (`AGENTS.md:901`).
+- Subagents can assert success without executing (`AGENTS.md`). Worktree fan-out branches have **no `.venv`**, so an agent's "tests pass" is literally un-runnable in its own tree — you must re-run pytest/ruff/mypy in the real venv before integrating (`AGENTS.md`).
+- **Mock-based FFI tests passed GREEN while the real PyO3 bridge was DEAD** — it dropped every forwarded flag and silently fell back to the Python engine. Prove a bridge/FFI change with a **live runtime call into the built extension**, then confirm the flag actually reached `rg` (`AGENTS.md`).
 
-**Concrete gate:** For generated/detached code (install scripts, self-upgrade helpers), adversarial-review by **executing** it — `compile()` + `exec()` the generated string and assert behavior (e.g. the checksum gate fires *before* `os.replace`), not substrings (`AGENTS.md:434`).
+**Concrete gate:** For generated/detached code (install scripts, self-upgrade helpers), adversarial-review by **executing** it — `compile()` + `exec()` the generated string and assert behavior (e.g. the checksum gate fires *before* `os.replace`), not substrings (`AGENTS.md`).
+
+**Corollaries.** The facts in a dispatch brief (version numbers, SHAs, "already shipped" claims) are hypotheses until the seat re-derives them from the tree (AGENTS.md A102). A spot-check of one file is a claim about that one file; declare N files stale or novel only from a mechanical per-file diff or an explicit per-file disposition (AGENTS.md A98).
 
 ### 3. No speed / improvement claim without measured numbers
 
 **Rule:** Never claim a speedup, regression, or "improvement" without a measured line **vs the accepted baseline** (not memory). Reject a candidate that is slower — or only "faster" in a microprofile while slower end-to-end — **even if the code is clean**. If a candidate is correct but slower, **revert it and record the attempt** (in `docs/PAPER.md`) so no future agent retries the losing idea.
 
-**Why / incidents & theory:** `rg` (ripgrep) is the **raw cold-text parity baseline**; `ast-grep` is the **structural-search baseline** (`AGENTS.md:344-345`). tg's moat is the agent-native intelligence layer, *not* faster grep — so an unmeasured "it's faster" claim is both unverified and off-strategy. Hard-won architectural truths already in the repo: more caching is **not** always faster; onefile Nuitka binaries are **not** the Windows speed path for plain passthrough; GPU is currently **slower** than CPU (`AGENTS.md:796-826`). Benchmark artifacts must carry `tg_launcher_mode` + `tg_launcher_command_kind` and **refuse stale in-tree binaries by default** — a timing taken through a `.cmd` shim or a stale `rust_core/target/*/tg.exe` is not a claim (`AGENTS.md:364`). Run the *right* benchmark for the area (see `tensor-grep-benchmark-and-proof-toolkit`).
+**Why / incidents & theory:** `rg` (ripgrep) is the **raw cold-text parity baseline**; `ast-grep` is the **structural-search baseline** (`AGENTS.md`). tg's moat is the agent-native intelligence layer, *not* faster grep — so an unmeasured "it's faster" claim is both unverified and off-strategy. Hard-won architectural truths already in the repo: more caching is **not** always faster; onefile Nuitka binaries are **not** the Windows speed path for plain passthrough; GPU is currently **slower** than CPU (`AGENTS.md`). Benchmark artifacts must carry `tg_launcher_mode` + `tg_launcher_command_kind` and **refuse stale in-tree binaries by default** — a timing taken through a `.cmd` shim or a stale `rust_core/target/*/tg.exe` is not a claim (`AGENTS.md`). Run the *right* benchmark for the area (see `tensor-grep-benchmark-and-proof-toolkit`).
 
 ### 4. Experimental-until-proven
 
@@ -70,9 +74,9 @@ These are not in a config file; they are CEO-confirmed law. Breaking one is a pr
 **Why / incidents:**
 - **GPU** Phase-0 SHIPPED (v1.75.1-v1.75.4, PRs #594-#597 -- #593/v1.75.0 was an UNRELATED
   `tg orient`/`tg agent` improvement that landed in the same version range by publish order, not part
-  of the GPU wave; AGENTS.md's "GPU Phase-0 hardening wave" addendum records the same range): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion" docs/CONTRACTS.md` — was cited at `:80-82`, now `:123`; the old anchor pointed at the `--column`/`-c` flag list). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md:843`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
-- **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md:375`).
-- **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md:366`).
+  of the GPU wave; AGENTS.md's "GPU Phase-0 hardening wave" addendum records the same range): NVIDIA native assets are built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120` -- `docs/gpu_crossover.md`), but gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 is now a reversible flag-flip, not a multi-week rebuild. That flip publishes assets only: no speed crossover is proven vs `rg`/`tg_cpu`, GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet (`grep -n "Public managed GPU promotion" docs/CONTRACTS.md`). Any GPU-requested fallback must surface `gpu_evidence_status = unsupported`, `gpu_proof = false`, `native_gpu_unavailable` (`AGENTS.md`). The only *candidate* CUDA wedge is many fixed strings over a large corpus — never single-pattern cold grep.
+- **LSP** availability is install evidence only, not proof of working navigation; a row counts as LSP proof only with `lsp_provider_response = true` from a completed request (`AGENTS.md`).
+- **classify** is deterministic-local by default; provider mode requires `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` and provider failure must fall back **before** loading a tokenizer/model (`AGENTS.md`).
 
 ### 5. Mandatory adversarial security gate before merge
 
@@ -89,10 +93,8 @@ bypass** on a security PR — `.resolve()` followed the symlink *before* the pat
 so a crafted symlink escaped the intended root — and separately a **lock-release TOCTOU** on an
 index-lock hardening PR. Both PRs had fully green test suites; neither bug was a test-coverage gap, it
 was a missing adversarial pass. Ordinary review (Codex) proved unreliable/WSL-flaky for this role in
-practice — run the security-adversarial pass on **Opus or Sonnet-5, never Fable** (Fable 5 ships a
-semantic+cumulative cyber-safety classifier that auto-falls-back to Opus mid-turn on vuln-hunting
-content, which just adds friction rather than blocking anything — see the global memory
-`feedback-fable5-cyber-classifier-audit-on-opus`). **Precedent for the native-asset/installer/
+practice, so explicit security-adversarial passes run on an **Opus** seat (Fable's cyber-safety
+classifier can decline or reroute vuln-hunting turns; other audits route per the `model-router` skill). **Precedent for the native-asset/installer/
 doctor-probe addition:** the v1.75.2/v1.75.3 GPU Phase-0 installer-downgrade PR (#596, P0-5 -- loud
 nvidia-to-cpu installer downgrade) was held in draft with an explicit "Opus gate pending before merge"
 per its council-reviewed plan before shipping; construction of installer/asset-selection logic and
@@ -237,14 +239,15 @@ cancelled. Three consecutive main runs, all killed while queued.
 it was initially misattributed entirely to the cap. Clearing the cap alone would not have fixed
 publishing.
 
-**The protocol, superseding "one merge per tick":**
+**The protocol (the burst half of the rule in Part 7):**
 
 1. Verify every candidate PR is genuinely green (see §11 — count is not enough).
-2. **Merge them all in one burst.** The release is cumulative from the last tag, so merging more
-   before the run starts LOSES NOTHING and gains a single publish covering everything.
-3. **Then stop pushing entirely** — including docs PRs, which consume the same runners.
-4. Wait for `gh run list --branch main --workflow=ci.yml --limit 1` to read **`completed`**, not
-   merely to exist. A created run is not a protected run.
+2. **Only when no release-bearing `main` run exists, merge them all in one burst.** The release is cumulative from the last tag, so merging more
+   inside the burst LOSES NOTHING and gains a single publish covering everything.
+3. **Then stop pushing entirely** — including docs PRs, which consume the same runners — until that run's `chore(release)` commit and the PyPI publish land. The window is the whole run from creation to the release push, not the job's current state: a pending/jobs=0 run still pushes last.
+4. Capture the release run's ID once and poll THAT ID (`gh run view <run-id> --json status,conclusion`)
+   until `status == "completed"`; never gate on a windowed `gh run list --limit N` (it hides the
+   executing run — see Part 7). A created run is not a protected run.
 5. Verify the release **per-artifact** (A124): a tag or version appearing proves nothing; the
    expected filename set does.
 
@@ -296,7 +299,7 @@ precedent for absorbing real growth. Law **A137**.
 
 ## Part 2 — The written Operating Rules
 
-From `AGENTS.md` "Operating Rules" (`:856`) and `CONTRIBUTING.md`:
+From `AGENTS.md` "Operating Rules" (`grep -n '^## Operating Rules' AGENTS.md`) and `CONTRIBUTING.md`:
 
 1. **Start with a failing test when behavior changes** (TDD-first). See `superpowers:test-driven-development`.
 2. **Make the smallest defensible change.**
@@ -306,7 +309,7 @@ From `AGENTS.md` "Operating Rules" (`:856`) and `CONTRIBUTING.md`:
 6. **Do not change workflow, release, or docs contracts without updating the validator-backed tests.**
 7. Do not `wsl --shutdown` / restart WSL/Docker / reboot the host for "memory cleanup" without explicit user approval — other agents share WSL.
 
-Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/validate_release_assets.py`, docs contracts, or package-manager assets, the change is **incomplete** until the matching validator test is updated. Read `docs/CI_PIPELINE.md` first — it is the canonical pipeline contract (`AGENTS.md:789`).
+Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `scripts/validate_release_assets.py`, docs contracts, or package-manager assets, the change is **incomplete** until the matching validator test is updated. Read `docs/CI_PIPELINE.md` first — it is the canonical pipeline contract (`AGENTS.md`).
 
 ---
 
@@ -319,22 +322,22 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 | # | Site | File | Verified anchor |
 |---|---|---|---|
 | 1 | `KNOWN_COMMANDS` (Python known-command registry) | `src/tensor_grep/cli/commands.py` | `commands.py:9` |
-| 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `grep -n "enum Commands" rust_core/src/main.rs` (was `:889`, now `:910`) |
-| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `grep -n "PUBLIC_TOP_LEVEL_COMMANDS = " tests/e2e/test_routing_parity.py` (was `:18`, now `:46`); asserted by `test_top_level_help_visible_commands_match_public_contract` (was `:563-564`, now def `:583`, asserts `:592-593`) |
+| 2 | `Commands::X` enum variant + dispatch arm (native front door) | `rust_core/src/main.rs` | `grep -n "enum Commands" rust_core/src/main.rs` |
+| 3 | `PUBLIC_TOP_LEVEL_COMMANDS` (parity contract test) | `tests/e2e/test_routing_parity.py` | `grep -n "PUBLIC_TOP_LEVEL_COMMANDS = " tests/e2e/test_routing_parity.py`; asserted by `test_top_level_help_visible_commands_match_public_contract` (grep the test name) |
 | 4 | `@app.command` function (Typer entry point) | `src/tensor_grep/cli/main.py` | `grep -c "@app.command" src/tensor_grep/cli/main.py` (re-run before citing a count — it drifts every release; do not trust a stamped number) |
 
 ### Adding a search flag (`tg search --myflag`) — 2 front doors (miss one → `rg: unrecognized flag` crash for installed users)
 
 | # | Front door | File | Verified anchor |
 |---|---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (was `:183`, now `:204`) |
-| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `grep -n "_TG_ONLY_SEARCH_FLAGS" src/tensor_grep/cli/bootstrap.py` — def `:50`, checked at `:404` (was cited as checked at `:355`) |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` |
+| 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `grep -n "_TG_ONLY_SEARCH_FLAGS" src/tensor_grep/cli/bootstrap.py` |
 
-**Why / incident:** The `tg search --rank` flag missed one of the two front doors. CliRunner tests were green — because CliRunner bypasses the bootstrap front door (Part 5) — so the crash shipped and only surfaced for users of the published binary (`AGENTS.md:405-410`). The **CI registration-completeness gate is BLOCKING since v1.17.1 (#282)** and its extractor is comment-aware (`#`-commented entries are not counted as registered) (`AGENTS.md:414`).
+**Why / incident:** The `tg search --rank` flag missed one of the two front doors. CliRunner tests were green — because CliRunner bypasses the bootstrap front door (Part 5) — so the crash shipped and only surfaced for users of the published binary (`AGENTS.md`). The **CI registration-completeness gate is BLOCKING since v1.17.1 (#282)** and its extractor is comment-aware (`#`-commented entries are not counted as registered) (`AGENTS.md`).
 
 **Audit procedure before claiming a registration change is done:**
 - `tg callers <registration-function>` lists every *callable* registration in ~1s — **but the call graph cannot see set/list/decorator/dispatch-table registrations** (e.g. `_TG_ONLY_SEARCH_FLAGS` is a *set*, `@router.post` a decorator). `--rank` lived in a set, so `callers` would never have found it.
-- So **grep / `tg scan`** the set/decorator/table sites too. Confirm your new entry appears in **all** sites (`AGENTS.md:412`).
+- So **grep / `tg scan`** the set/decorator/table sites too. Confirm your new entry appears in **all** sites (`AGENTS.md`).
 
 ### Registering a new symbol-graph language — 5 seams (miss one → a silent half-integration)
 
@@ -343,16 +346,12 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 passthrough). As of this pass **10** languages are registered: python, javascript, typescript, rust, go,
 java, php, csharp, **c, cpp** (`lang_registry.LANGUAGE_REGISTRY`, pinned by
 `test_language_registry_has_exactly_the_stage2_languages` in `tests/unit/test_lang_registry.py` --
-grep the test NAME, not a line number). C/C++ ARE registered, via `lang_c.py`/`lang_cpp.py`; an
-earlier revision of this section said they were not, which mattered because this is the skill that
-gates every new-language change.
+grep the test NAME, not a line number). C/C++ are registered, via `lang_c.py`/`lang_cpp.py`.
 
 The registry entry point is `lang_registry.register_language(lang_registry.LanguageSpec(...))`
-(`src/tensor_grep/cli/lang_registry.py:118`), called once per language inside
+(`grep -n "def register_language" src/tensor_grep/cli/lang_registry.py`), called once per language inside
 `src/tensor_grep/cli/repo_map.py`. **Do not cite a stamped count here** -- run
-`grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (10 as of 2026-07-27).
-This line previously carried a hardcoded 8 and went stale the moment C/C++ landed, which is exactly
-the failure the `@app.command` row in Part 10 already fixed by replacing a number with a command. A language's extraction
+`grep -c "lang_registry.register_language(" src/tensor_grep/cli/repo_map.py` (10 as of 2026-07-27). A language's extraction
 callables can live either inline in `repo_map.py` (python/rust/java) or in a dedicated `lang_<x>.py`
 module mirroring `lang_go.py` (go/php/csharp — a separate module avoids an import cycle back into
 `repo_map.py`); both are contract-consistent.
@@ -363,23 +362,23 @@ language works for some commands and quietly does nothing for others):
 
 | # | Seam | Feeds | File | Verified anchor |
 |---|---|---|---|---|
-| 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | grep `def _imports_and_symbols_for_path` (was `:6244`, now `:6627`; branches `:6650-6679`) |
-| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` (was `:6440`, now `:6832`) — dispatches ALL 10 as of the top-10 campaign's final waves (python/js/ts/rust/java inline; go/php/csharp/c/cpp via their `lang_*` module extractors, `repo_map.py:7089-7116`; the old "go/php/csharp fall through to `[]`" note predates the top-10 wave) |
-| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | grep `def build_symbol_source_from_map` (was `:15815`, now `:16326` -- 511 lines adrift) |
-| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | grep `def _target_language_for_path` (was `:7383`, now `:7867`) -- the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches, grep that phrase rather than trusting sub-line numbers; skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
+| 1 | `_imports_and_symbols_for_path` | `tg imports` (import list + symbols) | `repo_map.py` | grep `def _imports_and_symbols_for_path` |
+| 2 | `_imports_with_lines_for_path` | `tg imports`' line-numbered spans | `repo_map.py` | `grep -n "^def _imports_with_lines_for_path" src/tensor_grep/cli/repo_map.py` — dispatches ALL 10 as of the top-10 campaign's final waves (python/js/ts/rust/java inline; go/php/csharp/c/cpp via their `lang_*` module extractors inside that function; the old "go/php/csharp fall through to `[]`" note predates the top-10 wave) |
+| 3 | `build_symbol_source_from_map` | `tg source` | `repo_map.py` | grep `def build_symbol_source_from_map` |
+| 4 | `_target_language_for_path` | **MOST-FORGOTTEN.** Feeds the `tg agent` capsule's query-language-vs-target-language confidence gate (`agent_capsule.py`) | `repo_map.py` | grep `def _target_language_for_path` -- the function's own comments say "MOST-FORGOTTEN seam" at each of the 4 newest branches, grep that phrase rather than trusting sub-line numbers; skip it and the capsule can silently report "no target language" for a real target instead of downgrading confidence honestly |
 | 5 | `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` | `tg imports <file>`'s file-dependency-resolution "supported" gate | `repo_map.py` | grep `_SUPPORTED_FILE_DEPENDENCY_LANGUAGES` (no line number: the file has been split, grep the symbol) — all 10 as of the top-10 campaign's final waves: `frozenset({python, javascript, typescript, rust, java, go, php, csharp, c, cpp})` (the `frozenset` beside that symbol in `repo_map.py`); go/php/csharp/c/cpp joined at the raw-imports tier — their deeper `import_update_target`/true `import-string -> target-file` resolution is still `None` (tracked follow-ups in `docs/BACKLOG.md`), so those files honestly report unresolved import edges instead of a fabricated resolved list |
 
 **Fail closed for a missing grammar.** Every language added since the registry existed
 (go/java/php/csharp) sets `provenance_when_missing="grammar-missing"` in its `register_language(...)`
-call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
+call (grep `language_id="go"`) — never `"regex-heuristic"` — so a file whose tree-sitter grammar
 package isn't installed surfaces as an honest `resolution_gaps` entry via
-`_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py` — was `:8461`, now `:8478`; the fail-closed branch — `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`, now `:8521` — was previously cited as `:8019`, which today lands inside an unrelated AST-symbol-matching helper, `_thin_cli_dispatcher_call_targets`, not this function at all) instead
+`_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py`; the fail-closed branch: `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`) instead
 of a silent empty result. This is Part 4's Backend Fail-Closed Contract, applied inside the language
 registry (see Part 4's own worked example below).
 
 **Audit procedure:** grep all 5 seams plus the registration call
 (`grep -n "lang_registry.register_language\|_imports_and_symbols_for_path\|_imports_with_lines_for_path\|_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py`),
-then widen `tests/unit/test_lang_registry.py:84-94` (`test_language_registry_has_exactly_the_stage2_languages`) to include the new language — this is a **pin test for registry membership** (same
+then widen `tests/unit/test_lang_registry.py`'s `test_language_registry_has_exactly_the_stage2_languages` to include the new language — this is a **pin test for registry membership** (same
 principle as Part 1 Rule 6's ranking pin, applied to a set instead of a ranked list): it fails loud the
 moment a rebase silently drops a language (see Part 7's sequential-drain corollary below).
 
@@ -449,31 +448,31 @@ gets printed.
 
 **Jargon:** a *ComputeBackend* is a search engine implementation (CPU regex, Rust, GPU, ast-grep, …) behind a common interface (`src/tensor_grep/backends/base.py`).
 
-**Rule (`backends/base.py:7`, `AGENTS.md:2090`):** Every backend **MUST raise `BackendExecutionError` on a real failure** — never return a clean empty / `0-match` result, and never silently swap to an engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly**; a swallowed failure reaches a coding agent as a trustworthy "no matches" — the one failure a context tool cannot afford.
+**Rule (`backends/base.py:7`, `AGENTS.md`):** Every backend **MUST raise `BackendExecutionError` on a real failure** — never return a clean empty / `0-match` result, and never silently swap to an engine that cannot preserve the requested semantics. The search loop catches `BackendExecutionError` to fall back **visibly**; a swallowed failure reaches a coding agent as a trustworthy "no matches" — the one failure a context tool cannot afford.
 
 - **Fail closed** for any flag the fallback cannot preserve — e.g. `--pcre2` through a non-PCRE2 engine must **raise, not swap**.
 - If a degraded fallback is *legitimate* (e.g. heuristic classify when the model is down), make it **visible**: set `fallback_reason` (and a distinct `routing_reason`) on the result so JSON/CLI consumers can tell degraded from real. **Never label heuristic output as model output.**
 - Validate an untrusted response shape (e.g. a model's class count vs a fixed label list) before indexing, so a mismatch degrades instead of raising an `IndexError` a broad `except` then swallows.
 
-**Why / incidents (this contract is violated repeatedly):** the Rust/PCRE2 bridge ran `--pcre2` through the Python-regex engine (wrong results); the ast-grep OOM mask read a killed subprocess as a clean 0-match; a tree-sitter invalid-query silently returned 0 matches; CyBERT labeled keyword-heuristic hits as real model output. The recurring smell is a **bare `except Exception:` that returns empty or falls to a different engine** (`AGENTS.md:442`). The same rule extends to any router/pipeline that could silently override explicit user intent — e.g. an explicit `--gpu` request quietly routed to CPU must raise `ConfigurationError` or emit a diagnostic (`AGENTS.md:448`; fix shipped in `src/tensor_grep/core/pipeline.py`). A `SafeBackendMixin` + fault-injection conformance CI gate is the planned structural fix so this stops recurring file-by-file.
+**Why / incidents (this contract is violated repeatedly):** the Rust/PCRE2 bridge ran `--pcre2` through the Python-regex engine (wrong results); the ast-grep OOM mask read a killed subprocess as a clean 0-match; a tree-sitter invalid-query silently returned 0 matches; CyBERT labeled keyword-heuristic hits as real model output. The recurring smell is a **bare `except Exception:` that returns empty or falls to a different engine** (`AGENTS.md`). The same rule extends to any router/pipeline that could silently override explicit user intent — e.g. an explicit `--gpu` request quietly routed to CPU must raise `ConfigurationError` or emit a diagnostic (`AGENTS.md`; fix shipped in `src/tensor_grep/core/pipeline.py`). A `SafeBackendMixin` + fault-injection conformance CI gate is the planned structural fix so this stops recurring file-by-file.
 
 **Concrete example outside `backends/` (the same contract, a different subsystem):** the multi-language
 symbol registry (Part 3) applies this identically. `LanguageSpec.provenance_when_missing` must be
 `"grammar-missing"` (never `"regex-heuristic"`) for any language with no text-heuristic fallback —
-go/java/php/csharp all set it this way in their `register_language(...)` call (grep `language_id="go"`; was `repo_map.py:6090`, now ~`:6368`)
-— so `_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py` — was `:8461`, now `:8478`) can tell "grammar not installed, fail
-closed" apart from "language has a regex fallback, degrade quietly" at its branch — `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`, now `:8521` (was cited as `:8019`, which today lands inside an unrelated AST-symbol-matching helper, not this function). Get
+go/java/php/csharp all set it this way in their `register_language(...)` call (grep `language_id="go"`)
+— so `_language_coverage_gaps_for_universe` (`grep -n "^def _language_coverage_gaps_for_universe" src/tensor_grep/cli/repo_map.py`) can tell "grammar not installed, fail
+closed" apart from "language has a regex fallback, degrade quietly" at its branch — `grep -n "fail_closed = True" src/tensor_grep/cli/repo_map.py`. Get
 this backwards (label a no-fallback language `"regex-heuristic"`) and a grammar-missing file would read
 as a clean, silent "zero symbols found" instead of an honest gap — precisely the failure class this Part
 exists to prevent, just reached through a registry field instead of a bare `except`.
 
-**Domain note (ripgrep):** tg's default regex path matches invalid UTF-8; **PCRE2 requires valid UTF-8 and transcodes** — which is *why* swapping `--pcre2` to a non-PCRE2 engine changes results, not just performance. `rg` exit code `1` with empty output is a legitimate "no match" (`AGENTS.md:367`); exit code `2` with matches already parsed is treated as **partial** (kept + `result_incomplete=True`, the "surface degraded, don't discard" posture this Part argues for, not a swallow); any other case (`2`+ with nothing parsed, or `>2`) is a **real ripgrep failure** — `ripgrep_backend.py` raises `BackendExecutionError` (not a bare `RuntimeError`) on `returncode > 1 and not partial` at three call sites — `grep -n "if result.returncode > 1 and not partial" src/tensor_grep/backends/ripgrep_backend.py` (was `:126`, `:297`, `:413`, now `:127`, `:308`, `:426`) — and this must not be swallowed as non-fatal.
+**Domain note (ripgrep):** tg's default regex path matches invalid UTF-8; **PCRE2 requires valid UTF-8 and transcodes** — which is *why* swapping `--pcre2` to a non-PCRE2 engine changes results, not just performance. `rg` exit code `1` with empty output is a legitimate "no match" (`AGENTS.md`); exit code `2` with matches already parsed is treated as **partial** (kept + `result_incomplete=True`, the "surface degraded, don't discard" posture this Part argues for, not a swallow); any other case (`2`+ with nothing parsed, or `>2`) is a **real ripgrep failure** — `ripgrep_backend.py` raises `BackendExecutionError` (not a bare `RuntimeError`) on `returncode > 1 and not partial` at three call sites — `grep -n "if result.returncode > 1 and not partial" src/tensor_grep/backends/ripgrep_backend.py` — and this must not be swallowed as non-fatal.
 
 ---
 
 ## Part 5 — Dogfood the REAL binary, not CliRunner
 
-**The entry point is `tensor_grep.cli.bootstrap:main_entry`.** It intercepts plain-text searches and forwards them to ripgrep **before the Typer app sees argv**. `CliRunner` invokes the Typer app directly and **bypasses this front door entirely** — so bootstrap-routing bugs are **invisible** to CliRunner unit tests (`AGENTS.md:422-427`).
+**The entry point is `tensor_grep.cli.bootstrap:main_entry`.** It intercepts plain-text searches and forwards them to ripgrep **before the Typer app sees argv**. `CliRunner` invokes the Typer app directly and **bypasses this front door entirely** — so bootstrap-routing bugs are **invisible** to CliRunner unit tests (`AGENTS.md`).
 
 After adding/changing a flag or command, dogfood the **installed published binary** with the harness at `scripts/dogfood/` (`Dockerfile` + `dogfood_features.py`, both verified present):
 
@@ -491,11 +490,11 @@ docker build --build-arg TG_VERSION=<version> -f scripts/dogfood/Dockerfile -t t
 
 ## Part 6 — Verify AI-drafted plans against the real code
 
-Before implementing any AI/subagent-drafted plan, **cite `file:line` for every factual seam claim** (edit locations, registration sites, routing). A claim with no citation is a **hypothesis, not a fact** (`AGENTS.md:428-436`).
+Before implementing any AI/subagent-drafted plan, **cite `file:line` for every factual seam claim** (edit locations, registration sites, routing). A claim with no citation is a **hypothesis, not a fact** (`AGENTS.md`).
 
 **Why / incident:** AI plans reliably identify plausible-but-wrong edit locations (dead code paths, renamed symbols, already-fixed lines). A citation-enforced read-only review caught **5 blockers in two unverified plans in a single session**. After building, run a **post-build adversarial audit** (a distinct stage from planning) until **zero must-fix findings** remain — that zero-finding state is the convergence gate before promoting to a draft PR. See the global skill `verify-plan-against-code`.
 
-**Post-merge gotcha:** apply follow-up fixes **by SYMBOL, not line number** — a squash-merge shifts every line below the change, so "fix `main.py:8351`" is stale the moment anything above it lands. Re-anchor on the function/const name via `tg defs` or grep (`AGENTS.md:902`).
+**Post-merge gotcha:** apply follow-up fixes **by SYMBOL, not line number** — a squash-merge shifts every line below the change, so "fix `main.py:8351`" is stale the moment anything above it lands. Re-anchor on the function/const name via `tg defs` or grep (`AGENTS.md`).
 
 **A banked hypothesis is not exempt from this gate, even your own (#736, 2026-07-24).** A one-line
 memory note claiming a C symbol-graph mis-kind was fixable by "requiring `function_declarator`
@@ -538,19 +537,7 @@ qa` Part 1 point 19) was only caught by independently re-running the numbers, no
 shape. Extend the mandatory adversarial security gate's "actually try to break it" posture to
 quantitative claims: actually re-measure them.
 
-**Your verification instrument can be the thing that's wrong (2026-07-24).** Spot-checking a sibling
-docs PR for whether its "DEFERRED" honesty caveat was present, `grep -ciE "DEFERRED\|deferred"` returned
-ZERO hits — which briefly read as the caveat missing. It was there, verbatim; the command was broken.
-In `grep -E` (extended regex), `\|` matches a **literal pipe character**, not alternation — extended-
-regex alternation is a bare `|`, and the backslash-escaped `\|` form belongs to basic-regex/`sed`
-syntax, not `-E`. The search was therefore for the literal 9-character string `DEFERRED|deferred`,
-which matched nothing. **Rule:** when a verification check contradicts an otherwise-careful report,
-re-test the INSTRUMENT against known-present content before concluding the report is false — a false
-negative from a malformed pattern is indistinguishable from a real absence, and acting on it sends a
-spurious correction. Same family as this repo's git-bash/MSYS `gh --json`-parsing quirks (favor
-`python` over `jq`/raw `/`-path expressions there for the same reason) — a tool that silently does
-something other than what its syntax suggests, rather than failing loudly. Concretely here: `grep -E`
-alternation is a bare `|`, not `\|`.
+**Your verification instrument can be the thing that's wrong.** When a verification check contradicts an otherwise-careful report, re-test the INSTRUMENT against known-present content before concluding the report is false — a malformed pattern's false negative (e.g. `\|` inside `grep -E`, which matches a literal pipe, not alternation) is indistinguishable from a real absence.
 
 **Prove "docs-only"/"comment-only" with `ast.dump()`, not eyeballing (2026-07-24).** When a follow-up
 commit needs to be certified behavior-neutral to justify skipping a redundant full gate re-run, parse
@@ -656,48 +643,46 @@ security/compatibility behavior gets a stable tracker ID, owner, threat boundary
 
 ---
 
-## Part 7 — Push discipline & the push-race (one-merge-per-tick)
+## Part 7 — Push discipline & the push-race (burst, then hold)
 
-**The real publish is the `Semantic Release` JOB inside `.github/workflows/ci.yml`**, gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`. `release.yml` is `workflow_dispatch`-only, so a manually-pushed `v*` tag **cannot** bypass semantic-release (`AGENTS.md:2723`).
+**The real publish is the `Semantic Release` JOB inside `.github/workflows/ci.yml`**, gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`. `release.yml` is `workflow_dispatch`-only, so a manually-pushed `v*` tag **cannot** bypass semantic-release (`AGENTS.md`).
 
 That job **compiles native assets before publishing → it runs ~6 minutes**, and that entire window is a race window:
 
 > If **any** other merge lands on `main` during that window — **including a no-release `docs:`/`chore:` PR** — it advances `main`, and the in-flight release's final `git push origin main` (the `chore(release)` version-bump commit) is **rejected non-fast-forward** (`! [rejected] main -> main`), so **that version never publishes**.
 
-**Why / incident:** `v1.17.23` (a security batch, #318) failed to publish because the GPU-pause `docs:` PR (#319) was merged while #318's release job was still compiling assets (`AGENTS.md:840`). The CI concurrency group serializes *runs*, not the *human act of clicking merge* — it is necessary but **insufficient**.
+**Why / incident:** `v1.17.23` (a security batch, #318) failed to publish because the GPU-pause `docs:` PR (#319) was merged while #318's release job was still compiling assets (`AGENTS.md`). The CI concurrency group serializes *runs*, not the *human act of clicking merge* — it is necessary but **insufficient**.
 
-**Discipline = one-merge-per-tick:** merge ONE → wait for its `chore(release): vX [skip ci]` commit on `main` **and** the new version on PyPI → then merge the next. "Safe to interleave" means *after the prior release fully published*, not after its PR CI is green (`AGENTS.md:834`).
+**Discipline = burst, then hold (ONE rule).** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. "Safe to interleave" means *after the release fully published* (its `chore(release): vX [skip ci]` commit is on `main` **and** PyPI shows the new version), not after a PR's CI is green (`AGENTS.md`).
 
-**Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md:844`).
+**Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md`).
 
 **A second, DIFFERENT release-failure shape (C-release-flake) — rerun immediately; do not wait it out.** A flaky `needs:`-list job (e.g. a timing-sensitive lock-concurrency test, a transient dependency-install flake) can make `Semantic Release` report `skipped` rather than `failure` — no tag, no `chore(release)` commit, PyPI unchanged. This is **not** the push-race shape (no `! [rejected]` line). Do NOT wait for an unrelated push to clear it: the recovery is `gh run rerun --failed` on the SAME run, immediately (re-executes only the failed job, not the whole pipeline). A later green main push CAN also self-heal this shape — the `Semantic Release` job runs on every eligible main push (verify the `release` job's `if:` condition: `grep -n "github.event_name == 'push'" .github/workflows/ci.yml` — it additionally guards `!contains(github.event.head_commit.message, 'skip release')`) and the version is **derived from git tags**, not the failed run's state — but "a future push will eventually clear it" is not a strategy, it is an abandoned rerun; the failed run is the thing you own, so rerun it. Receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test widened + rerun), v1.92.2/#701 (the index-lock concurrency test rewritten to a scheduler-independent Event-handshake contract after 2 releases of flaking). **Tell the two shapes apart by reading the job conclusion, not by symptom-guessing:** `! [rejected] main -> main` in the `Semantic Release` job's own log = push-race, self-heals; a `skipped` conclusion with no rejection line = a `needs:`-job flake, needs `gh run rerun --failed`. Cross-link: `tensor-grep-debugging-playbook` §2.
 
-Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md:830-832`).
+Other push rules: don't push from a dirty worktree if `origin/main` moved with unrelated local changes; a branch push / open PR starts **PR CI only** — it is not a release (`AGENTS.md`).
 
-### Precedence: strict serialization is the DEFAULT; batch forms are narrow, named exceptions
+### One rule: burst, then hold
 
-The merge regimes below do NOT sit at equal weight — when in doubt, the strictest applies:
+The merge regime is ONE rule with two halves, not a strict default plus exceptions:
 
-1. **DEFAULT — one-merge-per-tick (strict serialization).** For any release-bearing PR: merge ONE →
-   wait for its `chore(release)` commit on `main` AND the new version on PyPI → then merge the next.
-   The Part 10 checklist item enforces this default.
-2. **Narrow MONITORED exception — C-batch (next subsection).** Several ALREADY-CI-green releasing PRs
-   may merge ~15-20s apart in ONE gate-open window and produce one combined release, but ONLY when:
-   every PR in the batch is already independently green, the merges happen inside one green window, and
-   the operator watches the NEWEST main run to full completion (run-id polled by id, job population
-   present — see "Two merge-gate blind spots" below), not just each PR's own CI.
-3. **Non-releasing PRs (`docs:`/`test:`/`chore:`/`bench:`) batch freely ONLY when no release is in
-   flight or planned** (A31; AGENTS.md "Batch the non-releasing, serialize the releasing" — grep the
-   phrase, don't stamp the line). They create no publish to race, so their only gate is "the newest
-   main run completed"; the moment a release is in flight or next in the queue, they fall back to the
-   DEFAULT wait, because ANY merge landing inside a release window can reject the in-flight publish
-   (v1.17.23/#318/#319 receipt above).
+1. **Burst** — when no release-bearing `main` run exists, merge every green PR in one burst. Every PR in the burst is already independently green; the merges
+   land inside one window; the operator then watches the NEWEST `main` run to full completion (run-id
+   polled by id, job population present — see "Two merge-gate blind spots" below), not each PR's own CI.
+2. **Hold** — from the creation of that release-bearing run until its `chore(release)` commit is on `main`
+   and PyPI shows the version, merge **nothing**: not a `docs:`/`chore:` PR, not a "just one more". The
+   window is the whole run from creation to the release push, not the job's current state — a
+   pending/`jobs=0` run still pushes last (receipt: a merge made on the theory that "the release job has
+   not started, so there is no push to reject" rejected that release's push).
+3. **Non-releasing PRs** (`docs:`/`test:`/`chore:`/`bench:`) join a burst when no release-bearing run
+   exists (A31: they create no publish to race; their only gate is "the newest main run completed"). While
+   a release-bearing run exists they wait like everything else, because ANY merge landing inside a
+   release window can reject the in-flight publish (v1.17.23/#318/#319 receipt above).
 
 ### Rapid-window batch-merge — several already-green releasing PRs in one window (C-batch)
 
 **Individually-green, releasing PRs may merge ~15-20s apart in one gate-open window and still produce
-ONE combined, fully-published release** — this is not a violation of one-merge-per-tick, it is the same
-discipline applied to a batch instead of a single PR. The tell that distinguishes a safe batch-merge from
+ONE combined, fully-published release** — this is the burst half of the rule, and the hold begins the moment
+the burst ends. The tell that distinguishes a safe batch-merge from
 a push-race collision: **only the LAST run in the window needs to go fully green.** Intermediate runs
 that report `cancelled` (the CI concurrency group superseding an in-flight run with a newer push) or even
 `failure` on their own push step are benign IF the final run in the sequence completes the full pipeline
@@ -714,18 +699,18 @@ four PRs' commits, with zero actual push-race damage. Earlier precedent: v1.91.0
 publish, and that version never came out at all. The v1.93.0/#703-706 sequence was a DELIBERATE,
 monitored batch where every intermediate `cancelled`/rejected state was expected and the operator
 confirmed the final run's full green before declaring the batch shipped. **The discipline is: know
-which one you're doing** — an accidental collision is a bug to prevent (one-merge-per-tick); a
-monitored rapid batch is a valid pattern IF you watch the final run to completion, not just each
+which one you're doing** — an accidental collision is a bug to prevent (the hold); a
+monitored burst is the valid pattern IF you watch the final run to completion, not just each
 individual PR's own CI.
 
 ### Build-vs-merge decoupling -- the push-race gates MERGE, not BUILD
 
-**One-merge-per-tick governs when a PR may *merge*, not when work on it may *start*.** A PR sequenced "after vX publishes" purely for a **code-collision** reason (it touches the same file as the in-flight release, or it wants vX's already-merged code as its base) may **branch and build off the just-merged `main` in parallel with the in-flight release** -- draft it, implement it, run PR-branch CI, get it fully review-ready -- while the release job is still compiling native assets. Only the final **merge** into `main` stays push-race-gated: wait for the prior `chore(release)` commit + PyPI to confirm publish before clicking merge, not before starting work. Across a multi-PR campaign this saves ~40 min/PR of pure idle waiting (see the wall-time table below for how long a full publish actually takes). Named patterns for the same underlying principle elsewhere: **merge-queue / speculative CI** (validate speculatively against a predicted merge base, re-validate only if the base actually changed), **release-train** (work lands continuously; only the train's scheduled departure is gated), and **build-once-promote-everywhere** (one build artifact is promoted through successive gates rather than rebuilt at each one).
+**The hold governs when a PR may *merge*, not when work on it may *start*.** A PR sequenced "after vX publishes" purely for a **code-collision** reason (it touches the same file as the in-flight release, or it wants vX's already-merged code as its base) may **branch and build off the just-merged `main` in parallel with the in-flight release** -- draft it, implement it, run PR-branch CI, get it fully review-ready -- while the release job is still compiling native assets. Only the final **merge** into `main` stays push-race-gated: wait for the prior `chore(release)` commit + PyPI to confirm publish before clicking merge, not before starting work. Across a multi-PR campaign this saves ~40 min/PR of pure idle waiting (see the wall-time table below for how long a full publish actually takes). Named patterns for the same underlying principle elsewhere: **merge-queue / speculative CI** (validate speculatively against a predicted merge base, re-validate only if the base actually changed), **release-train** (work lands continuously; only the train's scheduled departure is gated), and **build-once-promote-everywhere** (one build artifact is promoted through successive gates rather than rebuilt at each one).
 
 ### Sequential-drain union-rebase — N PRs that touch the same shared file
 
 When several parallel PRs each edit the SAME shared file — e.g. a registry test's asserted-membership
-set, a pyproject optional-dependency extra, `uv.lock` — merging them still follows one-merge-per-tick,
+set, a pyproject optional-dependency extra, `uv.lock` — merging them still follows the burst-then-hold rule,
 but each merge is also a **rebase**, not just a fast-forward: drain PRs one at a time, rebase the next
 one onto the branch the prior merge just landed, and **union** the assertions rather than taking either
 side. For a language-registry-style set (Part 3), that means the rebased test must assert the FULL
@@ -740,25 +725,14 @@ reading the diff: a dropped import surfaces immediately as `ImportError` at coll
 clean-looking diff will not show you.
 
 Concretely, for this repo's own language-registry campaign, that means re-running
-`tests/unit/test_lang_registry.py` (in particular `:84-94`,
+`tests/unit/test_lang_registry.py` (in particular
 `test_language_registry_has_exactly_the_stage2_languages`) after each rebase in the sequence, not just
 once at the end — the whole point of a pin test (Part 1 Rule 6) is that it only protects you if it
 actually runs against the post-rebase state.
 
-### Current wall-time is much bigger than "~6 minutes" — size watchers accordingly (re-verified 2026-07-03, v1.19.x receipts)
+### Size watchers to the real release window
 
-The **"~6 minutes" figure above (and at `AGENTS.md:2723`) is stale** — it describes only the `Semantic Release` job's own runtime (still accurate: ~4-5 min in isolation), not the real race window. The real danger window is **squash-merge lands → `chore(release)` commit successfully pushed to `main`**, because `Semantic Release` cannot even *start* until every job in its `needs:` list finishes (`.github/workflows/ci.yml:943`), and that list now includes a 4-OS `native-build-smoke` matrix plus `benchmark-regression`. Measured against four consecutive real releases (`gh run view <run-id> --json jobs`, PR merge → `chore(release)` commit timestamp → `gh run` job `completedAt`):
-
-| Release | PR / commit | push → `chore(release)` on `main` | push → `publish-pypi` | push → `release-tag-smoke` (final gate) |
-|---|---|---|---|---|
-| v1.19.0 | #343 `ab717a1` | 25m29s | 43m08s | 47m09s |
-| v1.19.1 | #344 `80de0b4` | 22m38s | 40m07s | 44m18s |
-| v1.19.2 | #345 `bb5dc59` | 43m39s | 1h01m24s | 1h05m48s |
-| v1.19.3 | #346 `6b7b518` | 39m55s | 59m16s | 1h03m06s |
-
-So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-66 min before PyPI/the final release-tag-smoke gate confirms full publish**. Treat "~40 minutes" as the practical minimum wait before checking "did the prior release finish yet", not an upper bound — the slower runs (v1.19.2, v1.19.3) topped an hour. **This table's numbers are still NOT re-measured as of this pass (v1.95.0) — they remain the v1.19.x historical sample; treat them as illustrative of the SHAPE of the wait (a 4-OS native-build matrix is the long pole), not as a current SLA.**
-
-**Long pole:** `native-build-smoke (macos-15-intel)` (`ci.yml:549-558`) is **consistently the slowest of its own 4-OS matrix** — every run measured: 15m09s, 9m14s, 15m43s, 11m43s (avg ~13 min) vs ~5 min for `ubuntu-latest`/`macos-latest` and ~10 min for `windows-latest`. It was the exact job whose completion unblocked `Semantic Release`'s start in 2 of the 4 runs (down to single-digit seconds: v1.19.0 completed 12:33:45, `Semantic Release` started 12:33:48; v1.19.2 completed 14:37:54, `Semantic Release` started 14:37:57). In the other 2 runs, `benchmark-regression (ubuntu-latest)` finished a couple minutes later and was the actual pole instead — the two jobs alternate as the true bottleneck, so don't tune a watcher to only one of them. After `Semantic Release` publishes, `build-release-native-assets (macos-15-intel, cpu)` (`:1159-1162`) repeats the same slow-OS pattern (9-12 min, once the whole pipeline's single longest job) before `publish-pypi` and `release-tag-smoke` can run.
+The race window is merge → `chore(release)` commit on `main` → PyPI, and `Semantic Release` cannot start until every job in its `needs:` list finishes (`grep -n -A2 '^  release:' .github/workflows/ci.yml`) — the 4-OS `native-build-smoke` matrix and `benchmark-regression` are the usual long poles, and `build-release-native-assets (macos-15-intel, cpu)` repeats the slow-OS pattern after publish. Historically (v1.19.x) this took 40-66 minutes end to end; re-time it with `gh run view <run-id> --json jobs` rather than trusting a number.
 
 **Gate a sequential merge-watcher on ABSOLUTE conditions, never "has the tag/commit changed since I started watching":**
 
@@ -775,8 +749,8 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
   **Population check, cheap and decisive:** compare the check count against a recently-merged comparable PR. `11` vs `48` was the entire tell, and it is invisible without the sibling. (Benign neighbour: `cancelled` runs on superseded SHAs are your own force-pushes, not failures.)
 
   This trap was already documented in the operator's memory index — *"queried BY RUN ID"* and *"guard the total-check count"*, in one sentence — and a monitor violating both was built anyway in the same session. **That is why it is written HERE, in the gate's own definition, instead of only in a lesson file: a documented rule does not fire on its own.**
-- **Wrong / deadlocks:** "wait until the release tag / `chore(release)` commit differs from what it was when my watcher launched." If the prior release **already finished publishing between the last time you looked and the moment the watcher actually started** — normal in a fast merge sequence like v1.19.0→v1.19.3 above, all landed inside roughly an hour — the tag is *already* at the target value the instant the watcher begins polling, so a changed-since-launch condition never fires and the watcher hangs forever on an event that already happened. Compare current absolute state against the registry/PR API, never against a snapshot taken at launch time.
-- **This v1.19.x sequence is itself the reaffirmation receipt for one-merge-per-tick:** four releases merged one at a time, each waited out to a confirmed publish before the next merge started, and **zero** `! [rejected] main -> main` push-races occurred — contrast the `v1.17.23`/#319 incident above, which is exactly what happens when that wait is skipped. Two PR-CI runs in this window did report `conclusion: "failure"` (`28657702879` — a capfd-vs-stdout test-capture regression, the round-4 ledger's `--rank`-routing item; `28648738456` — a one-off `macos-15-intel` native-asset build failure): both were **ordinary red PR-branch CI**, fixed and re-pushed before merge, not push-races. Triage tell: a red run on a **PR branch** is a normal fix-and-repush gate; a red **`main`**-branch `Semantic Release` push step with `! [rejected]` in its log is the push-race signature and self-heals on the next push (see above — don't panic-rerun).
+- **Wrong / deadlocks:** "wait until the release tag / `chore(release)` commit differs from what it was when my watcher launched." If the prior release **already finished publishing between the last time you looked and the moment the watcher actually started** — normal in a fast merge sequence like v1.19.0→v1.19.3, all landed inside roughly an hour — the tag is *already* at the target value the instant the watcher begins polling, so a changed-since-launch condition never fires and the watcher hangs forever on an event that already happened. Compare current absolute state against the registry/PR API, never against a snapshot taken at launch time.
+- **This v1.19.x sequence is itself the reaffirmation receipt for the hold half of burst-then-hold:** four releases merged one at a time, each waited out to a confirmed publish before the next merge started, and **zero** `! [rejected] main -> main` push-races occurred — contrast the `v1.17.23`/#319 incident above, which is exactly what happens when that wait is skipped. Two PR-CI runs in this window did report `conclusion: "failure"` (`28657702879` — a capfd-vs-stdout test-capture regression, the round-4 ledger's `--rank`-routing item; `28648738456` — a one-off `macos-15-intel` native-asset build failure): both were **ordinary red PR-branch CI**, fixed and re-pushed before merge, not push-races. Triage tell: a red run on a **PR branch** is a normal fix-and-repush gate; a red **`main`**-branch `Semantic Release` push step with `! [rejected]` in its log is the push-race signature and self-heals on the next push (see above — don't panic-rerun).
 
 ---
 
@@ -802,7 +776,7 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
   a test lane (observed: 11 -> 39 check-runs the instant smoke ended). **A merge or settle gate must
   assert the heavy lanes are PRESENT by name or count**, never "nothing is pending".
 
-### Session-retention lessons (2026-08-12)
+### Stale-branch reconciliation and long-lived branches
 
 - **Stale-branch content reconciliation: `git cherry` + proves PATCH-ID distinctness, NOT novel
   content.** A clean `git cherry` only says the patches are not byte-identical to upstream; the same
@@ -820,9 +794,14 @@ So: **~23-44 min before the version-bump commit is even on `main`**, and **~40-6
   `implemented + demand-gated` are each TWO outcomes, not one; never flatten a sub-outcome pair into
   a single flattering word when recording status.
 
+### Merge-tool traps
+
+- A local `gh pr merge` can fail because another worktree owns `main` while GitHub already merged; judge `gh pr view --json mergedAt` (or the merge API) and never double-merge (AGENTS.md A118).
+- A docs-only PR's skipped jobs are not a cheap `main` push: `main` always runs the full matrix, so a docs merge during the hold window is still a merge during the hold window (AGENTS.md A119).
+
 ## Part 8 — PR title drives release intent
 
-CI infers the semantic-release bump from the **PR title** (which becomes the squash-merge commit subject). Use conventional titles (`CONTRIBUTING.md:46-51`, `AGENTS.md:880-889`):
+CI infers the semantic-release bump from the **PR title** (which becomes the squash-merge commit subject). Use conventional titles (`CONTRIBUTING.md:46-51`, `AGENTS.md`):
 
 | Title prefix | Effect |
 |---|---|
@@ -835,7 +814,7 @@ CI infers the semantic-release bump from the **PR title** (which becomes the squ
 
 - Use **Squash and merge** for release-bearing PRs so the validated title becomes the `main` subject.
 - **Do not manually create release tags** while semantic-release is active.
-- A release-bearing fix is **not complete** after only a branch push / open PR / green PR checks. The final report must name: PR, merge commit, main CI run, CodeQL run, released tag, PyPI publish status, and any public installer dogfood result (`AGENTS.md:862`).
+- A release-bearing fix is **not complete** after only a branch push / open PR / green PR checks. The final report must name: PR, merge commit, main CI run, CodeQL run, released tag, PyPI publish status, and any public installer dogfood result (`AGENTS.md`).
 - **PR metadata is part of the reviewed artifact.** Re-read the title, body, comments, examples, and
   counts after every scope-changing push. State each count's population/denominator. PR #910 was green
   while its Markdown/Python example was malformed and its status counts were stale; independent prose
@@ -845,13 +824,13 @@ CI infers the semantic-release bump from the **PR title** (which becomes the squ
 
 ## Part 9 — Required local validation (run before push)
 
-From `CONTRIBUTING.md:9-14` and `AGENTS.md:597-601`:
+From `CONTRIBUTING.md` and `AGENTS.md` (locally the targeted suites for the touched areas; the full `pytest -q` is CI's or the `scripts/ci-local` container's, per A12):
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q <targeted tests/unit files>
 ```
 
 For release/workflow/package-manager changes, also:
@@ -881,9 +860,9 @@ for the guard's own regression coverage. It is not wired into CI — a CI checko
 clean, so it can never fire there and would be theater; it exists for the local/drain-session
 moment where the loss actually happens.
 
-**The ruff `--preview` trap (this costs a cycle every time it's missed):** CI runs `ruff format --check --preview .`. Running `ruff format` **without** `--preview` is an **active revert** — it rewrites preview-style lines back on disk, so the next CI `ruff format --check --preview` fails on lines you never meant to touch. Always pass `--preview` to `ruff format`; **never** pass it to `ruff check` (preview lint rules like RUF056 produce false failures that don't match CI) (`CONTRIBUTING.md:22`, `AGENTS.md:604`).
+**The ruff `--preview` trap (this costs a cycle every time it's missed):** CI runs `ruff format --check --preview .`. Running `ruff format` **without** `--preview` is an **active revert** — it rewrites preview-style lines back on disk, so the next CI `ruff format --check --preview` fails on lines you never meant to touch. Always pass `--preview` to `ruff format`; **never** pass it to `ruff check` (preview lint rules like RUF056 produce false failures that don't match CI) (`CONTRIBUTING.md:22`, `AGENTS.md`).
 
-**Windows CRLF false-alarm:** `.gitattributes` pins `*.py`/`*.rs` to `eol=lf`. A bare local `ruff format --check` can false-alarm over LF blobs; run `ruff format --preview <files>` (which normalizes) before commit. Audit real endings with `git ls-files --eol` (`git show` smudges output) (`CONTRIBUTING.md:24`, `AGENTS.md:906`).
+**Windows CRLF false-alarm:** `.gitattributes` pins `*.py`/`*.rs` to `eol=lf`. A bare local `ruff format --check` can false-alarm over LF blobs; run `ruff format --preview <files>` (which normalizes) before commit. Audit real endings with `git ls-files --eol` (`git show` smudges output) (`CONTRIBUTING.md:24`, `AGENTS.md`).
 
 **Editing a CRLF-committed file in text mode flips every line ending.** `.gitattributes` only forces
 `*.py`/`*.rs` to `eol=lf` (`git cat-file blob origin/main:.gitattributes` — two lines, nothing else
@@ -914,7 +893,7 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
 
 **Decode the structured CI failure FIRST:** when a CI run fails, open the failing check's **structured JSON output** before reading tracebacks. Theorizing from tracebacks wasted **4 CI cycles** in the June-2026 README-rewrite incident (a README rewrite broke ~14 governance tests + a release-blocker gate); the structured output names the exact gate, file, and line (`CONTRIBUTING.md:26`, `AGENTS.md`).
 
-**Commit-message trap:** `git commit -m "..."` with backticks/`$`/`!` runs shell command substitution and mangles the message. Use `git commit -F <file>` or a single-quoted `<<'EOF'` heredoc (`AGENTS.md:899`).
+**Commit-message trap:** `git commit -m "..."` with backticks/`$`/`!` runs shell command substitution and mangles the message. Use `git commit -F <file>` or a single-quoted `<<'EOF'` heredoc (`AGENTS.md`).
 
 **Build/toolchain notes:** on this dev box `cargo`/`rustc` are off `PATH` — use `C:/Users/oimir/.cargo/bin/cargo.exe` (or prepend `~/.cargo/bin`). A "hanging" Rust build is almost always slow **LTO that completes** (`maturin develop` ~15s; `--release` is minutes) — do not kill it. For build/env depth see `tensor-grep-build-and-env`.
 
@@ -949,29 +928,20 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
   authorizes removal.
 - [ ] A "DRY, extract the shared helper" refactor → checked that neither call site is a generated string later written to disk / `exec`'d / run standalone (Part 6).
 - [ ] Any defect noticed in passing, regardless of authorship/CI-visibility/scope → fixed now or filed as a concrete tracked blocker, never waved past (Part 1 Rule 7).
-- [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + `pytest -q`.
+- [ ] Local gate green: `ruff check` + `ruff format --check --preview` + `mypy src/tensor_grep` + targeted `pytest -q` (full suite in CI / `scripts/ci-local`).
 - [ ] Subagent claims **re-run in the real venv** — none trusted as-reported.
 - [ ] WSL and Windows venv roots stayed disjoint — no WSL `uv --project /mnt/c/...` touched the
   canonical Windows `.venv`; canonical verification ran from PowerShell.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
 - [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
-- [ ] Merging: prior release **fully published** (its `chore(release)` on `main` + PyPI shows it) before this merge — **one-merge-per-tick** is the DEFAULT; C-batch is the narrow monitored exception, and non-releasing PRs batch only in a release-free gap (Part 7 "Precedence").
-- [ ] Autonomous work stops at a **draft PR** — no auto/admin-merge.
+- [ ] Merging: no release-bearing `main` run exists (inspect every run, not `--limit 1`), or this merge is part of one burst; after the burst, hold until that run's `chore(release)` commit and PyPI publish land (Part 7 "One rule: burst, then hold").
+- [ ] Self-merge only after independent review + verified-green required CI + the push-race check; never admin-merge past a required check.
 
 ---
 
 ## Provenance and maintenance
 
-Volatile facts are dated **2026-07-02, release `v1.17.25`**, with a round-4 refresh dated **2026-07-03, release `v1.19.3`** (Part 7 wall-time section + this table's tag/wall-time rows), a **2026-07-08, release `v1.49.3`** touch-up (Part 1 Rule 5 / Part 10 adversarial-security-gate addition — the Part 7 wall-time numbers themselves are NOT re-measured at v1.49.3, treat them as an illustrative historical sample, not a current SLA), a **2026-07-16, release `v1.78.1`** fix (the stale `37 @app.command` count, actual 44, replaced with a re-verify command instead of a stamped number), a **2026-07-22, release `v1.93.2`** addition (Part 1 Rule 6 pin-first ranking gate / C-pin, #709; Part 7 rapid-window batch-merge / C-batch, #703-706; Part 7 second release-failure shape / C-release-flake, v1.76.9/#612-613 and v1.92.2/#701 — the Part 7 wall-time numbers again NOT re-measured in this pass), and a **2026-07-23, release `v1.95.0`** refresh (Part 3 gained a 3rd registration table — the symbol-graph language registry's 5 seams, `lang_registry.register_language` + `repo_map.py` citations; Part 4 gained a grammar-missing fail-closed worked example; Part 7 gained the sequential-drain union-rebase corollary (C4); Part 9 gained the CRLF-binary-preserve edit landmine and the `uv.lock` hand-splice discipline (C1/C2); and every pre-existing `file:line` citation into Rust/Python source, test, and workflow files in this skill was re-walked against `origin/main` and repointed where drifted — several had moved 20-300 lines since the last pass (e.g. `main.rs`'s `enum Commands` 838→889, the `Semantic Release` job's `needs:` list in `ci.yml` 862→943, `ripgrep_backend.py`'s fail-closed raise sites 88/164/199→126/297/413, which ALSO now raise `BackendExecutionError` there instead of a bare `RuntimeError`). AGENTS.md's own prose citations were re-pointed too (its "Current Handoff" section grew substantially since the last pass), but AGENTS.md is itself mid-refresh in this same campaign, so treat any `AGENTS.md:NNN` citation below as good only as of `v1.95.0` — re-grep by symbol/phrase, don't trust the number blind, before citing it in a future pass. The Part 7 wall-time numbers themselves are STILL not re-measured in this pass — they remain the v1.19.x historical sample. A **2026-07-24, release `v1.98.2`** pass added Part 6's banked-hypothesis (#736) and gate's-disclosed-edge (#736) paragraphs. A further same-day pass, **release `v1.98.3`**, added Part 6's four newest paragraphs (a test proving nothing until seen fail on the pre-fix baseline, #737; gating comments/docstrings with the same rigor as code, #739; diff-review-is-not-measurement-review, #739; the `ast.dump()` behavior-neutral proof technique). A coordinator review of that same pass added a fifth Part 6 paragraph (a verification instrument — a malformed `grep -E \|` alternation — can itself be the thing that's wrong) and the concrete clock-resolution figure into the CI/Release Rules mirror of the timing-flake lesson. A
-**2026-07-31** pass added Part 1 Rule 7 ("not mine"/"CI doesn't flag it" is not a disposition), a new Part
-3 subsection on census-population fallibility (curate the list by deletion-proof, enumerate by artifact
-not shared mechanism), and a new Part 6 paragraph (refactoring code that lives inside a generated string
-is not refactoring code) — doc-only, no release tag re-verified for this pass. A **2026-08-01** pass
-added a Part 3 subsection on shared-builder flag placement (`-q` landed in `RipgrepBackend._build_cmd`,
-the shared argv builder, and suppressed output for the three of its four consumers that parse rather than
-stream — #876, fixed #880: enumerate consumers before adding a flag that changes output) and a Part 6
-one-liner requiring a plan to prove its stated base commit with `git rev-parse origin/main` rather than
-have an auditor accept the header — doc-only, no release tag re-verified for this pass. Re-verify anything below before relying on it:
+Change history for this skill: `git log --format='%h %ad %s' --date=short -- .claude/skills/tensor-grep-change-control/SKILL.md`. Re-verify anything below before relying on it:
 
 | Claim | Re-verify command |
 |---|---|
@@ -993,29 +963,4 @@ have an auditor accept the header — doc-only, no release tag re-verified for t
 | #737 shape-9/9a/9b test split (pre-fix-baseline paragraph) | `grep -n "shape9a_filescope_member_fn_ptr_variable\|shape9b_inclass_member_fn_ptr_variable" tests/unit/test_lang_cpp.py` |
 | #739 structural marker-order test (ast.dump / comment-gating paragraphs) | `grep -n "def test_create_checkpoint_lock_does_not_wrap_expensive_work" tests/unit/test_index_lock_concurrency.py` |
 
-## Retention folds (2026-08-13)
-
-- **A102 — input-brief facts are hypotheses.** When dispatching a fix/build seat, the brief's stated
-  facts (version numbers, SHAs, "already shipped" claims) are hypotheses until the seat re-derives
-  them from the tree; two of seven retention fix-wave seats corrected facts in their own briefs.
-  Require seats to verify load-bearing input facts before writing and to report any that fail.
-- **A98 — spot-check census.** Declaring N dirty files "stale"/"novel" from one file's header is a
-  claim about the one file checked; use a mechanical per-file diff or explicit per-file disposition.
-
 If any command above no longer matches, update this skill in the same change — a wrong runbook is worse than none.
-
-
-## Retention (2026-08-15) — merge + docs CI traps
-
-- **A118:** Local gh pr merge can fail with main already used by another worktree while GitHub
-  already merged. Judge gh pr view --json mergedAt (or the merge API); never double-merge.
-- **A119:** Docs-only PR changes skips are not a cheap main push — main always runs the full matrix.
-- **A117:** Operator “skip Fable” waives that seat for the named docs packet only — not product code,
-  spend, or CEO_GATED flips (extends A74).
-- **A120:** A shell timeout must exceed the probe duration plus grace; otherwise the harness,
-  rather than the subject, creates the timeout.
-- **A121:** Raising `request_queue_size` without an aggregate pre-auth cap enlarges the DoS surface.
-- **A122:** Demand evidence plus a merged design is not shipment; product work still needs explicit
-  authorization and its required build/security gates. See `tensor-grep-demand-gate-measurement` for
-  the demand proof and `tensor-grep-design-authorization-ladder` for design authorization.
-

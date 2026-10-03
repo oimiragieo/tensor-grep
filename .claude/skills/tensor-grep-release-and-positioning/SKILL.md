@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-release-and-positioning
-description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + one-merge-per-tick discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims. As of 2026-07-24, v1.95.0.
+description: Use when merging a release-bearing PR, writing a PR title for tensor-grep, diagnosing "why didn't my release publish" or "why hasn't npm/the docs site updated", running the post-publish dogfood, or making any external-facing speed/GPU/LSP/benchmark claim about tg. Covers semantic-release mechanics in ci.yml, the push-race + burst-then-hold discipline (worked example: the #384-#399 sequence), the npm/docs manual-dispatch publish gap, PyPI/npm/Homebrew/winget publish gates, and the not-faster-grep positioning + reproducibility standard for comparator claims.
 ---
 
 # tensor-grep: Release Mechanics and Public Positioning
@@ -28,10 +28,10 @@ publicly once it ships.
 
 - **`ci.yml`** is the *only* path that actually publishes. It runs on every push to `main`, every
   PR, and weekly (`.github/workflows/ci.yml:3-9`). The `release` job (display name **`Semantic
-  Release`** — grep `^  release:` in `ci.yml`; was `:941`, now `:1062`, +121) runs
+  Release`** — grep `^  release:` in `ci.yml`) runs
   `python-semantic-release` and is gated on `github.ref == 'refs/heads/main' &&
   github.event_name == 'push' && !contains(commit message, 'skip release')` (grep
-  `contains(github.event.head_commit.message` in `ci.yml`; was `:944`, now `:1065`).
+  `contains(github.event.head_commit.message` in `ci.yml`).
 - **`release.yml`** is `workflow_dispatch`-only, targeting an *already-published* tag
   (`gh workflow run release.yml --ref vX.Y.Z`). It is a manual/backfill artifact pipeline, **not**
   triggered by a tag push — a manually-pushed `v*` tag cannot bypass semantic-release
@@ -81,17 +81,17 @@ next wrong anchor on a slower clock — grep instead.)
 A release is **not** done just because `release` (Semantic Release) went green. It is done when
 `publish-success-gate` is green — that job RE-VERIFIES (not merely re-checks job results) GitHub
 release asset coverage (`scripts/verify_github_release_assets.py`, invoked inside
-`publish-success-gate` — grep the script name in `ci.yml`; was `:1397`, now `:1577`) and PyPI parity
-(`scripts/validate_release_version_parity.py`, same job; was `:1418`, now `:1598`) for the exact tag
+`publish-success-gate` — grep the script name in `ci.yml`) and PyPI parity
+(`scripts/validate_release_version_parity.py`, same job) for the exact tag
 semantic-release produced — both scripts also run once earlier, inside
-`publish-github-release-assets`/`publish-pypi` themselves (was `:1295`/`:1332`, now `:1475`/`:1512` —
-two call sites each, grep the same script names), so `publish-success-gate` is a second, independent
+`publish-github-release-assets`/`publish-pypi` themselves (two call sites each; grep the same script names), so `publish-success-gate` is a
+second, independent
 confirmation pass, not the only place these checks run.
 
 ### 1.3 PR title → release intent
 
 `scripts/validate_pr_title_semver.py:10-26` is the ground truth (enforced by the `release-intent`
-PR job — grep `^  release-intent:` in `ci.yml`; was `:20-30`, now `:24-33`). The regex accepts an
+PR job — grep `^  release-intent:` in `ci.yml`). The regex accepts an
 optional `(scope)` and an optional `!`:
 
 | Prefix | Intent | Note |
@@ -103,9 +103,12 @@ optional `(scope)` and an optional `!`:
 | `docs:` / `test:` / `build:` / `ci:` / `chore:` / `bench:` | none | no release. **The title script is NOT ground truth for what SHIPS** — it gates titles. For publishing behaviour read `[tool.semantic_release]`, and for a specific merge read that merge's Semantic Release job log, which states its decision outright. |
 
 Anything that doesn't match the pattern fails PR CI outright (`validate_pr_title_semver.py:86-94`).
-Squash-merge release-bearing PRs — the PR title becomes the `main` commit subject that
-semantic-release reads (`AGENTS.md` — grep "the validated PR title becomes the commit subject"; was
-`:891`, now `:2348`; `docs/RELEASE_CHECKLIST.md:54`).
+Squash-merge release-bearing PRs. With 2+ commits the PR title becomes the `main` commit subject
+that semantic-release reads (`AGENTS.md` — grep "the validated PR title becomes the commit subject";
+`docs/RELEASE_CHECKLIST.md:54`); with ONE commit GitHub uses that commit's own subject and retitling
+is a no-op (repo `CLAUDE.md`, the PR #1036 receipt), so fix the commit subject (amend + force-push)
+or add a commit. Semantic-release parses the commit on main, so verify after merge:
+`git log --format='%s' <last-tag>..origin/main | grep -E '^(fix|feat|perf)'`.
 
 ### 1.4 What `chore(release)` actually touches
 
@@ -139,8 +142,7 @@ a merged branch, not a real regression.
 
 The `Semantic Release` job **builds native assets before it publishes**, so its `git push origin
 main` (the `chore(release)` commit) doesn't land until ~6 minutes after the merge that triggered it.
-That whole window is a race window (`AGENTS.md` — grep "that whole window is a race window"; was
-`:838`, now `:2295`).
+That whole window is a race window (`AGENTS.md` — grep "that whole window is a race window").
 
 If **any** other merge lands on `main` during that window — including a no-release `docs:`/`chore:`
 PR — the in-flight release's final push is rejected non-fast-forward (`! [rejected]  main -> main`)
@@ -149,7 +151,7 @@ not the human/agent act of clicking merge, so it does not prevent this.
 
 - **Receipt**: `v1.17.23` (security batch, #318) failed to publish because a GPU-pause `docs:` PR
   (#319) was merged while #318's release job was still compiling assets (`AGENTS.md` — grep "was
-  merged while #318's release job"; was `:840`, now `:2297`).
+  merged while #318's release job").
 - **Recovery — do NOT panic-rerun.** The failure self-heals: the *next* push-to-`main` re-runs
   `Semantic Release`, and because the version is derived from git tags (not the failed run's
   in-memory state), it recomputes the correct next version and folds in the orphaned commit. The
@@ -158,18 +160,13 @@ not the human/agent act of clicking merge, so it does not prevent this.
   `Semantic Release` → `--log-failed`. A `! [rejected]  main -> main` line is the push-race
   signature; anything else is a different bug. Do not theorize from a traceback before reading this.
 
-**Discipline — one-merge-per-tick**: merge ONE release-bearing (or potentially-racing) PR, then wait
-for its `chore(release): vX` commit to appear on `main` **and** for PyPI to show the new version,
-before merging the next one. "Safe to interleave" means *after the prior release has fully
-published*, not merely after its PR CI went green (`AGENTS.md` — grep "Safe to interleave" means;
-was `:834`, now `:2282`).
+**Discipline — burst, then hold (one rule):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. "Safe to interleave" means *after the release has fully
+published* (its `chore(release): vX` commit is on `main` **and** PyPI shows the new version), not merely after a PR's CI went green (`AGENTS.md` — grep "Safe to interleave" means).
 
-**Converse (A31) — the tick discipline binds ONLY overlap with a release-bearing publish window.**
-When NO release is in flight or planned, non-releasing `docs:`/`test:`/`chore:`/`bench:` PRs may
-batch-merge freely within one green gap: only `fix:`/`feat:` trigger semantic-release, so a
+**Converse (A31) — the hold binds ONLY overlap with a release-bearing publish window.**
+When NO release-bearing run exists, non-releasing `docs:`/`test:`/`chore:`/`bench:` PRs join the burst: only `fix:`/`feat:` trigger semantic-release, so a
 non-releasing merge creates no publish to race — its gate is just "the newest main run completed".
-Batch the non-releasing, serialize the releasing (`AGENTS.md` — grep "A31" / "Batch the
-non-releasing").
+While a release-bearing run exists they wait with everything else (`AGENTS.md` — grep "A31" / "The merge rule").
 
 ### 1.5.1 Worked example: the #384-#399 sequence (2026-07-04/05) — 16 PRs, 0 push-race failures
 
@@ -206,7 +203,7 @@ git log --format="%ci %s" --all | grep -E "chore\(release\)" | \
   awk -v cutoff="$(date -u -d '48 hours ago' '+%Y-%m-%d %H:%M:%S')" '{ts=$1" "$2; if (ts >= cutoff) c++} END{print c}'
 ```
 
-At that cadence, one-merge-per-tick is the only thing standing between "39-40 releases published
+At that cadence, the hold is the only thing standing between "39-40 releases published
 clean" and "half of them silently dropped to a push-race rejection" — see 1.6.1 below for what this
 cadence means for the surfaces that *aren't* on the automatic pipeline (npm, docs).
 
@@ -214,7 +211,7 @@ cadence means for the surfaces that *aren't* on the automatic pipeline (npm, doc
 
 | Surface | Package/formula identity | Gate/verify mechanism |
 |---|---|---|
-| PyPI | `tensor-grep` (`pyproject.toml`) | OIDC-based publish, only if `publish_pypi=true` (version not already on PyPI — grep `Determine PyPI Publish Need` in `ci.yml`; was `:965-1013`, now `:1086-1134`); `publish-success-gate` re-checks parity (grep `^  publish-success-gate:`; was `:1392-1418`, now `:1513-1539`) |
+| PyPI | `tensor-grep` (`pyproject.toml`) | OIDC-based publish, only if `publish_pypi=true` (version not already on PyPI — grep `Determine PyPI Publish Need` in `ci.yml`); `publish-success-gate` re-checks parity (grep `^  publish-success-gate:`) |
 | npm | `tensor-grep` / bin `tg` (`npm/package.json:2,5-8`) | version stamped by semantic-release `version_variables` |
 | Homebrew | `scripts/tensor-grep.rb` (`class TensorGrep`, `TENSOR_GREP_VERSION`) | `ruby -c scripts/tensor-grep.rb` in CI; formula URL must point at the tag's GitHub release asset (`docs/RELEASE_CHECKLIST.md:130-132`) |
 | winget | `PackageIdentifier: oimiragieo.tensor-grep` (`scripts/oimiragieo.tensor-grep.yaml:5`) | `winget validate` on Windows, Python validator fallback; `InstallerSha256` stamped from `CHECKSUMS.txt` |
@@ -223,7 +220,7 @@ cadence means for the surfaces that *aren't* on the automatic pipeline (npm, doc
 The default asset profile is CPU-only `native-frontdoor`. An opt-in repo variable
 `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE=native-frontdoor-gpu` additionally builds
 `tg-linux-amd64-nvidia` / `tg-windows-amd64-nvidia.exe` (`docs/CI_PIPELINE.md:25`; `ci.yml` — grep
-`RELEASE_NATIVE_ASSET_PROFILE:` inside `build-release-native-assets`; was `:1138`, now `:1259`).
+`RELEASE_NATIVE_ASSET_PROFILE:` inside `build-release-native-assets`).
 macOS stays CPU-only either way.
 
 ### 1.6.1 The npm/docs publish gap — semantic-release stamps the version, it does not publish either
@@ -239,9 +236,7 @@ grep -n "gh-deploy" .github/workflows/*.yml     # -> only .github/workflows/rele
 ```
 
 `ci.yml`'s only docs-related step is a **validation** build in the `release-readiness` job (grep
-`mkdocs build --strict` in `ci.yml`; was `:81-82,96-99`, now `:113,116` — the old citation actually
-pointed at the unrelated `smoke` job's grep assertions and the `release-readiness` header, not the
-build step itself) — it confirms the docs site still *builds*, it never runs `mkdocs gh-deploy` to
+`mkdocs build --strict` in `ci.yml`) — it confirms the docs site still *builds*, it never runs `mkdocs gh-deploy` to
 publish it.
 
 The actual publish steps — `npm publish --access public` (`release.yml:338-340`, job `publish-npm`
@@ -360,8 +355,7 @@ pip install "tensor-grep==<X.Y.Z>"
 python scripts/dogfood/dogfood_features.py   # or TG_BIN=/path/to/tg python scripts/dogfood/dogfood_features.py
 ```
 
-Compact release checklist from `AGENTS.md` — grep `gh release view <tag>` for the block (was
-`:625-635`, now `:1899-1905`; run all of these, not a subset):
+Compact release checklist from `AGENTS.md` — grep `gh release view <tag>` for the block (run all of these, not a subset):
 
 ```bash
 gh release view <tag>
@@ -393,8 +387,8 @@ Full runbook: `docs/RELEASE_CHECKLIST.md:153-170`. Summary:
 
 ```
 [ ] PR title matches the validator regex (scripts/validate_pr_title_semver.py:10)
-[ ] Squash-merged (not merge-commit) so the title becomes the main commit subject
-[ ] No other release-bearing PR is mid-flight (one-merge-per-tick — 1.5 above)
+[ ] Squash-merged, and the resulting main commit subject (not just the PR title) carries the intended type
+[ ] No release-bearing `main` run exists, or this merge is part of the same burst (burst-then-hold — 1.5 above)
 [ ] `Semantic Release` job green on the exact commit
 [ ] `git fetch origin main --tags && git pull --ff-only origin main`
 [ ] `publish-github-release-assets` green for the new tag
@@ -454,7 +448,7 @@ Where `tg` currently loses or ties (state this, don't bury it — `docs/tool_com
 ### 2.2 The reproducibility standard — required before ANY benchmark / GPU / LSP claim
 
 This is the actual gate, not aspiration. `AGENTS.md` (grep "Never claim a speedup without measured
-numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured numbers."** Concretely:
+numbers"): **"Never claim a speedup without measured numbers."** Concretely:
 
 1. **Emit a machine-readable artifact.** Benchmark suites write `artifacts/bench_*.json`
    (`docs/PAPER.md:340`). A verbal "it feels faster" is not evidence.
@@ -472,16 +466,16 @@ numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured nu
    (`run_hot_query_benchmarks.py`) for repeated-query/cache paths, AST (`run_ast_benchmarks.py`,
    `run_ast_workflow_benchmarks.py`) for structural workflows, GPU (`run_gpu_benchmarks.py`,
    `run_gpu_native_benchmarks.py`) for GPU paths (`AGENTS.md` — grep the benchmark script names
-   above; was `:645-717`, now `:1919-1982`). Using the wrong suite is not evidence for a different
+   above). Using the wrong suite is not evidence for a different
    code path.
 4. **Reject the change if it regresses**, even if the code is otherwise clean (`AGENTS.md` — grep
-   "[Rr]eject regressions"; two occurrences, was `:387,738`, now `:489,2417`).
+   "[Rr]eject regressions"; two occurrences).
    Main CI enforces this with a required same-runner base-vs-head benchmark-regression gate
    (`docs/CI_PIPELINE.md:23,42-45`) that blocks merge *before* semantic-release ever runs.
 5. **For GPU specifically**: correctness before speed, always. GPU scale gates need 1GB and 5GB rows
    with exact match/file-set correctness for every corpus, no-match must be a valid comparator
    outcome (`rg` exit 1 + empty output vs `tg` no-match), and explicit `--gpu-device-ids` must not
-   silently touch unselected devices (`AGENTS.md` — grep "unselected GPUs"; was `:367`, now `:842`).
+   silently touch unselected devices (`AGENTS.md` — grep "unselected GPUs").
    Public managed-GPU promotion additionally
    requires `NativeGpuBackend` with `sidecar_used = false`, a direct `rg --json` correctness/timing
    comparison, and the advanced many-fixed-string proof gate versus a fair single-invocation `rg -F
@@ -495,8 +489,7 @@ numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured nu
    result (`docs/CONTRACTS.md:109`).
 7. **Preserve failed attempts, not just wins.** `docs/PAPER.md`'s optimization ledger
    (section 3.10) exists so future agents don't re-attempt the same losing idea; update it whenever
-   a benchmark candidate is accepted *or* rejected (`AGENTS.md` — grep "retry the same losing ideas";
-   was `:911-916`, now `:2407`).
+   a benchmark candidate is accepted *or* rejected (`AGENTS.md` — grep "retry the same losing ideas").
 8. **Internally-verified is not the same gate as publishable.** A worked example (2026-07-16, `tg
    find` campaign #189): the golden-set gate-run showing `rrf` beating `bm25` by **+0.195 ndcg@10 /
    +0.30 recall@10** on the NL golden set is bidirectional-oracle-validated and internally accepted
@@ -510,12 +503,12 @@ numbers"; was `:641`, now `:1912`): **"Never claim a speedup without measured nu
 
 | Surface | Status (2026-07-24, v1.95.0 unless noted) | Source |
 |---|---|---|
-| GPU native backend | **Status refreshed to v1.75.4 (Phase-0 ship), with a 2026-07-21 re-adjudication (B-GPU) since — already live at `v1.95.0`.** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB correctness), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (the flag-flip) remains a reversible, **CEO-held**, not-yet-authorized decision, not a multi-week rebuild. The 2026-07-21 re-adjudication re-tested 10MB-5GB corpora and still found no crossover at any scale (historical worst ~30-35x slower at 5GB; even the best-case 100-pattern fixed-string lane loses to a fair-baseline `rg -F -e ...`), and corrected the shipped `gpu_text_search_positions` kernel's description to a **position-parallel brute-force byte-compare**, not a PFAC/Aho-Corasick automaton (PFAC remains documented future work, never shipped). GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet -- public CUDA-asset publishing is on a deliberate **HOLD** (CEO decision, #169). `docs/BACKLOG.md`'s CEO desk continues to frame the forward direction as CPU semantic search (`tg find`, #189) with GPU held under #169 (earlier entries used the phrase "GPU retired-for-search (#169)") -- read this as a *resourcing* signal (where engineering capacity goes next), not a technical claim that GPU search is proven impossible; the crossover question itself is still open (see `tensor-grep-research-frontier` Problem 1). | `docs/gpu_crossover.md:133-138`, `docs/CONTRACTS.md` (grep "Public managed GPU promotion"; was `:80-82`, now `:123`), `AGENTS.md` (grep "Phase 1 -- reversible flag-flip"; was `:489-496`, now `:1715-1726`), `docs/BACKLOG.md` CEO desk |
+| GPU native backend | **Status refreshed to v1.75.4 (Phase-0 ship), with a 2026-07-21 re-adjudication (B-GPU) since — already live at `v1.95.0`.** Phase-0 SHIPPED (v1.75.0-v1.75.4, PRs #593-#597): NVIDIA native assets built and locally correctness-proven (RTX 4070 `sm_89` / RTX 5070 `sm_120`, 1GB/5GB correctness), gated OFF the public release by the CI Actions var `TENSOR_GREP_RELEASE_NATIVE_ASSET_PROFILE` (default `native-frontdoor`, CPU-only; GPU asset publishing needs the non-default `native-frontdoor-gpu`) -- Phase 1 (the flag-flip) remains a reversible, **CEO-held**, not-yet-authorized decision, not a multi-week rebuild. The 2026-07-21 re-adjudication re-tested 10MB-5GB corpora and still found no crossover at any scale (historical worst ~30-35x slower at 5GB; even the best-case 100-pattern fixed-string lane loses to a fair-baseline `rg -F -e ...`), and corrected the shipped `gpu_text_search_positions` kernel's description to a **position-parallel brute-force byte-compare**, not a PFAC/Aho-Corasick automaton (PFAC remains documented future work, never shipped). GPU auto-recommendation stays `false`, and the reviewer-gated `public-gpu-proof.yml` speed-crossover gate remains unmet -- public CUDA-asset publishing is on a deliberate **HOLD** (CEO decision, #169). `docs/BACKLOG.md`'s CEO desk continues to frame the forward direction as CPU semantic search (`tg find`, #189) with GPU held under #169 (earlier entries used the phrase "GPU retired-for-search (#169)") -- read this as a *resourcing* signal (where engineering capacity goes next), not a technical claim that GPU search is proven impossible; the crossover question itself is still open (see `tensor-grep-research-frontier` Problem 1). | `docs/gpu_crossover.md:133-138`, `docs/CONTRACTS.md` (grep "Public managed GPU promotion"), `AGENTS.md` (grep "Phase 1 -- reversible flag-flip"), `docs/BACKLOG.md` CEO desk |
 | GPU speed claim generally | Not accepted. GPU still loses or times out on 100MB/1GB/5GB public scale checks as of the last dogfood; kept experimental/opt-in until correctness+speed beat both `rg` and `tg --cpu` on accepted artifacts. | `docs/PAPER.md:139` |
 | CyBERT / provider-backed `classify` | Opt-in only (`TENSOR_GREP_CLASSIFY_PROVIDER=cybert`), default is local deterministic; useful future reference, not a default performance claim. | `docs/PAPER.md:141-146` |
 | Resident AST worker (`tg worker`) | Opt-in (`TG_RESIDENT_AST=1`), hidden from `--help`, workload-dependent — helps startup-dominated repeated micro-workflows, not the default performance path. | `docs/EXPERIMENTAL.md:5-14` |
 | LSP semantic provider | Opt-in via `--provider lsp|hybrid`; default `native` never starts it. | `docs/CONTRACTS.md:111` |
-| Ranking scorer (`search --rank`, agent capsule, semantic surfaces) | Flat, no-IDF scorer — can silently flip/degrade on corpus change; a degrade-to-ask safety floor exists, the scorer itself is unresolved debt (tracked as capsule-hardening Task #4, ledger B3). Don't market ranking quality without re-checking this. | memory: `tensor-grep-idf-ranking-fragility-2026-06-29`; fuller detail in `tensor-grep-debugging-playbook` §8 — and the `AGENTS.md` corroboration is LIVE: `grep -n "IDF" AGENTS.md` finds the "BM25/IDF-ranked surfaces" bullet ("This IDF blast-radius is invisible to the call graph ... Tracked as capsule-hardening Task #4 (ledger B3)"; was cited at `:379`, now `:737` on 2026-08-13 — re-grep before trusting). **CORRECTION (2026-08-13):** the 2026-08-01 claim below that this content "no longer resolves to anything" in AGENTS.md was FALSE — a paraphrase-miss: that pass searched the skill's own wording ("no-IDF", "flat scorer", "degrade-to-ask"; zero hits) instead of the bullet's own vocabulary ("IDF"). A grep zero is UNRESOLVED, never ABSENT — re-test the instrument with the target's own words before concluding content moved. |
+| Ranking scorer (`search --rank`, agent capsule, semantic surfaces) | Flat, no-IDF scorer — can silently flip/degrade on corpus change; a degrade-to-ask safety floor exists, the scorer itself is unresolved debt (tracked as capsule-hardening Task #4, ledger B3). Don't market ranking quality without re-checking this. | memory: `tensor-grep-idf-ranking-fragility-2026-06-29`; fuller detail in `tensor-grep-debugging-playbook` §8 — and the `AGENTS.md` corroboration is LIVE: `grep -n "IDF" AGENTS.md` finds the "BM25/IDF-ranked surfaces" bullet ("This IDF blast-radius is invisible to the call graph ... Tracked as capsule-hardening Task #4 (ledger B3)"). |
 
 ### 2.4 Positioning checklist (before any public claim)
 
@@ -548,25 +541,11 @@ citation into them in this skill was individually re-grepped and confirmed exact
 not survive the next edit to any of those files, so this section does not repeat it as a standing
 freshness claim.
 
-**2026-08-01 citation-repair pass:** every `ci.yml:N` and `AGENTS.md:N` citation in this skill had
-drifted. `ci.yml`'s release-gate DAG (Part 1.2) shifted by a uniform +121 lines end-to-end (job names
-and `needs:` edges unchanged); other `ci.yml` citations in this file shifted by that same +121
-wherever they sit inside the release/publish job group, confirmed line-by-line rather than assumed.
-`AGENTS.md` drifted unpredictably instead — it's restructured content-first, not merely appended-to —
-and one citation (the ranking-scorer row in section 2.3, previously "corroborated live at
-`AGENTS.md:379`") was reported on 2026-08-01 as "could not be relocated at all / that content no
-longer exists anywhere in `AGENTS.md`". **That conclusion was itself wrong, corrected 2026-08-13
-(paraphrase-miss receipt):** the 2026-08-01 search used the skill's own wording ("no-IDF", "flat
-scorer", "degrade-to-ask" — zero hits), but the live bullet uses its own vocabulary: `grep -n "IDF"
-AGENTS.md` finds it ("BM25/IDF-ranked surfaces ... Tracked as capsule-hardening Task #4 (ledger
-B3)"; was `:379` at the original cite, now `:737` on 2026-08-13). The fuller write-up ALSO lives in
-`tensor-grep-debugging-playbook` §8, but AGENTS.md never lost the topic — the content is in BOTH.
-Every drifted citation above was converted
-from a bare line number to a grep instruction (job name, symbol, or a short quoted phrase), with a
-`was -> now` pair kept beside it as a drift-rate receipt, not as a number to trust on the next read.
-Per AGENTS.md's own "cite the SYMBOL, not the line" law: re-stamping a citation with today's correct
-number just ships the next wrong anchor on a slower clock — future passes should keep converting to
-grep form, not refresh the numbers.
+**Citation rule:** cite `ci.yml`/`AGENTS.md` by job name, symbol, or a short quoted phrase plus a
+grep instruction, never a line number — both files are edited on nearly every PR. A grep that
+returns zero is UNRESOLVED, not ABSENT: re-test with the target's own vocabulary before concluding
+content moved (the ranking-scorer bullet is found by `grep -n "IDF" AGENTS.md`, not by this
+skill's wording).
 
 ```bash
 # Current version + release doc tag

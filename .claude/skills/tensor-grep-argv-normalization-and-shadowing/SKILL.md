@@ -66,7 +66,7 @@ Before claiming a front-door/argv fix is closed, enumerate the doors mechanicall
 
 - [ ] List every flag the normalizer REWRITES (e.g. `SEARCH_OPTION_FIRST_FLAGS` includes
       `--count-matches`, so `tg PAT --count-matches` becomes the search subcommand form).
-- [ ] Know the SIBLING list: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (`rust_core/src/main.rs`, grep
+- [ ] Know the SIBLING list: `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (`rust_core/src/search_flag_registry.rs`, grep
       `const SEARCH_PYTHON_PASSTHROUGH_FLAGS`) is a co-trigger of the SAME rewrite —
       `normalize_top_level_search_args` rewrites to the search form when EITHER list matches (grep
       `raw_args_contain_any_flag` in the same file). It carries, among others, `-f`/`--file`.
@@ -81,7 +81,7 @@ Before claiming a front-door/argv fix is closed, enumerate the doors mechanicall
       positional (`run_positional_cli`) handler, and the rg-passthrough path.
 - [ ] For each (rewritten flag, sub-parser) pair, ask: does that parser honor the flag, refuse it,
       or silently drop it? NOTE `--gpu-device-ids` is NOT itself a `SEARCH_OPTION_FIRST_FLAGS`
-      member (verify: `const SEARCH_OPTION_FIRST_FLAGS` in `rust_core/src/main.rs`); the rewrite is
+      member (verify: `const SEARCH_OPTION_FIRST_FLAGS` in `rust_core/src/search_flag_registry.rs`); the rewrite is
       TRIGGERED by a member riding in the same argv (`--count-matches`), with `--gpu-device-ids`
       riding along into the search form, where the structured args struct has NO gpu field on the
       rg-passthrough route — the drop is structural, not a bug someone typed. The tree's own receipt
@@ -164,8 +164,8 @@ the thing the flag changes (AGENTS.md "The check and the defect AGREED" — #876
 
 **Repo receipts to cite by symbol, not line:** `main_entry`, `_normalize_search_invocation`,
 `_requires_full_cli`, `_can_delegate_to_native_tg_search` (all `src/tensor_grep/cli/bootstrap.py`);
-`SEARCH_OPTION_FIRST_FLAGS`, `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, and
-`normalize_top_level_search_args` (`rust_core/src/main.rs`); `_build_cmd` and its consumers
+`SEARCH_OPTION_FIRST_FLAGS`, `SEARCH_PYTHON_PASSTHROUGH_FLAGS`, and `raw_args_contain_any_flag`
+(`rust_core/src/search_flag_registry.rs`); `normalize_top_level_search_args` (`rust_core/src/main.rs`); `_build_cmd` and its consumers
 (`src/tensor_grep/backends/ripgrep_backend.py`); `tests/unit/test_argv_sentinel_covers_every_builder.py`
 (the behavioural census — read its docstring for WHY the source-scan form was retired); AGENTS.md A83.
 

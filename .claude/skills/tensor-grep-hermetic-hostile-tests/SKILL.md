@@ -180,12 +180,12 @@ tested anything. **A fixture is a claim about the world, and claims get verified
 ### 2.2 The repo's canonical hostile-fixture: Windows junctions on the M1 checkpoint guard
 
 `tests/unit/test_checkpoint_create_ancestor_confinement.py` is the in-repo pattern for BOTH halves
-of this discipline (M1, #982). Windows specifics that matter — a junction is NOT a symlink: `Path.is_symlink()` is False on a junction. **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
+of this discipline (M1, #982). Windows specifics that matter — a junction is NOT a symlink to CPython: `Path.is_symlink()`/`os.path.islink()` report False for a `mklink /J` junction, while Rust 1.96.0's `is_symlink()` reports true (`is_symlink_dir: true`, receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5) — pick the assertion for the runtime under test.
 
 - Junctions (`mklink /J` on Windows, or `New-Item -ItemType Junction`) need **NO privilege**, unlike
   symlinks — so Windows is the attack platform you MUST exercise, not skip.
 - `Path.is_symlink()` is **False** on a junction; `os.walk`/`os.scandir` descend junctions as plain
-  directories. **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.** So the enemy property is "an ANCESTOR directory that resolves out-of-root", not
+  directories. So the enemy property is "an ANCESTOR directory that resolves out-of-root", not
   "a leaf link".
 - `mklink /J` requires the **LINK path to NOT pre-exist**; the **TARGET may be fully populated**.
   SUPERSEDED (2026-08-12 — was the A88 dogfood wording): this bullet previously said `mklink /J`
@@ -202,7 +202,7 @@ of this discipline (M1, #982). Windows specifics that matter — a junction is N
   target (AGENTS.md's A88 entry still carries the old wording — out of scope for this skill, but
   do not re-cite it as authority for the non-empty-target claim). The BITE precheck stays
   mandatory regardless: assert the redirect actually resolves, AND assert the negative shape
-  (`assert not link.is_symlink()` (for CPython pathlib) so a real symlink is not mistaken for a junction). **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.** See
+  (`assert not link.is_symlink()` (for CPython pathlib) so a real symlink is not mistaken for a junction). See
   `_plant_ancestor_link_or_skip` plus the inline BITE precheck in each test body (grep
   `fixture is vacuous`) in that test module — there is no `_create_junction` / `_assert_fixture_bites`
   helper (was: cited here as `_create_junction` / `_assert_fixture_bites`; now: the real symbols).
@@ -216,7 +216,7 @@ Checked list for a junction/symlink hostile test:
       abort with "fixture is vacuous" otherwise.
 - [ ] **Negative shape pin:** `assert not link.is_symlink()` (for CPython pathlib) when the fixture is meant to be a
       junction — so the guard under test is the junction's parent-resolve containment, not a
-      symlink refusal. **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
+      symlink refusal.
 - [ ] Run the SAME probe against a plain (non-hostile) tree as the control arm — the hostile run
       must differ from the plain run.
 
@@ -327,7 +327,7 @@ requirements — grep `### M1` / `M17`).
 ```
 [1] env-independence   force the optional-engine seam (never env-detect) -> prove the force
 [2] fixture-BITES      assert the hostile setup actually applied before the probe; abort if not
-[3] junction != symlink  is_symlink()==False on a junction; mklink /J needs the LINK path absent (target may be populated) **SUPERSEDED for the pinned Rust 1.96.0 toolchain: a real `mklink /J` junction reports `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` (bounded probe receipt: docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5); the CPython `os.path.islink()` half of the claim stays true.**
+[3] junction != symlink  CPython is_symlink()==False on a junction (Rust 1.96.0 reports true); mklink /J needs the LINK path absent (target may be populated)
 [4] mutation REDs      delete a member / stamp / typed allowlist entry -> each must RED
 [5] mutation applied   assert the red-arm mutation actually took (diff / grep) before trusting red
 [6] positive control   the same probe must return non-zero somewhere it should

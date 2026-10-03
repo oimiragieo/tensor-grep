@@ -1,6 +1,6 @@
 ---
 name: tensor-grep-debugging-playbook
-description: Use when a tensor-grep (tg) run fails, hangs, returns wrong/empty/silently-degraded results, a CI check goes red, a release doesn't publish, a worktree agent's PR reports "No commits between main and <branch>" after a reported commit, or a wall-clock/timing-ratio test flakes on a loaded CI runner. Symptom-to-triage table, each row giving a discriminating experiment and a fix pointer, for CI red, release not published (push-race), search hangs/slow, silent-empty result (fail-closed contract), argv/flag injection, mock-green-but-real-dead FFI, dependency-cap silent downgrade, ranking flip, a `CliRunner`/`capfd` test that goes green-on-PR-red-on-main after a delegation/routing change, a latency fix/regression report that needs profiling-at-scale instead of a code-reading guess, a detached-HEAD worktree push that pushes a stale branch ref instead of the real commit, a timing-ratio test flake caused by a degenerate baseline below clock resolution, a diagnostic control that checked the wrong symbol or only proved a mechanism sufficient rather than operative, a windowed `gh run list`+filter query that misses an in-flight run, and a Windows-binary-from-Git-Bash path-domain false negative. Load BEFORE theorizing from a traceback or re-running a failing gate blind.
+description: Use when a tensor-grep (tg) run fails, hangs, or returns wrong, empty, or silently degraded results; a CI check goes red; a release does not publish; a worktree agent's PR reports "No commits between main and <branch>"; or a timing-ratio test flakes on a loaded runner. Symptom-to-triage table with a discriminating experiment and a fix pointer per row (CI red, push-race, hangs/slow, fail-closed silent-empty, argv/flag injection, mock-green FFI, dependency-cap downgrade, ranking flips, CliRunner/capfd false-greens, profile-at-scale latency, detached-HEAD pushes, wrong-symbol diagnostics, windowed `gh run list` misses, Git-Bash path-domain false negatives). Load BEFORE theorizing from a traceback or re-running a failing gate blind.
 ---
 
 # tensor-grep Debugging Playbook
@@ -28,7 +28,7 @@ book. Reach for a sibling instead when:
 | Local validation gate command reference (ruff/mypy/pytest) as a checklist, not a debug session | `tensor-grep-validation-and-qa` |
 | Full release-and-positioning procedure, not "why didn't THIS release publish" | `tensor-grep-release-and-positioning` |
 | Writing a NEW regression test for a hang-class bug (ReDoS/deadlock/lock-race/unbounded subprocess), or deciding whether a long-silent test/agent run is genuinely hung vs. slow-but-working | global skill `anti-hang-test-protocol` |
-| The mandatory adversarial security-gate review before merging a money/auth/security/migration diff (verdict shape, Opus-as-codex-substitute) | `tensor-grep-backlog-campaign` Hard Rule 11 (cross-referenced from `tensor-grep-change-control`) |
+| The mandatory adversarial security-gate review before merging a money/auth/security/migration diff (verdict shape, Opus seat for the adversarial pass) | `tensor-grep-backlog-campaign` Hard Rule 11 (cross-referenced from `tensor-grep-change-control`) |
 
 If your symptom isn't in the table below, it's probably not covered here — check
 `tensor-grep-failure-archaeology` for a prior occurrence before assuming it's novel.
@@ -67,7 +67,7 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A test suite is green but the real binary/extension does the wrong thing (dropped flags, dead code path) | Test mocked the boundary (a monkeypatched function, a stubbed PyO3 class) instead of exercising the compiled extension or the published binary | Run the same call through the *installed* `tg` (not `CliRunner`, not a mocked backend) and check `tg doctor --json` / `HAVE_RUST` | [§6](#6-mock-green-real-dead) |
 | A fresh Python install resolves `tensor-grep` to an old version with no error | An upper-bound dependency pin (e.g. `typer<0.26`) has no release compatible with the new Python, so the resolver silently downgrades the *whole package* | `pip index versions tensor-grep` vs what actually installed; check `pyproject.toml` for `<` pins on `typer`/`click`/`pydantic` | [§7](#7-dependency-cap-silent-downgrade) |
 | Agent-capsule primary target flipped after an unrelated change (wrong file promoted to top) | The agent capsule's flat, no-IDF candidate scorer is corpus-fragile — a small corpus change can flip which candidate wins a tie. (`tg search --rank` and semantic search use a different, IDF-weighted BM25 scorer and are not known to share this bug.) | Re-run `tg agent PATH QUERY --json` before/after the change and diff `primary_target` + `ambiguity`/`ask_reasons` fields | [§8](#8-ranking-flip) |
-| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. At the time of the incident PR CI did not build the native binary, so the mismatch never surfaced there (DATED — see §19's IN DISPUTE note). | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1980` — re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
+| A `CliRunner` test reading `capfd` starts returning empty output / `JSONDecodeError` right after a delegation, routing-gate, or `--rank`/`--sort-files`-style flag change — often only on `main`/release CI, green on the PR | The code path moved from a **delegated subprocess** (needs fd-level `capfd`) to **in-process** `typer.echo` (needs `result.stdout`), or vice versa — the test's capture fixture didn't move with it. At the time of the incident PR CI did not build the native binary, so the mismatch never surfaced there (DATED — see §19's IN DISPUTE note). | Grep the refuse-tuple for the field you touched (`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, re-derive with: `grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS =' src/tensor_grep/cli/main.py`) — did it just start refusing (or allowing) native delegation? | [§9](#9-capture-surface-trap-capfd-vs-resultstdout) |
 | A latency "fix" doesn't move the needle, or a reported regression can't be reproduced / doesn't match the diff | The hot path was inferred by reading code (a review/design pass) instead of measured — the real bottleneck is often a pure helper called redundantly in a hot loop, invisible from reading the "expensive-looking" function alone | Profile the **actual** slow command at realistic scale (not a toy input) and check top cumulative-time frames; Counter-wrap a suspect function to see call-count-vs-unique-input redundancy before designing a cache | [§10](#10-profile-at-scale-discipline-latency-claims) |
 | PyPI/`chore(release)` published fine, "latest `main` run green" -- but a real regression shipped anyway | The workflow run's *aggregate* status hides one late-stage job's own red conclusion -- specifically the NEEDS-gated `release-tag-smoke` job (re-runs `scripts/agent_readiness.py` against an EDITABLE install of the release tag's source — not the PyPI wheel), which can stay red for releases at a time while `publish-pypi`/`publish-success-gate` keep going green; later non-release runs never re-run it | `gh run view <run-id> --json jobs` on the release run -> find the job named **`release-tag-smoke`** specifically -> read its own `conclusion`, don't infer from the run's overall status | [S11](#11-release-published-but-release-tag-smoke-stayed-red-masked-regression) |
 | `Dependency & License Audit` job is red, but your diff doesn't touch any dependency file, and it reds EVERY open PR at once | A newly-disclosed CVE/RUSTSEC advisory against an already-pinned, unmodified dependency -- the strict-on-fixable `pip-audit`/`cargo-audit` gate fails for everyone until the floor moves, not just your branch | `gh run view <run-id> --log-failed` on the `Dependency & License Audit` job -- decode pip-audit's/cargo-audit's OWN structured output for the exact package + advisory ID + fixed-version | [S12](#12-dependency--license-audit-red-on-an-untouched-dependency-newly-disclosed-cve) |
@@ -82,7 +82,6 @@ If your symptom isn't in the table below, it's probably not covered here — che
 | A merge-gate or release-monitor check runs `gh run list --branch ... --limit N` (optionally filtered by SHA) and reports "0 in flight" / "all terminal" while a real run is still mid-publish | The limited window filled with unrelated rows sharing the same filter (other workflows on the branch, or cron-scheduled runs that happen to fire on the same commit SHA), pushing the real run out of view | Query the ONE run by its unique ID (`gh run view <run-id>`), never a list plus a filter; if you must list first, read every row's workflow name, not just whether the filter matched | [§20](#20-a-windowed-list-plus-filter-query-gives-a-false-complete) |
 | A dogfood/verification run through a Windows-built `tg` binary invoked from Git Bash reports zero files found against a fix that actually works | The invocation handed the binary a POSIX-style path (e.g. `/tmp/...`) it cannot resolve — NOT the default Git-Bash mode (which converts the cwd), but a path-conversion-disabled or BRIDGED invocation (a shim/env-var/argument carrying the shell's untranslated POSIX string), so the binary walks an empty/nonexistent directory in its own path domain | Re-run the identical command with an explicit Windows-form path (`C:\...`) instead of the defaulted/bridged path, and compare | [§21](#21-the-setup-lies-git-bash-cwd-vs-windows-binary-path-domain) |
 | A stray untracked `nul` file appears in `git status` on Windows (and `Remove-Item`/`Test-Path` can't touch it), OR a WSL-side test run misbehaves and you suspect the wrong interpreter/venv is executing | `2>nul` redirect artifact (reserved device name blocks PowerShell removal), or a broken system WSL stdlib / a WSL `uv` pointed at the Windows `.venv` (A60) | `rm -f ./nul` via Git Bash; probe WSL interpreter provenance with a bare `import shutil` and confirm a WSL-local managed venv | [§22](#22-environment-artifacts-2026-08-12-session-lessons) |
-| A skill/draft "where's the file?" shell probe hangs ~1–2 min then exits `-1` / `4294967295` with empty output, even though the skill already exists in the worktree | `Get-ChildItem -Recurse -Force $env:TEMP` (or similar whole-TEMP walk) hits locked/inaccessible Windows temp trees and never finishes usefully; HTML-escaped redirects like `2&gt;$null` can also mangle the command | `Test-Path .claude/skills/<name>/SKILL.md`; `git status --porcelain -- .claude/skills/<name>`; never recurse all of `$TEMP` — top-level `$TEMP` filter only if needed | Look in the worktree skill folder / PR branch first; the hang is the instrument, not a missing skill |
 
 ---
 
@@ -120,6 +119,8 @@ sends you looking for a routing bug that doesn't exist; the fix pointer is §9, 
 
 If the failing check is the `Semantic Release` job specifically, go to §2, not here.
 
+**Third recurrence = structural fix.** A rerun self-heals a flake once; the third sighting of the same flake (e.g. `windows-agent-readiness` `public-version-powershell` timing out 3 times in 3 runs) means fix the probe, not rerun again. Record the recurrence count beside the flake. `scripts/agent_readiness.py` `Check.retry_on_timeout` (opt-in, clamped by `_MAX_TIMEOUT_RETRIES`) is the existing mitigation (AGENTS.md A101).
+
 ## 2. Release did not publish (push-race)
 
 The real publish step is the **`Semantic Release` job inside `.github/workflows/ci.yml`**, which
@@ -135,7 +136,7 @@ gh run view <run-id> --log-failed                 # read its failed step only
 
 A line reading `! [rejected]  main -> main` is the push-race signature. **Do not panic-rerun** — the
 failure self-heals on the next push-to-`main` (version is derived from git tags, not the failed
-run's state). Full mechanism, the `v1.17.23`/#318/#319 receipt, and the one-merge-per-tick
+run's state). Full mechanism, the `v1.17.23`/#318/#319 receipt, and the burst-then-hold
 discipline to prevent recurrence: `tensor-grep-release-and-positioning` §1.5 /
 `tensor-grep-failure-archaeology` Battle 6.
 
@@ -145,9 +146,9 @@ picking a recovery, don't assume every "release didn't publish" is a push-race:*
 | Branch | Signature | Recovery |
 |---|---|---|
 | **Push-race** (this section) | `! [rejected] main -> main` in the `Semantic Release` job's own log | Self-heals on the next push. Do NOT rerun. |
-| **`needs:`-job flake (C-release-flake)** | `Semantic Release` shows `skipped` (not `failure`), no rejection line — a flaky upstream job in its `needs:` list failed | Does NOT self-heal — the flaky job's cause doesn't change between pushes. Run `gh run rerun --failed` on the SAME run (re-executes only the failed job). Receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test); v1.92.2/#701 (the index-lock concurrency test rewritten after 2 releases of flaking). |
+| **`needs:`-job flake (C-release-flake)** | `Semantic Release` shows `skipped` (not `failure`), no rejection line — a flaky upstream job in its `needs:` list failed | Rerun it now: `gh run rerun --failed` on the SAME run (re-executes only the failed job). A later green main push can also self-heal it (version is derived from tags), but don't wait for one — the failed run is yours to rerun. Receipts: v1.76.9/#612-613 (a timing-flaky heartbeat test); v1.92.2/#701 (the index-lock concurrency test rewritten after 2 releases of flaking). |
 
-**Rapid-window batch-merge is a third, benign shape — don't misdiagnose it as either of the above.**
+**A rapid-window burst is a third, benign shape — don't misdiagnose it as either of the above.**
 Several independently-green PRs merging ~15-20s apart can show an intermediate `cancelled` or
 rejected-push run that looks alarming in isolation, but is fine IF the LAST run in the sequence
 completes and publishes (receipt: v1.93.0/#703-706, runs `29890576036` rejected-only / `29890612228`
@@ -156,10 +157,8 @@ published). See `tensor-grep-change-control` Part 7 (C-batch) before treating a 
 
 ## 3. Search hangs/slow
 
-`tg search` does NOT have one timeout contract — it has **three distinct outcomes depending on
-which route executes the search** (verified 2026-08-12 against `bootstrap.py` +
-`rust_core/src/rg_passthrough.rs`; SUPERSEDES this section's earlier wording that claimed BOTH
-routes fail fast at 60s/exit 124):
+`tg search` has **three distinct timeout outcomes depending on which route executes the search**
+(verified 2026-08-12 against `bootstrap.py` + `rust_core/src/rg_passthrough.rs`):
 
 | Route | Bound | Outcome on a pathological walk |
 |---|---|---|
@@ -172,8 +171,7 @@ means something pathological is being scanned (an unexcluded huge/index director
 legitimately slow query. On the PYTHON route's timeout, the child is killed and the process exits
 **124** with a stderr hint to scope the search or raise the timeout (`src/tensor_grep/cli/bootstrap.py`,
 backward-compat shim path and the primary `Popen`/`_terminate_child` path both `return 124` —
-re-verify with `grep -n "return 124" src/tensor_grep/cli/bootstrap.py`; was `:1020`/`:1063-1071`,
-then `:1269`/`:1320`, now `:1353`/`:1404` — line numbers drift every release). The native route's
+re-verify with `grep -n "return 124" src/tensor_grep/cli/bootstrap.py`). The native route's
 ceiling applies ONLY when the walk is implicit (`path_was_implicit`); a user-scoped native search
 skips the ceiling and spawns rg directly into the unbounded-wait arm.
 
@@ -204,15 +202,12 @@ fully resolve full-tree speed. Full env-var reference: `tensor-grep-config-and-f
 class as the hang above (an unbounded directory read), and normally bounds cleanly per project
 (truncates at N files, stamps `truncation_cause = "deadline"` — `build_inventory` has since moved out
 of `main.py` into its own module; re-verify with
-`grep -n 'truncation_cause = "deadline"' src/tensor_grep/cli/inventory.py`; was in `main.py` -- the `:8404`/`:8420` pins pointed INSIDE a `--deadline` option block deleted
-by the 2026-08-23 de-duplication, so they have no successor; now `inventory.py:318`). On a PATHOLOGICAL **workspace-union** tree — many
+`grep -n 'truncation_cause = "deadline"' src/tensor_grep/cli/inventory.py`). On a PATHOLOGICAL **workspace-union** tree — many
 unrelated repos flattened under one huge root, not a single normal project — it can still blow its
 deadline: the shared walker `_iter_repo_files` (re-verify with `grep -n "def _iter_repo_files"
-src/tensor_grep/cli/repo_map.py`; was `:1143`, now `:1144`) reads an entire huge directory's entries
+src/tensor_grep/cli/repo_map.py`) reads an entire huge directory's entries
 in one non-lazy `list(os.scandir(normalized_root))` call inside that same function (re-verify with
-`grep -n "list(os.scandir(normalized_root))" src/tensor_grep/cli/repo_map.py`; was `:1009`, now
-`:1172` — the `def` itself barely moved but this internal call drifted much further as the
-function's docstring grew) before its own per-file deadline check gets a chance to run, so one
+`grep -n "list(os.scandir(normalized_root))" src/tensor_grep/cli/repo_map.py`) before its own per-file deadline check gets a chance to run, so one
 abnormally large subdirectory can exceed the deadline before the mid-walk check fires even once. This is a KNOWN, accepted, low-priority edge (rare shape; verified against a real
 300k+-file multi-project workspace) — not worth a load-bearing lazy-`scandir` rewrite. Don't
 re-diagnose it as a new bug; if the SAME deadline-blown symptom shows up on a normal single-project
@@ -241,7 +236,7 @@ fully-supported result, distinguishable from a real backend failure (which inste
 result with NEITHER `rank_fallback_reason` set NOR a nonzero exit on a run you expected the dense leg
 to participate in, that is the silent-swap bug this section targets, not a normal degrade.
 
-**Ground-truth example of the correct pattern** (`src/tensor_grep/backends/rust_backend.py:260-278`):
+**Ground-truth example of the correct pattern** (`grep -n "raise BackendExecutionError" src/tensor_grep/backends/rust_backend.py`):
 a PCRE2 search that fails inside the native ripgrep bridge raises `BackendExecutionError` and
 explicitly refuses to fall back to an engine that doesn't implement PCRE2 semantics — it does NOT
 silently re-run the pattern through the Python-regex engine (which would return wrong matches,
@@ -274,10 +269,9 @@ Run the same probe through any code path that builds subprocess argv from a
 pattern/path/replacement value (MCP tool handlers, rewrite commands) — a value beginning with `-`
 should error or be treated as data, never silently change tg's own behavior.
 
-**Fixed reference implementation** (`src/tensor_grep/cli/mcp_server.py`, `_build_rewrite_command` /
+**Fixed reference implementation** (`src/tensor_grep/cli/mcp_rewrite_tools.py`, `_build_rewrite_command` /
 `_build_index_search_command` — re-verify with
-`grep -n "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/mcp_server.py`;
-was `:1259`/`:1310`, now `:1328`/`:1379`, +69 each):
+`grep -rn "def _build_rewrite_command\|def _build_index_search_command" src/tensor_grep/cli/`):
 a `--` end-of-options sentinel is inserted before the user-controlled `pattern`/`path` positionals,
 with an inline comment explaining why.
 
@@ -286,7 +280,7 @@ with an inline comment explaining why.
 literally named `-l` parsed by `rg` as the `-l`/files-with-matches flag instead of a path) was fixed
 in `#326` (v1.17.26), silently regressed by a later refactor, then restored in `#370` (v1.28.1) as
 the extracted, unit-tested `ripgrep_operand_args` helper (`rust_core/src/rg_passthrough.rs` — see the
-grep below; was `:581-600`, now `:584-603`)
+grep below)
 — the sentinel is now pushed unconditionally before the path loop whenever `!args.paths.is_empty()`.
 Patterns going through `-e` were never affected (`-e` consumes the next token as its value regardless
 of a leading `-`); only bare path positionals were ever at risk, and that risk is now closed. Verify
@@ -313,7 +307,7 @@ missing-flag bug compounded, because the bridge call itself never got exercised
 **Discriminating experiment:** does the test import/patch `tensor_grep.rust_core` (or its Python
 wrapper `RustCoreBackend`, the `try: from tensor_grep.rust_core import RustBackend as
 NativeRustBackend` / `HAVE_RUST` block in `src/tensor_grep/backends/rust_backend.py` — re-verify with
-`grep -n "HAVE_RUST" src/tensor_grep/backends/rust_backend.py`; was `:28-33`, now `:9-14`), or does it
+`grep -n "HAVE_RUST" src/tensor_grep/backends/rust_backend.py`), or does it
 patch something *around* that boundary? If a test replaces `bootstrap.run_subprocess` or stubs
 `RustCoreBackend.inner`, it is validating call shape, not that the real extension does the right
 thing.
@@ -339,13 +333,13 @@ Python if no release in that range is compatible with it — `pip`/`uv` resolve 
 down to a stale version with **no error**, because `requires-python>=X` has no upper bound to catch
 the mismatch. Receipt: on Python 3.14, `uv tool install tensor-grep` with an unsatisfiable
 `typer<0.25` range resolved to a stale `1.13.35` instead of erroring. Current pin, chosen to thread
-both constraints (`pyproject.toml:560-566`):
+both constraints (`grep -n "typer>=" pyproject.toml`):
 
 ```
 typer>=0.12,<0.26
 ```
 
-The comment there (`pyproject.toml:560-565`) explains why the cap can't simply be dropped: typer
+The comment above that pin explains why the cap can't simply be dropped: typer
 0.26 removed `click.testing.CliRunner` inheritance, breaking `CliRunner.isolated_filesystem()`
 which ~49 tests rely on.
 
@@ -373,10 +367,7 @@ grep -n "def _score_symbol\|def _score_import_entry\|def _score_file_source_term
 grep -n "score_term_overlap(" src/tensor_grep/cli/repo_map.py
 ```
 
-`_score_symbol` used to sit **after** the other two (`:8211` vs `:7725`/`:7732`, with the call site
-at `:7737`) and now sits **before** them (`:8194` vs `:8221`/`:8228`, call site now `:8233`) — a
-relative reordering, not a uniform shift, so don't assume a fixed offset holds between any two of
-these four line numbers. Together they implement a **flat, no-IDF** set-membership scorer plus a
+Together they implement a **flat, no-IDF** set-membership scorer plus a
 hard top-N candidate cap — an acknowledged, not-yet-fixed weak point. A small, unrelated corpus change can flip which
 candidate wins a near-tie, and that flip is invisible to the call graph (nothing "broke" in the
 traditional sense — the ranking function just picked a different winner). This produced a real
@@ -407,9 +398,8 @@ tg agent PATH QUERY --json > after.json                # on the post-change comm
 
 For the agent capsule specifically, check the `ambiguity` / `ask_reasons` fields
 (`src/tensor_grep/cli/agent_capsule.py`) rather than only the `primary_target` — a **degrade-to-ask
-safety floor** (the `# Degrade-to-ask safety floor:` comment in `agent_capsule.py` — re-verify
-with `grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py`; was `:3224`, now
-`:3244`, line numbers drift every release) forces `ask_user`-style output whenever ranking
+safety floor** (the `# Degrade-to-ask safety floor:` comment in `agent_capsule_builder.py` — re-verify
+with `grep -rn "Degrade-to-ask safety floor" src/tensor_grep/cli/`) forces `ask_user`-style output whenever ranking
 buried the real implementation behind an unrequested marker/no-op helper, so a correctly-behaving
 flip should surface as `ambiguity`/`ask_user_before_editing` metadata, not a silent wrong answer.
 If you see a confident wrong `primary_target` with no ambiguity signal, that is a regression in the
@@ -439,8 +429,7 @@ output," not "you're reading the wrong stream." It is the same shape as the fail
 silent-empty trap in §4, one layer up in the test harness instead of the backend.
 
 **Real incident (round-4, commit `ab717a1`, #343 as a follow-up to #342, v1.19.0):** #342 added
-`rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` (now at
-`src/tensor_grep/cli/main.py:1987-1974`, inside the tuple starting `:1966`) so `tg search --rank` correctly **refuses** native (re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py)
+`rank_bm25`/`sort_files` to `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS` so `tg search --rank` correctly **refuses** native (re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py)
 delegation and the BM25 rerank runs in-process instead of via a delegated subprocess.
 `test_search_rank_reorders_by_bm25` (`tests/integration/test_bm25_search_flag.py`) had been written
 against the *old* delegated behavior and read `capfd.readouterr().out`, which had only ever
@@ -461,7 +450,7 @@ instead of `capfd.readouterr().out`; the now-unused `pytest.CaptureFixture` impo
 **Discriminating experiment:** if a `CliRunner` test that reads `capfd` starts failing right after a
 delegation/routing/gating change, first ask "does this flag/config still delegate to a real
 subprocess after my change?" — grep the refuse-tuple
-(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, `src/tensor_grep/cli/main.py:1980` — re-derive with: grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS' src/tensor_grep/cli/main.py) for the field
+(`_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`, re-derive with: `grep -n '_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS =' src/tensor_grep/cli/main.py`) for the field
 you touched. If it now refuses delegation (or newly allows it), the correct capture fixture flips
 too.
 
@@ -492,7 +481,7 @@ path by reading the code, and reasoned toward caching it. Profiling the *actual*
 call at depth 2 on this repo showed `compile()` was only **3.6% of runtime** — caching it would
 have saved roughly 3%. The real hotspot, invisible from code review, was `_module_aliases_for_path`
 (`src/tensor_grep/cli/repo_map.py` — re-verify with
-`grep -n "def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py`; was `:8197`, now `:8693`),
+`grep -n "def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py`),
 called **1,431,341 times** for ~1,000 unique path inputs
 from the reverse-import-graph / PageRank loops — 6.1s self / 38s cumulative of a 62s run. The commit
 message states this directly: "this corrects the regression-hunt synthesis, which guessed AST-parse
@@ -506,7 +495,7 @@ the two versions being compared (`v1.17.31`→`HEAD`), and a live `cProfile` cap
 regression. Don't design a fix for a slowdown you have not reproduced under a profiler.
 
 **Incident 3 — a warm end-to-end dogfood run hid a real ~54% win (commit `9a2a01c`, PR #719,
-v1.93.9):** `_python_imports_and_symbols` (`src/tensor_grep/cli/repo_map.py:2166` — re-derive with: grep -n '_python_imports_and_symbols' src/tensor_grep/cli/repo_map.py) was merged from
+v1.93.9):** `_python_imports_and_symbols` (now in `src/tensor_grep/cli/repo_map_lang_python.py` — re-derive with: `grep -rn 'def _python_imports_and_symbols' src/tensor_grep/cli/`) was merged from
 three separate `ast.walk(tree)` passes (imports, symbols, dynamic-imports) into one
 dispatch-by-node-type pass — the same general family of redundant-work-elimination fix as the
 "Technique" below (there it's redundant *calls*; here it's redundant *tree walks* over the same
@@ -522,8 +511,7 @@ it is genuinely **~54% faster** (961ms→446ms on the probe corpus), verified by
 monkeypatched-`ast.walk`-call-count assertion plus an old-vs-new diff over a
 static/nested/relative-imports/classes/sync+async/dynamic-import corpus. The companion
 validation-scan optimization (`_framework_test_pattern_bonus` in `src/tensor_grep/cli/repo_map.py` —
-re-verify with `grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`; was
-`:10616`, now `:11112` — commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
+re-verify with `grep -n "def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py` — commit `d2c1266`, PR #723, v1.93.10 — a textual pre-check
 that skips an expensive per-candidate AST parse when nothing in `expanded_terms` could possibly
 score) shows the identical shape: **~68% faster** (3657ms→1172ms) in isolation, invisible from a
 warm end-to-end read.
@@ -533,16 +521,15 @@ by timing a warm end-to-end dogfood command; a warm run's cache hits can make a 
 or a real regression look like a wash. Instead, microbenchmark the target function directly,
 isolated, in a **fresh process** (cold cache) against the **published wheel**
 (`uvx --from tensor-grep==<ver>`), a single pass over **distinct** inputs so no run benefits from an
-earlier run's warm cache, old-vs-new, and assert output-identity (not just wall-time). SUPERSEDED
-(2026-08-12): this rule previously sold `total == total` (an aggregate count equal on both sides)
-as proof the change is byte-identical — it is NOT: two different outputs can share a total, so a
+earlier run's warm cache, old-vs-new, and assert output-identity (not just wall-time). An aggregate
+count equal on both sides (`total == total`) is NOT proof that the change is byte-identical: two different outputs can share a total, so a
 count equality is at best a smoke precondition. The actual proof is DIRECT output equality (diff
 the full serialized outputs old-vs-new and require zero difference) or a field-by-field
 differential over every emitted field. The ~54%/~68% receipts above were proven by the stronger
 forms (a monkeypatched call-count assertion PLUS an old-vs-new diff over the probe corpus), not by
 a bare count equality. Re-verify with
-`grep -n "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py`
-before trusting these line numbers on a later version.
+`grep -rn "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/`
+before trusting these locations on a later version.
 
 **Technique that found the real hotspot:** before designing a cache or optimization for a suspect
 function, wrap or monkeypatch it with a call counter keyed by its argument(s)
@@ -558,7 +545,7 @@ instrument.
 **Caching correctness check — don't cache blind:** before adding `@lru_cache` to a suspect
 function, confirm it is a **pure function of its arguments** (no file I/O, no external state). This
 repo already documents the opposite pattern in the same file: `_mtime_aware_cache`
-(`src/tensor_grep/cli/repo_map.py:99-107`) exists specifically because a plain `@lru_cache` on a
+(`grep -rn "def _mtime_aware_cache" src/tensor_grep/cli/`) exists specifically because a plain `@lru_cache` on a
 path-keyed function that reads *file content* returns **stale results** in the long-lived daemon
 after the file is edited. `_module_aliases_for_path` is safe with a plain `@lru_cache` only because
 it is a pure string transform of the path itself — it never touches the filesystem. If the function
@@ -593,8 +580,7 @@ doesn't change results.
 `release-tag-smoke` job (`.github/workflows/ci.yml`, `needs: [release, publish-success-gate]`,
 `if: needs.release.outputs.released == 'true'`) checks out the just-published release TAG and
 re-runs `scripts/validate_release_assets.py` + `scripts/agent_readiness.py` against it. Two facts
-about what it actually installs and when it runs (verified 2026-08-12; SUPERSEDED — this section
-previously said the job validates "the actually-published wheel"):
+about what it actually installs and when it runs (verified 2026-08-12):
 
 - It installs an **EDITABLE** copy of the tag checkout (`uv pip install -e ".[dev]"` in the job's
   install step — re-derive with `grep -n 'uv pip install' .github/workflows/ci.yml` inside the
@@ -672,33 +658,10 @@ simultaneous cross-PR failure on this specific job is the tell.
 
 ## 13. Pipe exit-code masking
 
-**Symptom:** a one-liner like `tg some-probe ... | tail -5` or `some_script.py | python -c "..."`
-reports success (`$?`/`$LASTEXITCODE == 0`) even though the FIRST command in the pipe genuinely
-failed — the failure is invisible because nothing downstream noticed it crashed.
-
-**Root cause:** a shell pipeline's exit code (in bash, without `pipefail`; always in a naive
-PowerShell pipe) is the LAST command's exit code, not the first's. `tail`/`grep`/`python -c` almost
-always exit 0 regardless of what the upstream command produced (even empty input), so a crashed or
-error-exiting first command is silently swallowed by whatever reads its output next.
-
-**Discriminating experiment:** run the first command alone and check its own exit code before
-trusting any pipeline built on top of it:
-
-```bash
-tg some-probe ...            # run alone first, check $?/$LASTEXITCODE directly
-tg some-probe ... | tail -5  # only trust this AFTER the line above confirms exit 0
-```
-
-**Fix:** in bash, `set -o pipefail` (or check `${PIPESTATUS[0]}` for the first command's own exit
-code specifically) before trusting a piped one-liner's exit code; in PowerShell, don't chain `|`
-into a text-processing cmdlet when you need the upstream command's own exit code — capture it to a
-variable first. Or simplest: split into two statements instead of one pipe when you need the exit
-code AND the trimmed output.
-
-**Rule:** never write a diagnostic/verification one-liner as `real-command | text-filter` when the
-real command's own exit code is part of what you're checking — this is exactly how a genuinely
-failing probe can read as a clean pass during a closing-dogfood pass (2026-07-22 closing-dogfood
-receipt: caught mid-pass, before it produced a false PASS in the final verdict table).
+Never trust a piped one-liner's exit code when the first command's own status matters —
+`tg some-probe ... | tail -5` reports `tail`'s status. In bash use `set -o pipefail` or
+`${PIPESTATUS[0]}`; in PowerShell capture `$LASTEXITCODE` before piping; or run the command alone
+first. A 2026-07-22 closing-dogfood probe nearly recorded a false PASS this way.
 
 ## 14. Raw-JSON-before-scoring
 
@@ -728,15 +691,10 @@ dogfood/verdict scripts rather than a formal eval harness. 2026-07-22 closing-do
 step is what turned a suspicious-looking automated result into either a confirmed PASS or a real,
 actionable finding, rather than a guess either way.
 
-**Same family, a shell one-liner instead of a script (2026-07-24).** A `grep -ciE
-"DEFERRED\|deferred"` spot-check on a sibling PR returned zero hits for a caveat that was present
-verbatim — in `grep -E` (extended regex), `\|` matches a LITERAL pipe character, not alternation
-(extended-regex alternation is a bare `|`; the backslash form is basic-regex/`sed` syntax). The
-0-hit result briefly read as "the report is wrong" when the instrument was wrong. If a grep/check
-result contradicts what you can see by eye in the file, re-test the check against known-present
-content before trusting the negative — this generalizes point 14's raw-JSON rule to any ad hoc
-verification command, not just JSON scoring scripts. See `tensor-grep-change-control` Part 6 and
-AGENTS.md's "Verify AI-Drafted Plans" for the fuller writeup.
+**Same family, a shell one-liner instead of a script:** if a grep/check result contradicts what you
+can see in the file, re-test the check against known-present content before trusting the negative
+(a 2026-07-24 spot-check used `\|` inside `grep -E`, which matches a literal pipe, and returned a
+false zero). See `tensor-grep-change-control` Part 6.
 
 ---
 
@@ -757,8 +715,7 @@ consecutive PRs (#720, #721).
 **Fix (already shipped, #722):** the `test-rust-core` matrix job's `Setup Rust` step now pre-fetches
 the pin inside a 3x retry loop (`cd rust_core && for attempt in 1 2 3; do cargo --version && break;
 ...; sleep 15; done`) so the later `cargo test` step never hits the un-retried path (re-verify with
-`grep -n "pinned-toolchain fetch" .github/workflows/ci.yml`; was `.github/workflows/ci.yml:449-459`,
-now `:482-492`).
+`grep -n "pinned-toolchain fetch" .github/workflows/ci.yml`).
 
 **Discriminating experiment:**
 
@@ -945,8 +902,8 @@ forced the native binary to build reproduced the CI failure exactly -- but an in
 `test-python` job's `Run Pytest` step (the job that was actually red) stated `test-python` **never
 builds** `rust_core/target/release/tg` at all (maturin there only builds the `pyo3/extension-module`
 cdylib; the release binary only exists in a different job) -- re-verify with
-`grep -n "never builds" .github/workflows/ci.yml`; was `.github/workflows/ci.yml:688`, now `:704-705`
-(that comment moved, and the file has since grown a second, near-identical copy at `:442-443`). The
+`grep -n "never builds" .github/workflows/ci.yml` (several near-identical copies of that comment
+exist in the file). The
 reproduced failure and the real failure shared symptoms, not cause.
 
 **Update, since re-verified (task 22 / PR #868): `ci.yml` now marks this exact claim "IN DISPUTE."**
@@ -1008,13 +965,11 @@ the *selection* step instead of the *reading* step.
 **Symptom:** A dogfood/verification run through a Windows-built `tg` binary, invoked from a Git Bash
 shell, reports zero files found against a fix that demonstrably works.
 
-**Root cause (NARROWED 2026-08-12 — the original blanket claim is false):** the DEFAULT
+**Root cause:** the DEFAULT
 Git-Bash-to-Windows-child invocation does NOT leak a POSIX cwd. Verified on this host: `cmd /c cd`
 from a Git Bash shell whose cwd is `/tmp` reports the CONVERTED Windows path
 (`C:\Users\oimir\AppData\Local\Temp`), and `MSYS_NO_PATHCONV=1` does not change that (it governs
-ARGV conversion, not cwd). SUPERSEDED: this section previously said "Git Bash defaults a spawned
-Windows process's working directory to a POSIX-style path" — it does not, on this host, in the
-default mode. The POSIX-cwd leak is specific to invocations where MSYS path conversion is
+ARGV conversion, not cwd). The POSIX-cwd leak is specific to invocations where MSYS path conversion is
 DISABLED or BRIDGED — a launcher/shim that passes the shell's POSIX path string untranslated to
 the Windows binary (a captured `pwd`, an env var, an argument), or a bridged spawn that skips the
 conversion layer. In those shapes the Windows binary resolves the POSIX string in its OWN path
@@ -1070,70 +1025,7 @@ venv in its place — a dependency check becomes shared-environment mutation).
 
 ## Provenance and maintenance
 
-Facts here were originally verified **2026-07-02, tensor-grep v1.17.25** for §1–§8, and
-**2026-07-03, v1.19.3** for §9–§10; drift-checked and re-anchored **2026-07-08 against v1.49.3**
-(`pyproject.toml:430`) for the §5 rg-passthrough-sentinel status, §8 `score_term_overlap`/degrade-
-to-ask citations, §3 exit-124 citations, and the §9 `_NATIVE_TG_DELEGATION_DEFAULT_REQUIRED_FIELDS`
-line number; **2026-07-16 against v1.78.1** added §12 (dependency-CVE-audit triage) and the §4
-`tg find rank_fallback_reason` example; **2026-07-22 against v1.93.2** extended §2 with the
-push-race-vs-`needs:`-flake-vs-batch-merge triage (three distinct shapes, three different recovery
-paths), refreshed the §9 line citation to `main.py:1897`, and added §13 (pipe exit-code masking) and
-§14 (raw-JSON-before-scoring), both from the 2026-07-22 closing-dogfood pass; **2026-07-23 against
-v1.95.0** re-verified and re-anchored every hardcoded file:line citation in §3/§5/§7/§8/§9/§10 (most
-had drifted 200-3,000 lines — `repo_map.py`'s citations moved the most, after the Java/C#/PHP
-language-support campaign landed a large amount of new code near its scoring/caching helpers),
-added the §3 `tg inventory --deadline` pathological-workspace-union-tree scandir edge (known,
-low-priority, not a regression — `repo_map.py:987`/`:1009`), added §10 Incident 3 (a warm
-`tg orient` dogfood run hid PR #719's real ~54% win, plus the microbench-on-the-shipped-wheel
-discipline that catches it), and added §15 (macOS rustup pinned-toolchain fetch timeout, already
-mitigated by #722); **2026-07-24 against v1.98.2** added §16 ("No commits between main and
-`<branch>`" — a detached-HEAD worktree push, cross-referenced to AGENTS.md's Campaign Orchestration
-A24). A further same-day pass, **against v1.98.3**, added §17 (a timing-ratio test flake caused by a
-degenerate baseline below clock resolution, plus the profile-before-attributing-a-cause discipline and
-the structural ENTER/EXIT marker-order fix — receipts #737/#739, cross-referenced to
-`tensor-grep-validation-and-qa` Part 1 points 18-20 and `tensor-grep-change-control` Part 6). A
-coordinator review of that same pass added the §14 addendum (a malformed `grep -E \|` alternation
-returning a false-negative spot-check on a sibling PR) and the concrete clock-resolution figure to §17.
-**2026-07-31 against v1.101.24** added four diagnosis-process lessons from a single debugging
-session: §18 (a control that verified the wrong symbol -- `rust_core` the importable extension vs.
-`resolve_native_tg_binary()` the compiled-binary resolver -- falsely exonerated a correct hypothesis on
-#868), §19 (a control reproduced CI's failure byte-for-byte but the mechanism it forced was never
-exercised by the real failing job, per an in-line comment in `.github/workflows/ci.yml`; the
-dispatched fix had to be recalled mid-flight), §20 (a `gh run list --branch ... --limit N` merge-gate
-query reported "0 in flight" while a real release run was mid-publish, because unrelated
-cron-triggered rows sharing the same commit SHA filled the limited window), and §21 (a Windows-built
-`tg` binary invoked from Git Bash defaulted to a POSIX-style `/tmp/...` cwd it could not resolve,
-reading as a phantom regression until re-run with an explicit Windows-form path).
-**2026-08-01 citation-repair pass:** every hardcoded `file:line` citation in §3/§5/§6/§8/§10/§15/§19
-had drifted again since the 2026-07-23 pass (`repo_map.py`'s moved the most -- `_score_symbol` /
-`_score_import_entry` / `_score_file_source_terms` REORDERED relative to each other, not just shifted
-together; `_module_aliases_for_path` and `_framework_test_pattern_bonus` each drifted ~495 lines; the
-`tg inventory --deadline` truncation-cause stamp moved out of `main.py` into its own `inventory.py`
-module entirely). Each was converted from a bare line number to a `grep`-verifiable symbol/phrase,
-with a `was -> now` pair kept beside it as a drift-rate receipt, not a number to trust on the next
-read (per AGENTS.md's "cite the SYMBOL, not the line" law -- re-stamping a citation with today's
-correct number just ships the next wrong anchor on a slower clock). §19 additionally picked up a
-substantive update, not just a line move: `ci.yml` itself now marks the "`test-python` never builds
-the release binary" claim "IN DISPUTE" pending a task-22 diagnostic step, so that section now flags
-the claim as under active re-verification rather than settled.
-**2026-08-12 retention pass (branch `docs/retention-2026-08-12`, base `568065a`):** §3 rewritten
-from a single "both routes 60s/124" contract to THREE route-dependent outcomes (Python bootstrap
-60s/exit 124; native implicit-walk ceiling exit 2 before any rg spawn; native spawned-rg arm
-unbounded via `Command::status()` — verified against `rust_core/src/rg_passthrough.rs`
-`check_implicit_walk_ceiling` / `IMPLICIT_SEARCH_WALK_FILE_CEILING` / `command.status()`, and the
-§3 `return 124` receipt re-anchored `:1269`/`:1320` → `:1353`/`:1404`); §11 corrected —
-`release-tag-smoke` installs an EDITABLE copy of the tag checkout (`-e ".[dev]"`), not the PyPI
-wheel, has no `continue-on-error`, and is never re-run by later non-release runs; §10's
-`total == total` byte-identity overclaim replaced with direct-output-equality / field-by-field
-differential; §9's present-tense "PR CI never builds the native binary" claims marked
-DATED/HISTORICAL (contradicted by §19's IN DISPUTE + the matrix-wide non-gating Task 22
-diagnostic); §21's Git Bash cwd claim NARROWED to path-conversion-disabled/bridged invocations
-(default mode converts the cwd — verified live on this host); §17's "~15.6ms on Windows" relabelled
-historical/interpreter-specific with a `time.get_clock_info('monotonic')` probe; and four dated
-2026-08-12 lessons folded — §16 (`git cherry` patch-id: `-` = shipped, `+` = verify content, not
-unshipped-by-default), §17 (batch wobble → re-run the exact node in isolation first), §22.1 (the
-untracked `nul` Windows redirect artifact and its reserved-name removal), §22.2 (WSL interpreter
-provenance probe + A60 WSL-venv rule).
+Change history for this skill: `git log --format='%h %ad %s' --date=short -- .claude/skills/tensor-grep-debugging-playbook/SKILL.md`.
 Re-verify anything below before trusting it on a later version — this table
 drifts whenever the cited line numbers, defaults, or contracts change.
 
@@ -1150,7 +1042,7 @@ grep -n "TG_RG_TIMEOUT_SECONDS\|60.0" src/tensor_grep/cli/subprocess_policy.py
 grep -n "BackendExecutionError" src/tensor_grep/backends/base.py
 
 # -- sentinel fix still present at both cited sites (§5)
-grep -n '"--",' src/tensor_grep/cli/mcp_server.py
+grep -n '"--",' src/tensor_grep/cli/mcp_rewrite_tools.py
 # CAUTION: `grep -n "for path in &args.paths"` alone is a FALSE-NEGATIVE-PRONE check -- that loop
 # still exists post-fix (just after an unconditional sentinel push), so a bare grep hit does NOT
 # mean the gap reopened. Read the function instead:
@@ -1160,7 +1052,7 @@ grep -n "fn ripgrep_operand_args" -A 20 rust_core/src/rg_passthrough.rs   # expe
 grep -n "typer>=" pyproject.toml
 
 # degrade-to-ask safety floor still present (§8)
-grep -n "Degrade-to-ask safety floor" src/tensor_grep/cli/agent_capsule.py
+grep -rn "Degrade-to-ask safety floor" src/tensor_grep/cli/
 
 # score_symbol / score_import_entry / score_file_source_terms still current (§8)
 grep -n "def _score_symbol\|def _score_import_entry\|def _score_file_source_terms" src/tensor_grep/cli/repo_map.py
@@ -1182,7 +1074,7 @@ grep -n "^@lru_cache(maxsize=16384)" src/tensor_grep/cli/repo_map.py
 grep -n "^def _module_aliases_for_path" src/tensor_grep/cli/repo_map.py
 
 # Incident-3 optimization functions still present (§10)
-grep -n "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/repo_map.py
+grep -rn "def _python_imports_and_symbols\|def _framework_test_pattern_bonus" src/tensor_grep/cli/
 
 # tg inventory --deadline scandir edge still at the same shared walker (§3)
 grep -n "def _iter_repo_files" src/tensor_grep/cli/repo_map.py
@@ -1204,13 +1096,6 @@ grep -n -A8 "release-tag-smoke:" .github/workflows/ci.yml
 # clock resolution probe (§17) — run, don't grep:
 # python -c "import time; print(time.get_clock_info('monotonic'))"
 ```
-
-## Retention fold (2026-08-13)
-
-- **A101 — third recurrence of a flake = structural-fix signal, not rerun signal.** A rerun
-  self-heals ONCE; the third sighting of the same flake (e.g. `windows-agent-readiness`
-  `public-version-powershell` 30s timeout, 3× in 3 runs) means fix the probe (raise the timeout /
-  make it tolerant), not keep rerunning. Record the recurrence count beside the flake. **FIXED: PR #1009 → v1.110.15 — scripts/agent_readiness.py `Check.retry_on_timeout` (opt-in, clamped at `_MAX_TIMEOUT_RETRIES = 3`) + the four shell probes timeout_s=90 + retry_on_timeout=1; `attempts` in every run_check result.**
 
 If any of these greps come back empty or materially different, the corresponding row above is
 stale — update it before relying on it, and check whether the fix pointer's target skill
@@ -1282,8 +1167,9 @@ With `cancel-in-progress: false` on `main`, that pending state is the system wor
 - **Two main merges can produce TWO releases**, one per run — not one combined. Check which commits
   each run carries (`git log --format='%s' <last-tag>..<sha>`) before claiming what shipped.
 - A merge while a run is **pending** SUPERSEDES it (cancel-in-progress does not protect a queued or
-  pending run — A133). That is usually what you want: the replacement run is cumulative from the
-  last tag, so batch the merges and let one run publish everything.
+  pending run — A133), and the replacement run is cumulative from the last tag; that is what makes a
+  burst free. It does NOT make a pending release-bearing run safe to merge onto once the burst is
+  over: a pending/`jobs=0` run still pushes last (A142), so hold.
 - `--limit 1` is a window. The thing you care about can be outside it. Same trap as the
   `gh run list --commit` + `--limit` case already recorded — it recurred inside a monitor written
   by the session that had just documented it.

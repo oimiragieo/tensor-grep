@@ -6,16 +6,8 @@ description: Use when you need to MEASURE tensor-grep's health instead of eyebal
 # tensor-grep Diagnostics and Tooling
 
 How to **measure, not eyeball**, whether a tensor-grep (`tg`) install or a repo checkout is
-healthy. A full citation re-verify pass against **v1.95.0 (2026-07-23)** found every fact below
-still accurate -- only source line numbers had drifted (now refreshed; see "Provenance and
-maintenance" for the itemized diff). Most facts below were verified against the repo at
-**v1.17.25 (2026-07-02)**; the GPU doctor-probe
-fields (`gpu.search_runtime_probe.*`, `native_frontdoor_*`) were re-verified against **v1.75.4
-(2026-07-14)** by reading
-the cited files; the `agent_readiness.py` check count/names (13 repo-local, 23 total), the core
-doctor field names, and the new `tg find`/`tg route-test` interpretation section were spot-checked
-against **v1.78.1 (2026-07-16)** — re-verify with the commands in "Provenance and maintenance" if
-you suspect further drift.
+healthy. Field and check names below were read from the source; re-verify a specific value with the
+commands in "Provenance and maintenance" before relying on it.
 
 ## When to use this skill (and when to use a sibling instead)
 
@@ -38,7 +30,7 @@ Use a **sibling** instead when the question is really about:
 | The 4 command / 2 flag registration sites, the front door, the backend fail-closed contract | `tensor-grep-architecture-contract` |
 | Every `TG_*`/`TENSOR_GREP_*` env var and its default/guard | `tensor-grep-config-and-flags` |
 | Rebuilding the Rust extension/binary, toolchain setup, `maturin develop` | `tensor-grep-build-and-env` |
-| PR/release process gates (one-merge-per-tick, draft-PR-only, etc.) | `tensor-grep-change-control` |
+| PR/release process gates (burst-then-hold merging, verified-green self-merge, etc.) | `tensor-grep-change-control` |
 
 **This skill is the interpretation layer** — it explains what a signal *means*. It does not tell
 you the CLI syntax to produce other output (`tensor-grep-run-and-operate`), how to fix what a
@@ -60,12 +52,9 @@ dogfood only after a version actually publishes.
 
 ## Tool 1: `tg doctor --json` — field-by-field interpretation
 
-Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/main.py`
-(payload builder — `grep -n "^def _build_doctor_payload" src/tensor_grep/cli/main.py`, was
-`:3142`, now `:3452`; command registration — `grep -n "^def doctor(" src/tensor_grep/cli/main.py`,
-was `:14763`, now `:15329` — and see "which anchors drift" under Provenance before trusting any
-registration line number here, including this one: `main.py` grew another ~944 lines this pass and
-even the "stable" helper band moved).
+Source: `_build_doctor_payload` / `_render_doctor_payload` in `src/tensor_grep/cli/doctor_payload.py`;
+field helpers (`_doctor_*`) in `src/tensor_grep/cli/doctor_report.py`; the `doctor` command in
+`main.py`. Locate any of them with `grep -rn "^def <name>" src/tensor_grep/cli/`.
 
 ```powershell
 tg doctor --json --no-lsp        # fast (~2-5s); always prefer this while iterating
@@ -95,18 +84,18 @@ installation is unmissable in human output. The bundled `doctor_traffic_light.py
 | `fresh_shell_path_tg_first_launcher_kind` / `*_version_matches` | same shape as above, but simulated for a **brand-new shell** (reads Windows registry `PATH` on Windows) | catches "your current shell is fixed but a fresh terminal still resolves the wrong `tg`" |
 | `python_subprocess_path_tg_first_*` (Windows only) | same shape | Python's own `subprocess.run(["tg", ...])` can resolve **differently** than your interactive shell (e.g. Windows `CreateProcess` picks `.exe` ahead of a `.com` bridge) — this is what MCP servers and other Python tooling actually see |
 | `rust_binary_version_status` | `matches` or `stale-skipped` | `missing` is often benign (no standalone native binary in play; check `search_acceleration_backend`). `stale` or `mismatch` is a real problem — see remediation below. |
-| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation` — `grep -n "^def _doctor_rust_binary_remediation" src/tensor_grep/cli/main.py`, was `:2432`, now `:2575` — unconditionally returns it on `stale-skipped`) |
+| `rust_binary_remediation` | `null` except for `mismatch`, `stale`, and the healthy `stale-skipped` case | when non-null, it is a copy-pasteable fix string, e.g. rebuild-the-in-tree-binary guidance; note `stale-skipped` always carries this rebuild-hint string even though it needs no action (`_doctor_rust_binary_remediation` — `grep -rn "^def _doctor_rust_binary_remediation" src/tensor_grep/cli/` — unconditionally returns it on `stale-skipped`) |
 | `skipped_native_tg_binaries` | `[]`, or a list of correctly-ignored stale in-tree binaries | a non-empty list here is the **healthy** outcome when you have an old local dev build lying around — it means doctor correctly did NOT select it |
 | `mcp_stdio_launcher_warning` | `null` | non-null on Windows usually means a PowerShell shim (`tg.ps1`) is ambiguous for MCP stdio clients; the message tells you to point the MCP client at the native `tg.exe` directly |
 | `gpu.available` / `gpu.search_ready` / `gpu.tier.promotion_proof` | `available` reflects CUDA device presence; `search_ready` reflects whether a real search actually routed through `NativeGpuBackend` | **`gpu.available=true` does NOT mean GPU search works.** Always read `search_ready` and `tier.promotion_proof`, not just `available`. GPU is experimental-until-proven (see `docs/gpu_crossover.md`) — never a PASS/FAIL signal, always informational. |
-| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597; `failed`/`unsupported` arms verified 2026-08-13) | `supported`, or one of: `not_run` (probe never executed — e.g. no native binary resolved), `path_domain_mismatch`, `failed` (probe INFRASTRUCTURE fault, distinct from the taxonomy below: subprocess timeout, spawn `OSError`, or invalid JSON on stdout — `main.py` `:3298`/`:3302`/`:3319` as of this pass), `unsupported` (probe ran and exited 0, but the route did NOT use `NativeGpuBackend` or used the sidecar — `:3335`), or one of the rc!=0 failure-taxonomy statuses: `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU; `unsupported` means the GPU route was reachable but not taken (a routing/sidecar fact, not a crash) (`_doctor_gpu_probe_failure_status` — `grep -n "^def _doctor_gpu_probe_failure_status" src/tensor_grep/cli/main.py`, was `:2905`, then `:2976`, now `:3201`; `_doctor_gpu_search_runtime_probe` — same grep pattern with its own name, was `:2921`, then `:2992`, now `:3217`) |
+| `gpu.search_runtime_probe.status` (v1.75.2, #595 + gate-nits v1.75.4, #597; `failed`/`unsupported` arms verified 2026-08-13) | `supported`, or one of: `not_run` (probe never executed — e.g. no native binary resolved), `path_domain_mismatch`, `failed` (probe INFRASTRUCTURE fault, distinct from the taxonomy below: subprocess timeout, spawn `OSError`, or invalid JSON on stdout), `unsupported` (probe ran and exited 0, but the route did NOT use `NativeGpuBackend` or used the sidecar), or one of the rc!=0 failure-taxonomy statuses: `failed_input`, `failed_gpu_unavailable`, `failed_path_bridging` (WSL cross-domain), `failed_probe_path` (same-domain path vanished), `failed_other` (unrecognized/unparseable -- fails closed) | Replaces a single opaque `"failed"` for every `rc!=0` outcome -- read the specific status before assuming "GPU is just broken"; `failed_input` (e.g. `gpu_invalid_device_id`) means a bad request, not an unavailable GPU; `unsupported` means the GPU route was reachable but not taken (a routing/sidecar fact, not a crash) (`_doctor_gpu_probe_failure_status` / `_doctor_gpu_search_runtime_probe` — `grep -rn "^def _doctor_gpu_" src/tensor_grep/cli/`) |
 | `gpu.search_runtime_probe.native_error_kind` | `null`, or the native binary's own structured `--json` error kind (e.g. `path_not_found`, `empty_pattern`, `invalid_regex`, `gpu_fatal`, `gpu_invalid_device_id`) | the raw kind behind the mapped `status` above -- `null` means stdout wasn't the expected structured JSON at all (a raw panic, empty output), not that there was no error |
-| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note` — `grep -n "^def _doctor_native_frontdoor_flavor_mismatch_note" src/tensor_grep/cli/main.py`, was `:3121`, now `:3431`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py` (find it: `grep -n "^def _agent_gpu_tg_command" src/tensor_grep/cli/agent_capsule.py`) — re-verified unchanged this pass) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
+| `native_frontdoor_flavor` / `native_frontdoor_requested_flavor` / `native_frontdoor_asset_name` / `native_frontdoor_metadata_status` / `native_frontdoor_flavor_mismatch_note` | populated strings when a managed native front door is installed | surfaces "you asked for `nvidia` but got `cpu`" (`_doctor_native_frontdoor_flavor_mismatch_note` — `grep -rn "^def _doctor_native_frontdoor_flavor_mismatch_note" src/tensor_grep/cli/`) -- previously only a benchmark script could see this; now visible in plain `tg doctor`. **A14/#708 (v1.93.1):** `_agent_gpu_tg_command` (`agent_capsule.py` (find it: `grep -n "^def _agent_gpu_tg_command" src/tensor_grep/cli/agent_capsule.py`) — re-verified unchanged this pass) now pre-resolves a bare `"tg"` via `shutil.which` before it reaches the WSL cross-domain gate, closing a residual case where an unresolved bare command name skipped the check entirely; field semantics here are unchanged by that fix. |
 | `lsp.enabled` / `lsp.providers[].health_status` | `health_status` in `{ready, available_unverified, unhealthy, missing}` | **provider availability is not navigation proof.** A provider counts as real LSP evidence only when a completed request set `lsp_provider_response = true` — `provenance = "lsp-*"` alone is not enough (`AGENTS.md` LSP rules). |
 | `ast_grep.available` / `ast_grep.binary` | `true` / a resolved path | `false` degrades `tg run`'s semantic (`--selector`/`--strictness`) options; AST structural search itself still works via the native backend |
-| `pypi_latest` / `installed_behind_pypi` | a `pypi_latest` version string, `installed_behind_pypi` `false` (or `null` when the probe is disabled) | schema-3 freshness fields (v1.110.14, #1000): `installed_behind_pypi: true` means the installed version is older than PyPI's latest (`_doctor_installed_behind_pypi` — `grep -n "^def _doctor_installed_behind_pypi" src/tensor_grep/cli/main.py` — `:2644` as of 2026-08-13; returns `None`, never a confident `False`, when either version is unparseable or the probe failed). **UNVERIFIED / NO SOURCE (2026-08-13):** a prior revision of this row claimed "the public `tg doctor` telemetry bundle sends this to the health endpoint" — there is NO such telemetry send or health endpoint anywhere in `src/` (grep `health.endpoint|telemetry` finds only unrelated opentelemetry tracing and GPU-execution-telemetry fields); do not cite that claim. When `TG_DOCTOR_OFFLINE=1` is set (`main.py:492` as of this pass), `pypi_latest` is `None` and `installation_health` reports `unknown_pypi` - a deliberately disclosed offline mode, never a silent network skip. |
-| `shadow_launchers` | `[]` (empty list) | **NOT** "launchers behind the primary one on PATH" (a prior revision said that — wrong): it is the consolidated FIRST-CANDIDATE entries of the three launcher routes — `path`, `fresh_shell_path`, `python_subprocess_path` — built from `route_entries` (`main.py:3777` as of 2026-08-13) and filtered by `_doctor_shadow_launchers` (`grep -n "^def _doctor_shadow_launchers" src/tensor_grep/cli/main.py` — `:2677`). A route is listed iff `foreign OR version_matches is False OR version_matches is None` (the null contract == the inclusion predicate); ABSENT routes (`path=None`) are filtered out BEFORE the predicate, so an empty list means every present route is non-foreign and version-matched. Entries carry `route`/`path`/`version`/`kind`/`foreign`/`version_matches`, in deterministic `_ROUTE_ORDER` (`:2674`). An entry with `version_matches: false` is a real problem: a stale `tg` wins for that calling pattern; `foreign: true` means that route resolves another product's `tg` (v1.110.14, #1000) |
-| `installation_health` | `"ok"` | aggregate of launcher/version/shadow checks (`_doctor_installation_health` — `grep -n "^def _doctor_installation_health" src/tensor_grep/cli/main.py` — `:2698` as of 2026-08-13). **Real enum values, in precedence order** (a prior revision of this row carried three wrong names — `foreign_tg_on_path`/`version_mismatch`/`stale_installation` — and omitted `unverifiable_version`; the actual names are): `foreign_launcher` > `unverifiable_version` > `launcher_version_mismatch` > `stale_install` > `unknown_pypi` (PyPI probe unavailable) > `"ok"`. ANY unverifiable version — invalid installed version, invalid non-null `pypi_latest`, or an unparseable present-route version (`_any_route_unverifiable`, `:2731`) — lands on `unverifiable_version`, never `ok`. The human renderer appends a loud `warning: installation_health=...` line plus a per-value remediation when this is not `"ok"` (`:3843-3845` onward) - read it before trusting any other doctor row. |
+| `pypi_latest` / `installed_behind_pypi` | a `pypi_latest` version string, `installed_behind_pypi` `false` (or `null` when the probe is disabled) | schema-3 freshness fields (v1.110.14, #1000): `installed_behind_pypi: true` means the installed version is older than PyPI's latest (`_doctor_installed_behind_pypi` — `grep -rn "^def _doctor_installed_behind_pypi" src/tensor_grep/cli/`; returns `None`, never a confident `False`, when either version is unparseable or the probe failed). **UNVERIFIED / NO SOURCE (2026-08-13):** a prior revision of this row claimed "the public `tg doctor` telemetry bundle sends this to the health endpoint" — there is NO such telemetry send or health endpoint anywhere in `src/` (grep `health.endpoint|telemetry` finds only unrelated opentelemetry tracing and GPU-execution-telemetry fields); do not cite that claim. When `TG_DOCTOR_OFFLINE=1` is set (`grep -rn "TG_DOCTOR_OFFLINE" src/tensor_grep/cli/`), `pypi_latest` is `None` and `installation_health` reports `unknown_pypi` - a deliberately disclosed offline mode, never a silent network skip. |
+| `shadow_launchers` | `[]` (empty list) | **NOT** "launchers behind the primary one on PATH" (a prior revision said that — wrong): it is the consolidated FIRST-CANDIDATE entries of the three launcher routes — `path`, `fresh_shell_path`, `python_subprocess_path` — built from `route_entries` and filtered by `_doctor_shadow_launchers` (`grep -rn "^def _doctor_shadow_launchers" src/tensor_grep/cli/`). A route is listed iff `foreign OR version_matches is False OR version_matches is None` (the null contract == the inclusion predicate); ABSENT routes (`path=None`) are filtered out BEFORE the predicate, so an empty list means every present route is non-foreign and version-matched. Entries carry `route`/`path`/`version`/`kind`/`foreign`/`version_matches`, in deterministic `_ROUTE_ORDER`. An entry with `version_matches: false` is a real problem: a stale `tg` wins for that calling pattern; `foreign: true` means that route resolves another product's `tg` (v1.110.14, #1000) |
+| `installation_health` | `"ok"` | aggregate of launcher/version/shadow checks (`_doctor_installation_health` — `grep -rn "^def _doctor_installation_health" src/tensor_grep/cli/`). **Real enum values, in precedence order** (a prior revision of this row carried three wrong names — `foreign_tg_on_path`/`version_mismatch`/`stale_installation` — and omitted `unverifiable_version`; the actual names are): `foreign_launcher` > `unverifiable_version` > `launcher_version_mismatch` > `stale_install` > `unknown_pypi` (PyPI probe unavailable) > `"ok"`. ANY unverifiable version — invalid installed version, invalid non-null `pypi_latest`, or an unparseable present-route version (`_any_route_unverifiable`) — lands on `unverifiable_version`, never `ok`. The human renderer appends a loud `warning: installation_health=...` line plus a per-value remediation when this is not `"ok"` - read it before trusting any other doctor row. |
 | `session_daemon.running` | informational | `true` means a warm localhost daemon is serving cached repo-map/session state for this root |
 
 ### Live example (this repo, this box, 2026-07-02)
@@ -132,7 +121,7 @@ presence.
 - **`rust_binary_version_status = stale`** (an in-tree dev build IS being selected and it's old):
   rebuild it. On this dev box: `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path
   rust_core/Cargo.toml --release` (this exact command is the shipped `rust_binary_remediation`
-  string in `main.py`'s `_doctor_rust_binary_remediation`, not just a local aside) — or set
+  string in `doctor_report.py`'s `_doctor_rust_binary_remediation`, not just a local aside) — or set
   `TG_NATIVE_TG_BINARY` to pin a specific binary. Full toolchain setup: `tensor-grep-build-and-env`.
 - **`rust_binary_version_status = stale-skipped`**: nothing to do — this is the healthy "doctor
   correctly ignored your stale local build" outcome, unless you specifically need that local build
@@ -145,7 +134,7 @@ presence.
 
 ## Tool 2: `python scripts/agent_readiness.py` — the governed pre-push gate
 
-Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` — `grep -n "^def build_check_plan" scripts/agent_readiness.py`, was `:698`, now `:761`).
+Source: `scripts/agent_readiness.py` (entire file; `build_check_plan` — `grep -n "^def build_check_plan" scripts/agent_readiness.py`).
 
 ```powershell
 python scripts/agent_readiness.py --json --output artifacts/agent_readiness.json
@@ -154,7 +143,7 @@ python scripts/agent_readiness.py --only-shell-probes                       # pu
 ```
 
 This is the exact command `AGENTS.md` "Required Local Validation" tells you to run before push,
-alongside `tg dogfood` (`AGENTS.md:316-323`).
+alongside `tg dogfood` (`grep -n "## Required Local Validation" AGENTS.md`).
 
 ### Two independent phases
 
@@ -191,7 +180,7 @@ alongside `tg dogfood` (`AGENTS.md:316-323`).
 | `agent-capsule-hardcases` | polyglot monorepo, generated-noise, Rust/Python/JS/TS hardcases | — |
 | `docs-claim-check` | **no subprocess** — reads `AGENTS.md`/`README.md`/`SKILL.md`/`docs/*.md` directly and checks required fragments + version-staleness prose patterns + a banned-phrase list on GPU docs | — |
 
-`docs-claim-check` (`validate_docs_claims` -- `grep -n "^def validate_docs_claims" scripts/agent_readiness.py`; `:634` as of 2026-08-14) is the mechanism that
+`docs-claim-check` (`validate_docs_claims` -- `grep -n "^def validate_docs_claims" scripts/agent_readiness.py`) is the mechanism that
 enforces the **no-oversell rule** described in `AGENTS.md`: it bans phrases like `"mathematically
 guaranteeing"`, `"0ms interpreter lag"`, `"peak theoretical throughput"`, `"GPU-ready"` from
 `docs/benchmarks.md`, `docs/gpu_crossover.md`, and `docs/PAPER.md`, and requires phrases like `"not
@@ -225,7 +214,7 @@ useful when the shell-probe phase is slow.
 ## Tool 3: `tg dogfood` — verdict + JSON envelope around `agent_readiness.py`
 
 Source: `src/tensor_grep/cli/dogfood.py` (`run_dogfood_readiness`), CLI command at
-`grep -n "^def dogfood(" src/tensor_grep/cli/main.py` (was `:14493`, now `:15059`).
+`grep -n "^def dogfood(" src/tensor_grep/cli/main.py`.
 
 ```powershell
 tg dogfood --output artifacts/dogfood_readiness.json
@@ -249,7 +238,7 @@ Tool 2) and wraps it with:
 ```
 
 **`world_class_readiness` is a STATIC disclaimer block, not a live signal.** `_build_world_class_readiness()`
-(`dogfood.py:207`) takes **zero arguments** and returns the identical literal content on every
+(`grep -n "^def _build_world_class_readiness" src/tensor_grep/cli/dogfood.py`) takes **zero arguments** and returns the identical literal content on every
 single run, regardless of repo state. Its `status` field is always `"not_claimed"`. Its purpose is
 purely governance: it exists so a passing `tg dogfood` run can never be misread as "tg replaces
 `rg`", "tg replaces `ast-grep`", "GPU is promotion-ready", or "LSP navigation is proven" — each of
@@ -290,10 +279,10 @@ Source: `scripts/dogfood/dogfood_features.py`, `scripts/dogfood/README.md`,
 
 ```bash
 # after a version actually publishes to PyPI:
-docker build --build-arg TG_VERSION=1.110.14 -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
+docker build --build-arg TG_VERSION=<published-version> -f scripts/dogfood/Dockerfile -t tg-dogfood scripts/dogfood
 docker run --rm tg-dogfood
 # or, without Docker, against any installed tg:
-pip install "tensor-grep==1.110.14"
+pip install "tensor-grep==<published-version>"   # <published-version>: grep -n '^version = ' pyproject.toml
 python scripts/dogfood/dogfood_features.py         # or TG_BIN=/path/to/tg python ...
 ```
 
@@ -322,7 +311,7 @@ Two newer JSON surfaces belong in this skill's "what does the field actually pro
 neither is a health-check tool like Tools 1-4 above, but both need the same field-by-field
 interpretation discipline before you trust them.
 
-**`tg find` (`grep -n "^def find(" src/tensor_grep/cli/main.py`, was `:4625`, now `:5043`, onward):**
+**`tg find` (`grep -n "^def find(" src/tensor_grep/cli/main.py` onward):**
 
 | Field | Healthy value | What a bad/absent value means |
 |---|---|---|
@@ -330,7 +319,7 @@ interpretation discipline before you trust them.
 | `result_incomplete` | `false`/absent on a complete scan | `true` means `--deadline`/`--max-repo-files`/the internal corpus-wide chunk cap truncated the walk — the ranked results are a FLOOR, not the full answer. Exit code confirms this independent of the JSON: any truncation exits **2**, whether or not matches were found (`tensor-grep-run-and-operate` §11c, `tensor-grep-large-repo-scale-campaign` §1/§5). |
 | exit code | `0` = complete + found; `1` = complete + empty; `2` = `BackendExecutionError` OR any truncation | do not read exit `2` here as a plain usage error the way `tg search`'s exit-2 convention works (§11b) — `tg find` follows the symbol-command-style "truncation trumps found" shape, a DIFFERENT convention than `tg search`. |
 
-**`tg route-test` (`grep -n "^def route_test(" src/tensor_grep/cli/main.py`, was `:10302`, now `:10997`, onward) — diagnoses routing agreement between `context-render` and `edit-plan`:**
+**`tg route-test` (`grep -n "^def route_test(" src/tensor_grep/cli/main.py` onward) — diagnoses routing agreement between `context-render` and `edit-plan`:**
 
 | Field | Healthy value | What a bad value means |
 |---|---|---|
@@ -360,9 +349,7 @@ reach for" lookup (source: `AGENTS.md` "Benchmark Rules", verified against each 
 
 `benchmarks/run_benchmarks.py` refuses **claim-quality** output (not the run itself) when the timed
 `tg` entrypoint is a stale in-tree native binary (`benchmark_binary_warnings` /
-`benchmark_claim_blockers` in `run_benchmarks.py:194-225` — corrected this pass; a prior pass had
-mis-cited this as `:212-243`, which is `benchmark_claim_blockers`'s own def line through past the
-end of the block, not the block's real start at `benchmark_binary_warnings`'s def line) — it
+`benchmark_claim_blockers` in `run_benchmarks.py:194-225`) — it
 prints a blocker to stderr and
 requires `--allow-claim-unsafe-launcher` to proceed anyway for exploratory-only timing. It also
 tags every artifact with `tg_launcher_mode` and `tg_launcher_command_kind`
@@ -413,98 +400,8 @@ fail the exit code, matching `tg doctor`'s own non-gating nature).
 
 ## Provenance and maintenance
 
-Base doctor/dogfood facts verified against v1.17.25 (2026-07-02); the GPU doctor-probe fields
-(failure taxonomy, `native_error_kind`, `native_frontdoor_*` flavor fields, the honest
-out-of-range device-id warning) re-verified against **v1.75.4 (2026-07-14)** -- both by reading the
-cited source directly; the `tg find`/`tg route-test` interpretation section is new as of
-**v1.78.1 (2026-07-16)**, originally verified against `main.py:4354-4440`/`:9833-9925`. A consolidated
-re-grep pass **2026-07-22 (v1.93.2)** found EVERY `main.py:NNNN` citation in this file had drifted
-(several by 1200-4400 lines — `main.py` is now 16897 lines) and refreshed them: doctor def `:14302`,
-`_build_doctor_payload` `:3131`, `_doctor_rust_binary_remediation` `:2421`, the GPU-probe functions
-`:2894`/`:2910`, the flavor-mismatch function `:3110`, `dogfood` `:14032`, `find` `:4525`,
-`route_test` `:10074` — plus a one-line mention of A14/#708 (bootstrap no-ignore flag-field parity;
-`_agent_gpu_tg_command`'s `shutil.which` pre-resolution). Field SEMANTICS in every table above are
-UNCHANGED by this pass — only the line-number citations moved.
-
-A second consolidated re-grep pass **2026-07-23 (v1.95.0)** re-checked every citation above plus
-the full doctor payload field set (`_build_doctor_payload`'s literal dict, read end-to-end), the
-13 repo-local + 10 shell-probe check names (23 total, `build_check_plan` read end-to-end), the
-65-flag-token `public-search-advertised-flag-sweep` sweep (recounted by hand from
-`_public_search_flag_sweep_cases`), the GPU failure-taxonomy status strings, the
-`docs-claim-check` banned/required phrase list, and the 7-path `RELEASE_DOCS_GOVERNANCE_PATHS`
-tuple behind `release_docs_worktree` — every one of those facts is STILL accurate. Only line
-numbers had drifted again (`main.py` grew from 16897 to 17032 lines; `dogfood.py` and
-`agent_readiness.py` each grew too): `_build_doctor_payload` `:3142`, doctor command `:14437`,
-`_doctor_rust_binary_remediation` `:2432`, the GPU-probe functions `:2905`/`:2921`, the
-flavor-mismatch function `:3121`, `_agent_gpu_tg_command` (`agent_capsule.py` (find it: `grep -n "^def _agent_gpu_tg_command" src/tensor_grep/cli/agent_capsule.py`)), `dogfood`
-command `:14167`, `_build_world_class_readiness` (`dogfood.py:207`), `find` `:4574`, `route_test`
-`:10123`, `validate_docs_claims` (`grep -n "^def validate_docs_claims" scripts/agent_readiness.py` -- `:634` as of 2026-08-14), `build_check_plan`
-(`agent_readiness.py:698`). `run_benchmarks.py`'s `benchmark_binary_warnings`/
-`benchmark_claim_blockers` block (`:194-225`) had NOT drifted and needed no change. Field
-SEMANTICS remain UNCHANGED by this pass too — only line-number citations moved. This pass also
-added the Tool 3/Tool 4 warm-dogfood-hides-a-cold-path-win caveat above (the `tg orient`
--36%-vs-+54% receipt) — see the global skill `profile-guided-byte-identical-optimization` for the
-full methodology.
-
-**2026-07-27 re-derivation — WHICH ANCHORS DRIFT (read this before trusting any number above).**
-A fourth pass re-derived every anchor in this file against `origin/main` and found the drift is
-not uniform, which is the useful part: **six anchors had not moved at all** —
-`_doctor_rust_binary_remediation` `:2432`, the GPU probes `:2905`/`:2921`, the flavor-mismatch
-helper `:3121`, `_build_doctor_payload` `:3142`, `agent_capsule.py` (find it: `grep -n "^def _agent_gpu_tg_command" src/tensor_grep/cli/agent_capsule.py`), and
-`dogfood.py:207` — while **every command registration had**: doctor `:14437`->`:14763`, dogfood
-`:14167`->`:14493`, `find` `:4574`->`:4625`, `route_test` `:10123`->`:10302`, plus the two
-`scripts/agent_readiness.py` helpers (`validate_docs_claims` `:560`->`:623`, now `:634`, `build_check_plan`
-`:698`->`:761`). The rule: **private helpers in `main.py`'s ~2400-3500 band are stable anchors;
-`@app.command()` registrations in the file's tail are not**, because every new `tg` command is
-appended and shifts all of them. So cite a helper by line if you must, but cite a command by its
-`grep -n "^def <name>(" ` re-verify form — which is why the live sections above now carry one.
-The numbers inside the 2026-07-22 paragraph immediately above are **superseded** by this list;
-they are left in place as a record of that pass, not as current truth.
-
-One methodological note worth keeping, because it cost a false finding this pass: a
-`git cat-file blob origin/main:scripts/run_benchmarks.py` returned "does not exist" and was
-nearly filed as a dead reference. The skill never said `scripts/` — it correctly says
-`benchmarks/run_benchmarks.py` (:345, :352), and its `:194-225` cite is still exact. The bad path
-was invented by the checker, not the doc. Re-read what the doc actually claims before filing
-drift against it.
-
-**2026-08-01 re-derivation — the "stable anchor" theory from the 2026-07-27 paragraph above did
-NOT hold on the next pass.** That paragraph reported six `main.py` private helpers "had not moved
-at all" and proposed a rule — private helpers in the ~2400-3500 band are stable, `@app.command()`
-registrations in the tail are not. This pass re-derived the same six against `origin/main`
-(`main.py` grew again, 17032 -> 17976 lines) and found **all six had moved 71-85 lines**:
-`_doctor_rust_binary_remediation` `:2432`->`:2503`, the GPU probes `:2905`->`:2976` /
-`:2921`->`:2992`, the flavor-mismatch helper `:3121`->`:3206`, `_build_doctor_payload`
-`:3142`->`:3227` — while `agent_capsule.py` (find it: `grep -n "^def _agent_gpu_tg_command" src/tensor_grep/cli/agent_capsule.py`), `dogfood.py:207`,
-`agent_readiness.py`'s `validate_docs_claims` `:623`, now `:634`, and `build_check_plan` `:761` (the
-already-corrected 07-27 value) stayed exactly put. **The refined rule: it is not "private helper
-vs. command registration" — it is "lives in `main.py`'s own private-helper band vs. lives in a
-separate, smaller file."** `main.py` is the single fastest-growing file in this repo (every new
-`tg` command AND most doctor/GPU features land there), so nothing inside it is a stable anchor
-across passes, helper or command; `dogfood.py`/`agent_capsule.py`/`agent_readiness.py` helpers
-have held steady across three consecutive passes because those files grow far slower. Every
-`main.py` citation in the live sections above (Tools 1-3, the `tg find`/`tg route-test` section,
-the Benchmarks section) has been converted to a `grep -n "^def <name>("` instruction with its own
-`was -> now` receipt rather than a bare number, per `AGENTS.md`'s never-re-stamp rule — do the
-same for any NEW `main.py` citation added to this file, regardless of whether it looks like a
-"stable" private helper. Also corrected this pass, an internal inconsistency rather than pure
-staleness: the "Source:" line for Tool 2 (`agent_readiness.py`) still said `build_check_plan` was
-at line 698, even though the 07-27 paragraph two sections below it had already corrected that to
-761 — the live citation and the file's own provenance record had drifted apart. And the
-Benchmarks-section citation for `benchmark_binary_warnings`/`benchmark_claim_blockers` said
-`run_benchmarks.py:212-243`, which does not match either the actual current location (`:194-225`,
-confirmed unchanged since 2026-07-23) or make sense as a block start — `:212` is
-`benchmark_claim_blockers`'s own def line, after `benchmark_binary_warnings` at `:194`. Every
-other fact re-checked this pass (23 total agent-readiness checks, the 65-flag-token sweep, the
-banned-marketing-phrase list, the 7-path `RELEASE_DOCS_GOVERNANCE_PATHS` tuple, the
-`_ledger_physical_root`-style function names referenced elsewhere) is confirmed STILL ACCURATE —
-this was a pure line-number-and-one-typo pass, no other field semantics changed.
-
-**2026-08-13 re-derivation (v1.110.14 doctor rows, #1000) — the v1.110.14-tagged rows above were verified against the source this pass, and four of them needed correction.** Tree: `568065a` (`pyproject.toml` `version = "1.110.14"` at `:556`; `main.py` is 17949 lines here).
-(1) `installation_health` — the live row carried THREE wrong enum names (`foreign_tg_on_path`, `version_mismatch`, `stale_installation`) and omitted `unverifiable_version`; the real names, verified in `_doctor_installation_health` (`main.py:2712-2728`), are `foreign_launcher` / `unverifiable_version` / `launcher_version_mismatch` / `stale_install` / `unknown_pypi` / `ok` in that precedence order — fixed directly in the table (wrong current-state claim, not a receipt rewrite).
-(2) `shadow_launchers` — the live row described "launchers registered on PATH behind the primary one", which is not what the builder does: `_doctor_shadow_launchers` (`:2677-2695`) consolidates the FIRST-CANDIDATE entries of the three routes (`route_entries` `:3763-3794`), listed iff `foreign OR version_matches is False OR version_matches is None`, absent routes filtered first, deterministic `_ROUTE_ORDER` (`:2674`) — row rewritten.
-(3) The "public `tg doctor` telemetry bundle sends this to the health endpoint" claim has ZERO source backing in `src/` (grep `health.endpoint|telemetry` finds only unrelated opentelemetry/GPU-telemetry hits) — marked UNVERIFIED/NO-SOURCE in place rather than silently deleted.
-(4) `gpu.search_runtime_probe.status` was missing two statuses the probe itself sets: `failed` (timeout / spawn `OSError` / invalid-JSON stdout — `:3298`/`:3302`/`:3319`) and `unsupported` (exit 0 but not `NativeGpuBackend`, or sidecar — `:3335`); both added, and the taxonomy constants re-verified at `:3168-3179`. The two GPU-probe helper anchors moved again (`:2976`->`:3201`, `:2992`->`:3217`) — consistent with the "nothing inside `main.py` is a stable anchor" rule above; every other fact re-checked this pass (`TG_DOCTOR_OFFLINE` at `:492`, the `warning: installation_health=` renderer at `:3843-3845`, `_doctor_installed_behind_pypi` at `:2644`, `_doctor_route_version_matches` at `:2657`) is confirmed accurate. No other field semantics changed.
+Cite code by `grep -rn "^def <symbol>" src/tensor_grep/cli/`, never by line number; if a command
+below no longer matches, fix this skill in the same change.
 
 Re-verify if this skill feels stale:
 
@@ -513,10 +410,10 @@ Re-verify if this skill feels stale:
 grep -n '^version = ' pyproject.toml
 
 # doctor payload fields (re-check the table above against the real builder)
-grep -n 'search_acceleration_backend\|rust_binary_version_status\|launcher_kind' src/tensor_grep/cli/main.py
+grep -n 'search_acceleration_backend\|rust_binary_version_status\|launcher_kind' src/tensor_grep/cli/doctor_payload.py src/tensor_grep/cli/doctor_report.py
 
 # GPU doctor-probe failure taxonomy + native-frontdoor flavor fields
-grep -n 'native_error_kind\|_doctor_gpu_probe_failure_status\|native_frontdoor_flavor_mismatch_note\|_warn_unavailable_gpu_device_ids' src/tensor_grep/cli/main.py
+grep -n 'native_error_kind\|_doctor_gpu_probe_failure_status\|native_frontdoor_flavor_mismatch_note\|_warn_unavailable_gpu_device_ids' src/tensor_grep/cli/doctor_report.py src/tensor_grep/cli/main.py
 
 # agent_readiness check names / count (13 repo-local checks expected)
 grep -n 'name="' scripts/agent_readiness.py
@@ -536,7 +433,7 @@ Open uncertainties (do not treat as settled without re-checking):
 - `agent_readiness.py`'s doctor validator accepts a legacy `"native-standalone"` backend string
   that the current `_build_doctor_payload` never emits — unclear if this is intentional forward
   compatibility or simple drift; harmless either way (the traffic-light script also accepts it).
-  Re-check `main.py`'s `search_acceleration_backend` ternary if a 4th backend kind is ever added.
+  Re-check `doctor_payload.py`'s `search_acceleration_backend` ternary if a 4th backend kind is ever added.
   Also unconfirmed against `agent_readiness.py`: no schema link — the two lists (this skill's
   `KNOWN_BACKENDS` and the payload builder) are recorded from direct reads, not enforced by a
   shared constant, so a future rename can silently desync all three.

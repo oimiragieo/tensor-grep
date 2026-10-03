@@ -9,7 +9,7 @@ description: Use when stress-testing tensor-grep against a multi-project workspa
 
 ```bash
 # Prefer an explicit published pin when comparing skills to product:
-uvx --from tensor-grep==1.110.14 tg --version
+uvx --from tensor-grep==<CURRENT> tg --version   # pin the version you are comparing against
 # Bare `uvx --from tensor-grep tg` / a shadowed `C:\Users\...\bin\tg` can report a stale version.
 tg doctor --json ROOT
 tg devices

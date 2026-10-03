@@ -2,7 +2,7 @@
 
 The complete worked example behind `tensor-grep-demand-gate-measurement`. Source of truth:
 `docs/audits/2026-08-13-demand-gated-dispositions.md` W5B (`docs/audits/2026-08-13-demand-gated-dispositions.md:51`)
-and the DD-006 board row (`docs/TASK_BOARD.md:88`). Base: `origin/main` `a1c51ee` (v1.110.16).
+and the DD-006 board row (`docs/TASK_BOARD.md`, grep `DD-006`). Base: `origin/main` `a1c51ee` (v1.110.16).
 This wave wrote no product code; the probe is a scratch measurement harness whose OUTPUT is
 recorded, never committed under `src/`.
 

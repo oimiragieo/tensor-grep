@@ -18,8 +18,8 @@ The repo should be treated as a benchmark-governed, contract-heavy codebase. Do 
 
 The canonical prioritized/historical work ledger lives in **[docs/BACKLOG.md](docs/BACKLOG.md)**. GitHub
 (`gh pr list`) is the source of truth for PRs. The machine-parsed canonical status index in
-`docs/TASK_BOARD.md` is the live-state view once Task 2 creates it; until then, use the latest dated
-closed-world reconciliation audit referenced at the top of BACKLOG. **Subagents:** treat each live item's
+`docs/TASK_BOARD.md` is the live-state view.
+**Subagents:** treat each live item's
 description + files + status as your brief. **CEO status** must enumerate every live disposition—active,
 environment-blocked, nonfinancial decision-gated, financial/spend-gated, demand/research-gated, and
 mixed/terminal corrections—not merely SHIPPING or P0/P1 highlights.
@@ -29,8 +29,8 @@ cite `file:line`) → **Exa** recency + competitive research (you are trained on
 facts) → plan (superpowers skills) → thinktank/Fable review the plan → **Sonnet build, TDD** → verify in the
 REAL venv (`uv run --no-sync`; a worktree "tests pass" is a hypothesis, re-run in the main venv) →
 `ruff check` + `ruff format --preview` + `mypy` → codex/Fable review the PR → **PR → drain**
-(one-merge-per-publish, the push-race rule) → repeat until no issues. Isolate code agents with
-`isolation:'worktree'`. Match model to task (haiku scan / sonnet build / opus+fable review). Run the
+(burst-then-hold merging, the push-race rule) → repeat until no issues. Isolate code agents with
+`isolation:'worktree'`. Match model to task per the `model-router` skill. Run the
 common-sense gate before pending any question to the CEO. Keep docs (this file, `docs/BACKLOG.md`,
 `docs/SESSION_HANDOFF.md`, skills, CLAUDE.md) synchronized as work lands.
 
@@ -43,11 +43,11 @@ concrete failure observed this session.
   gate is a drop-everything hotfix that jumps the queue. Prevents "churning not completing" — generating
   faster than the ~40–66 min/publish drain empties (backlog stays constant-size = the smell).
 - **A2 — A self-firing drain-cron beats a long-lived background drain.** A short-lived per-fire cron that
-  merges ONE lowest-CLEAN PR (`gh pr merge --squash --delete-branch`, push-race-checked) is robust; a
+  merges the green PRs (`gh pr merge --squash --delete-branch`, push-race-checked) is robust; a
   long-lived `drain.sh &` background process kept *dying* during the long CI/publish waits (and an inner
   `&` in a `run_in_background` wrapper orphaned it). Each fire is short-lived, so nothing can be killed
-  mid-run. Push-race gate per fire: the latest `chore(release)` tag must be on PyPI AND `main` CI
-  `completed` before merging.
+  mid-run. Push-race gate per fire: if no release-bearing `main` run exists, merge the green PRs in one burst;
+  otherwise merge nothing until that run is `completed` AND its `chore(release)` tag is on PyPI.
 - **A3 -- Mandatory adversarial security gate before merge.** Every security PR -- touching `apply_policy`
   / `mcp_server` / `*_backend` / an index-or-session lock / auth / money / migration / native asset /
   installer / doctor-probe construction -- gets an Opus "try to BREAK it, cite `file:line`, default
@@ -56,8 +56,8 @@ concrete failure observed this session.
   installer / doctor-probe trigger was added after the v1.75.1-v1.75.3 GPU wave (#594-#596: WSL
   path-domain probe bridging, doctor probe failure taxonomy, calibrate/installer remediation) ran every PR
   through this same gate and it returned real `SHIP-WITH-NIT` / `SHIP` verdicts off 8/8 clean probes rather
-  than a rubber stamp. `codex` is the nominal second vendor but its WSL path is unreliable -> Opus is the
-  reliable substitute. Verdict shape: `SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)`.
+  than a rubber stamp.
+  Verdict shape: `SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)`.
 - **A4 — Resume a dead agent from its transcript.** A background subagent that dies with "terminated
   early due to an API error: 500" is REVIVED by `SendMessage` to its `agentId` (partial work intact) — do
   NOT re-dispatch fresh (loses the work). Happened 3× this session; all recovered.
@@ -66,7 +66,8 @@ concrete failure observed this session.
   build was killed twice before its kill-note proved it was mid-work). Trust the completion notification;
   diagnose a suspected hang from the kill-note's last line, not an mtime guess.
 - **A6 — Anti-hang test protocol.** Wrap every test run in a shell `timeout` (`timeout 120 uv run
-  --no-sync … pytest … --timeout=15`), and write the fix *before* the red-phase adversarial test — a
+  --no-sync … pytest …`; `pytest-timeout` is not installed, so a `--timeout=N` flag aborts collection —
+  see A141), and write the fix *before* the red-phase adversarial test — a
   ReDoS/deadlock red-test executed against un-fixed code IS the hang it is testing. Distinguish
   slow-but-protected from hung by exit code (124 timeout / 137 SIGKILL), not elapsed time.
 - **A7 — Harvest a worktree agent's work, then re-verify.** A worktree agent's "tests pass" is a
@@ -109,6 +110,7 @@ concrete failure observed this session.
   as long as the newest `main` run goes fully green. Receipts: v1.91.0 and v1.93.0 (the latter combining
   #703-706: run `29890576036` rejected-only, `29890612228` published). Distinguish deliberately from the
   ACCIDENTAL v1.17.23/#318/#319 push-race (an unintended two-writer collision, not a planned drain).
+  This is the burst half of the merge rule in "Push Discipline"; A142 is the hold half.
 - **A14 — Event-driven release watching + a cron floor (C-event).** Prefer a background `gh run watch
   <run-id> --exit-status` (chained off its own ~10-min expiry notification) over blind long-interval polling
   when waiting on a release; pair it with a cron floor (e.g. :02/:32-style offsets) that embeds the FULL
@@ -219,8 +221,8 @@ concrete failure observed this session.
   independently refuses anything unmerged — the two checks agreed 61/0), 2 kept. **`git branch
   --merged` under-reports after squash-merges, and a CLOSED PR is NOT a merged PR** — one of the two
   survivors had exactly that shape and a naive sweep would have destroyed it.
-- **A31 — Order the drain by RELEASE impact, not by PR number (2026-07-26).** Only `fix:`/`feat:`
-  trigger semantic-release; `docs:`/`test:`/`bench:`/`chore:` complete without publishing. A
+- **A31 — Order the drain by RELEASE impact, not by PR number (2026-07-26).** Only `fix:`/`perf:`/`feat:`
+  trigger semantic-release; `refactor:`/`docs:`/`test:`/`bench:`/`chore:` complete without publishing. A
   non-releasing merge therefore creates no publish to race — its gate is just "the main run
   completed", ~6 min, versus ~30–60 min for a release cycle. Landing the non-releasing PRs first took
   the queue 12 → 7 in about an hour that would otherwise have bought two merges. The one-per-publish
@@ -298,7 +300,8 @@ concrete failure observed this session.
 - **A45 — Durable CEO status is a closed-world snapshot, not a hand-picked top five (2026-08-02).**
   Separate active/buildable, environment-blocked, CEO/financial-gated, demand/research-gated, and
   terminal corrections. Give every live item one stable ID/owner/trigger and assert that the canonical
-  set has no unowned extras or omissions. Update `MEMORY.md` and the handoff in the same change.
+  set has no unowned extras or omissions. Update `docs/SESSION_HANDOFF.md` in the same change; `MEMORY.md` is untracked (A158), so refresh it
+  separately.
 - **A46 — Hash the canonical artifact, and state the hash method (2026-08-02).** Two clean Windows
   worktrees held clean-filter-equivalent plan content but different raw mixed-line-ending bytes. A bare
   “SHA-256” can therefore disagree without a semantic change. For plan gates, hash the designated
@@ -349,7 +352,7 @@ concrete failure observed this session.
   tuple and cross-checks Python JUnit plus Rust node census. Self-attested JSON is not anti-replay proof.
 - **A58 — Retry review by narrowing, not by weakening (2026-08-03).** A broad Cursor/council prompt can
   time out while exact-paragraph reviews converge quickly. Retry the disputed paragraph and invariant,
-  preserve the original severity, and send the resulting work to Sol. A no-verdict seat is recorded as
+  preserve the original severity, and send the resulting work to the independent adversarial gate (Sol seat). A no-verdict seat is recorded as
   failed and replaced; it is neither approval nor an infinite blocker.
 - **A59 — Discover deferred capabilities before declaring a required tool absent (2026-08-03).** Exa
   was available through the deferred tool catalog after appearing absent from the initial surface.
@@ -410,8 +413,9 @@ concrete failure observed this session.
   `rank_fallback_reason`. Enterprise CUJ dogfood uses prepare/search/evidence/review-bundle/ledger
   unless dense extras are installed first.
 - **A74 — Quota-blocked Sol/Fable SHIP is provisional (2026-08-06).** An orchestrator substitute
-  verdict is not an independent vendor seat. Re-dispatch Sol/Fable when quota returns for
-  security/load-bearing claims; do not treat the substitute as durable clearance.
+  verdict is not an independent vendor seat. Re-dispatch the independent seat (Sol seat; Opus for
+  security-adversarial passes) when quota returns for security/load-bearing claims; do not treat the
+  substitute as durable clearance.
 - **A75 — Premise-check the ready-to-build queue before dispatch (2026-08-06, #935).** Six of six
   “ready” items were already shipped. A plan against a fixed defect has perfectly resolving citations;
   reproducing the defect (or proving absence on `origin/main`) is Step 0.
@@ -460,57 +464,8 @@ concrete failure observed this session.
   `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
   the Rust-std half is toolchain-version-dependent. Probe receipt:
   docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
-  *SUPERSEDED (2026-08-13, A107 probe receipt): the sentence above claims junctions are NOT
-  symlinks. On the PINNED Rust 1.96.0 toolchain a real `mklink /J` junction reports
-  `is_symlink: true` / `is_symlink_dir: true` / `is_symlink_file: false` via
-  `symlink_metadata` (bounded std-only probe, positive+negative controls) and
-  `OpenOptions::open` follows it. The Python `os.path.islink()` half of the claim stays true;
-  the Rust-std half is toolchain-version-dependent. Probe receipt:
-  docs/design/2026-08-13-replace-in-place-symlink-threat-model.md section 5.*
 - **A89 — Real-artifact test arms beat fake-backed ones in parity oracles (2026-08-09, #987).** M16's three-arm composite-count parity test passed with SPAN FAKES while production read the WRONG ast-grep JSON fields (`range.start.index` vs the real 0.42.1 `range.byteOffset.start/end`), so the "parity" was pinned against the bug. Only adding a REAL `ast-grep --json` subprocess arm surfaced the divergence. Whenever a parity/oracle test can drive the real producer cheaply, it must — a fake-backed arm can certify a lie as three arms of agreement. (Extends the Verification-Oracle family: the oracle's INPUT was fake, so the agreement was between the test and its own fiction.)
-- **A90 — Fail closed on unknown subcommands; never fall through to search (2026-08-09, #993 / world-class H1).** The Python bootstrap door (`bootstrap.py:374-383` `_normalize_search_invocation`) returns every unknown-first-arg as search args, so `tg edit-ready --help` prints `Usage: tg search` exit 0 — an agent concludes a nonexistent command exists. Same family as the "registration-completeness" and "scope-honesty" laws, but about the CLI DISPATCH surface: an unknown top-level command must exit non-zero with `error.code=unknown_command` and `nearest[]`, on BOTH front doors (Python `KNOWN_COMMANDS` + native `normalize_top_level_search_args`/`is_known_python_command`), never be swallowed into search. A feature that isn't on the CLI must not be faked by a search fallthrough.
+- **A90 — Fail closed on unknown subcommands; never fall through to search (2026-08-09, #993 / world-class H1).** The Python bootstrap door (`bootstrap.py` `_normalize_search_invocation`) returns every unknown-first-arg as search args, so `tg edit-ready --help` prints `Usage: tg search` exit 0 — an agent concludes a nonexistent command exists. Same family as the "registration-completeness" and "scope-honesty" laws, but about the CLI DISPATCH surface: an unknown top-level command must exit non-zero with `error.code=unknown_command` and `nearest[]`, on BOTH front doors (Python `KNOWN_COMMANDS` + native `normalize_top_level_search_args`/`is_known_python_command`), never be swallowed into search. A feature that isn't on the CLI must not be faked by a search fallthrough.
 - **A91 — "No core-Rust logic" never means "no native touch" (2026-08-09, #993).** The public surface is the managed native `tg.exe`; a Python/sidecar feature that misses the native front-door enrollment (`Commands::X` passthrough + `PUBLIC_TOP_LEVEL_COMMANDS` parity test) is invisible through the real binary and its first dogfood fails with the very unknown-command bug it fixes. Every "Python-first" slice must state its both-front-door + 4-site-registration enrollment in the same slice, or it is honest only as "no core-rust LOGIC," never as "no native touch."
 - **A92 — Executed evidence must be escrowed to a key the verified principal does NOT hold (2026-08-09, #993 / S1).** "validation ran green" certified by the editing agent is self-attestation (Oracle Form 8 — the split-oracle/self-report family). A verify-edit PASS requires escrowed subprocess evidence — captured stdout-hash + exit code + duration, signed by a key pinned via `TG_EVIDENCE_TRUSTED_KEYS` that the editing principal cannot use (CI-held). Absent that, the verdict is UNVERIFIED with a reason, never PASS. Also: verification without a tree fingerprint certifies drift — a ticket must carry `base_sha` + working-tree fingerprint and verify fails closed on drift, or a rebase/sibling edit can certify a state nobody prepared (TOCTOU/drift = the push-race class inside a ticket flow).
 - **A93 — Self-dogfood is self-consistency, not demand, and roadmap premises need ground-truth before the council (2026-08-09, #993).** 22/22 PASS on tg dogfooding tg proves tg works for itself; the 5 self-triaged "bad oracle" rows need EXTERNAL-customer grounding (S1-S7 demand). And two of eight "banked" roadmap claims were false until a ground-truth seat checked origin/main (`prepare_service` fn name; `session prepare/resume` are actually UNBUILT). Any plan entering the design council must first premise-check its "already shipped"/"partially banked" claims against origin/main (A75), or the council certifies fiction.
@@ -702,7 +657,7 @@ concrete failure observed this session.
   consecutive main runs, all cancelled while queued. **This is a SECOND, independent cause of
   "tagged but not published", and it was initially misattributed entirely to PYPI-SIZE-CAP.** Both
   were real; clearing the cap alone would not have fixed publishing.
-  **Protocol change (supersedes "one merge per tick"):** batch every green PR into one burst, then
+  **Burst half of the merge rule (A142 is the hold half):** batch every green PR into one burst, then
   STOP pushing and let a single run publish them all — the release is cumulative from the last tag,
   so nothing is lost by merging more before it starts. Afterwards, wait for
   `gh run list --branch main --workflow=ci.yml --limit 1` to read **`completed`**, not merely to
@@ -771,8 +726,8 @@ concrete failure observed this session.
   class generally.
 - **A142 — CORRECTS A133. "Batch the merges, then stop" must stop the moment a run is IN
   PROGRESS, not merely before the next one (2026-08-21).** A133 says a QUEUED/PENDING run is
-  unprotected, so batching merges is free. That is true of pending runs and **false of a running
-  one**. Merging while `Semantic Release` is pushing its `chore(release)` commit makes that push
+  unprotected, so batching merges is free. That holds only for the burst that creates the run; it is **false of a running
+  one**, and false of any later merge once the burst is over. Merging while `Semantic Release` is pushing its `chore(release)` commit makes that push
   fail:
 
   ```
@@ -786,9 +741,12 @@ concrete failure observed this session.
   not happen. **I wrote A133 an hour before doing this**, and read "batching is free" as covering a
   case it explicitly does not.
 
-  **The operative rule:** check the run's STATE before every merge, not just whether one exists.
-  `queued` / `pending` -> batching is safe (the run is replaced, cumulatively). `in_progress` ->
-  **do not merge**; wait for `completed`. One command settles it:
+  **The operative rule:** a release-bearing run's window is the whole run from creation to the
+  release push, not its current state — a `queued` / `pending` / `jobs=0` run still pushes last (a
+  later merge made on the theory that "the release job has not started, so there is no push to
+  reject" rejected that release's push). Merges that CREATE the run (your own burst) are fine; once
+  the burst is over, or when any release-bearing run already exists, merge nothing until it is
+  `completed` and its `chore(release)` commit and PyPI publish have landed. One command finds it:
   `gh run list --branch main --workflow=ci.yml --limit 5 --json status,headSha` and look for
   `in_progress`, remembering A139 (`--limit 1` hides the executing run).
 
@@ -993,13 +951,16 @@ concrete failure observed this session.
 release_docs_current_tag: v1.123.11
 
 
-**2026-08-15 CEO/backlog update (dumbed-down packet).** Public product remains **`v1.110.16`**.
+The current tagged release state is `v1.123.11`, and the latest complete public PyPI/release-asset distribution is also `v1.123.11` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.123.11` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
+
+- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.123.11 tg --version` reports `tensor-grep 1.123.11`
+- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.123.11>
+
+**2026-08-15 CEO/backlog update (historical).** Public product was then **`v1.110.16`**.
 Closed-world: **29 rows / 17 unfinished** = 0 READY, 0 IN_FLIGHT, 6 BLOCKED, 5 CEO_GATED,
 6 DEMAND_GATED (8 SHIPPED + 4 RETIRED). DD-006 design packet merged (#1015 / `0710219`); demand
 SATISFIED earlier; **product build not started**. Fable waived for that docs packet only (A117).
 New laws **A117–A122**. Detail: `docs/audits/2026-08-15-ceo-backlog-update.md`.
-
-As of 2026-08-22, the current tagged release state is `v1.123.11`, and the latest complete public PyPI/release-asset distribution is also `v1.123.11` — verified PER-ARTIFACT, 4/4: the `macosx_11_0_arm64`, `manylinux_2_39_x86_64` and `win_amd64` wheels plus the sdist. HISTORICAL, still true of those tags: `v1.111.2` is TAGGED AND NOT PUBLISHED (ZERO files on PyPI) and `v1.111.1` carries only 2 of its 4 artifacts (no `win_amd64` wheel, no sdist), so installs on those lines resolved inconsistently per platform. Both were PYPI-SIZE-CAP casualties; the cap was cleared on 2026-08-21 (713 → 287 releases, 10.734 → 4.747 GB, ~280 releases of headroom), which is why `v1.111.3` could publish at all. See `docs/BACKLOG.md`. Per A124, verify a release by its expected filename set, never by the version appearing — a partial publish leaves 'latest' resolving on some platforms and silently stale on others. The stable installer, release-native asset publication, managed-native `tg upgrade` refresh path, stale tensor-grep-owned `tg.com` bridge refresh after upgrade, native-front-door CLI parity fixes, Windows `.cmd` quoted-pattern launcher fix, native-first Windows PATH ordering, top-level validation-command contract, local default `classify`, classify provider provenance, fixed multi-pattern native CPU search, GPU scale benchmark correctness gates, launcher-route observability, benchmark launcher attribution, scoped GPU device probing, benchmark launcher warnings, opt-in `tg agent` Actionable Context Capsule, mixed-language capsule confidence/validation alignment, GPU benchmark recommendation hygiene, edit JSON/rollback safety, explicit language/file-name agent ranking, Windows validation-command quoting, docs/version governance, `$file` / `{file}` validation placeholder substitution, native CUDA correctness gates, ambiguous capsule alternative-target surfacing, root help-menu diagnostics, foreign launcher diagnostics, benchmark promotion-gate taxonomy, agent workflow benchmark governance, capsule alternative-confidence capping, generic provider-token `secrets-basic` regex rules, release-docs synchronization, release wheel Cargo prefetch retries, native GPU/search accuracy hardening, explicit Windows Python subprocess launcher repair, agent capsule hardcase routing, Windows subprocess bridge ranking hardening, and long-lived agent-loop memory/cache caps are released through `v1.123.11` GitHub assets and PyPI. Follow-up work should focus on context/session latency, GPU production viability, token economy, call-site evidence, AST parity roadmap, classify provider/cache UX, and keeping docs synchronized with release proof.
 
 
 **2026-08-06 PM CEO/backlog update (dumbed-down packet).** Public product is still **`v1.110.0`**.
@@ -1207,8 +1168,6 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Previous `v1.13.15` proof runs `26386327552`, `26386327168`, `26386976717`, and `26386978124` remain retained as historical release proof
 - Main CI run `25951521056`: passed the pre-release matrix, semantic-release, PyPI wheel/sdist validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - Main CodeQL run `25951813292`: passed on the `v1.12.14` release line
-- PyPI pinned install: `uvx --refresh-package tensor-grep --from tensor-grep==1.123.11 tg --version` reports `tensor-grep 1.123.11`
-- GitHub release: <https://github.com/oimiragieo/tensor-grep/releases/tag/v1.123.11>
 - Main CI run `25866871838`: passed the pre-release matrix, semantic-release, PyPI artifact validation, `publish-github-release-assets`, `publish-pypi`, and `publish-success-gate`
 - GitHub release assets: `tg-windows-amd64-cpu.exe`, `tg-linux-amd64-cpu`, `tg-macos-amd64-cpu`, checksums, winget manifest, Homebrew formula, and publish instructions are uploaded and verified on `v1.12.14`
 - Public `v1.12.14` dogfood: release CI, assets, PyPI, and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.14 tg --version` verified `tensor-grep 1.12.14`; the release includes `21e5437 fix: collect capsule call-site evidence` while preserving `8a73f8d fix: harden agent bridge ranking`, `b601366 fix: harden agent output budget hygiene`, `2aebac6 fix: harden ast cli contract hygiene (#140)`, `bbc08e4 fix: harden rg flag contract aliases (#139)`, and the accepted v1.12.8-v1.12.13 dogfood contract fixes. Public managed GPU is not promotion-ready.
@@ -1228,7 +1187,7 @@ stays HOLD, #169). Meta-lesson: verify every "cheap win" against the live code b
 - Session handoff: `docs/SESSION_HANDOFF.md`
 - Current follow-up work is tracked in `docs/SESSION_HANDOFF.md`: keep release-native assets verified, preserve the managed installer fallback when assets are absent, keep sidecar and native front-door versions aligned after `tg upgrade`, keep current-process vs fresh-shell launcher routing visible in `tg doctor`, preserve benchmark launcher command-kind attribution and warnings, harden the opt-in `tg agent` context capsule/token-economy surface without changing raw search contracts, keep mixed-language capsule confidence/validation alignment honest, and keep GPU/provider paths experimental until correctness, speed, and UX are proven.
 
-The latest accepted release line fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, explicit language/file-name ranking for Python intent, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, explicit broad generated-root scan refusal unless callers bound the search or opt in, managed native front-door refresh after `tg upgrade`, native-front-door parity for `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`, classify fallback before expensive provider/model setup when unavailable, GPU benchmark no-match correctness handling, Windows `.cmd` quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])`, Windows installer User PATH ordering that puts the managed native front-door directory ahead of compatibility shim directories, top-level `validation_commands` on both `context-render` and `edit-plan` JSON, deterministic local default `classify` unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into CyBERT/Triton, GPU benchmark defaults/correctness checks for 1GB and 5GB scale rows, explicit GPU device probing that does not initialize or warn about unselected GPUs, benchmark script warnings when timings include shim or interpreter overhead, stale in-tree native binary benchmark refusal by default, parseable edit JSON and rollback on validation failure, quoted Windows validation commands with spaces, `$file` / `{file}` validation placeholder substitution, per-edited-file validation for directory rewrites, and docs-governance tests aligned with current release metadata.
+Earlier release lines (pre-v1.17) fixed the Windows `--files-with-matches` rg-backed argument-vector failure, raw rg-style no-path `--files-with-matches` output, malformed pinned Windows installer extras, root-based path-list output, `-0/--null` path-list/count parsing, `tg ast-info --json`, argv-safe PowerShell shims, UTF-8 path-list output, inaccessible PATH-entry handling, managed shim installation, stale Python package cleanup when an old `Python*\Scripts\tg.exe` shadows managed shims, argv-safe `.cmd` bridging, Git Bash / WSL no-extension shims, WSL-aware `/mnt/c/...` paths, LF-only generated bash shims, one-line default version output with verbose details behind `--verbose`, public `Usage: tg` help text, explicit `doctor` diagnostics for stale in-tree native binaries, implicit stale-native skipping for dev searches, public `--format rg` help text for exact ripgrep-style output, context-render/MCP trust invariants, validation command provenance, sorted rg parity edges for files-with-matches, files-without-match, replacement output, and PCRE2 output, multiline rg parity forwarding, exact-symbol context ranking over camel/snake bridge heuristics, explicit language/file-name ranking for Python intent, session stale-file filtering and no-runner validation consistency, embedded checkpoint fallback for MCP rewrite apply when standalone native `tg` is unavailable, inline scan rule severity/message preservation, uppercase `API_KEY` secret scanning, explicit broad generated-root scan refusal unless callers bound the search or opt in, managed native front-door refresh after `tg upgrade`, native-front-door parity for `tg search --files`, `tg search --multiline` / `-U`, `tg search --null`, `tg run -r`, and `tg classify --format json`, classify fallback before expensive provider/model setup when unavailable, GPU benchmark no-match correctness handling, Windows `.cmd` quoted multi-word no-match patterns from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])`, Windows installer User PATH ordering that puts the managed native front-door directory ahead of compatibility shim directories, top-level `validation_commands` on both `context-render` and `edit-plan` JSON, deterministic local default `classify` unless `TENSOR_GREP_CLASSIFY_PROVIDER=cybert` opts into CyBERT/Triton, GPU benchmark defaults/correctness checks for 1GB and 5GB scale rows, explicit GPU device probing that does not initialize or warn about unselected GPUs, benchmark script warnings when timings include shim or interpreter overhead, stale in-tree native binary benchmark refusal by default, parseable edit JSON and rollback on validation failure, quoted Windows validation commands with spaces, `$file` / `{file}` validation placeholder substitution, per-edited-file validation for directory rewrites, and docs-governance tests aligned with current release metadata.
 
 Known current weak spots:
 
@@ -1245,7 +1204,7 @@ Known current weak spots:
 - Windows launcher/path-list hardening should force UTF-8 for managed shims and Python path-list output; still scope broad file-list commands to avoid generated-tree volume.
 - If `cmd /c tg --version`, `pwsh -NoProfile -Command "tg --version"`, or Python `subprocess.run(["tg", "--version"])` resolves a tensor-grep-owned or self-identifying tensor-grep `Python*\Scripts\tg.exe` ahead of the managed native front door, treat it as installer regression evidence. The Windows installer and `tg repair-launcher` should remove verified-owned launchers or back up self-identifying orphaned tensor-grep launchers instead of only warning about them. If that command reports another product's version, treat it as a foreign PATH-shadow blocker: report remediation and keep readiness failing, but do not delete or overwrite the unrelated launcher unless the operator explicitly runs `tg repair-launcher --allow-foreign-rename`, which backs it up first. Python subprocess resolution is a separate Windows contract because `CreateProcess` can choose a foreign same-directory `tg.exe` even when shells prefer a tensor-grep `tg.com` bridge through `PATHEXT`.
 - Normal PowerShell should invoke `tg` or `tg.ps1`. Directly invoking `C:\Users\oimir\bin\tg.cmd` from PowerShell with an unescaped metacharacter such as `|` is still a `cmd.exe` parser limitation; quote the argument for `cmd.exe` or use the PowerShell shim. The quoted multi-word no-match pattern case from `cmd.exe`, direct `tg.cmd`, and Python `subprocess.run([...])` is a public launcher contract and must not split into a shorter false-positive search plus bogus paths.
-- Implicit native-binary resolution must ignore stale in-tree binaries such as `rust_core/target/debug/tg.exe` and `rust_core/target/release/tg.exe`. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `C:/Users/oimir/.cargo/bin/cargo.exe build --manifest-path rust_core/Cargo.toml --release` or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
+- Implicit native-binary resolution must ignore stale in-tree binaries such as `rust_core/target/debug/tg.exe` and `rust_core/target/release/tg.exe`. `uv run tg doctor --json` should report them under `skipped_native_tg_binaries`, set `rust_binary_version_status = stale-skipped`, and keep `search_acceleration_backend = rust-core-extension` when the embedded extension is available. Rebuild with `cargo build --manifest-path rust_core/Cargo.toml --release` (CPU-heavy on the shared box — see A12; prefer CI) or pin `TG_NATIVE_TG_BINARY` to opt in to a specific standalone binary.
 - Raw unsorted output ordering is semantic parity, not golden stdout parity. Use `--sort path` when deterministic path ordering matters and `--format rg` when automation needs exact ripgrep-style text formatting. Sorted files-with-matches, files-without-match, and replacement output are rg parity regression surfaces in the validated compatibility set.
 - `tg search --json` is tensor-grep aggregate JSON, not ripgrep JSON Lines. `tg search --format rg --json` is the explicit ripgrep JSON Lines compatibility route and deliberately emits raw rg events without the tensor-grep envelope. `tg search --ndjson` is tensor-grep's flattened streaming row schema, not the rg event schema. Do not describe default `--json` or `--ndjson` as rg JSON compatibility.
 - `edit-plan`, MCP `tg_edit_plan`, and session edit-plan should keep the agent command-surface budget flags aligned with `agent` / `context-render` (`--max-files`, `--max-sources`, `--max-tokens`, and related schema fields) while preserving the core contract that edit-plan emits no rendered source text.
@@ -1266,7 +1225,7 @@ Known current weak spots:
 - LSP provider availability is not proof of working semantic navigation. Treat `tg lsp-setup` / `tg doctor --with-lsp` availability as install evidence only; provider-backed navigation must report `health_status`, `health_check`, `lsp_proof`, `lsp_evidence_status`, and `not_lsp_proof_reason` when it falls back to native evidence. A navigation row counts as LSP proof only when it carries `lsp_provider_response = true` from a completed provider request; `provenance = "lsp-*"` alone is not enough. Keep `lsp` / `hybrid` optional and experimental until real provider-backed requests are latency-bounded, reliable, and measurably better on accepted hardcase artifacts.
 - `tg callers` and `tg blast-radius` JSON carry an additive `result_incomplete` field (v1.17.0, #281). `result_incomplete = true` means the scan hit an output or scan cap and the call-site list is TRUNCATED — do not treat a truncated zero-caller result as confirmed dead code. A clean scan that resolves zero callers emits a separate "resolved zero-caller" caveat, and even then is not proof of dead code: the call graph cannot see set/list/decorator/dispatch-table registration sites. Cross-check with `tg scan` or pattern grep before removing a zero-caller symbol.
 - `tg callers` is Python-first (`docs/harness_api.md`): call-site resolution matches Python AST call nodes most reliably and can under-match or run for minutes on large TypeScript/JS repos. Dogfood receipt (v1.19.3): on a TS-heavy repo, `tg refs` returned 14 reference sites for a symbol where `tg callers` returned 1. Prefer `tg refs` for TS/JS symbol navigation; still cross-check with `tg scan`/grep per the registration-completeness blind-spot note above.
-- Running `tg search PATTERN` with no path (or `tg search --glob X -l` without a scoped path) against this repo hangs ~600 s then errors: tg's own index dirs (`.tensor-grep/`, `_tg_refs/`, `.tg_semantic_index/`) and the vendored `benchmarks/external_repos/` tree are not auto-excluded and hit the default `TG_RG_TIMEOUT_SECONDS=600`. Scoped search runs in ~0.4 s. Workaround: always scope `tg search` to an explicit path (e.g. `tg search PATTERN src/`). Planned fix: own-dir excludes + fail-fast timeout + trigram-hybrid index.
+- An unscoped `tg search PATTERN` (no path) on a large tree is fast-refused once the implicit walk exceeds `IMPLICIT_SEARCH_WALK_FILE_CEILING` (`src/tensor_grep/io/scan_limits.py`, #702). Always scope `tg search` to an explicit path (e.g. `tg search PATTERN src/`).
 - BM25/IDF-ranked surfaces (`tg search --rank`, agent-capsule, local semantic search) are sensitive to corpus changes: adding code that introduces or repeats query-adjacent terms lowers those terms' corpus-wide IDF, which can flip a ranking result and silently degrade a safety behavior. This IDF blast-radius is invisible to the call graph (no caller/callee edge exists for a ranking shift). Harden tie/marker detection to be robust to IDF shifts rather than relaxing a failing test — relaxing masks a real degradation. Tracked as capsule-hardening Task #4 (ledger B3).
 
 ## Operating Rules
@@ -1295,7 +1254,7 @@ Adding a top-level `tg COMMAND` requires four registration points or the new com
 
 Adding a search flag (e.g. `tg search --myflag`) requires two front doors or the flag leaks to ripgrep and causes an `rg: unrecognized flag` crash at runtime:
 
-1. `SEARCH_PYTHON_PASSTHROUGH_FLAGS` in `rust_core/src/main.rs` — the native binary's allowlist.
+1. `SEARCH_PYTHON_PASSTHROUGH_FLAGS` in `rust_core/src/search_flag_registry.rs` (imported by `rust_core/src/main.rs`) — the native binary's allowlist.
 2. `bootstrap._TG_ONLY_SEARCH_FLAGS` in `src/tensor_grep/cli/bootstrap.py` — the Python bootstrap's allowlist (the Python front door runs before the Typer app and forwards plain searches to rg).
 
 Missing either slot lets the flag reach ripgrep for users who install the published binary while your CliRunner tests pass cleanly — exactly how the `--rank` crash shipped undetected.
@@ -1464,7 +1423,7 @@ thing it verifies were BROKEN?** If the answer is "the same", it is not verifica
 
 **Form 1 — normalize-both-sides (masks defects; the dangerous direction).** A comparator applies the same
 lossy transform to both arms, so a real divergence cancels out and reads as parity. Task #262: the
-rg-parity oracles were CRLF- and encoding-blind. A surviving instance in `tests/helpers/rg_parity.py:560`
+rg-parity oracles were CRLF- and encoding-blind. A surviving instance in `tests/helpers/rg_parity.py`
 (`_normalize_line` folds `\\` → `/` across the WHOLE line, so a separator divergence inside MATCHED TEXT
 is invisible) is a *consciously accepted* limit — and is now PROVEN lossy rather than argued, pinned by a
 characterization test with a discriminability control (PR #748). If you close that limit, that test starts
@@ -1496,15 +1455,14 @@ Verify the diagnosis, not only the finding.
 **Corollary — isolation-level evidence is not outcome-level evidence, and the rule binds PROSE.** In #747
 the orchestrator measured a bootstrap helper IN ISOLATION (`workspace_root_guard=False`) and wrote it up as
 a user-visible guard bypass. The gate ran the control arm through real `main_entry()`: the refusal fires
-IDENTICALLY in both arms — the defect was LATENT, masked by full-CLI routing. A confidently-wrong comment is
+IDENTICALLY in both arms — the defect was LATENT, masked by full-CLI routing. A confidently-wrong comment is worse than none. Any claim of the form "X causes user-visible Y" needs the control arm,
+not just the mechanism.
+
 **And never PUBLISH an untested cause.** A PR body told other contributors "a `pip install -e .[dev]`
 here left 5 of 11 declared grammars absent", framed as a warning -- the command was never run. The real
 cause was a stale interpreter carrying tensor-grep 1.83.0, ~18 releases behind, predating those
 grammars' entry into the extras. An explanation that merely FITS the evidence is a hypothesis;
 shipping it as a finding, especially one addressed to other people, is fabrication.
-
-worse than none. Any claim of the form "X causes user-visible Y" needs the control arm, not just the
-mechanism.
 
 **Corollary — when you cannot observe RED, say so.** CPU-SAFE forbids compiling, so a Rust fix often cannot
 watch its own new test fail pre-fix. The correct move is a STRUCTURAL argument from pinned source (e.g.
@@ -1796,7 +1754,7 @@ own tooling.
 
 ### Cite the SYMBOL, not the line — and never re-stamp
 
-`src/tensor_grep/cli/repo_map.py` is over 19,000 lines and grows every release. Its seam citations
+`src/tensor_grep/cli/repo_map.py` is one of the repo's giant files and its line numbers shift between releases. Its seam citations
 in `tensor-grep-change-control` were adrift by **283 to 515 lines** — all five of them:
 
 ```
@@ -1948,7 +1906,8 @@ pass -- and killed the hypothesis.
 
 `rust_core` is the Python **extension module**. The dispatch gate is
 `resolve_native_tg_binary()`, which looks for the compiled **`tg` binary**. Two different
-artifacts, adjacent names, and the hypothesis was right the whole time:
+artifacts, adjacent names, and the hypothesis was right the whole time (the `main.py` line numbers
+below are historical, as of 2026-07-31, and no longer resolve -- re-derive with grep):
 
 ```
 main.py:7521   _warn_unavailable_gpu_device_ids(...)      <- the warning CI showed, fires here
@@ -2348,7 +2307,7 @@ proves nothing.
 Generalise: this is the documentation twin of the Backend Fail-Closed Contract. Whenever prose or code
 decides *"is it safe to trust this signal?"*, enumerate the SAFE cases and reject everything else. And
 when you widen what an existing flag MEANS, grep its CONSUMERS — a comment stating the old assumption is
-the tell that a downstream reader is about to be wrong (receipt: `mcp_server.py:4794` ORs
+the tell that a downstream reader is about to be wrong (receipt: `tg_search` in `mcp_server.py` ORs
 `scanner.scan_truncated` into a `max_repo_files`-shaped payload under a comment explaining that the flag
 means a *budget cap*; #276 slice 1 made it also mean "unreadable path", which no budget increase fixes).
 
@@ -2519,12 +2478,12 @@ The same discipline applies beyond backends: any router/pipeline that can silent
 
 `tg`'s AST surfaces (`tg run`, `tg scan`, the MCP `tg_ast_search` tool) can be served by two backends with two different, incompatible query DSLs: `AstGrepWrapperBackend` (`backends/ast_wrapper_backend.py`) shells out to the `ast-grep` binary and understands the full ast-grep pattern language, including metavariables (`$NAME`, `$$$ARGS`), selectors, and strictness options; `AstBackend` (`backends/ast_backend.py`) parses in-process via tree-sitter and understands only a narrow native query shape (a bare identifier, or an s-expression starting with `(`) — it has **no concept of ast-grep metavariables at all**. Given `$NAME` it cannot reproduce the wrapper's capture semantics.
 
-This divergence is already fail-closed, at three verified sites (re-verified against `origin/main` `1135d30`; grep the symbol, not the line number, since these shift release to release — a regression test locks each one in, see below):
+This divergence is already fail-closed at four sites (grep the symbol, never a line number — these shift release to release; a regression test locks each one in, see below):
 
-1. `Pipeline._supports_native_ast_pattern` (`core/pipeline.py:52-60`) — the shared classifier. Only a bare identifier (`re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pattern)`) or a pattern starting with `(` counts as native-shaped; anything containing `$` (or any other non-identifier character, or more than one token) returns `False`.
-2. `Pipeline.__init__`'s AST branch (`core/pipeline.py:230-233`) — when `_supports_native_ast_pattern` is `False` and the ast-grep wrapper is unavailable, it raises `ConfigurationError` via `_raise_explicit_ast_configuration_error` instead of silently falling through to native tree-sitter.
-3. `_select_ast_backend_for_pattern` (`cli/ast_workflows.py:928-1004`, the `tg run`/`tg scan` selector) — mirrors the same classification (`pattern_kind == "wrapper"`) and raises the identical `ConfigurationError` at line 990 when the wrapper is required but absent.
-4. `tg_ast_search` (`cli/mcp_server.py:4630-4653`) wraps the `Pipeline(...)` construction in `try/except ConfigurationError` and converts it to the structured `{"error": {"code": "unavailable", ...}}` JSON shape instead of letting a raw exception escape as an unhandled FastMCP `ToolError`. Note: this call site never threads `query_pattern` into the `SearchConfig` it builds, so `_supports_native_ast_pattern` is unconditionally `False` there — every `tg_ast_search` pattern (metavariable-shaped or not) requires the wrapper at this construction step; native `AstBackend` is structurally unreachable through the MCP tool regardless of the caller's pattern.
+1. `Pipeline._supports_native_ast_pattern` (`core/pipeline.py`) — the shared classifier. Only a bare identifier (`re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", pattern)`) or a pattern starting with `(` counts as native-shaped; anything containing `$` (or any other non-identifier character, or more than one token) returns `False`.
+2. `Pipeline.__init__`'s AST branch (`core/pipeline.py`) — when `_supports_native_ast_pattern` is `False` and the ast-grep wrapper is unavailable, it raises `ConfigurationError` via `_raise_explicit_ast_configuration_error` instead of silently falling through to native tree-sitter.
+3. `_select_ast_backend_for_pattern` (`cli/ast_workflows.py`, with a second copy in `cli/ast_scan.py`; the `tg run`/`tg scan` selector) — mirrors the same classification (`pattern_kind == "wrapper"`) and raises the identical `ConfigurationError` when the wrapper is required but absent.
+4. `tg_ast_search` (`cli/mcp_server.py`) wraps the `Pipeline(...)` construction in `try/except ConfigurationError` and converts it to the structured `{"error": {"code": "unavailable", ...}}` JSON shape instead of letting a raw exception escape as an unhandled FastMCP `ToolError`. Note: this call site never threads `query_pattern` into the `SearchConfig` it builds, so `_supports_native_ast_pattern` is unconditionally `False` there — every `tg_ast_search` pattern (metavariable-shaped or not) requires the wrapper at this construction step; native `AstBackend` is structurally unreachable through the MCP tool regardless of the caller's pattern.
 
 Regression coverage locking this in: `tests/unit/test_pipeline.py` (`test_supports_native_ast_pattern_should_reject_ast_grep_metavariable_syntax`, `test_should_reject_ast_grep_metavariable_pattern_when_wrapper_is_unavailable`) and `tests/unit/test_ast_workflows.py` (`test_select_ast_backend_should_reject_ast_grep_metavariable_pattern_when_wrapper_is_unavailable`) each assert `ConfigurationError` for a genuine `$NAME`/`$$$ARGS` pattern with the wrapper unavailable — even with the native backend AVAILABLE, to prove its presence never lets a metavariable pattern silently mis-route. `tests/unit/test_mcp_server_search.py` (`test_tg_ast_search_fails_closed_for_metavariable_pattern_when_wrapper_unavailable`) drives the real `Pipeline` (not a mock) through `tg_ast_search` to prove the same refusal surfaces as the structured JSON error at the MCP boundary.
 
@@ -2552,8 +2511,8 @@ wins ship" rule:
   search; see `docs/gpu_crossover.md`), and the public promotion gate
   (`.github/workflows/public-gpu-proof.yml`, dispatch-only) has not been run to a `public_gpu_proof =
   true` / `public_managed_promotion_ready = true` verdict -- the exact requirements are pinned in
-  [docs/CONTRACTS.md](docs/CONTRACTS.md) (the "Public managed GPU promotion" bullets, currently around
-  lines 80-82). Do not flip the variable to promote GPU as a default route until that gate passes.
+  [docs/CONTRACTS.md](docs/CONTRACTS.md) (the "Public managed GPU promotion"
+  bullet). Do not flip the variable to promote GPU as a default route until that gate passes.
   **2026-07-21 re-adjudication (B-GPU):** re-tested across 10MB-5GB corpora -- still **no crossover at
   any scale** (historical worst ~30-35x slower at 5GB; even the best-case 100-pattern fixed-string lane
   loses to fair-baseline `rg -F -e ...`), and the shipped `gpu_text_search_positions` kernel is a
@@ -2626,15 +2585,17 @@ Three kinds of skills apply to this repo; load the relevant one before non-trivi
 - **Working ON `tg` (build + release discipline)** — reusable global skills at `~/.claude/skills/`:
   - `dogfood-the-shipped-artifact` — after a release, install the published wheel in clean Docker and run the REAL `tg` binary across every feature; never trust CliRunner (it bypasses the bootstrap front door). Harness: `scripts/dogfood/`.
   - `verify-plan-against-code` — before building an AI/subagent-drafted plan, verify every seam claim (file paths, the command/flag registration sites above, routing) against the real code with `file:line` citations; bake corrections in first.
-  - `supply-chain-hardening` — before writing any download / extract / install / self-upgrade / toolchain-bootstrap code, apply the 5 checks (zip-slip guard, byte-capped/time-bound downloads, fail-closed checksum incl. detached helpers, `--locked` pinned CI tools, fail-closed unverified toolchains). Shipped patterns: #283/#284/#285/#287.
+  - `supply-chain-hardening` — before writing any download / extract / install / self-upgrade / toolchain-bootstrap code, apply its checks (the skill and "CI / Release Rules" (a)–(h) below carry the current list). Shipped patterns: #283/#284/#285/#287.
   - `worktree-fanout-verification-gate` — before integrating agent branches from a worktree fan-out: remove worktrees before checkout (`git worktree remove --force <path>` — else checkout is blocked and tests silently run main's code); re-run pytest/ruff/mypy in the real venv (worktrees have no `.venv`; agents' "tests pass" claims are hypotheses until then); run `ruff format --preview` on ALL agent-touched files (not only hand-fixed ones); and treat scoped-local-green as a hypothesis, not a merge signal.
   - `anti-hang-test-protocol` — hang-class test hygiene: wrap every test run in a shell timeout, and write the fix BEFORE the red-phase adversarial test (a ReDoS/deadlock red-test executed against un-fixed code IS the hang it is testing).
   - `instrumented-build-gate` — measure real demand before building a speculative feature.
   - `agent-liveness-probe` — before killing, restarting, or `TaskStop`-ing a background subagent that looks stalled, probe liveness via `SendMessage` rather than trusting output-file mtime/size (see A9 above).
   - `profile-guided-byte-identical-optimization` — find a lever on the shipped wheel + prove output
     byte-identical; the warm/cold measurement trap (see "Optimization Discipline" above).
+  - `detect-the-false-green` — before trusting a passing suite, a zero-match grep, a clean gate run, or a count that confirms your prediction.
+  - `author-a-probe-that-cannot-lie` — before writing any script whose number you will act on (positive control, blind-vs-busy empties, arm interleaving, shared-box pollution).
   (the global-skill half of this list is manually maintained — no CI gate — diff it by hand against `CLAUDE.md`'s copy.)
-- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **37 skills**): the onboarding handbook so a new engineer or a Sonnet-class session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
+- **Carrying the project forward -- the in-repo skill library** (`.claude/skills/tensor-grep-*` + `code-search-and-retrieval-reference`, **37 skills**): the onboarding handbook so a new engineer or an autonomous agent session can debug, extend, validate, and advance `tg` without the original authors. Each auto-loads by its `description`; load the one matching your task. Index by intent -- this exact bucket list is kept byte-identical with `CLAUDE.md`'s skill index; `tests/unit/test_skill_index_sync.py` fails if either doc drifts from the real `.claude/skills/` folder set, and `tests/unit/test_skill_library_drift.py` additionally pins every `file:line` citation (must resolve to a git-tracked file, line in range) and the stated `**N skills**` count against the folders that sentence names. **Neither gate can tell you a skill is CORRECT** — they prove a citation resolves, not that the cited line still contains the claimed symbol. Anchors drift 14-500 lines while resolving perfectly; run `/tg-skill-audit` (`.claude/workflows/tg-skill-audit.js`) for that half, and never fix drift by re-stamping a new line number (see "Cite the SYMBOL, not the line" above):
   - **Change safely:** `tensor-grep-change-control` (the gates), `tensor-grep-debugging-playbook`, `tensor-grep-failure-archaeology` (don't re-fight settled battles), `tensor-grep-validation-and-qa`, `tensor-grep-hermetic-hostile-tests` (env-independent gated tests + hostile fixtures that must BITE), `tensor-grep-cross-platform-path-confinement` (junction vs symlink vs drive-absolute confinement, Windows+POSIX), `tensor-grep-release-drift-check` (post-release sweep: version stamps, derived counts, known-state facts vs the current tag, SUPERSEDED append-only fix discipline), `tensor-grep-local-ci-parity-harness` (run the shared-box-banned lanes in a CPU-capped container; the measured container-vs-runner divergences; act vs a hand-written harness).
   - **Understand:** `tensor-grep-architecture-contract`, `code-search-and-retrieval-reference` (domain theory), `tensor-grep-config-and-flags`, `tensor-grep-argv-normalization-and-shadowing` (front-door rewrites, `--` hygiene, shape-monotonic routing), `tensor-grep-index-fingerprint-freshness` (index reuse/staleness identity, M17).
   - **Operate:** `tensor-grep-build-and-env`, `tensor-grep-run-and-operate`, `tensor-grep-diagnostics-and-tooling`, `tensor-grep-docs-and-writing`, `tensor-grep-release-and-positioning`, `tensor-grep-workspace-dogfood` (multi-repo stress dogfood), `tensor-grep-enterprise-agent` (enterprise readiness gaps + agent hard-stops), `tensor-grep-worldclass-roadmap` (the edit-control-plane roadmap: S1 verify-edit escrow, S2-S7 contracts, H1), `tensor-grep-prepare` (one-call edit readiness), `tensor-grep-ledger` (advisory multi-agent claim/finding-reuse), `tensor-grep-find-and-route` (whole-repo hybrid find + route-test), `tensor-grep-multi-project-search` (scoped cross-repo search), `tensor-grep-enterprise-review-bundle` (review-bundle create/verify), `tensor-grep-gpu` (experimental GPU probes).
@@ -2659,41 +2620,27 @@ When public dogfood identifies multiple independent fixes, preserve the process 
 6. ORCHESTRATOR VERIFICATION GATE — after every agent branch returns, the orchestrator must verify before integration: (a) remove each worktree (`git worktree remove --force <path>`) before checking out the branch in the main repo — an un-removed worktree blocks checkout and causes a main-repo test run to silently execute main's code, not the branch's; (b) re-run pytest/ruff/mypy in the real venv, since worktrees have no `.venv` and agents' "tests pass" / "N tests green" claims are hypotheses until re-run there; (c) run `ruff format --preview` on EVERY file in `git diff main --name-only`, not only hand-fixed files — agents couldn't run ruff, so their files come back un-`--preview`-formatted; (d) treat scoped-local-green as a hypothesis, not a merge signal — lint/format run repo-wide, one unrelated failing test reddens the whole test-python job, and corpus side-effects are outside scoped test scope. See the global skill `worktree-fanout-verification-gate`.
 7. Integrate the verified slices onto one branch, resolving any overlaps.
 8. ADVERSARIAL AUDIT (3 lenses + chairman) — run a citation-enforced adversarial audit of the integrated diff; this is a mandatory stage distinct from the pre-build planning council (the post-build audit caught a HIGH CUDA-fork hazard that 203 passing tests missed). A finding with no `file:line` citation is discarded. Re-audit → fix-wave → re-audit until ZERO must-fix findings remain. The endpoint is a DRAFT PR; never auto-merge.
-9. Ask Gemini for a bounded read-only review of each PR diff before merge; treat its findings as hypotheses until checked against local files and tests.
+9. Get a bounded, read-only independent review of each PR diff before merge from a different model family than the builder (e.g. Gemini or codex); treat its findings as hypotheses until checked against local files and tests. A no-verdict seat is a failed seat, not approval.
 10. Push each branch, wait for PR CI, squash-merge intentionally, then watch main CI. Release-bearing work is not complete until semantic-release, assets, PyPI, and public release dogfood pass.
 
-Maintain a per-slice evidence ledger in `docs/SESSION_HANDOFF.md`, `SKILL.md`, and this file when operating practice changes. Each slice entry must record PR order, slice scope, Exa research anchors, thinktank or planning consensus, subagent ownership, Gemini review result, validation commands, PR CI, and main CI. Optional or triggered items may be marked `not applicable` only with a rationale. For release-bearing slices, additionally require semantic-release, release assets, PyPI, and public release dogfood evidence.
-
-Current dogfood slice ledger:
-
-- PR order: 13; scope: close the `v1.13.20` dogfood daemon-upgrade and LSP-diagnostic follow-up by snapshotting pre-upgrade session daemon state, restarting the daemon after direct or scheduled Windows upgrade handoff loss, stripping inherited Python runtime variables from managed LSP provider launch environments, and suppressing stale Pyright SRE mismatch stderr tails once a current provider request proves healthy while preserving failed-proof stderr; Exa anchors: CPython/uv SRE mismatch reports connecting the error to mismatched Python runtime/stdlib environment; thinktank/planning consensus: read-only subagent reviews required using the pre-upgrade daemon root and preserving failed-proof stderr; subagent ownership: Popper and Copernicus read-only plan review, implementation local; Claude Opus review: PASS with low findings, addressed by preserving non-SRE suppressed stderr as `provider_recent_stderr` and carrying daemon restart roots into the scheduled Windows helper; validation: targeted upgrade/LSP tests, focused LSP suites, ruff, preview format, mypy, and diff whitespace passed locally; PR CI: PR #233 passed; main CI: semantic-release published `v1.13.21` at `1b62da7`, main CI run `26450640497` passed, CodeQL/dynamic run `26450639894` passed, and public `uvx --refresh-package tensor-grep --from tensor-grep==1.13.21 tg --version` proof passed.
-- PR order: 12; scope: harden the `v1.13.19` built-in dogfood timeout gap by giving `tg dogfood` a wrapper timeout, passing an incremental child `--output` to `scripts/agent_readiness.py`, preserving partial running reports, and cleaning up the launched child process tree by PID only; Exa anchors: Python subprocess timeout semantics and psutil process-tree termination guidance; thinktank/planning consensus: not applicable because this is an internal harness lifecycle fix, with Zeno read-only subagent review confirming the timeout and descendant-cleanup root cause; subagent ownership: Zeno read-only call-path review, implementation local; Claude Opus review: no blocker/high findings (`OPUS_REVIEW: PASS`); validation: targeted dogfood/readiness/docs tests, ruff, preview format, mypy, and diff whitespace passed locally; PR CI/main CI: PR #231 passed, squash merge produced `6525853`, semantic-release published `v1.13.20` at `c41d475`, main CI run `26437847778` passed, CodeQL/dynamic run `26437847528` passed, and public `uvx --refresh-package tensor-grep --from tensor-grep==1.13.20 tg --version` proof passed.
-- PR order: 11; scope: harden the `v1.13.18` daemon-cache dogfood gap by letting capped or truncated implicit session snapshots bypass added-file stale detection for daemon-routed top-level `context-render` / `edit-plan` cache writes while preserving explicit added-file refresh for complete sessions; Exa anchors: not applicable because this is internal daemon/session cache behavior; thinktank/planning consensus: systematic-debugging trace plus read-only subagent review isolated the stale-detection failure before `response_cache.put()` and required an added-file refresh regression test; subagent ownership: Wegener read-only plan/diff review, implementation local; Claude Opus review: no blocking findings, optional capped-modification stale-refresh test added; validation: targeted docs/session tests pass (`47 passed`), `uv run --no-sync ruff check .`, `uv run --no-sync ruff format --check --preview . --exclude .tmp --exclude .tensor-grep --exclude src/.tensor-grep`, `uv run --no-sync mypy src/tensor_grep`, and `git diff --check` pass locally; full pytest/Rust matrices and benchmark suites intentionally deferred to PR/main CI unless the user approves heavy desktop validation; PR CI/main CI: PR #230 passed, squash merge produced `0c9155f`, semantic-release published `v1.13.19` at `b9197a6`, main CI run `26431129535` passed, CodeQL/dynamic run `26431129155` passed, and public `uvx --refresh-package tensor-grep --from tensor-grep==1.13.19 tg --version` proof passed.
-- PR order: 10; scope: harden `v1.13.17` dogfood regressions by making non-JSON rg-shaped explicit no-ignore searches prefer ripgrep passthrough when `rg` is available while preserving the native fallback when it is not, preserving tensor-grep aggregate JSON semantics, resolving top-level `context-render` / `edit-plan` daemon requests to absolute directory roots so repeated relative invocations can populate and hit the daemon response cache, and documenting desktop memory-safety operating rules for local validation; Exa anchors: official ripgrep guide/manpage behavior for `--no-ignore` and `-u` disabling ignore filtering; thinktank/planning consensus: read-only subagent review agreed the no-ignore fast path should stay in the rg-shaped non-JSON lane and the daemon cache fix should normalize request paths at the top-level caller boundary; subagent ownership: McClintock read-only plan/diff review, implementation local; Claude Opus review: accepted findings for direct JSON/NDJSON passthrough tests, no-ignore-vcs coverage, guarded daemon path normalization, daemon-start assertions, and absolute cleanup; validation: targeted daemon path/cache tests, targeted Rust routing test, ruff, preview format check, cargo fmt check, and diff whitespace check passed locally; full pytest/Rust matrices and benchmark suites intentionally deferred to PR/main CI unless the user approves heavy desktop validation; PR CI/main CI: PR #229 passed, squash merge produced `77a73b2`, semantic-release published `v1.13.18` at `4a0dad0`, main CI run `26425383595` passed, CodeQL/dynamic run `26425914836` passed, and public `uvx --refresh-package tensor-grep --from tensor-grep==1.13.18 tg --version` proof passed.
-- PR order: 7; scope: close concrete `v1.13.11` dogfood regressions by deduplicating `defs --provider hybrid` native/LSP definition rows while preserving LSP proof, bounding checkpoint discovery cache priming at the user-home boundary so Windows standalone `checkpoint create` does not write `C:\Users\.tensor-grep`, separating MCP protocol/CLI version fields in capabilities, sharpening the PowerShell `Start-Process`/`tg.ps1` MCP stdio warning, suppressing stale LSP stderr tails once a provider request proves healthy, routing `tg audit --help` to audit help instead of search, and broadening `secrets-basic` fake API key detection; Exa anchors: official MCP lifecycle/version negotiation docs and LSP 3.17 `Location`/range semantics for merge identity; thinktank/planning consensus: compressed read-only review through subagents because the separate thinktank spawn hit the agent thread limit; Aquinas recommended explicit MCP protocol versus CLI fields, Cicero recommended post-merge LSP/native dedupe with LSP proof preservation and quiet successful provider status, and Ohm recommended home-bounded checkpoint discovery plus explicit native-`tg.exe` MCP stdio warning; subagent ownership: Aquinas (MCP), Cicero (hybrid/LSP), Ohm (checkpoint/doctor/audit); Gemini review: unavailable because `gemini-3-flash-preview --approval-mode plan` stalled after startup/tool noise and was killed without a report; validation: targeted checkpoint, semantic-provider, LSP-provider, trust/audit, MCP, doctor, scan, docs, and integration tests pass locally; `uv run pytest -q` passes (`2451 passed, 16 skipped`); `uv run ruff check .`; `uv run ruff format --check --preview .`; `uv run mypy src/tensor_grep`; full Rust crate tests; cargo fmt check; `uv run python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --json` passes (`13 passed, 0 failed`); direct Windows checkpoint-create smoke, direct agent-studio hybrid-defs smoke, audit-help smoke, MCP-capabilities smoke, public-command contract smoke, and `git diff --check` pass locally; PR CI/main CI: pending.
-- PR order: 1; scope: accept and forward remaining rg config-override flags (`--pcre2-unicode`, `--ignore`, `--messages`, `--require-git`, `--no-hidden`) in native/Python search and add installed-public sweep coverage; Exa anchors: ripgrep manpage option inversion/config behavior plus ripgrep guide automatic-filtering defaults; thinktank/planning consensus: local planning review, external council not applicable for this parser/forwarding contract slice; subagent ownership: not applicable; Gemini review: unavailable because Gemini CLI 0.42.0 hung on a one-token read-only model probe and was killed; validation: Rust crate tests, full pytest, lint, format, mypy, and diff whitespace checks pass locally; PR CI/main CI: pending.
-- PR order: 1; scope: make `run_agent_success_harness.py` refuse stale in-tree native `tg` binaries by default and mark `--allow-claim-unsafe-launcher` runs as exploratory; Exa anchors: not applicable beyond existing benchmark-governance policy; thinktank/planning consensus: local planning review aligned with `run_benchmarks.py` stale-binary refusal; subagent ownership: not applicable; Gemini review: unavailable because Gemini CLI 0.42.0 hung on a one-token read-only model probe and was killed; validation: Rust crate tests, full pytest, lint, format, mypy, and diff whitespace checks pass locally; PR CI/main CI: pending.
-- PR order: 1; scope: accept and forward the 25 remaining ripgrep inverse/config-override flags found by `parser_sweep_1_12_31_codex.json`, including `--no-auto-hybrid-regex`, `--no-pcre2-unicode`, `--no-text`, `--no-binary`, `--no-follow`, `--ignore-dot`, `--ignore-vcs`, `--no-json`, and `--no-stats`, and batch those 25 installed-public sweep probes into one command to avoid adding dogfood latency; Exa anchors: current ripgrep guide/manpage behavior for config override flags plus local `rg 15.1.0` acceptance sweep; thinktank/planning consensus: local planning review only, external council not applicable because this is parser/forwarding contract work and does not alter GPU/LSP/product positioning; subagent ownership: not applicable, no subagents requested for this turn; Gemini review: unavailable because `gemini-3.1-pro-preview` returned an invalid empty stream and `gemini-2.5-flash` stalled after startup; validation: targeted parser/backend/readiness tests, full `test_public_native_cli_parity`, direct built-native acceptance of all 25 flags, full Python/Rust suites, lint, format, mypy, diff whitespace, and fast readiness pass locally; PR CI/main CI: pending.
-- PR order: 1; scope: add `world_class_readiness.status = "not_claimed"` plus `agent_target_selection_metrics` to `tg dogfood` reports so a PASS cannot be mistaken for full rg replacement, full ast-grep replacement, public GPU promotion, production LSP proof, or enterprise target-selection accuracy; Exa anchors: ripgrep JSON/config-override docs, ast-grep CLI docs, Cursor/Sourcegraph agentic context docs, and NVIDIA CUDA profiling/transfer guidance; thinktank/planning consensus: Gemini plan-mode read-only review rejected a separate `next_pr_slices` planning array as source-of-truth duplication and recommended adding the missing target-selection surface to the existing limitations contract; subagent ownership: not applicable, no Codex subagents requested for this turn; Gemini review: completed for planning, final diff-review retry unavailable because `gemini-3.1-pro-preview` returned an invalid empty stream and `gemini-2.5-flash` stalled after startup; validation: targeted dogfood/docs tests, full Python/Rust suites, lint, format, mypy, diff whitespace, and fast readiness pass locally; PR CI/main CI: pending.
-- PR order: 2; scope: make GPU promotion workload-scoped in benchmark artifacts and public dogfood/docs, including `promotion_scope = "declared_workload_class_only"`, fair many-pattern baseline `rg -F -e ... -e ...`, and candidate classes for `many_fixed_patterns_single_dispatch` / `resident_repeated_query`; Exa anchors: CUDA-grep final/checkpoint reports on transfer amortization and many-regex workloads, NVIDIA CUDA Graphs and pinned-memory async transfer docs, and ripgrep `-F`/`-e` multiple-pattern docs; thinktank/planning consensus: read-only GPU proof and release-governance seats both recommended an artifact/schema hardening PR rather than CUDA kernel work; subagent ownership: Jason reviewed GPU performance/proof, Lovelace reviewed release/governance; Gemini review: unavailable because `gemini-3.1-pro-preview` returned an invalid empty stream and `gemini-2.5-flash` stalled after startup; validation: targeted GPU benchmark contract, dogfood, public docs, benchmark-script, and readiness tests; `uv run ruff check .`; `uv run ruff format --check --preview .`; `uv run mypy src/tensor_grep`; `cargo fmt --manifest-path rust_core/Cargo.toml --check`; `cargo test --manifest-path rust_core/Cargo.toml`; `uv run pytest -q` (`2248 passed, 16 skipped`); `uv run python scripts/agent_readiness.py --no-shell-probes --no-wsl-probe --json` (`12 passed, 0 failed`); and `git diff --check` pass locally; PR CI/main CI: pending.
-- PR order: 3; scope: add public managed GPU proof plumbing with `tg-native-metadata.json`, Python upgrade/install script metadata writers, `--public-managed-proof`, and artifact fields `public_managed_promotion_ready` / `public_gpu_proof`; Exa anchors: NVIDIA Blackwell compatibility guidance, cudarc 0.19 CUDA 13/dynamic-loading docs, and GitHub Actions GPU runner docs; thinktank/planning consensus: Gemini plan-mode review rejected path-shape-only proof and recommended explicit managed front-door provenance; subagent ownership: attempted read-only Codex explorer, but the agent thread limit was reached, so implementation stayed local; Gemini review: planning review completed with file-read limitation, final diff review not run yet; validation: targeted runtime/installer/GPU benchmark/docs tests (`91 passed`), `uv run pytest -q` (`2261 passed, 16 skipped`), `uv run ruff check .`, `uv run ruff format --check --preview .`, `uv run mypy src/tensor_grep`, and `git diff --check` pass locally; PR CI/main CI: pending.
-- PR order: 4; scope: add a dispatch-only public managed GPU proof workflow and strengthen the native GPU proof gate so public promotion requires fixed GPU runner labels, managed NVIDIA asset verification, direct `rg --json` 1GB/5GB correctness, `NativeGpuBackend`, `sidecar_used = false`, and speed wins over both `rg` and `tg_cpu`; Exa anchors: GitHub Actions self-hosted/GPU runner docs, NVIDIA Blackwell/CUDA compatibility docs, CUDA compute-capability docs, and ripgrep JSON output semantics; thinktank/planning consensus: Mill/Mencius/Descartes agreed to separate public proof workflow/governance from local CUDA implementation evidence and to reject weak `promotion_ready` summaries; subagent ownership: Mill reviewed workflow scope, Mencius reviewed release/security workflow requirements, Descartes reviewed benchmark proof semantics; Gemini review: unavailable; `gemini-3.1-pro-preview` stalled after startup with no report and was stopped; validation: targeted GPU benchmark contract, benchmark-script, release-workflow validator, and release asset validator tests pass locally; PR CI/main CI: pending.
-- PR order: 1; scope: close the `v1.12.33` rg column-override edge by accepting and forwarding `--column --no-column` through both `tg search --format rg ...` and root-level `tg --format rg ...`, add installed-native sweep coverage, improve stale repo-local `uv run tg` warmup diagnostics, and pin the `ripgrep binary resolution` capsule hardcase; Exa anchors: ripgrep inverse/config-override docs where last flag wins, ripgrep JSON/output docs for preserving rg-vs-tg schema boundaries, Sourcegraph/Cody context docs for agent target-selection evidence, LSP initialize-timeout evidence for keeping LSP experimental, and CUDA-grep transfer-amortization notes for keeping GPU unpromoted; thinktank/planning consensus: two read-only seats recommended this narrow contract/readiness/capsule regression slice and explicitly rejected raw-speed, GPU, LSP, or ast-grep claim changes; subagent ownership: thinktank seats Lagrange and Hegel reviewed the plan, implementation stayed local due tight parser/readiness coupling; Gemini review: attempted with gemini CLI 0.42.0 / gemini-2.5-flash in read-only plan mode; unavailable because the model returned an invalid empty stream / malformed tool call; validation: targeted rg contract/parity tests, readiness stale-entrypoint and flag-sweep tests, agent hardcase test, Rust parser unit test, Rust public-native parity test, full Rust crate tests, full pytest, lint, format, mypy, fast readiness, and diff whitespace passed locally; PR CI/main CI: PR #163 passed, squash merge produced `c0cb613`, main CI run `26094452260` passed semantic-release, GitHub release assets, PyPI publish, and `publish-success-gate`; release/public proof: `v1.12.34` tag/release assets exist and `uvx --refresh-package tensor-grep --from tensor-grep==1.12.34 tg --version` reports `tensor-grep 1.12.34`.
+Maintain a per-slice evidence ledger in each slice's PR description (`CHANGELOG.md` and GitHub release notes carry the release record; the inline ledger this file used to hold drifted out of date and was retired). Each slice entry must record PR order, slice scope, Exa research anchors, thinktank or planning consensus, subagent ownership, independent review result (Gemini or another model family), validation commands, PR CI, and main CI. Optional or triggered items may be marked `not applicable` only with a rationale. For release-bearing slices, additionally require semantic-release, release assets, PyPI, and public release dogfood evidence.
 
 ## Required Local Validation
 
-Run these before push for normal code changes:
+Run these before push for normal code changes. Locally, run the targeted suites for the areas you touched plus ruff, mypy and the ratchets; the full `pytest -q` runs in CI or in the CPU-capped `scripts/ci-local` container, never as a local pre-push step on this shared box (A12):
 
 ```powershell
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q <the tests/unit files for the areas you touched>
+uv run python scripts/file_size_budget.py --report
+uv run python scripts/bare_call_ratchet.py --report
 ```
 
 CI runs `ruff format --check --preview .`. Running only `uv run ruff check .` is not enough to prove formatter parity, and running `ruff format` WITHOUT `--preview` actively REVERTS preview-style formatting on disk — a "clean" bare `ruff format` will undo CI-mandated style and red the next `ruff format --check --preview` run even when local lint passes. Always pass `--preview` to `ruff format` locally; never pass it to `ruff check`. The trailing `.` (whole repo) is load-bearing too: under `--preview`, ruff formats Python code fences INSIDE Markdown, so a scoped run (`ruff format --check --preview src/tensor_grep tests`) passes locally yet MISSES an unformatted `docs/**/*.md` snippet — which reds CI's release-gating `static-analysis` job and blocked v1.67.0. Always run the whole-repo `.` form; never a `src`/`tests` subset.
 
-`uv run pytest -q` can take substantially longer than 70-90 seconds on this Windows machine when the full JS/TS and e2e surface is hot; use a timeout of at least 120 seconds for narrow suites and a much larger timeout for the full suite when running it through automation.
+A full `uv run pytest -q` can take substantially longer than 70-90 seconds on this Windows machine when the full JS/TS and e2e surface is hot; use a timeout of at least 120 seconds for narrow suites, and give the full suite a much larger timeout in CI or the `scripts/ci-local` container.
 
 **`tests/conftest.py`'s `sys.path.insert` OUTRANKS `PYTHONPATH` — a `PYTHONPATH`-only baseline swap
 gives a FALSE red-green (2026-07-24).** The standing stale-venv discipline ("pin `PYTHONPATH` to the
@@ -2929,7 +2876,7 @@ CI is not just a test runner. It enforces:
 - artifact/version parity
 
 Any new download / extract / install / self-upgrade helper must apply the v1.17.2–v1.17.5 supply-chain patterns (see the `supply-chain-hardening` skill): (a) zip-slip guard — validate every member path against the resolved dest before `extractall` (reuse the production `_safe_extract_zip`); (b) time-bound + byte-capped downloads — `urlopen(timeout=...)` / socket timeout + a byte cap (256 MiB for native assets); (c) checksum-gated fail-closed installs — embed the expected SHA from `CHECKSUMS.txt` and verify before `os.replace`, INCLUDING in the detached Windows self-upgrade helpers; (d) `--locked` + exact version pins for CI tools (e.g. `cargo-audit==0.22.2 --locked`, `cargo-deny --locked`) — an unpinned `cargo install` can pull a breaking upstream release mid-CI.
-(e) uv's `.ps1` installer LACKS binary checksum verification (uv issue #13074) while the `.sh` self-verifies (uv >=0.11.0, pinned 0.11.25); Windows fix = download the pinned uv RELEASE BINARY + verify a COMMITTED dual-arch (x86_64 + aarch64) SHA-256 fail-closed before use (implemented in `scripts/install.ps1` + a new `scripts/uv_checksums.json`, landing with PR #302 — not yet on `main`); discipline: ALWAYS download + `Get-FileHash` to CONFIRM a committed SHA — never trust an agent's "fetched from the sidecar" value.
+(e) uv's `.ps1` installer LACKS binary checksum verification (uv issue #13074) while the `.sh` self-verifies (uv >=0.11.0, pinned 0.11.25); Windows fix = download the pinned uv RELEASE BINARY + verify a COMMITTED dual-arch (x86_64 + aarch64) SHA-256 fail-closed before use (implemented in `scripts/install.ps1` + `scripts/uv_checksums.json`); discipline: ALWAYS download + `Get-FileHash` to CONFIRM a committed SHA — never trust an agent's "fetched from the sidecar" value.
 (f) ACCEPTED BOOTSTRAP TRUST BOUNDARY (documented, not a gap): the toolchain bootstrappers are trusted-over-HTTPS + version-pinned, NOT checksum-gated like the release artifacts WE download — uv's `.sh` self-verifies its binary (uv >=0.11.0, pinned 0.11.25), and rustup is fetched via `curl https://sh.rustup.rs | sh` in the semantic-release `build_command` (pyproject.toml) then pinned with `rustup default 1.96.0` (rustup self-verifies the toolchain). This is a deliberately different posture from (a)-(e), which checksum-gate artifacts WE fetch/extract. De-piping rustup to a pinned-binary + committed-checksum download is a tracked follow-up — it touches the release `build_command`, so it is ATTENDED (do not change it autonomously).
 (g) **Runtime-dependency CVE response (#632 / v1.78.1).** Unlike (a)–(f) (code WE write), a disclosed CVE
 in a THIRD-PARTY runtime dependency is caught by the `Dependency & License Audit` workflow's strict-on-
@@ -3118,23 +3065,16 @@ Do not push from a dirty worktree if `origin/main` moved and the local tree has 
 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
-Merge one release-bearing PR at a time and wait for main CI + semantic-release to finish before merging the next. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the prior release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
+**The merge rule (one rule, two halves):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the in-flight release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
 
-**READ the type, do not assume it (2026-07-27).** The push-race bites a merge that lands *while a
-RELEASE job is pushing* — so the discriminator is whether one is in flight, and that is a fact you
-can check rather than a risk you have to sit out. Open the newest main run and look at
-`release-intent`: **`skipped` means no release will be cut for that commit**, so there is no push
-to reject. On that evidence `test:`-titled #817 and `docs:`-titled #820 were merged back-to-back
-(the earlier run's cancellation by the later push is benign — see the `cancelled != failure` note),
-while `fix:`-titled #821 was held for the full one-per-publish cycle. Batch the non-releasing,
-serialize the releasing; `gh run view <id> --json jobs` is the whole test.
-**SUPERSEDED in part by A33 (2026-07-26):** the `release-intent` discriminator above is only
-valid for deciding what a PR-triggered run will do. On a MAIN push run `release-intent` is
-ALWAYS skipped (it is a PR-only title validator), so its skip state there proves nothing about
-whether the `Semantic Release` job will publish; on main pushes decide by the commit-title type
-(`fix:`/`feat:`/`perf:` release; `docs:`/`test:`/`chore:`/`ci:`/`build:` do not; `refactor:`
-passes the title gate but does NOT publish under the default angular parser). The dated receipts
-in this paragraph stand; the general rule yields to A33 where they conflict.
+**Decide whether a release is in flight by the commit-title type on main, not by `release-intent`
+(2026-07-27, corrected by A33).** The push-race bites a merge that lands *while a RELEASE job is
+pushing*, and whether one is in flight is checkable. `release-intent` is a PR-only title validator
+and is always skipped on main pushes, so its state there proves nothing. On main,
+`fix:`/`feat:`/`perf:` commits release; `docs:`/`test:`/`chore:`/`ci:`/`build:`/`bench:` do not, and
+`refactor:` passes the title gate but does not publish under the default angular parser. Non-releasing
+PRs join a burst when no release-bearing run exists and wait like everything else while one does;
+`gh run view <id> --json jobs` shows whether the `Semantic Release` job is running.
 
 ### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
 
@@ -3184,14 +3124,15 @@ rebuilt at each one). Only the merge itself is push-race-gated; the build is not
 
 AI-generated PRs must use conventional titles so CI can infer semantic-release intent.
 
-Use this schema:
+Use this schema (title gate: `scripts/validate_pr_title_semver.py::_RELEASE_INTENTS`; publisher: `[tool.semantic_release]` in `pyproject.toml`, default angular parser):
 
 - `feat: ...` => minor release
 - `fix: ...` or `perf: ...` => patch release
 - `feat!: ...` or `fix!: ...` => major release
-- `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` => no release
+- `refactor: ...` => accepted by the title gate as patch intent, but does NOT publish
+- `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...`, `bench: ...` => no release
 
-Release-bearing PRs must use `Squash and merge` so the validated PR title becomes the commit subject on `main`.
+Release-bearing PRs use `Squash and merge`. Semantic-release parses the commit subject on `main`: GitHub uses the PR title only for multi-commit PRs, so on a single-commit PR fix the commit subject (or add a commit) — retitling alone is a no-op.
 
 - **Scope a PR's DIFF to what its TITLE promises.** The title becomes the changelog headline and a
   reviewer reads it as the contract for what is inside. When correct, reversible, unrelated work
@@ -3207,7 +3148,7 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
 
 - **`uv run` in a bare worktree creates an empty `.venv` (A116, 2026-08-14).** Run worktree tests from the MAIN checkout's venv targeting worktree paths; delete any accidentally-created worktree `.venv` immediately.
 - **`git commit -m "..."` with backticks runs command substitution.** A message containing `` `...` `` (e.g. a fenced identifier) is interpreted by the shell and mangles the commit. Use `git commit -F <file>` or a single-quoted `<<'EOF'` heredoc for any message with backticks, `$`, or `!`.
-- **cargo/rustc are off `PATH` here — and a "hanging" Rust build is almost always a false alarm.** Use `C:/Users/oimir/.cargo/bin/cargo.exe` (or prepend `~/.cargo/bin` to `PATH`). What looks like a hang is slow LTO that *completes*: `maturin develop` is ~15 s, a `--release` build is minutes. Do not kill it as hung; let it finish. (The build command for stale in-tree binaries is under the doctor note above.)
+- **cargo/rustc are off `PATH` here, and CPU-SAFE (A12) forbids local `cargo`/`rustc`/`clippy`/`maturin` builds on this shared box** — CI is the Rust oracle; only `rustfmt --check` runs locally. On a non-shared machine (`C:/Users/oimir/.cargo/bin/cargo.exe`, or prepend `~/.cargo/bin` to `PATH`), a "hanging" Rust build is usually slow LTO that *completes* (`maturin develop` ~15 s, a `--release` build minutes); do not kill it as hung. (The build command for stale in-tree binaries is under the doctor note above.)
 - **Verify FFI / PyO3 bridge changes against the REAL compiled extension, not mocks.** This is the "Dogfood the Real Binary" trap one layer down: mock-based tests passed green while the *real* bridge was dead (it dropped every forwarded flag and silently fell back to the Python engine). Prove a bridge change with a live runtime call into the built extension, then confirm the flag actually reached `rg`.
 - **After a squash-merge, apply follow-up fixes by SYMBOL, not by line number.** Merges shift every line below the change; a plan that says "fix `main.py:8468`" is stale the moment anything above it lands. Re-anchor on the function/const name (grep or `tg defs`) before editing.
 - **A dependency UPPER-cap can silently downgrade the whole install on a newer Python.** If an upper bound (e.g. `typer<0.25`) has no release compatible with a new Python, `pip`/`uv` resolve the *entire package* DOWN to a stale version with NO error — `requires-python>=X` has no upper bound to catch it. When a fresh Python yields a stale `tg`, suspect a transitive cap (typer/click/pydantic), not `requires-python`.
@@ -3224,12 +3165,12 @@ Small, non-obvious traps that have each cost a real cycle on this desktop. None 
   about the noise.
 - **Cumulative CPU time is not current CPU rate (2026-07-25).** Two orphaned `find /` scans showed 20,548 s and 6,073 s of accumulated CPU — 7.4 CPU-hours — and killing both moved total load 74% → 73%. They had been accumulating slowly for hours, not burning now. Same shape as the cProfile trap: *cumulative ≠ blocking*. Before attributing a slow box to a process, measure its current rate, not its lifetime total. (Related: orphaned children outlive the shell that spawned them — `find /` on Windows via git-bash traverses virtual mounts and effectively never terminates.)
 - **`MSYS_NO_PATHCONV=1` is REQUIRED for `git cat-file blob origin/main:path` on this box.** Without it git-bash mangles the ref into `origin\main;path` and the command fails *misleadingly* — it reads as "that path does not exist on origin/main", which twice produced a confident wrong conclusion (once nearly reporting a committed CI gate as a phantom). Same family as the "parse `gh --json` via python, never jq" rule.
-- **`tests/conftest.py:8-15` does `sys.path.insert(0, SRC_DIR)` from `__file__`, which OVERRIDES `PYTHONPATH`.** A gate running a control arm with `PYTHONPATH=<baseline>/src` got a FALSE PASS because conftest silently re-pointed imports at the worktree. For any baseline/control arm in this repo, use a scratch mini-repo or a full second checkout as pytest's rootdir — and verify `tensor_grep.__file__` resolves where you think before trusting RED or GREEN.
+- **Baseline/control arms:** `tests/conftest.py`'s `sys.path.insert` overrides `PYTHONPATH`; see "Required Local Validation" above for the mechanism and the second-checkout remedy.
 - **Enumerate mechanically, never from recollection — this recurred THREE times in one session (2026-07-25).** A commit-count stated from memory was 6; `git rev-list` said 8. A path probed from a remembered name (`.pytest_tmp_review_472dffd9`) was a truncation of the real one and `Test-Path` returned false for a path that never existed, briefly "closing" a live task. A worktree-husk count estimated at 11 was 12 when derived from `git worktree list --porcelain`. In every case the mechanical derivation was one command away. If you are about to state a count, a filename, or a site list — derive it.
 - **Windows symlink creation needs privilege.** Tests that create symlinks must `pytest.skip` on `OSError` / `NotImplementedError`, or they false-fail on an unprivileged run.
 - **A stray `nul` file in the tree is a Windows `2>nul` redirect artifact.** Use `2>$null` (PowerShell) or `2>/dev/null` (bash); clean up with `rm -f ./nul`.
 - **CRLF makes a local bare `ruff format --check` false-alarm** over LF-committed blobs. Run `ruff format --preview <files>` (which normalizes) before commit — see "Required Local Validation" for why `--preview` is mandatory and must never be passed to `ruff check`.
-- **The full local gate is four steps, not two — and re-run them after your LAST edit.** `ruff check` + `pytest` passing is NOT green: the CI "Formatting & Linting" job also runs `ruff format --check --preview .` (a *formatter*, distinct from the `ruff check` *linter* — a post-edit line-wrap or over-long comment passes `ruff check` but fails `ruff format --check`) AND `mypy src/tensor_grep` (catches type errors nothing else flags, e.g. assigning to a `Final` attribute like click's `UsageError.message` — mutate it and mypy errors; raise a fresh `UsageError(...)` instead). Running only `ruff check` + `pytest` — or running the gate before an *intermediate* edit that a later edit then invalidates — cost two drain-blocking CI failures in a single session (a mypy `Final`-assign and a `ruff format` line-wrap). Run all four (`ruff check` · `ruff format --check --preview` · `mypy src/tensor_grep` · `pytest`) on the touched files AFTER the final edit.
+- **The full local gate is four steps, not two — and re-run them after your LAST edit.** `ruff check` + `pytest` passing is NOT green: the CI "Formatting & Linting" job also runs `ruff format --check --preview .` (a *formatter*, distinct from the `ruff check` *linter* — a post-edit line-wrap or over-long comment passes `ruff check` but fails `ruff format --check`) AND `mypy src/tensor_grep` (catches type errors nothing else flags, e.g. assigning to a `Final` attribute like click's `UsageError.message` — mutate it and mypy errors; raise a fresh `UsageError(...)` instead). Running only `ruff check` + `pytest` — or running the gate before an *intermediate* edit that a later edit then invalidates — cost two drain-blocking CI failures in a single session (a mypy `Final`-assign and a `ruff format` line-wrap). Run all four (`ruff check` · `ruff format --check --preview` · `mypy src/tensor_grep` · targeted `pytest`) AFTER the final edit; the full suite is CI's job.
 - **Editing a CRLF file in text mode flips every line ending.** Python
   `open(path, newline="\n")` (or any text-mode write) on a CRLF-committed file
   (`ci.yml`, `uv.lock` are CRLF) rewrites ALL line endings — an 11-line change becomes
@@ -3696,12 +3637,6 @@ Four things agents get wrong, in the order you'll hit them:
 1. **PR-only gating is mandatory — `release` `needs:`s every gating job, and a SKIPPED dependency skips a dependent unless it uses `always()`.** Gate on `push` and the publish is silently lost. Main pushes always run the full matrix; only docs-only PRs skip.
 2. **A job skipped by an `if:` counts as SUCCESS for branch protection; `paths-ignore` on the trigger gives NO status → merge deadlock.** Job-level `if:` skip is the only safe cost lever.
 Validator-backed pins that asserted the literal old shape (`needs: smoke`) must be updated to assert SUBSTANCE in the same change — and a council's "these tests survive it" is a hypothesis until the tests are actually run.
-
-> Provenance (2026-08-12 retention audit): these two sections existed ONLY in the dirty
-> `audit/h6-cudf-backend` working tree — never committed to any ref (pickaxe-verified across
-> `--all`). The 2026-08-12 stale-branch reconciliation classified that tree's dirty docs as
-> "stale snapshots, BEHIND not novel" on a one-file spot-check; this content is the counterexample
-> and was landed verbatim by the retention PR rather than cleaned up.
 
 ## Bottom Line
 

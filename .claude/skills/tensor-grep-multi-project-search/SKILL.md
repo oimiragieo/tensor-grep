@@ -1,13 +1,13 @@
 ---
 name: tensor-grep-multi-project-search
-description: Use when searching across a multi-project workspace root (many sibling repos) with tensor-grep — bare unscoped search is refused; scope with --glob/--type/--max-depth or opt in with --allow-broad-generated-scan; prefer per-repo paths for agent/symbol/find work; pass explicit --deadline on whole-repo agent; narrow mega-repo PATH when result_incomplete.
+description: Use when searching across a multi-project workspace root (many sibling repos) with tensor-grep — bare unscoped search is refused; scope with an explicit PATH or --max-depth (--glob/--type alone do not bypass) or opt in with --allow-broad-generated-scan; prefer per-repo paths for agent/symbol/find work; pass explicit --deadline on whole-repo agent; narrow mega-repo PATH when result_incomplete.
 ---
 
 # tensor-grep multi-project workspace search
 
 Use this when the cwd is a **workspace parent** (e.g. `/mnt/c/dev/projects`) containing many unrelated repos, not a single git root.
 
-Verified against **tg 1.110.14** (2026-08-11 Windows `uvx`; prior stamps 1.95.0 / 1.91.0 WSL).
+Last verified: **tg 1.110.14** (2026-08-11 Windows `uvx`; prior stamps 1.95.0 / 1.91.0 WSL) -- not re-run since; re-verify on the current release before citing.
 
 ## Do this
 
@@ -24,7 +24,7 @@ tg orient my-repo --ignore "node_modules/**" --json
 tg orient . --ignore "node_modules/**" --json   # bounded via scan_limit(2000)+centrality (~4.9s on a 300k+-file workspace); still prefer per-repo for a repo-focused capsule
 tg agent my-repo/src "task" --json              # preferred (~16s PASS)
 tg agent my-repo "task" --deadline 20 --json    # partial capsule OK; honor ask_user_before_editing
-# Do NOT rely on bare `tg agent my-repo` default 60s cold bound on WSL (TIMEOUT empty @75s)
+# Whole-repo agent: pass --deadline N and set your own caller timeout above it (deadline is stop-starting-work, not wall-clock)
 
 # Mega-repo truncation mitigation:
 tg agent my-repo/subdir "task" --json           # e.g. agent-studio/.claude/lib/routing
@@ -37,7 +37,6 @@ tg search PATTERN          # refused in ~1.7s on a defaulted PATH over 1500 file
 tg search PATTERN --glob "*.py"   # --glob does NOT bypass the refusal when PATH is still defaulted (see below)
 tg agent . "task"          # too broad across sibling projects
 tg callers . SYMBOL        # incomplete graphs; prefer REPO/src
-tg codemap my-repo         # still TIMEOUT on WSL agent loops
 tg search TODO . --type ts --max-depth 4   # can TIMEOUT on large workspaces
 ```
 
@@ -67,7 +66,7 @@ scoping the walk.
 | `0` | Complete enough for the scoped ask |
 | `1` | Complete with **zero** matches (not a refuse) — common on scoped parent walks |
 | `2` | Incomplete / refused / deadline partial — parse JSON; do not treat as full coverage |
-| timeout / empty | Prefer narrower PATH or explicit `--deadline`; skip `codemap` |
+| timeout / empty | Prefer narrower PATH or explicit `--deadline` |
 
 **Parent-root refuse class (1.110.x):** unscoped
 `tg search needle C:\dev\projects --json` → exit 2 with

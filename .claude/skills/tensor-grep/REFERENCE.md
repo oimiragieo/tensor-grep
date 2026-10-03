@@ -156,7 +156,7 @@ tg evidence emit REPO_PATH --capsule capsule.json --query "task" --json --agent-
 
 ## Multi-Agent Ledger (advisory)
 
-`tg ledger` coordinates sibling agents on the same repo — never blocks an edit, only reports overlaps. Claim/release/list canonicalize to the nearest `.git` ancestor (worktree-aware, one store per repo); `list [PATH]` rolls scope UP so a subtree PATH still sees claims made at the repo root. See `tensor-grep-ledger` for the full contract (record/find findings-reuse, exit codes, the migration note for pre-fix subtree stores).
+`tg ledger` coordinates sibling agents on the same repo — never blocks an edit, only reports overlaps. Claim/release/list canonicalize to the nearest `.git` entry (a worktree's `.git` FILE is a boundary: each worktree has its OWN store; sibling worktrees do not see each other's claims); `list [PATH]` rolls scope UP so a subtree PATH still sees claims made at that store's root. See `tensor-grep-ledger` for the full contract (record/find findings-reuse, exit codes, the migration note for pre-fix subtree stores).
 
 ```powershell
 tg ledger claim REPO_PATH --symbol SYMBOL --agent-id AGENT --json

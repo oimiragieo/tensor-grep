@@ -26,11 +26,8 @@ because every gate round this wave found real defects — a vacuous guard, a byp
 env-dependent ratchet — that the build agent's own checks did not.
 
 **Verdict vocabulary is FIX-FIRST — unified, never FIX-BEFORE-MERGE.** The canonical shape is A3's
-in AGENTS.md (`SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)` — grep "A3" there); this file
-previously mixed both spellings and the 2026-08-12 retention audit unified on FIX-FIRST. Note:
-`.claude/skill_rules.json`'s keyword entry for this skill still lists the legacy `FIX-BEFORE-MERGE`
-alias (verified 2026-08-12); align it to `FIX-FIRST` when that file is next edited — it sat outside
-this pass's edit scope.
+in AGENTS.md (`SHIP` | `FIX-FIRST(+file:line + repro + minimal fix)` — grep "A3" there); do not write
+FIX-BEFORE-MERGE.
 
 **"The twin law" (this skill's description) is A27/A39 — sweep the twin in the SAME turn.** When a
 fix retires a defect shape, grep sibling adapters/helpers/tests for the same shape immediately: the
@@ -112,15 +109,10 @@ the exact defect this loop exists to prevent.
 BY CONSTRUCTION — a test that passes locally and fails CI on a missing engine is a DEFECT in
 the test, not the product.**
 
-The CI pytest env lacks the optional engines the dev desktop has; a gated test that reaches a
-tool's success arm through a real engine flips its verdict between the two environments:
-
-| Engine | Dev desktop | CI pytest env | What flips |
-|---|---|---|---|
-| ast-grep binary | present | absent | AST tool success arms → absent-dep raise or "unavailable" envelope |
-| tree-sitter native grammars | present | absent | `tg_ast_search`/`tg_ruleset_scan`/`tg_scan` success reach |
-| dense model (model2vec) | present/absent/corrupt | absent | `tg_find` success arm (dense → BM25 fallback) |
-| compiled `rust_core` extension | present (built) | absent | extension-backed probes raise instead of returning |
+The CI `test-python` env lacks the ast-grep binary and the dense model (`semantic` extra); it HAS
+the tree-sitter grammars and the compiled `rust_core` extension (`uv pip install -e ".[dev,ast]"`).
+A gated test that reaches a tool's success arm through a missing engine flips its verdict between
+the two environments. Full engine table: `tensor-grep-hermetic-hostile-tests` Part 1.1.
 
 Receipt: the M14 contract-stamp census (PR #984) **failed on every CI test-python lane** because
 the AST tools could not reach a success arm there; the fix was to drive exactly those
@@ -131,15 +123,16 @@ sites are value-checked identically everywhere.
 
 1. **Force a controlled deterministic seam for the optional engine** instead of detecting the
    environment:
-   - dense leg: force `DenseUnavailableError` (`src/tensor_grep/core/retrieval_dense.py:52`) for
-     the census duration — the deterministic BM25-only fallback success arm fires everywhere;
-   - AST tools: shim the engine seam — `Pipeline.get_backend`
-     (`src/tensor_grep/core/pipeline.py:448`) → a fixed `AstBackend` stub, and
-     `_run_ast_scan_payload` (`grep -n "def _run_ast_scan_payload" src/tensor_grep/cli/main.py`;
-     was `:6554`, now `:6784`) → a deterministic
+   - dense leg: replace `retrieval_dense.dense_available` with a deterministic `(False, reason)`
+     tuple for the census duration (`_force_dense_unavailable` in
+     `tests/unit/test_mcp_contract_stamp_ratchet.py`) — the BM25-only fallback success arm fires
+     everywhere;
+   - AST tools: shim the engine seam — `Pipeline.get_backend` (`src/tensor_grep/core/pipeline.py`,
+     grep `def get_backend`) → a fixed `AstBackend` stub, and `_run_ast_scan_payload`
+     (`src/tensor_grep/cli/ast_scan.py`, grep `def _run_ast_scan_payload`) → a deterministic
      empty-findings payload — so the tool's REAL success return site (the
-     `_inject_mcp_contract_fields` envelope, `src/tensor_grep/cli/mcp_server.py:1125`) is
-     exercised on every env.
+     `_inject_mcp_contract_fields` envelope, `src/tensor_grep/cli/mcp_server.py`, grep
+     `def _inject_mcp_contract_fields`) is exercised on every env.
 2. **Keep error arms real.** Engine-free refusals (e.g. out-of-root confinement) run the real
    code and stay value-checked on both envs.
 3. **Proof tests simulate the hostile envs.** A test that re-runs the census under a simulated
@@ -203,7 +196,7 @@ does (this is Form 1 applied to guards, from `AGENTS.md`):
   claim, is what unblocks.
 - **A no-verdict codex seat is a FAILED seat, not approval and not a blocker (A10/A74).** When
   the seat dies on a content filter / auth spin, substitute the orchestrator's own probes and
-  record the substitution; the draft-PR gate + CI remain the durable arbiter.
+  record the substitution; the independent review + CI remain the durable arbiter.
 
 ---
 
@@ -233,28 +226,24 @@ fix commit's own first census claim ("15/58 approx" unstamped) was overstated; t
 registry-derived census (58 tools × success+error families from `mcp.list_tools`, never a hand
 list) corrected it to 19 real sites across 11 tools with MASKED success paths — the
 masked-success arm was the real class, invisible to a hand-written count. After
-`_inject_mcp_contract_fields` (`src/tensor_grep/cli/mcp_server.py:1125`) hard-assigned the central
+`_inject_mcp_contract_fields` (`src/tensor_grep/cli/mcp_server.py`, grep `def _inject_mcp_contract_fields`) hard-assigned the central
 `mcp_contract_version` const (was `setdefault`, so a tool's own stale/forked literal won), the
 value ratchet's violation count reached 0 at every (tool, family) — and codex R2 then found
 three HARNESS defects in the ratchet itself (an exception-allowlist masking real failures, an
 env-dependence on the dense model — the 2026-08-09 mechanism above — and a partial-key parity
 gap). The ratchet, not the fix, was the part that needed two more rounds. `_envelope_base`
-(`mcp_server.py:695`) is the central stamp helper the const is threaded through.
+(`mcp_server.py`, grep `def _envelope_base`) is the central stamp helper the const is threaded through.
 
 **3. H2 — the front-door-rewrite shadow (A83, #979).** `SEARCH_OPTION_FIRST_FLAGS`
-(`rust_core/src/main.rs:104`) includes `--count-matches`, so the positional
+(`rust_core/src/search_flag_registry.rs`, grep `const SEARCH_OPTION_FIRST_FLAGS`) includes `--count-matches`, so the positional
 `tg PAT . --gpu-device-ids 0 --count-matches` is REWRITTEN into the search-subcommand form by
-`normalize_top_level_search_args` (`grep -n "fn normalize_top_level_search_args" rust_core/src/main.rs`;
-was `:1785`, now `:1814`) and never reaches
+`normalize_top_level_search_args` (`grep -n "fn normalize_top_level_search_args" rust_core/src/main.rs`) and never reaches
 `run_positional_cli`'s `validate_positional_native_structured_refusals`
-(`grep -n "fn validate_positional_native_structured_refusals" rust_core/src/main.rs`;
-was `:8861`, now `:9182`) — the validator was shadowed by the front-door rewrite. On the
+(`grep -n "fn validate_positional_native_structured_refusals" rust_core/src/main.rs`) — the validator was shadowed by the front-door rewrite. On the
 search path the count/files flags fall through `search_requires_ripgrep_passthrough`
-(`grep -n "fn search_requires_ripgrep_passthrough" rust_core/src/main.rs`; was `:8722`,
-now `:9043`)'s `!json && !ndjson` gate, so with `rg` present the explicit GPU
+(`grep -n "fn search_requires_ripgrep_passthrough" rust_core/src/main.rs`)'s `!json && !ndjson` gate, so with `rg` present the explicit GPU
 request was SILENTLY DROPPED (exit 0, wrong output); with `rg` absent the pre-existing
-rg-required gate in `handle_ripgrep_search` (`grep -n "fn handle_ripgrep_search" rust_core/src/main.rs`;
-was `:9502`, now `:9823`) exited 2 by accident
+rg-required gate in `handle_ripgrep_search` (`grep -n "fn handle_ripgrep_search" rust_core/src/main.rs`) exited 2 by accident
 with the wrong wording. The fix was a search-form gate in `handle_ripgrep_search` BEFORE the
 rg-passthrough early return — an airtight-ordering argument: for these combos it is the first
 gate in BOTH environments, so the message becomes deterministic rather than dual-env-tolerated.
@@ -309,7 +298,7 @@ execution, `file:line`-cited findings, round-recording commit messages).
   R4's vacuous `CliRunner` pin) is structurally incapable of failing; capture at the seam the
   VALUE crosses.
 - **Waiting on or trusting a failed codex seat.** A seat that dies mid-round is FAILED (A10/A74).
-  Substitute your own probes, record the substitution, keep the draft-PR + CI as the arbiter —
+  Substitute your own probes, record the substitution, keep the independent review + CI as the arbiter —
   never treat a failed seat as approval, and never let it block.
 - **Not recording the rounds.** The commit message is the durable audit trail. Rounds without
   severity+file:line in the message read as "fixed once" — the exact claim the loop disproves.
@@ -382,8 +371,8 @@ ran **13 opus rounds plus a final codex pass** to SHIP. Lessons that generalize:
   e.g. TG_REQUIRE_SYMLINK_TESTS); (5) commentary accuracy (Send/Sync claims, deferral rationale,
   Disconnected-vs-Timeout attribution — the rounds keep finding these until every load-bearing
   comment is re-derived). Check each class explicitly before opening the gate.
-- **Gate-vendor generalization.** codex (gpt-5.6-sol) is the nominal vendor; opus (claude -p
-  --model opus) is the reliable A3 substitute on this box. The per-round contract stays identical:
+- **Gate-vendor generalization.** codex is the nominal gate vendor; when its seat fails, substitute
+  a different-family seat per `model-router`. The per-round contract stays identical:
   read-only, cite file:line, verdict SHIP | SHIP-WITH-NIT | FIX-FIRST(+file:line+repro+minimal fix),
   and every fix lands as its OWN commit on the PR branch (unpushed branches never amend — A110).
 - **Stopping rule from the literature:** one clean round is not proof of convergence on a
@@ -393,7 +382,7 @@ ran **13 opus rounds plus a final codex pass** to SHIP. Lessons that generalize:
 ## Docs-artifact audit rounds (2026-08-14, W5-W8 closeout)
 
 The loop also runs on DOCS-only branches, and the 2026-08-14 closeout docs branch took codex
-(gpt-5.6-sol) four rounds to APPROVE: R1 five findings (control threshold, undifferentiated
+four rounds to APPROVE: R1 five findings (control threshold, undifferentiated
 timeout claim, missing W6/A101 receipts, untracked plan) all fixed -> R2 two LOW (plan
 ASCII-census falsehood, trailing space) fixed -> R3 one LOW (census location inventory) fixed
 -> R4 APPROVE on `7b7f3c8`. Three reusable rules (session ledger

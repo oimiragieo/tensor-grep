@@ -5,7 +5,7 @@ description: Use when vocabulary-mismatched queries need whole-repo hybrid searc
 
 # tensor-grep find + route-test
 
-Verified against **tg 1.110.14** (2026-08-11; prior full dogfood 2026-07-21 WSL workspace sweep at v1.91.0).
+Last verified: **tg 1.110.14** -- not re-run since; re-verify on the current release before citing (2026-08-11; prior full dogfood 2026-07-21 WSL workspace sweep at v1.91.0).
 
 ## When to use
 
@@ -48,7 +48,7 @@ tg find "session daemon timeout handling" REPO --deadline 30 --json
   literal `retrieval_dense.py` string (A12(a), v1.93.0/#705): `` semantic ranking unavailable: model2vec
   not installed -- run `tg install-dense` (or pip install 'tensor-grep[semantic]') `` — every
   dense-absent hint across the CLI leads with `tg install-dense` the same way, not just this one.
-- **Which leg ran is reported IN the payload** (`src/tensor_grep/cli/main.py:1663-1664`):
+- **Which leg ran is reported IN the payload** (`src/tensor_grep/core/reranker.py`, grep `"HybridFindBackend", "find_bm25_dense_rrf"`):
   `routing_backend` is `HybridFindBackend` when the dense index loaded, else `Bm25FindBackend`;
   `routing_reason` is `find_bm25_dense_rrf` or `find_bm25_only`. Both are REQUIRED by
   `tests/schemas/tg_output.schema.json` (typed `minLength: 1`), so a null there is a contract
@@ -71,7 +71,7 @@ tg route-test REPO/src "improve session daemon timeout" --json
 
 - Emits `agreement` + per-field `agreement_details` (`file`/`symbol`/`line`).
 - Dogfood (1.91.0): `agreement=true` on tensor-grep/src (~27s alone; the old "can exceed 60s under WSL suite load — budget 90s" guidance is SUPERSEDED by the default 60s deadline — see the next bullet). **This evidence predates the #693/#250 primary-target ranking fix (v1.91.2) that it is meant to validate — re-collect the `agreement=true` proof on a current version before citing it as current confirmation of post-fix routing agreement.**
-- **SUPERSEDED (2026-08-12 retention pass, verified against v1.110.14 / base `568065a`): since #672 (first released v1.81.21 — NOT v1.100.0), `route-test` defaults to a 60s wall-clock `--deadline`**, reusing `DEFAULT_AGENT_CLI_DEADLINE_SECONDS = 60.0` (defined in `agent_capsule_constants.py`, re-exported by `agent_capsule.py`; find it with `grep -rn "DEFAULT_AGENT_CLI_DEADLINE_SECONDS = " src/tensor_grep/cli/` — deliberately NO line number, because this citation previously pinned `agent_capsule.py:34`, which is an unrelated import after the constants split; wired at `grep -n "agreement_basis" src/tensor_grep/cli/main.py` — deadline defaulting `:11037-11081`, partial stamping `:10982-10993`). Under defaults it therefore CANNOT exceed ~60s: when either route's build is truncated, the payload additively stamps `partial=true`, `partial_reason="deadline"`, `deadline_limit` (which side(s) truncated), and **`agreement_basis="partial"` — the tell an agent MUST check before trusting `agreement` at face value**; an agreement computed from one or two truncated sides exits 2 and must not read as a full-confidence verdict. A complete run omits all four fields (byte-identical to the pre-#672 payload). `--deadline N` overrides the default; `--no-deadline` restores unbounded running (only then can it exceed 60s).
+- **SUPERSEDED (2026-08-12 retention pass, verified against v1.110.14 / base `568065a`): since #672 (first released v1.81.21 — NOT v1.100.0), `route-test` defaults to a 60s wall-clock `--deadline`**, reusing `DEFAULT_AGENT_CLI_DEADLINE_SECONDS = 60.0` (defined in `agent_capsule_constants.py`, re-exported by `agent_capsule.py`; find it with `grep -rn "DEFAULT_AGENT_CLI_DEADLINE_SECONDS = " src/tensor_grep/cli/` — deliberately NO line number, because this citation previously pinned `agent_capsule.py:34`, which is an unrelated import after the constants split; wired at `grep -n "def route_test\|agreement_basis" src/tensor_grep/cli/main.py`). Under defaults it therefore CANNOT exceed ~60s: when either route's build is truncated, the payload additively stamps `partial=true`, `partial_reason="deadline"`, `deadline_limit` (which side(s) truncated), and **`agreement_basis="partial"` — the tell an agent MUST check before trusting `agreement` at face value**; an agreement computed from one or two truncated sides exits 2 and must not read as a full-confidence verdict. A complete run omits all four fields (byte-identical to the pre-#672 payload). `--deadline N` overrides the default; `--no-deadline` restores unbounded running (only then can it exceed 60s).
 - Use before trusting an edit-plan primary when routes might diverge.
 - For the routine single-target case, `tg prepare` already returns a `primary_target` + `confidence` in one call and explicitly supersedes the multi-step `orient`→`search`→`agent`→`route-test`→`callers`→`evidence`→`ledger` loop (see `tensor-grep-prepare`) — reach for `tg route-test` directly when you need the explicit per-field `agreement_details` breakdown, or when reconciling separately-made `context-render`/`edit-plan` calls.
 

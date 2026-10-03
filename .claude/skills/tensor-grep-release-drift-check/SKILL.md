@@ -46,13 +46,13 @@ Ground truth holder: `docs/audits/2026-08-11-skill-audit-facts.md` (the last ful
    ```
 
    A stamp below current tag is not auto-broken (a skill about an OLD release is fine), but a
-   stamp that claims to describe CURRENT behavior must be at or above the tag. The 2026-08-11 sweep
-   found 21 stale stamps ONE release after the last refresh — manual curation does not scale.
+   stamp that claims to describe CURRENT behavior must be at or above the tag. A sweep one release after
+   the last refresh found 17 itemized stale stamps — manual curation does not scale.
 
 2. **Derived counts** — re-derive, never hand-count (a count is a measurement, and hand-counts
    have been wrong every pass; see `tensor-grep-enterprise-agent`'s "Never hand-count this" rule):
 
-   - Language tier (`10 parser-backed / 0 foundational` at v1.110.14):
+   - Language tier (re-derive it; never trust a stamped figure):
 
      ```bash
      python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
@@ -156,27 +156,11 @@ goes red and future readers never find it:
 
 ## Receipts
 
-- 2026-08-11 sweep (v1.110.14): 21 stale stamps, 7 tier contradictions, 2 stale state facts
-- **2026-08-23 (v1.113.0): THIS SKILL WAS ITSELF THE DRIFT.** A closeout audit found the two
-  known-state facts above still stamped **v1.110.14** while the tag was **v1.113.0** -- four
-  minors -- with no caveat, in the one skill whose job is to catch exactly that. Its two sibling
-  skills (`tensor-grep-prepare`, `tensor-grep-workspace-dogfood`) both carried honesty notes; this
-  one did not, which is why it read as current.
-  Deliberately NOT re-stamped to v1.113.0: nobody re-ran those checks at v1.113.0, and re-stamping
-  an unverified version is the failure this skill exists to prevent -- it would convert "stale but
-  honest" into "current and false". Treat every `v1.110.14` marker below as **NOT re-verified past
-  v1.110.14** until a dated sweep replaces it.
-  The generalisable point: a maintenance sweep that is not itself swept rots like anything else,
-  and it rots INVISIBLY, because its stated purpose reads as evidence that it ran.
-  (doctor schema, index-fingerprint) — all corrected or SUPERSEDED, and this skill created as the
-  standing maintenance mechanism. Ledger: `docs/audits/2026-08-11-skill-audit-findings.md`.
-
-  **ANNOTATION (2026-08-13, append-only — the dated receipt above stays as written):** the headline
-  counts "21 stale stamps / 7 tier contradictions" are HISTORICAL and not reproducible from the
-  ledger's own itemized census, which enumerates **17 stamp rows** (items 1-17 under "Stale version
-  stamps") + **5 tier rows** (items 18-22 under "Language-tier contradictions") — counted 2026-08-13
-  in `docs/audits/2026-08-11-skill-audit-findings.md`. The same 21/7 figures also appear in the
-  ledger's own closing paragraph ("this session found 21 stale stamps + 7 tier contradictions"), so
-  the mismatch is internal to the ledger, not a transcription error in this skill. Treat the
-  ITEMIZED ROWS as the authority; do not re-cite 21/7 as a re-derivable count. (The same headline
-  number also appears in Part 1 step 1 above; this single annotation covers both sites.)
+- The 2026-08-11 sweep's itemized ledger (`docs/audits/2026-08-11-skill-audit-findings.md`) is the
+  authority: 17 stale-stamp rows and 5 language-tier rows. Its "21 stamps / 7 tier contradictions"
+  headline is not reproducible from those rows; do not re-cite it as a count.
+- This skill's own known-state facts (Part 1 step 3) were last verified at v1.110.14. Treat every
+  `v1.110.14` marker in this file as not re-verified past that tag until a dated sweep replaces it,
+  and never re-stamp without re-running the checks: re-stamping an unverified version turns "stale but
+  honest" into "current and false". A sweep that is not itself swept rots invisibly, because its
+  stated purpose reads as evidence that it ran.

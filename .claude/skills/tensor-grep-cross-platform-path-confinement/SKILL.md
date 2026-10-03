@@ -40,8 +40,7 @@ preserving the leaf's RAW identity (a legitimately tracked out-of-root-pointing 
 stored AS a link, never refused and never followed). See `checkpoint_store.py` (grep
 `def _resolve_parent_within_root` for the create-side parent-chain resolve; the earlier text cited
 `_resolve_within_root` `:149` here, but that is the full-leaf UNDO-side resolver — the create side
-is `_resolve_parent_within_root`, was `:167`, verified `:167` at this SHA; grep the symbol, never a
-stamp) and `docs/plans/2026-08-08-backlog-completion-plan.md` M1 section.
+is `_resolve_parent_within_root`; grep the symbol, never a stamp) and `docs/plans/2026-08-08-backlog-completion-plan.md` M1 section.
 
 ---
 
