@@ -37,7 +37,8 @@ HOUSE RULES (shared dev box; these apply to every step):
 // hardcoded at authoring time goes stale one release later and then tells every
 // subagent to trust out-of-date facts over the current docs.
 // ---------------------------------------------------------------------------
-const LEDGER_INPUT = (args && (args.ledger || (args._text && args._text.join(' ')))) || null
+const LEDGER_RAW = (args && (args.ledger || (args._text && args._text.join(' ')))) || null
+const LEDGER_INPUT = typeof LEDGER_RAW === 'string' && LEDGER_RAW.trim() ? LEDGER_RAW.trim() : null
 if (!LEDGER_INPUT) {
   return {
     error:

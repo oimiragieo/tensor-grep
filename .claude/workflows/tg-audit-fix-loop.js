@@ -70,6 +70,7 @@ const VERDICT_SCHEMA = {
     // Canonical vocabulary is SHIP | FIX-FIRST. SHIP-WITH-NITS stays for gate
     // outputs whose nits are banked; FIX-BEFORE-MERGE is retired wording for FIX-FIRST.
     verdict: { type: 'string', enum: ['SHIP', 'SHIP-WITH-NITS', 'FIX-FIRST'] },
+    // The workflow itself may also return NOTHING_TO_FIX (seam found the finding false or already fixed).
     rounds: {
       type: 'array',
       items: {
@@ -113,10 +114,17 @@ const GREEN_SCHEMA = {
 
 const VERIFY_SCHEMA = {
   type: 'object',
-  required: ['probes', 'all_findings_reproduced'],
+  required: ['probes', 'all_findings_reproduced', 'findings_reproduced_count', 'fix_confirmed'],
   properties: {
+    fix_confirmed: {
+      type: 'boolean',
+      description: 'true only if YOU re-ran the RED test and it now passes for the right reason',
+    },
+    findings_reproduced_count: { type: 'integer', description: 'how many of the gate findings your own probes reproduced' },
     probes: {
       type: 'array',
+      minItems: 1,
+      description: 'must include the re-run of the RED test showing it passes',
       items: {
         type: 'object',
         required: ['finding', 'command', 'result'],
@@ -142,7 +150,8 @@ HOUSE CONSTRAINTS (shared dev box; these apply to every step):
 - A FAILED seat / empty payload is a HOLE, not a pass: report it, never paper over it.
 `
 
-const FINDING = (args && (args.finding || (args._text && args._text.join(' ')))) || null
+const FINDING_RAW = (args && (args.finding || (args._text && args._text.join(' ')))) || null
+const FINDING = typeof FINDING_RAW === 'string' && FINDING_RAW.trim() ? FINDING_RAW.trim() : null
 if (!FINDING) {
   return {
     verdict: 'FIX-FIRST',
@@ -177,7 +186,7 @@ this SHA -- code or docs -- set nothing_to_fix=true and do not invent work.`,
 )
 
 // An empty seam payload or an empty door census for a CODE finding is a HOLE (HOUSE rule), not
-// evidence that nothing needs fixing -- only an explicit nothing_to_fix=true may end as SHIP.
+// evidence that nothing needs fixing -- only an explicit nothing_to_fix=true (with a bound SHA) may end the run, as NOTHING_TO_FIX.
 if (!seam) {
   return {
     verdict: 'FIX-FIRST',
@@ -185,9 +194,17 @@ if (!seam) {
     error: 'seam seat returned nothing -- a hole, not a pass; re-run the seam phase',
   }
 }
+if (!/^[0-9a-f]{40}$/.test(seam.origin_main_sha || '')) {
+  return {
+    verdict: 'FIX-FIRST',
+    rounds: [],
+    error: 'seam.origin_main_sha is not a 40-hex SHA -- the finding is not bound to a real origin/main; re-run the seam phase',
+    seam,
+  }
+}
 if (seam.nothing_to_fix === true) {
   return {
-    verdict: 'SHIP',
+    verdict: 'NOTHING_TO_FIX',
     rounds: [],
     note: `seam phase found nothing to fix at ${seam.origin_main_sha} (finding false or already fixed) -- no loop run`,
     seam,
@@ -234,12 +251,16 @@ TASK: write ONE behavioral test that fails on the current code for the finding a
   { label: 'red', phase: 'RED', schema: RED_SCHEMA, model: 'sonnet' },
 )
 
+if (!red) {
+  return { verdict: 'FIX-FIRST', rounds: [], error: 'RED seat returned nothing -- a hole, not a pass', seam }
+}
+
 // Phase 3: GREEN -- minimal fix; platform-gate path-shape transforms.
 phase('GREEN')
 const green = await agent(
   `${HOUSE}
 ${SEAM_TEXT}
-RED TEST: ${red ? `${red.test_file} (expected reason class: ${red.reason_class})` : '(RED phase returned nothing -- STOP and report)'}
+RED TEST: ${red.test_file} (expected reason class: ${red.reason_class})
 
 TASK: make the MINIMAL fix that turns the RED test green for the right reason. Platform-gate any
 path-shape transform. Reach EVERY door in the seam census, not just the one the finding
@@ -252,6 +273,15 @@ Stage nothing; the orchestrator owns git.
   { label: 'green', phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
 )
 
+if (!green) {
+  return { verdict: 'FIX-FIRST', rounds: [], error: 'GREEN seat returned nothing -- a hole, not a pass', seam, red }
+}
+let latestGreen = green
+const fixText = () => `
+RED TEST: ${red.test_file} (reason class: ${red.reason_class})
+FILES CHANGED BY THE FIX: ${JSON.stringify(latestGreen.files_changed || [])}
+`
+
 // Phases 4-5: GATE + VERIFY, looped. The gate is a fresh-context adversarial audit (independent of the fix author); verify re-probes every finding with its own commands. A FIX-FIRST verdict feeds one repair round. A104: the gate is a real-finding convergence loop and ends only on independent SHIP, never on round count -- the RUST-REPLACE-SYMLINK guard took 13 rounds plus a final codex pass to SHIP (tensor-grep-codex-gated-audit-loop, "Campaign-scale round receipts"). Budget 10+ rounds for a security-class finding; MAX_ROUNDS is a parking point, not a conclusion.
 const MAX_ROUNDS = 10
 let verdict = null
@@ -262,7 +292,7 @@ for (let round = 1; round <= MAX_ROUNDS; round++) {
   phase('Gate')
   const gate = await agent(
     `${HOUSE}
-${SEAM_TEXT}
+${SEAM_TEXT}${fixText()}
 You are the INDEPENDENT adversarial gate. You did not write the fix. Try to BREAK it.
 ${repairContext}
 Cite file:line for every finding; default FIX-FIRST if uncertain. Verdicts: SHIP | SHIP-WITH-NITS
@@ -285,28 +315,47 @@ no citation is discarded. Record each as a round row with round=${round}.
   phase('Verify')
   const verify = await agent(
     `${HOUSE}
-${SEAM_TEXT}
-TASK: re-probe EVERY finding recorded for round ${round} with YOUR OWN commands (never trust the
-fix author's transcript). Include the RED test's reason class and the door census. Report each
-probe's command + verbatim result.
+${SEAM_TEXT}${fixText()}
+GATE FINDINGS FOR ROUND ${round} (verdict ${gate.verdict}):
+${JSON.stringify(gate.rounds || [], null, 1)}
+
+TASK: re-probe EVERY gate finding above with YOUR OWN commands (never trust the fix author's
+transcript or the gate's). You MUST re-run the RED test (${red.test_file}) and show it now passes
+for the right reason (${red.reason_class}); set fix_confirmed=true only if it does. Report each
+probe's command + verbatim result, how many gate findings you reproduced
+(findings_reproduced_count), and all_findings_reproduced.
 - For a docs artifact, re-probe means re-deriving the doc's counts/claims with your own commands
   against the edited bytes and comparing to the round's recorded artifact_sha256.`,
     { label: `verify:r${round}`, phase: 'Verify', schema: VERIFY_SCHEMA, model: 'sonnet' },
   )
 
+  const verifyOk = !!verify && verify.fix_confirmed === true && (verify.probes || []).length > 0
+  let verifyNote = ''
   if (verdict === 'SHIP' || verdict === 'SHIP-WITH-NITS') {
-    // The Verify phase gates SHIP: a missing verify payload is a hole, and a verify seat that
-    // could not reproduce the gate's recorded findings means the gate's SHIP is unconfirmed.
-    if (!verify || verify.all_findings_reproduced === false) {
-      verdict = 'FIX-FIRST'
-      allRounds.push({
-        round,
-        severity: 'VERIFY-FAILURE',
-        area: verify ? 'verify seat could not reproduce the gate findings' : 'verify seat returned nothing',
-        file: '-',
-        fix: 're-run gate + verify; a SHIP is accepted only when the independent verify confirms it',
-      })
-    }
+    // The Verify phase gates SHIP: it stands only on an independent verify that re-ran the RED
+    // test and confirmed the fix.
+    if (verifyOk) break
+    verdict = 'FIX-FIRST'
+    verifyNote = verify
+      ? 'verify seat did not confirm the fix (fix_confirmed false or no probes)'
+      : 'verify seat returned nothing'
+    allRounds.push({
+      round,
+      severity: 'VERIFY-FAILURE',
+      area: verifyNote,
+      file: '-',
+      fix: 're-run gate + verify; a SHIP is accepted only when the independent verify confirms it',
+    })
+  } else if (verifyOk && verify.findings_reproduced_count === 0 && verify.all_findings_reproduced === false) {
+    // Unreproduced gate findings must not force FIX-FIRST: bank them as nits.
+    verdict = 'SHIP-WITH-NITS'
+    allRounds.push({
+      round,
+      severity: 'NIT',
+      area: 'gate FIX-FIRST findings were not reproduced by the independent verify; banked as nits',
+      file: '-',
+      fix: 'none required',
+    })
     break
   }
 
@@ -314,11 +363,11 @@ probe's command + verbatim result.
     repairContext = `
 PRIOR GATE FINDINGS TO REPAIR (round ${round}):
 ${JSON.stringify(gate.rounds || [], null, 1)}
-VERIFY PROBES:
+${verifyNote ? `VERIFY FAILURE: ${verifyNote}\n` : ''}VERIFY PROBES:
 ${verify ? JSON.stringify(verify.probes, null, 1) : '(verify seat returned nothing)'}
 `
     phase('GREEN')
-    await agent(
+    const repaired = await agent(
       `${HOUSE}
 ${SEAM_TEXT}
 TASK: repair ONLY the gate findings listed below, minimally, then re-run the RED test and the
@@ -326,6 +375,7 @@ narrow suites around the touched files; paste verbatim output.
 ${repairContext}`,
       { label: `repair:r${round}`, phase: 'GREEN', schema: GREEN_SCHEMA, model: 'sonnet' },
     )
+    if (repaired) latestGreen = repaired
   }
 }
 
@@ -335,7 +385,7 @@ return {
   rounds: allRounds,
   seam,
   red,
-  green,
+  green: latestGreen,
   max_rounds: MAX_ROUNDS,
   note: verdict === 'SHIP' || verdict === 'SHIP-WITH-NITS'
     ? 'gate passed; orchestrator owns commit/PR per the usual gates'

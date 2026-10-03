@@ -141,12 +141,28 @@ async function inWaves(items, size, fn) {
 
 phase('Ledger')
 const ledger = await agent(
-  `TASK: run \`python scripts/skill_audit_ledger.py\` in the repository checkout you are invoked in,
+  `${HOUSE}
+
+TASK: run \`python scripts/skill_audit_ledger.py\` in the repository checkout you are invoked in,
 and return its JSON output unchanged. Do not edit, summarise, or re-derive any field; the script
 runs the fixed ledger commands itself. If it fails, return the error text in raw_output and leave
 the other fields empty.`,
   { label: 'ledger', phase: 'Ledger', schema: LEDGER_SCHEMA, model: 'haiku' },
 )
+
+// A missing or malformed ledger means the audited population is unknown. The frozen CLUSTERS
+// map below still runs so the audit is not wasted, but it can never be reported as covered.
+const ledgerProblems = []
+if (!ledger) ledgerProblems.push('ledger seat returned nothing')
+else {
+  if (!/^[0-9a-f]{40}$/.test(ledger.head_sha || '')) ledgerProblems.push('head_sha is not 40-hex')
+  if (!Array.isArray(ledger.skill_manifest) || ledger.skill_manifest.length === 0) {
+    ledgerProblems.push('skill_manifest is empty')
+  }
+}
+if (ledgerProblems.length > 0) {
+  log(`LEDGER INVALID (${ledgerProblems.join('; ')}) -- falling back to the frozen cluster map; coverage_exact will be false`)
+}
 
 // ---------------------------------------------------------------------------
 // DYNAMIC SKILL ENUMERATION (2026-08-14, W6 retention wave).
@@ -333,7 +349,9 @@ return {
   not_covered: finalMissing,
   unexpected_skills: extras,
   dynamic_skills: unassigned,
-  coverage_exact: finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
+  coverage_exact:
+    ledgerProblems.length === 0 && finalMissing.length === 0 && extras.length === 0 && evidenceFree.length === 0,
+  coverage_reason: ledgerProblems.length > 0 ? `ledger invalid: ${ledgerProblems.join('; ')}` : null,
   total_findings: findings.length,
   ledger,
   audits: covered,

@@ -37,6 +37,8 @@ def _run(argv: list[str], cwd: Path, timeout: float) -> tuple[bool, str]:
             cwd=str(cwd),
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
             check=False,
         )
@@ -69,7 +71,7 @@ def _py_probe(root: Path, code: str) -> tuple[bool, str]:
     return _run([sys.executable, "-c", code], root, PY_TIMEOUT_S)
 
 
-def build_ledger(root: Path) -> dict[str, Any]:
+def build_ledger(root: Path, offline: bool = False) -> dict[str, Any]:
     raw: list[str] = []
     facts: list[dict[str, str]] = []
 
@@ -114,19 +116,27 @@ def build_ledger(root: Path) -> dict[str, Any]:
         fact("register_language_calls", deriv2, False, f"ERROR: {exc}")
 
     deriv3 = "GET https://pypi.org/pypi/tensor-grep/json -> info.version"
-    try:
-        with urllib.request.urlopen(
-            "https://pypi.org/pypi/tensor-grep/json", timeout=NET_TIMEOUT_S
-        ) as resp:
-            fact("pypi_version", deriv3, True, str(json.load(resp)["info"]["version"]))
-    except (OSError, ValueError, KeyError) as exc:
-        fact("pypi_version", deriv3, False, f"ERROR: {type(exc).__name__}: {exc}")
-
-    ok, out = _run(["tg", "--version"], root, TG_TIMEOUT_S)
-    fact("tg_version (may lag PyPI; this is the installed tg)", "tg --version", ok, out)
+    tg_name = "tg_version (may lag PyPI; this is the installed tg)"
+    if offline:
+        fact("pypi_version", deriv3, False, "SKIPPED: --offline")
+        fact(tg_name, "tg --version", False, "SKIPPED: --offline")
+    else:
+        try:
+            with urllib.request.urlopen(
+                "https://pypi.org/pypi/tensor-grep/json", timeout=NET_TIMEOUT_S
+            ) as resp:
+                fact("pypi_version", deriv3, True, str(json.load(resp)["info"]["version"]))
+        except (OSError, ValueError, KeyError) as exc:
+            fact("pypi_version", deriv3, False, f"ERROR: {type(exc).__name__}: {exc}")
+        ok, out = _run(["tg", "--version"], root, TG_TIMEOUT_S)
+        fact(tg_name, "tg --version", ok, out)
 
     skills = root / ".claude" / "skills"
-    n_dirs = sum(1 for p in skills.iterdir() if p.is_dir()) if skills.is_dir() else 0
+    n_dirs = (
+        sum(1 for p in skills.iterdir() if p.is_dir() and not p.name.startswith("."))
+        if skills.is_dir()
+        else 0
+    )
     fact("skill_folder_count", "ls -1d .claude/skills/*/ | wc -l", True, str(n_dirs))
 
     deriv6 = r'grep -oE "^\*\*Form [0-9]+" AGENTS.md | sort -u | wc -l'
@@ -164,9 +174,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Derive the ground-truth ledger for the tg-skill-audit workflow."
     )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="skip the PyPI and `tg --version` facts (reported as SKIPPED)",
+    )
     parser.add_argument("--indent", type=int, default=None, help="pretty-print JSON")
     args = parser.parse_args(argv)
-    sys.stdout.write(json.dumps(build_ledger(repo_root()), indent=args.indent) + "\n")
+    ledger = build_ledger(repo_root(), offline=args.offline)
+    sys.stdout.write(json.dumps(ledger, indent=args.indent) + "\n")
+    if not re.fullmatch(r"[0-9a-f]{40}", ledger["head_sha"]) or not ledger["skill_manifest"]:
+        sys.stderr.write("ledger invalid: head_sha is not 40-hex or skill_manifest is empty\n")
+        return 1
     return 0
 
 
