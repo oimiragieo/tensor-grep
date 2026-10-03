@@ -362,8 +362,10 @@ def tg_symbol_refs(
 ) -> str:
     """
     Return references to a symbol across the inventory root, for every language in tg's symbol
-    graph: tree-sitter-verified when the `ast` extra is installed; each row's `provenance`
-    reports `regex-heuristic` or `grammar-missing` otherwise.
+    graph. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast`
+    extra, JS/TS/Rust degrade to `regex-heuristic` rows and other languages return no rows but are
+    listed in `resolution_gaps` -- treat an empty result as UNKNOWN when `resolution_gaps` is
+    non-empty.
 
     Args:
         symbol: Exact symbol name to resolve.
@@ -442,8 +444,10 @@ def tg_symbol_callers(
 ) -> str:
     """
     Return call sites of a symbol and the tests likely impacted by changing it, for every
-    language in tg's symbol graph: tree-sitter-verified when the `ast` extra is installed; each
-    row's `provenance` reports `regex-heuristic` or `grammar-missing` otherwise.
+    language in tg's symbol graph. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast`
+    extra, JS/TS/Rust degrade to `regex-heuristic` rows and other languages return no rows but are
+    listed in `resolution_gaps` -- treat an empty result as UNKNOWN when `resolution_gaps` is
+    non-empty.
 
     Args:
         symbol: Exact symbol name to resolve.

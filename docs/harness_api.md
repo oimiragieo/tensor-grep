@@ -1176,7 +1176,7 @@ Emitted by `tg.exe refs <path> <name> --json`.
 
 Example: [`examples/refs.json`](examples/refs.json)
 
-This resolves references for every language in tg's symbol graph. Rows are tree-sitter-verified when the `ast` extra is installed; otherwise each row's `provenance` reports `regex-heuristic` (JavaScript/TypeScript/Rust fallback) or `grammar-missing`. It does not claim full cross-language semantic resolution.
+This resolves references for every language in tg's symbol graph. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast` extra, JavaScript/TypeScript/Rust degrade to `regex-heuristic` rows and other languages (Go, Java, C#, PHP, C, C++) return no rows but are listed in the top-level `resolution_gaps`; treat an empty result as UNKNOWN when `resolution_gaps` is non-empty. It does not claim full cross-language semantic resolution.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1192,7 +1192,7 @@ This resolves references for every language in tg's symbol graph. Rows are tree-
 | `provider_status` | `object` | Provider health snapshot for reference discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
 | `graph_completeness` | `string` | Trust label for the returned definition graph, currently `strong`. |
-| `references` | `array<object>` | Reference rows; each carries `provenance` (tree-sitter-verified, `regex-heuristic`, or `grammar-missing`). |
+| `references` | `array<object>` | Reference rows; each carries `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). |
 | `files` | `array<string>` | Files containing reference rows. |
 | `related_paths` | `array<string>` | Stable union of definition files, reference files, and tests. |
 
@@ -1214,7 +1214,7 @@ Emitted by `tg.exe callers <path> <name> --json`.
 
 Example: [`examples/callers.json`](examples/callers.json)
 
-This resolves call sites for every language in tg's symbol graph by name/attribute match and combines them with likely impacted tests. Rows are tree-sitter-verified when the `ast` extra is installed; otherwise each row's `provenance` reports `regex-heuristic` or `grammar-missing`.
+This resolves call sites for every language in tg's symbol graph by name/attribute match and combines them with likely impacted tests. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast` extra, JavaScript/TypeScript/Rust degrade to `regex-heuristic` rows and other languages (Go, Java, C#, PHP, C, C++) return no rows but are listed in the top-level `resolution_gaps`; treat an empty result as UNKNOWN when `resolution_gaps` is non-empty.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -1229,7 +1229,7 @@ This resolves call sites for every language in tg's symbol graph by name/attribu
 | `provider_agreement` | `object` | Native-vs-provider merge summary for caller discovery. |
 | `provider_status` | `object` | Provider health snapshot for caller discovery. |
 | `definitions` | `array<object>` | Exact symbol definitions. |
-| `callers` | `array<object>` | Call rows; each carries `provenance` (tree-sitter-verified, `regex-heuristic`, or `grammar-missing`). |
+| `callers` | `array<object>` | Call rows; each carries `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). |
 | `files` | `array<string>` | Files containing call sites. |
 | `tests` | `array<string>` | Likely impacted tests. |
 | `related_paths` | `array<string>` | Stable union of definition files, caller files, and tests. |

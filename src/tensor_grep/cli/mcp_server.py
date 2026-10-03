@@ -4268,10 +4268,10 @@ def tg_navigate(
 
     - action="defs": exact definition locations for `symbol` (= tg_symbol_defs)
     - action="source": exact source blocks for `symbol`'s definition (= tg_symbol_source)
-    - action="refs": references to `symbol`; tree-sitter-verified with the `ast` extra, else
-      `provenance` is regex-heuristic/grammar-missing (= tg_symbol_refs)
-    - action="callers": call sites + likely impacted tests for `symbol`, same `provenance`
-      caveat (= tg_symbol_callers)
+    - action="refs": references to `symbol`, rows carry `provenance`; empty with non-empty
+      `resolution_gaps` means UNKNOWN (= tg_symbol_refs)
+    - action="callers": call sites + likely impacted tests for `symbol`; same `provenance` and
+      `resolution_gaps` caveat (= tg_symbol_callers)
     - action="imports": what `file` imports, O(1) single-file parse (= tg_file_imports)
     - action="importers": the files that import `file` (= tg_file_importers)
 

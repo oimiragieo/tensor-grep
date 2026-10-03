@@ -411,7 +411,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 420,
+    "lineno": 422,
     "enclosing_symbol": "tg_symbol_refs",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -421,7 +421,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 500,
+    "lineno": 504,
     "enclosing_symbol": "tg_symbol_callers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -431,7 +431,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 562,
+    "lineno": 566,
     "enclosing_symbol": "tg_file_imports",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -441,7 +441,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 654,
+    "lineno": 658,
     "enclosing_symbol": "tg_file_importers",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -451,7 +451,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 736,
+    "lineno": 740,
     "enclosing_symbol": "tg_symbol_blast_radius",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -461,7 +461,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 834,
+    "lineno": 838,
     "enclosing_symbol": "tg_symbol_blast_radius_render",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2191,7 +2191,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 430,
+    "lineno": 432,
     "enclosing_symbol": "tg_symbol_refs",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2201,7 +2201,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 510,
+    "lineno": 514,
     "enclosing_symbol": "tg_symbol_callers",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2211,7 +2211,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 571,
+    "lineno": 575,
     "enclosing_symbol": "tg_file_imports",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2221,7 +2221,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 664,
+    "lineno": 668,
     "enclosing_symbol": "tg_file_importers",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2231,7 +2231,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 747,
+    "lineno": 751,
     "enclosing_symbol": "tg_symbol_blast_radius",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -2241,7 +2241,7 @@
   },
   {
     "module": "cli/mcp_symbol_tools.py",
-    "lineno": 845,
+    "lineno": 849,
     "enclosing_symbol": "tg_symbol_blast_radius_render",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",

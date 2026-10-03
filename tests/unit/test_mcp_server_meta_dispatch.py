@@ -1332,6 +1332,8 @@ def test_legacy_tool_descriptions_name_their_covering_meta_tool():
         }
         assert owners == {match.group(1)}, name
         assert match.group(2) != "?", name
+        meta_actions = mcp_server._META_MCP_TOOL_CAPABILITIES[match.group(1)]["actions"]
+        assert match.group(2) in meta_actions, name
         assert desc.count(_LEGACY_NOTE_MARKER) == 1, name
     for name in _EXPECTED_META_TOOL_NAMES | _EXPECTED_SINGLETON_TOOL_NAMES:
         assert _LEGACY_NOTE_MARKER not in tools[name], name
