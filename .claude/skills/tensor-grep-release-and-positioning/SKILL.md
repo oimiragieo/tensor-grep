@@ -160,7 +160,7 @@ not the human/agent act of clicking merge, so it does not prevent this.
   `Semantic Release` → `--log-failed`. A `! [rejected]  main -> main` line is the push-race
   signature; anything else is a different bug. Do not theorize from a traceback before reading this.
 
-**Discipline — burst, then hold (one rule):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. "Safe to interleave" means *after the release has fully
+**Discipline — burst, then hold (one rule):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix. "Safe to interleave" means *after the release has fully
 published* (its `chore(release): vX` commit is on `main` **and** PyPI shows the new version), not merely after a PR's CI went green (`AGENTS.md` — grep "Safe to interleave" means).
 
 **Converse (A31) — the hold binds ONLY overlap with a release-bearing publish window.**

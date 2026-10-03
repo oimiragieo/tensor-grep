@@ -244,7 +244,7 @@ publishing.
 1. Verify every candidate PR is genuinely green (see §11 — count is not enough).
 2. **Only when no release-bearing `main` run exists, merge them all in one burst.** The release is cumulative from the last tag, so merging more
    inside the burst LOSES NOTHING and gains a single publish covering everything.
-3. **Then stop pushing entirely** — including docs PRs, which consume the same runners — until that run's `chore(release)` commit and the PyPI publish land. The window is the whole run from creation to the release push, not the job's current state: a pending/jobs=0 run still pushes last.
+3. **Then stop pushing entirely** — including docs PRs, which consume the same runners — until that run's `chore(release)` commit and the PyPI publish land. The window is the whole run from creation to the release push, not the job's current state: a pending/jobs=0 run still pushes last. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 4. Capture the release run's ID once and poll THAT ID (`gh run view <run-id> --json status,conclusion`)
    until `status == "completed"`; never gate on a windowed `gh run list --limit N` (it hides the
    executing run — see Part 7). A created run is not a protected run.
@@ -330,7 +330,7 @@ Rule 6 is easy to underrate: if you touch `.github/workflows/ci.yml`, `.github/w
 
 | # | Front door | File | Verified anchor |
 |---|---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/main.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` (native allowlist) | `rust_core/src/search_flag_registry.rs` | grep `SEARCH_PYTHON_PASSTHROUGH_FLAGS` |
 | 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` (Python bootstrap allowlist) | `src/tensor_grep/cli/bootstrap.py` | `grep -n "_TG_ONLY_SEARCH_FLAGS" src/tensor_grep/cli/bootstrap.py` |
 
 **Why / incident:** The `tg search --rank` flag missed one of the two front doors. CliRunner tests were green — because CliRunner bypasses the bootstrap front door (Part 5) — so the crash shipped and only surfaced for users of the published binary (`AGENTS.md`). The **CI registration-completeness gate is BLOCKING since v1.17.1 (#282)** and its extractor is comment-aware (`#`-commented entries are not counted as registered) (`AGENTS.md`).
@@ -653,7 +653,7 @@ That job **compiles native assets before publishing → it runs ~6 minutes**, an
 
 **Why / incident:** `v1.17.23` (a security batch, #318) failed to publish because the GPU-pause `docs:` PR (#319) was merged while #318's release job was still compiling assets (`AGENTS.md`). The CI concurrency group serializes *runs*, not the *human act of clicking merge* — it is necessary but **insufficient**.
 
-**Discipline = burst, then hold (ONE rule).** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. "Safe to interleave" means *after the release fully published* (its `chore(release): vX [skip ci]` commit is on `main` **and** PyPI shows the new version), not after a PR's CI is green (`AGENTS.md`).
+**Discipline = burst, then hold (ONE rule).** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix. "Safe to interleave" means *after the release fully published* (its `chore(release): vX [skip ci]` commit is on `main` **and** PyPI shows the new version), not after a PR's CI is green (`AGENTS.md`).
 
 **Recovery — do NOT panic-rerun:** the failure self-heals. The next push-to-`main` re-runs `Semantic Release`; because the version is **derived from git tags** (not the failed run's state), it recomputes the correct next version and covers the orphaned `fix:`/`feat:` commit. The fix's *code* was already on `main` — only the publish step was behind. Diagnose by decoding the structured job result first: `gh run view <id> --json jobs` → find `Semantic Release` → `--log-failed`. A `! [rejected] main -> main` line is the push-race signature (`AGENTS.md`).
 
@@ -671,7 +671,7 @@ The merge regime is ONE rule with two halves, not a strict default plus exceptio
 2. **Hold** — from the creation of that release-bearing run until its `chore(release)` commit is on `main`
    and PyPI shows the version, merge **nothing**: not a `docs:`/`chore:` PR, not a "just one more". The
    window is the whole run from creation to the release push, not the job's current state — a
-   pending/`jobs=0` run still pushes last (receipt: a merge made on the theory that "the release job has
+   pending/`jobs=0` run still pushes last. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix. A run is release-bearing iff `git log --format='%s' <last-tag>..<run headSha> | grep -E '^(fix|feat|perf)'` is non-empty (releases are cumulative). (receipt: a merge made on the theory that "the release job has
    not started, so there is no push to reject" rejected that release's push).
 3. **Non-releasing PRs** (`docs:`/`test:`/`chore:`/`bench:`) join a burst when no release-bearing run
    exists (A31: they create no publish to race; their only gate is "the newest main run completed"). While
@@ -801,7 +801,7 @@ The race window is merge → `chore(release)` commit on `main` → PyPI, and `Se
 
 ## Part 8 — PR title drives release intent
 
-CI infers the semantic-release bump from the **PR title** (which becomes the squash-merge commit subject). Use conventional titles (`CONTRIBUTING.md:46-51`, `AGENTS.md`):
+CI infers the semantic-release bump from the **PR title** (which becomes the squash-merge commit subject **only for a multi-commit PR**; a single-commit PR squashes with that commit's own subject, so put the release type on the commit subject, because semantic-release parses the commit on `main`, never the PR title). Use conventional titles (`CONTRIBUTING.md:46-51`, `AGENTS.md`):
 
 | Title prefix | Effect |
 |---|---|
@@ -934,7 +934,7 @@ uv export --format requirements.txt --all-extras --no-emit-project --locked
   canonical Windows `.venv`; canonical verification ran from PowerShell.
 - [ ] PR title matches intended release bump; **squash-merge** for release-bearing.
 - [ ] PR body/comments/examples/count denominators re-reviewed against the final head commit.
-- [ ] Merging: no release-bearing `main` run exists (inspect every run, not `--limit 1`), or this merge is part of one burst; after the burst, hold until that run's `chore(release)` commit and PyPI publish land (Part 7 "One rule: burst, then hold").
+- [ ] Merging: no release-bearing `main` run exists (inspect every run, not `--limit 1`), or this merge is part of one burst; after the burst, hold until that run's `chore(release)` commit and PyPI publish land (Part 7 "One rule: burst, then hold"). If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 - [ ] Self-merge only after independent review + verified-green required CI + the push-race check; never admin-merge past a required check.
 
 ---
@@ -948,7 +948,7 @@ Change history for this skill: `git log --format='%h %ad %s' --date=short -- .cl
 | Current release tag | `grep release_docs_current_tag AGENTS.md` (was `v1.95.0` as of 2026-07-23 — re-check, it moves every release) |
 | Mandatory adversarial security gate (Part 1 Rule 5) | `feedback-fable5-cyber-classifier-audit-on-opus` + `tensor-grep-campaign-orchestration-playbook-2026-07-08` (global memory) — no single code anchor, this is a process rule; verify it is still being applied by checking recent security-touching PR descriptions for a stated adversarial-review verdict |
 | 4 command registration sites | `grep -n KNOWN_COMMANDS src/tensor_grep/cli/commands.py`; `grep -n "enum Commands" rust_core/src/main.rs`; `grep -n PUBLIC_TOP_LEVEL_COMMANDS tests/e2e/test_routing_parity.py`; `grep -cn "@app.command" src/tensor_grep/cli/main.py` |
-| 2 search-flag front doors | `grep -n SEARCH_PYTHON_PASSTHROUGH_FLAGS rust_core/src/main.rs`; `grep -n _TG_ONLY_SEARCH_FLAGS src/tensor_grep/cli/bootstrap.py` |
+| 2 search-flag front doors | `grep -n SEARCH_PYTHON_PASSTHROUGH_FLAGS rust_core/src/search_flag_registry.rs`; `grep -n _TG_ONLY_SEARCH_FLAGS src/tensor_grep/cli/bootstrap.py` |
 | 5 language-registration seams | `grep -n "lang_registry.register_language\|_imports_and_symbols_for_path\|_imports_with_lines_for_path\|_target_language_for_path\|_SUPPORTED_FILE_DEPENDENCY_LANGUAGES" src/tensor_grep/cli/repo_map.py`; `grep -n "LANGUAGE_REGISTRY\|register_language" src/tensor_grep/cli/lang_registry.py` |
 | Fail-closed error type | `grep -n "class BackendExecutionError" src/tensor_grep/backends/base.py` |
 | Entry point | `grep -rn "bootstrap:main_entry\|main_entry" pyproject.toml src/tensor_grep/cli/bootstrap.py` |

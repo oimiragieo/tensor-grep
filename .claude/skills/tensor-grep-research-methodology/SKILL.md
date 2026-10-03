@@ -470,4 +470,3 @@ command below no longer matches, fix this skill (and the sibling that owns the f
 | Instrumented-build-gate discipline (Part 3, C12) | global skill `instrumented-build-gate`; worked example memory `tensor-grep-a2a-ledger-audit-2026-07-08` |
 | B-META 5/5-mirage worked example (Part 3/4) | `tensor-grep-failure-archaeology` Battle 22; `docs/BACKLOG.md` 2026-07-21 research-campaign entry |
 | Measure-first / byte-identical-proof receipts added 2026-07-24 (Test A, Test B, Test C) | `#719`/`v1.93.9` (ast.walk-merge, `docs/BACKLOG.md` v1.93.9 entry + `CHANGELOG.md`); `#723`/`v1.93.10` (validation-scan, `CHANGELOG.md` "Performance Improvements" under `v1.93.10`); the stale-brief receipt (Part 2) is detailed in `tensor-grep-add-language` |
-

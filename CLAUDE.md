@@ -64,7 +64,7 @@ Claude Code guidance for the **tensor-grep** repository.
 - **Push Discipline / the push-race** — the real publish is the `Semantic Release` job in `ci.yml`, and
   it runs ~6 min (native-asset compile). Merging *anything* onto `main` during that window — even a
   no-release `docs:`/`chore:` PR — rejects the in-flight release's push (`! [rejected] main -> main`).
-  The one rule: When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. A failed release self-heals
+  The one rule: When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix. A failed release self-heals
   on the next push (don't panic-rerun).
 
   **RELEASE CLASS IS PART OF THE FIX.** The title gate (`_RELEASE_INTENTS` in

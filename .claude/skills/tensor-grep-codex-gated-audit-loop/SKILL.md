@@ -86,8 +86,8 @@ in full at every merge; it is the loop that produces the diff the gates judge.
   round is closed with evidence.
 - [ ] **Step 6 — Record the rounds in the commit message.** Each round: `Codex R<N> <verdict>
   (count: the N findings, each with one-line mechanism)` — the merge message is the durable
-  audit trail. Then the normal change-control gates (draft PR, real venv re-verify, CI, human
-  merge) apply unchanged.
+  audit trail. Then the normal change-control gates (PR, real venv re-verify, CI, independent review,
+  self-merge once green and push-race clear) apply unchanged.
 
 The 2026-08-08/09 receipts for what "SHIP" actually took: H2 = R1(4)→R2(2)→R3(1)→R4(1)→R5
 APPROVE-WITH-NITS; M1 = R1 FIX-FIRST(4)→R2 SHIP; M3 = R1(3)→R2(3)→R3(1)→R4 seat FAILED
@@ -315,10 +315,10 @@ Step 2  minimal GREEN fix -> targeted suite green
 Step 3  codex gate: "try to BREAK it, cite file:line, FIX-FIRST when uncertain" (fresh ctx)
 Step 4  every finding -> your own probe -> CONFIRMED/REFUTED/NEEDS-FIX-DECISION
 Step 5  fold confirmed fixes in-draft -> codex round N+1 -> repeat until SHIP
-Step 6  commit message records each round (severity + mechanism) -> normal gates -> draft PR
+Step 6  commit message records each round (severity + mechanism) -> normal gates -> PR (self-merge once verified green)
 ```
 
-The endpoint is always a **draft PR** a human merges; the codex gate is an addition to the
+The endpoint is always a PR the orchestrator self-merges once verified green, independently reviewed, and push-race clear (change-control Part 1 §1); the codex gate is an addition to the
 change-control gates, never a substitute for them.
 
 ## Static SHIP is provisional until the first CI compile (A87, 2026-08-08/09 receipts)

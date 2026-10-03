@@ -451,8 +451,8 @@ Ranked by how hard each is to fake, cheapest-to-check first:
    heuristic tends to only contain the cases the author already thought of; the failure mode that
    actually matters (flooding false positives) never shows up until the heuristic meets a real, larger
    corpus. Receipt (2026-07-03): the `tg diff-docs` MVP (round-4 design-council build, commit
-   `90b7042` "wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)" on
-   commit `90b7042`, **not merged to `main`**) shipped with 17 green tests in
+   `90b7042` "wip: tg diff-docs foundation (DEFERRED — precision inadequate, see task)", preserved as
+   branch `archive/diff-docs-precision`, **not merged to `main`**) shipped with 17 green tests in
    `tests/unit/test_diff_docs.py` (`grep -c "def test_"` on that commit) — every fixture passed — but a
    dogfood run against this repo's real `docs/` vs `src/` corpus produced on the order of 20,000
    findings, the large majority flagging language/stdlib types (`String`, `Option`, `Vec`) as
@@ -1133,7 +1133,7 @@ Re-verify before relying on them:
 | mypy strict-mode config | `grep -n "\[tool.mypy\]" -A6 pyproject.toml` |
 | `--no-sync` rationale | `grep -n "no-sync" -B2 -A2 .github/workflows/ci.yml` |
 | Current release tag | `grep -n "^version" pyproject.toml` |
-| `tg diff-docs` still deferred/unmerged (2026-07-03) | `git log --oneline --all -- src/tensor_grep/cli/diff_docs.py` (should show only commit `90b7042`, nothing on `main`) |
+| `tg diff-docs` still deferred/unmerged (2026-07-03) | `git log --oneline --all -- src/tensor_grep/cli/diff_docs.py` (should show only commit `90b7042` = `archive/diff-docs-precision`, nothing on `main`) |
 | Native-binary discovery order for parity/integration tests (2026-07-03) | `grep -n "_in_tree_native_tg_candidates\|def resolve_native_tg_binary" -A5 src/tensor_grep/cli/runtime_paths.py` |
 | Native-delegation field-coverage ratchet test still present (2026-07-03) | `grep -n "class Test" tests/unit/test_native_delegation_field_coverage.py` |
 | `--rank`/`capfd` capture-surface receipt (2026-07-03) | `git show ab717a1 -s --format=%B` (contains both the `#342` refuse-delegation fix and the `#342 follow-up` capture fix in one squashed message) |

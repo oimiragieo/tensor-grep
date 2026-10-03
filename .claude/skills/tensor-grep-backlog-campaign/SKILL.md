@@ -137,7 +137,7 @@ has told you to ask only about money.
     status-stamp PRs retarget governance pins; gate tip bytes not archaeological RED SHAs; HIGH
     receipts ≠ Sol SHIP; AMEND_SPINE when READY∩reconcile-BLOCKED.
 
-12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min — the GATE duration, i.e. the wait for that main run itself to complete; a DIFFERENT referent from the semantic-release-job-alone figure in the drain-cron section below) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **One-per-publish protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
+12. **Order the drain by RELEASE impact, not PR number (2026-07-26 receipt).** Only `fix:`/`feat:` trigger semantic-release. `docs:`/`test:`/`bench:`/`chore:` complete without publishing, so they create no publish to race — their gate is just "the newest main run completed" (~6 min — the GATE duration, i.e. the wait for that main run itself to complete; a DIFFERENT referent from the semantic-release-job-alone figure in the drain-cron section below) versus a full release cycle (~30–60 min, longer under runner scarcity). Landing the non-releasing PRs first took a 12-deep queue to 7 in about an hour that would otherwise have bought two merges. **The hold protects an in-flight PUBLISH; it is not a per-PR serialisation.** Two riders: check for file collisions first (two PRs both editing `docs/CONTRACTS.md` will conflict once either lands), and re-poll `mergeable` after each merge — GitHub returns `UNKNOWN` for a few seconds while it recomputes, and `UNKNOWN` is not `CLEAN`.
 13. **The gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26 receipt).** When `main` is red, the fix FOR that red must still be mergeable — requiring green before merging the thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered on a later run; that recovery is the evidence the fix worked, not the merge itself. Everything else stays parked while red: merging onto a broken `main` compounds it and obscures which commit owns the failure.
 14. **A concurrent agent's PR gets an INDEPENDENT gate, and the verdict goes on the PR (2026-07-26, #786).** A PR arriving from another session/worktree is not self-gated by definition, so gate it — then post the verdict as a PR comment with its evidence (what was probed, what the control arm showed). A gate that lives only in your transcript is lost work: the next session re-runs it or reaches a different conclusion, and the author cannot un-draft without waiting on you. Cost: one `gh pr comment`.
 15. **Verify the fix on the MERGED artifact, not only pre-merge (2026-07-26).** Pre-merge proves the BUG is real (control arm on the unpatched tree); it says nothing about whether the FIX behaves on `main` after a squash. Re-run the treatment arm against merged `main` — and check the guard is present *structurally* (e.g. `"_seen" in fn.__code__.co_varnames`) rather than by re-reading the diff.
@@ -240,7 +240,7 @@ true; it is strictly worse than having no backstop at all.
 - Use **Agent subagent `model: fable`**. Do NOT rely on `claude -p --model claude-fable-5` headless.
 - **Workflow tool cannot reach Fable** — silently falls back to session model. Use Agent subagents for Fable; Workflow for haiku/sonnet file-grounded fan-out only.
 - **Fable is ~2× token cost.** Cap Fable parallel fan-out at **≤2–3** (vs ≤3–5 for sonnet/haiku).
-- Run explicit security audits on Opus; use Fable for correctness/design audits.
+- Run explicit security audits on an Opus seat; route other audits per the `model-router` skill.
 
 **Resume-from-transcript, not re-dispatch (broadened 2026-07-08 — ANY transient failure, not just session-limit kills).** A background subagent (Fable or otherwise) that dies mid-task — a session-limit kill (`had-no-active-task`) **or** a transient `"Agent terminated early due to an API error: 500"` — is resumed via `SendMessage` to its agent ID, not re-dispatched fresh: the transcript carries the partial work forward. Message it plainly: *"you hit a transient error, your work is intact, continue + <the finish criteria>."* Receipt: happened 3x in one session (2 builds + 1 security-gate agent hit a transient API 500) and all 3 recovered cleanly with zero lost work. Re-dispatching fresh instead of resuming loses everything the agent had already done.
 
@@ -334,11 +334,11 @@ process to survive uninterrupted. Note there is no `scratchpad/drain_v2.sh` chec
 any ad hoc drain script an agent writes lives in the OS scratch/temp dir (session-ephemeral), never
 committed at that path; do not cite it as a repo-relative file.
 
-**The fix: a per-fire, short-lived cron/loop tick that does at most ONE merge, then exits.** Each
+**The fix: a per-fire, short-lived cron/loop tick that does at most ONE burst (only when no release-bearing run exists), then exits.** Each
 fire is cheap and stateless — nothing to be killed, because nothing stays running between fires.
 Arm it with the `loop` skill (`/loop 30m <the one-shot prompt below>`) or an equivalent external
 scheduler — never a backgrounded `&` shell loop. Cadence **~30 min** matches the achievable
-~1-PR-per-publish rate (a release-bearing merge's own wait window is ~40–66 min, so firing much
+~1-burst-per-publish rate (a release-bearing merge's own wait window is ~40–66 min, so firing much
 faster than that just re-checks a still-in-flight release).
 
 **`/loop` vs `CronCreate` — pick based on how long the drain needs to survive, not habit.** `/loop`
@@ -380,7 +380,7 @@ gh pr merge "$pr" --squash --delete-branch
 ```
 
 - **Burst, then hold, per fire** — a fire that finds NO release-bearing `main` run merges every
-  independently-green PR in one burst and exits; a fire that finds one merges nothing. The next fire
+  independently-green PR in one burst and exits; a fire that finds one merges nothing (If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.). The next fire
   re-checks after the in-flight run's `chore(release)` commit and PyPI publish have landed.
 - **Push-race check is mandatory on every fire, not just the first**: the latest `chore(release): vX`
   tag must be confirmed on PyPI AND the newest `main` run must be `completed` (Hard rule 13; not

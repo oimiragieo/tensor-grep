@@ -58,8 +58,8 @@ Ground truth holder: `docs/audits/2026-08-11-skill-audit-facts.md` (the last ful
      python -c "import sys;sys.path.insert(0,'src');from tensor_grep.cli import repo_map as r;print(r._symbol_navigation_descriptor())"
      ```
 
-     If a skill still says "5 parser-backed / 5 foundational" or "8", it is superseded — append a
-     dated SUPERSEDED note (see below), do not silently edit the old sentence.
+     If a skill still says "5 parser-backed / 5 foundational" or "8", it is superseded — fix it per Part 2
+     (scope rule: append-only applies to dated receipts; a present-tense instruction is rewritten in place).
 
    - Skill library count (the `**N skills**` figure in AGENTS.md/CLAUDE.md): it equals the number
      of `.claude/skills/*/SKILL.md` folders named `tensor-grep-*` plus
@@ -113,8 +113,10 @@ Ground truth holder: `docs/audits/2026-08-11-skill-audit-facts.md` (the last ful
 
 ## Part 2 — Fix it (append-only SUPERSEDED, never rewrite-as-if-new)
 
-Precedent and law: this repo's `code-search-and-retrieval-reference` Task-10D/10E notes are the
-model. When a skill's old claim is WRONG but was correct-as-dated:
+**Scope rule.** Append-only applies to dated receipts (`docs/audits/*`, ledgers). A skill's
+present-tense instruction is rewritten in place to the current fact; history lives in `git log`.
+
+For a dated receipt whose old claim is WRONG but was correct-as-dated:
 
 - Leave the old sentence untouched (it is dated history and its read is accurate for its time).
 - Append a **`SUPERSEDED (append-only, dated)`** block immediately after it: what changed, at what

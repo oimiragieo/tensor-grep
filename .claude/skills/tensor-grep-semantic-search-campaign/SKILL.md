@@ -499,7 +499,7 @@ planned `SafeBackendMixin` conformance gate.
 - [ ] RRF is rank-based, `k=60` default, deterministic; unit-tested (identity no-op + top-surfacing).
 - [ ] Phase 4 evidence: three-row quality table (BM25 / dense / RRF) on a REAL corpus + editor-plane latency + token economy — RRF beats BM25-only on quality without a latency regression, OR the negative result is documented and you stop.
 - [ ] `--json` / `--ndjson` / `--format rg` unchanged when ranking is off.
-- [ ] Local validation green: `uv run ruff check .` · `uv run ruff format --check --preview .` · `uv run mypy src/tensor_grep` · `uv run pytest -q` (CI runs `ruff format --check --preview` — you MUST pass `--preview`).
+- [ ] Local validation green: `uv run ruff check .` · `uv run ruff format --check --preview .` · `uv run mypy src/tensor_grep` · targeted `uv run pytest -q <files>` + the two ratchet `--report` scripts (full suite in CI / `scripts/ci-local`) (CI runs `ruff format --check --preview` — you MUST pass `--preview`).
 - [ ] Real-binary dogfood, not just CliRunner (`scripts/dogfood/`).
 - [ ] Promotion routed through `tensor-grep-change-control`; flip PR gets explicit human sign-off; conscious flag-flip, never admin-merge.
 

@@ -56,10 +56,8 @@ skill without beating a measurable gate and a conscious flag-flip** (Phase 4).
   — the code comment measures **~18 s of ~22 s** wall time was redundant `resolve()`
   churn (`grep -n "^def _resolved_path_str" src/tensor_grep/cli/repo_map_cache.py`, comment above it), and the release notes claim **7.9x on central symbols** (not in the code; re-measure).
   So the pre-#396 receipt numbers are STALE — **Phase 0 re-measures at HEAD.**
-- **The unscoped-`tg search` hang was real and is now fixed, not in-flight.** `AGENTS.md`
-  (`grep -n "hangs ~600 s then errors" AGENTS.md`)
-  still narrates the pre-fix symptom ("hangs ~600 s then errors" because tg's own index dirs +
-  a vendored tree were not auto-excluded) — that doc lags. The fix, **#400**, shipped in
+- **The unscoped-`tg search` hang was real and is now fixed, not in-flight.** `AGENTS.md`'s "Known current weak spots" now states the fixed behavior
+  (`grep -n "IMPLICIT_SEARCH_WALK_FILE_CEILING" AGENTS.md`). The fix, **#400**, shipped in
   **v1.40.4** (`bb14abe`) and was hardened further by **#413** (v1.42.0) and **#428**; see
   §1 below. Do not present this as an open bug or an unmerged PR.
 - **Whole-repo GRAPH commands (agent / callers / blast-radius / orient) are SLOW AT SCALE, not
@@ -166,9 +164,8 @@ project's merge-gate guardrail: an open PR is guidance, not a receipt, until it 
   shape, not as an open task — do not re-propose closing #390 as new work.**
 - **Default budget.** The native-walk bound reuses `configured_ripgrep_timeout_seconds()`,
   which now defaults to **60 s** (`subprocess_policy.py:75`; was 600 s).
-  `AGENTS.md` (`grep -n "hangs ~600 s then errors" AGENTS.md`)
-  still narrates the pre-#400 "600 s" symptom — that doc lags; the resolver is the source of
-  truth.
+  `AGENTS.md`'s "Known current weak spots" states the fixed behavior
+  (`grep -n "IMPLICIT_SEARCH_WALK_FILE_CEILING" AGENTS.md`); the resolver is the source of truth.
 - **NEW (surfaced by the 2026-07-23 c:/dev dogfood receipt above) — a pathological
   workspace-union root can still blow an `inventory --deadline` budget**, even though
   #478 bounded `_iter_repo_files`'s walk. `tg inventory` always calls `build_inventory`
@@ -372,7 +369,7 @@ Only if (a)+(b)+(c) leave the parse itself as the irreducible hotspot.
 ### Phase 4 — Promote through change-control (never here)
 
 This skill produces evidence; **`tensor-grep-change-control` owns the flip.**
-1. One **release-bearing PR per tick** (respect the push-race / burst-then-hold rule,
+1. Merge under the burst-then-hold rule (`tensor-grep-change-control` Part 7;
    `tensor-grep-release-and-positioning`).
 2. Attach Phase 3 evidence (before/after wall-clock table + exit-code proof + parity).
 3. **Re-dogfood on the REAL large repo before declaring the contract done** — this is
@@ -486,7 +483,7 @@ git history (`git log -p -- .claude/skills/tensor-grep-large-repo-scale-campaign
   `refs`/`blast-radius`/`file_importers` siblings — read the code comment directly above each call
   site, which names task #203 as the closing fix.
 - **Native-walk bound + default budget:** `grep -n "native_walk_deadline\|compute_native_walk_deadline" src/tensor_grep/backends/cpu_backend.py`;
-  `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s, `subprocess_policy.py:75`; `AGENTS.md` still narrates the pre-#400 600 s symptom).
+  `grep -n TG_RG_TIMEOUT_SECONDS src/tensor_grep/cli/subprocess_policy.py` (default 60 s; `AGENTS.md`'s "Known current weak spots" states the fixed behavior).
 - **Vendored-root refusal (two front doors):** `grep -n "_should_refuse_unbounded_vendored_root_scan\|_search_paths_include_vendored_root" src/tensor_grep/cli/main.py src/tensor_grep/cli/bootstrap.py`.
 - **Exit contract:** `grep -n "Symbol-command exit codes are a three-state agent contract" docs/CONTRACTS.md` and `grep -n "council-verified B" src/tensor_grep/cli/main.py` (find the current `raise typer.Exit(2)` block — the exact line drifts every release, grep for the comment, don't trust a hardcoded number).
 - **#396 caches:** `grep -n "_mtime_aware_cache\|_resolved_path_str\|_module_aliases_for_path" src/tensor_grep/cli/repo_map.py`.
@@ -507,9 +504,8 @@ git history (`git log -p -- .claude/skills/tensor-grep-large-repo-scale-campaign
   never be worth it. The caller-scan re-parse bound (candidate a) shipped as #478 (see S3 Phase 2
   candidate (a) note) -- it is no longer an open candidate for the #52 shape specifically, though
   the pattern remains the template for the next similar finding.
-- Doc-of-record narrative lags reality: `AGENTS.md` (`grep -n "hangs ~600 s then errors" AGENTS.md`; still narrates the pre-#400 "600 s"
-  hang symptom as if unfixed), `SESSION_HANDOFF.md` — trust the code + `docs/CONTRACTS.md`,
-  note the doc lags.
+- Doc-of-record narrative can lag reality (`SESSION_HANDOFF.md`): trust the code + `docs/CONTRACTS.md`,
+  note the doc lags. `AGENTS.md`'s "Known current weak spots" states the fixed unscoped-search behavior.
 - **Merge-gate discipline:** if a future in-flight PR (not yet on `origin/main`) looks relevant
   to this campaign, capture the PATTERN as guidance only — do not write "#NNN shipped" until
   `git log --oneline origin/main | head` shows a `chore(release)` commit above it.

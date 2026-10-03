@@ -48,7 +48,7 @@ New and edited public issues are classified by a deterministic triage workflow. 
   - `fix: ...` or `perf: ...` => patch release
   - `feat!: ...` or `fix!: ...` => major release
   - `docs: ...`, `test: ...`, `chore: ...`, `ci: ...`, `build: ...` => no release
-- Use **Squash and merge** for release-bearing PRs so the validated PR title becomes the commit subject on `main`.
+- Use **Squash and merge** for release-bearing PRs so the validated PR title becomes the commit subject on `main`. A single-commit PR squashes with that commit's own subject instead, so give that commit the intended `feat:`/`fix:`/`chore:` subject; semantic-release parses the commit on `main`, never the PR title.
 - Do not manually create release tags while semantic-release is active.
 - A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state.
 - Release versioning starts only after a release-bearing PR is squash-merged to `main`.

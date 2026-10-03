@@ -67,7 +67,7 @@ rust_core/src/main.rs`).
 |---|---|---|---|
 | `TG_SIDECAR_PYTHON` | `sys.executable` | Python executable used for sidecar-backed commands (classify, GPU sidecar). | `main.py` epilog |
 | `TG_NATIVE_TG_BINARY` (alias `TG_MCP_TG_BINARY`) | auto-resolved | Path to the native `tg` binary front door used by Python-backed commands. Priority 1 override; stale in-tree dev builds (`rust_core/target/{debug,release}/tg.exe`) are otherwise skipped unless pinned here. | `main.py` epilog, `runtime_paths.py:238-248` |
-| `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR` (alias `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR`) | `cpu` | `nvidia`/`cuda` prefers the NVIDIA release-native front-door asset (`tg-*-nvidia.exe`), with CPU fallback; anything else normalizes to `cpu`. | `main.py` (`grep -n "def _normalize_native_frontdoor_flavor" src/tensor_grep/cli/main.py`) |
+| `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR` (alias `TG_NATIVE_FRONTDOOR_REQUESTED_FLAVOR`) | `cpu` | `nvidia`/`cuda` prefers the NVIDIA release-native front-door asset (`tg-*-nvidia.exe`), with CPU fallback; anything else normalizes to `cpu`. | `native_frontdoor.py`, re-exported in `main.py` (`grep -n "def _normalize_native_frontdoor_flavor" src/tensor_grep/cli/native_frontdoor.py`) |
 | `TG_RG_PATH` | auto-resolved | Path to the `rg` executable used for text-search passthrough. | `main.py` epilog, `runtime_paths.py:281` |
 | `TG_FORCE_CPU` | off | Force CPU routing for search commands (boolean convention). | `main.py` epilog |
 | `TG_RUST_FIRST_SEARCH` | off | Opt-in: prefer the Rust native front door before Python bootstrap logic for search dispatch. | `bootstrap.py:242` |

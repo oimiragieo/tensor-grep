@@ -207,13 +207,15 @@ effect — see Trap 6 (stale in-tree binaries) and Trap 8 (mocked tests hiding a
 
 ## Local validation (run before every push)
 
-Exact commands from `CONTRIBUTING.md` "Local Validation" + `AGENTS.md` "Required Local Validation":
+Commands from `CONTRIBUTING.md` "Local Validation", narrowed for the shared box per `AGENTS.md` "Required Local Validation" (targeted pytest locally; the full suite is CI's or `scripts/ci-local`'s):
 
 ```bash
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q <targeted tests/unit files for the touched areas>
+uv run python scripts/file_size_budget.py --report
+uv run python scripts/bare_call_ratchet.py --report
 ```
 
 Rust equivalents of CI's `static-analysis` job (grep `^  static-analysis:` in `.github/workflows/ci.yml`) — that job runs
@@ -357,7 +359,7 @@ worktree can be true for the wrong reason (mocked/stubbed backend, no real `rust
 commit onto a fresh branch off `origin/main` (or the current integration branch), then **re-verify in
 the real, fully-built venv**: `uv run maturin develop` (or a full `uv pip install -e ".[dev,ast]"`),
 `uv run ruff check . && uv run ruff format --check --preview .`, `uv run mypy src/tensor_grep`,
-`uv run pytest -q`, plus a live smoke (`uv run tg --version`, a real search) — only then does it clear
+targeted `uv run pytest -q <files>`, plus a live smoke (`uv run tg --version`, a real search) — only then does it clear
 the gate for PR. Cleanup after harvesting: `git checkout main; git reset --hard origin/main;
 git worktree remove --force <path>`. This caught 3/3 real issues in a 2026-07-03 worktree-council
 verify pass (a Linux-reasoning agent's Windows-FS-blind concurrency claim among them) — see

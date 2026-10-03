@@ -13,7 +13,7 @@ The current tagged version is `v1.123.11`, and the latest complete public PyPI/r
 
 Hardening agents can rely on:
 
-- **Verified upgrades & installs:** `tg upgrade` (and the detached Windows refresh helper) plus every installer -- `install.sh`, `install.ps1`, npm, **Homebrew**, and winget -- verify the downloaded native binary against the published `CHECKSUMS.txt` and fail closed on a missing or mismatched digest.
+- **Verified upgrades & installs:** `tg upgrade` (and the detached Windows refresh helper), `scripts/install.sh` and `scripts/install.ps1` verify the downloaded native binary against the published `CHECKSUMS.txt` and fail closed on a missing or mismatched digest. The npm, Homebrew and winget package assets exist in the repo but are not published yet.
 - **MCP apply safety:** the `tg_rewrite_apply` MCP tool refuses free-form `lint_cmd` / `test_cmd` (which shell-execute on the host) unless the operator opts in with `TG_MCP_ALLOW_VALIDATION_COMMANDS=1`; otherwise it returns `code="unsupported_option"`.
 - **grep parity:** `tg search --cpu -v` now includes blank lines, and `--json` / `--vimgrep` columns are byte offsets (ripgrep-accurate on non-ASCII lines).
 - **Agentic-edit integrity:** the audit-manifest chain records only verified manifests (a tampered manifest is no longer folded into the tamper-evident history), and the trigram index deserializer is hardened against a preallocation/OOM DoS from a crafted `.tensor-grep` index.
@@ -249,8 +249,12 @@ For code changes, follow `AGENTS.md` and run:
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q <targeted tests/unit files for the touched areas>
+uv run python scripts/file_size_budget.py --report
+uv run python scripts/bare_call_ratchet.py --report
 ```
+
+The full `pytest -q` runs in CI or the CPU-capped `scripts/ci-local` container, not locally on the shared box.
 
 For fast agent-readiness dogfood before push, run:
 

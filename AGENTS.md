@@ -48,6 +48,7 @@ concrete failure observed this session.
   `&` in a `run_in_background` wrapper orphaned it). Each fire is short-lived, so nothing can be killed
   mid-run. Push-race gate per fire: if no release-bearing `main` run exists, merge the green PRs in one burst;
   otherwise merge nothing until that run is `completed` AND its `chore(release)` tag is on PyPI.
+  If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 - **A3 -- Mandatory adversarial security gate before merge.** Every security PR -- touching `apply_policy`
   / `mcp_server` / `*_backend` / an index-or-session lock / auth / money / migration / native asset /
   installer / doctor-probe construction -- gets an Opus "try to BREAK it, cite `file:line`, default
@@ -225,8 +226,8 @@ concrete failure observed this session.
   trigger semantic-release; `refactor:`/`docs:`/`test:`/`bench:`/`chore:` complete without publishing. A
   non-releasing merge therefore creates no publish to race — its gate is just "the main run
   completed", ~6 min, versus ~30–60 min for a release cycle. Landing the non-releasing PRs first took
-  the queue 12 → 7 in about an hour that would otherwise have bought two merges. The one-per-publish
-  rule protects an in-flight PUBLISH; it is not a per-PR serialisation.
+  the queue 12 → 7 in about an hour that would otherwise have bought two merges. The hold
+  protects an in-flight PUBLISH; it is not a per-PR serialisation.
 - **A32 — The drain gate is "newest main run COMPLETED", not "completed GREEN" (2026-07-26).** When
   `main` is red, the fix for that red must still be mergeable — requiring green before merging the
   thing that makes it green is a deadlock. Merge the hotfix, then confirm `main` actually recovered
@@ -469,7 +470,7 @@ concrete failure observed this session.
 - **A91 — "No core-Rust logic" never means "no native touch" (2026-08-09, #993).** The public surface is the managed native `tg.exe`; a Python/sidecar feature that misses the native front-door enrollment (`Commands::X` passthrough + `PUBLIC_TOP_LEVEL_COMMANDS` parity test) is invisible through the real binary and its first dogfood fails with the very unknown-command bug it fixes. Every "Python-first" slice must state its both-front-door + 4-site-registration enrollment in the same slice, or it is honest only as "no core-rust LOGIC," never as "no native touch."
 - **A92 — Executed evidence must be escrowed to a key the verified principal does NOT hold (2026-08-09, #993 / S1).** "validation ran green" certified by the editing agent is self-attestation (Oracle Form 8 — the split-oracle/self-report family). A verify-edit PASS requires escrowed subprocess evidence — captured stdout-hash + exit code + duration, signed by a key pinned via `TG_EVIDENCE_TRUSTED_KEYS` that the editing principal cannot use (CI-held). Absent that, the verdict is UNVERIFIED with a reason, never PASS. Also: verification without a tree fingerprint certifies drift — a ticket must carry `base_sha` + working-tree fingerprint and verify fails closed on drift, or a rebase/sibling edit can certify a state nobody prepared (TOCTOU/drift = the push-race class inside a ticket flow).
 - **A93 — Self-dogfood is self-consistency, not demand, and roadmap premises need ground-truth before the council (2026-08-09, #993).** 22/22 PASS on tg dogfooding tg proves tg works for itself; the 5 self-triaged "bad oracle" rows need EXTERNAL-customer grounding (S1-S7 demand). And two of eight "banked" roadmap claims were false until a ground-truth seat checked origin/main (`prepare_service` fn name; `session prepare/resume` are actually UNBUILT). Any plan entering the design council must first premise-check its "already shipped"/"partially banked" claims against origin/main (A75), or the council certifies fiction.
-- **A94 — Skill/doc version stamps rot one release after the last refresh; freshness is a maintenance sweep, not a one-time event (2026-08-11).** The 2026-08-11 audit found 21 stale version stamps + 7 language-tier contradictions in the in-repo `.claude/skills/` library ONE release after the previous refresh — every "verified against vX" line and every hand-written derivation count is a snapshot, not a promise. The standing mechanism is now the `tensor-grep-release-drift-check` skill: version-stamp grep below the current tag, re-derived counts (language tier via `_symbol_navigation_descriptor()`, skill count = `tensor-grep-*` folders + `code-search-and-retrieval-reference` with the bare `tensor-grep` usage skill deliberately excluded, tree-sitter package count), and known-state facts — with append-only SUPERSEDED blocks for any dated claim that is now wrong (leave the old sentence as dated history, mark it, never silently rewrite or delete). Run it after EVERY release; it is a command like `.claude/skill_anchor_audit.py`, deliberately NOT a pytest (the numbers drift by design and a hard gate would red every PR).
+- **A94 — Skill/doc version stamps rot one release after the last refresh; freshness is a maintenance sweep, not a one-time event (2026-08-11).** The 2026-08-11 audit found 21 stale version stamps + 7 language-tier contradictions in the in-repo `.claude/skills/` library ONE release after the previous refresh — every "verified against vX" line and every hand-written derivation count is a snapshot, not a promise. The standing mechanism is now the `tensor-grep-release-drift-check` skill: version-stamp grep below the current tag, re-derived counts (language tier via `_symbol_navigation_descriptor()`, skill count = `tensor-grep-*` folders + `code-search-and-retrieval-reference` with the bare `tensor-grep` usage skill deliberately excluded, tree-sitter package count), and known-state facts — with append-only SUPERSEDED blocks for any dated claim that is now wrong (leave the old sentence as dated history, mark it, never silently rewrite or delete). Scope: append-only applies to dated receipts (`docs/audits/*`, ledgers); a skill's present-tense instruction is rewritten in place to the current fact, with history in `git log`. Run it after EVERY release; it is a command like `.claude/skill_anchor_audit.py`, deliberately NOT a pytest (the numbers drift by design and a hard gate would red every PR).
 - **A95 — A "verified correct — do not fix" note is part of the contract it guards, and it must be updated in the SAME change that breaks it (2026-08-11).** CLAUDE.md's "**32 skills** is VERIFIED CORRECT" note carried its own re-derivation (`ls .claude/skills/ | grep -c '^tensor-grep-'` = 31 + 1). Adding a 34th folder meant updating the count to 33, the re-derivation echo (32 + 1), the bucket list name, AND the AGENTS.md mirror — a three-site edit where the "do not fix" note itself was one of the sites. A fix-note that outlives its own stated number is the deny-list failure mode wearing a confident hat: it tells the next agent the count is right when it is stale.
 - **A96 — Non-ASCII punctuation in governed docs defeats byte-exact `edit`-tool matches; splice by line index, never by quoting the line (2026-08-11).** Em dashes (U+2014) and en dashes (U+2013) in skill prose (e.g. "straight field dump —", "saddle ~5s") made three consecutive `edit`-tool replacements fail with "oldString not found" while the text LOOKED identical — the tool matches exact bytes and PowerShell `python -c` mangling made the fixes worse. The reliable path: a script file (`write` a `.py`, run it) that reads with `encoding="utf-8"`, locates by line INDEX + assertion, splices the target lines, and writes back with `newline=""` — assertions (`assert "needle" in line[i]`) prove you hit the right lines.
 - **A97 — An interrupted/aborted tool call may have ALREADY APPLIED; read the target state before re-applying (2026-08-13).** During the retention campaign an `edit` call returned "Tool execution aborted" yet had actually landed; re-applying the same content duplicated whole sections across AGENTS.md, SESSION_HANDOFF.md, and the reconciliation doc (the independent gate caught them as the top finding). After any interrupted/ambiguous tool result, READ the file back before retrying — never re-apply blind. A double-apply duplicate is worse than the original gap, because it reads as two authoritative copies of the same section and a later reader trusts whichever they hit first.
@@ -515,7 +516,7 @@ concrete failure observed this session.
   std-only `cargo run --release` probe on the pinned Rust 1.96.0 settled it (`is_symlink: true`,
   `is_symlink_dir: true`) and became the only artifact all seats cite. Consequence: A88's
   parenthetical "junctions are NOT symlinks" is wrong for this toolchain and must carry an
-  append-only SUPERSEDED note in the law itself and in every skill quoting it (A94).
+  append-only SUPERSEDED note in the law itself; every skill quoting it is corrected in place (A94 scope rule).
 - **A108 — Plan-council convergence: hash-freeze each round, fix only the confirmed findings, failed
   seats are not votes, and a verdict-dependent step is a named GATE, never an expansion marker
   (2026-08-13).** The campaign plan converged through 5 council rounds: fix the confirmed findings,
@@ -659,9 +660,9 @@ concrete failure observed this session.
   were real; clearing the cap alone would not have fixed publishing.
   **Burst half of the merge rule (A142 is the hold half):** batch every green PR into one burst, then
   STOP pushing and let a single run publish them all — the release is cumulative from the last tag,
-  so nothing is lost by merging more before it starts. Afterwards, wait for
-  `gh run list --branch main --workflow=ci.yml --limit 1` to read **`completed`**, not merely to
-  exist.
+  so nothing is lost by merging more before it starts. Afterwards, poll the burst's run by ID
+  (`gh run view <id> --json status`) until it reads **`completed`**, not merely to exist; never gate
+  on `--limit 1` (A139). If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 - **A134 — On a runner-scarce repo, re-pushing to "re-trigger CI" STARVES it (2026-08-21).** Same
   queue effect on PR refs, where `cancel-in-progress` IS true. Measured on one branch: `08a7fe20`
   cancelled, `16fc31d1` queued 30+ minutes and never started, head SHA with no run at all. Each
@@ -746,9 +747,11 @@ concrete failure observed this session.
   later merge made on the theory that "the release job has not started, so there is no push to
   reject" rejected that release's push). Merges that CREATE the run (your own burst) are fine; once
   the burst is over, or when any release-bearing run already exists, merge nothing until it is
-  `completed` and its `chore(release)` commit and PyPI publish have landed. One command finds it:
-  `gh run list --branch main --workflow=ci.yml --limit 5 --json status,headSha` and look for
-  `in_progress`, remembering A139 (`--limit 1` hides the executing run).
+  `completed` and its `chore(release)` commit and PyPI publish have landed. Any run status other than `completed` (`queued` / `pending` / `waiting` / `requested` /
+  `in_progress`) is an open window. List runs with
+  `gh run list --branch main --workflow=ci.yml --limit 5 --json status,headSha,databaseId` (A139:
+  `--limit 1` hides the executing run), then poll that run by ID (`gh run view <id> --json
+  status,conclusion`) until `completed`. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 
   A failed release self-heals on the next push — the successor run carries the same unreleased
   commits cumulatively — so this costs a cycle, not the work. But it explains a release failing
@@ -2619,7 +2622,7 @@ When public dogfood identifies multiple independent fixes, preserve the process 
 5. For each slice, write or update the contract test first, implement the smallest fix, run the targeted suite, then run lint and format before moving on.
 6. ORCHESTRATOR VERIFICATION GATE — after every agent branch returns, the orchestrator must verify before integration: (a) remove each worktree (`git worktree remove --force <path>`) before checking out the branch in the main repo — an un-removed worktree blocks checkout and causes a main-repo test run to silently execute main's code, not the branch's; (b) re-run pytest/ruff/mypy in the real venv, since worktrees have no `.venv` and agents' "tests pass" / "N tests green" claims are hypotheses until re-run there; (c) run `ruff format --preview` on EVERY file in `git diff main --name-only`, not only hand-fixed files — agents couldn't run ruff, so their files come back un-`--preview`-formatted; (d) treat scoped-local-green as a hypothesis, not a merge signal — lint/format run repo-wide, one unrelated failing test reddens the whole test-python job, and corpus side-effects are outside scoped test scope. See the global skill `worktree-fanout-verification-gate`.
 7. Integrate the verified slices onto one branch, resolving any overlaps.
-8. ADVERSARIAL AUDIT (3 lenses + chairman) — run a citation-enforced adversarial audit of the integrated diff; this is a mandatory stage distinct from the pre-build planning council (the post-build audit caught a HIGH CUDA-fork hazard that 203 passing tests missed). A finding with no `file:line` citation is discarded. Re-audit → fix-wave → re-audit until ZERO must-fix findings remain. The endpoint is a DRAFT PR; never auto-merge.
+8. ADVERSARIAL AUDIT (3 lenses + chairman) — run a citation-enforced adversarial audit of the integrated diff; this is a mandatory stage distinct from the pre-build planning council (the post-build audit caught a HIGH CUDA-fork hazard that 203 passing tests missed). A finding with no `file:line` citation is discarded. Re-audit → fix-wave → re-audit until ZERO must-fix findings remain. The endpoint is a PR that the orchestrator self-merges once verified green, independently reviewed, and push-race clear (change-control Part 1 §1).
 9. Get a bounded, read-only independent review of each PR diff before merge from a different model family than the builder (e.g. Gemini or codex); treat its findings as hypotheses until checked against local files and tests. A no-verdict seat is a failed seat, not approval.
 10. Push each branch, wait for PR CI, squash-merge intentionally, then watch main CI. Release-bearing work is not complete until semantic-release, assets, PyPI, and public release dogfood pass.
 
@@ -3065,11 +3068,11 @@ Do not push from a dirty worktree if `origin/main` moved and the local tree has 
 
 A branch push or open PR starts PR CI only. It is not a release, not a released version, and not complete release state. Release versioning starts only after a release-bearing PR is squash-merged to `main`, because semantic-release reads the final `main` commit subject.
 
-**The merge rule (one rule, two halves):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the in-flight release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green.
+**The merge rule (one rule, two halves):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the in-flight release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 
 **Decide whether a release is in flight by the commit-title type on main, not by `release-intent`
 (2026-07-27, corrected by A33).** The push-race bites a merge that lands *while a RELEASE job is
-pushing*, and whether one is in flight is checkable. `release-intent` is a PR-only title validator
+pushing*, and whether one is in flight is checkable. A run is release-bearing iff `git log --format='%s' <last-tag>..<run headSha> | grep -E '^(fix|feat|perf)'` is non-empty (releases are cumulative). `release-intent` is a PR-only title validator
 and is always skipped on main pushes, so its state there proves nothing. On main,
 `fix:`/`feat:`/`perf:` commits release; `docs:`/`test:`/`chore:`/`ci:`/`build:`/`bench:` do not, and
 `refactor:` passes the title gate but does not publish under the default angular parser. Non-releasing
@@ -3471,8 +3474,8 @@ loop can enumerate, it must not be handed a list.
 
 ## A Constraint's REASON Defines Its Scope, Not Its Wording (2026-08-02)
 
-The WIP cap ("do not exceed ~3 open PRs") exists because **release-bearing** PRs drain one-per-publish
-and merging two into one publish window rejects the release push. I applied it to non-releasing
+The WIP cap ("do not exceed ~3 open PRs") exists because **release-bearing** PRs drain as one burst per release run
+and any merge landing inside that run's window (creation to release push) rejects the release push. I applied it to non-releasing
 `docs:`/`test:` PRs, which batch freely -- and throttled a five-item fan-out to one item per hour
 until the CEO called it out.
 

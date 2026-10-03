@@ -258,7 +258,7 @@ from default" kills the fast path entirely, because `query_pattern` differs on e
 `tg run`/`tg scan`/MCP `tg_ast_search` can be served by `AstGrepWrapperBackend` (shells out to
 `ast-grep`; full pattern DSL incl. `$NAME`/`$$$ARGS` metavariables) or `AstBackend` (in-process
 tree-sitter; bare identifiers and s-expressions only, no metavariables). A metavariable pattern
-with the wrapper absent raises `ConfigurationError` at three verified sites -- it must never
+with the wrapper absent raises `ConfigurationError` at four verified sites -- it must never
 silently mis-route to the native engine. The reverse fallback (native-shaped pattern, ast-grep
 absent -> tree-sitter) is DELIBERATE, so a CPU-only box still gets some AST capability; do not
 "fix" it into a refusal. Full DSL parity is task #141 and stays demand-gated.
@@ -355,7 +355,7 @@ CliRunner tests passed):
 
 | # | Site | File |
 |---|---|---|
-| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/main.rs` |
+| 1 | `SEARCH_PYTHON_PASSTHROUGH_FLAGS` | `rust_core/src/search_flag_registry.rs` |
 | 2 | `bootstrap._TG_ONLY_SEARCH_FLAGS` | `src/tensor_grep/cli/bootstrap.py` |
 
 A new MCP tool is a FIFTH registration site: bump `_TG_MCP_SERVER_CONTRACT_VERSION` in
