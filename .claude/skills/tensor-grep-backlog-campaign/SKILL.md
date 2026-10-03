@@ -380,7 +380,7 @@ gh pr merge "$pr" --squash --delete-branch
 ```
 
 - **Burst, then hold, per fire** — a fire that finds NO release-bearing `main` run merges every
-  independently-green PR in one burst and exits; a fire that finds one merges nothing (If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.). The next fire
+  independently-green PR in one burst and exits; a fire that finds one merges nothing; if that run completes without publishing (red, or semantic-release made no release), the window closes at completion (A32 governs the hotfix). The next fire
   re-checks after the in-flight run's `chore(release)` commit and PyPI publish have landed.
 - **Push-race check is mandatory on every fire, not just the first**: the latest `chore(release): vX`
   tag must be confirmed on PyPI AND the newest `main` run must be `completed` (Hard rule 13; not

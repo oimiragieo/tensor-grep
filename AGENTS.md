@@ -93,7 +93,7 @@ concrete failure observed this session.
 - **A11 -- Design-review-before-build** (CEO directive #174). Fable designs a plan -> a thinktank council
   certifies the PLAN itself is sound and ready (not findings, not a diff) -> bake must-fixes into the plan
   -> Sonnet builds TDD-first (worktree, foreground-gate) -> mandatory adversarial Opus gate (now including
-  native-asset/installer/doctor-probe work, see the A3 extension above) -> drain one PR per publish. This
+  native-asset/installer/doctor-probe work, see the A3 extension above) -> drain under the burst-then-hold merge rule. This
   sequence caught a CI-reddening fix, an ordering bug, and a GPU-oversell claim BEFORE any code was built
   this session.
 - **A12 -- CPU-safe shared-server discipline.** This desktop is a SHARED machine (Operating Rule #3); other
@@ -3070,7 +3070,7 @@ A branch push or open PR starts PR CI only. It is not a release, not a released 
 
 **The merge rule (one rule, two halves):** When no release-bearing `main` run exists, merge every green PR in one burst; then merge nothing until that run's `chore(release)` commit and PyPI publish land. The window is the whole run from creation to the release push, not the job's current state — a pending/jobs=0 run still pushes last. Concurrent squash-merges to `main` can race at the semantic-release step and produce a skipped release or a wrong version bump. `chore:` / `docs:` / `test:` titles do not bump the version — but that is NOT a licence to merge them while a prior release is in flight (see the push-race note directly below). "Safe to interleave" means *after the in-flight release has fully published* (its `chore(release): vX` commit is on `main` and PyPI shows the new version), not merely after its PR CI is green. If the run completes without publishing (red, or semantic-release made no release), the window closes at completion; A32 governs the hotfix.
 
-**Decide whether a release is in flight by the commit-title type on main, not by `release-intent`
+**Decide whether a run is release-bearing by the commit range since the last tag, not by `release-intent`
 (2026-07-27, corrected by A33).** The push-race bites a merge that lands *while a RELEASE job is
 pushing*, and whether one is in flight is checkable. A run is release-bearing iff `git log --format='%s' <last-tag>..<run headSha> | grep -E '^(fix|feat|perf)'` is non-empty (releases are cumulative). `release-intent` is a PR-only title validator
 and is always skipped on main pushes, so its state there proves nothing. On main,

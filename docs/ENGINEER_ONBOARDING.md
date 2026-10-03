@@ -105,7 +105,9 @@ Then run the four-step local gate once, so you know your environment can pass it
 uv run ruff check .
 uv run ruff format --check --preview .
 uv run mypy src/tensor_grep
-uv run pytest -q
+uv run pytest -q tests/unit/<files covering your change>   # targeted; the full suite runs in CI
+python scripts/file_size_budget.py --report
+python scripts/bare_call_ratchet.py --report
 ```
 
 ### 2.2 Traps you WILL hit in week one
@@ -512,8 +514,9 @@ The real publish is the `Semantic Release` job inside `.github/workflows/ci.yml`
 non-fast-forward and **that version never publishes**. Receipt: v1.17.23 (a security batch)
 lost its publish to a docs PR merged mid-window.
 
-- Merge ONE release-bearing PR per publish cycle; wait for the `chore(release)` commit on
-  `main` AND PyPI serving the new version before the next release-bearing merge.
+- Burst, then hold: when no release-bearing run exists, merge every green PR in one burst; then
+  merge nothing until that run's `chore(release)` commit and PyPI publish land (if it completes
+  without publishing, the window closes at completion; A32 governs the hotfix).
 - **The only safe merge gate is "the newest ci.yml run on main has reached COMPLETED".**
   `tag == PyPI` is NOT a gate -- it cannot distinguish "released" from "not started" from
   "died", and reading it as "gate open" cost a release (2026-07-28). `release-intent` being
