@@ -196,7 +196,7 @@ def tg_ruleset_scan(
             each with `id`/`rule.pattern`/optional `language`/`severity`/`message`) to
             execute WITHOUT a built-in pack or any file I/O -- mirrors the CLI's
             ``--inline-rules``. Mutually exclusive with ``ruleset``. Bounded to
-            64KiB to blunt a YAML anchor/alias expansion-bomb before it reaches the
+            65536 characters and 100 rules to blunt a YAML anchor/alias expansion-bomb before it reaches the
             parser; fails closed (a structured ``invalid_input`` error, never a raw
             traceback) on invalid YAML or a language ast-grep does not support.
         path: Root path to scan.
@@ -494,6 +494,10 @@ def tg_index_search(pattern: str, path: str = ".") -> str:
     """
     Search files via the native trigram index path and return machine-readable JSON.
 
+    Requires a standalone native tg binary; without one it returns an error envelope
+    (routing_reason="native-tg-unavailable") instead of results. tg_mcp_capabilities reports
+    which tools need the native binary.
+
     Args:
         pattern: Regex or literal search pattern.
         path: File or directory to search.
@@ -726,14 +730,14 @@ def tg_audit_manifest_verify(
 
     Args:
         manifest_path: Path to the rewrite audit manifest JSON file. Confined to the
-            project root (cwd); a manifest that legitimately lives outside the project
-            must be copied in first (fail-closed, not a silent drop).
+            MCP server root (cwd, or TG_MCP_ROOT if set); a manifest that legitimately
+            lives outside it must be copied in first (fail-closed, not a silent drop).
         signing_key: Optional HMAC signing key path for signed manifests. A READ of
             secret HMAC material; disabled on the MCP surface by default -- set
             TG_MCP_ALLOW_AUDIT_SIGNING_KEY_READ=1 in the server environment to opt in
-            (mirrors tg_rewrite_apply's audit_signing_key gate, round-5).
+            (the same gate as tg_rewrite_apply's audit_signing_key).
         previous_manifest: Optional previous manifest path for validating manifest
-            chaining. Confined to the project root (cwd) like manifest_path.
+            chaining. Confined to the MCP server root like manifest_path.
     """
     try:
         from tensor_grep.cli.audit_manifest import verify_audit_manifest_json
@@ -852,10 +856,10 @@ def tg_audit_diff(previous_manifest: str, current_manifest: str) -> str:
 
     Args:
         previous_manifest: Path to the previous audit manifest JSON file. Confined to
-            the project root (cwd); a manifest outside the project must be copied in
-            first (fail-closed, not a silent drop).
+            the MCP server root (cwd, or TG_MCP_ROOT if set); a manifest outside it must be
+            copied in first (fail-closed, not a silent drop).
         current_manifest: Path to the current audit manifest JSON file. Confined to
-            the project root (cwd) like previous_manifest.
+            the MCP server root like previous_manifest.
     """
     try:
         from tensor_grep.cli.audit_manifest import diff_audit_manifests_payload
@@ -921,13 +925,13 @@ def tg_review_bundle_create(
 
     Args:
         manifest_path: Path to the rewrite audit manifest JSON file. Confined to the
-            project root (cwd); a manifest outside the project must be copied in first
-            (fail-closed, not a silent drop).
-        scan_path: Optional path to the ruleset scan JSON file. Confined to the project
-            root (cwd) like manifest_path.
+            MCP server root (cwd, or TG_MCP_ROOT if set); a manifest outside it must be
+            copied in first (fail-closed, not a silent drop).
+        scan_path: Optional path to the ruleset scan JSON file. Confined to the MCP server
+            root like manifest_path.
         checkpoint_id: Optional checkpoint ID to include.
         previous_manifest: Optional previous audit manifest JSON for diff generation.
-            Confined to the project root (cwd) like manifest_path.
+            Confined to the MCP server root like manifest_path.
         output_path: Optional file path where the bundle JSON should be written.
     """
     try:
@@ -1040,9 +1044,9 @@ def tg_review_bundle_verify(bundle_path: str) -> str:
     Verify review bundle integrity and component checksums.
 
     Args:
-        bundle_path: Path to the review bundle JSON file. Confined to the project root
-            (cwd); a bundle outside the project must be copied in first (fail-closed,
-            not a silent drop).
+        bundle_path: Path to the review bundle JSON file. Confined to the MCP server root
+            (cwd, or TG_MCP_ROOT if set); a bundle outside it must be copied in first
+            (fail-closed, not a silent drop).
     """
     try:
         from tensor_grep.cli.audit_manifest import verify_review_bundle_json
@@ -1238,6 +1242,13 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
     """
     Undo an edit checkpoint rooted at the given path.
 
+    Restores the checkpointed scope exactly. This WRITES and DELETES: files changed since the
+    checkpoint are overwritten with their saved contents, AND files created in that scope since
+    the checkpoint (or recorded as absent in it) are removed. Use it to roll back a bad
+    tg_rewrite_apply; get the id from tg_checkpoint_create or tg_checkpoint_list. Returns the
+    restore result JSON, or an error envelope (e.g. invalid_input if path is outside the MCP
+    server root).
+
     Args:
         checkpoint_id: Checkpoint ID to restore.
         path: File or directory rooted at the checkpoint scope.
@@ -1307,6 +1318,10 @@ def tg_checkpoint_undo(checkpoint_id: str, path: str = ".") -> str:
 def tg_rewrite_diff(pattern: str, replacement: str, lang: str, path: str = ".") -> str:
     """
     Return a unified diff preview for native AST rewrites without modifying files.
+
+    Requires a standalone native tg binary; without one it returns an error envelope
+    (routing_reason="native-tg-unavailable") instead of a diff. tg_mcp_capabilities reports
+    which tools need the native binary.
 
     Args:
         pattern: AST pattern to rewrite.

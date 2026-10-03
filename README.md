@@ -99,6 +99,7 @@ It ships as a native CLI on Windows, macOS, and Linux — no server required for
 
 ### Integrations: MCP + LSP
 - **`tg mcp`** — built-in MCP server. Exposes `tg_search` and related tools with `query`, `max_results`, `max_files`, and `structured_json` bounds. Machine-readable contracts in [docs/harness_api.md](docs/harness_api.md).
+  - Legacy vs meta surface: the per-function tools stay advertised by default, and each description names the consolidated meta-tool (`tg_navigate`, `tg_impact`, `tg_query`, ...) that covers it. Set `TG_MCP_LEGACY_TOOLS=off` to advertise only the consolidated surface. Details in [docs/harness_api.md](docs/harness_api.md).
 - **`tg lsp`** / **`tg lsp-setup`** — structural search language server for editor integration.
 
 ### Indexed / persisted acceleration

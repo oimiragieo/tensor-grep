@@ -1303,3 +1303,62 @@ def test_meta_and_singleton_tool_names_partition_cleanly():
     assert meta.isdisjoint(legacy)
     assert singletons.isdisjoint(legacy)
     assert meta | singletons | legacy == set(mcp_server._MCP_TOOL_CAPABILITIES)
+
+
+_LEGACY_NOTE_MARKER = "Legacy per-function tool; meta-tool `"
+_LEGACY_NOTE_TAIL = "Set TG_MCP_LEGACY_TOOLS=off to advertise only the consolidated surface."
+
+
+def test_legacy_tool_descriptions_name_their_covering_meta_tool():
+    import asyncio
+    import re
+
+    from tensor_grep.cli import mcp_server
+
+    tools = {t.name: (t.description or "") for t in asyncio.run(mcp_server.mcp.list_tools())}
+    legacy = set(tools) - _EXPECTED_META_TOOL_NAMES - _EXPECTED_SINGLETON_TOOL_NAMES
+    assert len(legacy) == 46
+    for name in legacy:
+        desc = tools[name]
+        assert desc.endswith(_LEGACY_NOTE_TAIL), name
+        match = re.search(r"meta-tool `(tg_\w+)` \(action=(\w+)\)", desc)
+        assert match is not None, name
+        assert match.group(1) in _EXPECTED_META_TOOL_NAMES, name
+        # agreement with the explicit composes map, and exactly one note per tool
+        owners = {
+            meta
+            for meta, spec in mcp_server._META_MCP_TOOL_CAPABILITIES.items()
+            if name in spec["composes"]
+        }
+        assert owners == {match.group(1)}, name
+        assert match.group(2) != "?", name
+        meta_actions = mcp_server._META_MCP_TOOL_CAPABILITIES[match.group(1)]["actions"]
+        assert match.group(2) in meta_actions, name
+        assert desc.count(_LEGACY_NOTE_MARKER) == 1, name
+    for name in _EXPECTED_META_TOOL_NAMES | _EXPECTED_SINGLETON_TOOL_NAMES:
+        assert _LEGACY_NOTE_MARKER not in tools[name], name
+        assert "TG_MCP_LEGACY_TOOLS=off" not in tools[name], name
+
+
+def test_legacy_note_absent_when_legacy_tools_flag_off_subprocess():
+    import os
+    import subprocess
+    import sys
+
+    repo_root = Path(__file__).resolve().parents[2]
+    script = (
+        "import asyncio;from tensor_grep.cli import mcp_server as m;"
+        "ts=asyncio.run(m.mcp.list_tools());"
+        "print(len(ts), sum('Legacy per-function' in (t.description or '') for t in ts))"
+    )
+    env = {**os.environ, "TG_MCP_LEGACY_TOOLS": "off", "PYTHONPATH": str(repo_root / "src")}
+    done = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        cwd=str(repo_root),
+        capture_output=True,
+        text=True,
+        timeout=90,
+    )
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.split() == ["12", "0"]

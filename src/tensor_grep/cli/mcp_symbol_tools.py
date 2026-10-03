@@ -69,6 +69,7 @@ def tg_symbol_blast_radius_plan(
         max_depth: Maximum reverse-import depth to include.
         max_files: Maximum files to include in the plan.
         max_symbols: Maximum ranked symbols to retain.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     try:
@@ -151,6 +152,7 @@ def tg_symbol_defs(
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
@@ -220,6 +222,7 @@ def tg_symbol_source(
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
     """
     # round-8 security (audit #95 gate): confine the primary path/root param to the MCP root
@@ -286,6 +289,7 @@ def tg_symbol_impact(
     Args:
         symbol: Exact symbol name to evaluate.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
             unbounded.
@@ -357,11 +361,16 @@ def tg_symbol_refs(
     deadline: float | None = None,
 ) -> str:
     """
-    Return Python-first symbol references across the inventory root.
+    Return references to a symbol across the inventory root, for every language in tg's symbol
+    graph. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast`
+    extra, JS/TS/Rust degrade to `regex-heuristic` rows and other languages return no rows but are
+    listed in `resolution_gaps` -- treat an empty result as UNKNOWN when `resolution_gaps` is
+    non-empty.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
@@ -434,11 +443,16 @@ def tg_symbol_callers(
     deadline: float | None = None,
 ) -> str:
     """
-    Return Python-first symbol call sites and likely impacted tests.
+    Return call sites of a symbol and the tests likely impacted by changing it, for every
+    language in tg's symbol graph. Rows carry `provenance` (`python-ast`, `tree-sitter`, or `regex-heuristic`). Without the `ast`
+    extra, JS/TS/Rust degrade to `regex-heuristic` rows and other languages return no rows but are
+    listed in `resolution_gaps` -- treat an empty result as UNKNOWN when `resolution_gaps` is
+    non-empty.
 
     Args:
         symbol: Exact symbol name to resolve.
         path: File or directory to inventory.
+        provider: Semantic provider for primary target proof: native, lsp, or hybrid.
         max_repo_files: Maximum repository files to scan before resolving the symbol.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
             exceeded, the scan stops and returns a flagged partial result instead of running
@@ -507,13 +521,14 @@ def tg_file_imports(file: str) -> str:
     """
     Return what a single FILE imports, resolved to target files where possible.
 
-    The scoped forward file-dependency primitive (#74): O(1) -- parses exactly one file, no
-    repo scan. Far cheaper than a whole-repo `tg_map` for a single file's dependency edges.
+    The scoped forward file-dependency primitive: O(1) -- parses exactly one file, no repo
+    scan, so it is far cheaper than `tg_repo_map` when you only need one file's dependency
+    edges.
 
     Args:
-        file: File to inspect for its own imports. Confined to the project root (cwd); a
-            file that legitimately lives outside the project must be copied in first
-            (fail-closed, not a silent drop).
+        file: File to inspect for its own imports. Confined to the MCP server root (cwd, or
+            TG_MCP_ROOT if set); a file that legitimately lives outside it must be copied in
+            first (fail-closed, not a silent drop).
     """
     # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the project root
     # (cwd) before any read -- unconfined it is a file-existence + import-string read-oracle
@@ -570,15 +585,15 @@ def tg_file_importers(
     deadline: float | None = None,
 ) -> str:
     """
-    Return the files that import a single FILE (the reverse #74 file-dependency primitive).
+    Return the files that import a single FILE (the reverse of tg_file_imports).
 
     Prefilters candidate importers via the repo's import-alias graph, then re-parses and
     CONFIRMS each candidate against FILE before reporting it as an edge.
 
     Args:
-        file: File to find importers of. Confined to the project root (cwd); a file that
-            legitimately lives outside the project must be copied in first (fail-closed,
-            not a silent drop).
+        file: File to find importers of. Confined to the MCP server root (cwd, or
+            TG_MCP_ROOT if set); a file that legitimately lives outside it must be copied in
+            first (fail-closed, not a silent drop).
         path: Root to scan for importers.
         max_repo_files: Maximum repository files to scan before resolving importers.
         deadline: Optional wall-clock budget in seconds for the underlying repo scan. When
