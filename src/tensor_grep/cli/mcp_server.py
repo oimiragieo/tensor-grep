@@ -172,7 +172,7 @@ def _mcp_server_version() -> str:
 # Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
 # existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
-# + `text_chars` on a windowed match row, top-level `output_truncated` when the byte cap fires.
+# + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 _TG_MCP_SERVER_CONTRACT_VERSION = "1.9.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
