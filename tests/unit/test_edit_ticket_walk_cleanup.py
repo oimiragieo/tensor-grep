@@ -905,17 +905,42 @@ def test_no_close_in_the_walk_modules_ignores_its_result() -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows device-number representations")
-def test_windows_32bit_volume_serial_matches_the_64bit_file_id_serial() -> None:
+def test_mixed_width_windows_device_numbers_match_only_on_their_low_half() -> None:
     # CPython <= 3.11 reports st_dev as the 32-bit volume serial; 3.12+ reports the 64-bit
     # FILE_ID_INFO serial. The held handle's identity uses the 64-bit one. Comparing them
     # exactly made EVERY walk on Windows py3.11 `unreadable_path` (CI: windows-latest, 3.11).
     serial64 = 14794157465549117039
     serial32 = serial64 & 0xFFFFFFFF
     index = 33495522242563183
-    assert edit_ticket_walk._same_identity((serial32, index), (serial64, index))
+    assert edit_ticket_walk._same_identity((serial32, index), (serial64, index))  # 3.11 mixed pair
     assert edit_ticket_walk._same_identity((serial64, index), (serial32, index))
     assert not edit_ticket_walk._same_identity((serial32 ^ 1, index), (serial64, index))
     assert not edit_ticket_walk._same_identity((serial32, index + 1), (serial64, index))
+
+
+def test_two_64bit_serials_sharing_a_low_half_are_never_the_same_identity() -> None:
+    # Codex's negative control: on 3.12+ both sides are full 64-bit serials; two DIFFERENT
+    # volumes whose serials only share the low half must NOT match (the 32-bit compatibility
+    # rule applies only when one side really is a 32-bit serial). Holds on every platform.
+    index = 33495522242563183
+    a = (0x111111110540966F, index)
+    b = (0x222222220540966F, index)
+    assert not edit_ticket_walk._same_identity(a, b)
+    assert not edit_ticket_walk._same_identity(b, a)
+    assert edit_ticket_walk._same_identity(a, a)  # identical 64-bit pair still matches
+    # both 32-bit serials: full comparison as well
+    assert edit_ticket_walk._same_identity((0x0540966F, index), (0x0540966F, index))
+    assert not edit_ticket_walk._same_identity((0x0540966F, index), (0x0540966E, index))
+
+
+def test_different_file_indices_never_match_whatever_the_device_widths() -> None:
+    serial64 = 0x111111110540966F
+    for dev_a, dev_b in (
+        (serial64, serial64),
+        (serial64 & 0xFFFFFFFF, serial64),
+        (serial64 & 0xFFFFFFFF, serial64 & 0xFFFFFFFF),
+    ):
+        assert not edit_ticket_walk._same_identity((dev_a, 1), (dev_b, 2))
 
 
 def test_root_and_child_handles_are_compared_with_the_same_identity_rule(tmp_path: Path) -> None:

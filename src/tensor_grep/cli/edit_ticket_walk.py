@@ -796,14 +796,17 @@ def _same_identity(a: tuple[int, int], b: tuple[int, int]) -> bool:
 
     Windows: CPython <= 3.11 reports `st_dev` as the 32-bit volume serial while 3.12+ reports the
     64-bit FILE_ID_INFO serial (the held handle's identity uses the 64-bit one), and the 32-bit
-    serial is the low half of the 64-bit one: only the low 32 bits are comparable across versions.
-    Comparing the full values made EVERY walk on Windows py3.11 `unreadable_path`."""
+    serial is the low half of the 64-bit one. So a MIXED-width pair (one side fits in 32 bits, the
+    other is wider) is compared on the low half only; when both sides have the same width (every
+    pair on 3.12+) the comparison is exact, so two different 64-bit serials that merely share a
+    low half never match. POSIX is always exact. Comparing exactly everywhere made EVERY walk on
+    Windows py3.11 `unreadable_path`."""
     if not (a[1] and b[1]):
         return True
     if a[1] != b[1]:
         return False
     dev_a, dev_b = a[0], b[0]
-    if sys.platform == "win32":
+    if sys.platform == "win32" and (dev_a <= 0xFFFFFFFF) != (dev_b <= 0xFFFFFFFF):
         dev_a, dev_b = dev_a & 0xFFFFFFFF, dev_b & 0xFFFFFFFF
     return not (dev_a and dev_b and dev_a != dev_b)
 
