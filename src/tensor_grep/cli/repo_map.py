@@ -268,9 +268,6 @@ from tensor_grep.cli.repo_map_lang_rust import (
     _rust_file_imports_symbol_from_definition as _rust_file_imports_symbol_from_definition,
 )
 from tensor_grep.cli.repo_map_lang_rust import (
-    _rust_file_level_command as _rust_file_level_command,
-)
-from tensor_grep.cli.repo_map_lang_rust import (
     _rust_file_references_symbol_from_definition as _rust_file_references_symbol_from_definition,
 )
 from tensor_grep.cli.repo_map_lang_rust import (
@@ -345,6 +342,7 @@ from tensor_grep.cli.repo_map_lang_rust import (
 from tensor_grep.cli.repo_map_lang_rust import (
     _rust_test_function_candidates_from_source as _rust_test_function_candidates_from_source,
 )
+from tensor_grep.cli.repo_map_lang_rust import _rust_test_target as _rust_test_target
 from tensor_grep.cli.repo_map_lang_rust import (
     _rust_tokio_test_function_candidates as _rust_tokio_test_function_candidates,
 )
@@ -7245,10 +7243,13 @@ def _cargo_test_command_for_primary_file(
             return "cargo test"
     except (OSError, RuntimeError):
         pass
-    relative_manifest = _relative_validation_path(manifest, repo_root)
-    if not _inert.is_shell_inert_path(relative_manifest):
-        return None
-    return f"cargo test --manifest-path {relative_manifest}"
+    command = _inert.render_command(
+        "cargo",
+        "test",
+        "--manifest-path",
+        _inert.Derived(_relative_validation_path(manifest, repo_root)),
+    )
+    return command if isinstance(command, str) else None
 
 
 def _primary_language_fallback_validation_steps(
@@ -7427,9 +7428,9 @@ def _suggested_validation_command_for_primary_file(
         argv = ["vitest", "run", relative_test]
     else:
         argv = ["jest", relative_test]
-    if not _inert.is_shell_inert_path(relative_test):  # unknown paste shell: fail closed
+    command = _inert.render_command(*argv[:-1], _inert.Derived(relative_test))
+    if not isinstance(command, str):  # unknown paste shell: fail closed
         return _inert.unsafe_neighbour_entry(argv, relative_test)
-    command = " ".join(argv)
 
     return {
         "command": command,
@@ -7625,14 +7626,14 @@ def _raw_validation_plan_for_tests(
     requested_javascript_runners: list[str] = []
     include_python_fallback = False
     include_rust_fallback = False
-    unsafe_validation_paths: list[str] = []
+    omitted_tokens: list[str] = []
 
     def remember_runner(runner: str) -> None:
         if runner not in requested_javascript_runners:
             requested_javascript_runners.append(runner)
 
     def add_step(
-        command: str,
+        command: str | _inert.Omission,
         *,
         scope: str,
         runner: str,
@@ -7640,6 +7641,9 @@ def _raw_validation_plan_for_tests(
         confidence: float,
         detection: str,
     ) -> None:
+        if isinstance(command, _inert.Omission):
+            omitted_tokens.extend(command.tokens)
+            return
         if command in seen:
             return
         seen.add(command)
@@ -7660,10 +7664,7 @@ def _raw_validation_plan_for_tests(
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
         if not _inert.is_shell_inert_path(relative_path):
-            unsafe_validation_paths.append(relative_path)
-            include_python_fallback |= suffix == ".py"
-            include_rust_fallback |= suffix in _RUST_SUFFIXES
-            continue
+            omitted_tokens.append(relative_path)  # disclosure only; commands are gated per token
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
         )
@@ -7678,7 +7679,15 @@ def _raw_validation_plan_for_tests(
                 )
                 if test_filter:
                     add_step(
-                        f"uv run pytest {relative_path} -k {test_filter} -q",
+                        _inert.render_command(
+                            "uv",
+                            "run",
+                            "pytest",
+                            _inert.Derived(relative_path),
+                            "-k",
+                            _inert.Derived(test_filter),
+                            "-q",
+                        ),
                         scope="symbol",
                         runner="pytest",
                         target=relative_path,
@@ -7686,7 +7695,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
             add_step(
-                f"uv run pytest {relative_path} -q",
+                _inert.render_command("uv", "run", "pytest", _inert.Derived(relative_path), "-q"),
                 scope="file",
                 runner="pytest",
                 target=relative_path,
@@ -7776,7 +7785,12 @@ def _raw_validation_plan_for_tests(
 
         if suffix in _RUST_SUFFIXES:
             include_rust_fallback = True
-            file_level_command = _rust_file_level_command(path, root)
+            rust_target = _rust_test_target(path, root)
+            file_level_command = (
+                _inert.render_command("cargo", "test", "--test", _inert.Derived(rust_target))
+                if rust_target
+                else None
+            )
             if is_primary_test:
                 test_filter = _best_test_function_candidate(
                     list(_rust_test_function_candidates(absolute_path)),
@@ -7784,10 +7798,13 @@ def _raw_validation_plan_for_tests(
                     query=query,
                 )
                 if test_filter:
+                    named = _inert.Derived(test_filter)
                     targeted_command = (
-                        f"{file_level_command} {test_filter}"
-                        if file_level_command and _rust_uses_nested_test_target(path, root)
-                        else f"cargo test {test_filter}"
+                        _inert.render_command(
+                            "cargo", "test", "--test", _inert.Derived(rust_target), named
+                        )
+                        if rust_target and _rust_uses_nested_test_target(path, root)
+                        else _inert.render_command("cargo", "test", named)
                     )
                     add_step(
                         targeted_command,
@@ -7875,7 +7892,8 @@ def _raw_validation_plan_for_tests(
             detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
         )
 
-    _inert.disclose_unsafe_paths(plan, unsafe_validation_paths)
+    if omitted_tokens:
+        plan.append(_inert.omission_step(omitted_tokens))
     return plan
 
 
@@ -7978,6 +7996,7 @@ def _validation_plan_and_alignment_for_tests(
         if isinstance(primary_symbol, dict) and primary_symbol.get("file")
         else (str(primary_file) if primary_file is not None and str(primary_file) else None)
     )
+    raw_plan, omitted_steps = _inert.split_omissions(raw_plan)
     raw_plan = _ensure_primary_language_validation_fallback(
         raw_plan,
         repo_root=repo_root,
@@ -7986,7 +8005,10 @@ def _validation_plan_and_alignment_for_tests(
         deadline_monotonic=deadline_monotonic,
         deadline_hit=deadline_hit,
     )
-    return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
+    aligned, alignment = _align_validation_plan_for_primary_language(
+        raw_plan, resolved_primary_file
+    )
+    return aligned, _inert.merge_omissions(alignment, omitted_steps)
 
 
 def _validation_plan_for_tests(

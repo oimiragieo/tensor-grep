@@ -41,15 +41,26 @@ UNSAFE_NAMES = [
 ]
 
 
-def _commands_and_plan(project: Path, name: str) -> tuple[list[str], list[dict]]:
+def _commands_and_plan(project: Path, name: str) -> tuple[list[str], dict]:
     test_path = project / "tests" / name
-    plan = repo_map._validation_plan_for_tests(
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
         [str(test_path)],
         repo_root=project,
         primary_test=str(test_path),
         primary_symbol={"name": "x"},
     )
-    return [str(step["command"]) for step in plan], plan
+    assert all("command" in step for step in plan), plan  # consumers always see a command
+    return [str(step["command"]) for step in plan], alignment
+
+
+_PREFIXES = ("uv run pytest", "cargo", "npx", "node")
+
+
+def _split_prefix(cmd: str) -> tuple[str, str]:
+    for prefix in _PREFIXES:
+        if cmd.startswith(prefix):
+            return prefix, cmd[len(prefix) :]
+    raise AssertionError(cmd)
 
 
 def _shell_runners(tmp_path: Path):
@@ -59,7 +70,7 @@ def _shell_runners(tmp_path: Path):
 
     def bash(cmd: str):
         return subprocess.run(
-            ["bash", "-c", cmd.replace("uv run pytest", '"$PROBE_PY" "$PROBE_SCRIPT"', 1)],
+            ["bash", "-c", _split_prefix(cmd)[1].join(['"$PROBE_PY" "$PROBE_SCRIPT"', ""])],
             capture_output=True,
             text=True,
             env=env,
@@ -67,7 +78,7 @@ def _shell_runners(tmp_path: Path):
         )
 
     def pwsh(cmd: str):
-        swapped = cmd.replace("uv run pytest", "& $env:PROBE_PY $env:PROBE_SCRIPT", 1)
+        swapped = "& $env:PROBE_PY $env:PROBE_SCRIPT" + _split_prefix(cmd)[1]
         return subprocess.run(
             ["pwsh", "-NoProfile", "-Command", swapped],
             capture_output=True,
@@ -77,7 +88,7 @@ def _shell_runners(tmp_path: Path):
         )
 
     def cmd_exe(cmd: str):
-        swapped = cmd.replace("uv run pytest", '"%PROBE_PY%" "%PROBE_SCRIPT%"', 1)
+        swapped = '"%PROBE_PY%" "%PROBE_SCRIPT%"' + _split_prefix(cmd)[1]
         return subprocess.run(
             f'cmd /c "{swapped}"',
             capture_output=True,
@@ -132,13 +143,12 @@ def test_inert_paths_reach_every_shell_exactly_as_written(tmp_path: Path, name: 
 def test_unsafe_paths_never_appear_in_any_command_string(tmp_path: Path, name: str) -> None:
     project = tmp_path / "project"
     (project / "tests").mkdir(parents=True)
-    commands, plan = _commands_and_plan(project, name)
+    commands, alignment = _commands_and_plan(project, name)
     for command in commands:
         assert name not in command, command
     # disclosure: the raw path is carried in a separate field, never in a command
-    disclosed = [p for step in plan for p in step.get("omitted_unsafe_paths", [])]
-    assert f"tests/{name}" in disclosed, plan
-    assert any(step.get("omitted_note") == "path requires manual quoting" for step in plan), plan
+    assert f"tests/{name}" in alignment.get("omitted_unsafe_paths", []), alignment
+    assert alignment.get("omitted_note") == "path requires manual quoting", alignment
 
 
 def test_unsafe_neighbour_suggestion_has_no_command_but_argv_and_raw_path(tmp_path: Path) -> None:
@@ -184,3 +194,179 @@ def test_unsafe_javascript_test_title_falls_back_to_file_level_command(tmp_path:
     )
     assert "npx jest tests/widget.test.js" in commands  # file-level step survives
     assert not any("PWN" in c for c in commands), commands
+
+
+def _usable_runners(tmp_path: Path):
+    usable = []
+    for shell, run in _shell_runners(tmp_path):
+        if _received_argv(run, "uv run pytest control.py -q") == ["control.py", "-q"]:
+            usable.append((shell, run))
+    return usable
+
+
+def _rust_commands(project: Path, name: str) -> tuple[list[str], dict]:
+    (project / "tests").mkdir(parents=True, exist_ok=True)
+    (project / "Cargo.toml").write_text('[package]\nname = "x"\n', encoding="utf-8")
+    test_path = project / "tests" / name
+    test_path.write_text("#[test]\nfn it_works() {}\n", encoding="utf-8")
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [str(test_path)],
+        repo_root=project,
+        primary_test=str(test_path),
+        primary_symbol={"name": "it_works"},
+    )
+    return [str(step["command"]) for step in plan], alignment
+
+
+def test_derived_rust_target_is_checked_even_when_the_path_looks_inert(tmp_path: Path) -> None:
+    # `tests/@audit.rs` is an inert PATH, but the derived `--test @audit` token is PowerShell
+    # splatting: the program would receive ['test', '--test'].
+    project = tmp_path / "project"
+    commands, alignment = _rust_commands(project, "@audit.rs")
+    assert not any("@audit" in c for c in commands), commands
+    assert "@audit" in alignment.get("omitted_unsafe_paths", []), alignment
+    # every command that IS emitted reaches every usable shell exactly as written
+    for shell, run in _usable_runners(tmp_path):
+        for command in commands:
+            _prefix, rest = _split_prefix(command)
+            assert _received_argv(run, command) == rest.split(), (shell, command)
+
+
+def test_derived_rust_target_with_leading_dash_is_not_emitted(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    commands, alignment = _rust_commands(project, "-x.rs")
+    for command in commands:
+        tokens = command.split()
+        assert not any(t.startswith("-x") for t in tokens), command
+    assert "-x" in alignment.get("omitted_unsafe_paths", []), alignment
+
+
+def test_positive_control_inert_rust_target_is_emitted_and_executes(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    commands, _alignment = _rust_commands(project, "audit.rs")
+    assert "cargo test --test audit" in commands, commands
+    for shell, run in _usable_runners(tmp_path):
+        assert _received_argv(run, "cargo test --test audit") == ["test", "--test", "audit"], shell
+
+
+def test_unsafe_javascript_path_without_a_manifest_keeps_its_disclosure(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    test_path = project / "tests" / "unsafe name.test.js"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("test('x', () => {});\n", encoding="utf-8")
+    raw = repo_map._raw_validation_plan_for_tests(
+        [str(test_path)], repo_root=project, primary_test=str(test_path)
+    )
+    omitted = [step for step in raw if step.get("scope") == "omitted"]
+    assert len(omitted) == 1, raw
+    assert "command" not in omitted[0]
+    assert omitted[0]["omitted_unsafe_paths"] == ["tests/unsafe name.test.js"]
+    assert omitted[0]["omitted_note"] == "path requires manual quoting"
+    # consumers never see the command-less entry, and the disclosure survives on the alignment
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [str(test_path)], repo_root=project, primary_test=str(test_path)
+    )
+    assert all("command" in step for step in plan), plan
+    assert alignment["omitted_unsafe_paths"] == ["tests/unsafe name.test.js"]
+    assert alignment["omitted_note"] == "path requires manual quoting"
+    assert repo_map._validation_commands_for_tests(
+        [str(test_path)], repo_root=project, primary_test=str(test_path)
+    ) == [str(step["command"]) for step in plan]
+
+
+def test_render_command_checks_every_derived_token() -> None:
+    from tensor_grep.cli import repo_map_shell_inert as inert
+
+    assert inert.render_command("cargo", "test", "--test", inert.Derived("audit")) == (
+        "cargo test --test audit"
+    )
+    for bad in ("@audit", "-x", "a b", "$(x)", "a;b", "", "café"):
+        result = inert.render_command("cargo", "test", "--test", inert.Derived(bad))
+        assert isinstance(result, inert.Omission), bad
+        assert result.tokens == (bad,)
+    quoted = inert.render_command("npx", "jest", inert.DerivedFilter("two words"))
+    assert quoted == 'npx jest "two words"'
+    assert isinstance(
+        inert.render_command("npx", "jest", inert.DerivedFilter("$(x)")), inert.Omission
+    )
+    assert isinstance(
+        inert.render_command("npx", "jest", inert.DerivedFilter("-x")), inert.Omission
+    )
+
+
+_BUILDER_MODULES = [
+    "repo_map.py",
+    "repo_map_lang_js.py",
+    "repo_map_lang_rust.py",
+    "repo_map_lang_python.py",
+]
+_COMMAND_HEADS = (
+    "cargo",
+    "uv run",
+    "pytest",
+    "npx",
+    "npm",
+    "pnpm",
+    "yarn",
+    "bun",
+    "node",
+    "vitest",
+    "jest",
+    "mocha",
+    "python",
+)
+
+
+def _formatted_command_builders(source: str) -> list[str]:
+    """String-formatting expressions whose literal part begins with a command head."""
+    import ast
+
+    hits: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        literals: list[str] = []
+        if isinstance(node, ast.JoinedStr):
+            literals = [
+                v.value
+                for v in node.values
+                if isinstance(v, ast.Constant) and isinstance(v.value, str)
+            ]
+        elif (
+            isinstance(node, ast.BinOp)
+            and isinstance(node.op, (ast.Mod, ast.Add))
+            and isinstance(node.left, ast.Constant)
+            and isinstance(node.left.value, str)
+        ):
+            literals = [node.left.value]
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"format", "join"}
+            and isinstance(node.func.value, ast.Constant)
+            and isinstance(node.func.value.value, str)
+        ):
+            literals = [node.func.value.value]
+        first = literals[0].lstrip() if literals else ""
+        if any(first == head or first.startswith(head + " ") for head in _COMMAND_HEADS):
+            hits.append(f"line {node.lineno}: {first!r}")
+    return hits
+
+
+def test_census_no_command_builder_formats_strings_directly() -> None:
+    cli = Path(repo_map.__file__).parent
+    offenders: dict[str, list[str]] = {}
+    for name in _BUILDER_MODULES:
+        path = cli / name
+        if not path.exists():
+            continue
+        found = _formatted_command_builders(path.read_text(encoding="utf-8"))
+        if found:
+            offenders[name] = found
+    assert not offenders, offenders  # build commands with repo_map_shell_inert.render_command
+
+
+def test_census_detects_a_direct_fstring_builder() -> None:
+    # positive control: the census must fire on the exact pre-fix shapes
+    assert _formatted_command_builders('x = f"cargo test --test {target}"\n')
+    assert _formatted_command_builders('x = "npx jest " + path\n')
+    assert _formatted_command_builders('x = "uv run pytest %s" % path\n')
+    assert not _formatted_command_builders('x = "cargo test"\n')
