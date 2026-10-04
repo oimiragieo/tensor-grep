@@ -357,7 +357,7 @@ def _init_repo(repo: Path) -> None:
     _git(repo, "config", "core.autocrlf", "false")
 
 
-@pytest.mark.parametrize("ref", ["--output=pwned.txt", "-p", "--ext-diff", "a\nb", "a\x00b"])
+@pytest.mark.parametrize("ref", ["--output=pwned.txt", "-p", "--ext-diff", "a\nb", "a\x00b", ""])
 def test_extract_diff_hunks_rejects_option_like_ref_without_running_git(
     monkeypatch: Any, ref: str
 ) -> None:
@@ -532,3 +532,103 @@ def test_cli_diff_impact_exit_reason_incomplete(monkeypatch: Any) -> None:
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 2
     assert json.loads(res.stdout)["exit_reason"] == "incomplete"
+
+
+def _assert_deletion_reported(payload: dict[str, Any], name: str) -> None:
+    assert name in payload["deleted_files"]
+    assert name in payload["changed_files"]
+    assert "deleted_files_symbols_not_analyzed" in payload["downgrade_reasons"]
+
+
+def test_real_repo_empty_file_deletion_is_a_change(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "empty.py").write_text("", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "empty.py", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "empty.py").unlink()
+    payload = build_diff_blast_radius(root=tmp_path)
+    _assert_deletion_reported(payload, "empty.py")
+
+
+def test_real_repo_binary_file_deletion_is_a_change(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01\x02\xff\x00")
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "data.bin", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "data.bin").unlink()
+    payload = build_diff_blast_radius(root=tmp_path)
+    _assert_deletion_reported(payload, "data.bin")
+
+
+def test_cli_empty_file_deletion_is_not_no_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "empty.py").write_text("", encoding="utf-8")
+    _git(tmp_path, "add", "--", "empty.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "empty.py").unlink()
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    data = json.loads(res.stdout)
+    assert data["deleted_files"] == ["empty.py"]
+    assert data["exit_reason"] != "no_changes"
+    assert res.exit_code != 1
+
+
+def test_parse_headerless_deletions_empty_binary_and_quoted() -> None:
+    diff = (
+        "diff --git a/empty.py b/empty.py\ndeleted file mode 100644\nindex e69de29..0000000\n"
+        "diff --git a/sp ace.bin b/sp ace.bin\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        "Binary files a/sp ace.bin and /dev/null differ\n"
+        'diff --git "a/caf\\303\\251.bin" "b/caf\\303\\251.bin"\ndeleted file mode 100644\n'
+        "index 1111111..0000000\nBinary files a/caf\\303\\251.bin and /dev/null differ\n"
+    )
+    assert parse_git_diff_hunks(diff) == {
+        Path("empty.py"): [],
+        Path("sp ace.bin"): [],
+        Path("café.bin"): [],
+    }
+
+
+def test_parse_pure_rename_without_hunks_is_not_a_deletion() -> None:
+    diff = (
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\n"
+        "rename to new.py\n"
+    )
+    assert parse_git_diff_hunks(diff) == {}
+
+
+@pytest.mark.parametrize("sep", ["\u2028", "\u0085", "\u2029", "\x0b", "\x0c", "\x1c"])
+def test_parse_filename_with_unicode_line_separator_is_intact(sep: str) -> None:
+    name = f"caf{sep}e.py"
+    diff = f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n-x\n+y\n"
+    assert parse_git_diff_hunks(diff) == {Path(name): [(1, 1)]}
+
+
+def test_parse_tolerates_crlf_line_endings() -> None:
+    diff = "diff --git a/a.py b/a.py\r\n--- a/a.py\r\n+++ b/a.py\r\n@@ -1 +1 @@\r\n-x\r\n+y\r\n"
+    assert parse_git_diff_hunks(diff) == {Path("a.py"): [(1, 1)]}
+
+
+def test_real_repo_unicode_separator_filename(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    name = "caf\u2028e.py"
+    try:
+        (tmp_path / name).write_text("def a():\n    return 1\n", encoding="utf-8")
+    except OSError as exc:
+        pytest.skip(f"filesystem refuses U+2028 in names: {exc}")
+    _git(tmp_path, "add", "--", name)
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / name).write_text("def a():\n    return 2\n", encoding="utf-8")
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["changed_files"] == [name]
+    assert {s["name"] for s in payload["changed_symbols"]} == {"a"}
+
+
+def test_cli_empty_ref_is_invalid_ref(tmp_path: Path, monkeypatch: Any) -> None:
+    _init_repo(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["diff-impact", "--json", ""])
+    assert res.exit_code == 2
+    assert json.loads(res.stdout)["incomplete_reason"] == "invalid_ref"

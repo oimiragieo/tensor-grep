@@ -76,6 +76,33 @@ def _git_header_path(raw: str) -> Path | None:
     return Path(raw[2:]) if raw[:2] in ("a/", "b/") else Path(raw)
 
 
+def _diff_git_line_path(rest: str) -> Path | None:
+    """Path from a `diff --git A B` operand pair when both sides name the same file.
+
+    Used for deletions that carry no ---/+++ lines (empty or binary files). For a deletion the
+    a/ and b/ paths are equal, which makes the otherwise ambiguous space split decidable.
+    """
+    if rest.startswith('"'):
+        i = 1
+        while i < len(rest):
+            if rest[i] == "\\":
+                i += 2
+                continue
+            if rest[i] == '"':
+                break
+            i += 1
+        first, second = rest[: i + 1], rest[i + 2 :]
+    else:
+        n = len(rest)
+        if n < 5 or n % 2 == 0 or rest[n // 2] != " ":
+            return None
+        first, second = rest[: n // 2], rest[n // 2 + 1 :]
+    a_path, b_path = _git_header_path(first), _git_header_path(second)
+    if a_path is None or a_path != b_path:
+        return None
+    return a_path
+
+
 def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
     """Parse git diff hunk headers `@@ -l,s +start,count @@` into mapped 1-indexed line ranges per file.
 
@@ -86,12 +113,23 @@ def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
+    header_path: Path | None = None
 
-    for line in diff_text.splitlines():
+    # Split on literal LF only: str.splitlines() also breaks on U+2028/U+0085/U+000B/U+000C and
+    # friends, which are legal in file names and would truncate the parsed path.
+    for raw_line in diff_text.split("\n"):
+        line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
         if line.startswith("diff --git "):
             in_header = True
             old_path = None
             current_file = None
+            header_path = _diff_git_line_path(line[len("diff --git ") :])
+            continue
+
+        if in_header and line.startswith("deleted file mode ") and header_path is not None:
+            # Empty and binary deletions emit no ---/+++ lines; the diff --git header is the only
+            # place the path appears.
+            result.setdefault(header_path, [])
             continue
 
         if in_header and line.startswith("--- "):
@@ -178,7 +216,7 @@ def extract_diff_hunks_from_git(
     ]
     if staged:
         cmd.append("--cached")
-    if ref:
+    if ref is not None:
         cmd += ["--end-of-options", _validate_ref(ref), "--"]
 
     base_timeout = configured_git_timeout_seconds()
@@ -370,7 +408,6 @@ def build_diff_blast_radius(
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
-    # A deleted BINARY or EMPTY file has no ---/+++ header lines, so it is not listed here.
     deleted_files = sorted(
         str(p).replace("\\", "/") for p, ranges in changed_files_with_lines.items() if not ranges
     )
