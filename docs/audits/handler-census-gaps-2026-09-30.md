@@ -44,7 +44,6 @@ This section enumerates all unaudited modules (not in `_EXPLICIT_AUDITED_MODULES
 | cli/lsp_provider_setup.py | 4 | 421, 960, 965, 971 | Exception | UNAUDITED |
 | cli/lsp_server.py | 8 | 323, 591, 700, 705, 710, 964, 1040, 1045 | Exception | UNAUDITED |
 | cli/prepare_service.py | 4 | 221, 254, 372, 391 | Exception | UNAUDITED |
-| cli/rg_replacement.py | 1 | 29 | Exception | UNAUDITED |
 | cli/runtime_paths.py | 3 | 89, 107, 122 | Exception | UNAUDITED |
 | cli/session_daemon.py | 11 | 313, 482, 486, 581, 636, 895, 1566, 1643, 1862, 1947, 2021 | Exception | UNAUDITED |
 | cli/session_resume_service.py | 2 | 122, 139 | Exception | UNAUDITED |
@@ -226,19 +225,18 @@ Enclosing symbol resolved by innermost `ast.FunctionDef` / `ast.AsyncFunctionDef
 12. cli/lsp_provider_setup.py
 13. cli/lsp_server.py (8 handlers)
 14. cli/prepare_service.py
-15. cli/rg_replacement.py
-16. cli/runtime_paths.py
-17. cli/session_daemon.py (11 handlers)
-18. cli/session_resume_service.py
-19. cli/session_store.py
-20. core/hardware/device_detect.py (7 handlers)
-21. core/hardware/device_inventory.py
-22. core/hardware/memory_manager.py
-23. core/observability.py
-24. core/retrieval_chunker.py
-25. core/retrieval_dense.py (4 handlers)
-26. core/retrieval_late.py (4 handlers)
-27. sidecar.py
+15. cli/runtime_paths.py
+16. cli/session_daemon.py (11 handlers)
+17. cli/session_resume_service.py
+18. cli/session_store.py
+19. core/hardware/device_detect.py (7 handlers)
+20. core/hardware/device_inventory.py
+21. core/hardware/memory_manager.py
+22. core/observability.py
+23. core/retrieval_chunker.py
+24. core/retrieval_dense.py (4 handlers)
+25. core/retrieval_late.py (4 handlers)
+26. sidecar.py
 
 ---
 
@@ -298,3 +296,15 @@ A recon agent reported 14; 12 is the AST count of `ExceptHandler` nodes whose ty
 record for it and the ceiling can simply be bumped; `test_handler_dispositions.py` requires
 completeness only for the modules in `_audited_modules_so_far()` (28), and allows records for other
 modules (which is how `rg_replacement` got one).
+
+---
+
+## ERRATUM (2026-10-04, append-only) -- `cli/rg_replacement.py` deleted
+
+PR #1195 moved all `-o` / `--replace` rendering onto rg's own output, which made
+`cli/rg_replacement.py` (`expand_ripgrep_replacement`, its only broad handler at line 29)
+unreachable (0 callers, 0 references, no string-based importers in src/tests/scripts/docs).
+The module, its ledger record in `2026-08-20-handler-dispositions.json`, its row in the
+section-1 table and its entry in the section-7 listing were removed; the counts above are the
+2026-09-30 / 2026-10-02 snapshots and are NOT re-stated (one fewer ledgered module and one fewer
+live broad handler: `TOTAL_BROAD_HANDLERS_CEILING` 341 -> 340).

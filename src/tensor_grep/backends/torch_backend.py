@@ -2,6 +2,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.device_detect import DeviceDetector
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -149,9 +150,7 @@ class TorchBackend(ComputeBackend):
     ) -> list[MatchLine]:
         matches: list[MatchLine] = []
         for line_number, line in numbered_lines:
-            compare_line = (
-                line.lower() if cfg.ignore_case or (cfg.smart_case and query.islower()) else line
-            )
+            compare_line = line.lower() if effective_ignore_case(cfg, query) else line
             is_match = self._contains_literal_torch(
                 torch=torch,
                 line=compare_line,
@@ -227,11 +226,7 @@ class TorchBackend(ComputeBackend):
                 lines = handle.read().splitlines()
 
             matches: list[MatchLine] = []
-            query = (
-                pattern.lower()
-                if cfg.ignore_case or (cfg.smart_case and pattern.islower())
-                else pattern
-            )
+            query = pattern.lower() if effective_ignore_case(cfg, pattern) else pattern
 
             pattern_bytes = query.encode("utf-8", errors="replace")
             routing_chunk_plan_mb: list[tuple[int, int]] = []
@@ -291,11 +286,7 @@ class TorchBackend(ComputeBackend):
                 for line_number, line in numbered_lines:
                     is_match = self._contains_literal_torch(
                         torch=torch,
-                        line=(
-                            line.lower()
-                            if cfg.ignore_case or (cfg.smart_case and query.islower())
-                            else line
-                        ),
+                        line=(line.lower() if effective_ignore_case(cfg, query) else line),
                         pattern_tensor=pattern_tensors[0],
                         pattern_len=pattern_len,
                         device=devices[0],

@@ -3,8 +3,11 @@ a `column` field (1-based column of the match within the line).
 """
 
 import json
+import re as _re
 
+from tensor_grep.cli.formatters import json_fmt
 from tensor_grep.cli.formatters.json_fmt import JsonFormatter, NdjsonFormatter, _column_for_match
+from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -61,11 +64,6 @@ class TestColumnForMatch:
         match = _match_no_range("hello world")
         config = SearchConfig(query_pattern="world", fixed_strings=True)
         assert _column_for_match(match, config) == 7  # "world" starts at index 6 → col 7
-
-    def test_config_regex_find(self):
-        match = _match_no_range("foo: bar baz")
-        config = SearchConfig(query_pattern=r"\bbar\b")
-        assert _column_for_match(match, config) == 6  # "bar" at index 5 → col 6
 
     def test_config_regex_no_match_returns_none(self):
         match = _match_no_range("no match here")
@@ -214,3 +212,92 @@ class TestColumnByteOffsetParity:
         fmt = RipgrepFormatter(config=config)
         match = _match_no_range("café x")
         assert fmt._column_for_match(match) == 7
+
+
+# ---------------------------------------------------------------------------
+# Part D.1 (I-01): column comes from rg submatches; the user regex is never run in Python.
+# ---------------------------------------------------------------------------
+
+
+def _forbid_re(monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("user pattern must not be evaluated by Python re")
+
+    monkeypatch.setattr(_re, "search", boom)
+    monkeypatch.setattr(_re, "compile", boom)
+
+
+def test_column_prefers_rg_submatch_byte_offset_over_pattern_guess():
+    match = MatchLine(
+        line_number=1,
+        text="foobar foo",
+        file="f.py",
+        submatches=[{"match": {"text": "foo"}, "start": 7, "end": 10}],
+    )
+    cfg = SearchConfig(query_pattern="foo", word_regexp=True)
+    assert json_fmt._column_for_match(match, cfg) == 8
+
+
+def test_column_is_byte_offset_for_multibyte_line():
+    match = MatchLine(
+        line_number=1,
+        text="é foo",
+        file="f.py",
+        submatches=[{"match": {"text": "foo"}, "start": 3, "end": 6}],
+    )
+    assert json_fmt._column_for_match(match, SearchConfig(query_pattern="foo")) == 4
+
+
+def test_regex_without_submatches_is_omitted_and_never_evaluated(monkeypatch):
+    _forbid_re(monkeypatch)
+    match = _match_no_range("a" * 40)
+    assert json_fmt._column_for_match(match, SearchConfig(query_pattern="(a+)+b|a$")) is None
+    other = _match_no_range("foo: bar baz")
+    assert json_fmt._column_for_match(other, SearchConfig(query_pattern=r"\bbar\b")) is None
+
+
+def test_explicit_case_sensitive_overrides_smart_case_for_column():
+    m = _match_no_range("FOO foo")
+    cfg = SearchConfig(query_pattern="foo", smart_case=True, case_sensitive=True)
+    assert json_fmt._column_for_match(m, cfg) == 5
+    fmt = RipgrepFormatter(
+        SearchConfig(query_pattern="foo", smart_case=True, case_sensitive=True, column=True)
+    )
+    assert fmt._column_for_match(m) == 5
+
+
+def test_non_ascii_case_insensitive_literal_omits_column():
+    # final-sigma vs sigma with -i matches at col 1 under Unicode caseless rules; lower().find says 4
+    m = _match_no_range("\u03c2 \u03c3")
+    cfg = SearchConfig(query_pattern="\u03c3", ignore_case=True)
+    assert json_fmt._column_for_match(m, cfg) is None
+    fmt = RipgrepFormatter(SearchConfig(query_pattern="\u03c3", ignore_case=True, column=True))
+    assert fmt._column_for_match(m) == 1  # the formatter's documented no-column fallback
+    ascii_cfg = SearchConfig(query_pattern="foo", ignore_case=True)
+    assert json_fmt._column_for_match(_match_no_range("xx FOO"), ascii_cfg) == 4
+
+
+def test_word_or_line_regexp_without_submatches_omits_column():
+    m = _match_no_range("foobar foo")
+    word = SearchConfig(query_pattern="foo", word_regexp=True)
+    line = SearchConfig(query_pattern="foo", line_regexp=True)
+    assert json_fmt._column_for_match(m, word) is None
+    assert json_fmt._column_for_match(m, line) is None
+
+
+def test_literal_pattern_still_gets_byte_column(monkeypatch):
+    _forbid_re(monkeypatch)
+    cfg = SearchConfig(query_pattern="foo")
+    assert json_fmt._column_for_match(_match_no_range("xx foo"), cfg) == 4
+
+
+def test_ripgrep_formatter_column_does_not_run_user_regex(monkeypatch):
+    _forbid_re(monkeypatch)
+    fmt = RipgrepFormatter(SearchConfig(query_pattern="(a+)+b|a$", column=True))
+    assert fmt._column_for_match(_match_no_range("a" * 40)) == 1
+
+
+def test_ripgrep_formatter_word_regexp_column_never_guessed(monkeypatch):
+    _forbid_re(monkeypatch)
+    fmt = RipgrepFormatter(SearchConfig(query_pattern="foo", word_regexp=True, column=True))
+    assert fmt._column_for_match(_match_no_range("foobar foo")) == 1
