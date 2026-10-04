@@ -1298,3 +1298,56 @@ def test_tg_search_scan_limit_omits_cause_fields_on_a_complete_scan():
 
     assert "truncation_cause" not in scan_limit
     assert "budget_remediable" not in scan_limit
+
+
+def _ast_search_with(tmp_path, monkeypatch, *, matches, warning):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
+    result = SearchResult(
+        matches=matches,
+        matched_file_paths=["a.py"] if matches else [],
+        total_files=1 if matches else 0,
+        total_matches=len(matches),
+        routing_backend="AstGrepWrapperBackend",
+        routing_reason="ast",
+    )
+    fake = type(
+        "AstGrepWrapperBackend",
+        (),
+        {
+            "search": MagicMock(return_value=result),
+            "pattern_warning": MagicMock(return_value=warning),
+        },
+    )()
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
+        mock_pipeline.return_value.get_backend.return_value = fake
+        ms.return_value.walk.return_value = ["a.py"]
+        return json.loads(mcp_server.tg_ast_search("def (", "python", ".", structured_json=True))
+
+
+def test_tg_ast_search_malformed_pattern_with_zero_matches_is_invalid_input(tmp_path, monkeypatch):
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[], warning="Warning: Pattern contains an ERROR node"
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert "ERROR node" in out["error"]["message"]
+
+
+def test_tg_ast_search_warned_pattern_that_matches_is_returned_normally(tmp_path, monkeypatch):
+    hit = MatchLine(line_number=1, text="def f():", file="a.py")
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[hit], warning="Warning: Pattern contains an ERROR node"
+    )
+    assert "error" not in out
+    assert out["total_matches"] == 1
+
+
+def test_tg_ast_search_zero_matches_without_warning_is_a_normal_empty_result(tmp_path, monkeypatch):
+    out = _ast_search_with(tmp_path, monkeypatch, matches=[], warning=None)
+    assert "error" not in out
+    assert out["total_matches"] == 0

@@ -14739,7 +14739,12 @@ def build_symbol_blast_radius_from_map(
 
     caller_tree: list[dict[str, Any]] = []
     rendered_lines = [f"Blast radius for {symbol}:"]
-    for depth in range(0, normalized_depth + 1):
+    realised_depths = sorted({
+        int(item.get("depth", normalized_depth + 1))
+        for item in ranked_files
+        if 0 <= int(item.get("depth", normalized_depth + 1)) <= normalized_depth
+    })
+    for depth in realised_depths:
         depth_files = [
             str(item["path"])
             for item in ranked_files

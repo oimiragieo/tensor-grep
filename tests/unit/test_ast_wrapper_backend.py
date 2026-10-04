@@ -957,3 +957,192 @@ def test_ast_wrapper_backend_should_treat_valid_empty_list_as_no_match_not_error
 
         project_result = backend.search_project("project", "sgconfig.yml")
         assert project_result == {}
+
+
+def test_pattern_warning_detects_error_node_on_exit_zero():
+    backend = AstGrepWrapperBackend()
+    ok = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=ok),
+    ):
+        warning = backend.pattern_warning("def (", SearchConfig(ast=True, lang="python"))
+    assert warning is not None
+    assert "ERROR node" in warning
+
+
+def test_pattern_warning_ignores_legit_zero_match_pattern():
+    backend = AstGrepWrapperBackend()
+    zero = subprocess.CompletedProcess(args=[], returncode=1, stdout="[]", stderr="")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=zero),
+    ):
+        assert backend.pattern_warning("zzz($A)", SearchConfig(ast=True, lang="python")) is None
+
+
+def test_pattern_warning_propagates_backend_errors_and_ignores_unsupported_language():
+    backend = AstGrepWrapperBackend()
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", side_effect=BackendExecutionError("x")),
+    ):
+        # Changed deliberately (round 10): a failed probe used to read as "valid" (fail-open), so
+        # an empty-directory search with an unparseable pattern came back as a clean empty result.
+        with pytest.raises(BackendExecutionError):
+            backend.pattern_warning("def (", config)
+    assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="not-a-lang")) is None
+
+
+def _multiline_backend_run(pattern, *, returncode, stderr, stdout="[]"):
+    backend = AstGrepWrapperBackend()
+    run = subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=run),
+    ):
+        try:
+            backend.search("m.py", pattern, config=config)
+        except BackendExecutionError:
+            pass
+        return backend, backend.pattern_warning(pattern, config)
+
+
+def test_multiline_pattern_warning_is_captured_from_the_real_search_invocation():
+    backend, warning = _multiline_backend_run(
+        "def (\n    pass",
+        returncode=0,
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    assert warning is not None
+    assert "ERROR node" in warning
+    # keyed by pattern: a different pattern on the same backend is not tainted
+    with patch.object(backend, "is_available", return_value=False):  # no live probe here
+        assert backend.pattern_warning("ok($A)\n  x", SearchConfig(ast=True, lang="python")) is None
+
+
+def test_multiline_cannot_parse_rule_failure_is_reported_without_leaking_the_temp_path():
+    _backend, warning = _multiline_backend_run(
+        "def (\n    pass",
+        returncode=8,
+        stdout="",
+        stderr="Error: Cannot parse rule C:\\Users\\x\\Temp\\tg_ast_wrapper_rule_ab\\inline_rule.yml\n",
+    )
+    assert warning is not None
+    assert "multiline" in warning
+    assert "Temp" not in warning
+
+
+def test_valid_multiline_pattern_records_no_problem():
+    _backend, warning = _multiline_backend_run("def $A():\n    pass", returncode=0, stderr="")
+    assert warning is None
+
+
+def test_multiline_pattern_without_a_recorded_problem_is_probed_like_a_single_line_one():
+    """Changed deliberately (round 9): a multiline pattern used to skip validation, so a malformed
+    one on an empty directory (no file scanned, nothing recorded) came back as a clean empty
+    result. It is now probed with the same empty-stdin run."""
+    backend = AstGrepWrapperBackend()
+    warned = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    clean = subprocess.CompletedProcess(args=[], returncode=1, stdout="[]", stderr="")
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=warned) as run,
+    ):
+        assert "ERROR node" in backend.pattern_warning("def (\n    pass", config)
+        assert run.call_count == 1
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=clean),
+    ):
+        assert backend.pattern_warning("def $A():\n    pass", config) is None
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stderr", "expect"),
+    [
+        (0, "", None),
+        (1, "", None),
+        (8, "Error: Cannot parse query as a valid pattern.\n", "parsed as a valid"),
+        (2, "Error: Cannot parse query as a valid pattern.\n", "parsed as a valid"),
+        (0, "Warning: Pattern contains an ERROR node\n", "ERROR node"),
+        (1, "some other failure\n", BackendExecutionError),
+        (3, "", BackendExecutionError),
+    ],
+)
+def test_pattern_probe_result_is_an_explicit_allowlist(returncode, stderr, expect):
+    backend = AstGrepWrapperBackend()
+    run = subprocess.CompletedProcess(args=[], returncode=returncode, stdout="[]", stderr=stderr)
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=run),
+    ):
+        if expect is BackendExecutionError:
+            with pytest.raises(BackendExecutionError):
+                backend.pattern_warning("p", config)
+        elif expect is None:
+            assert backend.pattern_warning("p", config) is None
+        else:
+            assert expect in backend.pattern_warning("p", config)
+
+
+# --- Codex round 11: recorded pattern problems are keyed by (language, pattern) ---
+
+_JS_ONLY_PATTERN = "function f() { return 1; }"
+
+
+def _real_backend_or_skip():
+    backend = AstGrepWrapperBackend()
+    if not backend.is_available():
+        pytest.skip("ast-grep binary not installed")
+    return backend
+
+
+def test_recorded_python_warning_does_not_leak_into_javascript_on_a_reused_backend(tmp_path):
+    backend = _real_backend_or_skip()
+    source = tmp_path / "a.py"
+    source.write_text("def f():\n    return 1\n", encoding="utf-8")
+    py = SearchConfig(ast=True, lang="python")
+    js = SearchConfig(ast=True, lang="javascript")
+    backend.search(str(source), _JS_ONLY_PATTERN, config=py)
+    assert backend.pattern_warning(_JS_ONLY_PATTERN, py) is not None  # recorded for Python
+    fresh = AstGrepWrapperBackend()
+    expected = fresh.pattern_warning(_JS_ONLY_PATTERN, js)  # what a fresh backend says for JS
+    assert expected is None
+    assert backend.pattern_warning(_JS_ONLY_PATTERN, js) is None
+
+
+def test_recorded_warning_is_still_reused_within_the_same_language():
+    backend = AstGrepWrapperBackend()
+    warned = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    py = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=warned),
+    ):
+        backend.search("a.py", "def (", config=py)
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", side_effect=AssertionError("re-probed")),
+    ):
+        assert "ERROR node" in backend.pattern_warning("def (", py)  # no probe: reused
+        assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="Python")) is not None

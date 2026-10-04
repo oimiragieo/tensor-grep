@@ -1,3 +1,4 @@
+import builtins
 import io
 import json
 import re
@@ -1924,3 +1925,47 @@ def test_blast_radius_prioritizes_source_dirs_before_bounded_scan_cap(tmp_path):
         # `project-files` is the budget cap, so True is right; an `unreadable-path` cap emits False.
         "budget_remediable": True,
     }
+
+
+def test_blast_radius_huge_max_depth_iterates_only_realised_depths(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text(
+        "from a import foo\n\ndef bar():\n    return foo()\n", encoding="utf-8"
+    )
+    baseline = repo_map.build_symbol_blast_radius("foo", tmp_path, max_depth=3)
+
+    real_range = range
+
+    def guarded_range(*args):
+        candidate = real_range(*args)
+        assert len(candidate) <= 10_000, f"unbounded range({args}) in blast-radius"
+        return candidate
+
+    # Patch the builtin, NOT `repo_map.range`: scripts/bare_call_ratchet.py counts every symbol the
+    # tests monkeypatch on a Route A module, so patching `repo_map.range` would turn each bare
+    # `range(...)` call in repo_map.py into a ratchet violation.
+    monkeypatch.setattr(builtins, "range", guarded_range)
+    huge = repo_map.build_symbol_blast_radius("foo", tmp_path, max_depth=10**9)
+    assert huge["caller_tree"] == baseline["caller_tree"]
+    assert huge["files"] == baseline["files"]
+    assert huge["max_depth"] == 10**9
+
+
+def test_blast_radius_realised_depths_match_range_on_a_four_hop_chain(tmp_path):
+    (tmp_path / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text(
+        "from a import a\n\ndef b():\n    return a()\n", encoding="utf-8"
+    )
+    (tmp_path / "c.py").write_text(
+        "from b import b\n\ndef c():\n    return b()\n", encoding="utf-8"
+    )
+    (tmp_path / "d.py").write_text(
+        "from c import c\n\ndef d():\n    return c()\n", encoding="utf-8"
+    )
+    (tmp_path / "e.py").write_text(
+        "from d import d\n\ndef e():\n    return d()\n", encoding="utf-8"
+    )
+    shallow = repo_map.build_symbol_blast_radius("a", tmp_path, max_depth=3)
+    deep = repo_map.build_symbol_blast_radius("a", tmp_path, max_depth=10**6)
+    assert len({entry.get("depth") for entry in shallow["caller_tree"]}) >= 2  # really multi-hop
+    assert [e for e in deep["caller_tree"] if e.get("depth", 0) <= 3] == shallow["caller_tree"]

@@ -91,6 +91,7 @@ class AstGrepWrapperBackend(ComputeBackend):
 
     def __init__(self) -> None:
         self._resolved_binary_name: str | None = None
+        self._pattern_problems: dict[tuple[str, str], str] = {}
 
     def is_available(self) -> bool:
         return self._get_binary_name() != "ast-grep"
@@ -183,6 +184,78 @@ class AstGrepWrapperBackend(ComputeBackend):
         # from being interpreted as ast-grep's auto-fix flag (see comment above).
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), "--", *paths]
         return cmd, context
+
+    @staticmethod
+    def _effective_lang(config: SearchConfig | None) -> str:
+        """The normalized language a search runs under ('' when none was given)."""
+        try:
+            return normalize_ast_language(config.lang) if config and config.lang else ""
+        except ValueError:
+            return ""
+
+    def _record_pattern_problem(
+        self, pattern: str, result: subprocess.CompletedProcess[str], lang: str
+    ) -> None:
+        """Remember a malformed-pattern signal seen on the ACTUAL search invocation (any pattern,
+        multiline included): ast-grep's 'Pattern contains an ERROR node' stderr warning, or --
+        for a multiline pattern, which is compiled from a tg-generated inline rule -- a nonzero
+        'Cannot parse rule' failure. The message is constant for the latter (stderr names a
+        temp-file path). Never raises."""
+        raw_stderr = getattr(result, "stderr", "")
+        if not isinstance(raw_stderr, str):
+            return
+        stderr = raw_stderr.lower()
+        if "pattern contains an error node" in stderr:
+            for line in (result.stderr or "").splitlines():
+                if "pattern contains an error node" in line.lower():
+                    self._pattern_problems[(lang, pattern)] = line.strip()
+                    return
+        multiline = "\n" in pattern or "\r" in pattern
+        if multiline and getattr(result, "returncode", 0) != 0 and "cannot parse rule" in stderr:
+            self._pattern_problems[(lang, pattern)] = (
+                "Pattern contains an ERROR node: ast-grep could not parse the multiline pattern"
+            )
+
+    def pattern_warning(self, pattern: str, config: SearchConfig | None = None) -> str | None:
+        """Return a malformed-pattern message for ``pattern``, or None when it is valid.
+
+        Prefers the signal already captured from the real search invocation (any pattern,
+        multiline included); otherwise the pattern is probed with an empty-stdin run, INDEPENDENT
+        of whether any file was scanned. The probe result is an explicit ALLOWLIST:
+
+        - exit 0 without an 'ERROR node' warning, or a clean exit 1 (empty stderr): valid -> None;
+        - the 'Pattern contains an ERROR node' warning, exit 8, or stderr naming a query/pattern
+          parse failure: malformed -> a message (the MCP layer reports ``invalid_input``);
+        - anything else (timeout, unexpected exit code): NOT valid -- raises
+          ``BackendExecutionError`` so the caller reports an error instead of an empty success.
+
+        An unavailable ast-grep or an unsupported language returns None (no probe possible)."""
+        try:
+            lang = normalize_ast_language(config.lang) if config and config.lang else None
+        except ValueError:
+            return None
+        # A recorded problem belongs to ONE (language, pattern): the same text can be valid in
+        # another language, so a record made for Python must never answer for JavaScript.
+        recorded = self._pattern_problems.get((lang or "", pattern))
+        if recorded:
+            return recorded
+        if not lang or not self.is_available():
+            return None
+        cmd = [self._get_binary_name(), "run", "--json", "-p", pattern, "--lang", lang, "--stdin"]
+        result = self._run_ast_grep_command(cmd, input_text="")  # a timeout propagates
+        returncode = getattr(result, "returncode", 1)
+        stderr = (result.stderr or "").strip()
+        for line in stderr.splitlines():
+            if "pattern contains an error node" in line.lower():
+                return line.strip()
+        lowered = stderr.lower()
+        if returncode == 8 or "cannot parse query" in lowered or "valid pattern" in lowered:
+            return "Pattern could not be parsed as a valid ast-grep pattern"
+        if returncode == 0 or (returncode == 1 and not stderr):
+            return None
+        raise BackendExecutionError(
+            f"ast-grep pattern validation failed unexpectedly (exit {returncode})"
+        )
 
     def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> bool:
         """Return True when the nonzero exit was a NON-FATAL partial scan (ast-grep skipped
@@ -438,6 +511,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
+                self._record_pattern_problem(pattern, result, self._effective_lang(config))
                 partial = self._raise_for_nonzero(result)
                 return self._cap_to_max_count(
                     self._parse_result(result.stdout, partial=partial), config
@@ -471,6 +545,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
+                self._record_pattern_problem(pattern, result, self._effective_lang(config))
                 partial = self._raise_for_nonzero(result)
                 return self._cap_to_max_count(
                     self._parse_result(result.stdout, fallback_file=file_path, partial=partial),
