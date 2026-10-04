@@ -144,6 +144,8 @@ class RustCoreBackend(ComputeBackend):
         plain_literal = (
             config is not None
             and bool(config.fixed_strings)
+            and "\n" not in pattern  # rg rejects a literal newline without multiline: delegate
+            and "\r" not in pattern
             and not (
                 config.ignore_case or config.smart_case or config.word_regexp or config.line_regexp
             )
@@ -155,8 +157,11 @@ class RustCoreBackend(ComputeBackend):
                 return _file_contains_literal(
                     file_path, pattern.encode("utf-8", errors="surrogateescape")
                 )
-            except OSError:
-                return False
+            except OSError as exc:
+                # fail closed: an unreadable file is not a "no match"
+                raise BackendExecutionError(
+                    f"cannot read {file_path!r} for the binary-file match check: {exc}"
+                ) from exc
         rg = resolve_ripgrep_binary()
         if rg is None:
             raise BackendExecutionError(
@@ -164,6 +169,17 @@ class RustCoreBackend(ComputeBackend):
                 "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
             )
         cmd = [str(rg), "-a", "-q", "--no-config"]
+        if config:
+            # same precedence as RipgrepBackend._build_cmd: --engine, then -P, then --no-pcre2
+            engine = str(config.engine or "default").lower()
+            if engine in {"pcre2", "auto"}:
+                cmd.extend(["--engine", engine])
+            elif engine != "default":
+                raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
+            if config.pcre2:
+                cmd.append("-P")
+            if config.no_pcre2:
+                cmd.append("--no-pcre2")
         if config and config.fixed_strings:
             cmd.append("-F")
         if config and config.ignore_case:

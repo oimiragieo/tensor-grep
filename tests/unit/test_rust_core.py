@@ -545,3 +545,97 @@ def test_binary_notice_entry_points_never_read_whole_file(tmp_path, monkeypatch)
     monkeypatch.setattr(_P, "read_bytes", lambda self: pytest.fail(f"whole-file read of {self}"))
     assert rb.RustCoreBackend._binary_notice_text(str(f)) is not None  # notice still produced
     assert RipgrepFormatter(SearchConfig())._binary_notice(str(f)) is not None
+
+
+def _rg_pcre2_or_skip():
+    _rg_or_skip()
+    import subprocess
+
+    from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+
+    probe = subprocess.run(
+        [str(resolve_ripgrep_binary()), "--pcre2-version"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if probe.returncode != 0:
+        pytest.skip("rg built without PCRE2")
+
+
+@pytest.mark.parametrize("kw", [{"pcre2": True}, {"engine": "pcre2"}])
+def test_binary_notice_entry_point_honours_pcre2(tmp_path, kw):
+    _rg_pcre2_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00foo\n")
+    result = rb.RustCoreBackend().search(str(f), "(?=foo)foo", SearchConfig(**kw))
+    assert result.total_matches == 1
+    assert result.routing_reason == "rust_binary_notice"
+
+
+def test_binary_check_unknown_engine_fails_closed(tmp_path):
+    _rg_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00foo\n")
+    with pytest.raises(rb.BackendExecutionError):
+        rb.RustCoreBackend._binary_file_matches_pattern(str(f), "foo", SearchConfig(engine="bogus"))
+
+
+def test_plain_literal_binary_check_missing_file_fails_closed(tmp_path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    with pytest.raises(rb.BackendExecutionError):
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(tmp_path / "nonexistent"), "foo", SearchConfig(fixed_strings=True)
+        )
+
+
+def test_plain_literal_binary_check_permission_error_fails_closed(tmp_path):
+    import os
+    import sys
+
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    if sys.platform.startswith("win") or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("chmod 000 is not enforced on Windows / as root")
+    f = tmp_path / "locked.bin"
+    f.write_bytes(b"\x00foo\n")
+    f.chmod(0)
+    try:
+        with pytest.raises(rb.BackendExecutionError):
+            rb.RustCoreBackend._binary_file_matches_pattern(
+                str(f), "foo", SearchConfig(fixed_strings=True)
+            )
+    finally:
+        f.chmod(0o600)
+
+
+@pytest.mark.parametrize("pattern", ["foo\nbar", "foo\rbar"])
+def test_newline_literal_is_delegated_to_rg_not_shortcut(monkeypatch, tmp_path, pattern):
+    # rg rejects a literal newline without multiline (exit 2); the rg-free shortcut said True.
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.cli import runtime_paths
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00foo\nbar\n")
+    cfg = SearchConfig(fixed_strings=True)
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    with pytest.raises(rb.BackendExecutionError):  # no rg -> fail closed, never True
+        rb.RustCoreBackend._binary_file_matches_pattern(str(f), pattern, cfg)
+    monkeypatch.undo()
+    _rg_or_skip()
+    check = rb.RustCoreBackend._binary_file_matches_pattern
+    if "\n" in pattern:
+        with pytest.raises((rb.InvalidRegexError, rb.BackendExecutionError)):
+            check(str(f), pattern, cfg)  # rg exits 2 on a literal newline
+    else:
+        assert check(str(f), pattern, cfg) is False  # rg's own verdict: no such bytes in file
