@@ -1312,6 +1312,37 @@ class ExternalLSPProviderManager:
             "stderr_tail": client.stderr_tail(),
         }
 
+    def unresponsive_status(
+        self,
+        *,
+        language: str,
+        workspace_root: Path,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Fail-closed report for a provider the doctor never got to probe (deadline hit).
+
+        The provider may or may not be installed; it is reported ``unresponsive`` -- never
+        ``ready`` and never silently omitted -- so a slow box cannot hang ``tg doctor``.
+        """
+        try:
+            command: list[str] = list(_provider_command(language))
+        except (FileNotFoundError, ValueError):
+            command = []
+        return _attach_lsp_proof_fields({
+            "language": language.lower(),
+            "workspace_root": str(workspace_root.resolve()),
+            "available": bool(command),
+            "health_status": "unresponsive",
+            "health_check": "deadline_exceeded",
+            "running": False,
+            "command": command,
+            "initialized": False,
+            "capabilities": {},
+            "last_error": reason,
+            "opened_documents": 0,
+            "cooldown_remaining_s": 0.0,
+        })
+
     def _verified_provider_status(
         self,
         *,

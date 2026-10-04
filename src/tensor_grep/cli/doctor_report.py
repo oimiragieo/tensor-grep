@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -152,22 +153,57 @@ def _doctor_lsp_probe_timeout_seconds() -> float:
     return _self._DOCTOR_LSP_PROBE_TIMEOUT_SECONDS
 
 
+_DOCTOR_LSP_TOTAL_TIMEOUT_ENV = "TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS"
+_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS = 90.0
+
+
+def _doctor_lsp_total_timeout_seconds() -> float:
+    """Total wall-clock budget for the whole external-LSP probe sweep (all languages)."""
+    raw_timeout = os.environ.get(_DOCTOR_LSP_TOTAL_TIMEOUT_ENV)
+    if raw_timeout:
+        try:
+            parsed_timeout = float(raw_timeout)
+        except ValueError:
+            parsed_timeout = 0.0
+        if parsed_timeout > 0:
+            return parsed_timeout
+    return _DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS
+
+
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
     from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
 
     manager = ExternalLSPProviderManager()
     workspace_root = Path(path).resolve()
     probe_timeout_seconds = _doctor_lsp_probe_timeout_seconds()
+    total_timeout_seconds = _doctor_lsp_total_timeout_seconds()
+    deadline = time.monotonic() + total_timeout_seconds
+    statuses: list[dict[str, Any]] = []
     try:
-        return [
-            manager.provider_status(
-                language=language,
-                workspace_root=workspace_root,
-                verify_health=True,
-                probe_timeout_seconds=probe_timeout_seconds,
+        for language in _doctor_lsp_languages():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Fail closed in the report, never hang: later providers are unprobed.
+                statuses.append(
+                    manager.unresponsive_status(
+                        language=language,
+                        workspace_root=workspace_root,
+                        reason=(
+                            f"doctor LSP probe deadline ({total_timeout_seconds:g}s total) "
+                            "exhausted before this provider was probed"
+                        ),
+                    )
+                )
+                continue
+            statuses.append(
+                manager.provider_status(
+                    language=language,
+                    workspace_root=workspace_root,
+                    verify_health=True,
+                    probe_timeout_seconds=min(probe_timeout_seconds, remaining),
+                )
             )
-            for language in _doctor_lsp_languages()
-        ]
+        return statuses
     finally:
         manager.stop_all()
 
