@@ -1685,3 +1685,62 @@ def test_final_row_trim_recomputes_file_and_omission_counters_exactly():
     assert payload["omitted_matches"] == 1000 - len(kept)
     assert payload["omitted_files"] == 1000 - len({row["file"] for row in kept})
     assert payload["truncated"] is True
+
+
+# --- Codex round 7: per-match truncation must keep the match or say so; no empty windows ---
+
+
+def _plain_search_one_line(line, start_byte):
+    from tensor_grep.cli import mcp_server
+
+    hit = MatchLine(
+        line_number=1,
+        text=line,
+        file="min.js",
+        submatches=({"match": {"text": "NEEDLE"}, "start": start_byte, "end": start_byte + 6},),
+    )
+    with _stub_rg_search([hit]):
+        return mcp_server.tg_search("NEEDLE", ".", structured_json=False)
+
+
+def test_plain_text_clipped_row_keeps_the_match_and_says_it_was_truncated():
+    out = _plain_search_one_line("a" * 1500 + "NEEDLE" + "b" * 300, 1500)
+    assert "NEEDLE" in out
+    assert "[truncated" in out
+    out.encode("ascii")  # the marker stays ASCII
+
+
+def test_plain_text_clipped_row_without_offsets_carries_the_marker():
+    out = _run_tg_ast_search_many(1, "z" * 1000, False)
+    assert "[truncated" in out
+    assert "z" * 400 in out
+    assert "z" * 1000 not in out
+
+
+def test_short_rows_are_unchanged_in_plain_text_and_json():
+    plain = _plain_search_one_line("short NEEDLE line", 6)
+    assert "  1: short NEEDLE line" in plain
+    assert "[truncated" not in plain
+    row = json.loads(_run_tg_search_with_line("short NEEDLE line", 6))["matches"][0]
+    assert row["text"] == "short NEEDLE line"
+    assert "text_truncated" not in row
+
+
+def test_json_window_without_offsets_uses_the_stripped_text_not_an_empty_slice():
+    from tensor_grep.cli import mcp_server
+
+    hit = MatchLine(line_number=1, text=" " * 1000 + "NEEDLE" + "b" * 500, file="a.txt")
+    with _stub_rg_search([hit]):
+        row = json.loads(mcp_server.tg_search("NEEDLE", "."))["matches"][0]
+    assert row["text"] != ""
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    assert len(row["text"]) <= 400
+
+
+def test_json_window_with_offsets_and_leading_whitespace_keeps_the_match():
+    line = " " * 1000 + "NEEDLE" + "b" * 500
+    row = json.loads(_run_tg_search_with_line(line, 1000))["matches"][0]
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    assert row["text_chars"] == len(line)

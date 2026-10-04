@@ -21,33 +21,56 @@ _MCP_OUTPUT_TRUNCATED_NOTICE = (
 )
 
 
-def _bounded_match_row(filepath: str, match: Any) -> dict[str, Any]:
-    """One ``matches[]`` row. A line wider than the cap is windowed around the first submatch
-    (ripgrep reports BYTE offsets, converted to a char index) and flagged additively with
-    ``text_truncated`` / ``text_chars`` so a caller can tell the text is a window."""
-    raw = match.text
-    stripped = raw.strip()
-    row: dict[str, Any] = {"file": filepath, "line_number": match.line_number, "text": stripped}
-    if len(stripped) <= _MCP_MATCH_TEXT_MAX_CHARS:
-        return row
-    start_char = 0
+def _first_submatch_char(raw: str, match: Any) -> int | None:
+    """Char index (in ``raw``) of the first reported submatch, or None when the backend gave no
+    usable offsets. ripgrep reports BYTE offsets into the raw line."""
     subs = getattr(match, "submatches", None)
-    if subs:
-        try:
-            byte_start = int(subs[0].get("start", 0))
-            start_char = len(raw.encode("utf-8")[:byte_start].decode("utf-8", "ignore"))
-        except (TypeError, ValueError, AttributeError, IndexError, KeyError):
-            start_char = 0
-    lo = max(0, start_char - _MCP_MATCH_WINDOW_LEAD_CHARS)
-    row["text"] = raw[lo : lo + _MCP_MATCH_TEXT_MAX_CHARS].strip()
-    row["text_truncated"] = True
-    row["text_chars"] = len(raw)
+    if not subs:
+        return None
+    try:
+        byte_start = int(subs[0].get("start", 0))
+        return len(raw.encode("utf-8")[:byte_start].decode("utf-8", "ignore"))
+    except (TypeError, ValueError, AttributeError, IndexError, KeyError):
+        return None
+
+
+def _clip_match_text(match: Any) -> tuple[str, int]:
+    """Return ``(text, removed_chars)`` for one match, bounded to the per-match cap.
+
+    ``removed_chars == 0`` means the text is the full stripped line. Otherwise the text is a
+    window: centred on the first submatch when offsets exist (offsets are in RAW-line
+    coordinates, so the window is cut from the raw text and stripped only afterwards), else the
+    head of the STRIPPED text (never an unstripped slice that could be all whitespace)."""
+    raw = str(match.text)
+    stripped = raw.strip()
+    if len(stripped) <= _MCP_MATCH_TEXT_MAX_CHARS:
+        return stripped, 0
+    start_char = _first_submatch_char(raw, match)
+    if start_char is None:
+        window = stripped[:_MCP_MATCH_TEXT_MAX_CHARS]
+    else:
+        lo = max(0, start_char - _MCP_MATCH_WINDOW_LEAD_CHARS)
+        window = raw[lo : lo + _MCP_MATCH_TEXT_MAX_CHARS].strip()
+    return window, max(0, len(stripped) - len(window))
+
+
+def _bounded_match_row(filepath: str, match: Any) -> dict[str, Any]:
+    """One ``matches[]`` row. A line wider than the cap is windowed around the first submatch and
+    flagged additively with ``text_truncated`` / ``text_chars`` so a caller can tell the text is
+    a window."""
+    text, removed = _clip_match_text(match)
+    row: dict[str, Any] = {"file": filepath, "line_number": match.line_number, "text": text}
+    if removed:
+        row["text_truncated"] = True
+        row["text_chars"] = len(str(match.text))
     return row
 
 
 def _plain_match_text(match: Any) -> str:
-    """Per-line bound for the plain-text branches."""
-    return str(match.text).strip()[:_MCP_MATCH_TEXT_MAX_CHARS]
+    """Per-line bound for the plain-text branches: the same window as the JSON rows, plus an ASCII
+    marker whenever text was removed (plain text has no per-row flag)."""
+    text, removed = _clip_match_text(match)
+    return f"{text} ...[truncated {removed} chars]" if removed else text
 
 
 def _rendered_row_bytes(row: dict[str, Any]) -> int:
