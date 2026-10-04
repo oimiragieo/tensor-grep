@@ -278,9 +278,11 @@ def _sentinel_insertion_index(search_args: list[str]) -> int | None:
     """Index to insert ``--`` before caller-influenced dash-led positionals only."""
     if has_end_of_options(search_args):  # (S) value-aware: in `-e --` the `--` is a pattern
         return None
-    if _files_mode_active(search_args):
-        # `--files` and the other no-pattern modes take no pattern (tokenizer rule B3): there is no pattern slot, and a dash-led
-        # token is an OPTION in rg. Inserting `--` would turn `-i` into a PATH (rg exit 2).
+    if _files_mode_active(search_args) and not _exec_capable_flag_present(search_args):
+        # `--files` and the other no-pattern modes take no pattern (tokenizer rule B3): there is no
+        # pattern slot, and a dash-led token is an OPTION in rg. Inserting `--` would turn `-i`
+        # into a PATH (rg exit 2). NEVER over an exec-capable flag: `--files --hostname-bin X` makes
+        # rg RUN X, so those argvs keep the sentinel decision (CWE-88, same rule as the r40 fix).
         return None
 
     dash_led = _first_dash_led_pattern_index_after_tg_flags(search_args)
