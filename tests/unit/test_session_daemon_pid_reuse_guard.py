@@ -205,11 +205,80 @@ def test_pidfd_send_signal_is_used_when_available(
         _reap(proc)
 
 
-# ---- no handle / no pidfd: the create_time re-check, recorded honestly ----
+# ---- no bound handle (macOS, old kernel, sandbox without pidfd): FAIL CLOSED, never signal ----
+#
+# Round 6: the old "recheck" fallback built a NEW psutil.Process(pid) AFTER the identity re-read. If
+# the daemon exits and its pid is recycled in that window, terminate() signals the replacement.
+# psutil 7.x `Process.terminate()` pre-checks `_raise_if_pid_reused()` and then `os.kill(pid)`: a
+# check-then-kill with its own window, so it is not a bound handle either. Signals now go ONLY through
+# a kernel handle bound to the verified process (Windows process handle, Linux pidfd); without one
+# nothing is signalled and the stop is reported unconfirmed with reason `no_bound_process_handle`.
+# The cooperative authenticated shutdown is unaffected on every platform.
+
+
+def _spy_process_cls_factory(log: list[str]) -> Any:
+    """Replacement for the old ``_psutil_process_cls()`` seam: returns a REAL psutil.Process builder
+    that records every by-pid construction (the round-6 hazard). The fixed code never calls it."""
+
+    def factory() -> Any:
+        psutil = pytest.importorskip("psutil")
+
+        def build(pid: int) -> Any:
+            log.append(f"constructed:{pid}")
+            return psutil.Process(pid)
+
+        return build
+
+    return factory
+
+
+def test_pid_recycled_between_the_recheck_and_the_signal_never_signals_the_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    replacement = _sleeper()  # the process that now owns the recycled pid
+    log: list[str] = []
+    try:
+        meta = _signed_meta(root, replacement.pid)
+        monkeypatch.setattr(trust, "_process_info", _fake_info(replacement, root))
+        # no kernel handle is available on this platform (simulated everywhere)
+        monkeypatch.setattr(trust, "_open_pid_guard", lambda pid: trust._PidGuard(pid))
+        monkeypatch.setattr(
+            trust, "_psutil_process_cls", _spy_process_cls_factory(log), raising=False
+        )
+        assert sd._terminate_daemon_by_pid(meta, root=root) is False
+        assert replacement.poll() is None, "the recycled pid's new owner was signalled"
+        assert not any(entry.startswith("constructed") for entry in log), log
+        assert trust._last_pid_guard_level() is None
+    finally:
+        _reap(replacement)
+
+
+def test_without_a_bound_handle_the_stop_is_unconfirmed_with_its_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    proc = _sleeper()
+    try:
+        monkeypatch.setattr(trust, "_process_info", _fake_info(proc, root))
+        monkeypatch.setattr(trust, "_open_pid_guard", lambda pid: trust._PidGuard(pid))
+        _plant(root, proc.pid)  # dead endpoint: the stale-metadata pid path runs
+        result = sd.stop_session_daemon(str(root))
+        assert proc.poll() is None
+        assert result["running"] is True
+        assert result["stopped"] is False
+        assert result["stop_method"] == "none"
+        assert result["unconfirmed_reason"] == "no_bound_process_handle"
+        assert "pid_reuse_guard" not in result
+        assert sd._read_daemon_metadata(root) is not None
+    finally:
+        _reap(proc)
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="Windows always has a process handle")
-def test_without_pidfd_it_falls_back_to_the_recheck_and_records_it(
+def test_without_pidfd_nothing_is_signalled_on_a_real_platform_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     root = (tmp_path / "rootA").resolve()
@@ -219,9 +288,8 @@ def test_without_pidfd_it_falls_back_to_the_recheck_and_records_it(
         monkeypatch.setattr(trust, "_process_info", _fake_info(proc, root))
         monkeypatch.setattr(trust, "_pidfd_open", None)
         monkeypatch.setattr(trust, "_pidfd_send_signal", None)
-        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is True
-        proc.wait(timeout=10)
-        assert trust._last_pid_guard_level() == "recheck"
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is False
+        assert proc.poll() is None
     finally:
         _reap(proc)
 
@@ -229,6 +297,8 @@ def test_without_pidfd_it_falls_back_to_the_recheck_and_records_it(
 def test_the_stop_result_records_the_pid_reuse_guard(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    if sys.platform != "win32" and not _HAS_PIDFD:
+        pytest.skip("no bound process handle on this platform: covered by the fail-closed tests")
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
     proc = _sleeper()
@@ -238,8 +308,7 @@ def test_the_stop_result_records_the_pid_reuse_guard(
         result = sd.stop_session_daemon(str(root))
         proc.wait(timeout=10)
         assert result["stop_method"] == "pid"
-        expected = "handle" if sys.platform == "win32" else ("pidfd" if _HAS_PIDFD else "recheck")
-        assert result["pid_reuse_guard"] == expected
+        assert result["pid_reuse_guard"] == ("handle" if sys.platform == "win32" else "pidfd")
     finally:
         _reap(proc)
 
@@ -265,6 +334,7 @@ def test_a_refused_signal_reports_no_guard_level(
 
 class _StubGuard(trust._PidGuard):
     level = "stub"
+    bound = True
 
     def __init__(self, log: list[str], verify_ok: bool = True, term_ok: bool = True) -> None:
         super().__init__(1)

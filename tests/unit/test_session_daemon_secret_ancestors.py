@@ -54,7 +54,7 @@ def _secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *parts: str) ->
 )
 def test_windows_write_class_grant_to_a_broad_group_is_refused(sid: str, mask: int) -> None:
     entries = [(_USER, 0x1F01FF), (sid, mask)]
-    assert trust._windows_ancestor_dacl_ok(entries) is False
+    assert trust._windows_ancestor_dacl_ok(entries, _USER) is False
 
 
 def test_windows_read_only_grants_and_unrelated_sids_are_accepted() -> None:
@@ -62,15 +62,17 @@ def test_windows_read_only_grants_and_unrelated_sids_are_accepted() -> None:
     entries = [
         (_USERS, _READ_EXEC),
         (_EVERYONE, _READ_EXEC),
-        ("S-1-5-21-1-2-3-4000", 0x1F01FF),  # an unrelated account may have write
+        ("S-1-5-21-1-2-3-4000", 0x1200A9),  # another account may READ (full control is refused:
+        # see test_session_daemon_dacl_foreign_principals.py)
         ("S-1-5-18", 0x1F01FF),
+        (_USER, 0x1F01FF),
     ]
-    assert trust._windows_ancestor_dacl_ok(entries) is True
+    assert trust._windows_ancestor_dacl_ok(entries, _USER) is True
 
 
 def test_windows_null_dacl_and_unparsed_ace_sentinels_are_refused() -> None:
-    assert trust._windows_ancestor_dacl_ok([("NULL-DACL", 0xFFFFFFFF)]) is False
-    assert trust._windows_ancestor_dacl_ok([("UNPARSED-ACE-TYPE-5", 0xFFFFFFFF)]) is False
+    assert trust._windows_ancestor_dacl_ok([("NULL-DACL", 0xFFFFFFFF)], _USER) is False
+    assert trust._windows_ancestor_dacl_ok([("UNPARSED-ACE-TYPE-5", 0xFFFFFFFF)], _USER) is False
 
 
 # ---- Windows, real filesystem ----

@@ -350,6 +350,49 @@ def create_new_restricted(path: str, sid: str) -> Any | None:
     return handle
 
 
+def create_directory_restricted(path: str, sid: str) -> bool:
+    """``CreateDirectoryW`` with a PROTECTED descriptor ``D:P(A;OICI;FA;;;<sid>)``: the directory (and
+    what it will contain) is user-only from the first instant, with no grants inherited from the
+    parent (which on a multi-account machine may hand other accounts Modify / delete rights).
+    True if created or it already exists (a race), False on any failure."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class _SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    k32.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p]
+    k32.CreateDirectoryW.restype = wintypes.BOOL
+    descriptor = ctypes.c_void_p()
+    if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"D:P(A;OICI;FA;;;{sid})", 1, ctypes.byref(descriptor), None
+    ):
+        return False
+    try:
+        attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
+        if k32.CreateDirectoryW(path, ctypes.byref(attrs)):
+            return True
+        return int(ctypes.get_last_error()) == 183  # ERROR_ALREADY_EXISTS
+    finally:
+        k32.LocalFree(descriptor)
+
+
 def write_all(handle: Any, data: bytes) -> bool:
     """Write ``data`` through ``handle`` and flush it to disk; ``False`` on any failure."""
     if sys.platform != "win32":

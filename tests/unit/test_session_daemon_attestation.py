@@ -345,6 +345,7 @@ def _kill(pid: int) -> None:
 
 class _DeniedGuard(trust._PidGuard):
     level = "denied"
+    bound = True  # a BOUND guard whose terminate is denied (the unbound case has its own reason)
 
     def terminate(self) -> bool:
         return False  # OpenProcess/TerminateProcess: access denied

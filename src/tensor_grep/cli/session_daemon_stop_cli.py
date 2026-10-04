@@ -17,6 +17,10 @@ _REASONS = {
     "pid_unproven": "the recorded pid could not be proven to be this root's daemon, so it was not signalled",
     "termination_failed": "the daemon process could not be terminated",
     "endpoint_still_accepting_connections": "the daemon is still accepting connections",
+    "no_bound_process_handle": (
+        "no kernel process handle (Windows handle / Linux pidfd) is available to signal the process "
+        "safely, so it was not signalled"
+    ),
     "stop_not_confirmed": "the daemon did not acknowledge the stop request and still answers",
 }
 

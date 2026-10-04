@@ -50,6 +50,7 @@ _win_owner_and_dacl = _winsec.owner_and_dacl_sids
 _win_dacl_entries = _winsec.owner_and_dacl_entries  # (owner SID, [(SID, access mask)])
 _win_create_restricted = _winsec.create_new_restricted  # CREATE_NEW with a user-only descriptor
 _lstat = os.lstat  # private seam: tests patch this, never the global os.lstat
+_win_create_dir_restricted = _winsec.create_directory_restricted  # user-only, protected
 
 
 def _valid_daemon_port(value: object) -> int | None:
@@ -197,6 +198,7 @@ _pidfd_open = getattr(os, "pidfd_open", None)  # Linux 5.3+ (Python 3.9+); seam 
 _pidfd_send_signal = getattr(signal, "pidfd_send_signal", None)  # seam for tests
 _PID_CREATE_TIME_TOLERANCE = 0.01  # seconds; psutil and GetProcessTimes read the same FILETIME
 _last_guard_level: str | None = None
+_last_refusal: str | None = None
 
 
 def _last_pid_guard_level() -> str | None:
@@ -209,19 +211,18 @@ def _pid_guard_field(used: bool) -> dict[str, str]:
     return {"pid_reuse_guard": _last_guard_level or "unknown"} if used else {}
 
 
-def _psutil_process_cls() -> Any:
-    try:
-        import psutil  # type: ignore[import-not-found]
-    except ImportError:
-        return None
-    return psutil.Process
-
-
 class _PidGuard:
-    """``"recheck"``: no kernel object pins the pid, so the create_time/argv re-read is the guard
-    and a window of microseconds remains between that re-read and the signal."""
+    """UNBOUND: no kernel object pins this pid (macOS, a Linux kernel/sandbox without pidfd).
 
-    level = "recheck"
+    Signalling by pid -- even through a freshly built ``psutil.Process`` after an identity re-read --
+    is check-then-kill: if the daemon exits and its pid is recycled in that window the replacement is
+    signalled (psutil 7.x ``Process.terminate()`` itself only pre-checks ``_raise_if_pid_reused()`` and
+    then calls ``os.kill(pid)``, a window of its own). So an unbound guard NEVER signals: the stop is
+    reported unconfirmed with reason ``no_bound_process_handle``. The cooperative, authenticated
+    shutdown still works on every platform; only signal escalation is gated on a bound handle."""
+
+    level = "none"
+    bound = False
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
@@ -230,12 +231,7 @@ class _PidGuard:
         return True  # the caller re-reads _process_info after the guard exists
 
     def terminate(self) -> bool:
-        process_cls = _psutil_process_cls()
-        if process_cls is not None:
-            process_cls(self.pid).terminate()  # psutil itself refuses a pid whose create_time moved
-        else:
-            os.kill(self.pid, signal.SIGTERM)
-        return True
+        return False  # never signal by pid
 
     def wait(self, seconds: float) -> None:
         return None
@@ -248,6 +244,7 @@ class _PidfdGuard(_PidGuard):
     """``"pidfd"`` (Linux 5.3+): an open pidfd pins the process; the signal goes through it."""
 
     level = "pidfd"
+    bound = True
 
     def __init__(self, pid: int, fd: int) -> None:
         super().__init__(pid)
@@ -270,6 +267,7 @@ class _WinGuard(_PidGuard):
     from THAT handle and ``TerminateProcess`` is called on THAT handle, never a fresh OpenProcess."""
 
     level = "handle"
+    bound = True
 
     def __init__(self, pid: int, handle: Any) -> None:
         super().__init__(pid)
@@ -300,7 +298,7 @@ def _open_pid_guard(pid: int) -> _PidGuard | None:
         except ProcessLookupError:
             return None
         except OSError:
-            pass  # EPERM / ENOSYS / EINVAL: fall back to the create_time re-check
+            pass  # EPERM / ENOSYS / EINVAL: no pidfd here -> an UNBOUND guard (never signals)
     return _PidGuard(pid)
 
 
@@ -312,16 +310,19 @@ def _terminate_identified(
     The guard (Windows process handle / Linux pidfd) is opened FIRST and only then are the create
     time and argv re-verified against the classification; from that moment the pid cannot name a
     different process, so the signal sent through the same handle/pidfd hits exactly the verified
-    one. Without either primitive (macOS, old kernels) the create_time re-check remains and the
-    stop result records ``pid_reuse_guard: "recheck"``. The guard is always released.
+    one. Without either primitive (macOS, old kernels, pidfd-less sandboxes) NOTHING is signalled and
+    the stop is unconfirmed with reason ``no_bound_process_handle``. The guard is always released.
     """
-    global _last_guard_level
+    global _last_guard_level, _last_refusal
     pid, created, argv = identity
-    _last_guard_level = None
+    _last_guard_level = _last_refusal = None
     guard = _open_pid_guard(pid)
     if guard is None:
         return False
     try:
+        if not guard.bound:
+            _last_refusal = "no_bound_process_handle"  # fail closed: never signal by bare pid
+            return False
         if not guard.verify(created) or _process_info(pid) != (argv, created):
             return False
         if not guard.terminate():
@@ -394,6 +395,8 @@ def _unconfirmed_fields(state: str, delivered: bool) -> dict[str, Any]:
     """The honest stop result when shutdown cannot be confirmed: still running, not stopped."""
     if delivered:
         reason = "endpoint_still_accepting_connections"
+    elif state == "ours" and _last_refusal == "no_bound_process_handle":
+        reason = "no_bound_process_handle"
     else:
         reason = {"unverifiable": "pid_unproven", "ours": "termination_failed"}.get(
             state, "stop_not_confirmed"
@@ -508,7 +511,7 @@ def _parent_trusted(parent: Path) -> bool:
             if not _windows_handle_trusted(handle, check_dacl=False):
                 return False
             queried = _win_dacl_entries(handle)  # the directory's OWN DACL too, not just owner
-            return queried is not None and _windows_ancestor_dacl_ok(queried[1])
+            return queried is not None and _windows_parent_dacl_ok(queried[1])
         finally:
             _winsec.close_handle(handle)
     try:
@@ -530,15 +533,49 @@ _WIN_WRITE_MASK = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000
 _WIN_WRITE_MASK |= 0x40000000 | 0x10000000
 
 
-def _windows_ancestor_dacl_ok(entries: list[tuple[str, int]]) -> bool:
-    """No allow-ACE gives write/modify access to Everyone, Users or Authenticated Users.
+# Principals that may hold ANY right on the secret's directory chain: SYSTEM, Administrators and the
+# CREATOR OWNER / OWNER RIGHTS aliases (which resolve to the owner, i.e. us). The current user is
+# added at call time.
+_WIN_TRUSTED_PRINCIPALS = frozenset({"S-1-5-18", "S-1-5-32-544", "S-1-3-0", "S-1-3-4"})
+# Rights that let a principal REPLACE or RENAME a path component: FILE_DELETE_CHILD, WRITE_DAC,
+# WRITE_OWNER, GENERIC_ALL (generic bits only appear in unmapped ACEs).
+_WIN_REPLACE_MASK = 0x40 | 0x40000 | 0x80000 | 0x10000000
 
-    A NULL DACL or an allow-ACE type this code does not parse is refused (fail closed).
+
+def _windows_ancestor_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None = None) -> bool:
+    """ANCESTOR directories: nobody but the user / SYSTEM / Administrators may hold a right that lets
+    them replace or rename a path component (delete-child, write-DAC, write-owner), and Everyone /
+    Users / Authenticated Users may hold no write-class right at all.
+
+    A NULL DACL, an allow-ACE type this code does not parse, or an unknown current user is refused.
+    Measured default ancestors (C:\\Users, the profile, AppData\\Local with other accounts holding
+    Modify = DELETE without delete-child) pass; a foreign delete-child grant (e.g. ``(M,DC)`` on Temp)
+    does not.
     """
+    user = user_sid or _win_current_user_sid()
+    if user is None:
+        return False
     for sid, mask in entries:
         if sid.startswith(("NULL-DACL", "UNPARSED-ACE-TYPE-")):
             return False
         if sid in _WIN_BROAD_SIDS and mask & _WIN_WRITE_MASK:
+            return False
+        if sid != user and sid not in _WIN_TRUSTED_PRINCIPALS and mask & _WIN_REPLACE_MASK:
+            return False
+    return True
+
+
+def _windows_parent_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None = None) -> bool:
+    """The SECRET'S OWN directory: any principal other than the user / SYSTEM / Administrators holding
+    delete-child, delete, write-DAC, write-owner or create/write rights could delete or replace the
+    secret, so such a grant is refused (read-only grants to anyone are fine)."""
+    user = user_sid or _win_current_user_sid()
+    if user is None:
+        return False
+    for sid, mask in entries:
+        if sid.startswith(("NULL-DACL", "UNPARSED-ACE-TYPE-")):
+            return False
+        if sid != user and sid not in _WIN_TRUSTED_PRINCIPALS and mask & _WIN_WRITE_MASK:
             return False
     return True
 
@@ -564,6 +601,9 @@ def _ancestors_trusted(parent: Path) -> bool:
     if len(path.parts) > _MAX_ANCESTOR_DEPTH:
         return False
     if sys.platform == "win32":
+        user = _win_current_user_sid()
+        if user is None:
+            return False
         for anc in path.parents:
             if anc.parent == anc:
                 continue  # drive root: a system root, not attacker-modifiable
@@ -574,7 +614,7 @@ def _ancestors_trusted(parent: Path) -> bool:
                 queried = _win_dacl_entries(handle)
             finally:
                 _winsec.close_handle(handle)
-            if queried is None or not _windows_ancestor_dacl_ok(queried[1]):
+            if queried is None or not _windows_ancestor_dacl_ok(queried[1], user):
                 return False
         return True
     try:
@@ -677,6 +717,77 @@ def _after_parent_pinned(parent: Path) -> None:
     """Test seam: runs while the parent directory handle is held, before the secret is created."""
 
 
+def _ensure_secret_dir(parent: Path) -> bool:
+    """Create the secret's directory. On Windows a NEW directory is created with a protected
+    user-only DACL (no inherited grants to other accounts); an existing one is vetted by the caller."""
+    if sys.platform != "win32":
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        return True
+    parent.parent.mkdir(parents=True, exist_ok=True)
+    if parent.exists() or parent.is_symlink():
+        return True
+    sid = _win_current_user_sid()
+    return sid is not None and bool(_win_create_dir_restricted(str(parent), sid))
+
+
+# Orphan temps of THIS writer: ``.daemon-secret.json.<uuid4 hex>.tmp`` -- nothing else is ever touched.
+_TEMP_NAME = re.compile(r"^" + re.escape(f".{_DAEMON_SECRET_FILE}.") + r"[0-9a-f]{32}\.tmp$")
+
+
+def _is_our_plain_file(candidate: Path) -> bool:
+    """A regular file (never a symlink, junction or directory -- links are NOT followed) owned by us."""
+    try:
+        st = _lstat(candidate)
+    except OSError:
+        return False
+    if _stat.S_ISLNK(st.st_mode) or not _stat.S_ISREG(st.st_mode):
+        return False
+    if sys.platform == "win32":
+        if getattr(st, "st_file_attributes", 0) & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT
+            return False
+        handle = _winsec.open_no_follow(str(candidate))
+        if handle is None:
+            return False
+        try:
+            return _windows_handle_trusted(handle, check_dacl=False)
+        finally:
+            _winsec.close_handle(handle)
+    return st.st_uid == os.geteuid()
+
+
+def _recover_orphan_temps(path: Path) -> None:
+    """Under the creation lock no live writer of ours exists, so any trust-checked temp with the
+    exact writer pattern is an orphan: a writer killed between ``os.link`` and ``unlink`` leaves BOTH
+    names on the secret (``st_nlink == 2``) forever, one killed before the link leaves an unpublished
+    secret. Unlink those, and only those."""
+    try:
+        names = os.listdir(path.parent)
+    except OSError:
+        return
+    for name in names:
+        candidate = path.parent / name
+        if _TEMP_NAME.match(name) and _is_our_plain_file(candidate):
+            try:
+                candidate.unlink()
+            except OSError:
+                pass
+
+
+def _recover_under_lock(path: Path) -> None:
+    try:
+        with index_lock(path):
+            _recover_orphan_temps(path)
+    except (OSError, IndexLockTimeoutError):
+        pass  # best effort: an unrecovered extra link is retried on the next load
+
+
+def _extra_links(path: Path) -> bool:
+    try:
+        return _lstat(path).st_nlink > 1
+    except OSError:
+        return False
+
+
 def _write_secret_posix(path: Path, payload: dict[str, Any]) -> None:
     """Publish the secret 0600 WITHOUT replacing an existing one (hard-link no-clobber)."""
     atomic_write_bytes_anchored(
@@ -695,12 +806,15 @@ def _load_or_create_user_secret() -> bytes | None:
     path = _daemon_secret_path()
     existing = _read_user_secret(path)
     if existing is not None:
+        if _extra_links(path):  # a writer was killed between link and unlink: recover (rare path)
+            _recover_under_lock(path)
         return existing
     if os.path.lexists(path):
         return None  # present but untrusted (or unreadable): never use it, never overwrite it
     pinned: Any = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not _ensure_secret_dir(path.parent):
+            return None
         if sys.platform == "win32":
             # Hold the directory open through creation and publish so it cannot be renamed or
             # deleted underneath us (no FILE_SHARE_DELETE); FILE_SHARE_WRITE is required or the
@@ -717,6 +831,7 @@ def _load_or_create_user_secret() -> bytes | None:
                 return existing
             if os.path.lexists(path):
                 return None
+            _recover_orphan_temps(path)
             payload = {"secret": secrets.token_hex(32)}
             try:
                 if sys.platform == "win32":
