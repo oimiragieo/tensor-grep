@@ -534,19 +534,31 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
             (dirs if is_dir else files).append(entry.name)
         return dirs, files
 
-    def _enter(path: str, fd: int) -> Iterator[tuple[str, list[str], list[str], Any]]:
-        listing = _listing(fd)
+    def _own(path: str, fd: int) -> _FdFrame:
+        """Transfer ownership of a freshly opened `fd` to the stack IMMEDIATELY (no fallible call
+        between `os.open` returning and this): every later failure, however it unwinds, is closed
+        exactly once by the walk's `finally` (or by `_enter` when it pops the frame itself)."""
+        frame = _FdFrame(path, fd)
+        stack.append(frame)
+        return frame
+
+    def _enter(frame: _FdFrame) -> Iterator[tuple[str, list[str], list[str], Any]]:
+        listing = _listing(frame.fd)  # may raise (onerror): the stack already owns frame.fd
         if listing is None:
-            os.close(fd)
+            stack.pop()  # `frame` is the top: closed here, exactly once, and no longer owned
+            os.close(frame.fd)
             return
         dirs, files = listing
-        frame = _FdFrame(path, fd)
-        stack.append(frame)  # owned by the stack BEFORE the consumer can interrupt us
-        st = os.fstat(fd)
-        key = str(Path(path))
-        fds[key] = fd
+        st = os.fstat(frame.fd)
+        key = str(Path(frame.path))
+        fds[key] = frame.fd
         try:
-            yield path, dirs, files, _DirHandle((st.st_dev, st.st_ino), stat.S_ISDIR(st.st_mode))
+            yield (
+                frame.path,
+                dirs,
+                files,
+                _DirHandle((st.st_dev, st.st_ino), stat.S_ISDIR(st.st_mode)),
+            )
         finally:
             fds.pop(key, None)
         frame.pending = list(reversed(dirs))  # the consumer prunes `dirs` in place
@@ -558,7 +570,7 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
         except OSError as exc:
             onerror(exc)
             return
-        yield from _enter(top_s, root_fd)
+        yield from _enter(_own(top_s, root_fd))
         while stack:
             frame = stack[-1]
             if not frame.pending:
@@ -571,7 +583,7 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
                 child_fd = os.open(name, flags, dir_fd=frame.fd)
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
-            yield from _enter(child, child_fd)
+            yield from _enter(_own(child, child_fd))
     finally:
         while stack:
             os.close(stack.pop().fd)
@@ -651,22 +663,27 @@ if sys.platform == "win32":
         )
         if handle is None or handle == _INVALID_HANDLE:
             raise OSError(ctypes.get_last_error(), "cannot hold directory", str(path))
-        info = _BY_HANDLE_FILE_INFORMATION()
-        if not _k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
-            err = ctypes.get_last_error()
+        # From here until the `_DirHandle` (whose closer owns the handle) is returned, ANY failure
+        # (a ctypes call raising, a failed query, a reparse point) closes the handle exactly once.
+        try:
+            info = _BY_HANDLE_FILE_INFORMATION()
+            if not _k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                raise OSError(ctypes.get_last_error(), "cannot query held directory", str(path))
+            if (
+                info.dwFileAttributes & 0x400 or not info.dwFileAttributes & 0x10
+            ):  # reparse / not dir
+                raise _PopulationWalkError("unreadable_path")
+            # Same identity os.lstat reports: st_dev = 64-bit volume serial (FILE_ID_INFO), st_ino
+            # = file index. If FILE_ID_INFO is unavailable, dev is 0 and only the index is compared.
+            index = (int(info.nFileIndexHigh) << 32) | int(info.nFileIndexLow)
+            id_info = _FILE_ID_INFO()
+            got_id = _k32.GetFileInformationByHandleEx(  # FileIdInfo == 18
+                handle, 18, ctypes.byref(id_info), ctypes.sizeof(id_info)
+            )
+            ident = (int(id_info.VolumeSerialNumber) if got_id else 0, index)
+        except BaseException:
             _k32.CloseHandle(handle)
-            raise OSError(err, "cannot query held directory", str(path))
-        if info.dwFileAttributes & 0x400 or not info.dwFileAttributes & 0x10:  # reparse / not dir
-            _k32.CloseHandle(handle)
-            raise _PopulationWalkError("unreadable_path")
-        # Same identity os.lstat reports: st_dev = 64-bit volume serial (FILE_ID_INFO), st_ino
-        # = file index. If FILE_ID_INFO is unavailable, dev is 0 and only the index is compared.
-        index = (int(info.nFileIndexHigh) << 32) | int(info.nFileIndexLow)
-        id_info = _FILE_ID_INFO()
-        got_id = _k32.GetFileInformationByHandleEx(  # FileIdInfo == 18
-            handle, 18, ctypes.byref(id_info), ctypes.sizeof(id_info)
-        )
-        ident = (int(id_info.VolumeSerialNumber) if got_id else 0, index)
+            raise
         return _DirHandle(ident, True, lambda: _k32.CloseHandle(handle))
 
 else:
@@ -712,19 +729,20 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
             (dirs if is_dir else files).append(entry.name)
         return dirs, files
 
-    def _enter(path: str, held: _DirHandle) -> Iterator[tuple[str, list[str], list[str], Any]]:
-        try:
-            listing = _listing(path)
-        except BaseException:
-            held.close()
-            raise
+    def _own(path: str, held: _DirHandle) -> _HeldFrame:
+        """Transfer ownership of a freshly held handle to the stack IMMEDIATELY: every later
+        failure unwinds through the walk's `finally` (or `_enter` popping the frame itself)."""
+        frame = _HeldFrame(path, held)
+        stack.append(frame)
+        return frame
+
+    def _enter(frame: _HeldFrame) -> Iterator[tuple[str, list[str], list[str], Any]]:
+        listing = _listing(frame.path)  # may raise (onerror): the stack already owns the handle
         if listing is None:
-            held.close()
+            stack.pop().held.close()  # popped and closed here, exactly once
             return
         dirs, files = listing
-        frame = _HeldFrame(path, held)
-        stack.append(frame)  # owned by the stack BEFORE the consumer can interrupt us
-        yield path, dirs, files, held
+        yield frame.path, dirs, files, frame.held
         frame.pending = list(reversed(dirs))  # the consumer prunes `dirs` in place
 
     top_s = os.fspath(top)
@@ -734,7 +752,7 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
         except OSError as exc:
             onerror(exc)
             return
-        yield from _enter(top_s, root_held)
+        yield from _enter(_own(top_s, root_held))
         while stack:
             frame = stack[-1]
             if not frame.pending:
@@ -745,7 +763,7 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
                 child_held = _hold_dir(child)
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
-            yield from _enter(child, child_held)
+            yield from _enter(_own(child, child_held))
     finally:
         while stack:
             stack.pop().held.close()
@@ -816,9 +834,9 @@ def _authenticated_child(child: Path, child_st: os.stat_result) -> Iterator[None
         fd = _os_open(child, flags)
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
-    fds = _ctx_dirfds()
-    key = str(child)
     try:
+        fds = _ctx_dirfds()
+        key = str(child)
         fst = os.fstat(fd)
         if not stat.S_ISDIR(fst.st_mode) or not _same_identity(ident, (fst.st_dev, fst.st_ino)):
             raise _PopulationWalkError("unreadable_path")

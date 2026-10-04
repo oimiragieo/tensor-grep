@@ -1435,3 +1435,231 @@ def test_closing_the_walk_generator_mid_iteration_closes_every_held_handle(tmp_p
     after = _process_handle_count()
     assert after is not None
     assert after - before <= 3, f"handles {before} -> {held} -> {after} after close()"
+
+
+# ---- round 23: every handle / fd acquired by a walk is owned by the stack or closed exactly once ----
+
+
+class _OsProxy:
+    """A stand-in for the `os` name INSIDE edit_ticket_service only (never the stdlib module):
+    forwards everything to the real `os` except the explicitly overridden attributes."""
+
+    def __init__(self, real: object, **overrides: object) -> None:
+        self._real = real
+        for name, value in overrides.items():
+            setattr(self, name, value)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._real, name)
+
+
+class _FakeEntry:
+    def __init__(self, name: str, is_dir: bool) -> None:
+        self.name = name
+        self._is_dir = is_dir
+
+    def is_dir(self, follow_symlinks: bool = True) -> bool:
+        return self._is_dir
+
+
+class _FakeScandir:
+    def __init__(self, entries: list[_FakeEntry]) -> None:
+        self._entries = entries
+
+    def __enter__(self) -> list[_FakeEntry]:
+        return self._entries
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+
+def _fake_dir_stat(ino: int) -> os.stat_result:
+    return os.stat_result((0o040755, ino, 1, 1, 0, 0, 0, 0, 0, 0))
+
+
+class _FdWorld:
+    """A fake POSIX fd world for `_fd_walk`: fd numbers are handed out by `open`, every close is
+    recorded, and the failure points are injectable."""
+
+    def __init__(self) -> None:
+        self.next_fd = 100
+        self.closed: list[int] = []
+        self.tree: dict[int, list[_FakeEntry]] = {}
+        self.fail_scandir: set[int] = set()
+        self.fail_fstat: set[int] = set()
+        self.fail_open_child = False
+
+    def _alloc(self, entries: list[_FakeEntry]) -> int:
+        fd = self.next_fd
+        self.next_fd += 1
+        self.tree[fd] = entries
+        return fd
+
+    def install(self, monkeypatch: pytest.MonkeyPatch, root_entries: list[_FakeEntry]) -> None:
+        child_entries: dict[str, list[_FakeEntry]] = {}
+
+        def _open_dir(path: str, flags: int) -> int:
+            return self._alloc(root_entries)
+
+        def _open_at(name: str, flags: int, dir_fd: int | None = None) -> int:
+            if self.fail_open_child:
+                raise PermissionError(13, "denied")
+            return self._alloc(child_entries.get(name, []))
+
+        def _scandir(fd: int) -> _FakeScandir:
+            if fd in self.fail_scandir:
+                raise PermissionError(13, "scandir failed")  # e.g. EMFILE on the internal dup
+            return _FakeScandir(self.tree[fd])
+
+        def _fstat(fd: int) -> os.stat_result:
+            if fd in self.fail_fstat:
+                raise OSError(5, "fstat failed")
+            return _fake_dir_stat(fd)
+
+        proxy = _OsProxy(
+            os, scandir=_scandir, close=self.closed.append, fstat=_fstat, open=_open_at
+        )
+        monkeypatch.setattr(edit_ticket_service, "os", proxy)
+        monkeypatch.setattr(edit_ticket_service, "_os_open_dir", _open_dir, raising=False)
+
+
+def _raise_walk_error(exc: BaseException) -> None:
+    raise edit_ticket_service._PopulationWalkError("unreadable_path") from exc
+
+
+def _drain(gen: object) -> None:
+    for _ in gen:  # type: ignore[attr-defined]
+        pass
+
+
+def test_fd_walk_closes_the_root_fd_exactly_once_when_the_listing_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the open takes the fd, then scandir's internal dup fails (EMFILE is the real trigger):
+    # nothing owned the fd before the listing, so it leaked
+    world = _FdWorld()
+    world.install(monkeypatch, [])
+    world.fail_scandir = {100}
+    with pytest.raises(edit_ticket_service._PopulationWalkError):
+        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    assert world.closed == [100]
+
+
+def test_fd_walk_closes_the_fd_exactly_once_when_onerror_swallows_the_listing_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _FdWorld()
+    world.install(monkeypatch, [])
+    world.fail_scandir = {100}
+    assert list(edit_ticket_service._fd_walk(str(tmp_path), lambda exc: None)) == []
+    assert world.closed == [100]
+
+
+def test_fd_walk_closes_the_fd_exactly_once_when_fstat_fails_after_listing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _FdWorld()
+    world.install(monkeypatch, [])
+    world.fail_fstat = {100}
+    with pytest.raises(OSError):
+        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    assert world.closed == [100]
+
+
+def test_fd_walk_closes_parent_and_child_exactly_once_when_the_child_listing_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _FdWorld()
+    world.install(monkeypatch, [_FakeEntry("sub", True)])
+    world.fail_scandir = {101}  # the child fd
+    with pytest.raises(edit_ticket_service._PopulationWalkError):
+        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    assert sorted(world.closed) == [100, 101]  # each exactly once, no leak, no double close
+
+
+def test_fd_walk_closes_the_parent_exactly_once_when_the_child_open_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _FdWorld()
+    world.install(monkeypatch, [_FakeEntry("sub", True)])
+    world.fail_open_child = True
+    with pytest.raises(edit_ticket_service._PopulationWalkError):
+        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    assert world.closed == [100]
+
+
+def test_fd_walk_closes_every_fd_exactly_once_on_a_clean_full_walk_and_on_early_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    world = _FdWorld()
+    world.install(monkeypatch, [_FakeEntry("sub", True)])
+    _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    assert sorted(world.closed) == [100, 101]
+    world.closed.clear()
+    world.next_fd = 200
+    gen = edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error)
+    next(gen)  # root tuple only
+    gen.close()
+    assert world.closed == [200]
+
+
+class _CountingHandle(edit_ticket_service._DirHandle):
+    closes = 0
+
+    def close(self) -> None:
+        type(self).closes += 1
+        super().close()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="held directory handles are Windows-only")
+@pytest.mark.parametrize("fail_at", ["root", "child"])
+def test_held_walk_closes_every_handle_exactly_once_when_the_listing_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fail_at: str
+) -> None:
+    (tmp_path / "sub").mkdir()
+    victim = str(tmp_path if fail_at == "root" else tmp_path / "sub")
+    real_scandir = os.scandir
+
+    def _scandir(path: object) -> object:
+        if os.path.normcase(str(path)) == os.path.normcase(victim):
+            raise PermissionError(13, "listing failed")
+        return real_scandir(path)  # type: ignore[arg-type]
+
+    real_hold = edit_ticket_service._hold_dir
+    handles: list[_CountingHandle] = []
+
+    def _hold(path: object) -> object:
+        h = real_hold(path)  # type: ignore[arg-type]
+        counting = _CountingHandle(h.ident, True, h.close)
+        handles.append(counting)
+        return counting
+
+    _CountingHandle.closes = 0
+    monkeypatch.setattr(edit_ticket_service, "os", _OsProxy(os, scandir=_scandir))
+    monkeypatch.setattr(edit_ticket_service, "_hold_dir", _hold)
+    with pytest.raises(edit_ticket_service._PopulationWalkError):
+        _drain(edit_ticket_service._held_walk(str(tmp_path), _raise_walk_error))
+    assert handles, "no handle was ever held"
+    assert _CountingHandle.closes == len(handles)  # every acquired handle closed exactly once
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="held directory handles are Windows-only")
+def test_hold_dir_closes_the_handle_exactly_once_when_a_post_acquire_call_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    k32 = edit_ticket_service._k32
+    real_close = k32.CloseHandle
+    closes: list[object] = []
+
+    def _close(handle: object) -> object:
+        closes.append(handle)
+        return real_close(handle)
+
+    def _boom(*a: object, **k: object) -> object:
+        raise RuntimeError("injected failure after the handle was acquired")
+
+    monkeypatch.setattr(k32, "CloseHandle", _close, raising=False)
+    monkeypatch.setattr(k32, "GetFileInformationByHandleEx", _boom, raising=False)
+    with pytest.raises(RuntimeError):
+        edit_ticket_service._hold_dir(tmp_path)
+    assert len(closes) == 1  # acquired, failed, closed exactly once
