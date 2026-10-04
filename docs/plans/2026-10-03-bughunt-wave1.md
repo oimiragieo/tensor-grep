@@ -69,7 +69,9 @@
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
-        cwd=repo, check=True, capture_output=True,
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
 
 
@@ -137,7 +139,9 @@ def test_git_failure_is_incomplete_not_no_changes(tmp_path: Path, monkeypatch: A
     assert payload["result_incomplete"] is True
     assert payload["incomplete_reason"] == "git_diff_failed"
     assert "git_diff_failed" in payload["downgrade_reasons"]
-    monkeypatch.chdir(tmp_path)  # council round 2: never run git in the real repo cwd (RED would write ./x there)
+    monkeypatch.chdir(
+        tmp_path
+    )  # council round 2: never run git in the real repo cwd (RED would write ./x there)
     res = runner.invoke(app, ["diff-impact", "--json", "--", "--output=x"])
     assert not (tmp_path / "x").exists()
     assert res.exit_code == 2
@@ -172,35 +176,50 @@ def _validate_ref(ref: str) -> str:
 Replace the body of `extract_diff_hunks_from_git`:
 
 ```python
-    cmd = [
-        # core.fsmonitor=false: a repo-local .git/config (e.g. from an extracted archive) must not
-        # get to run an fsmonitor hook during our read (council round 3, defence in depth).
-        # No --no-renames (council round 5): it would turn a pure rename into delete-all + add-all,
-        # reporting the old path as deleted and the whole new file as changed, where main reports
-        # nothing; the header-state parser reads `---/+++` and handles rename diffs as main does.
-        "git", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", "diff", "-U0",
-        "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
-    ]
-    if staged:
-        cmd.append("--cached")
-    if ref:
-        cmd += ["--end-of-options", _validate_ref(ref), "--"]
-    base_timeout = configured_git_timeout_seconds()
-    timeout = deadline_capped_timeout_seconds(base_timeout, deadline_monotonic=deadline_monotonic)
-    if timeout is None:
-        raise DiffError("deadline_exceeded")
-    try:
-        proc = run_subprocess(
-            cmd, cwd=str(root), stdout=-1, stderr=-1, text=True,
-            encoding="utf-8", errors="surrogateescape", timeout_seconds=timeout,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise DiffError("git_diff_timeout") from exc
-    except (OSError, ValueError, TimeoutError) as exc:
-        raise DiffError("git_diff_failed", str(exc)) from exc
-    if proc.returncode != 0:
-        raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
-    return parse_git_diff_hunks(proc.stdout or "")
+cmd = [
+    # core.fsmonitor=false: a repo-local .git/config (e.g. from an extracted archive) must not
+    # get to run an fsmonitor hook during our read (council round 3, defence in depth).
+    # No --no-renames (council round 5): it would turn a pure rename into delete-all + add-all,
+    # reporting the old path as deleted and the whole new file as changed, where main reports
+    # nothing; the header-state parser reads `---/+++` and handles rename diffs as main does.
+    "git",
+    "-c",
+    "core.quotepath=false",
+    "-c",
+    "core.fsmonitor=false",
+    "diff",
+    "-U0",
+    "--no-ext-diff",
+    "--no-textconv",
+    "--src-prefix=a/",
+    "--dst-prefix=b/",
+]
+if staged:
+    cmd.append("--cached")
+if ref:
+    cmd += ["--end-of-options", _validate_ref(ref), "--"]
+base_timeout = configured_git_timeout_seconds()
+timeout = deadline_capped_timeout_seconds(base_timeout, deadline_monotonic=deadline_monotonic)
+if timeout is None:
+    raise DiffError("deadline_exceeded")
+try:
+    proc = run_subprocess(
+        cmd,
+        cwd=str(root),
+        stdout=-1,
+        stderr=-1,
+        text=True,
+        encoding="utf-8",
+        errors="surrogateescape",
+        timeout_seconds=timeout,
+    )
+except subprocess.TimeoutExpired as exc:
+    raise DiffError("git_diff_timeout") from exc
+except (OSError, ValueError, TimeoutError) as exc:
+    raise DiffError("git_diff_failed", str(exc)) from exc
+if proc.returncode != 0:
+    raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
+return parse_git_diff_hunks(proc.stdout or "")
 ```
 
 Add `"DiffError"` to `__all__`. Add helper `_empty_payload(root, ref, staged, *, partial: bool, reason: str | None = None, error: str | None = None) -> dict` returning the existing zeroed "no changes" dict plus `deleted_files: []`, `result_incomplete: partial`, `incomplete_reason: reason if partial else None`, and when `partial`: `partial: True`, `downgrade_reasons: [reason]`, `error: error`. In `build_diff_blast_radius` wrap the extract call:
@@ -367,11 +386,22 @@ def test_cli_diff_impact_bogus_fail_on_risk_is_usage_error(monkeypatch: Any) -> 
 
 def _payload(**overrides: Any) -> dict[str, Any]:
     base = {
-        "root": ".", "ref": None, "staged": False, "changed_files": ["a.py"],
-        "changed_symbols": [], "callers": [], "affected_files": ["a.py"],
-        "affected_tests": [], "blast_radius_score": 0.5, "risk_tier": "medium",
-        "partial": False, "downgrade_reasons": [], "symbol_count": 0,
-        "caller_count": 0, "file_count": 1, "test_count": 0,
+        "root": ".",
+        "ref": None,
+        "staged": False,
+        "changed_files": ["a.py"],
+        "changed_symbols": [],
+        "callers": [],
+        "affected_files": ["a.py"],
+        "affected_tests": [],
+        "blast_radius_score": 0.5,
+        "risk_tier": "medium",
+        "partial": False,
+        "downgrade_reasons": [],
+        "symbol_count": 0,
+        "caller_count": 0,
+        "file_count": 1,
+        "test_count": 0,
     }
     base.update(overrides)
     return base
@@ -498,10 +528,19 @@ class _Fake:
 
 
 def _plant(root: Path, *, host: str = "127.0.0.1", port: int) -> None:
-    sd._write_daemon_metadata(root, {
-        "version": 1, "package_version": _expected_tg_version(), "root": str(root),
-        "host": host, "port": port, "pid": 1, "started_at": "x", "token": "attacker",
-    })
+    sd._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "package_version": _expected_tg_version(),
+            "root": str(root),
+            "host": host,
+            "port": port,
+            "pid": 1,
+            "started_at": "x",
+            "token": "attacker",
+        },
+    )
 
 
 def test_forged_ok_reply_is_rejected(tmp_path: Path) -> None:
@@ -534,7 +573,9 @@ def test_forged_proof_with_wrong_secret_is_rejected(tmp_path: Path) -> None:
         fake.close()
 
 
-def test_non_loopback_host_is_never_connected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_non_loopback_host_is_never_connected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # Record calls instead of raising: _probe_daemon swallows exceptions, so a raising canary
     # would pass on broken code (vacuous). Recording proves the request was never attempted.
     root = tmp_path.resolve()
@@ -567,7 +608,9 @@ def test_relayed_proof_for_a_different_port_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("host", ["example.com", "10.0.0.1", "127.0.0.2", "::1", "localhost"])
-def test_daemon_request_refuses_any_host_but_the_canonical_bind(monkeypatch: pytest.MonkeyPatch, host: str) -> None:
+def test_daemon_request_refuses_any_host_but_the_canonical_bind(
+    monkeypatch: pytest.MonkeyPatch, host: str
+) -> None:
     # Record instead of connecting: RED on main must not make a real outbound connection (council round 2).
     calls: list[Any] = []
 
@@ -598,10 +641,19 @@ def test_same_port_relay_on_another_loopback_address_is_never_contacted(
 
 def test_malformed_planted_port_is_rejected_not_crash(tmp_path: Path) -> None:
     root = tmp_path.resolve()
-    sd._write_daemon_metadata(root, {
-        "version": 1, "package_version": _expected_tg_version(), "root": str(root),
-        "host": "127.0.0.1", "port": "not-a-port", "pid": 1, "started_at": "x", "token": "t",
-    })
+    sd._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "package_version": _expected_tg_version(),
+            "root": str(root),
+            "host": "127.0.0.1",
+            "port": "not-a-port",
+            "pid": 1,
+            "started_at": "x",
+            "token": "t",
+        },
+    )
     assert sd._probe_daemon(root) is None
 
 
@@ -611,11 +663,19 @@ def test_genuine_daemon_is_still_accepted(tmp_path: Path) -> None:
     server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        sd._write_daemon_metadata(root, {
-            "version": 1, "package_version": _expected_tg_version(), "root": str(root),
-            "host": "127.0.0.1", "port": int(server.server_address[1]), "pid": 0,
-            "started_at": "x", "token": "tok",
-        })
+        sd._write_daemon_metadata(
+            root,
+            {
+                "version": 1,
+                "package_version": _expected_tg_version(),
+                "root": str(root),
+                "host": "127.0.0.1",
+                "port": int(server.server_address[1]),
+                "pid": 0,
+                "started_at": "x",
+                "token": "tok",
+            },
+        )
         assert sd._probe_daemon(root) is not None
     finally:
         server.shutdown()
@@ -676,7 +736,9 @@ def _read_user_secret(path: Path) -> bytes | None:
         raw = json.loads(path.read_text(encoding="utf-8")).get("secret")
     except (OSError, ValueError, AttributeError):
         return None
-    return raw.encode("ascii") if isinstance(raw, str) and len(raw) >= 32 and raw.isascii() else None
+    return (
+        raw.encode("ascii") if isinstance(raw, str) and len(raw) >= 32 and raw.isascii() else None
+    )
 
 
 def _load_or_create_user_secret() -> bytes | None:
@@ -703,7 +765,9 @@ def _daemon_ping_proof(secret: bytes, nonce: str, pid: int, root: str, port: int
     return hmac.new(secret, msg, hashlib.sha256).hexdigest()
 
 
-def _verify_ping_reply(response: dict[str, Any], nonce: str, root: Path, connected_port: int) -> bool:
+def _verify_ping_reply(
+    response: dict[str, Any], nonce: str, root: Path, connected_port: int
+) -> bool:
     secret = _read_user_secret(_daemon_secret_path())
     pid, reply_root = response.get("pid"), response.get("root")
     port, proof = response.get("port"), response.get("proof")
@@ -809,6 +873,7 @@ def _drive(
     refresh_session_impl: Any = None,
 ) -> dict[str, Any]:
     ...
+
     def _fake_serve(**_kwargs: Any) -> tuple[dict[str, Any], str]:
         attempts["count"] += 1
         if attempts["count"] == 1 and first_attempt_raises is not None:
@@ -819,7 +884,8 @@ def _drive(
 
     monkeypatch.setattr(session_daemon, "_serve_daemon_response_with_cache", _fake_serve)
     monkeypatch.setattr(
-        session_daemon, "refresh_session",
+        session_daemon,
+        "refresh_session",
         refresh_session_impl if refresh_session_impl is not None else (lambda *a, **k: {}),
     )
     ...  # rest unchanged
@@ -842,9 +908,13 @@ def _raise(exc: BaseException):
     return _f
 
 
-def test_rebuild_failure_discloses_trigger_and_both_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_rebuild_failure_discloses_trigger_and_both_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     err = _drive(
-        tmp_path, monkeypatch, first_attempt_raises=KeyError("orig"),
+        tmp_path,
+        monkeypatch,
+        first_attempt_raises=KeyError("orig"),
         refresh_session_impl=_raise(OSError("disk gone")),
     )["error"]
     assert err["code"] == "refresh_failed"
@@ -853,17 +923,25 @@ def test_rebuild_failure_discloses_trigger_and_both_errors(tmp_path: Path, monke
     assert "disk gone" in err["rebuild_error"]
 
 
-def test_failure_of_the_post_rebuild_serve_is_also_refresh_failed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failure_of_the_post_rebuild_serve_is_also_refresh_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     err = _drive(
-        tmp_path, monkeypatch, first_attempt_raises=KeyError("orig"),
+        tmp_path,
+        monkeypatch,
+        first_attempt_raises=KeyError("orig"),
         second_attempt_raises=RuntimeError("serve again failed"),
     )["error"]
     assert err["code"] == "refresh_failed"
     assert "serve again failed" in err["rebuild_error"]
 
 
-def test_without_refresh_on_stale_error_code_is_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    err = _drive(tmp_path, monkeypatch, first_attempt_raises=KeyError("orig"), refresh_on_stale=False)["error"]
+def test_without_refresh_on_stale_error_code_is_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    err = _drive(
+        tmp_path, monkeypatch, first_attempt_raises=KeyError("orig"), refresh_on_stale=False
+    )["error"]
     assert err["code"] == "invalid_request"
 ```
 
@@ -948,7 +1026,9 @@ def test_blast_radius_huge_max_depth_iterates_only_realised_depths(tmp_path, mon
     from tensor_grep.cli import repo_map
 
     (tmp_path / "a.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("from a import foo\n\ndef bar():\n    return foo()\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text(
+        "from a import foo\n\ndef bar():\n    return foo()\n", encoding="utf-8"
+    )
     baseline = repo_map.build_symbol_blast_radius("foo", tmp_path, max_depth=3)
 
     real_range = range
@@ -974,10 +1054,18 @@ def test_blast_radius_realised_depths_match_range_on_a_four_hop_chain(tmp_path):
     from tensor_grep.cli import repo_map
 
     (tmp_path / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "b.py").write_text("from a import a\n\ndef b():\n    return a()\n", encoding="utf-8")
-    (tmp_path / "c.py").write_text("from b import b\n\ndef c():\n    return b()\n", encoding="utf-8")
-    (tmp_path / "d.py").write_text("from c import c\n\ndef d():\n    return c()\n", encoding="utf-8")
-    (tmp_path / "e.py").write_text("from d import d\n\ndef e():\n    return d()\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text(
+        "from a import a\n\ndef b():\n    return a()\n", encoding="utf-8"
+    )
+    (tmp_path / "c.py").write_text(
+        "from b import b\n\ndef c():\n    return b()\n", encoding="utf-8"
+    )
+    (tmp_path / "d.py").write_text(
+        "from c import c\n\ndef d():\n    return c()\n", encoding="utf-8"
+    )
+    (tmp_path / "e.py").write_text(
+        "from d import d\n\ndef e():\n    return d()\n", encoding="utf-8"
+    )
     shallow = repo_map.build_symbol_blast_radius("a", tmp_path, max_depth=3)
     deep = repo_map.build_symbol_blast_radius("a", tmp_path, max_depth=10**6)
     assert len({entry.get("depth") for entry in shallow["caller_tree"]}) >= 2  # really multi-hop
@@ -1010,7 +1098,9 @@ If the loop body emits a row for depths with zero files (e.g. empty tree levels)
 - [ ] **Step 1: Write the failing tests** — append to `tests/unit/test_mcp_server_path_confinement.py`:
 
 ```python
-@pytest.mark.parametrize("target", ["a.py", ".git/config", ".GIT/config", "notes.txt", "other.json"])
+@pytest.mark.parametrize(
+    "target", ["a.py", ".git/config", ".GIT/config", "notes.txt", "other.json"]
+)
 def test_ruleset_scan_write_baseline_refuses_non_artifact_target(tmp_path, monkeypatch, target):
     from tensor_grep.cli import mcp_server
 
@@ -1031,9 +1121,14 @@ def test_ruleset_scan_new_json_baseline_is_still_allowed(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
-    out = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="base.json"))
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="base.json")
+    )
     assert "error" not in out
-    assert json.loads((tmp_path / "base.json").read_text(encoding="utf-8"))["kind"] == "ruleset-scan-baseline"
+    assert (
+        json.loads((tmp_path / "base.json").read_text(encoding="utf-8"))["kind"]
+        == "ruleset-scan-baseline"
+    )
 
 
 def test_ruleset_scan_write_suppressions_and_bundle_refuse_source_overwrite(tmp_path, monkeypatch):
@@ -1044,25 +1139,36 @@ def test_ruleset_scan_write_suppressions_and_bundle_refuse_source_overwrite(tmp_
     manifest = tmp_path / "manifest.json"
     manifest.write_text("{}", encoding="utf-8")
     before = (tmp_path / "a.py").read_bytes()
-    sup = json.loads(mcp_server.tg_ruleset_scan(
-        "secrets-basic", path=".", write_suppressions="a.py", justification="x"))
+    sup = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "secrets-basic", path=".", write_suppressions="a.py", justification="x"
+        )
+    )
     assert sup["error"]["code"] == "invalid_input"
-    bundle = json.loads(mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path="a.py"))
+    bundle = json.loads(
+        mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path="a.py")
+    )
     assert bundle["error"]["code"] == "invalid_input"
     # Non-vacuous: the refusal must come from the artifact gate, not unrelated manifest validation.
-    assert "must be a new .json file or an existing tensor-grep artifact" in bundle["error"]["message"]
+    assert (
+        "must be a new .json file or an existing tensor-grep artifact" in bundle["error"]["message"]
+    )
     assert (tmp_path / "a.py").read_bytes() == before
 
 
 @pytest.mark.parametrize("body", ['{"kind": []}', '{"routing_reason": {"x": 1}}', "[]", '"s"'])
-def test_existing_json_with_non_string_discriminator_is_refused_not_crash(tmp_path, monkeypatch, body):
+def test_existing_json_with_non_string_discriminator_is_refused_not_crash(
+    tmp_path, monkeypatch, body
+):
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
     victim = tmp_path / "weird.json"
     victim.write_text(body, encoding="utf-8")
-    out = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="weird.json"))
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="weird.json")
+    )
     assert out["error"]["code"] == "invalid_input"
     assert victim.read_text(encoding="utf-8") == body
 ```
@@ -1080,7 +1186,9 @@ class ArtifactWriteRefused(PathConfinementError):
         )
 
 
-_MCP_ARTIFACT_PROBE_MAX_BYTES = 256 * 1024 * 1024  # council round 12: full-parse cap, far above real artifacts
+_MCP_ARTIFACT_PROBE_MAX_BYTES = (
+    256 * 1024 * 1024
+)  # council round 12: full-parse cap, far above real artifacts
 
 
 def _confine_artifact_write_path(
@@ -1139,19 +1247,27 @@ def _confine_artifact_write_path(
 def test_pattern_warning_detects_error_node_on_exit_zero():
     backend = AstGrepWrapperBackend()
     ok = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="[]",
+        args=[],
+        returncode=0,
+        stdout="[]",
         stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
     )
-    with patch.object(backend, "is_available", return_value=True), \
-         patch.object(backend, "_run_ast_grep_command", return_value=ok):
-        assert "ERROR node" in backend.pattern_warning("def (", SearchConfig(ast=True, lang="python"))
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=ok),
+    ):
+        assert "ERROR node" in backend.pattern_warning(
+            "def (", SearchConfig(ast=True, lang="python")
+        )
 
 
 def test_pattern_warning_ignores_legit_zero_match_pattern():
     backend = AstGrepWrapperBackend()
     zero = subprocess.CompletedProcess(args=[], returncode=1, stdout="[]", stderr="")
-    with patch.object(backend, "is_available", return_value=True), \
-         patch.object(backend, "_run_ast_grep_command", return_value=zero):
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=zero),
+    ):
         assert backend.pattern_warning("zzz($A)", SearchConfig(ast=True, lang="python")) is None
 ```
 
@@ -1164,30 +1280,43 @@ def _ast_search_with(tmp_path, monkeypatch, *, matches, warning):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
     result = SearchResult(
-        matches=matches, matched_file_paths=["a.py"] if matches else [],
-        total_files=1 if matches else 0, total_matches=len(matches),
-        routing_backend="AstGrepWrapperBackend", routing_reason="ast",
+        matches=matches,
+        matched_file_paths=["a.py"] if matches else [],
+        total_files=1 if matches else 0,
+        total_matches=len(matches),
+        routing_backend="AstGrepWrapperBackend",
+        routing_reason="ast",
     )
-    fake = type("AstGrepWrapperBackend", (), {
-        "search": MagicMock(return_value=result),
-        "pattern_warning": MagicMock(return_value=warning),
-    })()
-    with patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline, \
-         patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms:
+    fake = type(
+        "AstGrepWrapperBackend",
+        (),
+        {
+            "search": MagicMock(return_value=result),
+            "pattern_warning": MagicMock(return_value=warning),
+        },
+    )()
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
         mock_pipeline.return_value.get_backend.return_value = fake
         ms.return_value.walk.return_value = ["a.py"]
         return json.loads(mcp_server.tg_ast_search("def (", "python", ".", structured_json=True))
 
 
 def test_tg_ast_search_malformed_pattern_with_zero_matches_is_invalid_input(tmp_path, monkeypatch):
-    out = _ast_search_with(tmp_path, monkeypatch, matches=[], warning="Warning: Pattern contains an ERROR node")
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[], warning="Warning: Pattern contains an ERROR node"
+    )
     assert out["error"]["code"] == "invalid_input"
     assert "ERROR node" in out["error"]["message"]
 
 
 def test_tg_ast_search_warned_pattern_that_matches_is_returned_normally(tmp_path, monkeypatch):
     hit = MatchLine(line_number=1, text="def f():", file="a.py")
-    out = _ast_search_with(tmp_path, monkeypatch, matches=[hit], warning="Warning: Pattern contains an ERROR node")
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[hit], warning="Warning: Pattern contains an ERROR node"
+    )
     assert "error" not in out
     assert out["total_matches"] == 1
 
@@ -1232,17 +1361,24 @@ def test_tg_ast_search_zero_matches_without_warning_is_a_normal_empty_result(tmp
 **Council round 1 refinement:** ast-grep says an ERROR-node pattern "may cause unexpected results" — it can still match usefully. So the warning is consulted ONLY when the search returned zero matches; a warned pattern that matches is returned normally. `mcp_server.py :: tg_ast_search`, after the search loop has produced `all_results` and BEFORE the zero-match payload is rendered:
 
 ```python
-        if all_results.total_matches == 0:
-            warn = getattr(backend, "pattern_warning", None)
-            pattern_problem = warn(pattern, config) if callable(warn) else None
-            if pattern_problem:
-                message = f"Invalid AST pattern for language {lang!r}: {pattern_problem}"
-                if structured_json:
-                    return _self._inject_mcp_contract_fields(json.dumps({
-                        "pattern": pattern, "lang": lang, "path": path,
+if all_results.total_matches == 0:
+    warn = getattr(backend, "pattern_warning", None)
+    pattern_problem = warn(pattern, config) if callable(warn) else None
+    if pattern_problem:
+        message = f"Invalid AST pattern for language {lang!r}: {pattern_problem}"
+        if structured_json:
+            return _self._inject_mcp_contract_fields(
+                json.dumps(
+                    {
+                        "pattern": pattern,
+                        "lang": lang,
+                        "path": path,
                         "error": {"code": "invalid_input", "message": message},
-                    }, indent=2))
-                return f"AST search failed: {message}"
+                    },
+                    indent=2,
+                )
+            )
+        return f"AST search failed: {message}"
 ```
 
 (`_self` is the module alias defined at mcp_server.py:127, `_self = sys.modules[__name__]` — not a typo.) The three MCP tests in Step 1 pin all three branches (warned+zero -> invalid_input; warned+match -> normal; unwarned+zero -> normal empty).
@@ -1264,13 +1400,29 @@ def _run_tg_search_with_line(line, start_byte):
     from tensor_grep.cli import mcp_server
 
     backend = RipgrepBackend()
-    backend.search = MagicMock(return_value=SearchResult(
-        matches=[MatchLine(line_number=1, text=line, file="min.js",
-                           submatches=({"match": {"text": "NEEDLE"}, "start": start_byte, "end": start_byte + 6},))],
-        matched_file_paths=["min.js"], total_files=1, total_matches=1,
-        routing_backend="RipgrepBackend", routing_reason="rg_json"))
-    with patch("tensor_grep.cli.mcp_server.Pipeline") as mp, \
-         patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms:
+    backend.search = MagicMock(
+        return_value=SearchResult(
+            matches=[
+                MatchLine(
+                    line_number=1,
+                    text=line,
+                    file="min.js",
+                    submatches=(
+                        {"match": {"text": "NEEDLE"}, "start": start_byte, "end": start_byte + 6},
+                    ),
+                )
+            ],
+            matched_file_paths=["min.js"],
+            total_files=1,
+            total_matches=1,
+            routing_backend="RipgrepBackend",
+            routing_reason="rg_json",
+        )
+    )
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mp,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
         p = mp.return_value
         p.get_backend.return_value = backend
         p.selected_backend_name = "RipgrepBackend"
@@ -1431,15 +1583,21 @@ def _forbid_re(monkeypatch):
 
 def test_column_prefers_rg_submatch_byte_offset_over_pattern_guess():
     match = MatchLine(
-        line_number=1, text="foobar foo", file="f.py",
+        line_number=1,
+        text="foobar foo",
+        file="f.py",
         submatches=[{"match": {"text": "foo"}, "start": 7, "end": 10}],
     )
-    assert json_fmt._column_for_match(match, SearchConfig(query_pattern="foo", word_regexp=True)) == 8
+    assert (
+        json_fmt._column_for_match(match, SearchConfig(query_pattern="foo", word_regexp=True)) == 8
+    )
 
 
 def test_column_is_byte_offset_for_multibyte_line():
     match = MatchLine(
-        line_number=1, text="é foo", file="f.py",
+        line_number=1,
+        text="é foo",
+        file="f.py",
         submatches=[{"match": {"text": "foo"}, "start": 3, "end": 6}],
     )
     assert json_fmt._column_for_match(match, SearchConfig(query_pattern="foo")) == 4
@@ -1449,7 +1607,12 @@ def test_regex_without_submatches_is_omitted_and_never_evaluated(monkeypatch):
     _forbid_re(monkeypatch)
     match = _match_no_range("a" * 40)
     assert json_fmt._column_for_match(match, SearchConfig(query_pattern="(a+)+b|a$")) is None
-    assert json_fmt._column_for_match(_match_no_range("foo: bar baz"), SearchConfig(query_pattern=r"\bbar\b")) is None
+    assert (
+        json_fmt._column_for_match(
+            _match_no_range("foo: bar baz"), SearchConfig(query_pattern=r"\bbar\b")
+        )
+        is None
+    )
 
 
 def test_explicit_case_sensitive_overrides_smart_case_for_column():
@@ -1457,7 +1620,9 @@ def test_explicit_case_sensitive_overrides_smart_case_for_column():
     m = _match_no_range("FOO foo")
     cfg = SearchConfig(query_pattern="foo", smart_case=True, case_sensitive=True)
     assert json_fmt._column_for_match(m, cfg) == 5
-    fmt = RipgrepFormatter(SearchConfig(query_pattern="foo", smart_case=True, case_sensitive=True, column=True))
+    fmt = RipgrepFormatter(
+        SearchConfig(query_pattern="foo", smart_case=True, case_sensitive=True, column=True)
+    )
     assert fmt._column_for_match(m) == 5
 
 
@@ -1467,19 +1632,31 @@ def test_non_ascii_case_insensitive_literal_omits_column():
     assert json_fmt._column_for_match(m, SearchConfig(query_pattern="σ", ignore_case=True)) is None
     fmt = RipgrepFormatter(SearchConfig(query_pattern="σ", ignore_case=True, column=True))
     assert fmt._column_for_match(m) == 1  # the formatter's documented no-column fallback
-    assert json_fmt._column_for_match(_match_no_range("xx FOO"), SearchConfig(query_pattern="foo", ignore_case=True)) == 4  # ASCII control
+    assert (
+        json_fmt._column_for_match(
+            _match_no_range("xx FOO"), SearchConfig(query_pattern="foo", ignore_case=True)
+        )
+        == 4
+    )  # ASCII control
 
 
 def test_word_or_line_regexp_without_submatches_omits_column():
     # council round 8: "foobar foo" -w foo matches at col 8; find() would say 1 -- omit instead
     m = _match_no_range("foobar foo")
-    assert json_fmt._column_for_match(m, SearchConfig(query_pattern="foo", word_regexp=True)) is None
-    assert json_fmt._column_for_match(m, SearchConfig(query_pattern="foo", line_regexp=True)) is None
+    assert (
+        json_fmt._column_for_match(m, SearchConfig(query_pattern="foo", word_regexp=True)) is None
+    )
+    assert (
+        json_fmt._column_for_match(m, SearchConfig(query_pattern="foo", line_regexp=True)) is None
+    )
 
 
 def test_literal_pattern_still_gets_byte_column(monkeypatch):
     _forbid_re(monkeypatch)
-    assert json_fmt._column_for_match(_match_no_range("xx foo"), SearchConfig(query_pattern="foo")) == 4
+    assert (
+        json_fmt._column_for_match(_match_no_range("xx foo"), SearchConfig(query_pattern="foo"))
+        == 4
+    )
 
 
 def test_ripgrep_formatter_column_does_not_run_user_regex(monkeypatch):
@@ -1504,7 +1681,9 @@ def _literal_column_index(text: str, pattern: str, *, ignore_case: bool) -> int:
     if not ignore_case:
         return text.find(pattern)
     if not (text.isascii() and pattern.isascii()):
-        return -1  # council round 9: lower() is not Unicode caseless matching (`ς` vs `σ`) -- never guess
+        return (
+            -1
+        )  # council round 9: lower() is not Unicode caseless matching (`ς` vs `σ`) -- never guess
     return text.lower().find(pattern.lower())
 
 
@@ -1526,7 +1705,10 @@ def _column_for_match(match, config=None):
     if config.word_regexp or config.line_regexp:
         return None  # council round 8: first-occurrence find() ignores -w/-x boundaries -- omit, never guess
     # council round 10: explicit -s (case_sensitive) overrides smart case, as in D.2 / _build_cmd
-    ignore_case = bool(config.ignore_case or (config.smart_case and not config.case_sensitive and pattern.islower()))
+    ignore_case = bool(
+        config.ignore_case
+        or (config.smart_case and not config.case_sensitive and pattern.islower())
+    )
     index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
     if index < 0:
         return None
@@ -1560,22 +1742,43 @@ from tensor_grep.core.config import SearchConfig
 
 _RG_BACKEND_KNOWN_GAP_FIELDS = frozenset({
     # non-rg engines
-    "ast", "ast_prefer_native", "ast_selector", "ast_stdin", "ast_stdin_input",
-    "ast_strictness", "lang", "ltl", "nlp_threshold", "use_jit",
+    "ast",
+    "ast_prefer_native",
+    "ast_selector",
+    "ast_stdin",
+    "ast_stdin_input",
+    "ast_strictness",
+    "lang",
+    "ltl",
+    "nlp_threshold",
+    "use_jit",
     # routing / telemetry
-    "force_cpu", "format_type", "gpu_device_ids", "input_total_bytes",
-    "json_mode", "query_pattern", "rank_bm25", "semantic_rank",
+    "force_cpu",
+    "format_type",
+    "gpu_device_ids",
+    "input_total_bytes",
+    "json_mode",
+    "query_pattern",
+    "rank_bm25",
+    "semantic_rank",
     # handled by the CLI layer before the backend
-    "generate", "type_list", "pcre2_version", "quiet",
+    "generate",
+    "type_list",
+    "pcre2_version",
+    "quiet",
     # irrelevant to rg --json parsing
-    "pretty", "hostname_bin", "hyperlink_format", "line_number_explicit",
+    "pretty",
+    "hostname_bin",
+    "hyperlink_format",
+    "line_number_explicit",
 })
 
 
 def _forwarded() -> set[str]:
     tree = ast.parse(textwrap.dedent(inspect.getsource(RipgrepBackend._build_cmd)))
     return {
-        n.attr for n in ast.walk(tree)
+        n.attr
+        for n in ast.walk(tree)
         if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "config"
     }
 
@@ -1583,7 +1786,9 @@ def _forwarded() -> set[str]:
 def _cmd(**kw) -> list[str]:
     backend = RipgrepBackend()
     with patch.object(backend, "_get_binary_name", return_value="rg"):
-        return backend._build_cmd(file_path="a.txt", pattern="foo", config=SearchConfig(**kw), json_mode=True)
+        return backend._build_cmd(
+            file_path="a.txt", pattern="foo", config=SearchConfig(**kw), json_mode=True
+        )
 
 
 def test_every_searchconfig_field_forwarded_or_gapped():
@@ -1598,15 +1803,18 @@ def test_known_gap_has_no_stale_entries():
     assert not (_RG_BACKEND_KNOWN_GAP_FIELDS & _forwarded())
 
 
-@pytest.mark.parametrize("kw, expected", [
-    ({"smart_case": True}, ["-S"]),
-    ({"stop_on_nonmatch": True}, ["--stop-on-nonmatch"]),
-    ({"null_data": True}, ["--null-data"]),
-    ({"engine": "pcre2"}, ["--engine", "pcre2"]),
-    ({"engine": "auto"}, ["--engine", "auto"]),
-    ({"dfa_size_limit": "10M"}, ["--dfa-size-limit", "10M"]),
-    ({"regex_size_limit": "20M"}, ["--regex-size-limit", "20M"]),
-])
+@pytest.mark.parametrize(
+    "kw, expected",
+    [
+        ({"smart_case": True}, ["-S"]),
+        ({"stop_on_nonmatch": True}, ["--stop-on-nonmatch"]),
+        ({"null_data": True}, ["--null-data"]),
+        ({"engine": "pcre2"}, ["--engine", "pcre2"]),
+        ({"engine": "auto"}, ["--engine", "auto"]),
+        ({"dfa_size_limit": "10M"}, ["--dfa-size-limit", "10M"]),
+        ({"regex_size_limit": "20M"}, ["--regex-size-limit", "20M"]),
+    ],
+)
 def test_flag_forwarded(kw, expected):
     cmd = _cmd(**kw)
     i = cmd.index(expected[0])
@@ -1615,7 +1823,7 @@ def test_flag_forwarded(kw, expected):
 
 def test_default_engine_and_explicit_case_flags_unchanged():
     assert "--engine" not in _cmd()
-    assert "-S" not in _cmd(smart_case=True, ignore_case=True)    # explicit -i wins
+    assert "-S" not in _cmd(smart_case=True, ignore_case=True)  # explicit -i wins
     assert "-S" not in _cmd(smart_case=True, case_sensitive=True)  # explicit -s wins
 
 
@@ -1685,7 +1893,9 @@ def test_binary_notice_check_accepts_unicode_class(tmp_path):
 
     f = tmp_path / "bin.bin"
     f.write_bytes(b"\x00abc\n")
-    assert rb.RustCoreBackend._binary_file_matches_pattern(str(f), r"\p{L}+", SearchConfig()) is True
+    assert (
+        rb.RustCoreBackend._binary_file_matches_pattern(str(f), r"\p{L}+", SearchConfig()) is True
+    )
 
 
 def test_binary_notice_check_honours_word_and_smart_case(tmp_path):
@@ -1715,11 +1925,25 @@ def test_plain_fixed_string_binary_check_works_without_rg(monkeypatch, tmp_path)
     monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
     f = tmp_path / "bin.bin"
     f.write_bytes(b"\x00" + b"x" * 65530 + b"NEEDLE" + b"\n")  # straddles the 65536 boundary
-    assert rb.RustCoreBackend._binary_file_matches_pattern(str(f), "NEEDLE", SearchConfig(fixed_strings=True)) is True
-    assert rb.RustCoreBackend._binary_file_matches_pattern(str(f), "ABSENT", SearchConfig(fixed_strings=True)) is False
+    assert (
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(f), "NEEDLE", SearchConfig(fixed_strings=True)
+        )
+        is True
+    )
+    assert (
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(f), "ABSENT", SearchConfig(fixed_strings=True)
+        )
+        is False
+    )
     assert rb._file_contains_literal(str(f), b"NEEDLE", chunk_size=4096) is True
-    with pytest.raises(rb.BackendExecutionError):  # fail-closed control: an unsupported flag still needs rg
-        rb.RustCoreBackend._binary_file_matches_pattern(str(f), "needle", SearchConfig(fixed_strings=True, ignore_case=True))
+    with pytest.raises(
+        rb.BackendExecutionError
+    ):  # fail-closed control: an unsupported flag still needs rg
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(f), "needle", SearchConfig(fixed_strings=True, ignore_case=True)
+        )
 
 
 def test_first_nul_offset_is_chunked(tmp_path):
@@ -1756,7 +1980,9 @@ def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
         def __exit__(self, *exc):
             self._h.close()
 
-    monkeypatch.setattr(rb, "open", lambda p, mode="r", *a, **k: _Rec(real_open(p, mode, *a, **k)), raising=False)
+    monkeypatch.setattr(
+        rb, "open", lambda p, mode="r", *a, **k: _Rec(real_open(p, mode, *a, **k)), raising=False
+    )
     f = tmp_path / "late.bin"
     f.write_bytes(b"a" * 70000 + b"\x00")
     assert rb._first_nul_offset(str(f), chunk_size=4096) == 70000  # crosses many chunk boundaries
@@ -1818,43 +2044,46 @@ def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536)
 Use it in `_binary_notice_text` and `ripgrep_fmt.RipgrepFormatter._binary_notice` in place of `read_bytes().find(b"\0")` (keep their existing `OSError` handling). In `_binary_file_matches_pattern`, route BOTH branches through rg (council round 1: raw byte containment cannot honour `-w`/`-x`, so the fixed-string branch is replaced too; fixed strings add `-F`). Replace the whole body after the binary check:
 
 ```python
-        from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
-        from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
+from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 
-        plain_literal = bool(config and config.fixed_strings) and not (
-            config.ignore_case or config.smart_case or config.word_regexp or config.line_regexp
-        )
-        if plain_literal:
-            # council round 11: an exact case-sensitive literal has no regex semantics and no
-            # ReDoS surface -- keep the rg-free path (bounded chunks with overlap), as main has.
-            return _file_contains_literal(file_path, pattern.encode("utf-8"))
-        rg = resolve_ripgrep_binary()
-        if rg is None:
-            raise BackendExecutionError(
-                "binary-file match check for a regex pattern requires the 'rg' binary; "
-                "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
-            )
-        cmd = [str(rg), "-a", "-q", "--no-config"]
-        if config and config.fixed_strings:
-            cmd.append("-F")
-        if config and config.ignore_case:
-            cmd.append("-i")
-        elif config and config.smart_case and not config.case_sensitive:
-            cmd.append("-S")
-        if config and config.word_regexp:
-            cmd.append("-w")
-        if config and config.line_regexp:
-            cmd.append("-x")
-        cmd += ["-e", pattern, "--", file_path]
-        proc = run_subprocess(
-            cmd, capture_output=True, text=True, check=False,
-            timeout_seconds=configured_ripgrep_timeout_seconds(),
-        )
-        if proc.returncode == 0:
-            return True
-        if proc.returncode == 1:
-            return False
-        raise InvalidRegexError(f"invalid regex pattern: {(proc.stderr or '').strip()[:300]}")
+plain_literal = bool(config and config.fixed_strings) and not (
+    config.ignore_case or config.smart_case or config.word_regexp or config.line_regexp
+)
+if plain_literal:
+    # council round 11: an exact case-sensitive literal has no regex semantics and no
+    # ReDoS surface -- keep the rg-free path (bounded chunks with overlap), as main has.
+    return _file_contains_literal(file_path, pattern.encode("utf-8"))
+rg = resolve_ripgrep_binary()
+if rg is None:
+    raise BackendExecutionError(
+        "binary-file match check for a regex pattern requires the 'rg' binary; "
+        "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
+    )
+cmd = [str(rg), "-a", "-q", "--no-config"]
+if config and config.fixed_strings:
+    cmd.append("-F")
+if config and config.ignore_case:
+    cmd.append("-i")
+elif config and config.smart_case and not config.case_sensitive:
+    cmd.append("-S")
+if config and config.word_regexp:
+    cmd.append("-w")
+if config and config.line_regexp:
+    cmd.append("-x")
+cmd += ["-e", pattern, "--", file_path]
+proc = run_subprocess(
+    cmd,
+    capture_output=True,
+    text=True,
+    check=False,
+    timeout_seconds=configured_ripgrep_timeout_seconds(),
+)
+if proc.returncode == 0:
+    return True
+if proc.returncode == 1:
+    return False
+raise InvalidRegexError(f"invalid regex pattern: {(proc.stderr or '').strip()[:300]}")
 ```
 
 (`-e` + `--` per the argv-sentinel rule; no `--no-messages` so rg's parse error reaches `InvalidRegexError`. Remove the now-unused non-fixed `ignore_case` computation; keep `import re` if used elsewhere.) If `configured_ripgrep_timeout_seconds` does not exist under that name, use the timeout helper `RipgrepBackend` already uses (find with `tg search "timeout_seconds" src/tensor_grep/backends/ripgrep_backend.py`).
@@ -1867,11 +2096,20 @@ Use it in `_binary_notice_text` and `ripgrep_fmt.RipgrepFormatter._binary_notice
 - [ ] **Step 1: Write the failing tests** — create `tests/unit/test_pipeline_count_semantics.py`, copying the four `@patch(...)` decorators and mock parameter order verbatim from the existing count test in `tests/unit/test_pipeline.py` (~L702-722):
 
 ```python
-@pytest.mark.parametrize("kw", [
-    {"word_regexp": True}, {"line_regexp": True}, {"smart_case": True},
-    {"max_count": 1}, {"null_data": True}, {"stop_on_nonmatch": True},
-])
-def test_count_with_semantic_flag_uses_rg_not_rust_count(mock_cudf, mock_mem, mock_rust, mock_rg, kw):
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"word_regexp": True},
+        {"line_regexp": True},
+        {"smart_case": True},
+        {"max_count": 1},
+        {"null_data": True},
+        {"stop_on_nonmatch": True},
+    ],
+)
+def test_count_with_semantic_flag_uses_rg_not_rust_count(
+    mock_cudf, mock_mem, mock_rust, mock_rg, kw
+):
     mock_rg.return_value.is_available.return_value = True
     mock_rust.return_value.is_available.return_value = True
     p = Pipeline(force_cpu=False, config=SearchConfig(query_pattern="foo", count=True, **kw))
@@ -1890,13 +2128,17 @@ def test_count_unforwardable_flag_without_rg_fails_closed(mock_cudf, mock_mem, m
     mock_rg.return_value.is_available.return_value = False
     mock_rust.return_value.is_available.return_value = True
     with pytest.raises(BackendExecutionError):
-        Pipeline(force_cpu=False, config=SearchConfig(query_pattern="foo", count=True, null_data=True))
+        Pipeline(
+            force_cpu=False, config=SearchConfig(query_pattern="foo", count=True, null_data=True)
+        )
 
 
 def test_count_word_regexp_without_rg_uses_python_cpu(mock_cudf, mock_mem, mock_rust, mock_rg):
     mock_rg.return_value.is_available.return_value = False
     mock_rust.return_value.is_available.return_value = True
-    p = Pipeline(force_cpu=False, config=SearchConfig(query_pattern="foo", count=True, word_regexp=True))
+    p = Pipeline(
+        force_cpu=False, config=SearchConfig(query_pattern="foo", count=True, word_regexp=True)
+    )
     assert p.selected_backend_reason == "count_python_cpu_semantics"
 ```
 
@@ -1904,13 +2146,17 @@ def test_count_word_regexp_without_rg_uses_python_cpu(mock_cudf, mock_mem, mock_
 - [ ] **Step 3: Minimal implementation** (`pipeline.py`; import `BackendExecutionError` next to `ComputeBackend`, L7):
 
 ```python
-    @staticmethod
-    def _count_needs_rg_semantics(config: SearchConfig | None) -> bool:
-        """Flags RustCoreBackend.count_matches(pattern, path, ignore_case, fixed) cannot honour."""
-        return bool(config) and bool(
-            config.word_regexp or config.line_regexp or config.smart_case
-            or config.max_count is not None or config.null_data or config.stop_on_nonmatch
-        )
+@staticmethod
+def _count_needs_rg_semantics(config: SearchConfig | None) -> bool:
+    """Flags RustCoreBackend.count_matches(pattern, path, ignore_case, fixed) cannot honour."""
+    return bool(config) and bool(
+        config.word_regexp
+        or config.line_regexp
+        or config.smart_case
+        or config.max_count is not None
+        or config.null_data
+        or config.stop_on_nonmatch
+    )
 ```
 
 Count arm (L342) becomes `elif config and config.count and rust_available and not self._count_needs_rg_semantics(config):`; insert after it:
@@ -2001,7 +2247,17 @@ CPUBackend populating `submatches` (its regex column is now omitted, not guessed
 _CACHEDIR_SIG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
 
 
-@pytest.mark.parametrize("rel", ["build/gen.py", "src/build/gen.py", "dist/a.py", "pkg/dist/b.py", "target/x.py", "venv/notes.py"])
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "build/gen.py",
+        "src/build/gen.py",
+        "dist/a.py",
+        "pkg/dist/b.py",
+        "target/x.py",
+        "venv/notes.py",
+    ],
+)
 def test_ambiguous_build_dirs_are_covered_at_any_depth(tmp_path: Path, rel: str) -> None:
     f = tmp_path / rel
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -2012,7 +2268,16 @@ def test_ambiguous_build_dirs_are_covered_at_any_depth(tmp_path: Path, rel: str)
     assert population["population_source"] == "filesystem-walk"
 
 
-@pytest.mark.parametrize("dep", ["node_modules/m/i.js", "pkg/node_modules/m/i.js", "a/__pycache__/x.pyc", ".git/HEAD", "x/.pytest_cache/v"])
+@pytest.mark.parametrize(
+    "dep",
+    [
+        "node_modules/m/i.js",
+        "pkg/node_modules/m/i.js",
+        "a/__pycache__/x.pyc",
+        ".git/HEAD",
+        "x/.pytest_cache/v",
+    ],
+)
 def test_unambiguous_dependency_dirs_are_pruned_at_any_depth(tmp_path: Path, dep: str) -> None:
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     f = tmp_path / dep
@@ -2047,7 +2312,9 @@ def test_in_source_cmake_build_dir_is_covered_and_undeclared_edit_fails(tmp_path
     (lib / "CMakeCache.txt").write_text("CMAKE_X:STRING=1\n", encoding="utf-8")
     src = lib / "core.c"
     src.write_text("int x;\n", encoding="utf-8")
-    ticket = build_edit_ready_ticket(repo_root=str(tmp_path), target_path="app.py", query="a", allowed_files=["app.py"])
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path), target_path="app.py", query="a", allowed_files=["app.py"]
+    )
     src.write_text("int y;\n", encoding="utf-8")
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "FAIL"
@@ -2085,7 +2352,9 @@ def test_symlinked_marker_does_not_prune_and_is_never_opened(tmp_path: Path) -> 
     assert "src" not in population["pruned_dirs"]
 
 
-def test_unreadable_subtree_makes_population_incomplete(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreadable_subtree_makes_population_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "a.py").write_text("1\n", encoding="utf-8")
     (tmp_path / "locked").mkdir()
     real_walk = os.walk
@@ -2105,7 +2374,9 @@ def test_unreadable_subtree_makes_population_incomplete(tmp_path: Path, monkeypa
 def test_directory_budget_stops_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for i in range(30):
         (tmp_path / f"d{i:02d}").mkdir()  # many EMPTY dirs: file/byte budgets never trip
-    monkeypatch.setattr(edit_ticket_service, "_MAX_WALK_DIRS", 10, raising=False)  # council round 8: behavioural RED on main
+    monkeypatch.setattr(
+        edit_ticket_service, "_MAX_WALK_DIRS", 10, raising=False
+    )  # council round 8: behavioural RED on main
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "dir_count_limit"
@@ -2121,14 +2392,20 @@ def test_cachedir_tag_without_signature_does_not_prune(tmp_path: Path) -> None:
 
 
 def _ticket(tmp_path: Path):
-    return build_edit_ready_ticket(repo_root=str(tmp_path), target_path="app.py", query="a", allowed_files=["app.py"])
+    return build_edit_ready_ticket(
+        repo_root=str(tmp_path), target_path="app.py", query="a", allowed_files=["app.py"]
+    )
 
 
 @pytest.mark.parametrize("rel", ["build/gen.py", ".env", "secrets/k.txt", "sub/build/gen.py"])
 def test_undeclared_edit_outside_dependency_trees_fails_verify(tmp_path: Path, rel: str) -> None:
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
-    (tmp_path / ".gitignore").write_text(".env\nsecrets/\n", encoding="utf-8")  # git-ignore is irrelevant now
-    (tmp_path / "sub" / ".git").mkdir(parents=True)  # a nested repo's .git is pruned, its files are covered
+    (tmp_path / ".gitignore").write_text(
+        ".env\nsecrets/\n", encoding="utf-8"
+    )  # git-ignore is irrelevant now
+    (tmp_path / "sub" / ".git").mkdir(
+        parents=True
+    )  # a nested repo's .git is pruned, its files are covered
     target = tmp_path / rel
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("old\n", encoding="utf-8")
@@ -2146,14 +2423,21 @@ def test_declared_edit_in_build_dir_passes(tmp_path: Path) -> None:  # positive 
     gen.parent.mkdir()
     gen.write_text("x = 1\n", encoding="utf-8")
     ticket = build_edit_ready_ticket(
-        repo_root=str(tmp_path), target_path="app.py", query="a", allowed_files=["app.py", "build/gen.py"]
+        repo_root=str(tmp_path),
+        target_path="app.py",
+        query="a",
+        allowed_files=["app.py", "build/gen.py"],
     )
     gen.write_text("x = 2\n", encoding="utf-8")
-    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=["build/gen.py"])
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path), ticket=ticket, modified_files=["build/gen.py"]
+    )
     assert result["verdict"] == "PASS"
 
 
-def test_enumeration_stops_at_max_files_without_walking_the_rest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_enumeration_stops_at_max_files_without_walking_the_rest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     # UNIT COVERAGE of the new lazy generator, NOT RED evidence (council round 9): on main
     # `_population_paths` does not exist, so this fails with AttributeError there. E.1's
     # behavioural RED is the ambiguous-directory, undeclared-edit and unreadable-path tests.
@@ -2168,7 +2452,9 @@ def test_enumeration_stops_at_max_files_without_walking_the_rest(tmp_path: Path,
             yield p
 
     monkeypatch.setattr(edit_ticket_service, "_population_paths", counting)
-    _files, population = _walk_tracked_files_bounded(tmp_path, max_files=5)  # real kwarg (edit_ticket_service.py:90)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_files=5
+    )  # real kwarg (edit_ticket_service.py:90)
     assert population["status"] == "incomplete"
     assert population["reason"] == "file_count_limit"
     assert seen["n"] <= 6  # lazy: stopped right after the limit
@@ -2187,10 +2473,15 @@ def test_oversize_symlink_target_is_not_followed(tmp_path: Path) -> None:
         pytest.skip("symlinks unavailable")
     files, population = _walk_tracked_files_bounded(root, max_file_bytes=100)
     assert population["status"] == "complete"
-    assert files["link.bin"] == hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(root / "link.bin"))).hexdigest()
+    assert (
+        files["link.bin"]
+        == hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(root / "link.bin"))).hexdigest()
+    )
 
 
-def test_unreadable_fingerprint_marks_incomplete_not_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_unreadable_fingerprint_marks_incomplete_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     (tmp_path / "a.py").write_text("1\n", encoding="utf-8")
 
     def _boom(_p: object) -> str:
@@ -2210,8 +2501,15 @@ def test_unreadable_fingerprint_marks_incomplete_not_crash(tmp_path: Path, monke
 
 ```python
 _ALWAYS_PRUNED_DIRS = frozenset({
-    "node_modules", ".git", "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    ".tox", ".nox", "site-packages",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    ".nox",
+    "site-packages",
 })
 _CACHEDIR_TAG_SIGNATURE = b"Signature: 8a477f597d28d172789f06886806bc55"
 _BUILD_ROOT_MARKERS = ("pyvenv.cfg", ".rustc_info.json")
@@ -2263,6 +2561,7 @@ def _population_paths(root: Path, pruned: list[str]) -> Iterator[str]:
 
     Raises _PopulationWalkError on any directory-enumeration error (never silently skip a
     subtree) or when more than _MAX_WALK_DIRS directories are visited."""
+
     def _on_error(exc: OSError) -> None:
         raise _PopulationWalkError("unreadable_path") from exc
 
@@ -2430,10 +2729,12 @@ def _strip_json_comments_and_trailing_commas(text: str) -> str:
 In `_update_json_mcp`, after parsing:
 
 ```python
-    if not isinstance(data, dict):
-        raise ValueError(f"Configuration file '{path}' must contain a JSON object; refusing to modify it.")
-    if "mcpServers" in data and not isinstance(data["mcpServers"], dict):
-        raise ValueError(f"'mcpServers' in '{path}' must be a JSON object; refusing to modify it.")
+if not isinstance(data, dict):
+    raise ValueError(
+        f"Configuration file '{path}' must contain a JSON object; refusing to modify it."
+    )
+if "mcpServers" in data and not isinstance(data["mcpServers"], dict):
+    raise ValueError(f"'mcpServers' in '{path}' must be a JSON object; refusing to modify it.")
 ```
 
 (Installer callers already surface `ValueError` cleanly — `install_command` catches `ValueError`/`OSError`.)
@@ -2447,8 +2748,17 @@ In `_update_json_mcp`, after parsing:
 
 ```python
 def test_zero_match_rules_are_catalogued_but_emit_no_result() -> None:
-    clear = {"rule_id": "py-clear", "language": "python", "severity": "high", "message": "m",
-             "matches": 0, "status": "clear", "files": [], "fingerprint": "b" * 64, "evidence": []}
+    clear = {
+        "rule_id": "py-clear",
+        "language": "python",
+        "severity": "high",
+        "message": "m",
+        "matches": 0,
+        "status": "clear",
+        "files": [],
+        "fingerprint": "b" * 64,
+        "evidence": [],
+    }
     base = _payload()["findings"][0]
     doc = scan_payload_to_sarif(_payload(findings=[base, clear]), tool_version=_VERSION)
     run = doc["runs"][0]
@@ -2492,18 +2802,34 @@ from tensor_grep.cli import ast_scan
 def test_inline_suppression_survives_non_utf8_bytes(tmp_path: Path) -> None:
     (tmp_path / "lat.py").write_bytes(b"# tg-ignore: rule-x\nx = '\xe9'\n")
     cache: dict[str, list[str]] = {}
-    assert ast_scan._occurrence_has_inline_suppression(
-        occurrence_file="lat.py", occurrence_line=2, rule_id="rule-x",
-        language="python", root_dir=tmp_path, source_cache=cache,
-    ) is True
-    assert ast_scan._occurrence_has_inline_suppression(
-        occurrence_file="lat.py", occurrence_line=2, rule_id="other",
-        language="python", root_dir=tmp_path, source_cache=cache,
-    ) is False
+    assert (
+        ast_scan._occurrence_has_inline_suppression(
+            occurrence_file="lat.py",
+            occurrence_line=2,
+            rule_id="rule-x",
+            language="python",
+            root_dir=tmp_path,
+            source_cache=cache,
+        )
+        is True
+    )
+    assert (
+        ast_scan._occurrence_has_inline_suppression(
+            occurrence_file="lat.py",
+            occurrence_line=2,
+            rule_id="other",
+            language="python",
+            root_dir=tmp_path,
+            source_cache=cache,
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("loader", ["_load_ruleset_baseline", "_load_ruleset_suppressions"])
-def test_missing_dir_or_bad_json_ruleset_input_is_clean_value_error(tmp_path: Path, loader: str) -> None:
+def test_missing_dir_or_bad_json_ruleset_input_is_clean_value_error(
+    tmp_path: Path, loader: str
+) -> None:
     fn = getattr(ast_scan, loader)
     with pytest.raises(ValueError, match="could not be read"):
         fn(str(tmp_path / "nope.json"))

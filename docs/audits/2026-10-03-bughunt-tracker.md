@@ -166,6 +166,7 @@ PR -> CI green -> merge (burst-then-hold) -> verify on merged main -> update thi
 | R-06 | W2b H.5 | Mixed-version upgrade window and unlink-while-held can yield two lock holders | Old process must exit; acquire-time identity re-check narrows it. |
 | R-07 | W2b H.6 | `_remove_daemon_metadata` re-read/unlink is not atomic against a successor publishing in between | Pre-existing (session_daemon.py:398-421, :2123). **Follow-up:** a publish-side lock around daemon.json writes (W3). |
 | R-08 | W2b H.6 | Daemons built before wave 1 cannot prove identity, so `daemon stop` never stops them | They self-reap via the idle monitor (900 s default). |
+| R-10 | W2a G1.3 | Multi-line TypeScript object/conditional return types (`(): { a: string;` + next line) may stop the signature at an internal `;` | Main's existing behaviour, disclosed as `signature_truncated`; three council rounds showed a general brace heuristic breaks rustfmt `where` clauses. Reopen with a parser-backed signature span. |
 | R-09 | W1 C.4 | `tg_ast_search` plain-text cumulative byte cap is unreachable under its hard 150-line limit | Defence in depth; documented in the test docstring. |
 
 ## Wave status
