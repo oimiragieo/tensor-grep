@@ -32,6 +32,7 @@ use tensor_grep_rs::broken_pipe::error_chain_has_broken_pipe;
 use tensor_grep_rs::crossover::{
     run_crossover_calibration, skip_signal_payload, write_crossover_config, NoCudaBuildError,
 };
+use tensor_grep_rs::exit_codes::exit_with_run_error;
 #[cfg(feature = "cuda")]
 use tensor_grep_rs::gpu_native::{
     benchmark_cuda_graph_search_paths, benchmark_pageable_transfer_throughput,
@@ -7290,7 +7291,7 @@ fn run_command_cli(cli: CommandCli) -> anyhow::Result<()> {
         Commands::Audit { args } => handle_python_passthrough("audit", args),
         Commands::Mcp => handle_python_passthrough("mcp", vec![]),
         Commands::Classify(args) => handle_classify_command(args),
-        Commands::Run(args) => handle_ast_run(args),
+        Commands::Run(args) => handle_ast_run(args).or_else(exit_with_run_error),
         Commands::Scan { args } => {
             if ast_scan_requires_python_passthrough(&args) {
                 return handle_python_passthrough("scan", args);
@@ -7944,27 +7945,20 @@ fn python_set_members(set_name: &str) -> Vec<String> {
     members
 }
 
-/// A90 nearest[]: normalized, max edit distance 3, excludes internal `__` names, cap 5, stable
-/// (alphabetical) order, empty when nothing is close. Mirrors `_nearest_commands`. Uses the
-/// same scoped member extractor as membership so nearest and known can never disagree.
+/// A90 nearest[]: normalized, max edit distance 3, excludes internal `__` names, RANKED by edit
+/// distance (closest first, alphabetical tie-break) BEFORE the cap of 5, empty when nothing is
+/// close. Mirrors `_nearest_commands` (A-04). Uses the same scoped member extractor as
+/// membership so nearest and known can never disagree.
 fn nearest_commands(token: &str) -> Vec<String> {
-    let candidates: Vec<String> = python_set_members("KNOWN_COMMANDS")
+    let norm = token.to_lowercase();
+    let mut ranked: Vec<(usize, String)> = python_set_members("KNOWN_COMMANDS")
         .into_iter()
         .filter(|name| !name.starts_with("__"))
+        .map(|name| (levenshtein_distance(&norm, &name), name))
+        .filter(|(distance, _)| *distance <= 3)
         .collect();
-    let norm = token.to_lowercase();
-    let mut matches: Vec<String> = Vec::new();
-    for name in candidates {
-        // Genuine Levenshtein edit distance — the honest "max distance 3" bound. Length-diff
-        // alone is not edit distance (a 1-char substitution changes nothing about length); the
-        // plan/council contract and the Python sibling both mean edit distance, so enforce it.
-        if levenshtein_distance(&norm, &name) <= 3 {
-            matches.push(name);
-        }
-    }
-    matches.sort();
-    matches.truncate(5);
-    matches
+    ranked.sort(); // (distance, name): closest first, alphabetical tie-break
+    ranked.into_iter().take(5).map(|(_, name)| name).collect()
 }
 
 /// Classic Wagner–Fischer Levenshtein distance over chars. Deterministic, bounded — the
@@ -9861,7 +9855,9 @@ fn handle_ripgrep_search(args: SearchArgs) -> anyhow::Result<()> {
 
     match decision.selection {
         BackendSelection::TrigramIndex => {
+            // Step 3b (I.4): an indexed-search ERROR is exit 2, never exit 1 (= "no match").
             handle_index_search(&args, &request, &query, warm_loaded_index)
+                .or_else(exit_with_run_error)
         }
         BackendSelection::NativeGpu => {
             let gpu_device_ids = if args.gpu_device_ids.is_empty() {

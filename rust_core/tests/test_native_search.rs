@@ -1120,3 +1120,45 @@ fn test_native_search_large_file_chunk_parallelism_is_faster_than_sequential() {
         sequential_median
     );
 }
+
+#[test]
+fn test_native_search_count_with_json_or_ndjson_emits_only_structured_output() {
+    let dir = tempdir().unwrap();
+    fs::write(dir.path().join("a.txt"), "needle one\nneedle two\nother\n").unwrap();
+    fs::write(dir.path().join("b.txt"), "nothing\n").unwrap();
+    for target_path in [dir.path().to_path_buf(), dir.path().join("a.txt")] {
+        let (target, buffer) = buffer_target();
+        let mut config = base_config("needle", &target_path, target);
+        config.json = true;
+        config.count = true;
+        run_native_search(config).unwrap();
+        let out = read_buffer(&buffer);
+        let payload: Value =
+            serde_json::from_str(&out).unwrap_or_else(|e| panic!("mixed stdout {out:?}: {e}"));
+        assert_eq!(payload["total_matches"], 2, "{out}");
+        assert_eq!(
+            payload["match_counts_by_file"]
+                .as_object()
+                .unwrap()
+                .values()
+                .next()
+                .unwrap(),
+            2
+        );
+    }
+    let (target, buffer) = buffer_target();
+    let mut config = base_config("needle", dir.path(), target);
+    config.ndjson = true;
+    config.count = true;
+    run_native_search(config).unwrap();
+    let ndjson = read_buffer(&buffer);
+    let records: Vec<Value> = ndjson
+        .lines()
+        .map(|line| {
+            serde_json::from_str::<Value>(line)
+                .unwrap_or_else(|e| panic!("non-JSON ndjson line {line:?}: {e}"))
+        })
+        .collect();
+    assert!(!records.is_empty(), "ndjson output must not be empty");
+    assert!(ndjson.contains("needle"), "{ndjson}");
+}

@@ -1,3 +1,4 @@
+use crate::apply_report::{collect_group_results, partition_apply_results};
 use anyhow::{Context, Result};
 use ast_grep_core::{
     matcher::NodeMatch, meta_var::MetaVariable, tree_sitter::LanguageExt, Node, Pattern,
@@ -520,7 +521,7 @@ impl AstBackend {
             .collect();
 
         let (mut valid_edits, mut rejected_overlaps) =
-            collect_per_file_rewrite_outcomes(file_results)?;
+            collect_per_file_rewrite_outcomes(&files, file_results, &mut Vec::new())?;
         sort_rewrite_edits(&mut valid_edits);
         sort_overlap_rejections(&mut rejected_overlaps);
         assign_edit_ids(&mut valid_edits);
@@ -553,6 +554,7 @@ impl AstBackend {
         let mut total_files_scanned = 0usize;
         let mut valid_edits = Vec::new();
         let mut rejected_overlaps = Vec::new();
+        let mut written_so_far: Vec<PathBuf> = Vec::new();
 
         for (lang_name, rules) in &compiled_by_lang {
             let language = resolve_language(lang_name)?;
@@ -565,7 +567,7 @@ impl AstBackend {
                 .collect();
 
             let (mut file_edits, mut file_rejections) =
-                collect_per_file_rewrite_outcomes(file_results)?;
+                collect_per_file_rewrite_outcomes(&files, file_results, &mut written_so_far)?;
             valid_edits.append(&mut file_edits);
             rejected_overlaps.append(&mut file_rejections);
         }
@@ -1409,7 +1411,6 @@ where
     let files = group_edits_by_file(edits);
     ensure_files_not_stale(&files)?;
 
-    let mut files_written = 0;
     let apply_file = |(file, file_edits): &(&Path, Vec<&RewriteEdit>)| {
         let original_source = original_sources
             .and_then(|sources| sources.get(*file))
@@ -1419,22 +1420,20 @@ where
 
     match execution {
         ApplyExecution::Parallel => {
-            let results: Vec<Result<()>> = files.par_iter().map(apply_file).collect();
-            for result in results {
-                result?;
-                files_written += 1;
-            }
+            let outcomes: Vec<(PathBuf, Result<()>)> = files
+                .par_iter()
+                .map(|item| (item.0.to_path_buf(), apply_file(item)))
+                .collect();
+            Ok(partition_apply_results(outcomes, |_| true)?.len())
         }
         #[cfg(test)]
         ApplyExecution::Sequential => {
             for file in &files {
                 apply_file(file)?;
-                files_written += 1;
             }
+            Ok(files.len())
         }
     }
-
-    Ok(files_written)
 }
 
 fn verify_rewrite_edits(edits: &[RewriteEdit]) -> Result<VerifyResult> {
@@ -1733,17 +1732,18 @@ fn compile_batch_rewrites_by_lang(
     Ok(compiled_by_lang)
 }
 
+/// `written_so_far`: files an EARLIER language group already wrote (J-04), named on failure.
 fn collect_per_file_rewrite_outcomes(
+    files: &[PathBuf],
     file_results: Vec<Result<Option<PerFileRewriteOutcome>>>,
+    written_so_far: &mut Vec<PathBuf>,
 ) -> Result<(Vec<RewriteEdit>, Vec<OverlapRejection>)> {
-    let mut edits = Vec::new();
-    let mut rejected_overlaps = Vec::new();
-
-    for result in file_results {
-        if let Some(outcome) = result? {
-            edits.extend(outcome.edits);
-            rejected_overlaps.extend(outcome.rejected_overlaps);
-        }
+    let wrote = |o: &Option<PerFileRewriteOutcome>| o.as_ref().is_some_and(|o| !o.edits.is_empty());
+    let group = collect_group_results(files, file_results, written_so_far, wrote)?;
+    let (mut edits, mut rejected_overlaps) = (Vec::new(), Vec::new());
+    for outcome in group.into_iter().flatten() {
+        edits.extend(outcome.edits);
+        rejected_overlaps.extend(outcome.rejected_overlaps);
     }
 
     Ok((edits, rejected_overlaps))

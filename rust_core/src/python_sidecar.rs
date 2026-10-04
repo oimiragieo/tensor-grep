@@ -229,7 +229,7 @@ fn execute_python_passthrough_command_inner(
             stderr: String::new(),
         })?;
 
-        return Ok(status.code().unwrap_or(1));
+        return Ok(crate::exit_codes::child_exit_code(status));
     }
 
     let timeout = resolve_passthrough_timeout();
@@ -251,7 +251,7 @@ fn execute_python_passthrough_command_inner(
         SidecarWaitOutcome::TimedOut => unreachable!("timed out passthrough handled above"),
     };
 
-    Ok(status.code().unwrap_or(1))
+    Ok(crate::exit_codes::child_exit_code(status))
 }
 
 /// Recognizes the passthrough subcommands that legitimately launch a long-running
@@ -377,7 +377,7 @@ pub fn execute_python_passthrough_command_captured(
     };
 
     Ok(PythonPassthroughResult {
-        exit_code: status.code().unwrap_or(1),
+        exit_code: crate::exit_codes::child_exit_code(status),
         stdout: stdout_text,
         stderr: stderr_text,
     })
@@ -508,7 +508,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
         SidecarWaitOutcome::Exited(status) => status,
         SidecarWaitOutcome::TimedOut => unreachable!("timed out sidecar handled above"),
     };
-    let child_exit_code = status.code().unwrap_or(1);
+    let child_exit_code = crate::exit_codes::child_exit_code(status);
     let response: SidecarResponse = serde_json::from_slice(&stdout_bytes).map_err(|err| {
         let mut message = format!("Python sidecar returned invalid JSON: {err}");
         if child_exit_code != 0 {
@@ -1056,7 +1056,7 @@ fn resolve_passthrough_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
-fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
+pub(crate) fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
     if err.kind() == io::ErrorKind::NotFound {
         return SidecarError {
             exit_code: 2,
@@ -1070,7 +1070,7 @@ fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
     }
 
     SidecarError {
-        exit_code: 1,
+        exit_code: 2,
         message: format!(
             "Failed to start Python sidecar with `{}`: {err}",
             python.to_string_lossy()
