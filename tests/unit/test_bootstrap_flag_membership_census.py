@@ -1,6 +1,6 @@
-"""Census + raw-argv gates for plan 2026-10-03-bughunt-wave2a Part F (prototype).
+"""Census + raw-argv gates for plan 2026-10-03-bughunt-wave2a Part F.
 
-Split out of test_bootstrap_search_guards_prototype.py to stay under the 2000-line test limit.
+Split out of test_bootstrap_search_guards.py to stay under the 2000-line test limit.
 Pure AST over the three front-door modules: no rg, no git, no subprocess. Collects on main (it reads
 the source files; the guards module is simply absent there, so its parametrized case fails).
 """
@@ -321,3 +321,21 @@ def test_census_matcher_controls(source, flagged):
 def test_requires_full_cli_help_scan_is_flagged_if_it_regresses_to_a_raw_membership_test():
     src = 'def _scan_help(a):\n    return any(x in {"--help", "-h"} for x in a)\n'
     assert census_violations(src) == [("_scan_help", "collection")]
+
+
+# --- r40: the guarded-broad-root guard reads the tokenizer's PATH list, not raw argv ---------------
+
+
+def test_broad_root_ignores_a_flag_value_that_looks_like_a_root():
+    # `-g .claude` is a glob VALUE, `foo` the pattern, `src` the only path.
+    assert bootstrap._search_args_include_guarded_broad_root(["-g", ".claude", "foo", "src"]) is False
+
+
+def test_broad_root_still_refuses_a_genuine_guarded_path():  # positive control
+    assert bootstrap._search_args_include_guarded_broad_root(["foo", ".claude"]) is True
+    assert bootstrap._search_args_include_guarded_broad_root(["-g", "*.py", "foo", ".claude"]) is True
+
+
+def test_broad_root_pattern_with_default_scope_is_not_a_root():
+    assert bootstrap._search_args_include_guarded_broad_root([".claude"]) is False
+    assert bootstrap._search_args_include_guarded_broad_root(["-e", ".claude"]) is False

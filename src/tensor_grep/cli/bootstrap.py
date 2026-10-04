@@ -689,8 +689,10 @@ def _write_defaulted_scope_note() -> None:
 
 
 def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
-    for arg in search_args:
-        if not arg or arg == "-" or arg.startswith("-"):
+    # PATH positionals from the tokenizer, not raw argv: a flag VALUE (`-g .claude`) or the pattern
+    # is not a root (council wave-2a r40), and a genuine PATH still is.
+    for arg in _search_path_args_raw(search_args):
+        if not arg or arg == "-":
             continue
         normalized = arg.replace("\\", "/").rstrip("/").lower()
         if normalized in _GUARDED_BROAD_SEARCH_ROOTS:
