@@ -422,7 +422,7 @@ def teardown_provider(
     # is verified dead that EPIPE/EINVAL is the expected consequence, not a cleanup failure.
     errors += [f for f in close_failures if not (tree_dead and "(stream[0])" in f)]
     for name in abandoned:
-        if group_only and tree_dead and close_window >= 0.05 and name in ("stream[1]", "stream[2]"):
+        if group_only and tree_dead and close_window >= 0.05:
             # The group is verified dead yet its output pipe is still held: a descendant left
             # the process group (setsid). POSIX has no general primitive to stop that; detect it.
             errors.append(ESCAPE_MESSAGE)

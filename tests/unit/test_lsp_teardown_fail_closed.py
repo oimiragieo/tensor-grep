@@ -626,3 +626,185 @@ def test_provider_that_dies_during_startup_fails_closed_instead_of_deadlocking(
     monkeypatch.setattr(client, "request", slow_request)
     with pytest.raises(lsp_external_provider.LSPTransportError):
         _bounded(client.start)
+
+
+# --- round-6 finding 1: a response at/after the deadline is never "ready" ---------------
+
+
+def test_response_delivered_after_the_watchdog_fired_is_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        lsp_external_provider, "_provider_command", lambda language: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        lsp_external_provider, "_document_symbol_result_contains", lambda r, s: True
+    )
+
+    class _LateClient(lsp_external_provider.ExternalLSPClient):
+        def start(self) -> None:
+            self.initialized = True
+            self.capabilities = {"documentSymbolProvider": True}
+
+        def ensure_document(self, **kwargs: Any) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, Any]) -> Any:
+            time.sleep(0.8)  # the valid answer only arrives AFTER the watchdog fired
+            return [{"name": "x"}]
+
+    client = _LateClient(language="python", workspace_root=tmp_path)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    status, _ = _bounded(
+        lambda: manager._verified_provider_status(
+            client=client,
+            language="python",
+            workspace_root=tmp_path,
+            probe_timeout_seconds=5.0,
+            stop_after_probe=True,
+            deadline_monotonic=time.monotonic() + 0.5,
+        )
+    )
+    assert status["health_status"] != "ready"
+    assert status["lsp_proof"] is False
+    assert "deadline" in str(status["last_error"]).lower(), status["last_error"]
+
+
+# --- round-6 finding 2: an abandoned shutdown worker cannot stop a REPLACEMENT ----------
+
+
+class _RecordingStdin:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_resumed_old_shutdown_worker_sends_nothing_to_the_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    old = _FakeProcess(wait_times_out_first=False)
+    client.process = old  # type: ignore[assignment]
+    gate = threading.Event()
+    workers: list[threading.Thread] = []
+    original = client._request_shutdown_for_stop
+
+    def paused(*args: Any, **kwargs: Any) -> None:
+        workers.append(threading.current_thread())
+        original(*args, **kwargs)
+        gate.wait(timeout=20)  # pause the old worker AFTER its shutdown wait, BEFORE `exit`
+
+    monkeypatch.setattr(client, "_request_shutdown_for_stop", paused)
+    _bounded(lambda: client.stop(grace_seconds=0.1))
+
+    replacement = _FakeProcess()
+    replacement.stdin = _RecordingStdin()  # type: ignore[assignment]
+    client.process = replacement  # type: ignore[assignment]
+    client._generation += 1  # what _start_locked does for a restarted provider
+    gate.set()
+    for worker in workers:
+        worker.join(timeout=5)
+        assert not worker.is_alive(), "old worker must exit cleanly"
+
+    assert replacement.stdin.writes == [], "the replacement received a stale shutdown/exit"  # type: ignore[attr-defined]
+
+
+# --- round-6 finding 3: writes are deadline-bounded independently of process death ------
+
+
+class _StuckStdin:
+    """Stands in for a pipe whose reader was inherited by an escaped descendant."""
+
+    def __init__(self, gate: threading.Event) -> None:
+        self._gate = gate
+
+    def write(self, data: bytes) -> int:
+        self._gate.wait(timeout=20)
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def test_transport_write_is_bounded_even_if_killing_the_process_does_not_unblock_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    gate = threading.Event()
+    process = _FakeProcess()
+    process.stdin = _StuckStdin(gate)  # type: ignore[assignment]
+    process.stdout = object()  # type: ignore[assignment]
+    client.process = process  # type: ignore[assignment]
+    client.request_timeout_seconds = 0.3
+
+    def attempt() -> str:
+        try:
+            client.request("textDocument/documentSymbol", {})
+        except lsp_external_provider.LSPTransportError as exc:
+            return str(exc)
+        return "no error"
+
+    try:
+        message, elapsed = _bounded(attempt)
+        second, second_elapsed = _bounded(attempt)
+    finally:
+        gate.set()
+    assert elapsed <= 0.3 + _MARGIN, f"write blocked {elapsed:.2f}s"
+    assert "deadline" in message, message
+    assert second_elapsed <= _MARGIN and "deadline" in second, "dead transport must fail fast"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="setsid stdin holder is a POSIX scenario")
+def test_escaped_stdin_holder_with_oversized_initialize_is_bounded_and_reports_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import signal
+
+    pid_file = tmp_path / "sleeper.pid"
+    script = tmp_path / "stdin_holder_lsp.py"
+    script.write_text(
+        "import subprocess, sys, time\n"
+        "gc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'],\n"
+        "                      start_new_session=True)\n"
+        f"open({str(pid_file)!r}, 'w').write(str(gc.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    command = [sys.executable, str(script)]
+    monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
+    monkeypatch.setattr(
+        lsp_external_provider,
+        "_configuration_settings",
+        lambda language: {"settings": {"blob": "x" * 3_000_000}},
+    )
+    monkeypatch.setattr(doctor_report, "_doctor_lsp_languages", lambda: ["python"])
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "2")
+    budget = 3.0
+    monkeypatch.setenv("TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS", str(budget))
+    try:
+        statuses, elapsed = _bounded(
+            lambda: doctor_report._doctor_lsp_provider_statuses(str(tmp_path))
+        )
+        assert elapsed <= budget + _MARGIN, f"took {elapsed:.2f}s"
+        assert statuses[0]["health_status"] != "ready"
+        assert "outside the provider's process group" in str(statuses[0]["last_error"])
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass

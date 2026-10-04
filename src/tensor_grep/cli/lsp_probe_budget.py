@@ -28,6 +28,8 @@ class ProbeBudget:
             self._probe_deadline = deadline_monotonic - self.cleanup_seconds
         self.fired = threading.Event()
         self._cancelled = threading.Event()
+        self._decision = threading.Lock()  # serializes 'watchdog fires' vs 'probe succeeds'
+        self._settled = False
 
     def arm(self, client: Any) -> None:
         """Cap the client's initialize/request timeouts by the time left before cleanup.
@@ -58,7 +60,10 @@ class ProbeBudget:
         assert self._probe_deadline is not None
         if self._cancelled.wait(max(self._probe_deadline - time.monotonic(), 0.0)):
             return
-        self.fired.set()
+        with self._decision:
+            if self._settled:
+                return  # the probe already decided success before the deadline
+            self.fired.set()
         while not self._cancelled.is_set():  # retry: the provider may still be spawning
             containment, process = client._containment, client.process
             if containment is not None:
@@ -70,6 +75,19 @@ class ProbeBudget:
                     pass
                 return
             self._cancelled.wait(0.05)
+
+    def settle(self) -> bool:
+        """Decide success atomically with the watchdog: True only if it has not fired and the
+        probe deadline has not passed. Once False, the probe can never become ``ready``; once
+        True, the watchdog can no longer fire for this probe."""
+        with self._decision:
+            if self.fired.is_set():
+                return False
+            if self._probe_deadline is not None and time.monotonic() >= self._probe_deadline:
+                self.fired.set()
+                return False
+            self._settled = True
+            return True
 
     def cancel(self) -> None:
         self._cancelled.set()
@@ -102,6 +120,9 @@ def reset_after_stop(
     if client._stderr_thread is stderr_thread:
         client._stderr_thread = None
     client._message_queue = queue.Queue()
+    writer, client._writer = client._writer, None
+    if writer is not None:
+        writer.close()
     # audit B12: unblock any callers still waiting in request().
     wake_waiters(client._pending_requests.values(), closed_sentinel)
     client._pending_requests = {}

@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 from collections import OrderedDict
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,6 +22,7 @@ from tensor_grep.cli.lsp_provider_setup import (
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
 )
+from tensor_grep.cli.lsp_transport_writer import bounded_stdin
 from tensor_grep.cli.process_containment import (
     Containment,
     ContainmentUnavailableError,
@@ -426,6 +428,8 @@ class ExternalLSPClient:
         # default bound -- including the stop() that start() runs after a failed initialize.
         self.stop_grace_seconds: float | None = None
         self._starting = False
+        self._writer: Any = None  # DeadlineWriter for the current process's stdin
+        self._generation = 0  # bumped per spawned provider; binds cleanup to ITS provider
         self.unusable = False  # set when teardown could not take the client lock in time
         self.teardown_error: str | None = None
         self.containment_error: str | None = None  # set when the tree could not be contained
@@ -536,6 +540,7 @@ class ExternalLSPClient:
             self.containment_error = str(exc)
             self.last_error = f"containment_unavailable: {exc}"
             raise LSPTransportError(self.last_error) from exc
+        self._generation += 1
         self._record_debug_trace(
             event="process_start",
             detail={"command": spawn_argv, "cwd": str(self.workspace_root)},
@@ -600,7 +605,7 @@ class ExternalLSPClient:
             process,
             self._containment,
             deadline=deadline,
-            graceful=self._graceful_shutdown_for_stop,
+            graceful=partial(self._graceful_shutdown_for_stop, process, self._generation),
         )
         self.teardown_error = None
         if errors:  # the handle is dropped below; keep the pid and the root cause visible
@@ -622,23 +627,28 @@ class ExternalLSPClient:
         finally:
             self._lock.release()
 
-    def _graceful_shutdown_for_stop(self, timeout_seconds: float) -> None:  # bounded thread
-        self._request_shutdown_for_stop(timeout_seconds)
+    def _is_current(self, process: Any, generation: int) -> bool:
+        return self.process is process and self._generation == generation  # hold self._lock
+
+    def _graceful_shutdown_for_stop(self, process: Any, generation: int, timeout: float) -> None:
+        self._request_shutdown_for_stop(process, generation, timeout)
         with self._lock:
+            if not self._is_current(process, generation):
+                return  # abandoned: a replacement provider owns this client now
             try:
                 self._write_notification("exit", None)
             except Exception:
                 pass
 
-    def _request_shutdown_for_stop(self, timeout_seconds: float) -> None:
-        # audit B12: use a per-id slot so the shutdown request cannot race with
-        # any concurrent request() calls that are still in flight.
-        process = self.process
+    def _request_shutdown_for_stop(self, process: Any, generation: int, timeout: float) -> None:
+        # audit B12: per-id slot so the shutdown cannot race concurrent request() calls.
         if process is None or process.stdin is None:
             return
         slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
         try:
             with self._lock:
+                if not self._is_current(process, generation):
+                    return
                 self._request_id += 1
                 request_id = self._request_id
                 self._pending_requests[request_id] = slot
@@ -652,7 +662,7 @@ class ExternalLSPClient:
         except Exception:
             return
         try:
-            slot.get(timeout=timeout_seconds)
+            slot.get(timeout=timeout)
         except queue.Empty:
             pass
         finally:
@@ -837,7 +847,7 @@ class ExternalLSPClient:
             request_id=request_id,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self), payload)
 
     def _write_notification(self, method: str, params: dict[str, Any] | None) -> None:
         if self.process is None or self.process.stdin is None:
@@ -850,10 +860,7 @@ class ExternalLSPClient:
             method=method,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(
-            self.process.stdin,
-            payload,
-        )
+        _write_message(bounded_stdin(self), payload)
 
     def _write_response(self, request_id: object, result: Any) -> None:
         if self.process is None or self.process.stdin is None:
@@ -864,7 +871,7 @@ class ExternalLSPClient:
             request_id=request_id,
             detail={"result_type": type(result).__name__},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self), payload)
 
     def _write_error_response(self, request_id: object, *, code: int, message: str) -> None:
         if self.process is None or self.process.stdin is None:
@@ -879,7 +886,7 @@ class ExternalLSPClient:
             request_id=request_id,
             detail={"code": code, "message": message},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self), payload)
 
     def _configuration_response(self, params: object) -> list[Any]:
         settings = _configuration_settings(self.language).get("settings", {})
@@ -1364,6 +1371,8 @@ class ExternalLSPProviderManager:
                     raise LSPTransportError(
                         "semantic documentSymbol probe returned no matching symbol"
                     )
+                if not budget.settle():
+                    raise TimeoutError("doctor LSP probe deadline exceeded")
                 probe_succeeded = True
                 client.lsp_provider_response = True
             except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
