@@ -1308,3 +1308,115 @@ class TestAstBackend:
                 "someIdentifier",
                 SearchConfig(ast=True, ast_prefer_native=True, lang="java"),
             )
+
+    # ---- K1.5 (I-06): LF-only line splitting, undecodable bytes, TS grammar, cache format ----
+
+    @staticmethod
+    def _run(tmp_path, monkeypatch, name, data, pattern, config=None):
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "0")
+        path = tmp_path / name
+        path.write_bytes(data)
+        return AstBackend().search(str(path), pattern, config or SearchConfig(ast=True))
+
+    def test_form_feed_does_not_shift_line_text(self, tmp_path, monkeypatch):
+        r = self._run(
+            tmp_path, monkeypatch, "ff.py", b"x = 1\n\x0c\ndef foo():\n    pass\n", "function_definition"
+        )
+        assert [(m.line_number, m.text) for m in r.matches] == [(3, "def foo():")]
+
+    def test_non_utf8_source_is_searched_not_crashed(self, tmp_path, monkeypatch):
+        r = self._run(
+            tmp_path, monkeypatch, "lat.py", b"# caf\xe9\ndef foo():\n    pass\n", "function_definition"
+        )
+        assert [(m.line_number, m.text) for m in r.matches] == [(2, "def foo():")]
+
+    def test_ts_file_uses_typescript_grammar_when_lang_unset(self, tmp_path, monkeypatch):
+        r = self._run(
+            tmp_path, monkeypatch, "a.ts", b"interface A { x: number }\n", "interface_declaration"
+        )
+        assert r.total_matches == 1
+
+    def test_crlf_display_text_has_no_trailing_carriage_return(self, tmp_path, monkeypatch):
+        r = self._run(
+            tmp_path, monkeypatch, "crlf.py", b"def foo():\r\n    pass\r\n", "function_definition"
+        )
+        assert [(m.line_number, m.text) for m in r.matches] == [(1, "def foo():")]
+
+    def test_pre_fix_cached_text_is_rebuilt_after_upgrade(self, tmp_path, monkeypatch):
+        # council wave-2b r31: seed a REAL cache entry, rewrite it to look like an older tg wrote it
+        # (format 2, wrong text), and require the corrected text on the next search.
+        import json
+
+        from tensor_grep.backends.ast_backend import _RESULT_CACHE_FORMAT, AstBackend
+
+        cache_dir = tmp_path / "ast-cache"
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "1")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE_DIR", str(cache_dir))
+        src = tmp_path / "ff.py"
+        src.write_bytes(b"x = 1\n\f\ndef foo():\n    return 1\n")
+        first = AstBackend().search(str(src), "function_definition", SearchConfig(ast=True))
+        entries = list(cache_dir.rglob("*.json"))
+        assert entries, "premise: the first search must write a persistent result-cache entry"
+        assert _RESULT_CACHE_FORMAT == 3
+        for entry in entries:  # make every entry look like a pre-fix format-2 entry with wrong text
+            data = json.loads(entry.read_text(encoding="utf-8"))
+            if "matches" not in data:
+                continue  # not a result-cache entry (e.g. node-type index)
+            data["format"] = 2
+            for m in data["matches"]:
+                m["text"] = "STALE PRE-FIX TEXT"
+            entry.write_text(json.dumps(data), encoding="utf-8")
+        AstBackend._shared_node_type_index_cache.clear()  # in-process cache must not mask the disk check
+        second = AstBackend().search(str(src), "function_definition", SearchConfig(ast=True))
+        assert [m.text for m in second.matches] == [m.text for m in first.matches]
+        assert all("STALE" not in m.text for m in second.matches)
+        assert any(m.line_number == 3 and m.text.startswith("def foo():") for m in second.matches)
+
+    def test_fresh_cache_entry_is_reused(self, tmp_path, monkeypatch):
+        # council wave-2b r31: positive control -- a format-3 entry written by THIS version is a hit.
+        from tensor_grep.backends.ast_backend import AstBackend
+
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE", "1")
+        monkeypatch.setenv("TENSOR_GREP_AST_CACHE_DIR", str(tmp_path / "ast-cache"))
+        src = tmp_path / "ok.py"
+        src.write_bytes(b"def foo():\n    return 1\n")
+        AstBackend().search(str(src), "function_definition", SearchConfig(ast=True))
+        calls = []
+        real = AstBackend._load_persistent_cached_result
+
+        def _spy(self, *a, **k):
+            result = real(self, *a, **k)
+            calls.append(result is not None)
+            return result
+
+        monkeypatch.setattr(AstBackend, "_load_persistent_cached_result", _spy)
+        AstBackend().search(str(src), "function_definition", SearchConfig(ast=True))
+        assert calls == [True]
+
+    # ---- K1.6 (I-07): -m 0 ----
+
+    def test_cap_to_max_count_zero_returns_no_matches(self):
+        from tensor_grep.backends.ast_backend import AstBackend
+        from tensor_grep.core.result import MatchLine, SearchResult
+
+        result = SearchResult(
+            matches=[MatchLine(line_number=1, text="a", file="f.py")],
+            total_files=1,
+            total_matches=1,
+            matched_file_paths=["f.py"],
+        )
+        capped = AstBackend._cap_to_max_count(result, SearchConfig(max_count=0))
+        assert capped.matches == [] and capped.total_matches == 0 and capped.total_files == 0
+
+    def test_max_count_zero_end_to_end_returns_no_matches(self, tmp_path, monkeypatch):
+        r = self._run(
+            tmp_path,
+            monkeypatch,
+            "m0.py",
+            b"def foo():\n    pass\n\n\ndef bar():\n    pass\n",
+            "function_definition",
+            SearchConfig(ast=True, max_count=0),
+        )
+        assert r.total_matches == 0 and r.matches == []

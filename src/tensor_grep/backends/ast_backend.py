@@ -9,7 +9,7 @@ from typing import Any, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult
+from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +25,28 @@ _DEFAULT_AST_NODE_INDEX_CACHE_MAX_ENTRIES = 512
 # collapse, so composite-rule union accounting would undercount on a cache hit.
 # A cache whose discriminator is absent/old is treated as a miss (rebuilt from
 # the current tree). Bump together with any match-shape change.
-_RESULT_CACHE_FORMAT = 2
+# Format 3: display text is split on LF only and decoded with errors="replace" (K1.5); format-2
+# entries may carry text shifted by a form feed, so they are rebuilt. The node-type index holds
+# no display text and keeps its format.
+_RESULT_CACHE_FORMAT = 3
 _NODE_TYPE_INDEX_FORMAT = 2
 NodeSpan = tuple[int, int, int]  # (line, start_byte, end_byte)
+
+_AST_EXTENSION_LANGUAGES = {
+    ".js": "javascript",
+    ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".ts": "typescript",
+    ".tsx": "tsx",
+}
+
+
+def _decode_source_lines(source_bytes: bytes) -> list[str]:
+    # Split on "\n" only (tree-sitter rows); undecodable bytes only affect display text.
+    text = source_bytes.decode("utf-8", errors="replace")
+    return [ln[:-1] if ln.endswith("\r") else ln for ln in split_source_lines(text)]
+
 
 FileSignature = tuple[int, int, int, int, int]
 ParsedSourceCacheEntry = tuple[FileSignature, bytes, list[str], Any, int]
@@ -571,7 +590,7 @@ class AstBackend(ComputeBackend):
         requests a higher (or no) max_count for the same file/lang/pattern.
         """
         max_count = config.max_count if config else None
-        if not max_count or len(result.matches) <= max_count:
+        if max_count is None or len(result.matches) <= max_count:
             return result
         result.matches = result.matches[:max_count]
         result.total_matches = len(result.matches)
@@ -703,7 +722,7 @@ class AstBackend(ComputeBackend):
             source_bytes = f.read()
 
         tree = parser.parse(source_bytes)
-        lines = source_bytes.decode("utf-8").splitlines()
+        lines = _decode_source_lines(source_bytes)
         self._store_parsed_source_cache_entry(
             file_path,
             lang,
@@ -740,8 +759,8 @@ class AstBackend(ComputeBackend):
         lang = "python"
         if config and hasattr(config, "lang") and config.lang:
             lang = config.lang
-        elif file_path.endswith(".js") or file_path.endswith(".ts"):
-            lang = "javascript"
+        else:
+            lang = _AST_EXTENSION_LANGUAGES.get(Path(file_path).suffix.lower(), "python")
 
         persistent_cached_result = self._load_persistent_cached_result(
             file_path,
@@ -758,7 +777,7 @@ class AstBackend(ComputeBackend):
             if node_type_index is not None and pattern in node_type_index:
                 lines = self._get_cached_lines(file_path, lang)
                 if lines is None:
-                    lines = Path(file_path).read_text(encoding="utf-8").splitlines()
+                    lines = _decode_source_lines(Path(file_path).read_bytes())
                 result = self._build_matches_from_node_spans(
                     file_path,
                     lines,
