@@ -1196,13 +1196,18 @@ def test_every_git_subprocess_receives_the_sanitised_env(monkeypatch: Any) -> No
 
     class P:
         returncode = 0
-        stdout = "C:/repo\n"
+        stdout = ""
         stderr = ""
+
+    class Top(P):
+        stdout = "C:/repo\n"  # rev-parse prints the top level; the diff call prints nothing
 
     monkeypatch.setenv("GIT_DIFF_OPTS", "--unified=100")
     monkeypatch.setattr(
         "tensor_grep.cli.diff_impact.run_subprocess",
-        lambda cmd, **k: calls.append({"cmd": list(cmd), **k}) or P(),
+        lambda cmd, **k: (
+            calls.append({"cmd": list(cmd), **k}) or (Top() if "rev-parse" in cmd else P())
+        ),
     )
     di._git_toplevel(Path("."))
     extract_diff_hunks_from_git()
@@ -1211,3 +1216,122 @@ def test_every_git_subprocess_receives_the_sanitised_env(monkeypatch: Any) -> No
         env = call.get("env")
         assert env is not None, call["cmd"]
         assert "GIT_DIFF_OPTS" not in env
+
+
+COMBINED_DIFF = (
+    "diff --cc a.py\nindex 1111111,2222222..3333333\n--- a/a.py\n+++ b/a.py\n"
+    "@@@ -1,1 -1,1 +1,1 @@@\n- x = 1\n -x = 2\n++x = 3\n"
+)
+
+
+def _make_merge_with_conflict_resolution(repo: Path) -> str:
+    _init_repo(repo)
+    (repo / "a.py").write_text("x = 0\n", encoding="utf-8")
+    _git(repo, "add", "--", "a.py")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "checkout", "-q", "-b", "left")
+    (repo / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "left")
+    _git(repo, "checkout", "-q", "-b", "right", "HEAD~1")
+    (repo / "a.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "right")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "left"],
+        cwd=repo,
+        capture_output=True,
+        check=False,
+    )
+    (repo / "a.py").write_text("x = 3\n", encoding="utf-8")
+    _git(repo, "add", "--", "a.py")
+    _git(repo, "commit", "-qm", "merge")
+    return subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+@pytest.mark.parametrize(
+    "diff",
+    [
+        COMBINED_DIFF,
+        "diff --combined a.py\nindex 1111111,2222222..3333333\n@@@ -1 -1 +1 @@@\n++x\n",
+        "diff --git a/ok.py b/ok.py\n--- a/ok.py\n+++ b/ok.py\n@@ -1 +1 @@\n-a\n+b\n"
+        "@@@ -1 -1 +1 @@@\n++x\n",
+    ],
+)
+def test_parse_combined_diff_fails_closed(diff: str) -> None:
+    with pytest.raises(di.DiffError) as exc_info:
+        parse_git_diff_hunks(diff)
+    assert exc_info.value.reason == "unsupported_combined_diff"
+    assert "^1" in str(exc_info.value)
+
+
+def test_real_merge_revision_is_incomplete_not_no_changes(tmp_path: Path) -> None:
+    merge = _make_merge_with_conflict_resolution(tmp_path)
+    raw = subprocess.run(
+        ["git", "diff", f"{merge}^!"], cwd=tmp_path, check=True, capture_output=True, text=True
+    ).stdout
+    assert "diff --cc" in raw, f"fixture did not produce a combined diff:\n{raw}"
+    payload = build_diff_blast_radius(ref=f"{merge}^!", root=tmp_path)
+    assert payload["partial"] is True
+    assert payload["incomplete_reason"] == "unsupported_combined_diff"
+    # the remediation: diffing against ONE parent works
+    one_parent = build_diff_blast_radius(ref=f"{merge}^1..{merge}", root=tmp_path)
+    assert one_parent["partial"] is False
+    assert one_parent["changed_files"] == ["a.py"]
+
+
+def test_cli_merge_revision_exits_2(tmp_path: Path, monkeypatch: Any) -> None:
+    merge = _make_merge_with_conflict_resolution(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["diff-impact", "--json", f"{merge}^!"])
+    assert res.exit_code == 2
+    data = json.loads(res.stdout)
+    assert data["incomplete_reason"] == "unsupported_combined_diff"
+    assert data["exit_reason"] == "incomplete"
+
+
+def test_unrecognised_nonempty_output_raises_unparsed_git_output(monkeypatch: Any) -> None:
+    class P:
+        returncode = 0
+        stdout = "some future git record shape\nthat we do not understand\n"
+        stderr = ""
+
+    monkeypatch.setattr("tensor_grep.cli.diff_impact.run_subprocess", lambda cmd, **k: P())
+    with pytest.raises(di.DiffError) as exc_info:
+        extract_diff_hunks_from_git()
+    assert exc_info.value.reason == "unparsed_git_output"
+
+
+def test_empty_stdout_is_still_no_changes(monkeypatch: Any) -> None:
+    class P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr("tensor_grep.cli.diff_impact.run_subprocess", lambda cmd, **k: P())
+    assert extract_diff_hunks_from_git() == {}
+
+
+def test_pure_rename_only_output_is_still_no_change_not_unparsed(monkeypatch: Any) -> None:
+    class P:
+        returncode = 0
+        stdout = (
+            "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\n"
+            "rename to new.py\n"
+            "diff --git a/o.bin b/n.bin\nsimilarity index 100%\ncopy from o.bin\ncopy to n.bin\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr("tensor_grep.cli.diff_impact.run_subprocess", lambda cmd, **k: P())
+    assert extract_diff_hunks_from_git() == {}
+
+
+def test_real_repo_pure_rename_is_no_change_not_incomplete(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "old.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "old.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    _git(tmp_path, "mv", "old.py", "new.py")
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["partial"] is False
+    assert payload["changed_files"] == []

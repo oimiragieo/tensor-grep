@@ -161,6 +161,33 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
         self.submodule_changed_files = set()
 
 
+_NOOP_RECORD_PREFIXES = (
+    "diff --git ",
+    "similarity index 100%",
+    "rename from ",
+    "rename to ",
+    "copy from ",
+    "copy to ",
+)
+
+
+def _is_pure_rename_or_copy_output(diff_text: str) -> bool:
+    """True when every non-blank line is part of a 100%-similarity rename/copy record."""
+    lines = [ln.rstrip("\r") for ln in diff_text.split("\n") if ln.strip()]
+    return bool(lines) and all(ln.startswith(_NOOP_RECORD_PREFIXES) for ln in lines)
+
+
+def _parse_checked(diff_text: str) -> DiffHunks:
+    """Parse, but never let non-empty git output silently become 'no changes'."""
+    parsed = parse_git_diff_hunks(diff_text)
+    if not parsed and diff_text.strip() and not _is_pure_rename_or_copy_output(diff_text):
+        raise DiffError(
+            "unparsed_git_output",
+            "git produced output diff-impact could not interpret: " + repr(diff_text.strip()[:200]),
+        )
+    return parsed
+
+
 def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     """Parse git diff hunk headers `@@ -l,s +start,count @@` into mapped 1-indexed line ranges per file.
 
@@ -199,6 +226,14 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     # friends, which are legal in file names and would truncate the parsed path.
     for raw_line in diff_text.split("\n"):
         line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
+        if line.startswith(("diff --cc ", "diff --combined ", "@@@")):
+            # Merge revisions produce a COMBINED diff that this parser cannot read; returning {}
+            # would let a merge bypass risk gates, so fail closed instead.
+            raise DiffError(
+                "unsupported_combined_diff",
+                "git produced a combined diff (merge revision), which diff-impact cannot "
+                "analyse; diff against one parent instead, e.g. '<merge>^1..<merge>'",
+            )
         if line.startswith("diff --git "):
             flush_header_only_entry()
             in_header = True
@@ -422,7 +457,7 @@ def extract_diff_hunks_from_git(
     if proc.returncode != 0:
         raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
 
-    return parse_git_diff_hunks(proc.stdout or "")
+    return _parse_checked(proc.stdout or "")
 
 
 def map_changed_lines_to_symbols(
@@ -574,7 +609,12 @@ def build_diff_blast_radius(
     partial = False
     changed_files_with_lines: dict[Path, list[tuple[int, int]]]
     if diff_text is not None:
-        changed_files_with_lines = parse_git_diff_hunks(diff_text)
+        try:
+            changed_files_with_lines = _parse_checked(diff_text)
+        except DiffError as exc:
+            return _empty_payload(
+                root, ref, staged, partial=True, reason=exc.reason, error=str(exc)
+            )
     else:
         try:
             if ref is not None:
