@@ -427,6 +427,31 @@ def _await_endpoint_refused(
         time.sleep(0.05)
 
 
+def _endpoint_accepts_connections(host: object, port: object, timeout: float = 0.5) -> bool:
+    """True iff a connection to the recorded endpoint is ACCEPTED (one bounded attempt).
+
+    Used to flag a listener behind metadata that looks stale (e.g. a ping that fails to authenticate)
+    so "not running" is never read as "nothing is listening"."""
+    valid = _valid_daemon_port(port)
+    if valid is None or not _is_loopback_host(host):
+        return False
+    try:
+        socket.create_connection((DAEMON_HOST, valid), timeout=timeout).close()
+    except OSError:
+        return False
+    return True
+
+
+def _endpoint_flag(metadata: dict[str, Any]) -> dict[str, bool]:
+    """``{"endpoint_accepting_connections": bool}`` for a status payload built from stale-looking
+    metadata: a listener that merely fails to authenticate must not read as "nothing listening"."""
+    return {
+        "endpoint_accepting_connections": _endpoint_accepts_connections(
+            metadata.get("host", DAEMON_HOST), metadata.get("port")
+        )
+    }
+
+
 def _is_loopback_host(host: object) -> bool:
     # "Any loopback" is not enough -- a relay on 127.0.0.2 can share the genuine daemon's port.
     # The daemon always binds DAEMON_HOST, so accept exactly that.

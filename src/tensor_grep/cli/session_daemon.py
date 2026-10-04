@@ -33,6 +33,7 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _daemon_ping_proof,
     _daemon_secret_path,
     _DaemonRefreshFailed,
+    _endpoint_flag,
     _is_loopback_host,
     _load_or_create_user_secret,
     _pid_guard_field,
@@ -698,6 +699,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
                 "discovered": False,
                 "running": False,
                 "stale_metadata": True,
+                **_endpoint_flag(metadata),
             },
             root,
         )
@@ -880,8 +882,11 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # a delivered signal, the connection is refused. A live process we could not stop (ours but
         # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.
         state = "gone" if killed else _daemon_pid_state(stale_metadata, root)
+        # A recorded endpoint must REFUSE connections before ANY removal (a dead pid alone does not
+        # prove the listener is gone); if it accepts or cannot be checked, keep daemon.json.
+        endpoint_recorded = (stale_metadata or {}).get("port") is not None
         if state != "gone" or (
-            killed
+            (killed or endpoint_recorded)
             and not _await_endpoint_refused(
                 (stale_metadata or {}).get("host", _DAEMON_HOST),
                 (stale_metadata or {}).get("port"),
@@ -891,7 +896,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
             return {
                 "version": _SESSION_VERSION,
                 "root": str(root),
-                **_unconfirmed_fields(state, killed),
+                **_unconfirmed_fields(state, state == "gone"),
             }
         # Task #143a-a: only remove the metadata that still identifies the STALE daemon we just
         # targeted -- never whatever happens to be on disk by the time we get here. A concurrent

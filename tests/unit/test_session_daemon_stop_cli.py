@@ -197,3 +197,41 @@ def test_an_exception_exits_2_with_ascii_only_output_and_a_structured_error(
     else:
         assert "Session daemon stop failed" in result.output
         assert "caf\\xe9" in result.output  # escaped, not printed
+
+
+def test_cli_real_daemon_with_a_changed_token_and_a_dead_pid_exits_2(tmp_path: Path) -> None:
+    """Round-5 repro through the shipped CLI: real daemon, same port, token changed so the ping
+    cannot authenticate, recorded pid replaced by one the OS confirms is absent."""
+    psutil = pytest.importorskip("psutil")
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    done = subprocess.Popen([sys.executable, "-c", "pass"])
+    done.wait(timeout=30)
+    if psutil.pid_exists(done.pid):
+        pytest.skip("the pid was recycled before the probe")
+    sd._spawn_daemon_subprocess(root)
+    live = None
+    deadline = time.time() + 60
+    while time.time() < deadline and live is None:
+        live = sd._probe_daemon(root)
+        time.sleep(0.2)
+    assert live is not None, "the real daemon never became reachable"
+    real_pid = int(live["pid"])
+    try:
+        meta = sd._read_daemon_metadata(root)
+        assert meta is not None
+        sd._write_daemon_metadata(root, {**meta, "token": "changed-token", "pid": done.pid})
+        done_cli = _run_cli(root, "--json")
+        assert done_cli.returncode == 2, (done_cli.returncode, done_cli.stdout, done_cli.stderr)
+        payload = json.loads(done_cli.stdout)
+        assert payload["running"] is True
+        assert payload["stopped"] is False
+        assert payload["error"]["code"] == "stop_unconfirmed"
+        assert payload["unconfirmed_reason"] == "endpoint_still_accepting_connections"
+        assert psutil.pid_exists(real_pid), "the real daemon is gone: it should be untouched"
+        assert sd._read_daemon_metadata(root) is not None
+    finally:
+        try:
+            psutil.Process(real_pid).kill()
+        except Exception:
+            pass

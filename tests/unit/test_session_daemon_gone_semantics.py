@@ -146,3 +146,74 @@ def test_no_psutil_means_unverifiable_never_gone(
 
     monkeypatch.setattr(trust, "_process_info", _no_psutil)
     assert trust._daemon_pid_state({"pid": 4242}, tmp_path) == "unverifiable"
+
+
+def _dead_pid() -> int:
+    psutil = pytest.importorskip("psutil")
+    done = subprocess.Popen([sys.executable, "-c", "pass"])
+    done.wait(timeout=30)
+    if psutil.pid_exists(done.pid):
+        pytest.skip("the pid was recycled before the probe")
+    return int(done.pid)
+
+
+def test_a_dead_recorded_pid_does_not_make_a_listening_daemon_look_stopped(
+    tmp_path: Path,
+) -> None:
+    """Round 5: the OS confirms the recorded pid is absent, but the endpoint still ACCEPTS
+    connections (the ping merely fails to authenticate). Absence of the pid alone is not a stop."""
+    root = tmp_path.resolve()
+    server, real_shutdown = _serve(
+        root, server_token="real-token", metadata_token="changed-token", pid=_dead_pid()
+    )
+    try:
+        assert sd._probe_daemon(root) is None  # precondition: the ping fails to authenticate
+        result = sd.stop_session_daemon(str(root))
+        assert result["running"] is True, "a listening daemon was reported as not running"
+        assert result["stopped"] is False
+        assert result["stop_method"] == "none"
+        assert result["unconfirmed_reason"] == "endpoint_still_accepting_connections"
+        assert sd._read_daemon_metadata(root) is not None  # daemon.json kept
+    finally:
+        real_shutdown()
+        server.server_close()
+
+
+def test_a_dead_pid_with_a_malformed_endpoint_cannot_be_confirmed_so_it_is_kept(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path.resolve()
+    sd._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "package_version": _expected_tg_version(),
+            "root": str(root),
+            "host": "127.0.0.1",
+            "port": "not-a-port",
+            "pid": _dead_pid(),
+            "started_at": "x",
+            "token": "t",
+        },
+    )
+    result = sd.stop_session_daemon(str(root))
+    assert result["running"] is True
+    assert result["stopped"] is False
+    assert sd._read_daemon_metadata(root) is not None
+
+
+def test_status_flags_a_listening_endpoint_behind_stale_looking_metadata(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path.resolve()
+    server, real_shutdown = _serve(
+        root, server_token="real-token", metadata_token="changed-token", pid=_dead_pid()
+    )
+    try:
+        status = sd.get_session_daemon_status(str(root))
+        assert status["running"] is False  # it cannot be authenticated ...
+        assert status["stale_metadata"] is True
+        assert status["endpoint_accepting_connections"] is True  # ... but it is listening
+    finally:
+        real_shutdown()
+        server.server_close()
