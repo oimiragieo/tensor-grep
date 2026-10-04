@@ -410,6 +410,9 @@ class ExternalLSPClient:
             else max(float(initialize_timeout_seconds), 0.0)
         )
         self.retry_cooldown_seconds = retry_cooldown_seconds
+        # When set (doctor probe under a deadline), stop() uses this slice instead of the
+        # default bound -- including the stop() that start() runs after a failed initialize.
+        self.stop_grace_seconds: float | None = None
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
@@ -554,7 +557,7 @@ class ExternalLSPClient:
         except Exception:
             pass
 
-    def stop(self) -> None:
+    def stop(self, grace_seconds: float | None = None) -> None:
         process = self.process
         if process is None:
             return
@@ -564,7 +567,12 @@ class ExternalLSPClient:
             max(float(self.request_timeout_seconds), 0.0),
             _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
         )
-        self._request_shutdown_for_stop()
+        grace = grace_seconds if grace_seconds is not None else self.stop_grace_seconds
+        if grace is not None:
+            # Deadline-bounded stop (doctor probe): graceful shutdown gets half the slice,
+            # then terminate/kill waits share the rest; never longer than the default bound.
+            stop_timeout_seconds = min(stop_timeout_seconds, max(float(grace) / 2.0, 0.05))
+        self._request_shutdown_for_stop(stop_timeout_seconds)
         with self._lock:
             try:
                 self._write_notification("exit", None)
@@ -623,7 +631,7 @@ class ExternalLSPClient:
             self._orphan_responses = {}
             self._doc_versions = {}
 
-    def _request_shutdown_for_stop(self) -> None:
+    def _request_shutdown_for_stop(self, timeout_seconds: float) -> None:
         # audit B12: use a per-id slot so the shutdown request cannot race with
         # any concurrent request() calls that are still in flight.
         process = self.process
@@ -644,10 +652,6 @@ class ExternalLSPClient:
                     pass
         except Exception:
             return
-        timeout_seconds = min(
-            max(float(self.request_timeout_seconds), 0.0),
-            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
-        )
         try:
             slot.get(timeout=timeout_seconds)
         except queue.Empty:
@@ -1177,6 +1181,7 @@ class ExternalLSPProviderManager:
         workspace_root: Path,
         verify_health: bool = False,
         probe_timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         key = (language.lower(), str(workspace_root.resolve()))
         current = self._cached_client(key)
@@ -1187,6 +1192,7 @@ class ExternalLSPProviderManager:
                     language=language,
                     workspace_root=workspace_root,
                     probe_timeout_seconds=probe_timeout_seconds,
+                    deadline_monotonic=deadline_monotonic,
                 )
             status = current.status()
             status["available"] = True
@@ -1246,6 +1252,7 @@ class ExternalLSPProviderManager:
                 workspace_root=workspace_root,
                 probe_timeout_seconds=probe_request_timeout,
                 stop_after_probe=True,
+                deadline_monotonic=deadline_monotonic,
             )
         return _attach_lsp_proof_fields({
             "language": language.lower(),
@@ -1312,37 +1319,6 @@ class ExternalLSPProviderManager:
             "stderr_tail": client.stderr_tail(),
         }
 
-    def unresponsive_status(
-        self,
-        *,
-        language: str,
-        workspace_root: Path,
-        reason: str,
-    ) -> dict[str, Any]:
-        """Fail-closed report for a provider the doctor never got to probe (deadline hit).
-
-        The provider may or may not be installed; it is reported ``unresponsive`` -- never
-        ``ready`` and never silently omitted -- so a slow box cannot hang ``tg doctor``.
-        """
-        try:
-            command: list[str] = list(_provider_command(language))
-        except (FileNotFoundError, ValueError):
-            command = []
-        return _attach_lsp_proof_fields({
-            "language": language.lower(),
-            "workspace_root": str(workspace_root.resolve()),
-            "available": bool(command),
-            "health_status": "unresponsive",
-            "health_check": "deadline_exceeded",
-            "running": False,
-            "command": command,
-            "initialized": False,
-            "capabilities": {},
-            "last_error": reason,
-            "opened_documents": 0,
-            "cooldown_remaining_s": 0.0,
-        })
-
     def _verified_provider_status(
         self,
         *,
@@ -1351,7 +1327,17 @@ class ExternalLSPProviderManager:
         workspace_root: Path,
         probe_timeout_seconds: float | None,
         stop_after_probe: bool = False,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
+        # ABSOLUTE deadline (time.monotonic() timestamp): initialize, every semantic request
+        # and cleanup all draw from it. A small slice is reserved for cleanup.
+        cleanup_seconds: float | None = None
+        probe_deadline: float | None = None
+        if deadline_monotonic is not None:
+            total_budget = max(deadline_monotonic - time.monotonic(), 0.0)
+            cleanup_seconds = min(_DEFAULT_LSP_STOP_TIMEOUT_SECONDS, 0.1 * total_budget)
+            probe_deadline = deadline_monotonic - cleanup_seconds
+            client.stop_grace_seconds = cleanup_seconds
         timeout = (
             max(float(probe_timeout_seconds), 0.0)
             if probe_timeout_seconds is not None
@@ -1363,10 +1349,20 @@ class ExternalLSPProviderManager:
         original_initialize_timeout = client.initialize_timeout_seconds
         probe_succeeded = False
         probe_error: Exception | None = None
-        client.request_timeout_seconds = timeout
-        client.initialize_timeout_seconds = timeout
+
+        def _arm_phase_timeout() -> None:
+            phase_timeout = timeout
+            if probe_deadline is not None:
+                remaining = probe_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise LSPTransportError("doctor LSP probe deadline exhausted")
+                phase_timeout = min(timeout, remaining)
+            client.request_timeout_seconds = phase_timeout
+            client.initialize_timeout_seconds = phase_timeout
+
         try:
             try:
+                _arm_phase_timeout()
                 client.start()
                 phase = "did_open"
                 client.ensure_document(
@@ -1375,6 +1371,7 @@ class ExternalLSPProviderManager:
                     language_id=probe["language_id"],
                 )
                 phase = "document_symbol"
+                _arm_phase_timeout()
                 result = client.request(
                     "textDocument/documentSymbol",
                     {"textDocument": {"uri": probe["uri"]}},
@@ -1408,7 +1405,8 @@ class ExternalLSPProviderManager:
             return _attach_lsp_proof_fields(status)
         finally:
             if stop_after_probe:
-                client.stop()
+                client.stop()  # honours client.stop_grace_seconds (set above under a deadline)
+            client.stop_grace_seconds = None
 
     def stop_all(self) -> None:
         clients = self._pop_all_clients()

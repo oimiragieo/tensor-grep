@@ -21,6 +21,7 @@ This module sits in the same directory as `main.py`, so the depth is unchanged b
 """
 
 import json
+import math
 import os
 import re
 import sys
@@ -165,9 +166,38 @@ def _doctor_lsp_total_timeout_seconds() -> float:
             parsed_timeout = float(raw_timeout)
         except ValueError:
             parsed_timeout = 0.0
-        if parsed_timeout > 0:
+        if math.isfinite(parsed_timeout) and parsed_timeout > 0:
             return parsed_timeout
     return _DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS
+
+
+def _doctor_lsp_unresponsive_status(
+    language: str, workspace_root: Path, reason: str
+) -> dict[str, Any]:
+    """Fail-closed report for a provider the sweep never probed (total deadline hit).
+
+    Reported ``unresponsive`` -- never ``ready`` and never silently omitted.
+    """
+    from tensor_grep.cli import lsp_external_provider as _lsp
+
+    try:
+        command: list[str] = list(_lsp._provider_command(language))
+    except (FileNotFoundError, ValueError):
+        command = []
+    return _lsp._attach_lsp_proof_fields({
+        "language": language.lower(),
+        "workspace_root": str(workspace_root.resolve()),
+        "available": bool(command),
+        "health_status": "unresponsive",
+        "health_check": "deadline_exceeded",
+        "running": False,
+        "command": command,
+        "initialized": False,
+        "capabilities": {},
+        "last_error": reason,
+        "opened_documents": 0,
+        "cooldown_remaining_s": 0.0,
+    })
 
 
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
@@ -185,13 +215,11 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
             if remaining <= 0:
                 # Fail closed in the report, never hang: later providers are unprobed.
                 statuses.append(
-                    manager.unresponsive_status(
-                        language=language,
-                        workspace_root=workspace_root,
-                        reason=(
-                            f"doctor LSP probe deadline ({total_timeout_seconds:g}s total) "
-                            "exhausted before this provider was probed"
-                        ),
+                    _doctor_lsp_unresponsive_status(
+                        language,
+                        workspace_root,
+                        f"doctor LSP probe deadline ({total_timeout_seconds:g}s total) "
+                        "exhausted before this provider was probed",
                     )
                 )
                 continue
@@ -201,6 +229,7 @@ def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
                     workspace_root=workspace_root,
                     verify_health=True,
                     probe_timeout_seconds=min(probe_timeout_seconds, remaining),
+                    deadline_monotonic=deadline,
                 )
             )
         return statuses
