@@ -533,6 +533,54 @@ def test_json_multiline_only_matching_gets_one_numbered_entry_per_line(tmp_path)
     assert doc["total_matches"] == 2
 
 
+def _rg_entries(path, pattern, *flags, sep: bytes = b"\n"):
+    """rg's own `-n --column -o` output as (line, column, text) triples."""
+    out = _rg_run(pattern, path, *flags, "-n", "--column", "-o").stdout
+    entries = []
+    chunks = out.split(sep)
+    if chunks and chunks[-1] == b"":
+        chunks.pop()
+    for chunk in chunks:
+        line, col, text = chunk.split(b":", 2)
+        entries.append((int(line), int(col), text.decode()))
+    return entries
+
+
+def _tg_entries(path, pattern, *flags):
+    proc, doc = _json_matches(*flags, "-o", pattern, str(path))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    return [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]], doc
+
+
+def test_json_trailing_newline_in_a_match_is_not_a_phantom_entry(tmp_path):
+    # audit (round 9): `-U -o 'foo\n'` on foo/bar -> rg reports ONE match, 1:1:foo
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\n")
+    got, doc = _tg_entries(f, r"foo\n", "-U")
+    assert got == _rg_entries(f, r"foo\n", "-U") == [(1, 1, "foo")]
+    assert doc["total_matches"] == 1
+
+
+def test_json_null_data_uses_nul_as_the_record_delimiter(tmp_path):
+    # audit (round 9): under --null-data a record ends at NUL; LF is content, not a boundary
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\x00baz\x00")
+    got, doc = _tg_entries(f, "bar|baz", "--null-data")
+    assert (
+        got
+        == _rg_entries(f, "bar|baz", "--null-data", sep=b"\x00")
+        == [
+            (1, 5, "bar"),
+            (2, 1, "baz"),
+        ]
+    )
+    assert doc["total_matches"] == 2
+    # a match that spans an embedded LF stays ONE entry
+    spanning, _ = _tg_entries(f, r"foo\nbar", "--null-data")
+    assert spanning == _rg_entries(f, r"foo\nbar", "--null-data", sep=b"\x00")
+    assert spanning == [(1, 1, "foo\nbar")]
+
+
 def test_json_context_records_are_marked_context_and_carry_no_column(tmp_path):
     # audit 3: context records must not get match prefixes / columns
     f = tmp_path / "a.txt"

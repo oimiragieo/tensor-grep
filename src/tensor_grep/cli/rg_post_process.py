@@ -89,6 +89,8 @@ def only_matching_lines(
     matches: list[MatchLine], pattern: str, config: SearchConfig
 ) -> list[MatchLine]:
     replacing = config.replace_str is not None
+    # the CONFIGURED record delimiter: NUL under --null-data (an embedded LF is then content)
+    delim = b"\0" if config.null_data else b"\n"
     out: list[MatchLine] = []
     for match in matches:
         if match.rg_kind in ("context", "inverted"):
@@ -108,8 +110,8 @@ def only_matching_lines(
             if token is None or raw is None:
                 raise _refuse(match, "the -o output")
             # offsets index the RECORD bytes (a -U record spans lines): locate the line/column
-            line_start = record.rfind(b"\n", 0, start) + 1
-            line_offset = record.count(b"\n", 0, start)
+            line_start = record.rfind(delim, 0, start) + 1
+            line_offset = record.count(delim, 0, start)
             if line_start != shift_line:
                 shift, shift_line = 0, line_start
             col0 = start - line_start + shift
@@ -117,7 +119,9 @@ def only_matching_lines(
                 shift += len(raw) - (end - start)
             # an EMPTY match is still a match: rg prints an empty line (and exits 0)
             # a multi-line -o match is printed one numbered line per line; a replacement is not
-            pieces = [token] if replacing else token.split("\n")
+            pieces = [token] if replacing else token.split(delim.decode())
+            if len(pieces) > 1 and pieces[-1] == "":
+                pieces.pop()  # a match ending with the delimiter has no phantom next line
             for index, piece in enumerate(pieces):
                 begin = col0 if index == 0 else 0
                 piece_sub = dict(sub)
