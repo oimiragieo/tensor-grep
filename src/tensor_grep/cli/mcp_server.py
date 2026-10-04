@@ -2857,6 +2857,24 @@ def tg_find(
             payload["error"] = {"code": "invalid_input", "message": str(exc)}
             return json.dumps(payload, indent=2)
 
+        refusal = (
+            "query must not be empty."
+            if not isinstance(query, str) or not query.strip()
+            else "limit must be >= 1."
+            if limit < 1
+            else None
+        )
+        if refusal is not None:
+            payload = _envelope_base(
+                routing_backend=_FIND_ROUTING_BACKEND,
+                routing_reason=_FIND_ROUTING_REASON,
+                include_schema_version=False,
+            )
+            payload["query"] = query
+            payload["path"] = path
+            payload["error"] = {"code": "invalid_input", "message": refusal}
+            return json.dumps(payload, indent=2)
+
         try:
             result = _execute_find(
                 query,
