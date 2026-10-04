@@ -17,6 +17,8 @@ import queue
 import threading
 from typing import Any
 
+from tensor_grep.cli.lsp_probe_budget import remaining_seconds
+
 _DEADLINE_MESSAGE = "LSP write did not complete before the deadline"
 
 
@@ -88,4 +90,5 @@ def bounded_stdin(client: Any) -> DeadlineStream:
     writer = client._writer
     if writer is None or writer.stream is not stdin:
         writer = client._writer = DeadlineWriter(stdin)
-    return DeadlineStream(writer, max(float(client.request_timeout_seconds), 0.05))
+    timeout = remaining_seconds(client, max(float(client.request_timeout_seconds), 0.05))
+    return DeadlineStream(writer, timeout)

@@ -7,12 +7,11 @@ teardown (graceful shutdown, tree kill, pipe close) fits inside the deadline too
 
 from __future__ import annotations
 
-import queue
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
-
-from tensor_grep.cli.process_containment import wake_waiters
 
 
 class ProbeBudget:
@@ -30,6 +29,7 @@ class ProbeBudget:
         self._cancelled = threading.Event()
         self._decision = threading.Lock()  # serializes 'watchdog fires' vs 'probe succeeds'
         self._settled = False
+        self._client: Any = None
 
     def arm(self, client: Any) -> None:
         """Cap the client's initialize/request timeouts by the time left before cleanup.
@@ -54,6 +54,8 @@ class ProbeBudget:
         """
         if self._probe_deadline is None:
             return
+        self._client = client
+        client.deadline_monotonic = self._probe_deadline  # lock/write/wait bound
         threading.Thread(target=self._watch, args=(client,), daemon=True).start()
 
     def _watch(self, client: Any) -> None:
@@ -91,6 +93,8 @@ class ProbeBudget:
 
     def cancel(self) -> None:
         self._cancelled.set()
+        if self._client is not None:
+            self._client.deadline_monotonic = None
 
     def reason(self, last_error: Any, probe_error: Any) -> Any:
         """Report the deadline as the cause when the watchdog fired (the write error is its echo)."""
@@ -105,26 +109,37 @@ class ProbeBudget:
         return exc
 
 
-def reset_after_stop(
-    client: Any, process: Any, reader_thread: Any, stderr_thread: Any, closed_sentinel: Any
-) -> None:
-    """Clear a stopped client's per-process state (caller holds ``client._lock``)."""
-    if client.process is process:
-        client.process = client._containment = None
-    client._opened_documents.clear()
-    client.capabilities = {}
-    client.initialized = False
-    client.lsp_provider_response = False
-    if client._reader_thread is reader_thread:
-        client._reader_thread = None
-    if client._stderr_thread is stderr_thread:
-        client._stderr_thread = None
-    client._message_queue = queue.Queue()
-    writer, client._writer = client._writer, None
-    if writer is not None:
-        writer.close()
-    # audit B12: unblock any callers still waiting in request().
-    wake_waiters(client._pending_requests.values(), closed_sentinel)
-    client._pending_requests = {}
-    client._orphan_responses = {}
-    client._doc_versions = {}
+def remaining_seconds(client: Any, default: float) -> float:
+    """Time a lock wait / write / response wait may still take: ``default`` capped by the probe's
+    ABSOLUTE deadline (``client.deadline_monotonic``, set while a probe runs). Raises
+    ``TimeoutError`` (an ``OSError``) once that deadline has passed."""
+    deadline = client.deadline_monotonic
+    if deadline is None:
+        return default
+    left = deadline - time.monotonic()
+    if left <= 0:
+        raise TimeoutError("doctor LSP probe deadline exceeded")
+    return float(min(default, left))
+
+
+@contextmanager
+def client_lock(
+    client: Any, timeout: float | None = None, *, follow_deadline: bool = True
+) -> Iterator[None]:
+    """``with client._lock`` that honours the probe deadline instead of waiting unboundedly.
+
+    Every lock acquisition reachable from a probe goes through here (a census test fails if a
+    bare ``with self._lock`` reappears in those methods). With no deadline and no ``timeout``
+    it is the plain blocking acquire, exactly as before. ``follow_deadline=False`` is for the
+    reader thread, which must still run (to wake waiters) after the probe's deadline has passed.
+    """
+    wait = timeout
+    if follow_deadline and client.deadline_monotonic is not None:
+        wait = remaining_seconds(client, timeout if timeout is not None else float("inf"))
+    acquired = client._lock.acquire() if wait is None else client._lock.acquire(timeout=wait)
+    if not acquired:
+        raise TimeoutError("doctor LSP probe deadline exceeded (client lock busy)")
+    try:
+        yield
+    finally:
+        client._lock.release()

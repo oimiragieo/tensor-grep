@@ -11,6 +11,8 @@ Every arm runs on a worker thread with a hard join, so a regression FAILS instea
 
 from __future__ import annotations
 
+import io
+import queue
 import subprocess
 import sys
 import threading
@@ -688,36 +690,6 @@ class _RecordingStdin:
         pass
 
 
-def test_resumed_old_shutdown_worker_sends_nothing_to_the_replacement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = _client(tmp_path, monkeypatch)
-    old = _FakeProcess(wait_times_out_first=False)
-    client.process = old  # type: ignore[assignment]
-    gate = threading.Event()
-    workers: list[threading.Thread] = []
-    original = client._request_shutdown_for_stop
-
-    def paused(*args: Any, **kwargs: Any) -> None:
-        workers.append(threading.current_thread())
-        original(*args, **kwargs)
-        gate.wait(timeout=20)  # pause the old worker AFTER its shutdown wait, BEFORE `exit`
-
-    monkeypatch.setattr(client, "_request_shutdown_for_stop", paused)
-    _bounded(lambda: client.stop(grace_seconds=0.1))
-
-    replacement = _FakeProcess()
-    replacement.stdin = _RecordingStdin()  # type: ignore[assignment]
-    client.process = replacement  # type: ignore[assignment]
-    client._generation += 1  # what _start_locked does for a restarted provider
-    gate.set()
-    for worker in workers:
-        worker.join(timeout=5)
-        assert not worker.is_alive(), "old worker must exit cleanly"
-
-    assert replacement.stdin.writes == [], "the replacement received a stale shutdown/exit"  # type: ignore[attr-defined]
-
-
 # --- round-6 finding 3: writes are deadline-bounded independently of process death ------
 
 
@@ -745,7 +717,7 @@ def test_transport_write_is_bounded_even_if_killing_the_process_does_not_unblock
     gate = threading.Event()
     process = _FakeProcess()
     process.stdin = _StuckStdin(gate)  # type: ignore[assignment]
-    process.stdout = object()  # type: ignore[assignment]
+    process.stdout = io.BytesIO()  # type: ignore[assignment]
     client.process = process  # type: ignore[assignment]
     client.request_timeout_seconds = 0.3
 
@@ -808,3 +780,228 @@ def test_escaped_stdin_holder_with_oversized_initialize_is_bounded_and_reports_e
                 os.kill(int(pid_file.read_text()), signal.SIGKILL)
             except (ProcessLookupError, ValueError):
                 pass
+
+
+class _RecordingStdin:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.writes.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+# --- round-7 finding 2: stale teardown cannot reach a REPLACEMENT session --------------
+
+
+def _live_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from tests.unit.test_doctor_lsp_deadline import _fake_command
+
+    command = _fake_command(tmp_path)  # answers `initialize`, then sleeps and never reads
+    monkeypatch.setenv("FAKE_LSP_INIT_DELAY", "0")
+    monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
+    return lsp_external_provider.ExternalLSPClient(
+        language="python",
+        workspace_root=tmp_path,
+        request_timeout_seconds=3.0,
+        initialize_timeout_seconds=15.0,
+    )
+
+
+def test_resumed_old_teardown_leaves_the_replacement_sessions_state_intact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _live_client(tmp_path, monkeypatch)
+    client.start()
+    session_a = client._session
+    gate = threading.Event()
+    paused = threading.Event()
+    calls: list[Any] = []
+    original = lsp_external_provider.reset_after_stop
+
+    def paused_reset(session: Any, sentinel: Any) -> None:
+        calls.append(session)
+        if len(calls) == 1:
+            paused.set()
+            gate.wait(timeout=20)  # A's teardown stalls right before its final reset
+        original(session, sentinel)
+
+    monkeypatch.setattr(lsp_external_provider, "reset_after_stop", paused_reset)
+    stopper = threading.Thread(target=client.stop, daemon=True)
+    stopper.start()
+    try:
+        assert paused.wait(timeout=15), "old teardown never reached its final reset"
+        client.start()  # a REAL restart through start(): provider B
+        session_b = client._session
+        assert session_b is not session_a
+        client.capabilities = {"documentSymbolProvider": True}
+        slot: queue.Queue[Any] = queue.Queue(maxsize=1)
+        client._pending_requests[777] = slot
+        writer_b = client._writer
+        assert writer_b is not None and client.initialized is True
+        gate.set()
+        stopper.join(timeout=15)
+        assert not stopper.is_alive()
+
+        assert client._session is session_b
+        assert client.capabilities == {"documentSymbolProvider": True}
+        assert client.initialized is True
+        assert client._pending_requests.get(777) is slot and slot.empty(), "B's request resolved"
+        assert client._writer is writer_b, "B's writer was closed/replaced by A's teardown"
+        assert client.process is not None and client.process.poll() is None
+        assert session_a.process is None, "A's own state is cleared"
+    finally:
+        gate.set()
+        client.stop()
+
+
+def test_resumed_old_shutdown_worker_sends_nothing_to_a_really_restarted_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _live_client(tmp_path, monkeypatch)
+    client.start()
+    gate = threading.Event()
+    workers: list[threading.Thread] = []
+    original = client._request_shutdown_for_stop
+
+    def paused(*args: Any, **kwargs: Any) -> None:
+        workers.append(threading.current_thread())
+        original(*args, **kwargs)
+        gate.wait(timeout=20)  # old worker pauses AFTER its shutdown wait, BEFORE `exit`
+
+    monkeypatch.setattr(client, "_request_shutdown_for_stop", paused)
+    try:
+        client.stop(grace_seconds=0.3)
+        client.start()  # real replacement
+        sent: list[str] = []
+        monkeypatch.setattr(client, "_write_notification", lambda m, p: sent.append(m))
+        monkeypatch.setattr(client, "_write_request", lambda i, m, p: sent.append(m))
+        gate.set()
+        for worker in workers:
+            worker.join(timeout=10)
+            assert not worker.is_alive(), "old worker must exit cleanly"
+        assert sent == [], f"the replacement received stale traffic: {sent}"
+    finally:
+        gate.set()
+        client.stop()
+
+
+# --- round-7 finding 1: no probe-reachable lock acquisition may be unbounded ------------
+
+_LOCK_GUARDED_METHODS = (
+    "request",
+    "notify",
+    "ensure_document",
+    "_notify_document_closed",
+    "did_change",
+    "_start_locked",
+    "_graceful_shutdown_for_stop",
+    "_request_shutdown_for_stop",
+    "_handle_server_request",
+    "_dispatch_response",
+    "_broadcast_closed",
+)
+
+
+def _bare_lock_acquisitions(source: str, methods: tuple[str, ...]) -> tuple[list[str], set[str]]:
+    import ast
+
+    tree = ast.parse(source)
+    found: list[str] = []
+    seen: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name in methods:
+            seen.add(node.name)
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.With):
+                    for item in inner.items:
+                        ctx = item.context_expr
+                        if (
+                            isinstance(ctx, ast.Attribute)
+                            and ctx.attr in {"_lock", "_start_lock"}
+                            and isinstance(ctx.value, ast.Name)
+                            and ctx.value.id == "self"
+                        ):
+                            found.append(f"{node.name}:{inner.lineno}")
+                if (
+                    isinstance(inner, ast.Call)
+                    and isinstance(inner.func, ast.Attribute)
+                    and inner.func.attr == "acquire"
+                    and isinstance(inner.func.value, ast.Attribute)
+                    and inner.func.value.attr == "_lock"
+                ):
+                    found.append(f"{node.name}:{inner.lineno}:acquire")
+    return found, seen
+
+
+def test_no_probe_reachable_method_takes_the_client_lock_unbounded() -> None:
+    source = Path(lsp_external_provider.__file__).read_text(encoding="utf-8")
+    found, seen = _bare_lock_acquisitions(source, _LOCK_GUARDED_METHODS)
+    assert seen == set(_LOCK_GUARDED_METHODS), (
+        f"census is vacuous; missing {set(_LOCK_GUARDED_METHODS) - seen}"
+    )
+    assert found == [], f"bare lock acquisition in probe-reachable methods: {found}"
+
+
+def test_lock_census_detects_a_bare_acquisition() -> None:
+    sample = "class C:\n    def request(self):\n        with self._lock:\n            pass\n"
+    found, seen = _bare_lock_acquisitions(sample, ("request",))
+    assert seen == {"request"} and found == ["request:3"]
+
+
+def test_probe_ends_within_budget_when_the_client_lock_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        lsp_external_provider, "_provider_command", lambda language: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        lsp_external_provider, "_document_symbol_result_contains", lambda r, s: True
+    )
+
+    class _Client(lsp_external_provider.ExternalLSPClient):
+        def start(self) -> None:
+            fake = _FakeProcess(wait_times_out_first=False)
+            fake.stdin = _RecordingStdin()  # type: ignore[assignment]
+            fake.stdout = io.BytesIO()  # type: ignore[assignment]
+            self.process = fake  # type: ignore[assignment]
+            self.initialized = True
+
+    client = _Client(language="python", workspace_root=tmp_path)
+    held = threading.Event()
+    gate = threading.Event()
+
+    def holder() -> None:
+        with client._lock:
+            held.set()
+            gate.wait(timeout=10)
+
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    assert held.wait(timeout=5)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    budget = 0.2
+    try:
+        status, elapsed = _bounded(
+            lambda: manager._verified_provider_status(
+                client=client,
+                language="python",
+                workspace_root=tmp_path,
+                probe_timeout_seconds=5.0,
+                stop_after_probe=True,
+                deadline_monotonic=time.monotonic() + budget,
+            )
+        )
+    finally:
+        gate.set()
+        thread.join(timeout=10)
+    assert elapsed <= budget + _MARGIN, f"probe took {elapsed:.2f}s for a {budget}s budget"
+    assert status["health_status"] != "ready"
+    assert status["lsp_proof"] is False
+    assert "deadline" in str(status["last_error"]).lower(), status["last_error"]
