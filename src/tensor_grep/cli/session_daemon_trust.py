@@ -14,11 +14,13 @@ Kept out of ``session_daemon.py`` because that file is size-ratcheted.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import hmac
 import json
 import ntpath
 import os
+import platform
 import re
 import secrets
 import select
@@ -198,7 +200,15 @@ def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str
 
 
 _IS_LINUX = sys.platform.startswith("linux")  # seam for tests
-_SYS_PIDFD_SEND_SIGNAL, _SYS_PIDFD_OPEN = 424, 434  # identical on every Linux architecture
+# 434 / 424 come from the unified syscall table shared by x86-64 and arm64 ONLY. Other ABIs differ (MIPS
+# uses ABI-specific bases), so the raw fallback is restricted to architectures whose tables are verified;
+# anywhere else the guard stays unbound and nothing is signalled (same fail-closed result as ENOSYS).
+_SYS_PIDFD_SEND_SIGNAL, _SYS_PIDFD_OPEN = 424, 434
+_RAW_SYSCALL_MACHINES = frozenset({"x86_64", "amd64", "aarch64", "arm64"})
+
+
+def _raw_syscalls_verified() -> bool:
+    return _IS_LINUX and platform.machine().lower() in _RAW_SYSCALL_MACHINES
 
 
 def _load_libc() -> Any:  # seam for tests
@@ -225,8 +235,8 @@ def _raw_syscall(*args: int | None) -> int:
 def _syscall_pidfd_open(pid: int) -> int:
     """``pidfd_open(pid, 0)`` through ``syscall(2)``: stripped CPython builds (python-build-standalone,
     which is what ``uv`` installs) omit ``os.pidfd_open`` even on kernels that support it."""
-    if not _IS_LINUX:
-        raise OSError("pidfd is Linux-only")
+    if not _raw_syscalls_verified():
+        raise OSError(errno.ENOSYS, "raw pidfd syscalls are unverified on this platform")
     fd = _raw_syscall(_SYS_PIDFD_OPEN, pid, 0)
     if fd < 0:
         err = _libc_errno()
@@ -236,8 +246,8 @@ def _syscall_pidfd_open(pid: int) -> int:
 
 def _syscall_pidfd_send_signal(fd: int, sig: int) -> None:
     """``pidfd_send_signal(fd, sig, NULL, 0)`` through ``syscall(2)`` (see ``_syscall_pidfd_open``)."""
-    if not _IS_LINUX:
-        raise OSError("pidfd is Linux-only")
+    if not _raw_syscalls_verified():
+        raise OSError(errno.ENOSYS, "raw pidfd syscalls are unverified on this platform")
     if _raw_syscall(_SYS_PIDFD_SEND_SIGNAL, fd, sig, None, 0) < 0:
         err = _libc_errno()
         raise OSError(err, os.strerror(err))

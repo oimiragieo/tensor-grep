@@ -108,6 +108,39 @@ def test_on_linux_the_pidfd_seams_exist_even_without_the_stdlib_wrappers() -> No
     assert callable(trust._pidfd_send_signal)
 
 
+@pytest.mark.parametrize("machine", ["mips", "mips64", "ppc64le", "riscv64", "s390x", ""])
+def test_an_unverified_architecture_never_attempts_the_raw_syscall_and_is_unbound(
+    machine: str, linux: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    libc = _FakeLibc(7)
+    monkeypatch.setattr(trust, "_load_libc", lambda: libc)
+    monkeypatch.setattr(trust.platform, "machine", lambda: machine)
+    for call in (
+        lambda: trust._syscall_pidfd_open(1234),
+        lambda: trust._syscall_pidfd_send_signal(7, 15),
+    ):
+        with pytest.raises(OSError) as info:
+            call()
+        assert info.value.errno == errno.ENOSYS
+    assert libc.calls == []  # CONTROL below proves the same fake IS called on a verified machine
+    if sys.platform != "win32":
+        monkeypatch.setattr(trust, "_pidfd_open", trust._syscall_pidfd_open)
+        monkeypatch.setattr(trust, "_pidfd_send_signal", trust._syscall_pidfd_send_signal)
+        guard = trust._open_pid_guard(os.getpid())
+        assert guard is not None and guard.bound is False
+
+
+@pytest.mark.parametrize("machine", ["x86_64", "AMD64", "aarch64", "arm64"])
+def test_a_verified_architecture_uses_the_raw_syscall(
+    machine: str, linux: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    libc = _FakeLibc(7)
+    monkeypatch.setattr(trust, "_load_libc", lambda: libc)
+    monkeypatch.setattr(trust.platform, "machine", lambda: machine)
+    assert trust._syscall_pidfd_open(1234) == 7
+    assert libc.calls == [(434, 1234, 0)]
+
+
 # ---- (2) elevated Windows tokens ----
 
 
