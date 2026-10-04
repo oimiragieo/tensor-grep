@@ -36,9 +36,12 @@ OUTPUT-FORMAT FLAGS (checked against `rg --help`; rg is last-wins, so these are 
   `--hyperlink-format none`.
   left alone: `--path-separator` (the parser only needs the NUL after the path), `--sort*`,
   `--threads`, `--debug`/`--trace` (stderr), `--line-buffered`/`--block-buffered`, `--mmap`.
-  REFUSED with a structured `invalid_input` (`refuse_unrepresentable_flags`), because they change
-  the TEXT itself or admit NUL into it and cannot be honoured faithfully: `--trim`, `-M/--max-columns`,
-  `--max-columns-preview`, `--vimgrep`, `--passthru`, `-b/--byte-offset`, `-a/--text`, `--binary`.
+  NEUTRALISED (`neutralize_text_flags`; no-ops for structured entries, as in --json mode):
+  `--trim`, `-M/--max-columns`, `--max-columns-preview`, `--vimgrep`, `--passthru`, `-b`, and a custom
+  `--path-separator` (a separator of LF would break the framing). `-a/--text/--binary` and a replacement
+  containing LF/NUL are not neutralisable (they put NUL/LF into the text): `plain_route_eligible` is
+  False and the JSON-data route (rg_json_render.py) serves them, as does any framing anomaly
+  (`PlainFramingError`).
   mode flags that cannot coexist with a rendered stream (`-c/--count*`, `-l`, `--files-without-match`,
   `--files`) never reach this route: `RipgrepBackend.search` handles them before it, as rg would.
 
@@ -48,9 +51,10 @@ Text is returned byte-exact; text that is not valid UTF-8 cannot be a faithful `
 
 from __future__ import annotations
 
+import dataclasses
 import re
 
-from tensor_grep.backends.base import BackendExecutionError, InvalidInputError
+from tensor_grep.backends.base import BackendExecutionError
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine
 
@@ -83,32 +87,41 @@ _COLUMN = re.compile(rb"(\d+):", re.DOTALL)
 _BINARY_NOTICE = re.compile(rb'(.*): (binary file matches \(found "\\0" byte around offset \d+\))')
 
 
-def refuse_unrepresentable_flags(config: SearchConfig) -> None:
-    """Raise `InvalidInputError` for flags the internal record stream cannot honour (see above)."""
-    refused = [
-        spelling
-        for present, spelling in (
-            (config.trim, "--trim"),
-            (config.max_columns is not None, "-M/--max-columns"),
-            (config.max_columns_preview, "--max-columns-preview"),
-            (config.vimgrep, "--vimgrep"),
-            (config.passthru, "--passthru"),
-            (config.byte_offset, "-b/--byte-offset"),
-            (config.text, "-a/--text"),
-            (config.binary, "--binary"),
-        )
-        if present
-    ]
-    if refused:
-        raise InvalidInputError(
-            f"{', '.join(refused)} cannot be combined with structured -o/-r output: it changes "
-            "the text of the lines (or admits NUL into it), which the structured record stream "
-            "cannot represent faithfully; drop the flag, or drop --json/-o/-r for plain rg output"
-        )
+def plain_route_eligible(config: SearchConfig) -> bool:
+    """True when rg's plain text is an UNAMBIGUOUS carrier for this request.
+
+    NUL in text (`-a/--text/--binary`) or an LF/NUL in the replacement would let content forge
+    record boundaries, so those requests use the JSON-data route (rg_json_render.py) instead.
+    """
+    if config.text or config.binary:
+        return False
+    template = config.replace_str
+    return not (template is not None and ("\n" in template or "\0" in template))
+
+
+def neutralize_text_flags(config: SearchConfig) -> SearchConfig:
+    """Drop the flags that only restyle rg's text output; they are no-ops for structured entries
+    (exactly as in `--json` mode, so behaviour matches main): trim, max-columns(+preview), vimgrep,
+    passthru, byte offsets and a custom path separator."""
+    return dataclasses.replace(
+        config,
+        trim=False,
+        max_columns=None,
+        max_columns_preview=False,
+        vimgrep=False,
+        passthru=False,
+        byte_offset=False,
+        path_separator=None,
+    )
+
+
+class PlainFramingError(BackendExecutionError):
+    """rg's plain text did not have the expected framing (e.g. a path containing LF): the caller
+    re-runs the request on the JSON-data route instead of guessing."""
 
 
 def _bad(what: str) -> BackendExecutionError:
-    return BackendExecutionError(f"cannot parse rg's plain-text output: {what}")
+    return PlainFramingError(f"cannot parse rg's plain-text output: {what}")
 
 
 def _split_records(stdout: bytes, null_data: bool) -> list[tuple[bytes, bytes, bool]]:

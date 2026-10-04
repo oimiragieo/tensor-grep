@@ -4041,7 +4041,7 @@ def search_command(
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc, json_mode=json)
                 if isinstance(exc, BackendExecutionError):  # e.g. rg output not representable
-                    _exit_search_error(exc.error_kind, str(exc), json_mode=json)
+                    _exit_search_error("backend_error", str(exc), json_mode=json)
                 raise
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
@@ -4193,7 +4193,7 @@ def search_command(
     try:  # rg's own -o/-r output; a record it cannot represent exactly is a clean exit 2
         all_results.matches = _rg_out(all_results.matches, pattern, config, only_matching)
     except BackendExecutionError as exc:
-        _exit_search_error(exc.error_kind, str(exc), json_mode=json)
+        _exit_search_error("backend_error", str(exc), json_mode=json)
 
     if only_matching:
         all_results.total_matches = sum(m.rg_kind != "context" for m in all_results.matches)

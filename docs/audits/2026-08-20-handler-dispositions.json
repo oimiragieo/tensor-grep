@@ -1421,7 +1421,7 @@
   },
   {
     "module": "backends/ripgrep_backend.py",
-    "lineno": 209,
+    "lineno": 189,
     "enclosing_symbol": "supports_pcre2",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1431,7 +1431,7 @@
   },
   {
     "module": "backends/ripgrep_backend.py",
-    "lineno": 346,
+    "lineno": 339,
     "enclosing_symbol": "search",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

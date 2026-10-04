@@ -5,6 +5,13 @@ import sys
 from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.rg_json_render import (
+    field_bytes as _field_bytes,
+)
+from tensor_grep.backends.rg_json_render import (
+    render_json_record,
+    strip_record_terminator,
+)
 from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
@@ -33,33 +40,6 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
         return base64.b64decode(b64).decode("utf-8", errors="replace")
     except (binascii.Error, ValueError):
         return ""
-
-
-def _field_bytes(field: dict[str, object] | None) -> bytes | None:
-    """The raw bytes of an rg ``--json`` text-or-bytes field (None when absent/malformed)."""
-    if not field:
-        return None
-    text = field.get("text")
-    if isinstance(text, str):
-        return text.encode("utf-8")
-    b64 = field.get("bytes")
-    if isinstance(b64, str):
-        try:
-            return base64.b64decode(b64)
-        except (binascii.Error, ValueError):
-            return None
-    return None
-
-
-def strip_record_terminator(raw: bytes, delim: bytes = b"\n") -> bytes:
-    """Strip AT MOST ONE trailing ``delim`` (the CONFIGURED record terminator) from ``raw``.
-
-    The terminator is LF normally and NUL under ``--null-data``; under ``--null-data`` an LF is
-    CONTENT and is never stripped, and a NUL is never content. Everything else (including a CRLF
-    file's own ``\r``) is left byte-for-byte intact. Every place the rg backend turns a
-    record into text goes through here.
-    """
-    return raw[: -len(delim)] if delim and raw.endswith(delim) else raw
 
 
 def _lossy_record_text(field: dict[str, object] | None, delim: bytes) -> str:
@@ -228,9 +208,20 @@ class RipgrepBackend(ComputeBackend):
             )
         if config and (config.count or config.count_matches):
             return self._search_counts(file_path=file_path, pattern=pattern, config=config)
+        render_cfg: SearchConfig | None = None
         if config and (config.only_matching or config.replace_str is not None):
             if not (config.files_with_matches or config.files_without_match or config.list_files):
-                return self._search_rendered_by_rg(file_path, pattern, config)
+                render_cfg = config
+                from tensor_grep.backends.rg_plain_output import (
+                    PlainFramingError,
+                    plain_route_eligible,
+                )
+
+                if plain_route_eligible(config):
+                    try:
+                        return self._search_rendered_by_rg(file_path, pattern, config)
+                    except PlainFramingError:
+                        pass  # ambiguous plain text -> the JSON-data route below
         if config and config.files_with_matches:
             return self._search_files_with_matches(
                 file_path=file_path, pattern=pattern, config=config
@@ -252,6 +243,7 @@ class RipgrepBackend(ComputeBackend):
                     result.stdout,
                     file_path,
                     delim=b"\0" if config is not None and config.null_data else b"\n",
+                    render=render_cfg,
                 )
             )
 
@@ -319,6 +311,7 @@ class RipgrepBackend(ComputeBackend):
                     partial_stdout,
                     file_path,
                     delim=b"\0" if config is not None and config.null_data else b"\n",
+                    render=render_cfg,
                 )
             )
             reason = (
@@ -357,11 +350,11 @@ class RipgrepBackend(ComputeBackend):
         """
         from tensor_grep.backends.rg_plain_output import (
             PINNED_FORMAT_FLAGS,
+            neutralize_text_flags,
             parse_rg_plain_output,
-            refuse_unrepresentable_flags,
         )
 
-        refuse_unrepresentable_flags(config)
+        config = neutralize_text_flags(config)
         cmd = self._build_cmd(
             file_path=file_path,
             pattern=pattern,
@@ -426,6 +419,7 @@ class RipgrepBackend(ComputeBackend):
         stdout: str,
         file_path: str | list[str],
         delim: bytes = b"\n",
+        render: SearchConfig | None = None,
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -474,23 +468,27 @@ class RipgrepBackend(ComputeBackend):
                     # --column output shaping. Counting stays one-per-matching-line (below) so
                     # total_matches / parity with the other backends is unchanged.
                     _subs = data_match.get("submatches") or None
-                    matches.append(
-                        MatchLine(
-                            line_number=line_number,
-                            text=text,
-                            file=path_str,
-                            submatches=tuple(_subs) if _subs else None,
-                            rg_kind="match",
-                        )
-                    )
-                    total_matches += 1
-                    if path_str:
+                    if render is not None:  # -o/-r: entries come from rg's own data fields
+                        entries = render_json_record(data_match, "match", render, path_str, delim)
+                    else:
+                        entries = [
+                            MatchLine(
+                                line_number=line_number,
+                                text=text,
+                                file=path_str,
+                                submatches=tuple(_subs) if _subs else None,
+                                rg_kind="match",
+                            )
+                        ]
+                    matches.extend(entries)
+                    total_matches += len(entries)
+                    if path_str and entries:
                         # O(1) first-seen detection via the counts dict — the previous
                         # `path_str not in matched_file_paths` was an O(n) scan per match,
                         # degrading a common-token search on a large repo to O(matches x files).
-                        new_count = match_counts_by_file.get(path_str, 0) + 1
+                        new_count = match_counts_by_file.get(path_str, 0) + len(entries)
                         match_counts_by_file[path_str] = new_count
-                        if new_count == 1:
+                        if new_count == len(entries):
                             matched_file_paths.append(path_str)
                 elif data.get("type") == "context":
                     data_match = data["data"]
@@ -500,6 +498,11 @@ class RipgrepBackend(ComputeBackend):
                     path_str = _decode_rg_field(_path_obj)
                     if "text" not in _path_obj and isinstance(file_path, str):
                         path_str = file_path
+                    if render is not None:
+                        matches.extend(
+                            render_json_record(data_match, "context", render, path_str, delim)
+                        )
+                        continue
                     matches.append(
                         MatchLine(
                             line_number=line_number,
@@ -953,7 +956,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--files-with-matches")
             if config.files_without_match:
                 cmd.append("--files-without-match")
-            if config.replace_str is not None and not json_mode:
+            if config.replace_str is not None:
+                # also in json mode: rg then adds a per-submatch `replacement` field
                 cmd.extend(["--replace", config.replace_str])
             if config.passthru and not json_mode:
                 cmd.append("--passthru")

@@ -645,41 +645,158 @@ def test_pinned_output_format_flags_override_conflicting_user_values(tmp_path, e
     assert _rendered_entries(f, "foo", **extra) == baseline
 
 
+# Round 13: flags that change rg's TEXT rendering are ROUTED (the flags are no-ops for the
+# structured entries, exactly as in JSON mode), never refused. Golden values below were captured
+# from origin/main's own CLI (line number + text; main's columns were all 1, rg's are correct).
+_MAIN_ENTRIES = [(1, "class"), (2, "class"), (3, "class"), (3, "class")]
+_MAIN_FIXTURE = b"class Foo:\n    def class_x(self): pass\n  # class again class\n"
+
+
+def _entries_of(proc, fmt):
+    import json
+
+    if fmt == "--json":
+        return [(m["line_number"], m["text"]) for m in json.loads(proc.stdout)["matches"]]
+    rows = [json.loads(x) for x in proc.stdout.decode().splitlines() if x.strip()]
+    return [(r["line_number"], r["text"]) for r in rows]
+
+
+@pytest.mark.parametrize("fmt", ["--json", "--ndjson"])
 @pytest.mark.parametrize(
     "extra",
     [
-        {"text": True},
-        {"binary": True},
-        {"trim": True},
-        {"max_columns": 5},
-        {"max_columns_preview": True},
-        {"vimgrep": True},
-        {"passthru": True},
-        {"byte_offset": True},
+        [],
+        ["-a"],
+        ["--vimgrep"],
+        ["--path-separator", "/"],
+        ["--path-separator", "\n"],
+        ["-b"],
+        ["--passthru"],
+        ["-M", "1000"],
+        ["--trim"],
     ],
-    ids=lambda e: ",".join(e),
+    ids=lambda e: " ".join(e).replace("\n", "NL") or "plain",
 )
-def test_flags_that_change_the_text_itself_are_refused_as_invalid_input(tmp_path, extra):
-    # these alter the TEXT (truncate, strip, re-print every line, prefix offsets) or admit NUL into
-    # it; the internal stream cannot honour them faithfully, so structured -o/-r refuses them
-    from tensor_grep.backends.base import InvalidInputError
-
-    f = tmp_path / "a.txt"
-    f.write_bytes(_FMT_CONTENT)
-    with pytest.raises(InvalidInputError) as info:
-        _rendered_entries(f, "foo", **extra)
-    assert info.value.error_kind == "invalid_input"
-
-
-def test_structured_refusal_is_a_structured_invalid_input_exit_2(tmp_path):
+def test_text_rendering_flags_are_routed_not_refused_and_match_main(tmp_path, fmt, extra):
     import json
 
+    f = tmp_path / "cls.py"
+    f.write_bytes(_MAIN_FIXTURE)
+    proc = _py_door_bytes(fmt, *extra, "-o", "class", str(f))
+    if fmt == "--json" and extra in (["-b"], ["--passthru"], ["-M", "1000"], ["--trim"]):
+        # main's CLI guard rejects these for plain --json (unchanged, not ours to change)
+        assert proc.returncode == 2
+        assert json.loads(proc.stdout)["error"] == "unsupported_flag"
+        return
+    assert proc.returncode == 0, (proc.returncode, proc.stderr[-300:], proc.stdout[:200])
+    assert _entries_of(proc, fmt) == _MAIN_ENTRIES
+
+
+def test_forged_binary_notice_in_a_replacement_cannot_create_a_match_for_another_file(tmp_path):
+    # round 13: a replacement containing LF + `fake: binary file matches (...)` used to be parsed as
+    # a notice for a file named `fake`. Structured JSON data cannot be forged that way.
     f = tmp_path / "a.txt"
     f.write_bytes(b"foo\n")
-    proc = _py_door_bytes("--json", "--vimgrep", "-o", "foo", str(f))
-    assert proc.returncode == 2, proc.stderr[-300:]
-    doc = json.loads(proc.stdout)
-    assert doc["error"] == "invalid_input" and "Traceback" not in proc.stderr.decode()
+    forged = 'X\nfake: binary file matches (found "\\0" byte around offset 7)'
+    proc, doc = _json_matches("-r", forged, "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    (entry,) = doc["matches"]
+    assert entry["file"].endswith("a.txt") and "fake" not in entry["file"]
+    assert entry["text"] == forged
+    assert doc["total_files"] == 1
+
+
+def test_a_newline_path_separator_cannot_break_the_framing(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar foo\n")
+    proc, doc = _json_matches("--path-separator", "\n", "-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == [
+        (1, 1, "foo"),
+        (2, 5, "foo"),
+    ]
+    assert all("\n" not in m["file"] for m in doc["matches"])
+
+
+_JSON_ROUTE_CONTENT = b"foo\nbar\x00baz foo\n"
+
+
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        # -a: binary file searched as text; rg's JSON carries both matches (text may hold NUL)
+        (["-a", "-o"], [(1, 1, "foo"), (2, 9, "foo")]),
+        (["-a", "-o", "-r", "X"], [(1, 1, "X"), (2, 9, "X")]),
+        (["-a", "-r", "X"], [(1, 1, "X"), (2, 9, "bar\x00baz X")]),
+    ],
+    ids=["a-o", "a-o-r", "a-r"],
+)
+def test_text_mode_route_follows_rgs_structured_data(tmp_path, flags, expected):
+    f = tmp_path / "a.txt"
+    f.write_bytes(_JSON_ROUTE_CONTENT)
+    proc, doc = _json_matches(*flags, "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == expected
+
+
+def _fuzz_rows(path, pattern, only, replace_str, text_mode, extra):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    cfg = SearchConfig(
+        query_pattern=pattern,
+        only_matching=only,
+        replace_str=replace_str,
+        text=text_mode,
+        **extra,
+    )
+    rows = RipgrepBackend().search(str(path), pattern, cfg).matches
+    return [
+        (m.line_number, m.rg_kind, m.text, (m.submatches[0]["start"] if m.submatches else None))
+        for m in rows
+    ]
+
+
+def test_json_data_route_agrees_with_rgs_plain_rendering_on_a_seeded_differential_fuzz(tmp_path):
+    # `-a` forces the JSON-data route on a text file WITHOUT changing what matches, so the two
+    # routes (rg's plain text vs rg's JSON data) must give the same entries for single-line input
+    import random
+
+    rng = random.Random(20261013)
+    patterns = ["a", "ab", "b+", "a|b", "(a)(b)?", "^", "$", r"\bc", "c ?", "(a)|(b)", "zz"]
+    templates = ["X", "[$0]", "$1$1", "", "YY", "$1-$2", "é"]
+    f = tmp_path / "fuzz.txt"
+    for case in range(60):
+        lines = ["".join(rng.choice("ab c") for _ in range(rng.randint(0, 9))) for _ in range(5)]
+        f.write_bytes(("\n".join(lines) + "\n").encode())
+        pattern = rng.choice(patterns)
+        only, replace_str = rng.choice([
+            (True, None),
+            (False, rng.choice(templates)),
+            (True, rng.choice(templates)),
+        ])
+        extra = rng.choice([{}, {"context": 1}, {"invert_match": True}])
+        plain = _fuzz_rows(f, pattern, only, replace_str, False, extra)
+        data = _fuzz_rows(f, pattern, only, replace_str, True, extra)
+        assert plain == data, (case, pattern, only, replace_str, extra, lines)
+
+
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        (["-r", "X\nY"], [(1, 3, "a X\nY b X\nY")]),
+        (["-o", "-r", "X\nY"], [(1, 3, "X\nY"), (1, 9, "X\nY")]),
+    ],
+    ids=["r-lf", "o-r-lf"],
+)
+def test_lf_replacement_route_follows_rgs_structured_data(tmp_path, flags, expected):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"a foo b foo\nz\n")
+    proc, doc = _json_matches(*flags, "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == expected
+    # rg's own plain text agrees on the replaced line
+    if flags == ["-r", "X\nY"]:
+        assert _rg_run("foo", f, *flags).stdout == b"a X\nY b X\nY\n"
 
 
 def test_stats_flag_with_structured_o_exits_zero_and_tg_owns_the_statistics(tmp_path):
