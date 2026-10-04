@@ -1455,3 +1455,118 @@ def test_real_repo_staged_edit_plus_unmerged_conflict_is_incomplete(tmp_path: Pa
     payload = build_diff_blast_radius(root=tmp_path, staged=True)
     assert payload["partial"] is True
     assert payload["incomplete_reason"] == "unmerged_paths"
+
+
+REC_BINARY_RENAME = (
+    "diff --git a/old.bin b/new.bin\nsimilarity index 90%\nrename from old.bin\n"
+    "rename to new.bin\nindex 1111111..2222222 100644\n"
+    "Binary files a/old.bin and b/new.bin differ\n"
+)
+REC_BINARY_ADD = (
+    "diff --git a/n.bin b/n.bin\nnew file mode 100644\nindex 0000000..2222222\n"
+    "Binary files /dev/null and b/n.bin differ\n"
+)
+REC_BINARY_DELETE = (
+    "diff --git a/g.bin b/g.bin\ndeleted file mode 100644\nindex 1111111..0000000\n"
+    "Binary files a/g.bin and /dev/null differ\n"
+)
+REC_TEXT_ADD = (
+    "diff --git a/n.py b/n.py\nnew file mode 100644\nindex 0000000..1111111\n"
+    "--- /dev/null\n+++ b/n.py\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+)
+REC_TEXT_DELETE = (
+    "diff --git a/d.py b/d.py\ndeleted file mode 100644\nindex 1111111..0000000\n"
+    "--- a/d.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n"
+)
+REC_MODE_RENAME = (
+    "diff --git a/old.sh b/new.sh\nold mode 100644\nnew mode 100755\nsimilarity index 100%\n"
+    "rename from old.sh\nrename to new.sh\n"
+)
+REC_TEXT_RENAME_EDIT = (
+    "diff --git a/old.py b/new.py\nsimilarity index 90%\nrename from old.py\nrename to new.py\n"
+    "index 1111111..2222222 100644\n--- a/old.py\n+++ b/new.py\n@@ -2,0 +3,1 @@\n+x\n"
+)
+MORE_RECORDS = [
+    REC_BINARY_RENAME,
+    REC_BINARY_ADD,
+    REC_BINARY_DELETE,
+    REC_TEXT_ADD,
+    REC_TEXT_DELETE,
+    REC_MODE_RENAME,
+    REC_TEXT_RENAME_EDIT,
+]
+
+
+@pytest.mark.parametrize("record", MORE_RECORDS)
+def test_record_validator_accepts_more_legitimate_record_shapes(record: str) -> None:
+    di._parse_checked(record)  # must not raise
+
+
+def test_every_legitimate_record_kind_still_validates_mixed() -> None:
+    parsed = di._parse_checked("".join(ALL_RECORDS + MORE_RECORDS))
+    assert Path("new.bin") in parsed.binary_files
+    assert Path("n.bin") in parsed.binary_files
+    assert Path("g.bin") in parsed.deleted_paths
+    assert Path("d.py") in parsed.deleted_paths
+    assert Path("new.sh") in parsed.mode_changed_files
+    assert parsed[Path("new.py")] == [(3, 3)]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        # 1. malformed hunk headers must not validate (parser would record nothing)
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ malformed\n+x\n",
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1\n+x\n",
+        "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n+x\n@@ garbage @@\n+y\n",
+        # 2. a binary record with no recoverable identity
+        "diff --git a/old.bin b/new.bin\nindex 1111111..2222222 100644\n"
+        "Binary files a/old.bin and b/new.bin differ\n",
+        # header-only add/delete and mode-only records need an identity too
+        "diff --git a/x.py b/y.py\nnew file mode 100644\nindex 0000000..e69de29\n",
+        "diff --git a/x.py b/y.py\ndeleted file mode 100644\nindex e69de29..0000000\n",
+        "diff --git a/x.sh b/y.sh\nold mode 100644\nnew mode 100755\n",
+        # add/delete must agree with /dev/null on the matching side
+        "diff --git a/n.bin b/n.bin\nnew file mode 100644\nindex 0000000..2222222\n"
+        "Binary files a/n.bin and b/n.bin differ\n",
+        "diff --git a/g.bin b/g.bin\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        "Binary files a/g.bin and b/g.bin differ\n",
+        "diff --git a/n.py b/n.py\nnew file mode 100644\nindex 0000000..1111111\n"
+        "--- a/n.py\n+++ b/n.py\n@@ -0,0 +1 @@\n+a\n",
+        "diff --git a/d.py b/d.py\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        "--- a/d.py\n+++ b/d.py\n@@ -1 +0,0 @@\n-a\n",
+        # a binary rename whose metadata does not rebuild the header operands
+        "diff --git a/old.bin b/new.bin\nsimilarity index 90%\nrename from old.bin\n"
+        "rename to other.bin\nindex 1111111..2222222 100644\n"
+        "Binary files a/old.bin and b/new.bin differ\n",
+    ],
+)
+def test_record_validator_rejects_what_the_parser_would_drop(bad: str) -> None:
+    with pytest.raises(di.DiffError) as exc_info:
+        di._parse_checked(bad)
+    assert exc_info.value.reason == "unparsed_git_output"
+
+
+def test_malformed_hunk_header_cli_style_result_is_incomplete_not_no_changes() -> None:
+    payload = build_diff_blast_radius(
+        diff_text="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ malformed\n+x\n"
+    )
+    assert payload["partial"] is True
+    assert payload["incomplete_reason"] == "unparsed_git_output"
+
+
+def test_cross_check_catches_validator_parser_drift(monkeypatch: Any) -> None:
+    # If the parser ever stops producing an entry for a record the validator accepted, the
+    # result must fail closed instead of silently shrinking.
+    real_parse = di.parse_git_diff_hunks
+
+    def drifting_parse(text: str) -> Any:
+        parsed = real_parse(text)
+        parsed.pop(Path("t.py"), None)
+        return parsed
+
+    monkeypatch.setattr(di, "parse_git_diff_hunks", drifting_parse)
+    with pytest.raises(di.DiffError) as exc_info:
+        di._parse_checked(REC_TEXT)
+    assert exc_info.value.reason == "unparsed_git_output"
+    assert "t.py" in str(exc_info.value)

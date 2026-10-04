@@ -179,11 +179,18 @@ def _quoted_operand(raw: str, prefix: str) -> str:
     return f'"{prefix}{raw[1:]}' if raw.startswith('"') else f"{prefix}{raw}"
 
 
-def _validate_record(record: list[str]) -> None:
-    """Classify ONE `diff --git` record; raise DiffError unless it is a recognised shape."""
+def _validate_record(record: list[str]) -> tuple[Path, str] | None:
+    """Classify ONE `diff --git` record; raise DiffError unless it is a recognised shape.
+
+    Returns the (path, kind) the parser MUST produce for this record, or None for a verified pure
+    rename/copy (which records nothing by design). A record is accepted only if it has a
+    recoverable identity, so validator and parser cannot disagree about whether it is a change.
+    """
     rest = record[0][len("diff --git ") :]
-    hint = str(_diff_git_line_path(rest) or rest[:120])
+    same_path = _diff_git_line_path(rest)
+    hint = str(same_path or rest[:120])
     has_minus = has_plus = binary = body = False
+    minus_raw = plus_raw = binary_line = ""
     hunks = 0
     old_mode = new_mode = new_file = deleted_file = False
     sim100 = False
@@ -195,20 +202,23 @@ def _validate_record(record: list[str]) -> None:
                 f"unmerged path {line[len(_UNMERGED_PREFIX) :]!r}: resolve or stage the merge "
                 "conflicts first, then re-run",
             )
+        if line.startswith("@@ "):
+            # the parser's own regex: a hunk header it cannot read would silently record nothing
+            if not _DIFF_HUNK_RE.match(line):
+                raise _unparsed(hint, f"malformed hunk header {line[:80]!r}")
+            hunks += 1
+            body = True
+            continue
         if body:
-            if line.startswith("@@ "):
-                hunks += 1
-                continue
             if line[:1] in (" ", "+", "-", "\\"):
                 continue
             raise _unparsed(hint, f"stray line {line[:80]!r} inside a hunk")
-        if line.startswith("@@ "):
-            hunks += 1
-            body = True
-        elif line.startswith("--- "):
+        if line.startswith("--- "):
             has_minus = True
+            minus_raw = line[4:]
         elif line.startswith("+++ "):
             has_plus = True
+            plus_raw = line[4:]
         elif _INDEX_LINE_RE.match(line):
             pass
         elif m := _MODE_LINE_RE.match(line):
@@ -230,35 +240,61 @@ def _validate_record(record: list[str]) -> None:
             pair[f"{kind} {direction}"] = operand
         elif line.startswith("Binary files ") and line.endswith(" differ"):
             binary = True
+            binary_line = line
         else:
             raise _unparsed(hint, f"unexpected line {line[:80]!r}")
 
-    if has_minus and has_plus and hunks >= 1:
-        return  # (a) text change (also covers submodule gitlink hunks)
-    if (hunks == 0 and (has_minus or has_plus)) or (hunks and not (has_minus and has_plus)):
-        raise _unparsed(hint, "incomplete ---/+++/@@ structure")
-    if binary:
-        return  # (b)
-    if (new_file or deleted_file) and not pair and not (old_mode or new_mode):
-        return  # (a) header-only add/delete
-    verified_pair = False
-    if pair:
+    pair_dest: Path | None = None
+    if len(pair) == 2:
         for kind in ("rename", "copy"):
             src, dst = pair.get(f"{kind} from"), pair.get(f"{kind} to")
-            if src is not None and dst is not None and len(pair) == 2:
+            if src is not None and dst is not None:
                 expected = f"{_quoted_operand(src, 'a/')} {_quoted_operand(dst, 'b/')}"
-                verified_pair = sim100 and rest == expected
-    if pair and not verified_pair:
-        raise _unparsed(hint, "rename/copy record is incomplete, inconsistent or not 100% similar")
-    if old_mode and new_mode and not (new_file or deleted_file):
-        return  # (c) mode-only (optionally with a verified pure rename)
-    if verified_pair and not (old_mode or new_mode or new_file or deleted_file):
-        return  # (e) verified pure rename/copy
+                if rest == expected:
+                    pair_dest = _git_header_path(_quoted_operand(dst, "b/"))
+    identity = pair_dest if pair_dest is not None else same_path
+    add_del = new_file or deleted_file
+
+    if has_minus and has_plus and hunks >= 1:
+        # (a) text change (also covers submodule gitlink hunks); path must be recoverable
+        old_p, new_p = _git_header_path(minus_raw), _git_header_path(plus_raw)
+        if (new_file and old_p is not None) or (deleted_file and new_p is not None):
+            raise _unparsed(hint, "add/delete disagrees with /dev/null in its ---/+++ lines")
+        if (old_p is None and not new_file) or (new_p is None and not deleted_file):
+            raise _unparsed(hint, "/dev/null in ---/+++ without an add/delete mode line")
+        target = new_p if new_p is not None else old_p
+        if target is None:
+            raise _unparsed(hint, "no recoverable path in ---/+++ lines")
+        return target, "deleted" if deleted_file else "text"
+    if (hunks == 0 and (has_minus or has_plus)) or (hunks and not (has_minus and has_plus)):
+        raise _unparsed(hint, "incomplete ---/+++/@@ structure")
+    if pair and pair_dest is None:
+        raise _unparsed(hint, "rename/copy metadata is incomplete or does not match the header")
+    if binary:  # (b)
+        if identity is None:
+            raise _unparsed(hint, "binary record has no recoverable path")
+        if new_file and not binary_line.startswith("Binary files /dev/null and "):
+            raise _unparsed(hint, "added binary disagrees with /dev/null")
+        if deleted_file and not binary_line.endswith(" and /dev/null differ"):
+            raise _unparsed(hint, "deleted binary disagrees with /dev/null")
+        return identity, "deleted" if deleted_file else "binary"
+    if add_del and not pair and not (old_mode or new_mode):
+        if same_path is None:  # (a) header-only add/delete needs a same-file operand pair
+            raise _unparsed(hint, "header-only add/delete has no recoverable path")
+        return same_path, "deleted" if deleted_file else "added"
+    if pair and not sim100:
+        raise _unparsed(hint, "rename/copy record is not 100% similar and has no content")
+    if old_mode and new_mode and not add_del:  # (c) mode-only (optionally a verified pure rename)
+        if identity is None:
+            raise _unparsed(hint, "mode-only record has no recoverable path")
+        return identity, "mode"
+    if pair_dest is not None and not (old_mode or new_mode or add_del):
+        return None  # (e) verified pure rename/copy
     raise _unparsed(hint, "record matches no supported shape")
 
 
-def _validate_records(diff_text: str) -> None:
-    """Validate EVERY record of git's output, not the output as a whole."""
+def _validate_records(diff_text: str) -> list[tuple[Path, str]]:
+    """Validate EVERY record of git's output; return what the parser must have produced."""
     lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
     if lines and lines[-1] == "":
         lines.pop()
@@ -276,14 +312,33 @@ def _validate_records(diff_text: str) -> None:
             records[-1].append(line)
         elif line.strip():
             raise _unparsed("<output>", f"line outside any diff record: {line[:80]!r}")
+    expectations: list[tuple[Path, str]] = []
     for record in records:
-        _validate_record(record)
+        expected = _validate_record(record)
+        if expected is not None:
+            expectations.append(expected)
+    return expectations
 
 
 def _parse_checked(diff_text: str) -> DiffHunks:
-    """Parse, but never let unexplained git output silently become 'no changes'."""
+    """Parse, but never let unexplained git output silently become 'no changes'.
+
+    Cross-check: every record the validator accepted as a change MUST appear in the parsed
+    result, so validator and parser can never drift apart without failing closed.
+    """
     parsed = parse_git_diff_hunks(diff_text)  # raises on combined (merge) diffs
-    _validate_records(diff_text)
+    for path, kind in _validate_records(diff_text):
+        missing = path not in parsed
+        if kind == "deleted":
+            missing = missing or path not in getattr(parsed, "deleted_paths", set())
+        elif kind == "binary":
+            missing = missing or path not in getattr(parsed, "binary_files", set())
+        elif kind == "mode":
+            missing = missing or path not in getattr(parsed, "mode_changed_files", set())
+        if missing:
+            raise _unparsed(
+                str(path), f"validated {kind} record was not recorded by the parser (drift)"
+            )
     return parsed
 
 
@@ -310,9 +365,10 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     def flush_header_only_entry() -> None:
         # Header-only entries (no ---/+++/@@ lines) carry their change in the header flags.
         dest = rename_path or header_path
-        if is_deleted and header_path is not None:
-            result.setdefault(header_path, [])
-            result.deleted_paths.add(header_path)
+        deleted_path = header_path or old_path  # a text deletion also names itself in `---`
+        if is_deleted and deleted_path is not None:
+            result.setdefault(deleted_path, [])
+            result.deleted_paths.add(deleted_path)
         elif dest is not None and (is_added or mode_changed):
             result.setdefault(dest, [])
         if is_submodule and dest is not None:
