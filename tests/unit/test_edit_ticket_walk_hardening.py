@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import edit_ticket_service
+from tensor_grep.cli import edit_ticket_service, edit_ticket_walk
 from tensor_grep.cli.edit_ticket_service import (
     _walk_tracked_files_bounded,
     build_edit_ready_ticket,
@@ -84,18 +84,18 @@ def test_budgeted_read_pulls_at_most_limit_plus_one_raw_bytes(
         inner = real_fdopen(fd, "rb", buffering=0)
         return _CountingRaw(inner, counter).make(buffering)
 
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen, raising=False)
     _files, population = _walk_tracked_files_bounded(
         tmp_path, max_file_bytes=10, max_aggregate_bytes=10
     )
     # the size check rejects 200 KB before reading, so grow-after-check isn't needed: also probe
     # the open path directly with the same budget
     assert counter.get("opened", 0) >= 0
-    ledger = edit_ticket_service._ByteLedger(10, 10)
-    with edit_ticket_service._open_regular_no_follow(tmp_path / "big.bin") as handle:
+    ledger = edit_ticket_walk._ByteLedger(10, 10)
+    with edit_ticket_walk._open_regular_no_follow(tmp_path / "big.bin") as handle:
         try:
             list(ledger.iter_chunks(handle))
-        except edit_ticket_service._BudgetExceeded:
+        except edit_ticket_walk._BudgetExceeded:
             pass
     assert counter.get("opened", 0) >= 1, "the safe open did not go through the _fdopen seam"
     assert counter["raw_bytes"] <= 11
@@ -110,7 +110,7 @@ def _counting_readlink(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         calls["n"] += 1
         return real(path, *a, **k)
 
-    monkeypatch.setattr(edit_ticket_service, "_readlink", _readlink, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_readlink", _readlink, raising=False)
     return calls
 
 
@@ -186,7 +186,7 @@ def test_short_read_of_a_malformed_cachedir_tag_does_not_prune_or_hide_an_edit(
     # 43 == len(signature): a read that returns exactly the signature bytes of a longer file is
     # NOT end-of-file. `head == sig` used to accept it, prune pkg/ and hide an undeclared edit.
     monkeypatch.setattr(
-        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
+        edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
     )
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     pkg = tmp_path / "pkg"
@@ -210,7 +210,7 @@ def test_short_reads_of_a_valid_cachedir_tag_still_prune(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, per_read: int, ending: bytes
 ) -> None:
     monkeypatch.setattr(
-        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
+        edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
     )
     d = tmp_path / "cache"
     d.mkdir()
@@ -226,7 +226,7 @@ def test_signature_followed_by_a_lone_carriage_return_is_not_a_valid_tag(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # CRLF is accepted (a Windows-edited tag), a bare CR or any other tail is not
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
     d = tmp_path / "cache"
     d.mkdir()
     (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG.rstrip(b"\n") + b"\r")
@@ -240,7 +240,7 @@ def test_short_read_leaf_fingerprint_equals_the_full_read_fingerprint(
 ) -> None:
     (tmp_path / "f.py").write_bytes(b"x = 1\n" * 5000)
     full, _p = _walk_tracked_files_bounded(tmp_path)
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=7), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=7), raising=False)
     short, _p2 = _walk_tracked_files_bounded(tmp_path)
     assert short == full
 
@@ -252,7 +252,7 @@ def test_short_read_marker_digest_equals_the_full_read_digest(
     env.mkdir()
     (env / "pyvenv.cfg").write_bytes(b"home = x\n" * 100)
     _f, full = _walk_tracked_files_bounded(tmp_path)
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=3), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=3), raising=False)
     _f2, short = _walk_tracked_files_bounded(tmp_path)
     assert short["pruned_set"] == full["pruned_set"]
 
@@ -275,9 +275,7 @@ def test_oserror_during_read_is_unreadable_path_not_a_crash(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     _tree_for(kind, tmp_path)
-    monkeypatch.setattr(
-        edit_ticket_service, "_fdopen", _fdopen_with(fail_on_read=True), raising=False
-    )
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(fail_on_read=True), raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -315,7 +313,7 @@ def test_file_exactly_at_both_limits_is_hashed_in_full_with_short_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / "big.bin").write_bytes(_BIG)
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
     files, population = _walk_tracked_files_bounded(
         tmp_path, max_file_bytes=100_000, max_aggregate_bytes=100_000
     )
@@ -345,9 +343,7 @@ def test_tight_aggregate_never_yields_a_complete_population_with_a_partial_hash(
     contents = {f"f{i}.bin": bytes([66 + i]) * 40_000 for i in range(3)}
     for name, data in contents.items():
         (tmp_path / name).write_bytes(data)
-    monkeypatch.setattr(
-        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=5000), raising=False
-    )
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen_with(max_per_read=5000), raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=100_000)
     for name, fp in files.items():
         assert fp == "file:" + hashlib.sha256(contents[name]).hexdigest()  # never partial
@@ -406,7 +402,7 @@ def test_bytes_hashed_must_equal_the_fstat_size_taken_at_open(
 
         return _EarlyEof()
 
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -417,10 +413,10 @@ def test_ledger_never_manufactures_eof_when_the_allowance_is_exhausted(tmp_path:
     # an item that starts with no aggregate allowance left is a BUDGET failure, never EOF
     import io
 
-    ledger = edit_ticket_service._ByteLedger(100, 10)
+    ledger = edit_ticket_walk._ByteLedger(100, 10)
     ledger.remaining = -1  # a previous item overflowed the aggregate
     ledger.begin_item()
-    with pytest.raises(edit_ticket_service._BudgetExceeded) as excinfo:
+    with pytest.raises(edit_ticket_walk._BudgetExceeded) as excinfo:
         ledger.read_budgeted(io.BytesIO(b"abc"), 3)
     assert excinfo.value.reason == "aggregate_byte_limit"
 
@@ -448,7 +444,7 @@ def _swap_dir_for_symlink_on_classification(
                 pytest.skip(f"directory symlink creation not permitted here: {exc}")
         return result
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     return swapped
 
 
@@ -499,7 +495,7 @@ def _raw_read_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         counter["opens"] = counter.get("opens", 0) + 1
         return _CountingRaw(inner, counter).make(buffering)
 
-    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fdopen", _fdopen, raising=False)
     return counter
 
 
@@ -572,7 +568,7 @@ def test_a_directory_in_the_walk_chain_cannot_be_renamed_while_it_is_being_walke
     (root / "pkg" / "sub").mkdir(parents=True)
     (root / "pkg" / "kept.py").write_text("x = 1\n", encoding="utf-8")
     attempts: dict[str, object] = {"n": 0, "error": None}
-    real = edit_ticket_service._content_prune_marker
+    real = edit_ticket_walk._content_prune_marker
 
     def _rename_pkg_while_it_is_walked(path: Path, *a: object, **k: object) -> object:
         if path.name == "sub" and attempts["n"] == 0:  # classifying pkg's children: pkg is held
@@ -585,9 +581,7 @@ def test_a_directory_in_the_walk_chain_cannot_be_renamed_while_it_is_being_walke
                 os.rename(root / "pkg.moved", root / "pkg")  # undo; the assertion below fails
         return real(path, *a, **k)
 
-    monkeypatch.setattr(
-        edit_ticket_service, "_content_prune_marker", _rename_pkg_while_it_is_walked
-    )
+    monkeypatch.setattr(edit_ticket_walk, "_content_prune_marker", _rename_pkg_while_it_is_walked)
     files, population = _walk_tracked_files_bounded(root)
     assert attempts["n"] == 1
     assert isinstance(attempts["error"], PermissionError), "the walked directory was renameable"
@@ -601,7 +595,7 @@ def _swap_src_before_descent(
     """`_walk_impl` seam: when the walker is about to descend into `src/` (after our own
     classification), move `src` aside and put an impostor in its place: a symlink to `other`
     (how == "symlink") or a REAL directory with the same name (how == "dir")."""
-    real = edit_ticket_service._default_walk
+    real = edit_ticket_walk._default_walk
     state: dict[str, object] = {"swapped": False, "blocked": None}
 
     def _walk(root: object, onerror: object):  # type: ignore[no-untyped-def]
@@ -618,7 +612,7 @@ def _swap_src_before_descent(
                 except OSError as exc:
                     state["blocked"] = exc  # e.g. a held directory refuses the rename
 
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _walk, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", _walk, raising=False)
     return state
 
 
@@ -676,7 +670,7 @@ def _after_sibling_lstat(monkeypatch: pytest.MonkeyPatch, sibling: Path, action)
             action()
         return real(path, *a, **k)
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
 
 
 def test_invalid_tag_fingerprint_is_the_bytes_read_at_classification_with_no_cache(
@@ -704,10 +698,10 @@ def test_invalid_tag_fingerprint_is_the_bytes_read_at_classification_with_no_cac
     assert counter["raw_bytes"] <= len(bad) + 1 + 1  # tag (one session) + the 1-byte sibling
     assert counter["opens"] == 2  # the tag exactly once, the sibling once
     # no cache path exists any more
-    ledger = edit_ticket_service._ByteLedger(1, 1)
+    ledger = edit_ticket_walk._ByteLedger(1, 1)
     assert not hasattr(ledger, "leaf_fingerprints")
     assert not hasattr(ledger, "tag_digests")
-    assert not hasattr(edit_ticket_service, "_stat_snapshot")
+    assert not hasattr(edit_ticket_walk, "_stat_snapshot")
 
 
 def test_in_place_same_size_tag_rewrite_before_the_walk_reaches_it_fails_verify(
@@ -753,7 +747,7 @@ def _swap_after_lstat(
                 state["blocked"] = exc
         return result
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     return state
 
 
@@ -790,13 +784,13 @@ def test_outside_marker_is_never_read_through_a_directory_swapped_after_lstat(
     (repo / "src" / "m.py").write_text("x = 1\n", encoding="utf-8")
     outside = _outside_with_marker(tmp_path)
     opened: list[str] = []
-    real_open = edit_ticket_service._os_open
+    real_open = edit_ticket_walk._os_open
 
     def _recording_open(path: object, flags: int) -> int:
         opened.append(str(path))
         return real_open(path, flags)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(edit_ticket_service, "_os_open", _recording_open, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_os_open", _recording_open, raising=False)
 
     def _swap() -> None:
         os.rename(repo / "src", repo / "src.moved")
@@ -950,7 +944,7 @@ def test_a_walk_that_never_visits_the_root_is_incomplete(
     def _empty_walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
         return iter(())
 
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _empty_walk, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", _empty_walk, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -978,8 +972,8 @@ def test_root_handle_with_a_different_inode_is_incomplete(
     # Codex's seam probe: the first tuple's handle is not the directory the root pathname lstat
     # authenticated. It used to be skipped entirely and the population was "complete".
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
-    real = edit_ticket_service._default_walk
-    DirHandle = edit_ticket_service._DirHandle
+    real = edit_ticket_walk._default_walk
+    DirHandle = edit_ticket_walk._DirHandle
 
     def _walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
         for dirpath, dirnames, filenames, handle in real(top, onerror):
@@ -988,7 +982,7 @@ def test_root_handle_with_a_different_inode_is_incomplete(
             yield dirpath, dirnames, filenames, handle
             return  # the root tuple is all this probe needs
 
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _walk, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", _walk, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -1001,7 +995,7 @@ def _swap_root_before_the_walk_opens_it(
     """Deterministic race through the `_walk_impl` seam: AFTER the walker's root `lstat` and
     BEFORE the real walker opens the root, rename the root aside and put a real directory with
     only the unchanged `app.py` in its place; restore the original after the walk."""
-    real = edit_ticket_service._default_walk
+    real = edit_ticket_walk._default_walk
     state: dict[str, object] = {"swapped": False}
 
     def _walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
@@ -1017,7 +1011,7 @@ def _swap_root_before_the_walk_opens_it(
             shutil.rmtree(root)
             os.rename(saved, root)
 
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _walk, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", _walk, raising=False)
     return state
 
 
@@ -1062,7 +1056,7 @@ def _swap_before_lstat(
             swap()  # type: ignore[operator]
         return real(path, *a, **k)
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     return state
 
 
@@ -1138,7 +1132,7 @@ def _swap_tag_at_leaf_stage(
                 swap()  # type: ignore[operator]
         return real(path, *a, **k)
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     return state
 
 
@@ -1426,7 +1420,7 @@ def test_closing_the_walk_generator_mid_iteration_closes_every_held_handle(tmp_p
     before = _process_handle_count()
     if before is None:
         pytest.skip("no handle/fd counter on this platform")
-    gen = edit_ticket_service._default_walk(root, lambda exc: (_ for _ in ()).throw(exc))
+    gen = edit_ticket_walk._default_walk(root, lambda exc: (_ for _ in ()).throw(exc))
     for _ in range(25):  # 25 directories deep: 25 handles / fds held
         next(gen)
     held = _process_handle_count()
@@ -1519,12 +1513,12 @@ class _FdWorld:
         proxy = _OsProxy(
             os, scandir=_scandir, close=self.closed.append, fstat=_fstat, open=_open_at
         )
-        monkeypatch.setattr(edit_ticket_service, "os", proxy)
-        monkeypatch.setattr(edit_ticket_service, "_os_open_dir", _open_dir, raising=False)
+        monkeypatch.setattr(edit_ticket_walk, "os", proxy)
+        monkeypatch.setattr(edit_ticket_walk, "_os_open_dir", _open_dir, raising=False)
 
 
 def _raise_walk_error(exc: BaseException) -> None:
-    raise edit_ticket_service._PopulationWalkError("unreadable_path") from exc
+    raise edit_ticket_walk._PopulationWalkError("unreadable_path") from exc
 
 
 def _drain(gen: object) -> None:
@@ -1540,8 +1534,8 @@ def test_fd_walk_closes_the_root_fd_exactly_once_when_the_listing_raises(
     world = _FdWorld()
     world.install(monkeypatch, [])
     world.fail_scandir = {100}
-    with pytest.raises(edit_ticket_service._PopulationWalkError):
-        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    with pytest.raises(edit_ticket_walk._PopulationWalkError):
+        _drain(edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error))
     assert world.closed == [100]
 
 
@@ -1551,7 +1545,7 @@ def test_fd_walk_closes_the_fd_exactly_once_when_onerror_swallows_the_listing_fa
     world = _FdWorld()
     world.install(monkeypatch, [])
     world.fail_scandir = {100}
-    assert list(edit_ticket_service._fd_walk(str(tmp_path), lambda exc: None)) == []
+    assert list(edit_ticket_walk._fd_walk(str(tmp_path), lambda exc: None)) == []
     assert world.closed == [100]
 
 
@@ -1563,7 +1557,7 @@ def test_fd_walk_closes_the_fd_exactly_once_when_fstat_fails_after_listing(
     world.fail_fstat = {100}
     # An OSError from a filesystem call inside the walk is NOT an exception for the caller: the
     # population is incomplete (unreadable_path). Driven through the real entry point.
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", edit_ticket_service._fd_walk)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", edit_ticket_walk._fd_walk)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -1576,8 +1570,8 @@ def test_fd_walk_closes_parent_and_child_exactly_once_when_the_child_listing_rai
     world = _FdWorld()
     world.install(monkeypatch, [_FakeEntry("sub", True)])
     world.fail_scandir = {101}  # the child fd
-    with pytest.raises(edit_ticket_service._PopulationWalkError):
-        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    with pytest.raises(edit_ticket_walk._PopulationWalkError):
+        _drain(edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error))
     assert sorted(world.closed) == [100, 101]  # each exactly once, no leak, no double close
 
 
@@ -1587,8 +1581,8 @@ def test_fd_walk_closes_the_parent_exactly_once_when_the_child_open_fails(
     world = _FdWorld()
     world.install(monkeypatch, [_FakeEntry("sub", True)])
     world.fail_open_child = True
-    with pytest.raises(edit_ticket_service._PopulationWalkError):
-        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    with pytest.raises(edit_ticket_walk._PopulationWalkError):
+        _drain(edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error))
     assert world.closed == [100]
 
 
@@ -1597,17 +1591,17 @@ def test_fd_walk_closes_every_fd_exactly_once_on_a_clean_full_walk_and_on_early_
 ) -> None:
     world = _FdWorld()
     world.install(monkeypatch, [_FakeEntry("sub", True)])
-    _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    _drain(edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error))
     assert sorted(world.closed) == [100, 101]
     world.closed.clear()
     world.next_fd = 200
-    gen = edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error)
+    gen = edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error)
     next(gen)  # root tuple only
     gen.close()
     assert world.closed == [200]
 
 
-class _CountingHandle(edit_ticket_service._DirHandle):
+class _CountingHandle(edit_ticket_walk._DirHandle):
     closes = 0
 
     def close(self) -> None:
@@ -1629,7 +1623,7 @@ def test_held_walk_closes_every_handle_exactly_once_when_the_listing_raises(
             raise PermissionError(13, "listing failed")
         return real_scandir(path)  # type: ignore[arg-type]
 
-    real_hold = edit_ticket_service._hold_dir
+    real_hold = edit_ticket_walk._hold_dir
     handles: list[_CountingHandle] = []
 
     def _hold(path: object) -> object:
@@ -1639,10 +1633,10 @@ def test_held_walk_closes_every_handle_exactly_once_when_the_listing_raises(
         return counting
 
     _CountingHandle.closes = 0
-    monkeypatch.setattr(edit_ticket_service, "os", _OsProxy(os, scandir=_scandir))
-    monkeypatch.setattr(edit_ticket_service, "_hold_dir", _hold)
-    with pytest.raises(edit_ticket_service._PopulationWalkError):
-        _drain(edit_ticket_service._held_walk(str(tmp_path), _raise_walk_error))
+    monkeypatch.setattr(edit_ticket_walk, "os", _OsProxy(os, scandir=_scandir))
+    monkeypatch.setattr(edit_ticket_walk, "_hold_dir", _hold)
+    with pytest.raises(edit_ticket_walk._PopulationWalkError):
+        _drain(edit_ticket_walk._held_walk(str(tmp_path), _raise_walk_error))
     assert handles, "no handle was ever held"
     assert _CountingHandle.closes == len(handles)  # every acquired handle closed exactly once
 
@@ -1651,7 +1645,7 @@ def test_held_walk_closes_every_handle_exactly_once_when_the_listing_raises(
 def test_hold_dir_closes_the_handle_exactly_once_when_a_post_acquire_call_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    k32 = edit_ticket_service._k32
+    k32 = edit_ticket_walk._k32
     real_close = k32.CloseHandle
     closes: list[object] = []
 
@@ -1665,7 +1659,7 @@ def test_hold_dir_closes_the_handle_exactly_once_when_a_post_acquire_call_raises
     monkeypatch.setattr(k32, "CloseHandle", _close, raising=False)
     monkeypatch.setattr(k32, "GetFileInformationByHandleEx", _boom, raising=False)
     with pytest.raises(RuntimeError):
-        edit_ticket_service._hold_dir(tmp_path)
+        edit_ticket_walk._hold_dir(tmp_path)
     assert len(closes) == 1  # acquired, failed, closed exactly once
 
 
@@ -1726,13 +1720,13 @@ def _install_census(
     injector = _Injector(fail_at)
     accounting = _Accounting()
     if sys.platform == "win32":
-        k32 = edit_ticket_service._k32
+        k32 = edit_ticket_walk._k32
         real_create = k32.CreateFileW
         real_close = k32.CloseHandle
 
         def _create(*a: object) -> object:
             handle = real_create(*a)
-            if handle is not None and handle != edit_ticket_service._INVALID_HANDLE:
+            if handle is not None and handle != edit_ticket_walk._INVALID_HANDLE:
                 accounting.opened += 1
             return handle
 
@@ -1746,7 +1740,7 @@ def _install_census(
             monkeypatch.setattr(k32, site, injector.wrap(getattr(k32, site)), raising=False)
     if site in _CENSUS_OS_SITES:
         real = getattr(os, site)
-        monkeypatch.setattr(edit_ticket_service, "os", _OsProxy(os, **{site: injector.wrap(real)}))
+        monkeypatch.setattr(edit_ticket_walk, "os", _OsProxy(os, **{site: injector.wrap(real)}))
     return injector, accounting
 
 

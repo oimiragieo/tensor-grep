@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tensor_grep.cli import edit_ticket_service
+from tensor_grep.cli import edit_ticket_service, edit_ticket_walk
 from tensor_grep.cli.edit_ticket_service import (
     _walk_tracked_files_bounded,
     build_edit_ready_ticket,
@@ -35,7 +35,7 @@ def test_unreadable_file_marks_population_incomplete_not_silently_dropped(
 
     # The walker now classifies, sizes and fingerprints each leaf through the `_lstat` seam
     # (one stat per step) instead of `Path.stat`; the behaviour pinned here is unchanged.
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _flaky_lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _flaky_lstat, raising=False)
 
     files, population = _walk_tracked_files_bounded(tmp_path)
 
@@ -337,15 +337,15 @@ def test_unreadable_subtree_makes_population_incomplete(
 ) -> None:
     (tmp_path / "a.py").write_text("1\n", encoding="utf-8")
     (tmp_path / "locked").mkdir()
-    real_walk = edit_ticket_service._default_walk
+    real_walk = edit_ticket_walk._default_walk
 
     def walk_with_error(top, onerror):
         yield from real_walk(top, onerror)
         onerror(PermissionError(13, "denied", str(Path(top) / "locked")))
 
     # Patch a private seam, never the stdlib attribute through a module alias (patching
-    # `edit_ticket_service.os.walk` would stub os.walk GLOBALLY).
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", walk_with_error, raising=False)
+    # `edit_ticket_walk.os.walk` would stub os.walk GLOBALLY).
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", walk_with_error, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -355,7 +355,7 @@ def test_directory_budget_stops_traversal(tmp_path: Path, monkeypatch: pytest.Mo
     for i in range(30):
         (tmp_path / f"d{i:02d}").mkdir()  # many EMPTY dirs: file/byte budgets never trip
     monkeypatch.setattr(
-        edit_ticket_service, "_MAX_WALK_DIRS", 10, raising=False
+        edit_ticket_walk, "_MAX_WALK_DIRS", 10, raising=False
     )  # council round 8: behavioural RED on main
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
@@ -424,14 +424,14 @@ def test_enumeration_stops_at_max_files_without_walking_the_rest(
     for i in range(50):
         (tmp_path / f"f{i:02d}.txt").write_text("x\n", encoding="utf-8")
     seen = {"n": 0}
-    real = edit_ticket_service._population_paths
+    real = edit_ticket_walk._population_paths
 
     def counting(*a: object, **k: object):
         for p in real(*a, **k):
             seen["n"] += 1
             yield p
 
-    monkeypatch.setattr(edit_ticket_service, "_population_paths", counting)
+    monkeypatch.setattr(edit_ticket_walk, "_population_paths", counting)
     _files, population = _walk_tracked_files_bounded(
         tmp_path, max_files=5
     )  # real kwarg (edit_ticket_service.py:90)
@@ -468,7 +468,7 @@ def test_unreadable_fingerprint_marks_incomplete_not_crash(
         raise PermissionError("denied")
 
     # the walker fingerprints enumerated leaves through its own fail-closed helper
-    monkeypatch.setattr(edit_ticket_service, "_fingerprint_enumerated", _boom, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_fingerprint_enumerated", _boom, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert files == {}
     assert population["status"] == "incomplete"
@@ -718,7 +718,7 @@ def test_content_pruned_budget_makes_population_incomplete(
         d = tmp_path / f"env{i}"
         d.mkdir()
         (d / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
-    monkeypatch.setattr(edit_ticket_service, "_MAX_CONTENT_PRUNED_DIRS", 3, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_MAX_CONTENT_PRUNED_DIRS", 3, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "pruned_dir_limit"
@@ -730,7 +730,7 @@ def test_name_pruned_budget_makes_population_incomplete(
 ) -> None:
     for i in range(5):
         (tmp_path / f"d{i}" / "node_modules").mkdir(parents=True)
-    monkeypatch.setattr(edit_ticket_service, "_MAX_NAME_PRUNED_DIRS", 3, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_MAX_NAME_PRUNED_DIRS", 3, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "pruned_dir_limit"
@@ -743,7 +743,7 @@ def test_marker_edit_beyond_hash_cap_is_not_recorded_as_complete(
     # A digest of only the first CAP bytes cannot see an edit past the cap. Never record a
     # truncated digest as complete: a marker larger than the cap makes the population
     # incomplete (marker_too_large), so mint and verify fail closed.
-    monkeypatch.setattr(edit_ticket_service, "_MARKER_HASH_CAP", 64, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_MARKER_HASH_CAP", 64, raising=False)
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     env = tmp_path / "env"
     env.mkdir()
@@ -760,7 +760,7 @@ def test_marker_edit_beyond_hash_cap_is_not_recorded_as_complete(
 def test_marker_exactly_at_cap_is_hashed_in_full(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # positive control: the cap is inclusive
-    monkeypatch.setattr(edit_ticket_service, "_MARKER_HASH_CAP", 64, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_MARKER_HASH_CAP", 64, raising=False)
     env = tmp_path / "env"
     env.mkdir()
     (env / "pyvenv.cfg").write_bytes(b"x" * 64)
@@ -779,7 +779,7 @@ def test_unreadable_marker_makes_population_incomplete(
         raise PermissionError(13, "denied")
 
     # private seam for the marker read; raising=False keeps the test collectable on main
-    monkeypatch.setattr(edit_ticket_service, "_os_open", _denied, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_os_open", _denied, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -884,7 +884,7 @@ def test_lstat_failure_while_classifying_a_directory_is_unreadable_path(
             raise PermissionError(13, "denied")
         return real(path, *a, **k)
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -986,7 +986,7 @@ def test_directory_listed_among_filenames_is_unreadable_path_not_a_leaf(
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "m.py").write_text("x = 1\n", encoding="utf-8")
-    real_walk = edit_ticket_service._default_walk
+    real_walk = edit_ticket_walk._default_walk
 
     def walk_misclassifying_src(top, onerror):
         for dirpath, dirnames, filenames, handle in real_walk(top, onerror):
@@ -995,7 +995,7 @@ def test_directory_listed_among_filenames_is_unreadable_path_not_a_leaf(
                 filenames.append("src")
             yield dirpath, dirnames, filenames, handle
 
-    monkeypatch.setattr(edit_ticket_service, "_walk_impl", walk_misclassifying_src, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", walk_misclassifying_src, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -1003,8 +1003,8 @@ def test_directory_listed_among_filenames_is_unreadable_path_not_a_leaf(
 
 
 def test_missing_path_fingerprint_is_empty_string_not_an_exception(tmp_path: Path) -> None:
-    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "missing" / "x") == ""
-    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "nope.py") == ""
+    assert edit_ticket_walk.compute_file_fingerprint(tmp_path / "missing" / "x") == ""
+    assert edit_ticket_walk.compute_file_fingerprint(tmp_path / "nope.py") == ""
 
 
 def test_non_notfound_lstat_failure_in_fingerprint_still_propagates(
@@ -1016,9 +1016,9 @@ def test_non_notfound_lstat_failure_in_fingerprint_still_propagates(
     def _denied(*_a: object, **_k: object) -> os.stat_result:
         raise PermissionError(13, "denied")
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _denied, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _denied, raising=False)
     with pytest.raises(PermissionError):
-        edit_ticket_service.compute_file_fingerprint(target)
+        edit_ticket_walk.compute_file_fingerprint(target)
 
 
 def _scripted_lstat(tmp_path: Path, victim: str, script: list[str]):
@@ -1047,7 +1047,7 @@ def test_file_replaced_by_directory_between_checks_is_unreadable_path(
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     (tmp_path / "allowed.py").write_text("x = 1\n", encoding="utf-8")
     seam, calls = _scripted_lstat(tmp_path, "allowed.py", ["real", "real", "dir"])
-    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", seam, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert calls["n"] >= 3  # the walker really did stat it three times
     assert population["status"] == "incomplete"
@@ -1062,7 +1062,7 @@ def test_file_replaced_by_directory_never_passes_verify(
     (tmp_path / "allowed.py").write_text("x = 1\n", encoding="utf-8")
     ticket = _ticket(tmp_path)
     seam, _calls = _scripted_lstat(tmp_path, "allowed.py", ["real", "real", "dir"])
-    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", seam, raising=False)
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "FAIL"
     assert result["reason"] == "verify_population_incomplete"
@@ -1076,7 +1076,7 @@ def test_file_disappearing_before_fingerprint_is_incomplete_not_empty_string(
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
     (tmp_path / "gone.py").write_text("x = 1\n", encoding="utf-8")
     seam, calls = _scripted_lstat(tmp_path, "gone.py", ["real", "real", "missing"])
-    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", seam, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert calls["n"] >= 3
     assert population["status"] == "incomplete"
@@ -1097,7 +1097,7 @@ def test_walker_fingerprints_normal_file_and_link_correctly(tmp_path: Path) -> N
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "complete"
     assert files["f.py"] == expected
-    assert files["f.py"] == edit_ticket_service.compute_file_fingerprint(tmp_path / "f.py")
+    assert files["f.py"] == edit_ticket_walk.compute_file_fingerprint(tmp_path / "f.py")
     if link_ok:
         assert files["l.py"] == "symlink:" + hashlib.sha256(b"t.py").hexdigest()
 
@@ -1105,7 +1105,7 @@ def test_walker_fingerprints_normal_file_and_link_correctly(tmp_path: Path) -> N
 def test_standalone_fingerprint_of_missing_path_keeps_empty_string_contract(
     tmp_path: Path,
 ) -> None:
-    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "missing.py") == ""
+    assert edit_ticket_walk.compute_file_fingerprint(tmp_path / "missing.py") == ""
 
 
 def _growing_lstat(victim: Path, grow_by: int, grow_after_call: int = 2):
@@ -1131,7 +1131,7 @@ def test_file_growing_after_size_check_hits_the_per_file_limit(
 ) -> None:
     victim = tmp_path / "grow.bin"
     victim.write_bytes(b"x" * 5)
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 20), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _growing_lstat(victim, 20), raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path, max_file_bytes=10)
     assert population["status"] == "incomplete"
     assert population["reason"] == "per_file_byte_limit"
@@ -1142,7 +1142,7 @@ def test_file_growing_after_size_check_hits_the_aggregate_limit(
 ) -> None:
     victim = tmp_path / "grow.bin"
     victim.write_bytes(b"x" * 5)
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 20), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _growing_lstat(victim, 20), raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=10)
     assert population["status"] == "incomplete"
     assert population["reason"] == "aggregate_byte_limit"
@@ -1153,7 +1153,7 @@ def test_scanned_bytes_charges_the_bytes_actually_read(
 ) -> None:
     victim = tmp_path / "grow.bin"
     victim.write_bytes(b"x" * 5)
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 3), raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _growing_lstat(victim, 3), raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "complete"
     assert population["scanned_bytes"] == 8  # 5 at the size check + 3 grown = what was read
@@ -1178,6 +1178,7 @@ _FIFO_CHILD = """
 import json, os, sys
 from pathlib import Path
 from tensor_grep.cli import edit_ticket_service as svc
+from tensor_grep.cli import edit_ticket_walk as wk
 
 root = Path(sys.argv[1])
 victim = root / "f.py"
@@ -1193,7 +1194,7 @@ def seam(path, *a, **k):
             os.mkfifo(victim)
     return result
 
-svc._lstat = seam
+wk._lstat = seam
 files, population = svc._walk_tracked_files_bounded(root)
 print(json.dumps({"status": population["status"], "reason": population["reason"]}))
 """
@@ -1246,7 +1247,7 @@ def test_per_file_overflow_charges_the_bytes_it_consumed(
                     handle.write(b"y" * 20)
         return result
 
-    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    monkeypatch.setattr(edit_ticket_walk, "_lstat", _lstat, raising=False)
     files, population = _walk_tracked_files_bounded(
         tmp_path, max_file_bytes=10, max_aggregate_bytes=30
     )
@@ -1261,6 +1262,7 @@ _MARKER_FIFO_CHILD = """
 import json, os, sys
 from pathlib import Path
 from tensor_grep.cli import edit_ticket_service as svc
+from tensor_grep.cli import edit_ticket_walk as wk
 
 root = Path(sys.argv[1])
 victim = root / "env" / sys.argv[2]
@@ -1276,7 +1278,7 @@ def seam(path, *a, **k):
             os.mkfifo(victim)
     return result
 
-svc._lstat = seam
+wk._lstat = seam
 files, population = svc._walk_tracked_files_bounded(root)
 print(json.dumps({"status": population["status"], "reason": population["reason"]}))
 """
