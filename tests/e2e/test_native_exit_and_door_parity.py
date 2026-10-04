@@ -335,6 +335,12 @@ def test_root_door_accepts_search_only_flag_strict(tmp_path: Path, flag: str) ->
     (tmp_path / "a.txt").write_text("needle one\n", encoding="utf-8")
     r = _tg(tg, _root_args(flag), tmp_path)
     assert "unexpected argument" not in r.stderr, (flag, r.stderr)
+    if "backend, but rg is unavailable" in r.stderr:
+        # The flag WAS recognised; this build honestly refuses it because the rg backend is
+        # absent (Windows native-build-smoke installs no rg). That is a fail-closed exit 2,
+        # not the J-03 clap rejection this test guards against.
+        assert r.returncode == 2, (flag, r.returncode, r.stderr)
+        return
     assert r.returncode in (0, 1), (flag, r.returncode, r.stderr)
 
 
