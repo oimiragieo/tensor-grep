@@ -13,18 +13,19 @@ Kept out of ``session_daemon.py`` because that file is size-ratcheted.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import socket
 import stat as _stat
-import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 from uuid import uuid4
 
 from tensor_grep.cli import session_daemon_winsec as _winsec
@@ -40,6 +41,7 @@ _SECRET_FILE_MODE = 0o600
 _win_current_user_sid = _winsec.current_user_sid
 _win_owner_and_dacl = _winsec.owner_and_dacl_sids
 _win_dacl_entries = _winsec.owner_and_dacl_entries  # (owner SID, [(SID, access mask)])
+_win_create_restricted = _winsec.create_new_restricted  # CREATE_NEW with a user-only descriptor
 _lstat = os.lstat  # private seam: tests patch this, never the global os.lstat
 
 
@@ -49,21 +51,75 @@ def _valid_daemon_port(value: object) -> int | None:
 
 
 _DAEMON_MODULE = "tensor_grep.cli.session_daemon"
+_PYTHON_NAME = re.compile(r"^pythonw?(\d+(\.\d+)*)?(\.exe)?$", re.IGNORECASE)
+_PY_NOARG_FLAGS = frozenset("BdEiIOPqsSuvxbR")  # interpreter flags that take no argument
+_PY_ARG_FLAGS = frozenset("WX")  # -W/-X take an argument (attached or the next argv element)
+
+
+class _DaemonArgs(argparse.ArgumentParser):
+    """The daemon's own grammar (``session_daemon._parse_args``), raising instead of exiting."""
+
+    def error(self, message: str) -> NoReturn:
+        raise ValueError(message)
+
+    def exit(self, status: int = 0, message: str | None = None) -> NoReturn:
+        raise ValueError(message or "exit")
+
+
+def _daemon_invocation_root(argv: list[str]) -> str | None:
+    """The ``--root`` value iff ``argv`` is EXACTLY a daemon launch, else ``None``.
+
+    ``<python> [interpreter options] -m tensor_grep.cli.session_daemon <daemon args>`` where
+    ``-m`` is the module selector (not ``-c``, not a script path, not ``--``, not the module name
+    appearing as an argument to something else) and the daemon args bind through the same argparse
+    grammar the daemon uses (so abbreviations and "last one wins" behave identically).
+    """
+    if not argv or not _PYTHON_NAME.match(argv[0].replace("\\", "/").rsplit("/", 1)[-1]):
+        return None
+    index, module = 1, None
+    while module is None:
+        if index >= len(argv):
+            return None
+        arg = argv[index]
+        if len(arg) < 2 or arg[0] != "-" or arg.startswith("--"):
+            return None  # a script path, "-", "--" or a long option: not a module launch
+        index += 1
+        for pos in range(1, len(arg)):
+            flag = arg[pos]
+            if flag == "m":
+                if arg[pos + 1 :]:
+                    module = arg[pos + 1 :]
+                elif index < len(argv):
+                    module, index = argv[index], index + 1
+                else:
+                    return None
+                break
+            if flag in _PY_ARG_FLAGS:
+                if not arg[pos + 1 :]:
+                    if index >= len(argv):
+                        return None
+                    index += 1
+                break
+            if flag not in _PY_NOARG_FLAGS:
+                return None  # -c, -h, -V or anything unknown
+    if module != _DAEMON_MODULE:
+        return None
+    parser = _DaemonArgs(add_help=True)
+    parser.add_argument("--root", required=True)
+    try:
+        return str(parser.parse_args(argv[index:]).root)
+    except ValueError:
+        return None
 
 
 def _argv_serves_root(cmdline: list[str], root: Path) -> bool:
-    """True iff the (last, argparse-style) ``--root`` in ``cmdline`` resolves to ``root``.
+    """True iff ``cmdline`` is a genuine daemon launch whose ``--root`` is ``root``.
 
-    Both sides go through ``normcase(realpath(...))`` so spelling, relative paths and (on Windows)
-    case cannot make two different roots look equal or one root look different.
+    The root must be absolute (the daemon is always launched with one; a relative value would be
+    resolved against a cwd we cannot see) and both sides go through ``normcase(realpath(...))``.
     """
-    value: str | None = None
-    for index, arg in enumerate(cmdline):
-        if arg == "--root":
-            value = cmdline[index + 1] if index + 1 < len(cmdline) else None
-        elif arg.startswith("--root="):
-            value = arg[len("--root=") :]
-    if not value:
+    value = _daemon_invocation_root(cmdline)
+    if not value or not os.path.isabs(value):
         return False
     try:
         return os.path.normcase(os.path.realpath(value)) == os.path.normcase(os.path.realpath(root))
@@ -71,41 +127,87 @@ def _argv_serves_root(cmdline: list[str], root: Path) -> bool:
         return False
 
 
-def _process_cmdline(pid: int) -> list[str]:
-    """argv of ``pid`` via psutil (test seam). ``LookupError``: the process is gone. ``OSError``:
-    it cannot be read (psutil missing, AccessDenied, ...) -- the caller must then NOT signal."""
+def _process_info(pid: int) -> tuple[list[str], float]:
+    """``(argv, create_time)`` of ``pid`` via psutil (test seam). ``LookupError``: the process is
+    gone. ``OSError``: it cannot be read (psutil missing, AccessDenied, ...) -- the caller must
+    then NOT signal."""
     try:
         import psutil  # type: ignore[import-not-found]
     except Exception as exc:
         raise OSError("psutil unavailable") from exc
     try:
-        return [str(arg) for arg in psutil.Process(pid).cmdline()]
+        process = psutil.Process(pid)
+        with process.oneshot():
+            return [str(arg) for arg in process.cmdline()], float(process.create_time())
     except psutil.NoSuchProcess as exc:
         raise LookupError(pid) from exc
     except Exception as exc:
         raise OSError(str(exc)) from exc
 
 
-def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str:
-    """``"ours"`` (provably the tensor-grep daemon serving ``root``), ``"gone"`` (no such process
-    or not a tensor-grep daemon at all) or ``"unverifiable"`` (alive but not provably ours:
-    another root's daemon, an unreadable argv, no psutil, or no root given). Only ``"ours"`` may
-    ever be signalled."""
+def _classify_daemon_pid(
+    metadata: dict[str, Any] | None, root: Path | None
+) -> tuple[str, tuple[int, float, list[str]] | None]:
+    """``(state, identity)``. ``"ours"``: provably the tensor-grep daemon serving ``root`` (identity
+    = pid, create_time, argv); ``"gone"``: no such process, or nothing that mentions the daemon
+    module; ``"unverifiable"``: alive and mentions the module but is not provably ours (another
+    root, ``python -c ...`` / a script carrying the module name, unreadable argv, no psutil, no
+    root given). Only ``"ours"`` may ever be signalled."""
     try:
         pid = int((metadata or {})["pid"])
     except (KeyError, TypeError, ValueError, OverflowError):
-        return "gone"
+        return "gone", None
     if pid <= 0 or pid == os.getpid():
-        return "gone"
+        return "gone", None
     try:
-        cmdline = _process_cmdline(pid)
+        argv, created = _process_info(pid)
     except LookupError:
-        return "gone"
+        return "gone", None
     except Exception:
-        return "unverifiable"
-    if _DAEMON_MODULE not in cmdline:
-        return "gone"
-    return "ours" if root is not None and _argv_serves_root(cmdline, root) else "unverifiable"
+        return "unverifiable", None
+    if not any(_DAEMON_MODULE in arg for arg in argv):
+        return "gone", None
+    if root is not None and _argv_serves_root(argv, root):
+        return "ours", (pid, created, argv)
+    return "unverifiable", None
+
+
+def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str:
+    return _classify_daemon_pid(metadata, root)[0]
+
+
+def _terminate_identified(identity: tuple[int, float, list[str]]) -> bool:
+    """Signal the classified process only if it is STILL that process (PID-reuse guard).
+
+    The create_time and argv captured at classification must be unchanged when the signal is sent,
+    and the signal goes through a freshly built ``psutil.Process`` (which itself refuses a pid whose
+    create_time moved), so a recycled pid is never signalled.
+    """
+    pid, created, argv = identity
+    try:
+        if _process_info(pid) != (argv, created):
+            return False
+    except Exception:
+        return False
+    process_cls: Any = None
+    try:
+        import psutil  # type: ignore[import-not-found]
+
+        process_cls = psutil.Process
+    except Exception:
+        process_cls = None
+    try:
+        if process_cls is not None:
+            process_cls(pid).terminate()
+        elif os.name == "nt":
+            import signal
+
+            os.kill(pid, signal.SIGTERM)
+        else:
+            os.kill(pid, 15)
+    except Exception:
+        return False
+    return True
 
 
 def _await_endpoint_refused(
@@ -187,7 +289,10 @@ def _parent_trusted(parent: Path) -> bool:
         if handle is None:
             return False
         try:
-            return _windows_handle_trusted(handle, check_dacl=False)
+            if not _windows_handle_trusted(handle, check_dacl=False):
+                return False
+            queried = _win_dacl_entries(handle)  # the directory's OWN DACL too, not just owner
+            return queried is not None and _windows_ancestor_dacl_ok(queried[1])
         finally:
             _winsec.close_handle(handle)
     try:
@@ -320,36 +425,37 @@ def _read_user_secret(path: Path) -> bytes | None:
 
 
 def _write_secret_windows(path: Path, payload: dict[str, Any]) -> None:
-    """Create the secret with an owner-only DACL applied BEFORE any secret byte is written.
+    """Create the secret so it is NEVER broader than the current user, not even for an instant.
 
-    Unlike the daemon.json writer (icacls failures are non-fatal there), a failed ACL application
-    is FATAL here: the temp file is removed and nothing is published.
+    The temp file is created with ``CreateFileW(CREATE_NEW)`` and an explicit protected descriptor
+    (``D:P(A;;FA;;;<user>)``), share mode 0: there is no window in which it carries an inherited
+    broad DACL that a pre-opened handle could outlive (tightening a DACL later does not revoke
+    handles already open). The descriptor is re-read from the open handle before any byte is
+    written; anything unexpected removes the temp file and nothing is published.
     """
     sid = _win_current_user_sid()
     if sid is None:
         raise OSError("cannot determine the current user SID; refusing to create the secret")
     tmp = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
+    handle = _win_create_restricted(str(tmp), sid)
+    if handle is None:
+        raise OSError("cannot create the restricted secret file; refusing to create the secret")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
-            try:
-                done = subprocess.run(
-                    ["icacls", str(tmp), "/inheritance:r", "/grant:r", f"*{sid}:F"],
-                    check=False,
-                    capture_output=True,
-                    timeout=10,
-                )
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise OSError(f"icacls failed for the daemon secret: {exc}") from exc
-            if done.returncode != 0:
-                raise OSError(f"icacls exited {done.returncode}; refusing to create the secret")
-            handle.write(json.dumps(payload))
-            handle.flush()
-            os.fsync(handle.fileno())
+        queried = _win_owner_and_dacl(handle)
+        if queried is None or queried[0] != sid or any(granted != sid for granted in queried[1]):
+            raise OSError("created secret has an unexpected security descriptor; refusing")
+        if not _winsec.write_all(handle, json.dumps(payload).encode("utf-8")):
+            raise OSError("cannot write the secret file")
     except BaseException:
+        _winsec.close_handle(handle)
         tmp.unlink(missing_ok=True)
         raise
+    _winsec.close_handle(handle)  # exclusive until now; the rename below needs it closed
     replace_with_retry(tmp, path)
+
+
+def _after_parent_pinned(parent: Path) -> None:
+    """Test seam: runs while the parent directory handle is held, before the secret is created."""
 
 
 def _load_or_create_user_secret() -> bytes | None:
@@ -359,10 +465,19 @@ def _load_or_create_user_secret() -> bytes | None:
         return existing
     if os.path.lexists(path):
         return None  # present but untrusted (or unreadable): never use it, never overwrite it
+    pinned: Any = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if sys.platform == "win32":
+            # Hold the directory open through creation and publish so it cannot be renamed or
+            # deleted underneath us (no FILE_SHARE_DELETE); FILE_SHARE_WRITE is required or the
+            # rename of the temp file into place inside it is refused. Vet it AFTER pinning.
+            pinned = _winsec.open_no_follow(str(path.parent), directory=True, share=0x3)
+            if pinned is None:
+                return None
         if not _parent_trusted(path.parent) or not _ancestors_trusted(path.parent):
             return None
+        _after_parent_pinned(path.parent)
         payload = {"secret": secrets.token_hex(32)}
         if sys.platform == "win32":
             _write_secret_windows(path, payload)
@@ -370,6 +485,9 @@ def _load_or_create_user_secret() -> bytes | None:
             _write_json_atomic(path, payload, mode=_SECRET_FILE_MODE)
     except OSError:
         return None
+    finally:
+        if pinned is not None:
+            _winsec.close_handle(pinned)
     return _read_user_secret(path)
 
 

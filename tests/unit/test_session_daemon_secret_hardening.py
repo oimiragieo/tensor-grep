@@ -101,34 +101,10 @@ def test_real_secret_with_an_extra_grant_is_refused() -> None:
     assert trust._read_user_secret(path) is None
 
 
-def test_secret_creation_fails_closed_when_the_acl_cannot_be_applied(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(trust, "_win_current_user_sid", lambda: _USER)
-    calls: list[Any] = []
-
-    def _icacls_fails(argv: Any, **_k: Any) -> Any:
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 5, b"", b"Access is denied")
-
-    monkeypatch.setattr(trust.subprocess, "run", _icacls_fails)
-    target = tmp_path / "sec" / "daemon-secret.json"
-    target.parent.mkdir()
-    with pytest.raises(OSError, match="icacls"):
-        trust._write_secret_windows(target, {"secret": "a" * 64})
-    assert calls, "the ACL step was never attempted (vacuous)"
-    assert list(target.parent.iterdir()) == []  # no secret and no leftover temp file
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="win32 creation branch")
-def test_create_returns_none_and_publishes_nothing_when_icacls_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        trust.subprocess, "run", lambda argv, **_k: subprocess.CompletedProcess(argv, 1, b"", b"")
-    )
-    assert trust._load_or_create_user_secret() is None
-    assert not trust._daemon_secret_path().exists()
+# Superseded (round 2): the two icacls-failure tests that used to live here modelled a file created
+# with the parent's inherited DACL and tightened afterwards. The secret is now created with a
+# user-only descriptor at CreateFileW time (no icacls step); the equivalent fail-closed arms are in
+# test_session_daemon_secret_creation_acl.py.
 
 
 def test_an_untrusted_existing_secret_is_never_overwritten(

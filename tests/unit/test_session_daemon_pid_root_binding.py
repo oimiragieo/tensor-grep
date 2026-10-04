@@ -1,10 +1,17 @@
-"""A kill by recorded pid must only ever hit a daemon that serves THIS root (PR #1197 residual).
+"""A kill by recorded pid must only ever hit THE tensor-grep daemon that serves THIS root.
 
-``_pid_looks_like_tg_daemon`` checked the command line for the daemon module but not the root, so
-a stale/planted daemon.json for root A naming root B's live daemon pid made A's ``stop`` signal B.
-The candidate's argv must carry ``--root <R>`` with R resolving to the SAME canonical root as the
-one being stopped; if psutil is missing or the argv cannot be read, the client refuses to signal
-(never "signal anyway") and reports the stop as unconfirmed.
+Round 1 bound the kill to ``--root <R>``; round 2 found that "the module name appears somewhere in
+argv" still accepted ``python -c "<sleep>" tensor_grep.cli.session_daemon --root R`` (an unrelated
+process that never ran the daemon), and that a recorded pid says nothing about pid REUSE. So:
+
+* the invocation is validated structurally: ``<python> [interpreter options] -m
+  tensor_grep.cli.session_daemon <args>`` where ``-m`` is the module selector (``-c``, a script path,
+  ``--`` or the module appearing only as an argument to something else are refused) and the daemon
+  arguments are bound by the SAME argparse grammar the daemon uses;
+* the process identity (create_time) captured at classification must still match when the signal
+  is sent (PID-reuse guard).
+If psutil is missing or the argv/identity cannot be read, nothing is signalled and the stop is
+reported as unconfirmed.
 """
 
 from __future__ import annotations
@@ -13,6 +20,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,6 +32,7 @@ from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 _MODULE = "tensor_grep.cli.session_daemon"
+_PY = "python"
 
 
 @pytest.fixture(autouse=True)
@@ -54,15 +63,8 @@ def _plant(root: Path, pid: int) -> None:
     )
 
 
-def _decoy(*argv_tail: str) -> subprocess.Popen[bytes]:
-    # argv looks like a tensor-grep daemon: python -c ... tensor_grep.cli.session_daemon --root R
-    return subprocess.Popen([
-        sys.executable,
-        "-c",
-        "import time; time.sleep(120)",
-        _MODULE,
-        *argv_tail,
-    ])
+def _sleeper(*argv_tail: str) -> subprocess.Popen[bytes]:
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", *argv_tail])
 
 
 def _reap(proc: subprocess.Popen[bytes]) -> None:
@@ -71,16 +73,107 @@ def _reap(proc: subprocess.Popen[bytes]) -> None:
     proc.wait(timeout=10)
 
 
-def _fake_psutil_cmdline(proc: subprocess.Popen[bytes]) -> Callable[[int], list[str]]:
-    def _cmdline(pid: int) -> list[str]:
+def _fake_info(
+    proc: subprocess.Popen[bytes], argv: list[str], create_time: float = 1000.0
+) -> Callable[[int], tuple[list[str], float]]:
+    """Seam double: report ``argv`` for the real, harmless sleeper process ``proc``."""
+
+    def _info(pid: int) -> tuple[list[str], float]:
         if pid != proc.pid:
             raise LookupError(pid)
-        return [str(a) for a in proc.args]  # type: ignore[union-attr]
+        return list(argv), create_time
 
-    return _cmdline
+    return _info
 
 
-# ---- real psutil, real process (skipped where psutil is not installed) ----
+# ---- the invocation grammar (pure) ----
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [_PY, "-m", _MODULE, "--root", "R"],
+        ["C:\\Python312\\python.exe", "-m", _MODULE, "--root", "R"],
+        ["/usr/bin/python3.12", "-m", _MODULE, "--root", "R"],
+        ["PYTHONW.EXE", "-m", _MODULE, "--root", "R"],
+        [_PY, "-B", "-u", "-m", _MODULE, "--root", "R"],
+        [_PY, "-X", "utf8", "-W", "ignore", "-m", _MODULE, "--root=R"],
+        [_PY, "-Wignore", "-Xutf8", "-m", _MODULE, "--root", "R"],
+        [_PY, "-Bm", _MODULE, "--root", "R"],
+        [_PY, "-m" + _MODULE, "--root", "R"],
+        [_PY, "-I", "-m", _MODULE, "--ro", "R"],  # argparse prefix matching binds --root
+        [_PY, "-m", _MODULE, "--root", "first", "--root", "R"],  # argparse: the last one wins
+    ],
+)
+def test_a_genuine_daemon_invocation_yields_its_root(argv: list[str]) -> None:
+    assert trust._daemon_invocation_root(argv) == "R"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        [],
+        [_PY],
+        [_PY, "-c", "import time; time.sleep(9)", _MODULE, "--root", "R"],
+        [_PY, "-c", "x", "-m", _MODULE, "--root", "R"],
+        [_PY, "-ccode", _MODULE, "--root", "R"],
+        [_PY, "script.py", _MODULE, "--root", "R"],
+        [_PY, "script.py", "-m", _MODULE, "--root", "R"],
+        [_PY, "-m", "other_module", _MODULE, "--root", "R"],
+        [_PY, "-m", "other_module", "-m", _MODULE, "--root", "R"],
+        [_PY, "--", "-m", _MODULE, "--root", "R"],
+        [_PY, "-", _MODULE, "--root", "R"],
+        [_PY, "--version", "-m", _MODULE, "--root", "R"],
+        [_PY, "-m", _MODULE],  # no --root: the daemon itself would exit with an argparse error
+        [_PY, "-m", _MODULE, "--root"],
+        [_PY, "-m", _MODULE, "--root", "R", "--bogus"],
+        [_PY, "-m", _MODULE, "--", "--root", "R"],
+        [_PY, "-m", _MODULE, "extra", "--root", "R"],
+        ["node", "-m", _MODULE, "--root", "R"],
+        ["not-python", _PY, "-m", _MODULE, "--root", "R"],
+        [_PY + "x", "-m", _MODULE, "--root", "R"],
+        [_PY, "-m", _MODULE + ".extra", "--root", "R"],
+        [_PY, "-m", "x" + _MODULE, "--root", "R"],
+    ],
+)
+def test_anything_else_is_not_a_daemon_invocation(argv: list[str]) -> None:
+    assert trust._daemon_invocation_root(argv) is None
+
+
+# ---- live processes, real psutil (skipped where psutil is not installed) ----
+
+
+def test_live_python_c_sleeper_carrying_the_module_name_is_refused(tmp_path: Path) -> None:
+    pytest.importorskip("psutil")
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    sleeper = _sleeper(_MODULE, "--root", str(root))  # the exact round-2 repro
+    try:
+        _plant(root, sleeper.pid)
+        result = sd.stop_session_daemon(str(root))
+        assert sleeper.poll() is None, "an unrelated python -c process was killed"
+        assert result["running"] is True
+        assert result["stopped"] is False
+        assert result["stop_method"] == "none"
+        assert sd._read_daemon_metadata(root) is not None
+    finally:
+        _reap(sleeper)
+
+
+def test_live_script_with_a_fake_daemon_argv_is_refused(tmp_path: Path) -> None:
+    pytest.importorskip("psutil")
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    script = tmp_path / "fake_daemon.py"
+    script.write_text("import time\ntime.sleep(120)\n", encoding="utf-8")
+    fake = subprocess.Popen([sys.executable, str(script), _MODULE, "--root", str(root)])
+    try:
+        _plant(root, fake.pid)
+        result = sd.stop_session_daemon(str(root))
+        assert fake.poll() is None
+        assert result["running"] is True and result["stopped"] is False
+    finally:
+        _reap(fake)
 
 
 def test_live_decoy_serving_a_different_root_is_not_signalled(tmp_path: Path) -> None:
@@ -89,37 +182,62 @@ def test_live_decoy_serving_a_different_root_is_not_signalled(tmp_path: Path) ->
     root.mkdir()
     other = (tmp_path / "rootB").resolve()
     other.mkdir()
-    victim = _decoy("--root", str(other))
+    victim = _sleeper(_MODULE, "--root", str(other))
     try:
         _plant(root, victim.pid)
         result = sd.stop_session_daemon(str(root))
-        assert victim.poll() is None, "root B's daemon was signalled by root A's stop"
-        assert result["running"] is True
-        assert result["stopped"] is False
-        assert result["stop_method"] == "none"
-        assert sd._read_daemon_metadata(root) is not None  # metadata kept
+        assert victim.poll() is None
+        assert result["running"] is True and result["stopped"] is False
     finally:
         _reap(victim)
 
 
-def test_live_decoy_serving_the_same_root_is_signalled_control(tmp_path: Path) -> None:
+def test_a_real_daemon_serving_this_root_is_signalled_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CONTROL: a REAL daemon, launched exactly like ``_spawn_daemon_subprocess``, IS terminated.
+
+    The recorded endpoint is replaced by a dead port so the cooperative path is unavailable and
+    the pid-kill fallback is what must work (and must only work for the genuine daemon).
+    """
     pytest.importorskip("psutil")
+    monkeypatch.setattr(sd, "_DAEMON_START_TIMEOUT_SECONDS", 20.0)
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    mine = _decoy("--root", str(root))
+    sd._spawn_daemon_subprocess(root)
+    live = None
+    deadline = time.time() + 60
+    while time.time() < deadline and live is None:
+        live = sd._probe_daemon(root)
+        time.sleep(0.2)
+    assert live is not None, "the real daemon never became reachable"
+    daemon_pid = int(live["pid"])
     try:
-        _plant(root, mine.pid)
+        meta = sd._read_daemon_metadata(root)
+        assert meta is not None
+        sd._write_daemon_metadata(root, {**meta, "port": _free_port(), "pid": daemon_pid})
+        assert trust._daemon_pid_state(sd._read_daemon_metadata(root), root) == "ours"
         result = sd.stop_session_daemon(str(root))
-        mine.wait(timeout=10)  # it really was terminated
         assert result["running"] is False
         assert result["stopped"] is True
         assert result["stop_method"] == "pid"
-        assert sd._read_daemon_metadata(root) is None
+        import psutil
+
+        for _ in range(100):
+            if not psutil.pid_exists(daemon_pid):
+                break
+            time.sleep(0.1)
+        assert not psutil.pid_exists(daemon_pid)
     finally:
-        _reap(mine)
+        try:
+            import psutil
+
+            psutil.Process(daemon_pid).kill()
+        except Exception:
+            pass
 
 
-# ---- the same contract through the argv seam (runs everywhere, real processes, real signals) ----
+# ---- the same contract through the process-info seam (real signals, fabricated argv) ----
 
 
 def test_seam_different_root_refused_and_same_root_signalled(
@@ -129,14 +247,14 @@ def test_seam_different_root_refused_and_same_root_signalled(
     root.mkdir()
     other = (tmp_path / "rootB").resolve()
     other.mkdir()
-    victim = _decoy("--root", str(other))
-    mine = _decoy("--root", str(root))
+    victim = _sleeper()
+    mine = _sleeper()
     try:
-        monkeypatch.setattr(
-            trust,
-            "_process_cmdline",
-            lambda pid: _fake_psutil_cmdline(victim if pid == victim.pid else mine)(pid),
-        )
+        infos = {
+            victim.pid: ([_PY, "-m", _MODULE, "--root", str(other)], 1.0),
+            mine.pid: ([_PY, "-m", _MODULE, "--root", str(root)], 2.0),
+        }
+        monkeypatch.setattr(trust, "_process_info", lambda pid: infos[pid])
         assert sd._terminate_daemon_by_pid({"pid": victim.pid}, root=root) is False
         assert victim.poll() is None
         assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
@@ -146,47 +264,79 @@ def test_seam_different_root_refused_and_same_root_signalled(
         _reap(mine)
 
 
-@pytest.mark.parametrize("form", ["equals", "relative", "case"])
+@pytest.mark.parametrize("form", ["equals", "case"])
 def test_root_spellings_that_resolve_to_the_same_root_are_accepted(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, form: str
 ) -> None:
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
     if form == "equals":
-        argv = ["--root=" + str(root)]
-    elif form == "relative":
-        monkeypatch.chdir(tmp_path)
-        argv = ["--root", os.path.join(".", "rootA")]
+        tail = ["--root=" + str(root)]
     else:
         if sys.platform != "win32":
             pytest.skip("case-insensitive roots are a Windows property")
-        argv = ["--root", str(root).swapcase()]
-    mine = _decoy(*argv)
+        tail = ["--root", str(root).swapcase()]
+    mine = _sleeper()
     try:
-        monkeypatch.setattr(trust, "_process_cmdline", _fake_psutil_cmdline(mine))
+        monkeypatch.setattr(trust, "_process_info", _fake_info(mine, [_PY, "-m", _MODULE, *tail]))
         assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
         mine.wait(timeout=10)
     finally:
         _reap(mine)
 
 
-@pytest.mark.parametrize(
-    "argv_tail",
-    [[], ["--root"], ["--other", "x"], ["--root", "", "--root", "elsewhere"]],
-    ids=["no-root", "dangling-root", "no-root-flag", "wrong-root"],
-)
-def test_argv_without_a_matching_root_is_never_signalled(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv_tail: list[str]
+def test_a_relative_root_is_refused_because_its_cwd_is_unknowable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The daemon is always launched with an ABSOLUTE root; a relative one would be resolved against
+    # a cwd we cannot see, so it is never treated as ours even when it happens to resolve here.
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    victim = _decoy(*argv_tail)
+    monkeypatch.chdir(tmp_path)
+    victim = _sleeper()
     try:
-        monkeypatch.setattr(trust, "_process_cmdline", _fake_psutil_cmdline(victim))
+        argv = [_PY, "-m", _MODULE, "--root", os.path.join(".", "rootA")]
+        monkeypatch.setattr(trust, "_process_info", _fake_info(victim, argv))
         assert sd._terminate_daemon_by_pid({"pid": victim.pid}, root=root) is False
         assert victim.poll() is None
     finally:
         _reap(victim)
+
+
+def test_pid_reuse_is_refused_when_the_create_time_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Classified as the daemon at T1; by the time the signal is sent the pid belongs to a process
+    # created at T2 (the original exited and the OS recycled the pid): never signal it.
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    bystander = _sleeper()
+    try:
+        argv = [_PY, "-m", _MODULE, "--root", str(root)]
+        times = iter([1000.0, 2000.0, 2000.0])
+        monkeypatch.setattr(trust, "_process_info", lambda pid: (list(argv), next(times)))
+        assert sd._terminate_daemon_by_pid({"pid": bystander.pid}, root=root) is False
+        assert bystander.poll() is None
+    finally:
+        _reap(bystander)
+
+
+def test_an_unchanged_create_time_is_signalled_control(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = (tmp_path / "rootA").resolve()
+    root.mkdir()
+    mine = _sleeper()
+    try:
+        monkeypatch.setattr(
+            trust,
+            "_process_info",
+            _fake_info(mine, [_PY, "-m", _MODULE, "--root", str(root)], 1000.0),
+        )
+        assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
+        mine.wait(timeout=10)
+    finally:
+        _reap(mine)
 
 
 def test_a_root_argument_is_required_to_signal(
@@ -194,9 +344,11 @@ def test_a_root_argument_is_required_to_signal(
 ) -> None:
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    victim = _decoy("--root", str(root))
+    victim = _sleeper()
     try:
-        monkeypatch.setattr(trust, "_process_cmdline", _fake_psutil_cmdline(victim))
+        monkeypatch.setattr(
+            trust, "_process_info", _fake_info(victim, [_PY, "-m", _MODULE, "--root", str(root)])
+        )
         assert sd._terminate_daemon_by_pid({"pid": victim.pid}) is False  # no root: fail closed
         assert victim.poll() is None
     finally:
@@ -209,13 +361,13 @@ def test_an_unreadable_argv_never_signals_and_reports_an_unconfirmed_stop(
 ) -> None:
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
-    victim = _decoy("--root", str(root))  # genuinely OUR daemon, but we cannot prove it
+    victim = _sleeper()  # stands in for OUR daemon that we cannot prove is ours
     try:
 
-        def _denied(_pid: int) -> list[str]:
+        def _denied(_pid: int) -> tuple[list[str], float]:
             raise error
 
-        monkeypatch.setattr(trust, "_process_cmdline", _denied)
+        monkeypatch.setattr(trust, "_process_info", _denied)
         _plant(root, victim.pid)
         result = sd.stop_session_daemon(str(root))
         assert victim.poll() is None
@@ -235,10 +387,10 @@ def test_a_pid_that_no_longer_exists_still_cleans_up_stale_metadata(
     root.mkdir()
     _plant(root, 999_999)
 
-    def _gone(pid: int) -> list[str]:
+    def _gone(pid: int) -> tuple[list[str], float]:
         raise LookupError(pid)
 
-    monkeypatch.setattr(trust, "_process_cmdline", _gone)
+    monkeypatch.setattr(trust, "_process_info", _gone)
     result = sd.stop_session_daemon(str(root))
     assert result["running"] is False
     assert result["stop_method"] == "none"

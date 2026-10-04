@@ -24,9 +24,10 @@ from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, repla
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
-    _DAEMON_MODULE,
     DAEMON_HOST,
     _await_endpoint_refused,
+    _classify_daemon_pid,
+    _daemon_invocation_root,
     _daemon_pid_state,
     _daemon_ping_proof,
     _daemon_secret_path,
@@ -34,9 +35,10 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _is_loopback_host,
     _load_or_create_user_secret,
     _ping_proof_fields,
-    _process_cmdline,
+    _process_info,
     _read_user_secret,
     _refresh_failed_error,
+    _terminate_identified,
     _valid_daemon_port,
     _verify_ping_reply,
 )
@@ -484,16 +486,10 @@ def _daemon_identity(metadata: dict[str, Any] | None) -> tuple[int | None, int |
 
 
 def _pid_looks_like_tg_daemon(pid: int) -> bool:
-    """Best-effort check that ``pid`` is a tensor-grep session daemon (audit I7).
-
-    Uses psutil (a dev/optional dependency) to inspect the command line so the PID-kill
-    fallback never terminates an unrelated process that happens to reuse the recorded pid. If
-    psutil is unavailable we cannot prove identity and return ``False`` (skip the kill).
-    """
-    if pid <= 0:
-        return False
+    """Best-effort: ``pid`` is running a genuine ``python -m tensor_grep.cli.session_daemon`` launch
+    (kept for callers/tests; the kill path decides through ``_classify_daemon_pid``)."""
     try:
-        return _DAEMON_MODULE in _process_cmdline(pid)
+        return pid > 0 and _daemon_invocation_root(_process_info(pid)[0]) is not None
     except Exception:
         return False
 
@@ -501,22 +497,12 @@ def _pid_looks_like_tg_daemon(pid: int) -> bool:
 def _terminate_daemon_by_pid(metadata: dict[str, Any] | None, *, root: Path | None = None) -> bool:
     """Terminate the daemon process recorded in ``metadata`` (audit I7).
 
-    Only fires when the pid is provably the tensor-grep daemon serving ``root`` (its argv carries
-    ``--root <root>``). Returns True if a terminate signal was delivered.
+    Only fires when the pid is provably the tensor-grep daemon serving ``root`` (a genuine
+    ``-m tensor_grep.cli.session_daemon --root <root>`` launch) and is still the same process
+    (create_time unchanged). Returns True if a terminate signal was delivered.
     """
-    if not metadata or _daemon_pid_state(metadata, root) != "ours":
-        return False
-    pid = int(metadata["pid"])
-    try:
-        if os.name == "nt":
-            import signal
-
-            os.kill(pid, signal.SIGTERM)
-        else:
-            os.kill(pid, 15)
-    except OSError:
-        return False
-    return True
+    state, identity = _classify_daemon_pid(metadata, root)
+    return state == "ours" and identity is not None and _terminate_identified(identity)
 
 
 def _daemon_request(
@@ -922,7 +908,6 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
             "stop_method": "pid" if killed else "none",
         }
     response: dict[str, Any]
-    stop_method = "cooperative"
     try:
         response = _daemon_request(
             str(metadata.get("host", _DAEMON_HOST)),
@@ -932,7 +917,15 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         )
     except Exception:
         response = {"version": _SESSION_VERSION, "ok": False}
-        stop_method = "none"
+    # Only an ok:true reply can start a cooperative stop (a failed/unauthorized reply is no
+    # evidence of anything), and even then it is not PROOF: see the refusal check below.
+    stop_method = "cooperative" if response.get("ok") is True else "none"
+
+    def _refused() -> bool:
+        return _await_endpoint_refused(
+            metadata.get("host", _DAEMON_HOST), metadata.get("port"), _DAEMON_START_TIMEOUT_SECONDS
+        )
+
     still_up = False
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
@@ -949,12 +942,15 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # PROVEN by the signed ping reply.
         stop_method = "pid" if _terminate_daemon_by_pid(metadata, root=root) else "none"
         still_up = stop_method == "none"  # still answering and never signalled
-    # A DELIVERED signal is not a stopped daemon: after ANY pid escalation only a REFUSED
-    # connection to the verified endpoint is evidence that it ended.
-    if stop_method == "pid" and not _await_endpoint_refused(
-        metadata.get("host", _DAEMON_HOST), metadata.get("port"), _DAEMON_START_TIMEOUT_SECONDS
-    ):
-        stop_method, still_up = "none", True
+    # An ok reply / a delivered signal is not a stopped daemon: "cooperative" and "pid" are
+    # reported only once a connection to the verified endpoint is REFUSED. An unproven cooperative
+    # stop falls through to the proven-pid path (which needs the same refusal).
+    if stop_method == "cooperative" and not _refused():
+        stop_method = "pid" if _terminate_daemon_by_pid(metadata, root=root) else "none"
+    if stop_method == "pid" and not _refused():
+        stop_method = "none"
+    if stop_method == "none" and (still_up or not _refused()):
+        still_up = True
     if still_up:
         # Unconfirmed: keep daemon.json and say so.
         response.update(running=True, root=str(root), stopped=False, stop_method="none")

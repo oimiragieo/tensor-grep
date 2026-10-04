@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 325,
+    "lineno": 327,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3081,7 +3081,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 497,
+    "lineno": 493,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3091,8 +3091,8 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 79,
-    "enclosing_symbol": "_process_cmdline",
+    "lineno": 136,
+    "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception around 'import psutil' (an optional dependency): re-raised as OSError('psutil unavailable') from the original exception.",
@@ -3101,27 +3101,27 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 85,
-    "enclosing_symbol": "_process_cmdline",
+    "lineno": 144,
+    "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around psutil.Process(pid).cmdline() after the NoSuchProcess clause: AccessDenied or any other psutil error is re-raised as OSError from the original exception.",
+    "evidence": "except Exception around psutil.Process(pid).cmdline()/create_time() after the NoSuchProcess clause: AccessDenied or any other psutil error is re-raised as OSError from the original exception.",
     "reason": "Nothing is swallowed: an unreadable argv becomes the typed 'cannot read' outcome (-> 'unverifiable', no signal, metadata kept); only NoSuchProcess maps to LookupError ('gone'), the sole case where stale metadata may be cleaned.",
     "hardened_in": null
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 104,
-    "enclosing_symbol": "_daemon_pid_state",
+    "lineno": 166,
+    "enclosing_symbol": "_classify_daemon_pid",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around _process_cmdline(pid) after the LookupError clause: any unreadable-argv error returns 'unverifiable'.",
+    "evidence": "except Exception around _process_info(pid) after the LookupError clause: any unreadable-argv/identity error returns ('unverifiable', None).",
     "reason": "Fails closed and loudly: 'unverifiable' is never signalled, and stop_session_daemon reports running True / stopped False / stop_method none and keeps daemon.json, so the failure is surfaced in the result, not swallowed.",
     "hardened_in": null
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 597,
+    "lineno": 583,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 657,
+    "lineno": 643,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 933,
+    "lineno": 918,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1620,
+    "lineno": 1616,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1697,
+    "lineno": 1693,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3171,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1828,
+    "lineno": 1824,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3181,7 +3181,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1919,
+    "lineno": 1915,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -3191,7 +3191,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1957,
+    "lineno": 1953,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3201,7 +3201,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 2004,
+    "lineno": 2000,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3377,6 +3377,36 @@
     "category": "SILENT-SWALLOW",
     "evidence": "except Exception around the per-line read/decode/append loop over process.stderr in the stderr thread: any failure appends an optional debug-trace entry (off by default, so nothing is recorded by default) and ends the thread. stop() closing the pipe from another thread lands here too and is the expected case.",
     "reason": "Not a wrong-answer path: stderr is diagnostics only (stderr_tail in status()). Residual: after a read failure that is not caused by stop(), the stderr pipe is no longer drained, stderr_tail silently stops updating, and a server that keeps writing to stderr can fill the pipe buffer and block. That child would then stall and surface as request timeouts. No handle is leaked, stop() closes the stream.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 190,
+    "enclosing_symbol": "_terminate_identified",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the identity re-read `_process_info(pid)` in _terminate_identified (the PID-reuse guard): any failure to re-read argv/create_time returns False.",
+    "reason": "Fails closed: if the process cannot be re-read, or its create_time/argv changed since classification, NOTHING is signalled and the caller reports the stop as unconfirmed (running True / stopped False). Nothing is swallowed into a success.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 197,
+    "enclosing_symbol": "_terminate_identified",
+    "handler_index_within_symbol": 1,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around `import psutil` in _terminate_identified: when psutil cannot be imported the signal falls back to os.kill, which is reachable only after the identity re-read above succeeded.",
+    "reason": "Not a swallow: it selects the signalling primitive. In production the classification itself already required psutil, so this branch only exists for test seams; the PID-reuse re-check has already passed when it runs.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 208,
+    "enclosing_symbol": "_terminate_identified",
+    "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the actual terminate call (psutil.Process(pid).terminate() or os.kill): a failure (NoSuchProcess, AccessDenied, OSError) returns False.",
+    "reason": "Reported as 'not signalled', never as a stop: the caller then reports running True / stopped False and keeps daemon.json, and a delivered signal is in any case only believed after the endpoint REFUSES connections.",
     "hardened_in": null
   }
 ]

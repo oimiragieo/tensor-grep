@@ -28,7 +28,9 @@ _INHERIT_ONLY_ACE = 0x08
 _MAX_READ_BYTES = 8192
 
 
-def open_no_follow(path: str, *, directory: bool = False) -> Any | None:
+def open_no_follow(
+    path: str, *, directory: bool = False, share: int = _FILE_SHARE_READ
+) -> Any | None:
     """Open ``path`` for reading WITHOUT following a reparse point; ``None`` if refused/failed."""
     if sys.platform != "win32":
         return None
@@ -67,7 +69,7 @@ def open_no_follow(path: str, *, directory: bool = False) -> Any | None:
     handle = k32.CreateFileW(
         path,
         _GENERIC_READ | _READ_CONTROL,
-        _FILE_SHARE_READ,
+        share,
         None,
         _OPEN_EXISTING,
         flags,
@@ -282,3 +284,96 @@ def owner_and_dacl_sids(handle: Any) -> tuple[str, list[str]] | None:
     if queried is None:
         return None
     return queried[0], [sid for sid, _mask in queried[1]]
+
+
+def create_new_restricted(path: str, sid: str) -> Any | None:
+    """Create ``path`` (``CREATE_NEW``, exclusive share mode 0) whose DACL is ``D:P(A;;FA;;;<sid>)``
+    FROM THE FIRST INSTANT: a protected descriptor passed in ``SECURITY_ATTRIBUTES`` at creation, so
+    the file is never broader than the current user, not even briefly and not by inheritance.
+    Tightening a DACL afterwards does not revoke handles opened against the broad one.
+    Returns the open write handle, or ``None`` on any failure (fail closed)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    k32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    k32.CreateFileW.restype = ctypes.c_void_p
+    descriptor = ctypes.c_void_p()
+    # SDDL_REVISION_1 = 1. Owner defaults to the creating token; "P" blocks DACL inheritance.
+    if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"D:P(A;;FA;;;{sid})", 1, ctypes.byref(descriptor), None
+    ):
+        return None
+    try:
+        attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
+        handle = k32.CreateFileW(
+            path,
+            0x40000000 | _READ_CONTROL,  # GENERIC_WRITE | READ_CONTROL
+            0,  # share mode 0: nobody else can open the file while we hold it
+            ctypes.byref(attrs),
+            1,  # CREATE_NEW
+            0x80 | _FILE_FLAG_OPEN_REPARSE_POINT,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+    finally:
+        k32.LocalFree(descriptor)
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        return None
+    return handle
+
+
+def write_all(handle: Any, data: bytes) -> bool:
+    """Write ``data`` through ``handle`` and flush it to disk; ``False`` on any failure."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WriteFile.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    k32.WriteFile.restype = wintypes.BOOL
+    k32.FlushFileBuffers.argtypes = [ctypes.c_void_p]
+    k32.FlushFileBuffers.restype = wintypes.BOOL
+    view = memoryview(data)
+    offset = 0
+    while offset < len(data):
+        chunk = bytes(view[offset : offset + 65536])
+        written = wintypes.DWORD(0)
+        if not k32.WriteFile(handle, chunk, len(chunk), ctypes.byref(written), None) or (
+            written.value == 0
+        ):
+            return False
+        offset += written.value
+    return bool(k32.FlushFileBuffers(handle))

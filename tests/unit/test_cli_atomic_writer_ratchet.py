@@ -885,23 +885,17 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "`atomic_write_bytes_anchored`, so the detector correctly does not credit it as helper-"
         "backed. Same rationale as the os.open entry above; sanctioned together."
     ),
-    ("session_daemon_trust.py", "_write_secret_windows", "os.open"): (
-        "PR #1197 audit round: the per-user daemon HMAC secret must have its owner-only DACL "
-        "applied BEFORE any secret byte is written AND that application must be FATAL (the shared "
-        "`_write_daemon_metadata_windows` treats an icacls failure as non-fatal, which for a trust "
-        "root would leave a readable secret). `atomic_write_bytes_anchored` exposes no hook "
-        "between temp creation and the write, so this is the same audited hand-rolled "
-        "create(O_CREAT|O_EXCL)-lock-write-fsync-publish sequence, with the failure mode "
-        "inverted: a failed icacls removes the temp file and nothing is published. The reader "
-        "re-verifies owner + DACL on the opened handle regardless."
-    ),
     (
         "session_daemon_trust.py",
         "_write_secret_windows",
         "tensor_grep.cli._index_lock.replace_with_retry",
     ): (
-        "The publish step of the same hand-rolled sequence as the os.open entry directly above "
-        "(shared `replace_with_retry` for the atomic rename); sanctioned together."
+        "Publish step of the per-user daemon HMAC secret writer. The secret file is created with "
+        "CreateFileW(CREATE_NEW, share mode 0) and a protected user-only SECURITY_ATTRIBUTES "
+        "descriptor (so it is never broader than the current user, not even for an instant -- "
+        "`atomic_write_bytes_anchored` cannot pass a descriptor at creation), the descriptor is "
+        "re-read from the open handle before any byte is written, and only then is the closed "
+        "temp file renamed into place with the shared `replace_with_retry`."
     ),
 }
 
@@ -1606,7 +1600,6 @@ _EXPECTED_SANCTIONED = {
         "_write_daemon_metadata_windows",
         "tensor_grep.cli._index_lock.replace_with_retry",
     ),
-    ("session_daemon_trust.py", "_write_secret_windows", "os.open"),
     (
         "session_daemon_trust.py",
         "_write_secret_windows",
