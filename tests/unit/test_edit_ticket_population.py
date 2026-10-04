@@ -191,10 +191,12 @@ def test_verify_edit_ticket_still_passes_on_complete_population(tmp_path: Path) 
     assert result["verdict"] == "PASS"
 
 
-def test_legacy_ticket_without_population_status_still_verifies(tmp_path: Path) -> None:
-    """Backward compatibility: a ticket serialized before this change (no population_status key)
-    must still round-trip and verify -- this is a fail-open compatibility path documented as
-    such, not a silent relaxation of the new fail-closed default for NEW tickets."""
+def test_ticket_without_population_status_is_refused_as_format_outdated(
+    tmp_path: Path,
+) -> None:
+    """A ticket serialized before population_status existed carries no pruned-directory record,
+    so verify cannot detect a marker planted after minting. It is REFUSED (re-mint), never
+    verified through a fail-open compatibility path."""
     from tensor_grep.cli.edit_ticket_service import EditReadyTicketV1
 
     allowed = tmp_path / "allowed.py"
@@ -217,7 +219,9 @@ def test_legacy_ticket_without_population_status_still_verifies(tmp_path: Path) 
         ticket=reloaded,
         modified_files=["allowed.py"],
     )
-    assert result["verdict"] == "PASS"
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "ticket_format_outdated"
+    assert result["violations"] == ["ticket_format_outdated"]
 
 
 _CACHEDIR_SIG = b"Signature: 8a477f597d28d172789f06886806bc55\n"
@@ -666,16 +670,33 @@ def test_preexisting_name_pruned_dir_with_changes_inside_passes(tmp_path: Path) 
     assert result["verdict"] == "PASS"
 
 
-def test_legacy_ticket_without_pruned_set_skips_the_pruned_check(tmp_path: Path) -> None:
+@pytest.mark.parametrize("missing", ["pruned_set", "population_policy", "population_source"])
+def test_ticket_missing_pruned_record_or_policy_is_refused_not_verified(
+    tmp_path: Path, missing: str
+) -> None:
+    # Without `pruned_set` a planted marker reopens the bypass: modify the declared file, add an
+    # undeclared sibling, plant src/pyvenv.cfg -> the old fail-open skip returned PASS.
     (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
-    ticket = _ticket(tmp_path)
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "allowed.py").write_text("x = 1\n", encoding="utf-8")
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path="src/allowed.py",
+        query="x",
+        allowed_files=["src/allowed.py"],
+    )
     legacy_dict = ticket.to_dict()
-    del legacy_dict["population_status"]["pruned_set"]
+    del legacy_dict["population_status"][missing]
     legacy = edit_ticket_service.EditReadyTicketV1.from_dict(legacy_dict)
-    (tmp_path / "node_modules").mkdir()
-    (tmp_path / "node_modules" / "e.js").write_text("x\n", encoding="utf-8")
-    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=legacy, modified_files=[])
-    assert result["verdict"] == "PASS"
+    (src / "allowed.py").write_text("x = 2\n", encoding="utf-8")
+    (src / "evil.py").write_text("boom\n", encoding="utf-8")
+    (src / "pyvenv.cfg").write_bytes(b"home = x\n")
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path), ticket=legacy, modified_files=["src/allowed.py"]
+    )
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "ticket_format_outdated"
 
 
 def test_many_name_pruned_dirs_stay_complete_and_verify_passes(tmp_path: Path) -> None:
@@ -1370,3 +1391,111 @@ def test_markers_files_and_links_share_one_aggregate_ledger(tmp_path: Path) -> N
     # 8 + 10 + 8 actually read; c.bin (10 bytes) exceeds the remaining 4 at its size check, so
     # nothing of it is read (and nothing is charged for it)
     assert population["scanned_bytes"] == 8 + 10 + 8
+
+
+# ---- raw reads are bounded; links are read once ----
+
+
+class _CountingRaw:
+    """Raw handle recording the bytes ACTUALLY pulled from the OS."""
+
+    def __init__(self, inner: object, counter: dict[str, int]) -> None:
+        self._inner = inner
+        self._counter = counter
+        self._counter["opened"] = self._counter.get("opened", 0) + 1
+
+    def make(self, buffering: int) -> object:
+        import io
+
+        counter = self._counter
+        inner = self._inner
+
+        class _Raw(io.RawIOBase):
+            def readable(self) -> bool:
+                return True
+
+            def readinto(self, buf: bytearray) -> int:
+                n = inner.readinto(buf) or 0  # type: ignore[attr-defined]
+                counter["raw_bytes"] = counter.get("raw_bytes", 0) + n
+                return n
+
+            def fileno(self) -> int:
+                return inner.fileno()  # type: ignore[attr-defined]
+
+            def close(self) -> None:
+                inner.close()  # type: ignore[attr-defined]
+                super().close()
+
+        raw = _Raw()
+        return raw if buffering == 0 else io.BufferedReader(raw)
+
+
+def test_budgeted_read_pulls_at_most_limit_plus_one_raw_bytes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A buffered handle pulls a whole buffer from the OS even for a 10-byte budgeted read, so the
+    # budget bounds nothing. The handle must be unbuffered: every request reaches the raw read.
+    (tmp_path / "big.bin").write_bytes(b"x" * 200_000)
+    counter: dict[str, int] = {}
+    real_fdopen = os.fdopen
+
+    def _fdopen(fd: int, mode: str = "r", buffering: int = -1, *a: object, **k: object) -> object:
+        inner = real_fdopen(fd, "rb", buffering=0)
+        return _CountingRaw(inner, counter).make(buffering)
+
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    # the size check rejects 200 KB before reading, so grow-after-check isn't needed: also probe
+    # the open path directly with the same budget
+    assert counter.get("opened", 0) >= 0
+    ledger = edit_ticket_service._ByteLedger(10, 10)
+    with edit_ticket_service._open_regular_no_follow(tmp_path / "big.bin") as handle:
+        try:
+            list(ledger.iter_chunks(handle))
+        except edit_ticket_service._BudgetExceeded:
+            pass
+    assert counter.get("opened", 0) >= 1, "the safe open did not go through the _fdopen seam"
+    assert counter["raw_bytes"] <= 11
+    assert population["status"] == "incomplete"
+
+
+def _counting_readlink(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    calls = {"n": 0}
+    real = os.readlink
+
+    def _readlink(path: object, *a: object, **k: object) -> object:
+        calls["n"] += 1
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(edit_ticket_service, "_readlink", _readlink, raising=False)
+    return calls
+
+
+def test_link_target_is_read_exactly_once_and_charged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Contract: link targets are read in full once; bounded by the platform path limit.
+    _symlink_or_skip(tmp_path / "alias", "t" * 10)
+    calls = _counting_readlink(monkeypatch)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    assert calls["n"] == 1
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 10
+
+
+def test_oversized_link_target_is_rejected_after_the_single_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _symlink_or_skip(tmp_path / "alias", "t" * 11)
+    calls = _counting_readlink(monkeypatch)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    assert calls["n"] == 1
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "per_file_byte_limit"
+    assert population["scanned_bytes"] == 11  # the one read is charged

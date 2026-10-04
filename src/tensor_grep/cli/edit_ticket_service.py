@@ -44,6 +44,8 @@ from typing import Any, BinaryIO
 
 _os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
 _os_open = os.open  # private seam: the ONE safe open of every file read from the walked tree
+_fdopen = os.fdopen  # private seam: wraps the opened fd (unbuffered)
+_readlink = os.readlink  # private seam: link targets are read ONCE per link
 _lstat = os.lstat  # private seam for link classification
 
 _ALWAYS_PRUNED_DIRS = frozenset({
@@ -249,7 +251,9 @@ def _open_regular_no_follow(
             and expected_ident != (fst.st_dev, fst.st_ino)
         ):
             raise _PopulationWalkError("unreadable_path")  # replaced between lstat and open
-        return os.fdopen(fd, "rb")
+        # UNBUFFERED: a buffered handle would pull a whole buffer from the OS for a 10-byte
+        # budgeted read, so the byte budget would bound nothing. Every read reaches the raw fd.
+        return _fdopen(fd, "rb", buffering=0)  # type: ignore[return-value]
     except BaseException:
         os.close(fd)
         raise
@@ -448,7 +452,9 @@ def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
     except FileNotFoundError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
     if _link_from_stat(st):
-        target = os.fsencode(os.readlink(path))
+        # Link targets are read in FULL, ONCE (os.readlink cannot be bounded), bounded by the
+        # platform path limit; the value is charged here and reused for hashing.
+        target = os.fsencode(_readlink(path))
         ledger.charge_link(len(target))
         return "symlink:" + hashlib.sha256(target).hexdigest()
     if stat.S_ISDIR(st.st_mode):
@@ -495,11 +501,9 @@ def _walk_tracked_files_bounded(
 
             try:
                 size_st = _lstat(item)  # ONE lstat sizes the leaf (links: link-text length)
-                size = (
-                    len(os.fsencode(os.readlink(item)))
-                    if _link_from_stat(size_st)
-                    else size_st.st_size
-                )
+                # a link's size is its target text, which is read (and charged) exactly once
+                # by `_fingerprint_enumerated`; the size check must not read it a second time
+                size = 0 if _link_from_stat(size_st) else size_st.st_size
             except OSError:
                 # A file that vanishes or becomes unreadable mid-walk must not silently
                 # disappear from `result` while the population still reports "complete" --
@@ -521,10 +525,12 @@ def _walk_tracked_files_bounded(
             except _BudgetExceeded as exc:
                 # every byte read is already on the ledger: nothing is refunded
                 incomplete_reason = exc.reason
-                if exc.reason == "per_file_byte_limit" and ledger.remaining >= 0:
+                if exc.reason == "per_file_byte_limit":
+                    # the item alone is too big (the more specific reason); if its read also
+                    # exhausted the aggregate allowance, the NEXT item trips the aggregate
+                    # limit at its own size check / read (cap 0), so the walk still stops
                     scanned_files += 1
                     continue
-                incomplete_reason = "aggregate_byte_limit" if ledger.remaining < 0 else exc.reason
                 break
             except OSError:
                 incomplete_reason = incomplete_reason or "unreadable_path"
@@ -667,12 +673,20 @@ def verify_edit_ticket(
 ) -> dict[str, Any]:
     # AGT-04 fail-closed gate: a ticket built from an incomplete population may be missing
     # fingerprints for files a budget cut off, so drift there is undetectable -- never let an
-    # incomplete population reach PASS. "unknown" (legacy tickets predating this field) is
-    # deliberately NOT treated as incomplete -- that is the documented compatibility path.
+    # incomplete population reach PASS. A ticket with no population record at all ("unknown")
+    # is REFUSED below as ticket_format_outdated, not verified through a compatibility path.
     # Old-format (untagged) fingerprints are REFUSED, never re-tagged on read: old tickets could
     # hold links hashed by the colliding scheme, so tagging them `file:` would keep the hole
     # open for exactly the tickets that predate the fix. Re-mint.
-    if any(not fp.startswith(_FINGERPRINT_TAGS) for fp in ticket.pre_edit_fingerprints.values()):
+    # The same refusal covers a ticket with no `pruned_set` or policy fields: without the
+    # mint-time record of pruned directories a marker planted afterwards (modify the declared
+    # file, add an undeclared sibling, plant src/pyvenv.cfg) cannot be detected.
+    pop = ticket.population_status
+    if (
+        not isinstance(pop.get("pruned_set"), dict)
+        or pop.get("population_policy") != "agt04-v2"
+        or not pop.get("population_source")
+    ) or any(not fp.startswith(_FINGERPRINT_TAGS) for fp in ticket.pre_edit_fingerprints.values()):
         return {
             "verdict": "FAIL",
             "reason": "ticket_format_outdated",
