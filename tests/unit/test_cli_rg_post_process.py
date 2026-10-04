@@ -87,13 +87,21 @@ def test_ascii_literal_controls_keep_existing_behaviour(tmp_path):
 def test_lines_without_rg_data_are_refused_not_rebuilt_in_python():
     # design: Python never rebuilds rg's -o/-r output; a line with no rg data is refused
     from tensor_grep.backends.base import BackendExecutionError
-    from tensor_grep.cli.rg_post_process import only_matching_lines, replace_lines
+    from tensor_grep.cli.rg_post_process import post_process_matches
 
     line = MatchLine(line_number=1, text="foo bar", file="f.txt")
     with pytest.raises(BackendExecutionError):
-        replace_lines([line], "foo", SearchConfig(query_pattern="foo", replace_str="x"))
+        post_process_matches(
+            [line], "foo", SearchConfig(query_pattern="foo", replace_str="x"), False
+        )
     with pytest.raises(BackendExecutionError):
-        only_matching_lines([line], "foo", SearchConfig(only_matching=True))
+        post_process_matches([line], "foo", SearchConfig(only_matching=True), True)
+    rg_line = MatchLine(line_number=1, text="foo", file="f.txt", rg_kind="match")
+    assert post_process_matches([rg_line], "foo", SearchConfig(only_matching=True), True) == [
+        rg_line
+    ]
+    # no -o / -r requested: nothing to guard
+    assert post_process_matches([line], "foo", SearchConfig(), False) == [line]
 
 
 def test_post_process_module_no_longer_evaluates_the_user_pattern():
@@ -118,20 +126,16 @@ def test_post_processing_of_rg_matches_never_redecides_smart_case(tmp_path, temp
     # the audit repro at the seam: rg matched FOOX for `foo\S` under -S; extraction and
     # replacement used to re-run the pattern with a strict case resolver and raise
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-    from tensor_grep.cli import rg_post_process as cli_main
 
     pattern = r"(foo)\S" if "$1" in template else r"foo\S"
     f = tmp_path / "a.txt"
     f.write_bytes(b"FOOX\n")
     cfg = SearchConfig(query_pattern=pattern, smart_case=True, replace_str=template)
-    matches = RipgrepBackend().search(str(f), pattern, cfg).matches
-    assert matches and matches[0].submatches
-
-    (replaced,) = cli_main.replace_lines(matches, pattern, cfg)
+    (replaced,) = RipgrepBackend().search(str(f), pattern, cfg).matches
     assert replaced.text == expected
 
     only = SearchConfig(query_pattern=pattern, smart_case=True, only_matching=True)
-    out = cli_main.only_matching_lines(matches, pattern, only)
+    out = RipgrepBackend().search(str(f), pattern, only).matches
     assert [m.text for m in out] == ["FOOX"]
 
 
@@ -160,7 +164,6 @@ def _rg_o_replace(path, pattern, template, *flags):
 
 def _seam(tmp_path, content: bytes, pattern: str, template: str):
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-    from tensor_grep.cli import rg_post_process as cli_main
 
     f = tmp_path / "a.txt"
     f.write_bytes(content)
@@ -169,7 +172,7 @@ def _seam(tmp_path, content: bytes, pattern: str, template: str):
     )
     matches = RipgrepBackend().search(str(f), pattern, cfg).matches
     assert matches and matches[0].submatches
-    return f, [m.text for m in cli_main.only_matching_lines(matches, pattern, cfg)]
+    return f, [m.text for m in matches]
 
 
 def test_only_matching_with_replace_emits_each_replaced_match_alone(tmp_path):
@@ -222,9 +225,8 @@ def _rg_lines(path, pattern, *flags) -> list[bytes]:
 
 
 def _tg_matches(path, pattern, *, template=None, only=False, smart=False, fixed=False, **extra):
-    """Search with rg, then run the project's own -o/-r post-processing. Returns (cfg, matches)."""
+    """Search through RipgrepBackend (rg renders -o/-r itself). Returns (cfg, matches)."""
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-    from tensor_grep.cli import rg_post_process
 
     cfg = SearchConfig(
         query_pattern=pattern,
@@ -234,12 +236,7 @@ def _tg_matches(path, pattern, *, template=None, only=False, smart=False, fixed=
         only_matching=only,
         **extra,
     )
-    matches = RipgrepBackend().search(str(path), pattern, cfg).matches
-    if only:
-        matches = rg_post_process.only_matching_lines(matches, pattern, cfg)
-    elif template is not None:
-        matches = rg_post_process.replace_lines(matches, pattern, cfg)
-    return cfg, matches
+    return cfg, RipgrepBackend().search(str(path), pattern, cfg).matches
 
 
 def _tg_lines(path, pattern, **kw):
@@ -292,7 +289,7 @@ def test_cpu_fallback_repeated_matches_never_yield_a_single_occurrence(monkeypat
     # audit 3: the CPU Python loop recorded only the first re.search hit, so `ab ab` -o gave one
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.backends.cpu_backend import CPUBackend
-    from tensor_grep.cli import rg_post_process as cli_main
+    from tensor_grep.cli.rg_post_process import post_process_matches
     from tensor_grep.core.pipeline import Pipeline
 
     f = tmp_path / "a.txt"
@@ -308,7 +305,7 @@ def test_cpu_fallback_repeated_matches_never_yield_a_single_occurrence(monkeypat
     # direct CPU result: either complete (== rg) or refused, never one occurrence
     try:
         direct = CPUBackend().search(str(f), "ab", cfg).matches
-        got = [m.text.encode() for m in cli_main.only_matching_lines(direct, "ab", cfg)]
+        got = [m.text.encode() for m in post_process_matches(direct, "ab", cfg, True)]
     except BackendExecutionError:
         got = "raised"
     assert got == "raised" or got == expected, got
@@ -316,7 +313,7 @@ def test_cpu_fallback_repeated_matches_never_yield_a_single_occurrence(monkeypat
     pipe = Pipeline(force_cpu=True, config=cfg)
     assert type(pipe.backend).__name__ == "RipgrepBackend"
     matches = pipe.backend.search(str(f), "ab", cfg).matches
-    assert [m.text.encode() for m in cli_main.only_matching_lines(matches, "ab", cfg)] == expected
+    assert [m.text.encode() for m in matches] == expected
 
 
 def test_invalid_utf8_line_offsets_are_applied_to_original_bytes(tmp_path):
@@ -559,6 +556,83 @@ def test_json_trailing_newline_in_a_match_is_not_a_phantom_entry(tmp_path):
     got, doc = _tg_entries(f, r"foo\n", "-U")
     assert got == _rg_entries(f, r"foo\n", "-U") == [(1, 1, "foo")]
     assert doc["total_matches"] == 1
+
+
+def test_json_multiline_match_starting_with_the_delimiter_uses_rgs_coordinates(tmp_path):
+    # round 11: `\nbar` on foo/bar -> rg prints `2:4:bar` (NOT a phantom (1,4,"") plus (2,1,"bar"))
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\n")
+    got, doc = _tg_entries(f, r"\nbar", "-U")
+    assert got == _rg_entries(f, r"\nbar", "-U") == [(2, 4, "bar")]
+    assert doc["total_matches"] == 1
+
+
+def test_json_match_consisting_only_of_the_delimiter_is_zero_entries_and_success(tmp_path):
+    # round 11: `-U -o '\n'` -> rg prints NOTHING and exits 0 (tg used to invent two empty matches)
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\n")
+    assert _rg_run(r"\n", f, "-U", "-o").returncode == 0
+    proc, doc = _json_matches("-U", "-o", r"\n", str(f))
+    assert doc["matches"] == [] and doc["total_matches"] == 0
+    assert proc.returncode == 0, proc.stderr[-300:]  # rg's success, faithfully
+
+
+def test_json_multiline_replacement_uses_replaced_line_coordinates(tmp_path):
+    # round 11: `ab\nab|ab` -U -o -r X -> rg: 1:1:X then 1:3:X (not 1:1 then 2:4)
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"ab\nab ab\n")
+    pattern = r"ab\nab|ab"
+    got, _doc = _tg_entries(f, pattern, "-U", "-r", "X")
+    assert got == _rg_entries(f, pattern, "-U", "-r", "X") == [(1, 1, "X"), (1, 3, "X")]
+
+
+def test_json_non_ascii_text_columns_are_rgs_byte_columns(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes("xéé é\n".encode())
+    got, _doc = _tg_entries(f, "é", "-n")
+    assert got == _rg_entries(f, "é") == [(1, 2, "é"), (1, 4, "é"), (1, 7, "é")]
+
+
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="':' is not valid in Windows filenames")
+def test_json_filename_with_colon_and_digits_is_parsed_via_nul(tmp_path):
+    f = tmp_path / "12:3:x.txt"
+    f.write_bytes(b"foo\n")
+    proc, doc = _json_matches("-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["file"], m["line_number"], m["text"]) for m in doc["matches"]] == [
+        (str(f), 1, "foo")
+    ]
+
+
+def test_plain_output_parser_handles_hostile_paths_separators_and_inverted_lines():
+    from tensor_grep.backends.rg_plain_output import parse_rg_plain_output
+
+    raw = (
+        b"dir/a:1:2:b.txt\x001-ctx 5:6:7\n"  # context text that LOOKS like line:col
+        b"dir/a:1:2:b.txt\x002:4:ab:7:8\n"  # match text containing more ':' digits
+        b"--\n"
+        b"dir/a:1:2:b.txt\x009:1:\n"  # empty text (a zero-width match)
+    )
+    got = parse_rg_plain_output(raw)
+    assert [(m.file, m.line_number, m.rg_kind, m.text) for m in got] == [
+        ("dir/a:1:2:b.txt", 1, "context", "ctx 5:6:7"),
+        ("dir/a:1:2:b.txt", 2, "match", "ab:7:8"),
+        ("dir/a:1:2:b.txt", 9, "match", ""),
+    ]
+    # a match record with no `<column>:` field is malformed for a non-inverted parse
+    from tensor_grep.backends.base import BackendExecutionError
+
+    with pytest.raises(BackendExecutionError):
+        parse_rg_plain_output(b"p\x009:\n")
+    inv = parse_rg_plain_output(b"p\x001:bar\np\x002-ctx\n", inverted=True)
+    assert [(m.line_number, m.rg_kind, m.text, m.submatches) for m in inv] == [
+        (1, "inverted", "bar", None),
+        (2, "context", "ctx", None),
+    ]
+    nul = parse_rg_plain_output(b"p\x001:5:foo\nbar\x00", null_data=True)
+    assert [(m.text, m.submatches[0]["start"]) for m in nul] == [("foo\nbar", 4)]
+    with pytest.raises(BackendExecutionError):
+        parse_rg_plain_output(b"p\x001:1:\xff\n")  # not valid UTF-8 -> refused
 
 
 def test_json_null_data_uses_nul_as_the_record_delimiter(tmp_path):

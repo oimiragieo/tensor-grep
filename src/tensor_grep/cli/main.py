@@ -4040,6 +4040,8 @@ def search_command(
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc, json_mode=json)
+                if isinstance(exc, BackendExecutionError):  # e.g. rg output not representable
+                    _exit_search_error("backend_error", str(exc), json_mode=json)
                 raise
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
@@ -4427,7 +4429,7 @@ def search_command(
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
             _safe_stdout_line(JsonFormatter().format(all_results))
-        sys.exit(2 if exit_incomplete else 1)
+        sys.exit(2 if exit_incomplete else int(not all_results.rg_exit_zero))
 
     if quiet:
         _emit_stats()

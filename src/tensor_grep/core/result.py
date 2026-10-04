@@ -89,16 +89,9 @@ class MatchLine:
     # populated. Excluding it from == is correct: these offsets are a pure function of text+line,
     # so two matches equal on those fields are equal here too.
     submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)
-    # rg's OWN `--replace` output for this line (matches substituted, built from the line's
-    # ORIGINAL bytes). Populated by RipgrepBackend only when a replacement was requested; None
-    # otherwise, and None when the line is not valid UTF-8 (not representable as str).
-    replaced_text: str | None = field(default=None, compare=False)
-    # rg record kind: "match" (ordinary), "inverted" (a -v match: printed unchanged by -o/-r)
-    # or "context" (-A/-B/-C). None for non-rg engines. Only RipgrepBackend sets it.
+    # rg record kind: "match", "inverted" (a -v line: rg prints it without a column) or
+    # "context" (-A/-B/-C). None for non-rg engines. Only RipgrepBackend sets it.
     rg_kind: str | None = field(default=None, compare=False)
-    # the record's raw `lines` bytes (a -U match record spans several lines); set only while
-    # transforming output (-o/-r). Submatch offsets index THESE bytes.
-    rg_lines_raw: bytes | None = field(default=None, compare=False, repr=False)
     container: dict[str, object] | None = field(default=None, compare=False)
     why_ranked: list[str] | None = field(default=None, compare=False)
 
@@ -106,6 +99,9 @@ class MatchLine:
 @dataclass
 class SearchResult:
     matches: list[MatchLine] = field(default_factory=list)
+    # rg ran a rendered (-o/-r) search and exited 0: success even with zero entries (e.g. a
+    # match that is only the record delimiter prints nothing). Drives the CLI exit code.
+    rg_exit_zero: bool = False
     matched_file_paths: list[str] = field(default_factory=list)
     match_counts_by_file: dict[str, int] = field(default_factory=dict)
     total_files: int = 0
@@ -201,6 +197,7 @@ def merge_runtime_routing(aggregate: SearchResult, result: SearchResult) -> None
         aggregate.routing_gpu_chunk_plan_mb = list(result.routing_gpu_chunk_plan_mb)
     if result.routing_reason:
         aggregate.routing_reason = result.routing_reason
+    aggregate.rg_exit_zero = aggregate.rg_exit_zero or result.rg_exit_zero
     aggregate.routing_distributed = aggregate.routing_distributed or result.routing_distributed
     aggregate.routing_worker_count = max(
         aggregate.routing_worker_count, result.routing_worker_count

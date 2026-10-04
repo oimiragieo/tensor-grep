@@ -936,11 +936,9 @@ def test_search_single_regexp_with_unused_file_option_and_only_matching_still_wo
                 matches=[
                     MatchLine(
                         line_number=1,
-                        text="prefix ERROR suffix",
+                        text="ERROR",
                         file="a.py",
                         rg_kind="match",
-                        rg_lines_raw=b"prefix ERROR suffix\n",
-                        submatches=({"match": {"text": "ERROR"}, "start": 7, "end": 12},),
                     )
                 ],
                 total_files=1,

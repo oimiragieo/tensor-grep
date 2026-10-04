@@ -591,11 +591,9 @@ def test_only_matching_outputs_token_not_whole_line(monkeypatch):
                 matches=[
                     MatchLine(
                         line_number=1,
-                        text="prefix ERROR suffix",
+                        text="ERROR",
                         file="a.py",
                         rg_kind="match",
-                        rg_lines_raw=b"prefix ERROR suffix\n",
-                        submatches=({"match": {"text": "ERROR"}, "start": 7, "end": 12},),
                     )
                 ],
                 total_files=1,
@@ -822,10 +820,9 @@ def test_cli_replaces_rg_capture_groups_in_output(monkeypatch):
                 matches=[
                     MatchLine(
                         line_number=1,
-                        text="abc123",
+                        text="123-abc-abc-123-$-abc123-abca-",
                         file="a.log",
                         rg_kind="match",
-                        replaced_text="123-abc-abc-123-$-abc123-abca-",
                     )
                 ],
                 total_files=1,
@@ -860,10 +857,9 @@ def test_cli_replaces_rg_capture_groups_for_fixed_strings(monkeypatch):
                 matches=[
                     MatchLine(
                         line_number=1,
-                        text="hello world",
+                        text="hello-a--$ world",
                         file="a.log",
                         rg_kind="match",
-                        replaced_text="hello-a--$ world",
                     )
                 ],
                 total_files=1,
@@ -893,10 +889,9 @@ def test_cli_keeps_non_ascii_replacement_tokens_literal(monkeypatch):
                 matches=[
                     MatchLine(
                         line_number=1,
-                        text="abc123",
+                        text="123-$" + chr(0xE9) + "bar-$" + arabic_digit_one + "-$",
                         file="a.log",
                         rg_kind="match",
-                        replaced_text="123-$" + chr(0xE9) + "bar-$" + arabic_digit_one + "-$",
                     )
                 ],
                 total_files=1,
