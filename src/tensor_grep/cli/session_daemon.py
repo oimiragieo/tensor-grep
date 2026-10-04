@@ -617,7 +617,9 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     # existing idle/max-uptime lifecycle monitor.
     if metadata.get("package_version") != _expected_tg_version():
         return None
-    return metadata
+    # The metadata's own `pid` is unverified (repo-controlled); the signed reply's is proven.
+    # Callers that escalate to a pid kill must only ever see the proven one.
+    return {**metadata, "pid": int(response["pid"])}
 
 
 def _merge_live_daemon_stats(status: dict[str, Any], *, token: str = "") -> dict[str, Any]:
@@ -928,8 +930,20 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
             break
         time.sleep(0.05)
     else:
-        # audit I7: no effect within the deadline; escalate to a validated pid terminate.
+        # audit I7: no effect within the deadline; escalate to a validated terminate of the pid
+        # PROVEN by the signed ping reply, then require real evidence (a probe that no longer
+        # answers) before claiming the daemon ended.
         stop_method = "pid" if _terminate_daemon_by_pid(metadata) else "none"
+        confirm_deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
+        while stop_method == "pid" and _probe_daemon(root) is not None:
+            if time.time() >= confirm_deadline:
+                stop_method = "none"
+            else:
+                time.sleep(0.05)
+        if stop_method == "none":
+            # Unconfirmed: still serving (or never signalled). Keep daemon.json and say so.
+            response.update(running=True, root=str(root), stopped=False, stop_method="none")
+            return response
     # Task #143a-a: only remove daemon.json if it still identifies the SAME daemon this call
     # targeted (captured in `metadata` above) -- a replacement may have spawned and published its
     # own metadata in the window since. See _remove_daemon_metadata's docstring for the full race.
