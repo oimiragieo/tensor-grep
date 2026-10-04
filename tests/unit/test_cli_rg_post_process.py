@@ -432,13 +432,17 @@ def test_bogus_engine_exits_2_with_a_structured_error_not_a_traceback(tmp_path):
 
 
 def test_unrepresentable_rg_output_exits_2_with_a_structured_error(tmp_path):
-    # an invalid-UTF-8 context line cannot be reproduced byte-exactly through str
+    # an invalid-UTF-8 context line cannot be reproduced byte-exactly through str, so the
+    # STRUCTURED (--json) route refuses it with exit 2 ...
     f = _file(tmp_path, b"\xff\nfoo\n")
-    for extra in ([], ["--json"]):
-        proc = _py_door(*extra, "-o", "-C", "1", "foo", f)
-        assert proc.returncode == 2, (proc.returncode, proc.stderr[-300:])
-        assert "Traceback" not in proc.stderr
-        assert "rg" in (proc.stderr + proc.stdout)
+    proc = _py_door("--json", "-o", "-C", "1", "foo", f)
+    assert proc.returncode == 2, (proc.returncode, proc.stderr[-300:])
+    assert "Traceback" not in proc.stderr
+    assert "rg" in (proc.stderr + proc.stdout)
+    # ... while plain text is rg's own raw bytes, \xff included
+    plain = _py_door_bytes("-o", "-C", "1", "foo", f)
+    assert plain.stdout == _rg_run("foo", f, "-o", "-C", "1").stdout
+    assert plain.returncode == 0 and b"\xff" in plain.stdout
 
 
 def test_valid_o_with_context_and_inverted_searches_work_end_to_end(tmp_path):
@@ -450,6 +454,131 @@ def test_valid_o_with_context_and_inverted_searches_work_end_to_end(tmp_path):
     inv = _py_door("-v", "-o", "foo", g)
     assert inv.returncode == 0, inv.stderr[-300:]
     assert inv.stdout.split() == ["bar"]
+
+
+def _py_door_bytes(*args: str):
+    code = f"import sys; sys.path.insert(0, {_SRC!r}); from tensor_grep.cli.main import app; app()"
+    return subprocess.run(
+        [sys.executable, "-c", code, "search", *args],
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+
+
+def _rg_run(pattern: str, path, *flags: str):
+    return subprocess.run(
+        [str(resolve_ripgrep_binary()), "--no-config", *flags, "-e", pattern, "--", str(path)],
+        capture_output=True,
+        check=False,
+    )
+
+
+# Round 8: plain-text -o / -r is rg's OWN stdout, written through unchanged (the same
+# passthrough route every other plain rg search uses); Python renders only structured output.
+_TEXT_CASES = [
+    ("empty-match", b"foo\n", "^", ["-o"]),
+    ("multiline", b"foo\nbar\n", r"foo\nbar", ["-U", "-o", "-n", "--column"]),
+    ("context", b"before\nfoo\nafter\n", "foo", ["-o", "-C", "1", "-n", "--column"]),
+    ("context+r", b"before\nfoo\nafter\n", "foo", ["-o", "-r", "X", "-C", "1", "-n"]),
+    ("invert", b"bar\n", "foo", ["-v", "-o"]),
+    ("col-o", b"xx ab yy ab\n", "ab", ["-n", "--column", "-o"]),
+    ("col-r", b"xx ab yy ab\n", "ab", ["-n", "--column", "-r", "X"]),
+    ("col-o-r", b"xx ab yy ab\n", "ab", ["-n", "--column", "-o", "-r", "X"]),
+    ("col-o-r-long", b"xx ab yy ab\n", "ab", ["-n", "--column", "-o", "-r", "XYZ"]),
+]
+
+
+@pytest.mark.parametrize(
+    "name, content, pattern, flags", _TEXT_CASES, ids=[c[0] for c in _TEXT_CASES]
+)
+def test_plain_text_o_and_r_are_rgs_own_bytes_and_exit_code(
+    tmp_path, name, content, pattern, flags
+):
+    f = tmp_path / "a.txt"
+    f.write_bytes(content)
+    expected = _rg_run(pattern, f, *flags)
+    got = _py_door_bytes(*flags, pattern, str(f))
+    assert got.stdout == expected.stdout, (name, got.stdout, expected.stdout, got.stderr)
+    assert got.returncode == expected.returncode, (name, got.returncode, got.stderr[-200:])
+    assert b"column approximated" not in got.stderr
+
+
+def _json_matches(*args: str):
+    import json
+
+    proc = _py_door_bytes("--json", *args)
+    return proc, json.loads(proc.stdout or b"{}")
+
+
+def test_json_empty_match_is_kept_and_success_is_not_derived_from_text(tmp_path):
+    # audit 1: `-o '^'` printed nothing and exited 1; rg prints an empty line and exits 0
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\n")
+    proc, doc = _json_matches("-o", "^", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert doc["total_matches"] == 1
+    (entry,) = doc["matches"]
+    assert (entry["line_number"], entry["text"], entry["column"]) == (1, "", 1)
+
+
+def test_json_multiline_only_matching_gets_one_numbered_entry_per_line(tmp_path):
+    # audit 2: `-U -o -n 'foo\nbar'` -> rg prints 1:1:foo then 2:1:bar
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\n")
+    proc, doc = _json_matches("-U", "-o", r"foo\nbar", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    got = [(m["line_number"], m["text"], m["column"]) for m in doc["matches"]]
+    assert got == [(1, "foo", 1), (2, "bar", 1)]
+    assert doc["total_matches"] == 2
+
+
+def test_json_context_records_are_marked_context_and_carry_no_column(tmp_path):
+    # audit 3: context records must not get match prefixes / columns
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"before\nfoo\nafter\n")
+    proc, doc = _json_matches("-o", "-C", "1", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    shape = [(m["line_number"], m["text"], m.get("kind"), "column" in m) for m in doc["matches"]]
+    assert shape == [
+        (1, "before", "context", False),
+        (2, "foo", None, True),
+        (3, "after", "context", False),
+    ]
+    assert doc["total_matches"] == 1  # context lines are not matches
+    assert b"column approximated" not in proc.stderr
+
+
+def test_engine_diagnostic_is_ascii_on_both_streams(tmp_path):
+    # audit 4: `--engine é` echoed the non-ASCII value into stderr
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\n")
+    engine = "é"
+    for extra in ([], ["--json"]):
+        proc = _py_door_bytes(*extra, "--engine", engine, "foo", str(f))
+        assert proc.returncode == 2, proc.stderr[-300:]
+        assert proc.stdout.isascii(), proc.stdout
+        assert proc.stderr.isascii(), proc.stderr
+        assert b"Traceback" not in proc.stderr
+
+
+_TEMPLATES = [
+    "$digits-${letters}-$1-$2-$$-$0-${1}a-$1a",
+    "[$0]",
+    "$2$1",
+    "$$",
+    "$" + chr(0xE9) + "bar-$" + chr(0x661),
+]
+
+
+@pytest.mark.parametrize("template", _TEMPLATES)
+def test_replacement_templates_are_expanded_by_rg_not_python(tmp_path, template):
+    # the `$N` / `${name}` / `$$` semantics belong to rg; compare with rg byte for byte
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"abc123\n")
+    pattern = "(?P<letters>[a-z]+)(?P<digits>[0-9]+)"
+    got = _same_as_rg_or_raised(f, pattern, ["-r", template], template=template)
+    assert got != "raised"
 
 
 def test_only_matching_and_replace_are_unsupported_on_non_rg_engines():

@@ -94,9 +94,10 @@ def only_matching_lines(
         if match.rg_kind in ("context", "inverted"):
             out.append(_pass_through(match, "the -o output"))
             continue
-        if match.rg_kind != "match" or not match.submatches:
+        record = match.rg_lines_raw
+        if match.rg_kind != "match" or not match.submatches or record is None:
             raise _refuse(match, "the -o output")
-        shift = 0  # bytes added/removed by earlier replacements on this line (rg's -o -r column)
+        shift, shift_line = 0, -1  # -o -r: byte delta of earlier replacements on the SAME line
         for sub in match.submatches:
             start, end = sub.get("start"), sub.get("end")
             if not isinstance(start, int) or not isinstance(end, int):
@@ -106,14 +107,31 @@ def only_matching_lines(
             raw = _field_bytes(field)
             if token is None or raw is None:
                 raise _refuse(match, "the -o output")
-            new_start = start + shift
+            # offsets index the RECORD bytes (a -U record spans lines): locate the line/column
+            line_start = record.rfind(b"\n", 0, start) + 1
+            line_offset = record.count(b"\n", 0, start)
+            if line_start != shift_line:
+                shift, shift_line = 0, line_start
+            col0 = start - line_start + shift
             if replacing:
                 shift += len(raw) - (end - start)
-            # rg -o prints nothing for an empty match, but does print an empty replacement
-            if token or replacing:
-                token_sub = dict(sub)
-                token_sub["start"], token_sub["end"] = new_start, new_start + len(raw)
-                out.append(replace(match, text=token, submatches=(token_sub,), replaced_text=None))
+            # an EMPTY match is still a match: rg prints an empty line (and exits 0)
+            # a multi-line -o match is printed one numbered line per line; a replacement is not
+            pieces = [token] if replacing else token.split("\n")
+            for index, piece in enumerate(pieces):
+                begin = col0 if index == 0 else 0
+                piece_sub = dict(sub)
+                piece_sub["start"], piece_sub["end"] = begin, begin + len(piece.encode("utf-8"))
+                out.append(
+                    replace(
+                        match,
+                        text=piece,
+                        line_number=match.line_number + line_offset + index,
+                        submatches=(piece_sub,),
+                        replaced_text=None,
+                        rg_lines_raw=None,
+                    )
+                )
     return out
 
 

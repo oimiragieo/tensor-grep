@@ -933,7 +933,16 @@ def test_search_single_regexp_with_unused_file_option_and_only_matching_still_wo
     _FAKE_BACKEND = _FakeBackend(
         results_by_file={
             "a.py": SearchResult(
-                matches=[MatchLine(line_number=1, text="prefix ERROR suffix", file="a.py")],
+                matches=[
+                    MatchLine(
+                        line_number=1,
+                        text="prefix ERROR suffix",
+                        file="a.py",
+                        rg_kind="match",
+                        rg_lines_raw=b"prefix ERROR suffix\n",
+                        submatches=({"match": {"text": "ERROR"}, "start": 7, "end": 12},),
+                    )
+                ],
                 total_files=1,
                 total_matches=1,
             )

@@ -83,7 +83,10 @@ def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict
         "line_number": match.line_number,
         "text": match.text,
     }
-    column = _column_for_match(match, config)
+    is_context = match.rg_kind == "context"
+    if is_context:
+        payload["kind"] = "context"  # additive: only context records carry a kind
+    column = None if is_context else _column_for_match(match, config)
     if column is not None:
         payload["column"] = column
     if match.range is not None:

@@ -169,7 +169,8 @@ def _pattern_semantics_flags(config: SearchConfig | None) -> list[str]:
     if engine in {"pcre2", "auto"}:
         flags.extend(["--engine", engine])
     elif engine != "default":
-        raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
+        # ascii(): CLI diagnostics stay ASCII even when the user's value is not
+        raise BackendExecutionError(f"unsupported --engine value: {config.engine!a}")
     if config.word_regexp:
         flags.append("-w")
     if config.line_regexp:
@@ -439,6 +440,9 @@ class RipgrepBackend(ComputeBackend):
                                 )
                             ),
                             rg_kind="inverted" if inverted else "match",
+                            rg_lines_raw=(
+                                _field_bytes(data_match.get("lines")) if transforming else None
+                            ),
                         )
                     )
                     total_matches += 1

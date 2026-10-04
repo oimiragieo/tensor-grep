@@ -182,7 +182,10 @@ class RipgrepFormatter(OutputFormatter):
             if self.config.line_number:
                 prefix_parts.append(str(match.line_number))
 
-            if self.config.column:
+            if match.rg_kind == "context":
+                # rg: context lines use `-` between fields and have no column
+                lines.append("-".join([*prefix_parts, str(match.text)]))
+            elif self.config.column:
                 columns = submatch_columns or [self._column_for_match(match)]
                 for column in columns:
                     lines.append(":".join([*prefix_parts, str(column), str(match.text)]))

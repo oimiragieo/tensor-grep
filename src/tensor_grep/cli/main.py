@@ -2493,7 +2493,6 @@ def _can_passthrough_rg(
         and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
         and not (files_mode and json_mode)
-        and not only_matching
         and not (rg_json_passthrough and stats_mode)
         and not (rg_json_passthrough and (config.count or config.count_matches))
         and not (rg_json_passthrough and (files_with_matches or files_without_match))
@@ -4195,7 +4194,7 @@ def search_command(
         _exit_search_error("backend_error", str(exc), json_mode=json)
 
     if only_matching:
-        all_results.total_matches = len(all_results.matches)
+        all_results.total_matches = sum(m.rg_kind != "context" for m in all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
         matched_file_paths = {m.file for m in all_results.matches}
         matched_file_paths_ordered = []

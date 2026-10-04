@@ -96,6 +96,9 @@ class MatchLine:
     # rg record kind: "match" (ordinary), "inverted" (a -v match: printed unchanged by -o/-r)
     # or "context" (-A/-B/-C). None for non-rg engines. Only RipgrepBackend sets it.
     rg_kind: str | None = field(default=None, compare=False)
+    # the record's raw `lines` bytes (a -U match record spans several lines); set only while
+    # transforming output (-o/-r). Submatch offsets index THESE bytes.
+    rg_lines_raw: bytes | None = field(default=None, compare=False, repr=False)
     container: dict[str, object] | None = field(default=None, compare=False)
     why_ranked: list[str] | None = field(default=None, compare=False)
 
