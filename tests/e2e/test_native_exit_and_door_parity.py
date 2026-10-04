@@ -288,8 +288,16 @@ def test_every_rg_documented_flag_is_recognised_by_the_native_root_door() -> Non
 
     rg = shutil.which("rg")
     if rg is None:
-        if os.environ.get("TG_REQUIRE_RG_PARITY", "").strip().lower() in {"1", "true", "yes"}:
-            pytest.fail("TG_REQUIRE_RG_PARITY=1 but rg is not installed")
+        # native-build-smoke installs rg on Linux only (measured: the Windows job runs this suite
+        # with the marker set and no rg), so the fail-closed arm is Linux-only; the static flag
+        # list is OS-independent, so one enforcing OS is enough.
+        required = os.environ.get("TG_REQUIRE_RG_PARITY", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if required and sys.platform.startswith("linux"):
+            pytest.fail("TG_REQUIRE_RG_PARITY=1 on Linux but rg is not installed")
         pytest.skip("rg not installed")
     root = Path(__file__).resolve().parents[2]
     registry_src = (root / "rust_core" / "src" / "search_flag_registry.rs").read_text("utf-8")
