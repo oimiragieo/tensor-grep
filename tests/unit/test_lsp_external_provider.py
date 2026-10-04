@@ -17,6 +17,7 @@ from tensor_grep.cli.lsp_external_provider import (
     ExternalLSPProviderManager,
     LSPTransportError,
 )
+from tests.helpers.lsp_session import install_session
 
 
 class _CapturedSpawn(Exception):
@@ -224,7 +225,7 @@ def test_provider_status_reports_cached_client_state(
     )
     manager = ExternalLSPProviderManager()
     client = manager.get_client(language="python", workspace_root=tmp_path)
-    client.capabilities = {"definitionProvider": True}
+    install_session(client, capabilities={"definitionProvider": True})
     client.last_error = "timeout waiting for LSP response: textDocument/definition"
 
     status = manager.provider_status(language="python", workspace_root=tmp_path)
@@ -256,7 +257,7 @@ def test_external_lsp_client_drains_stderr_tail(
         stderr = StringIO("starting provider\nindexed workspace\n")
 
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
-    client.process = _FakeProcess()  # type: ignore[assignment]
+    install_session(client, process=_FakeProcess())  # type: ignore[assignment]
     client.enable_debug_trace()
 
     client._stderr_loop()
@@ -279,7 +280,7 @@ def test_provider_debug_trace_reports_probe_status_and_trace(
         self._record_debug_trace(event="process_start", detail={"command": self.command})
         self._record_debug_trace(event="send_request", method="initialize", request_id=1)
         self._record_debug_trace(event="receive_response", method="initialize", request_id=1)
-        self.capabilities = {"documentSymbolProvider": True}
+        install_session(self, capabilities={"documentSymbolProvider": True})
 
     def _fake_ensure_document(self: ExternalLSPClient, **_kwargs: object) -> None:
         self._record_debug_trace(event="send_notification", method="textDocument/didOpen")
@@ -325,9 +326,12 @@ def test_provider_status_cached_initialized_client_is_not_lsp_proof_without_prov
 
     manager = ExternalLSPProviderManager()
     client = manager.get_client(language="python", workspace_root=tmp_path)
-    client.process = _FakeProcess()  # type: ignore[assignment]
-    client.initialized = True
-    client.capabilities = {"documentSymbolProvider": True}
+    install_session(
+        client,
+        process=_FakeProcess(),
+        initialized=True,
+        capabilities={"documentSymbolProvider": True},
+    )  # type: ignore[assignment]
 
     status = manager.provider_status(language="python", workspace_root=tmp_path)
 
@@ -498,10 +502,11 @@ def test_lsp_client_closes_oldest_document_when_open_document_cap_is_exceeded(
     client = ExternalLSPClient(language="python", workspace_root=tmp_path, max_open_documents=2)
     notifications: list[tuple[str, dict[str, Any]]] = []
 
-    def _fake_notify(method: str, params: dict[str, Any]) -> None:
+    def _fake_notify(_session: Any, method: str, params: dict[str, Any]) -> None:
         notifications.append((method, params))
 
-    monkeypatch.setattr(client, "notify", _fake_notify)
+    monkeypatch.setattr(client, "start", lambda: None)
+    monkeypatch.setattr(client, "_notify", _fake_notify)
     uris = [f"file:///{index}.py" for index in range(3)]
     for uri in uris:
         client.ensure_document(uri=uri, text="def f():\n    pass\n", language_id="python")
@@ -533,12 +538,13 @@ def test_lsp_client_preserves_old_document_when_new_open_fails(
     client._opened_documents[old_uri] = None
     notifications: list[str] = []
 
-    def _fake_notify(method: str, _params: dict[str, Any]) -> None:
+    def _fake_notify(_session: Any, method: str, _params: dict[str, Any]) -> None:
         notifications.append(method)
         if method == "textDocument/didOpen":
             raise LSPTransportError("open failed")
 
-    monkeypatch.setattr(client, "notify", _fake_notify)
+    monkeypatch.setattr(client, "start", lambda: None)
+    monkeypatch.setattr(client, "_notify", _fake_notify)
 
     with pytest.raises(LSPTransportError):
         client.ensure_document(uri=new_uri, text="def f():\n    pass\n", language_id="python")
@@ -646,7 +652,9 @@ def test_provider_status_verify_health_success_reports_lsp_proof(
 
     def _fake_start(self: ExternalLSPClient) -> None:
         seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
-        self.capabilities = {"definitionProvider": True, "documentSymbolProvider": True}
+        install_session(
+            self, capabilities={"definitionProvider": True, "documentSymbolProvider": True}
+        )
 
     def _fake_ensure_document(self: ExternalLSPClient, **kwargs: object) -> None:
         opened_documents.append(dict(kwargs))
@@ -690,8 +698,11 @@ def test_provider_status_verify_health_success_suppresses_sre_stderr_tail(
     )
 
     def _fake_start(self: ExternalLSPClient) -> None:
-        self.capabilities = {"documentSymbolProvider": True}
-        self._stderr_tail = ["SRE module mismatch traceback"]
+        install_session(
+            self,
+            capabilities={"documentSymbolProvider": True},
+            stderr_tail=["SRE module mismatch traceback"],
+        )
 
     monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
     monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
@@ -730,8 +741,11 @@ def test_provider_status_verify_health_success_preserves_other_suppressed_stderr
     )
 
     def _fake_start(self: ExternalLSPClient) -> None:
-        self.capabilities = {"documentSymbolProvider": True}
-        self._stderr_tail = ["provider indexed workspace"]
+        install_session(
+            self,
+            capabilities={"documentSymbolProvider": True},
+            stderr_tail=["provider indexed workspace"],
+        )
 
     monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
     monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
@@ -766,8 +780,11 @@ def test_provider_status_verify_health_failure_preserves_sre_stderr_tail(
     )
 
     def _fake_start(self: ExternalLSPClient) -> None:
-        self.capabilities = {"documentSymbolProvider": True}
-        self._stderr_tail = ["AssertionError: SRE module mismatch"]
+        install_session(
+            self,
+            capabilities={"documentSymbolProvider": True},
+            stderr_tail=["AssertionError: SRE module mismatch"],
+        )
 
     def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
         raise LSPTransportError("semantic probe failed")
@@ -803,7 +820,7 @@ def test_provider_status_verify_health_applies_probe_budget_to_initialize(
 
     def _fake_start(self: ExternalLSPClient) -> None:
         seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
-        self.capabilities = {"documentSymbolProvider": True}
+        install_session(self, capabilities={"documentSymbolProvider": True})
 
     monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
     monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
@@ -844,9 +861,12 @@ def test_provider_status_verify_health_persists_semantic_provider_response(
             return None
 
     def _fake_start(self: ExternalLSPClient) -> None:
-        self.process = _FakeProcess()  # type: ignore[assignment]
-        self.initialized = True
-        self.capabilities = {"documentSymbolProvider": True}
+        install_session(
+            self,
+            process=_FakeProcess(),
+            initialized=True,
+            capabilities={"documentSymbolProvider": True},
+        )  # type: ignore[assignment]
 
     monkeypatch.setattr(ExternalLSPClient, "start", _fake_start)
     monkeypatch.setattr(ExternalLSPClient, "ensure_document", lambda self, **_kwargs: None)
@@ -891,9 +911,12 @@ def test_provider_status_verify_health_bounds_cached_probe_timeout(
 
     def _fake_start(self: ExternalLSPClient) -> None:
         seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
-        self.process = _FakeProcess()  # type: ignore[assignment]
-        self.initialized = True
-        self.capabilities = {"documentSymbolProvider": True}
+        install_session(
+            self,
+            process=_FakeProcess(),
+            initialized=True,
+            capabilities={"documentSymbolProvider": True},
+        )  # type: ignore[assignment]
 
     def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
         seen_timeouts.append((self.request_timeout_seconds, self.initialize_timeout_seconds))
@@ -934,7 +957,7 @@ def test_provider_status_verify_health_requires_semantic_provider_response(
     requests: list[str] = []
 
     def _fake_start(self: ExternalLSPClient) -> None:
-        self.capabilities = {"documentSymbolProvider": True}
+        install_session(self, capabilities={"documentSymbolProvider": True})
 
     def _fake_request(self: ExternalLSPClient, method: str, params: dict[str, Any]) -> object:
         requests.append(method)
@@ -1061,10 +1084,10 @@ def test_external_provider_client_starts_managed_provider_with_managed_runtime_e
     monkeypatch.setattr(provider_module.subprocess, "Popen", _fake_popen)
     monkeypatch.setattr(
         ExternalLSPClient,
-        "request",
-        lambda self, method, params: {"capabilities": {}},
+        "_request",
+        lambda self, session, method, params: {"capabilities": {}},
     )
-    monkeypatch.setattr(ExternalLSPClient, "notify", lambda self, method, params: None)
+    monkeypatch.setattr(ExternalLSPClient, "_notify", lambda self, session, method, params: None)
 
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
     client.start()
@@ -1359,7 +1382,7 @@ def test_external_provider_client_stop_sends_shutdown_request_then_exit_notifica
     )
 
     client = ExternalLSPClient(language="python", workspace_root=tmp_path)
-    client.process = _FakeProcess()  # type: ignore[assignment]
+    install_session(client, process=_FakeProcess())  # type: ignore[assignment]
     client._message_queue.put({"jsonrpc": "2.0", "id": 1, "result": None})
 
     client.stop()

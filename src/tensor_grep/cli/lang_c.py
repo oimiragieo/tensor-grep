@@ -404,7 +404,7 @@ def c_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     record per declarator so ``typedef int A, B;`` yields both). Imports come from every
     ``preproc_include`` directive's target text (see ``_c_include_target_text``).
     """
-    if path.suffix != ".c":
+    if path.suffix.lower() != ".c":
         return [], []
 
     parser = _c_parser()
@@ -523,7 +523,7 @@ def c_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
 # resolution has no standardized C manifest to resolve against (see the module docstring), so a
 # real path is not guessable without fabricating one.
 def c_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".c":
+    if path.suffix.lower() != ".c":
         return []
 
     parser = _c_parser()
@@ -568,7 +568,7 @@ def c_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     "every real AST node is a legitimate hit" behavior C#'s own module already ships (an
     interface method and its class implementation sharing a name both resolve as separate
     ``tg source`` blocks)."""
-    if path.suffix != ".c":
+    if path.suffix.lower() != ".c":
         return []
 
     parser = _c_parser()
@@ -764,7 +764,7 @@ def c_references_and_calls(
     preferred definitions), a bare call whose file ``#include``-resolves into those directories
     earns the cross-file confirmed band (``c-include-path-confirmation``).
     """
-    if path.suffix != ".c":
+    if path.suffix.lower() != ".c":
         return [], []
 
     parser = _c_parser()

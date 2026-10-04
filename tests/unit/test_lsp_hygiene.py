@@ -453,11 +453,11 @@ class TestMonotonicVersion:
 
         sent_versions: list[int] = []
 
-        def _capture_notify(method: str, params: dict[str, Any]) -> None:
+        def _capture_notify(_session: Any, method: str, params: dict[str, Any]) -> None:
             if method == "textDocument/didChange":
                 sent_versions.append(params["textDocument"]["version"])
 
-        monkeypatch.setattr(client, "notify", _capture_notify)
+        monkeypatch.setattr(client, "_notify", _capture_notify)
         # Simulate document open.
         with client._lock:
             client._doc_versions[uri] = 1
@@ -481,7 +481,7 @@ class TestMonotonicVersion:
         uri = "file:///test/not_opened.py"
 
         called = []
-        monkeypatch.setattr(client, "notify", lambda *a, **kw: called.append(a))
+        monkeypatch.setattr(client, "_notify", lambda *a, **kw: called.append(a))
 
         # Should silently skip — document was never opened.
         client.did_change(uri=uri, text="irrelevant", version=1)

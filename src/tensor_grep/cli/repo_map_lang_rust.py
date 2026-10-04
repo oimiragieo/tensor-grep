@@ -381,7 +381,7 @@ def _rust_use_binding_match_details(
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str, ...]:
     path = Path(definition_path)
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return ()
     try:
         source = path.read_text(encoding="utf-8")
@@ -405,7 +405,7 @@ def _rust_impl_method_candidates(definition_path: str, symbol: str) -> tuple[str
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
 def _rust_impl_owner_type(definition_path: str, line_number: int) -> str | None:
     path = Path(definition_path)
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return None
     try:
         source = path.read_text(encoding="utf-8")
@@ -611,7 +611,7 @@ def _rust_import_update_target(
 
 
 def _rust_parser_symbols(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return []
 
     parsed = _self._parsed_source_and_tree(str(path))
@@ -662,7 +662,7 @@ def _rust_references_and_calls(
     symbol: str,
     repo_root: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return [], []
 
     try:
@@ -813,7 +813,7 @@ def _rust_provider_alias_calls(
     *,
     include_assignment_wrappers: bool = False,
 ) -> list[dict[str, Any]]:
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return []
 
     try:
@@ -944,7 +944,7 @@ def _rust_provider_alias_calls(
 
 
 def _rust_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return []
 
     parser = _self._rust_parser()
@@ -1010,7 +1010,7 @@ def _rust_references_and_calls_for_registry(
 
 
 def _rust_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._RUST_SUFFIXES:
         return []
     try:
         file_size = path.stat().st_size
@@ -1130,7 +1130,7 @@ def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
         relative = test_path.resolve().relative_to(repo_root)
     except ValueError:
         return None
-    if relative.suffix != ".rs" or "tests" not in relative.parts:
+    if relative.suffix.lower() != ".rs" or "tests" not in relative.parts:
         return None
     parts = list(relative.parts)
     tests_index = parts.index("tests")
@@ -1151,7 +1151,7 @@ def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:
         relative = test_path.resolve().relative_to(repo_root)
     except ValueError:
         return False
-    if relative.suffix != ".rs" or "tests" not in relative.parts:
+    if relative.suffix.lower() != ".rs" or "tests" not in relative.parts:
         return False
     parts = list(relative.parts)
     tests_index = parts.index("tests")

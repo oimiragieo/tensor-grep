@@ -41,7 +41,7 @@ else:
 
 
 def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
         return [], []
 
     try:
@@ -53,7 +53,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
     symbols: list[dict[str, Any]] = []
 
     for line_number, line in enumerate(lines, start=1):
-        if path.suffix in _self._JS_TS_SUFFIXES:
+        if path.suffix.lower() in _self._JS_TS_SUFFIXES:
             import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
             export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
             require_match = re.match(
@@ -137,7 +137,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                         end_line=end_line,
                     )
                 )
-        elif path.suffix in _self._RUST_SUFFIXES:
+        elif path.suffix.lower() in _self._RUST_SUFFIXES:
             use_match = re.match(r"^\s*use\s+([^;]+);", line)
             fn_match = re.match(
                 r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
@@ -209,7 +209,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
 def _regex_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
         return [], []
 
     try:
@@ -285,7 +285,7 @@ def _regex_references_and_calls(
                 "line": line_number,
                 "text": line,
             })
-        supports_template_strings = path.suffix in _self._JS_TS_SUFFIXES
+        supports_template_strings = path.suffix.lower() in _self._JS_TS_SUFFIXES
         sanitized_line = _strip_line_string_and_comment_noise(
             line, supports_template_strings=supports_template_strings
         )
@@ -311,7 +311,7 @@ def _regex_references_and_calls(
 
 
 def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
         return []
 
     try:
@@ -319,7 +319,7 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     except (OSError, UnicodeDecodeError):
         return []
 
-    if path.suffix in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() in _self._JS_TS_SUFFIXES:
         escaped_symbol = re.escape(symbol)
         patterns = [
             (

@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.123.14 (2026-10-04)
+
+### Bug Fixes
+
+- **diff-impact**: Close git argv injection, parse quoted/space/deleted paths, fail closed on git
+  failure ([#1194](https://github.com/oimiragieo/tensor-grep/pull/1194),
+  [`92a39de`](https://github.com/oimiragieo/tensor-grep/commit/92a39def024c28b1267d73321e9e526e9e96a298))
+
+Close git argv injection in diff-impact, parse quoted/space/deleted paths, bind extracted content to
+  the diff's post-image object id, refuse symlinks, confine and bound every read, and honour
+  --deadline (wave-1 Part A of the 2026-10-03 bug hunt). Codex adversarial audit SHIP at the
+  round-19 closure audit; CI green on fc49432.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **doctor**: Bound external LSP provider shutdown so tg doctor cannot hang
+  ([#1199](https://github.com/oimiragieo/tensor-grep/pull/1199),
+  [`2c4c112`](https://github.com/oimiragieo/tensor-grep/commit/2c4c1123f7f05be5b930452032dfe4b5ec016e3c))
+
+Bound the doctor LSP probe so tg doctor cannot hang: contained provider process tree, one absolute
+  deadline with a session-bound watchdog, deadline-bounded locks, per-session provider state, and
+  proof recorded only from the current session's responses (2026-10-03 bug hunt). Codex adversarial
+  audit SHIP at the round-12 closure confirmation; CI green on 1cb4365.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.13 (2026-10-04)
 
 ### Bug Fixes

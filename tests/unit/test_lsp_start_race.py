@@ -46,7 +46,7 @@ def test_concurrent_start_spawns_exactly_one_process(tmp_path, monkeypatch):
 
     monkeypatch.setattr(provider_module.subprocess, "Popen", _fake_popen)
     # skip the real initialize handshake (which would need a live reader/stdio round-trip)
-    monkeypatch.setattr(client, "request", lambda *a, **k: {"capabilities": {}})
+    monkeypatch.setattr(client, "_request", lambda *a, **k: {"capabilities": {}})
 
     threads = [threading.Thread(target=client.start) for _ in range(6)]
     for thread in threads:

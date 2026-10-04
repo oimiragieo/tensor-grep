@@ -21,9 +21,11 @@ This module sits in the same directory as `main.py`, so the depth is unchanged b
 """
 
 import json
+import math
 import os
 import re
 import sys
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -152,22 +154,85 @@ def _doctor_lsp_probe_timeout_seconds() -> float:
     return _self._DOCTOR_LSP_PROBE_TIMEOUT_SECONDS
 
 
+_DOCTOR_LSP_TOTAL_TIMEOUT_ENV = "TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS"
+_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS = 90.0
+
+
+def _doctor_lsp_total_timeout_seconds() -> float:
+    """Total wall-clock budget for the whole external-LSP probe sweep (all languages)."""
+    raw_timeout = os.environ.get(_DOCTOR_LSP_TOTAL_TIMEOUT_ENV)
+    if raw_timeout:
+        try:
+            parsed_timeout = float(raw_timeout)
+        except ValueError:
+            parsed_timeout = 0.0
+        if math.isfinite(parsed_timeout) and parsed_timeout > 0:
+            return parsed_timeout
+    return _DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS
+
+
+def _doctor_lsp_unresponsive_status(
+    language: str, workspace_root: Path, reason: str
+) -> dict[str, Any]:
+    """Fail-closed report for a provider the sweep never probed (total deadline hit).
+
+    Reported ``unresponsive`` -- never ``ready`` and never silently omitted.
+    """
+    from tensor_grep.cli import lsp_external_provider as _lsp
+
+    try:
+        command: list[str] = list(_lsp._provider_command(language))
+    except (FileNotFoundError, ValueError):
+        command = []
+    return _lsp._attach_lsp_proof_fields({
+        "language": language.lower(),
+        "workspace_root": str(workspace_root.resolve()),
+        "available": bool(command),
+        "health_status": "unresponsive",
+        "health_check": "deadline_exceeded",
+        "running": False,
+        "command": command,
+        "initialized": False,
+        "capabilities": {},
+        "last_error": reason,
+        "opened_documents": 0,
+        "cooldown_remaining_s": 0.0,
+    })
+
+
 def _doctor_lsp_provider_statuses(path: str) -> list[dict[str, Any]]:
     from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager
 
     manager = ExternalLSPProviderManager()
     workspace_root = Path(path).resolve()
     probe_timeout_seconds = _doctor_lsp_probe_timeout_seconds()
+    total_timeout_seconds = _doctor_lsp_total_timeout_seconds()
+    deadline = time.monotonic() + total_timeout_seconds
+    statuses: list[dict[str, Any]] = []
     try:
-        return [
-            manager.provider_status(
-                language=language,
-                workspace_root=workspace_root,
-                verify_health=True,
-                probe_timeout_seconds=probe_timeout_seconds,
+        for language in _doctor_lsp_languages():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                # Fail closed in the report, never hang: later providers are unprobed.
+                statuses.append(
+                    _doctor_lsp_unresponsive_status(
+                        language,
+                        workspace_root,
+                        f"doctor LSP probe deadline ({total_timeout_seconds:g}s total) "
+                        "exhausted before this provider was probed",
+                    )
+                )
+                continue
+            statuses.append(
+                manager.provider_status(
+                    language=language,
+                    workspace_root=workspace_root,
+                    verify_health=True,
+                    probe_timeout_seconds=min(probe_timeout_seconds, remaining),
+                    deadline_monotonic=deadline,
+                )
             )
-            for language in _doctor_lsp_languages()
-        ]
+        return statuses
     finally:
         manager.stop_all()
 

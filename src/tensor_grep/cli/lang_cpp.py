@@ -546,7 +546,7 @@ def cpp_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]
     whatever it wraps. Imports come from every ``preproc_include`` directive's target text (see
     ``_cpp_include_target_text``).
     """
-    if path.suffix not in _CPP_SUFFIXES:
+    if path.suffix.lower() not in _CPP_SUFFIXES:
         return [], []
 
     parser = _cpp_parser()
@@ -695,7 +695,7 @@ def cpp_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]
 # resolution has no standardized C++ manifest to resolve against (see the module docstring), so a
 # real path is not guessable without fabricating one.
 def cpp_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _CPP_SUFFIXES:
+    if path.suffix.lower() not in _CPP_SUFFIXES:
         return []
 
     parser = _cpp_parser()
@@ -739,7 +739,7 @@ def cpp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     source block for EACH matching AST node (no dedup/preference between them) -- the same
     "every real AST node is a legitimate hit" behavior C's own module already ships (a prototype
     and its later definition sharing a name both resolve as separate ``tg source`` blocks)."""
-    if path.suffix not in _CPP_SUFFIXES:
+    if path.suffix.lower() not in _CPP_SUFFIXES:
         return []
 
     parser = _cpp_parser()
@@ -1076,7 +1076,7 @@ def cpp_references_and_calls(
     resolves into those directories earns the cross-file confirmed band
     (``cpp-include-path-confirmation``).
     """
-    if path.suffix not in _CPP_SUFFIXES:
+    if path.suffix.lower() not in _CPP_SUFFIXES:
         return [], []
 
     parser = _cpp_parser()
