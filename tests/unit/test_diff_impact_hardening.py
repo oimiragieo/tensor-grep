@@ -756,3 +756,72 @@ def test_deletion_exemption_never_suppresses_analysis_of_a_surviving_source_file
     symbols = map_changed_lines_to_symbols(hunks, root, out)
     assert [s["name"] for s in symbols] == ["changed"]
     assert out == []
+
+
+@pytest.mark.parametrize("name", ["app.PY", "app.Py", "app.pY"])
+@pytest.mark.parametrize(
+    ("after", "reason"),
+    [
+        (b"def changed():\n    return 2\ndef broken(:\n", "extraction_failed: SyntaxError"),
+        (
+            b"def changed():\n    return 2\n# bad byte \xff\n",
+            "extraction_failed: UnicodeDecodeError",
+        ),
+    ],
+)
+def test_uppercase_python_suffix_cannot_bypass_the_parse_check(
+    tmp_path: Path, monkeypatch: Any, name: str, after: bytes, reason: str
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / name).write_bytes(b"def changed():\n    return 1\n")
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / name).write_bytes(after)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [{"path": name, "reason": reason}]
+    assert data["incomplete_reason"] == "extraction_failed"
+
+
+def test_uppercase_suffix_symbol_free_valid_file_stays_analyzed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "app.PY").write_bytes(b"x = 1\n")
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "app.PY").write_bytes(b"x = 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    assert json.loads(res.stdout)["not_analyzed_paths"] == []
+
+
+@pytest.mark.parametrize("name", ["app.PY", "app.Py"])
+def test_valid_uppercase_python_file_with_symbols_is_not_silently_symbol_free(
+    tmp_path: Path, monkeypatch: Any, name: str
+) -> None:
+    # The Python extractor itself compares `path.suffix != ".py"` case-sensitively and returns
+    # ([], []) for `app.PY` without parsing it. A valid file with defs must not be reported as
+    # analysed-with-no-symbols: it fails closed until the extractor is fixed.
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / name).write_bytes(b"def changed():\n    return 1\n")
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / name).write_bytes(b"def changed():\n    return 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    data = json.loads(res.stdout)
+    if data["changed_symbols"]:  # extractor fixed upstream: symbols are reported, all good
+        assert [s["name"] for s in data["changed_symbols"]] == ["changed"]
+        assert res.exit_code == 0
+    else:
+        assert res.exit_code == 2, res.stdout
+        assert data["not_analyzed_paths"] == [
+            {"path": name, "reason": "extraction_failed: UnsupportedSuffixCase"}
+        ]

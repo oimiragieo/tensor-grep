@@ -756,6 +756,7 @@ def _map_one_path(
         return "not_analyzed", "file_missing", []
 
     before = _file_identity(full_path)
+    extractor_skipped_suffix = False
     try:
         spec = lang_registry.spec_for_path(full_path)
         symbols: list[dict[str, Any]]
@@ -769,10 +770,24 @@ def _map_one_path(
             # results (so normal files cost nothing), with the extractor's reader rules (strict
             # UTF-8, then ast.parse). Tree-sitter languages' parse-gap is owned by wave 2a G1
             # (r25 disposition for diff_impact.py:164/:169), deliberately not rebuilt here.
-            if full_path.suffix == ".py":
-                ast.parse(full_path.read_text(encoding="utf-8"))
+            # Same language decision as the registry (which lowercases suffixes): `app.PY` is
+            # handled by the Python extractor, so it gets the same re-check.
+            if full_path.suffix.lower() == ".py" or (
+                spec is not None and spec is lang_registry.spec_for_path("x.py")
+            ):
+                tree = ast.parse(full_path.read_text(encoding="utf-8"))
+                # The Python extractor compares `path.suffix != ".py"` case-sensitively and
+                # returns ([], []) for `app.PY` without parsing it. If the file really defines
+                # symbols, the empty result is the extractor skipping it, not a symbol-free file.
+                if full_path.suffix != ".py" and any(
+                    isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                    for n in ast.walk(tree)
+                ):
+                    extractor_skipped_suffix = True
     except _extraction_errors() as exc:  # narrow on purpose: anything else is a bug, not a gap
         return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    if extractor_skipped_suffix:
+        return "not_analyzed", "extraction_failed: UnsupportedSuffixCase", []
 
     after = _file_identity(full_path)
     if (
