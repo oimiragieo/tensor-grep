@@ -44,23 +44,14 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO, NamedTuple
 
-# ---------------------------------------------------------------------------------------------
-# Enumeration is BOUND TO AN OPEN DIRECTORY, never to a pathname lookup.
-#
-# A pathname `lstat` cannot authenticate which directory supplied a listing (A is moved aside, a
-# symlink to an empty dir takes its name, the walker lists the impostor, A is restored before the
-# tuple is yielded). So:
-#   POSIX   - `os.fwalk(follow_symlinks=False)` lists through an open dirfd; every leaf is then
-#             stat'ed / opened / readlink'ed RELATIVE to that dirfd (`dir_fd=`), and the dirfd's
-#             own `fstat` identity is compared with the identity recorded at classification.
-#   Windows - no `dir_fd`: every directory in the current root-to-leaf chain is HELD open
-#             (`CreateFileW`, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, OPEN_EXISTING,
-#             BACKUP_SEMANTICS | OPEN_REPARSE_POINT, share READ|WRITE but NOT DELETE) for as long
-#             as it is walked, so it cannot be renamed, deleted or replaced; the handle must not
-#             be a reparse point and its file id must match the recorded identity.
-# The per-directory dirfd registry below makes the path-taking seams (`_lstat`, `_os_open`,
+# Enumeration is BOUND TO AN OPEN DIRECTORY, never to a pathname lookup (a pathname `lstat` cannot
+# authenticate which directory supplied a listing). POSIX: an iterative walk over open dirfds
+# (`_fd_walk`); every leaf is stat'ed / opened / readlink'ed RELATIVE to its dirfd (`dir_fd=`) and
+# the dirfd's `fstat` identity is compared with the one recorded at classification. Windows (no
+# `dir_fd`): every directory of the current chain is HELD open without FILE_SHARE_DELETE
+# (`_held_walk`), so it cannot be renamed, deleted or replaced; it must not be a reparse point and
+# its file id must match. The registry below makes the path-taking seams (`_lstat`, `_os_open`,
 # `_readlink`) use `dir_fd=` automatically while a directory's tuple is being processed.
-# ---------------------------------------------------------------------------------------------
 _dir_ctx = threading.local()
 
 
