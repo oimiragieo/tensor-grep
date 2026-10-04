@@ -10,7 +10,7 @@ from tensor_grep.backends.cudf_backend import CuDFBackend
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend, _pattern_semantics_flags
 from tensor_grep.backends.rust_backend import RustCoreBackend
 from tensor_grep.backends.stringzilla_backend import StringZillaBackend
-from tensor_grep.core.case_semantics import smart_case_needs_rg
+from tensor_grep.core.case_semantics import effective_ignore_case, smart_case_needs_rg
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
@@ -43,6 +43,14 @@ def _unsupported_flags(
     # "-S" is only exact for patterns whose case rg's smart-case scan reads literally.
     if "-S" in flags and smart_case_needs_rg(config) and "-S" not in bad:
         bad.append("-S")
+    # Case-insensitive + non-ASCII pattern: lower()/re.IGNORECASE are not rg's Unicode case
+    # folding (backends/unicode_fold.py). An ASCII pattern is still checked against the file
+    # content at search time, where the content is known.
+    patterns = [config.query_pattern or "", *(config.regexp or [])]
+    if any(not p.isascii() for p in patterns) and any(
+        effective_ignore_case(config, p, strict=False) for p in patterns
+    ):
+        bad.append("non-ascii case-insensitive pattern")
     return bad
 
 

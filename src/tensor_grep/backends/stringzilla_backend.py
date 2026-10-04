@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
 from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
@@ -432,6 +433,9 @@ class StringZillaBackend(ComputeBackend):
             import stringzilla as sz  # noqa: F401
 
             ignore_case = effective_ignore_case(config, pattern)
+            if ignore_case and not ascii_fold_exact(pattern, file_path):
+                # lower() is not rg's Unicode case folding (final sigma, ...): let rg decide
+                return delegate_to_rg(file_path, pattern, config)
             if config and config.fixed_strings:
                 indexed = self._search_with_index(file_path, pattern, config, ignore_case)
                 if indexed is not None:

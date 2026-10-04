@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
@@ -615,6 +616,10 @@ class CPUBackend(ComputeBackend):
                 file_path,
                 exc,
             )
+
+        if effective_ignore_case(config, pattern) and not ascii_fold_exact(pattern, file_path):
+            # re.IGNORECASE is not rg's Unicode case folding (U+0130/U+0131 vs i): rg decides
+            return delegate_to_rg(file_path, pattern, config)
 
         matches = []
         flags = 0

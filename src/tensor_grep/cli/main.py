@@ -33,7 +33,6 @@ from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
-from tensor_grep.cli import rg_replacement as _rg_replacement
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note
@@ -41,6 +40,8 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
+from tensor_grep.cli.rg_post_process import only_matching_lines as _only_matching_lines
+from tensor_grep.cli.rg_post_process import replace_lines as _replace_lines
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version as _native_tg_version,
 )
@@ -115,7 +116,7 @@ else:
 
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import MatchLine, SearchResult
+    from tensor_grep.core.result import SearchResult
     from tensor_grep.core.retrieval_chunker import Chunk
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -2642,83 +2643,6 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
         raise typer.Exit(int(last_completed.returncode or 1))
     typer.echo(unavailable_message, err=True)
     raise typer.Exit(1)
-
-
-def _replace_lines(
-    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
-) -> list["MatchLine"]:
-    if config.replace_str is None:
-        return matches
-
-    flags = case_regex_flags(config, pattern)
-
-    if config.fixed_strings:
-        regex = re.compile(re.escape(pattern), flags)
-    elif config.line_regexp:
-        regex = re.compile(f"^{pattern}$", flags)
-    elif config.word_regexp:
-        regex = re.compile(rf"\b{pattern}\b", flags)
-    else:
-        regex = re.compile(pattern, flags)
-
-    extracted: list[MatchLine] = []
-    for match in matches:
-        replacement = config.replace_str
-        if config.fixed_strings and "$" not in replacement:
-            flags_val = flags
-            if flags_val & re.IGNORECASE:
-                new_text = re.sub(
-                    re.escape(pattern),
-                    replacement.replace("\\", r"\\"),
-                    match.text,
-                    flags=re.IGNORECASE,
-                )
-            else:
-                new_text = match.text.replace(pattern, replacement)
-            extracted.append(replace(match, text=new_text))
-            continue
-        if regex is not None:
-
-            def _expand_match(current: re.Match[str], replacement: str = replacement) -> str:
-                return _expand_ripgrep_replacement(replacement, current)
-
-            new_text = regex.sub(
-                _expand_match,
-                match.text,
-            )
-        else:
-            new_text = match.text
-        extracted.append(replace(match, text=new_text))
-    return extracted
-
-
-# Split to cli/rg_replacement.py under the file-size ratchet; alias keeps the local name.
-_expand_ripgrep_replacement = _rg_replacement.expand_ripgrep_replacement
-
-
-def _only_matching_lines(
-    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
-) -> list["MatchLine"]:
-    flags = case_regex_flags(config, pattern)
-
-    if config.fixed_strings:
-        regex = re.compile(re.escape(pattern), flags)
-    elif config.line_regexp:
-        regex = re.compile(f"^{pattern}$", flags)
-    elif config.word_regexp:
-        regex = re.compile(rf"\b{pattern}\b", flags)
-    else:
-        regex = re.compile(pattern, flags)
-
-    extracted: list[MatchLine] = []
-    for match in matches:
-        for token in regex.findall(match.text):
-            if isinstance(token, tuple):
-                token = "".join(token)
-            token_text = str(token)
-            if token_text:
-                extracted.append(replace(match, text=token_text))
-    return extracted
 
 
 def _normalize_string_list(value: object, fallback: list[str]) -> list[str]:
