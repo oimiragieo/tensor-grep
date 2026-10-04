@@ -28,8 +28,11 @@ from tensor_grep.cli.subprocess_policy import (
     run_subprocess,
 )
 
+# Digit groups are bounded: an unbounded \d+ let a 5000-digit hunk number reach int() and raise
+# a bare ValueError that bypassed every DiffError handler (and the CLI exit-2 path).
 _DIFF_HUNK_RE = re.compile(
-    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
+    r"^@@ -(?P<old_start>\d{1,9})(?:,(?P<old_count>\d{1,9}))? "
+    r"\+(?P<new_start>\d{1,9})(?:,(?P<new_count>\d{1,9}))? @@"
 )
 _GITLINK_INDEX_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ 160000$")
 _C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
@@ -82,6 +85,47 @@ def _validate_ref(ref: str) -> str:
     return ref
 
 
+def _hunk_new_range(match: re.Match[str]) -> tuple[int, int]:
+    """The new-side changed line range of a parsed hunk header (shared by parser and validator)."""
+    start = int(match.group("new_start"))
+    count_str = match.group("new_count")
+    count = int(count_str) if count_str is not None else 1
+    if count == 0:
+        # Pure deletion at line `start`, changed point is line start
+        line_start = max(1, start)
+        return line_start, line_start
+    return start, start + count - 1
+
+
+def _merge_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Sort and merge adjacent or overlapping inclusive ranges."""
+    if not ranges:
+        return []
+    ordered = sorted(ranges)
+    merged: list[tuple[int, int]] = [ordered[0]]
+    for r_start, r_end in ordered[1:]:
+        last_start, last_end = merged[-1]
+        if r_start <= last_end + 1:
+            merged[-1] = (last_start, max(last_end, r_end))
+        else:
+            merged.append((r_start, r_end))
+    return merged
+
+
+_DRIVE_RE = re.compile(r"^[A-Za-z]:")
+
+
+def _check_safe_rel_path(rel: str) -> None:
+    """Refuse a diff path that is not a plain repo-relative path (reason: unsafe_path).
+
+    Absolute, drive-qualified (C:), UNC, or any path with a `..` component could make
+    `root / rel_path` point outside the repository.
+    """
+    segments = re.split(r"[\\/]", rel)
+    if not rel or rel[0] in "/\\" or _DRIVE_RE.match(rel) or ".." in segments or "\x00" in rel:
+        raise DiffError("unsafe_path", f"refusing diff path outside the repository: {rel!r}")
+
+
 def _git_header_path(raw: str) -> Path | None:
     """Decode a ---/+++ header operand ('/dev/null' -> None, quoted C-string -> text)."""
     if raw == "/dev/null":
@@ -108,7 +152,9 @@ def _git_header_path(raw: str) -> Path | None:
         raw = out.decode("utf-8", errors="surrogateescape")
     elif raw.endswith("\t"):
         raw = raw[:-1]
-    return Path(raw[2:]) if raw[:2] in ("a/", "b/") else Path(raw)
+    rel = raw[2:] if raw[:2] in ("a/", "b/") else raw
+    _check_safe_rel_path(rel)
+    return Path(rel)
 
 
 def _diff_git_line_path(rest: str) -> Path | None:
@@ -179,12 +225,26 @@ def _quoted_operand(raw: str, prefix: str) -> str:
     return f'"{prefix}{raw[1:]}' if raw.startswith('"') else f"{prefix}{raw}"
 
 
-def _validate_record(record: list[str]) -> tuple[Path, str] | None:
+def _close_hunk(hint: str, hunk: list[Any] | None) -> None:
+    """Require a hunk body to carry exactly the line counts its header declares."""
+    if hunk is None:
+        return
+    header, exp_old, exp_new, seen_old, seen_new = hunk
+    if (seen_old, seen_new) != (exp_old, exp_new):
+        raise _unparsed(
+            hint,
+            f"hunk {header[:60]!r} declares -{exp_old}/+{exp_new} lines but its body has "
+            f"-{seen_old}/+{seen_new} (surplus, missing or truncated lines)",
+        )
+
+
+def _validate_record(record: list[str]) -> tuple[Path, str, list[tuple[int, int]]] | None:
     """Classify ONE `diff --git` record; raise DiffError unless it is a recognised shape.
 
-    Returns the (path, kind) the parser MUST produce for this record, or None for a verified pure
-    rename/copy (which records nothing by design). A record is accepted only if it has a
-    recoverable identity, so validator and parser cannot disagree about whether it is a change.
+    Returns the (path, kind, ranges) the parser MUST produce for this record, or None for a
+    verified pure rename/copy (which records nothing by design). A record is accepted only if it
+    has a recoverable identity and a well-formed body, so validator and parser cannot disagree
+    about whether it is a change, or about which lines changed.
     """
     rest = record[0][len("diff --git ") :]
     same_path = _diff_git_line_path(rest)
@@ -194,6 +254,9 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
     hunks = 0
     old_mode = new_mode = new_file = deleted_file = False
     sim100 = False
+    is_sub = False
+    hunk: list[Any] | None = None
+    ranges: list[tuple[int, int]] = []
     pair: dict[str, str] = {}
     for line in record[1:]:
         if line.startswith(_UNMERGED_PREFIX):
@@ -204,15 +267,34 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
             )
         if line.startswith("@@ "):
             # the parser's own regex: a hunk header it cannot read would silently record nothing
-            if not _DIFF_HUNK_RE.match(line):
+            hm = _DIFF_HUNK_RE.match(line)
+            if hm is None:
                 raise _unparsed(hint, f"malformed hunk header {line[:80]!r}")
+            _close_hunk(hint, hunk)
+            hunk = [
+                line,
+                int(hm.group("old_count")) if hm.group("old_count") is not None else 1,
+                int(hm.group("new_count")) if hm.group("new_count") is not None else 1,
+                0,
+                0,
+            ]
+            ranges.append(_hunk_new_range(hm))
             hunks += 1
             body = True
             continue
         if body:
-            if line[:1] in (" ", "+", "-", "\\"):
-                continue
-            raise _unparsed(hint, f"stray line {line[:80]!r} inside a hunk")
+            assert hunk is not None
+            lead = line[:1]
+            if lead == " ":
+                hunk[3] += 1
+                hunk[4] += 1
+            elif lead == "-":
+                hunk[3] += 1
+            elif lead == "+":
+                hunk[4] += 1
+            elif lead != "\\":  # "\ No newline at end of file" counts toward neither side
+                raise _unparsed(hint, f"stray line {line[:80]!r} inside a hunk")
+            continue
         if line.startswith("--- "):
             has_minus = True
             minus_raw = line[4:]
@@ -220,13 +302,15 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
             has_plus = True
             plus_raw = line[4:]
         elif _INDEX_LINE_RE.match(line):
-            pass
+            is_sub = is_sub or line.endswith(" 160000")
         elif m := _MODE_LINE_RE.match(line):
+            is_sub = is_sub or line.endswith(" 160000")
             if m.group(1) == "old":
                 old_mode = True
             else:
                 new_mode = True
         elif m := _FILE_MODE_LINE_RE.match(line):
+            is_sub = is_sub or line.endswith(" 160000")
             if m.group(1) == "new":
                 new_file = True
             else:
@@ -244,7 +328,9 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
         else:
             raise _unparsed(hint, f"unexpected line {line[:80]!r}")
 
+    _close_hunk(hint, hunk)
     pair_dest: Path | None = None
+    pair_src: Path | None = None
     if len(pair) == 2:
         for kind in ("rename", "copy"):
             src, dst = pair.get(f"{kind} from"), pair.get(f"{kind} to")
@@ -252,12 +338,19 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
                 expected = f"{_quoted_operand(src, 'a/')} {_quoted_operand(dst, 'b/')}"
                 if rest == expected:
                     pair_dest = _git_header_path(_quoted_operand(dst, "b/"))
+                    pair_src = _git_header_path(_quoted_operand(src, "a/"))
+    if pair and pair_dest is None:
+        raise _unparsed(hint, "rename/copy metadata is incomplete or does not match the header")
     identity = pair_dest if pair_dest is not None else same_path
     add_del = new_file or deleted_file
 
     if has_minus and has_plus and hunks >= 1:
         # (a) text change (also covers submodule gitlink hunks); path must be recoverable
         old_p, new_p = _git_header_path(minus_raw), _git_header_path(plus_raw)
+        exp_old = pair_src if pair_dest is not None else same_path
+        exp_new = pair_dest if pair_dest is not None else same_path
+        if (old_p is not None and old_p != exp_old) or (new_p is not None and new_p != exp_new):
+            raise _unparsed(hint, "---/+++ paths do not match the diff --git header operands")
         if (new_file and old_p is not None) or (deleted_file and new_p is not None):
             raise _unparsed(hint, "add/delete disagrees with /dev/null in its ---/+++ lines")
         if (old_p is None and not new_file) or (new_p is None and not deleted_file):
@@ -265,11 +358,10 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
         target = new_p if new_p is not None else old_p
         if target is None:
             raise _unparsed(hint, "no recoverable path in ---/+++ lines")
-        return target, "deleted" if deleted_file else "text"
+        kept = [] if (deleted_file or is_sub) else _merge_ranges(ranges)
+        return target, "deleted" if deleted_file else "text", kept
     if (hunks == 0 and (has_minus or has_plus)) or (hunks and not (has_minus and has_plus)):
         raise _unparsed(hint, "incomplete ---/+++/@@ structure")
-    if pair and pair_dest is None:
-        raise _unparsed(hint, "rename/copy metadata is incomplete or does not match the header")
     if binary:  # (b)
         if identity is None:
             raise _unparsed(hint, "binary record has no recoverable path")
@@ -277,23 +369,23 @@ def _validate_record(record: list[str]) -> tuple[Path, str] | None:
             raise _unparsed(hint, "added binary disagrees with /dev/null")
         if deleted_file and not binary_line.endswith(" and /dev/null differ"):
             raise _unparsed(hint, "deleted binary disagrees with /dev/null")
-        return identity, "deleted" if deleted_file else "binary"
+        return identity, "deleted" if deleted_file else "binary", []
     if add_del and not pair and not (old_mode or new_mode):
         if same_path is None:  # (a) header-only add/delete needs a same-file operand pair
             raise _unparsed(hint, "header-only add/delete has no recoverable path")
-        return same_path, "deleted" if deleted_file else "added"
+        return same_path, "deleted" if deleted_file else "added", []
     if pair and not sim100:
         raise _unparsed(hint, "rename/copy record is not 100% similar and has no content")
     if old_mode and new_mode and not add_del:  # (c) mode-only (optionally a verified pure rename)
         if identity is None:
             raise _unparsed(hint, "mode-only record has no recoverable path")
-        return identity, "mode"
+        return identity, "mode", []
     if pair_dest is not None and not (old_mode or new_mode or add_del):
         return None  # (e) verified pure rename/copy
     raise _unparsed(hint, "record matches no supported shape")
 
 
-def _validate_records(diff_text: str) -> list[tuple[Path, str]]:
+def _validate_records(diff_text: str) -> list[tuple[Path, str, list[tuple[int, int]]]]:
     """Validate EVERY record of git's output; return what the parser must have produced."""
     lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
     if lines and lines[-1] == "":
@@ -312,7 +404,7 @@ def _validate_records(diff_text: str) -> list[tuple[Path, str]]:
             records[-1].append(line)
         elif line.strip():
             raise _unparsed("<output>", f"line outside any diff record: {line[:80]!r}")
-    expectations: list[tuple[Path, str]] = []
+    expectations: list[tuple[Path, str, list[tuple[int, int]]]] = []
     for record in records:
         expected = _validate_record(record)
         if expected is not None:
@@ -324,10 +416,12 @@ def _parse_checked(diff_text: str) -> DiffHunks:
     """Parse, but never let unexplained git output silently become 'no changes'.
 
     Cross-check: every record the validator accepted as a change MUST appear in the parsed
-    result, so validator and parser can never drift apart without failing closed.
+    result with exactly the ranges the validator derived from the hunk bodies, and the parser
+    may not invent entries, so validator and parser can never drift apart without failing closed.
     """
     parsed = parse_git_diff_hunks(diff_text)  # raises on combined (merge) diffs
-    for path, kind in _validate_records(diff_text):
+    expected_ranges: dict[Path, list[tuple[int, int]]] = {}
+    for path, kind, ranges in _validate_records(diff_text):
         missing = path not in parsed
         if kind == "deleted":
             missing = missing or path not in getattr(parsed, "deleted_paths", set())
@@ -339,6 +433,17 @@ def _parse_checked(diff_text: str) -> DiffHunks:
             raise _unparsed(
                 str(path), f"validated {kind} record was not recorded by the parser (drift)"
             )
+        expected_ranges.setdefault(path, []).extend(ranges)
+    for path, ranges in expected_ranges.items():
+        if parsed.get(path, []) != _merge_ranges(ranges):
+            raise _unparsed(
+                str(path),
+                f"parsed ranges {parsed.get(path)} differ from the hunk bodies "
+                f"{_merge_ranges(ranges)} (drift)",
+            )
+    stray = sorted(str(p) for p in parsed if p not in expected_ranges)
+    if stray:
+        raise _unparsed(stray[0], "parser recorded a path no validated record accounts for (drift)")
     return parsed
 
 
@@ -465,35 +570,14 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
                 continue
             match = _DIFF_HUNK_RE.match(line)
             if match:
-                start = int(match.group("new_start"))
-                count_str = match.group("new_count")
-                count = int(count_str) if count_str is not None else 1
-                if count == 0:
-                    # Pure deletion at line `start`, changed point is line start
-                    line_start = max(1, start)
-                    line_end = line_start
-                else:
-                    line_start = start
-                    line_end = start + count - 1
-
-                ranges = result.setdefault(current_file, [])
-                ranges.append((line_start, line_end))
+                result.setdefault(current_file, []).append(_hunk_new_range(match))
 
     flush_header_only_entry()
 
     # Normalize / merge adjacent or overlapping ranges per file
     for file_path, ranges in list(result.items()):
-        if not ranges:
-            continue
-        ranges.sort(key=lambda r: (r[0], r[1]))
-        merged: list[tuple[int, int]] = [ranges[0]]
-        for r_start, r_end in ranges[1:]:
-            last_start, last_end = merged[-1]
-            if r_start <= last_end + 1:
-                merged[-1] = (last_start, max(last_end, r_end))
-            else:
-                merged.append((r_start, r_end))
-        result[file_path] = merged
+        if ranges:
+            result[file_path] = _merge_ranges(ranges)
 
     return result
 
@@ -627,6 +711,10 @@ def map_changed_lines_to_symbols(
 
     for rel_path, line_ranges in changed_files_with_lines.items():
         full_path = root / rel_path
+        # Reuse repo_map's containment guard (resolves symlinks/`..` on both sides): a diff path,
+        # or a symlink in the repo, must never make us open a file outside `root`.
+        if not repo_map._path_is_relative_to(full_path, root):
+            continue
         if not full_path.is_file():
             continue
 
@@ -787,6 +875,8 @@ def build_diff_blast_radius(
             )
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
+    if any(not repo_map._path_is_relative_to(root / p, root) for p in changed_files_with_lines):
+        downgrade_reasons.append("path_escapes_root_not_analyzed")
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
     binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
     binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
