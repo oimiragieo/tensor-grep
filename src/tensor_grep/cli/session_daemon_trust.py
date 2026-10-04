@@ -47,6 +47,7 @@ _SECRET_FILE_MODE = 0o600
 
 # OS seams (monkeypatched in tests): current token user SID, and (owner SID, granted SIDs).
 _win_current_user_sid = _winsec.current_user_sid
+_win_token_owner_sid = _winsec.token_owner_sid
 _win_owner_and_dacl = _winsec.owner_and_dacl_sids
 _win_dacl_entries = _winsec.owner_and_dacl_entries  # (owner SID, [(SID, access mask)])
 _win_create_restricted = _winsec.create_new_restricted  # CREATE_NEW with a user-only descriptor
@@ -196,8 +197,58 @@ def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str
     return _classify_daemon_pid(metadata, root)[0]
 
 
-_pidfd_open = getattr(os, "pidfd_open", None)  # Linux 5.3+ (Python 3.9+); seam for tests
-_pidfd_send_signal = getattr(signal, "pidfd_send_signal", None)  # seam for tests
+_IS_LINUX = sys.platform.startswith("linux")  # seam for tests
+_SYS_PIDFD_SEND_SIGNAL, _SYS_PIDFD_OPEN = 424, 434  # identical on every Linux architecture
+
+
+def _load_libc() -> Any:  # seam for tests
+    import ctypes
+
+    return ctypes.CDLL(None, use_errno=True)
+
+
+def _libc_errno() -> int:  # seam for tests
+    import ctypes
+
+    return ctypes.get_errno()
+
+
+def _raw_syscall(*args: int | None) -> int:
+    """``syscall(2)`` with every argument passed as a full-width C ``long`` / pointer (the function is
+    variadic, so ctypes would otherwise pass narrow ``int`` values)."""
+    import ctypes
+
+    wrapped = [ctypes.c_void_p(None) if a is None else ctypes.c_long(a) for a in args]
+    return int(_load_libc().syscall(*wrapped))
+
+
+def _syscall_pidfd_open(pid: int) -> int:
+    """``pidfd_open(pid, 0)`` through ``syscall(2)``: stripped CPython builds (python-build-standalone,
+    which is what ``uv`` installs) omit ``os.pidfd_open`` even on kernels that support it."""
+    if not _IS_LINUX:
+        raise OSError("pidfd is Linux-only")
+    fd = _raw_syscall(_SYS_PIDFD_OPEN, pid, 0)
+    if fd < 0:
+        err = _libc_errno()
+        raise OSError(err, os.strerror(err))
+    return fd
+
+
+def _syscall_pidfd_send_signal(fd: int, sig: int) -> None:
+    """``pidfd_send_signal(fd, sig, NULL, 0)`` through ``syscall(2)`` (see ``_syscall_pidfd_open``)."""
+    if not _IS_LINUX:
+        raise OSError("pidfd is Linux-only")
+    if _raw_syscall(_SYS_PIDFD_SEND_SIGNAL, fd, sig, None, 0) < 0:
+        err = _libc_errno()
+        raise OSError(err, os.strerror(err))
+
+
+# Linux 5.3+. Prefer the stdlib wrappers; fall back to the raw syscalls. A kernel without the syscall
+# fails with ENOSYS at open time and the guard is then UNBOUND (nothing is signalled).
+_pidfd_open: Any = getattr(os, "pidfd_open", None) or (_syscall_pidfd_open if _IS_LINUX else None)
+_pidfd_send_signal: Any = getattr(signal, "pidfd_send_signal", None) or (
+    _syscall_pidfd_send_signal if _IS_LINUX else None
+)
 _PID_CREATE_TIME_TOLERANCE = 0.01  # seconds; psutil and GetProcessTimes read the same FILETIME
 _last_guard_level: str | None = None
 _last_refusal: str | None = None
@@ -589,8 +640,20 @@ _MAX_SECRET_FILE_BYTES = 8192
 _WIN_ALLOWED_DACL_SIDS = frozenset({"S-1-5-18", "S-1-5-32-544"})  # SYSTEM, Administrators
 
 
+def _our_owners(user_sid: str) -> frozenset[str]:
+    """Owners that mean "created by this process": the user SID and the token's default owner."""
+    default_owner = _win_token_owner_sid()
+    return frozenset({user_sid, default_owner} if default_owner else {user_sid})
+
+
 def _windows_handle_trusted(handle: Any, *, check_dacl: bool) -> bool:
-    """Owner == this process token's user, and (``check_dacl``) the DACL grants nobody else.
+    """Owner is this process token's user or its default owner, and (``check_dacl``) the DACL
+    grants nobody else.
+
+    An ELEVATED administrator token (e.g. a CI runner's ``runneradmin``) creates objects owned by the
+    token's default owner, ``BUILTIN\\Administrators``, not by the user SID; that default owner is
+    accepted too (anything an administrator could do anyway). A non-elevated token's default owner IS
+    the user, so nothing widens there.
 
     Fails CLOSED: an API error, an unreadable token, a NULL DACL or any ACE for a SID outside
     {current user, SYSTEM, Administrators} makes the object untrusted. Platform-independent logic
@@ -601,7 +664,7 @@ def _windows_handle_trusted(handle: Any, *, check_dacl: bool) -> bool:
     if user_sid is None or queried is None:
         return False
     owner_sid, granted = queried
-    if owner_sid != user_sid:
+    if owner_sid not in _our_owners(user_sid):
         return False
     if check_dacl:
         allowed = _WIN_ALLOWED_DACL_SIDS | {user_sid}
@@ -887,7 +950,11 @@ def _write_secret_windows(path: Path, payload: dict[str, Any]) -> None:
         raise OSError("cannot create the restricted secret file; refusing to create the secret")
     try:
         queried = _win_owner_and_dacl(handle)
-        if queried is None or queried[0] != sid or any(granted != sid for granted in queried[1]):
+        if (
+            queried is None
+            or queried[0] not in _our_owners(sid)
+            or any(granted != sid for granted in queried[1])
+        ):
             raise OSError("created secret has an unexpected security descriptor; refusing")
         if not _winsec.write_all(handle, json.dumps(payload).encode("utf-8")):
             raise OSError("cannot write the secret file")

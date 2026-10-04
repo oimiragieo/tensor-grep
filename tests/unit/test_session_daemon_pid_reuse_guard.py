@@ -26,13 +26,11 @@ _MODULE = "tensor_grep.cli.session_daemon"
 
 
 def _pidfd_works() -> bool:
-    """True where pidfd_open/pidfd_send_signal exist AND the kernel/sandbox allows them."""
-    import signal
-
-    if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")):
+    """True where the production pidfd seams exist AND the kernel/sandbox allows opening one."""
+    if trust._pidfd_open is None or trust._pidfd_send_signal is None:
         return False
     try:
-        os.close(os.pidfd_open(os.getpid()))
+        os.close(trust._pidfd_open(os.getpid()))
     except OSError:
         return False
     return True

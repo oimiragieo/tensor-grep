@@ -37,21 +37,29 @@ _PY = "python"
 
 
 def _bound_primitive_available() -> bool:
-    """A kernel handle that can pin a process exists: always on Windows, pidfd on Linux 5.3+."""
-    import signal
-
+    """A kernel handle that can pin a process exists: always on Windows; on Linux a pidfd that the
+    production code can really open (stdlib wrapper OR the raw-syscall fallback) on this kernel."""
     if sys.platform == "win32":
         return True
-    if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")):
+    if trust._pidfd_open is None or trust._pidfd_send_signal is None:
         return False
     try:
-        os.close(os.pidfd_open(os.getpid()))
+        os.close(trust._pidfd_open(os.getpid()))
     except OSError:
         return False
     return True
 
 
 _BOUND = _bound_primitive_available()
+
+
+def _is_gone(psutil: Any, pid: int) -> bool:
+    """Dead: no such process, or a zombie (killed, not yet reaped by its parent: the daemon is a child
+    of this test process, and pid_exists() is True for zombies)."""
+    try:
+        return bool(psutil.Process(pid).status() == psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return True
 
 
 @pytest.fixture(autouse=True)
@@ -285,10 +293,10 @@ def test_a_real_daemon_serving_this_root_is_signalled_control(
         import psutil
 
         for _ in range(100):
-            if not psutil.pid_exists(daemon_pid):
+            if _is_gone(psutil, daemon_pid):
                 break
             time.sleep(0.1)
-        assert not psutil.pid_exists(daemon_pid)
+        assert _is_gone(psutil, daemon_pid)
     finally:
         try:
             import psutil
@@ -404,10 +412,14 @@ def test_pid_reuse_is_refused_when_the_create_time_changes(
         reads.clear()
         # now drive the real escalation: first read (classification) is genuine, the second differs
         assert sd._terminate_daemon_by_pid(meta, root=root) is False
-        assert len(reads) >= 2, "the termination-time identity re-read never happened"
         assert opened and opened[0] is not None, "the guard never opened"
         assert trust._last_pid_guard_level() is None  # no signal was delivered
         assert bystander.poll() is None
+        if _BOUND:
+            assert len(reads) >= 2, "the termination-time identity re-read never happened"
+        else:
+            # no bound primitive here: refused up front (nothing to re-read), never signalled
+            assert trust._last_refusal == "no_bound_process_handle"
     finally:
         _reap(bystander)
 

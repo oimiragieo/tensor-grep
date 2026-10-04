@@ -3381,7 +3381,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 327,
+    "lineno": 386,
     "enclosing_symbol": "_terminate_identified",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

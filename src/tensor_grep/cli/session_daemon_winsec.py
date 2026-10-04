@@ -241,6 +241,49 @@ def current_user_sid() -> str | None:
         k32.CloseHandle(token)
 
 
+def token_owner_sid() -> str | None:
+    """The SID string of the process token's DEFAULT OWNER (``TokenOwner``): the owner given to
+    objects this process creates (the user for a normal token, Administrators when elevated)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    adv.OpenProcessToken.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    adv.OpenProcessToken.restype = wintypes.BOOL
+    adv.GetTokenInformation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    adv.GetTokenInformation.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    token = ctypes.c_void_p()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        return None
+    try:
+        needed = wintypes.DWORD(0)
+        adv.GetTokenInformation(token, 4, None, 0, ctypes.byref(needed))  # 4 = TokenOwner
+        if needed.value == 0:
+            return None
+        buf = ctypes.create_string_buffer(needed.value)
+        if not adv.GetTokenInformation(token, 4, buf, needed.value, ctypes.byref(needed)):
+            return None
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        return _sid_string(sid_ptr)
+    finally:
+        k32.CloseHandle(token)
+
+
 def owner_and_dacl_entries(handle: Any) -> tuple[str, list[tuple[str, int]]] | None:
     """``(owner SID, [(SID, access mask)] granted by the DACL)`` read from the OPENED handle.
 
