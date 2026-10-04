@@ -226,6 +226,22 @@ def mark_incomplete(
         payload["incomplete_reason_class"] = reason_class
 
 
+# Every key a payload kind counts as "the answer". An answer is EMPTY only when all are empty.
+_ANSWER_KEYS = {
+    "refs": ("references", "string_refs"),
+    "callers": ("callers", "import_graph_consumers"),
+    "source": ("sources",),
+    "imports": ("imports",),
+    "importers": ("importers",),
+    "file-api": ("symbols",),
+}
+
+
+def answer_empty(payload: dict[str, Any], kind: str) -> bool:
+    """Whether the payload's whole result set for `kind` is empty (never just the headline list)."""
+    return not any(payload.get(key) for key in _ANSWER_KEYS[kind])
+
+
 def blocking_gaps(gaps: list[dict[str, Any]], *, answer_empty: bool) -> list[dict[str, Any]]:
     return [
         gap
@@ -358,6 +374,13 @@ def attach_target_gaps(payload: dict[str, Any], target: Path, *, answer_empty: b
     if gaps:
         payload["resolution_gaps"] = gaps
         apply_coverage_gap_incompleteness(payload, gaps, answer_empty=answer_empty)
+
+
+def apply_answer_gaps(payload: dict[str, Any], kind: str) -> None:
+    """Apply the payload's own `resolution_gaps`, judging emptiness from its whole result set."""
+    apply_coverage_gap_incompleteness(
+        payload, payload.get("resolution_gaps", []), answer_empty=answer_empty(payload, kind)
+    )
 
 
 def attach_found_answer_gaps(payload: dict[str, Any], repo_map: dict[str, Any]) -> None:

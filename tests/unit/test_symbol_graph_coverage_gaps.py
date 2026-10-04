@@ -687,3 +687,60 @@ def test_inventory_classifies_ts_family_as_typescript_code(tmp_path, suffix):
 
     assert inventory._LANGUAGE_BY_SUFFIX[suffix] == "typescript"
     assert suffix in inventory._CODE_SUFFIXES
+
+
+# --------------------------------------------------------------------------------------------
+# G1 audit fix: "empty answer" is decided from ALL the answer's evidence
+# --------------------------------------------------------------------------------------------
+
+
+def _import_only_repo(tmp_path: Path, *, with_bad: bool = True) -> None:
+    (tmp_path / "defs.py").write_text("def target():\n    pass\n", encoding="utf-8")
+    (tmp_path / "use.py").write_text("from defs import target\n", encoding="utf-8")
+    if with_bad:
+        (tmp_path / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+
+
+@pytest.mark.parametrize("command", ["callers", "blast-radius"])
+def test_import_only_consumer_answer_is_not_empty_and_never_exit_2(tmp_path, command):
+    _import_only_repo(tmp_path)
+    result = _cli([command, "--json", str(tmp_path), "target"])
+    # Zero DIRECT callers exits 1 on main with or without the bad file (the CLI's own
+    # not-found semantics for the callers list); the point is that the gap never makes it 2.
+    (tmp_path / "bad.py").unlink()
+    control = _cli([command, "--json", str(tmp_path), "target"])
+    assert result.exit_code == control.exit_code != 2, result.output
+    payload = _json_of(result)
+    assert payload["import_graph_consumer_count"] == 1
+    assert not payload.get("result_incomplete")
+    assert any("syntax" in g["reason"] for g in payload["resolution_gaps"])
+
+
+@pytest.mark.parametrize("command", ["callers", "blast-radius"])
+def test_direct_call_answer_with_a_gap_stays_exit_0(tmp_path, command):
+    (tmp_path / "defs.py").write_text("def target():\n    pass\n", encoding="utf-8")
+    (tmp_path / "use.py").write_text(
+        "from defs import target\n\n\ndef run():\n    return target()\n", encoding="utf-8"
+    )
+    (tmp_path / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+    result = _cli([command, "--json", str(tmp_path), "target"])
+    assert result.exit_code == 0, result.output
+    assert not _json_of(result).get("result_incomplete")
+
+
+@pytest.mark.parametrize("command", ["callers", "blast-radius"])
+def test_truly_empty_callers_answer_with_a_gap_exits_2(tmp_path, command):
+    _import_only_repo(tmp_path)
+    (tmp_path / "use.py").unlink()
+    result = _cli([command, "--json", str(tmp_path), "target"])
+    assert result.exit_code == 2, result.output
+
+
+def test_answer_empty_helper_counts_every_evidence_key():
+    from tensor_grep.cli import repo_map_coverage_gaps as cg
+
+    assert cg.answer_empty({"callers": [], "import_graph_consumers": [1]}, "callers") is False
+    assert cg.answer_empty({"callers": [], "import_graph_consumers": []}, "callers") is True
+    assert cg.answer_empty({"references": [], "string_refs": [1]}, "refs") is False
+    assert cg.answer_empty({"references": [1]}, "refs") is False
+    assert cg.answer_empty({"references": [], "string_refs": []}, "refs") is True

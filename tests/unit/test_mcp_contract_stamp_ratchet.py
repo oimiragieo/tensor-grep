@@ -1042,3 +1042,28 @@ def test_contract_stamp_ratchet_census_is_independent_of_ambient_ast_engine_stat
 
     with pytest.raises(ConfigurationError):
         mcp_server.Pipeline(config=SearchConfig(ast=True, lang="python", no_messages=True))
+
+
+# Test files that may carry the CURRENT contract version as a quoted literal. Every other test
+# derives its expectation from ``_TG_MCP_SERVER_CONTRACT_VERSION``, so a version bump is ONE
+# coordinated edit: the constant, the two docs (checked by test_mcp_contract_version_docs_are_pinned)
+# and the wire-review pin below -- which is a deliberate forced-review marker, not a mirror.
+_LITERAL_VERSION_PIN_ALLOWLIST = {"test_mcp_passthrough_wire_surface.py"}
+
+
+def test_current_contract_version_literal_lives_only_in_allowlisted_tests() -> None:
+    from tensor_grep.cli.mcp_server import _TG_MCP_SERVER_CONTRACT_VERSION as live
+
+    quoted = f'"{live}"'
+    root = Path(__file__).resolve().parents[1]
+    offenders = sorted(
+        path.name
+        for path in [*(root / "unit").glob("test_*.py"), *(root / "integration").glob("test_*.py")]
+        if path.name != Path(__file__).name
+        and quoted in path.read_text(encoding="utf-8")
+        and path.name not in _LITERAL_VERSION_PIN_ALLOWLIST
+    )
+    assert offenders == [], (
+        f"these tests hard-code the live MCP contract version {live}: derive it from "
+        f"_TG_MCP_SERVER_CONTRACT_VERSION instead -> {offenders}"
+    )

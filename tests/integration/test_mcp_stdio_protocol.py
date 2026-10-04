@@ -11,6 +11,8 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from tensor_grep.cli.mcp_server import _TG_MCP_SERVER_CONTRACT_VERSION
+
 pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -58,7 +60,7 @@ async def _stdio_protocol_roundtrip() -> None:
             # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows);
             # 1.9.0 -> 1.10.0 (Part K2, invalid_input envelopes). Keep this comment in step with the assert below.
             assert (
-                initialized.serverInfo.version == "1.10.0"
+                initialized.serverInfo.version == _TG_MCP_SERVER_CONTRACT_VERSION
             )  # task 336: budget_remediable on the repo_map-backed wire
 
             listed = await session.list_tools()
@@ -141,7 +143,7 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows);
         # 1.9.0 -> 1.10.0 (Part K2, invalid_input envelopes). Keep this comment in step with the assert below.
         assert (
-            server_info["version"] == "1.10.0"
+            server_info["version"] == _TG_MCP_SERVER_CONTRACT_VERSION
         )  # task 336: budget_remediable on the repo_map-backed wire
     finally:
         if process.stdin is not None:

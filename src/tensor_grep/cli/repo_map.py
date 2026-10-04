@@ -47,6 +47,8 @@ from tensor_grep.cli.repo_map_cache import (
     _resolved_path_str as _resolved_path_str,
 )
 from tensor_grep.cli.repo_map_coverage_gaps import (
+    answer_empty,
+    apply_answer_gaps,
     apply_coverage_gap_incompleteness,
     attach_found_answer_gaps,
     attach_importer_coverage,
@@ -12371,9 +12373,7 @@ def build_symbol_source_from_map(
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
     copy_coverage_gap_state(payload, defs_payload)
-    apply_coverage_gap_incompleteness(
-        payload, payload.get("resolution_gaps", []), answer_empty=not sources
-    )
+    apply_answer_gaps(payload, "source")
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -13115,9 +13115,7 @@ def build_symbol_refs_from_map(
                 "files_total": len(refs_universe_files) + len(refs_universe_tests),
             },
         )
-    apply_coverage_gap_incompleteness(
-        payload, payload["resolution_gaps"], answer_empty=not references
-    )
+    apply_answer_gaps(payload, "refs")
     return payload
 
 
@@ -13381,7 +13379,7 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
     payload["result_incomplete"] = result_incomplete
     if incomplete_reason is not None:
         payload["incomplete_reason"] = incomplete_reason
-    attach_target_gaps(payload, resolved_file, answer_empty=not imports)
+    attach_target_gaps(payload, resolved_file, answer_empty=answer_empty(payload, "imports"))
     return payload
 
 
@@ -13726,7 +13724,12 @@ def build_file_importers_from_map(
             "repo containing FILE as ROOT (tg importers FILE <its-repo>) or run from inside it."
         )
     attach_importer_coverage(
-        payload, repo_map, all_files, repo_root, resolved_file, answer_empty=not edges
+        payload,
+        repo_map,
+        all_files,
+        repo_root,
+        resolved_file,
+        answer_empty=answer_empty(payload, "importers"),
     )
     return payload
 
@@ -14294,7 +14297,7 @@ def build_symbol_callers_from_map(
                 "files_total": len(callers_universe_files) + len(callers_universe_tests),
             },
         )
-    apply_coverage_gap_incompleteness(payload, payload["resolution_gaps"], answer_empty=not calls)
+    apply_answer_gaps(payload, "callers")
     return _attach_profiling(payload, _profiling_collector)
 
 

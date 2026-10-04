@@ -187,6 +187,7 @@ def file_api_command(path: str, *, json_output: bool) -> int:
         build_repo_map,
     )
     from tensor_grep.cli.repo_map_coverage_gaps import (
+        answer_empty,
         apply_coverage_gap_incompleteness,
         target_file_gaps,
     )
@@ -215,7 +216,9 @@ def file_api_command(path: str, *, json_output: bool) -> int:
     )
     if gaps:
         payload["resolution_gaps"] = gaps
-        apply_coverage_gap_incompleteness(payload, gaps, answer_empty=not payload["symbols"])
+        apply_coverage_gap_incompleteness(
+            payload, gaps, answer_empty=answer_empty(payload, "file-api")
+        )
         if payload.get("incomplete_reason_class") == "coverage_gap":
             payload.setdefault("remediation", payload.get("scan_remediation"))
 
