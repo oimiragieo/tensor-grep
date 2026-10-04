@@ -2,6 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.formatters.json_fmt import _REGEX_META, _literal_column_index
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -50,23 +51,17 @@ class RipgrepFormatter(OutputFormatter):
         pattern = self.config.query_pattern or ""
         if not pattern and self.config.regexp:
             pattern = self.config.regexp[0]
-        if not pattern:
-            return 1
-        if self.config.fixed_strings:
-            index = match.text.find(pattern)
-        else:
-            try:
-                import re
-
-                flags = (
-                    re.IGNORECASE
-                    if self.config.ignore_case or (self.config.smart_case and pattern.islower())
-                    else 0
-                )
-                found = re.search(pattern, match.text, flags=flags)
-                index = -1 if found is None else found.start()
-            except re.error:
-                index = match.text.find(pattern)
+        is_literal = bool(self.config.fixed_strings) or not (_REGEX_META & set(pattern))
+        if not pattern or not is_literal:
+            return 1  # a real regex is never evaluated in Python; no-column fallback
+        if self.config.word_regexp or self.config.line_regexp:
+            return 1  # find() ignores -w/-x boundaries -- never guess a column
+        # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
+        ignore_case = bool(
+            self.config.ignore_case
+            or (self.config.smart_case and not self.config.case_sensitive and pattern.islower())
+        )
+        index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
         if index < 0:
             return 1
         # ripgrep/--vimgrep columns are BYTE offsets, not character indices: advance
