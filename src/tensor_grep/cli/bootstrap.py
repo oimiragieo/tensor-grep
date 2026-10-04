@@ -1320,8 +1320,9 @@ def main_entry() -> None:
             if _run_requires_ast_workflow(argv[1:]):
                 _run_ast_workflow_cli(argv)
                 return
-            native_binary_path = resolve_native_tg_binary()
-            native_binary = str(native_binary_path) if native_binary_path else None
+            from tensor_grep.cli.bootstrap_search_guards import resolve_native_or_exit
+
+            native_binary = resolve_native_or_exit()
             if native_binary is not None:
                 raise SystemExit(_run_native_tg_command(native_binary, argv))
             _run_full_cli()
@@ -1368,8 +1369,9 @@ def main_entry() -> None:
         )
 
         effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
-        native_binary_path = resolve_native_tg_binary()
-        native_binary = str(native_binary_path) if native_binary_path else None
+        from tensor_grep.cli.bootstrap_search_guards import resolve_native_or_exit
+
+        native_binary = resolve_native_or_exit()
         if os.environ.get("TG_REEXEC_GUARD"):
             # We were spawned by the native front door (it delegated a `--json` +
             # passthrough-flag search to us). Never delegate search BACK to the native

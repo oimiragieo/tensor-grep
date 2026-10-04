@@ -309,3 +309,18 @@ def strip_noop_rg_format(search_args: Sequence[str]) -> list[str] | None:
 def has_any_option(search_args: Sequence[str]) -> bool:
     """Is there ANY flag in option position (``-e -x`` has one; the ``-x`` is its value)?"""
     return next(option_tokens(search_args), None) is not None
+
+
+def resolve_native_or_exit() -> str | None:
+    """``resolve_native_tg_binary()`` as a string, or a clean ASCII exit 2 when an explicit
+    ``TG_NATIVE_TG_BINARY`` / ``TG_MCP_TG_BINARY`` override names a file that does not exist (by
+    design a hard error, but never a traceback: exit 1 would read as "no match")."""
+    try:
+        path = _b.resolve_native_tg_binary()
+    except FileNotFoundError as exc:
+        import sys
+
+        detail = str(exc).encode("ascii", "backslashreplace").decode("ascii")
+        sys.stderr.write(f"error: {detail} Fix or unset TG_NATIVE_TG_BINARY / TG_MCP_TG_BINARY.\n")
+        raise SystemExit(2) from exc
+    return str(path) if path else None
