@@ -1414,8 +1414,9 @@ def test_tg_search_maps_python_re_error_to_invalid_input(tmp_path, monkeypatch):
     # council wave-2b r1: non-rg backends raise re.error for "(" -- must also be invalid_input
     import re as _re
 
-    from tensor_grep.cli import mcp_server
+    from tensor_grep.cli import mcp_arg_validation, mcp_server
 
+    monkeypatch.setattr(mcp_arg_validation, "regex_is_invalid", lambda *a, **k: False)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")  # r16: a searchable file
     backend = MagicMock()
@@ -1435,8 +1436,9 @@ def test_tg_search_maps_python_re_error_to_invalid_input(tmp_path, monkeypatch):
 def test_tg_search_maps_rg_regex_parse_error_to_invalid_input(tmp_path, monkeypatch):
     from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-    from tensor_grep.cli import mcp_server
+    from tensor_grep.cli import mcp_arg_validation, mcp_server
 
+    monkeypatch.setattr(mcp_arg_validation, "regex_is_invalid", lambda *a, **k: False)
     monkeypatch.chdir(tmp_path)
     backend = MagicMock(spec=RipgrepBackend)
     backend.search.side_effect = BackendExecutionError(
@@ -1494,3 +1496,70 @@ def test_rewrite_plan_unsupported_language_is_invalid_input(tmp_path, monkeypatc
     payload = json.loads(mcp_audit_tools.tg_rewrite_plan("x", "y", "klingon", str(tmp_path)))
     assert payload["error"]["code"] == "invalid_input"
     assert "Supported languages" in payload["error"]["message"]
+
+
+@pytest.mark.parametrize("rg_present", [True, False])
+def test_tg_search_invalid_regex_with_zero_selected_files_is_invalid_input(
+    tmp_path, monkeypatch, rg_present
+):
+    # Codex audit: the backend parser is never reached when the glob selects no file, so a bad
+    # regex used to come back as a COMPLETE empty success (reproduced with rg absent).
+    from tensor_grep.cli import mcp_server, runtime_paths
+
+    if rg_present:
+        if shutil.which("rg") is None:
+            pytest.skip("needs rg (the pre-walk check asks rg itself)")
+    else:
+        monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search("(", str(tmp_path), glob="**/*.no-such-ext"))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "regex parse error" not in json.dumps(payload)
+
+
+def test_tg_search_rg_valid_python_invalid_pattern_is_not_rejected(tmp_path, monkeypatch):
+    # Control: \p{Greek} is valid rg (Rust regex) syntax but invalid for Python's re.
+    import re as _re
+
+    from tensor_grep.cli import mcp_server
+
+    if shutil.which("rg") is None:
+        pytest.skip("needs rg")
+    with pytest.raises(_re.error):
+        _re.compile(r"\p{Greek}")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search(r"\p{Greek}", str(tmp_path), glob="**/*.no-such-ext"))
+    assert "error" not in payload, payload
+
+
+def test_tg_search_rg_absent_python_invalid_pattern_is_not_rejected(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server, runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search(r"\p{Greek}", str(tmp_path), glob="*.no-such-ext"))
+    assert "error" not in payload, payload
+
+
+def test_tg_search_fixed_strings_paren_is_not_pre_rejected(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("f(x)\n", encoding="utf-8")
+    payload = json.loads(
+        mcp_server.tg_search("(", str(tmp_path), fixed_strings=True, glob="**/*.no-such-ext")
+    )
+    assert "error" not in payload, payload
+
+
+def test_tg_search_missing_pattern_is_structured_invalid_input(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    payload = json.loads(mcp_server.tg_search(None, str(tmp_path)))
+    assert payload["error"]["code"] == "invalid_input"
+    text = mcp_server.tg_search(None, str(tmp_path), structured_json=False)
+    assert text == "Search failed: either pattern or query is required."

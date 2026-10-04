@@ -3000,9 +3000,7 @@ def tg_search(
             both are set.
     """
     try:
-        search_pattern = pattern or query
-        if not search_pattern:
-            return "Search failed: either pattern or query is required."
+        search_pattern = pattern or query or ""
 
         # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
         # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
@@ -3019,7 +3017,9 @@ def tg_search(
                 search_pattern, str(exc), path="[refused]", structured_json=structured_json
             )
 
-        invalid_arg = _arg_validation.tg_search_invalid_argument(context, max_count, type_filter)
+        invalid_arg = _arg_validation.tg_search_invalid_argument(
+            search_pattern, fixed_strings, context, max_count, type_filter
+        )
         if invalid_arg is not None:
             return _search_invalid_input_response(
                 search_pattern, invalid_arg, path=path, structured_json=structured_json

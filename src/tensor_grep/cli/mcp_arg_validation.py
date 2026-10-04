@@ -3,7 +3,8 @@
 Lives outside ``mcp_server.py`` because that file is under a file-size ratchet (it may only
 shrink). Everything here is PURE: it returns a constant, non-leaking message (or a payload dict)
 and never touches the wire itself -- ``mcp_server`` stamps the contract fields and returns it.
-No import of ``mcp_server`` (circular), no I/O.
+No import of ``mcp_server`` at module scope (circular); the only I/O is the optional rg probe in
+``regex_is_invalid``.
 """
 
 from __future__ import annotations
@@ -21,15 +22,23 @@ RG_TYPE_NAME_RE = re.compile(r"^[^\W_][\w+.-]*$")
 
 
 def tg_search_invalid_argument(
-    context: int | None, max_count: int | None, type_filter: str | None
+    pattern: str,
+    fixed_strings: bool,
+    context: int | None,
+    max_count: int | None,
+    type_filter: str | None,
 ) -> str | None:
     """Return a refusal message for an argument rg would reject (or misparse), else None."""
+    if not pattern:
+        return "either pattern or query is required."
     if context is not None and context < 0:
         return "context must be >= 0."
     if max_count is not None and max_count < 0:
         return "max_count must be >= 0."
     if type_filter and not RG_TYPE_NAME_RE.fullmatch(type_filter):
         return "type_filter must be a file type name such as 'py' or 'js'."
+    if regex_is_invalid(pattern, fixed_strings=fixed_strings):
+        return REGEX_INVALID_MESSAGE
     return None
 
 
@@ -109,3 +118,69 @@ def unsupported_ast_language_message(lang: str | None) -> str | None:
             f"Supported languages: {', '.join(get_supported_languages())}."
         )
     return None
+
+
+# Python `re` messages for syntax errors that the Rust regex grammar (rg / tg native) ALSO rejects:
+# an unclosed group, an unmatched ")", an unterminated class. Anything else Python rejects
+# (`\p{Greek}`, possessive quantifiers, ...) can be valid Rust, so it is never pre-rejected.
+_AGREED_RE_ERRORS = (
+    "missing ), unterminated subpattern",
+    "unbalanced parenthesis",
+    "unterminated character set",
+)
+
+
+_REGEX_META = frozenset(chr(92) + "^$.|?*+()[]{}")
+
+
+def _rg_rejects_regex(pattern: str) -> bool | None:
+    """Ask rg itself (empty stdin, same default grammar). None = rg absent / cannot tell.
+
+    Measured ~180 ms per probe on a loaded Windows box, so a pattern with no regex metacharacter
+    (always valid) skips it.
+    """
+    import subprocess
+
+    if _REGEX_META.isdisjoint(pattern):
+        return False
+
+    from tensor_grep.cli import runtime_paths
+
+    binary = runtime_paths.resolve_ripgrep_binary()
+    if binary is None:
+        return None
+    try:
+        proc = subprocess.run(
+            [str(binary), "--no-config", "-e", pattern],
+            input=b"",
+            capture_output=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode in (0, 1):
+        return False
+    return b"regex parse error" in proc.stderr
+
+
+def regex_is_invalid(pattern: str, *, fixed_strings: bool) -> bool:
+    """True only when ``pattern`` is a syntax error for the engine that will run it.
+
+    rg's own grammar decides when rg is present (never rejects an rg-valid pattern). Without rg
+    only errors invalid in BOTH Python ``re`` and Rust regex are reported. A literal
+    (``fixed_strings``) pattern is never a regex. Runs BEFORE the walk, so a pattern is refused
+    even when the glob/type filter selects no file and no backend parser would ever see it.
+    """
+    if fixed_strings:
+        return False
+    verdict = _rg_rejects_regex(pattern)
+    if verdict is not None:
+        return verdict
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        return any(exc.msg.startswith(m) for m in _AGREED_RE_ERRORS)
+    except (RecursionError, OverflowError):
+        return False
+    return False
