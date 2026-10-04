@@ -315,8 +315,8 @@ def java_file_imports_symbol_from_definition(
     except OSError:
         return False
     try:
-        definition_source = definition.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        definition_source = lang_registry.read_source_text(definition)
+    except OSError:
         return False
 
     definition_fqn = _java_definition_fqn(definition, definition_source)
@@ -495,8 +495,8 @@ def java_references_and_calls(
         return [], []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return [], []
 
     source_bytes = source.encode("utf-8")

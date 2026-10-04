@@ -162,10 +162,28 @@ def graph_suffixes() -> frozenset[str]:
     return frozenset(_SPEC_BY_SUFFIX.keys())
 
 
+def read_source_text(path: Path) -> str:
+    """Shared source reader: BOM-stripped; never raises UnicodeDecodeError (only OSError).
+
+    One read with utf-8-sig + errors="replace" (a two-step fallback to plain utf-8 kept the BOM
+    as U+FEFF when the file also had an invalid byte)."""
+    return Path(path).read_text(encoding="utf-8-sig", errors="replace")
+
+
+def split_source_lines(text: str) -> list[str]:
+    """Split on newline characters only (read_text already normalised newlines); matches ast rows."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
 __all__ = [
     "LANGUAGE_REGISTRY",
     "LanguageSpec",
     "graph_suffixes",
+    "read_source_text",
     "register_language",
     "spec_for_path",
+    "split_source_lines",
 ]

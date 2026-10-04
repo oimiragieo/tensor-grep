@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_cache import _SOURCE_READ_CACHE_MAXSIZE as _SOURCE_READ_CACHE_MAXSIZE
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
@@ -1061,8 +1062,8 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return []
 
     source_bytes = source.encode("utf-8")

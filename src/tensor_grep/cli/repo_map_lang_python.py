@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
 
@@ -142,8 +143,8 @@ def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, A
         return [], []
 
     try:
-        tree = _self._cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
+        tree = _self._cached_ast_parse(lang_registry.read_source_text(path))
+    except (OSError, SyntaxError):
         return [], []
 
     imports: list[str] = []
@@ -331,8 +332,8 @@ def _python_import_update_target(
     definition_path: str,
 ) -> dict[str, Any] | None:
     try:
-        source = file_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(file_path)
+    except OSError:
         return None
 
     try:
@@ -401,9 +402,9 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
+        source = lang_registry.read_source_text(path)
         tree = _self._cached_ast_parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError):
         return []
 
     lines = source.splitlines()
@@ -508,9 +509,9 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
+        source = lang_registry.read_source_text(path)
         tree = _self._cached_ast_parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError):
         return []
 
     lines = source.splitlines()
@@ -589,8 +590,8 @@ def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _self._max_parse_bytes():
         return []
     try:
-        tree = _self._cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
+        tree = _self._cached_ast_parse(lang_registry.read_source_text(path))
+    except (OSError, SyntaxError):
         return []
 
     entries: list[dict[str, Any]] = []
@@ -1232,8 +1233,8 @@ def _python_decorator_qualname(node: ast.AST) -> str | None:
 def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        tree = _self._cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
+        tree = _self._cached_ast_parse(lang_registry.read_source_text(path))
+    except (OSError, SyntaxError):
         return ()
 
     candidates: list[str] = []
@@ -1255,8 +1256,8 @@ def _python_test_function_candidates(test_path: str) -> tuple[str, ...]:
 def _python_parametrized_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        tree = _self._cached_ast_parse(path.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError, UnicodeDecodeError):
+        tree = _self._cached_ast_parse(lang_registry.read_source_text(path))
+    except (OSError, SyntaxError):
         return ()
 
     candidates: list[str] = []

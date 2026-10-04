@@ -1833,13 +1833,13 @@ def _read_source_text_cached(path_str: str) -> str:
     except OSError:
         size = -1
     if size < 0 or size > _SYMBOL_LITERAL_SEED_MAX_BYTES:
-        return Path(path_str).read_text(encoding="utf-8")
+        return lang_registry.read_source_text(Path(path_str))
     return _read_source_text_cached_bounded(path_str)
 
 
 @_mtime_aware_cache(maxsize=_SOURCE_READ_CACHE_MAXSIZE)
 def _read_source_text_cached_bounded(path_str: str) -> str:
-    return Path(path_str).read_text(encoding="utf-8")
+    return lang_registry.read_source_text(Path(path_str))
 
 
 # backlog #57 companion fix (2026-07-09): must stay >= CALLER_SCAN_FILE_CEILING (2000). This
@@ -2907,8 +2907,8 @@ def _source_line_text(path: Path, line_number: int) -> str:
     if line_number <= 0:
         return ""
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+        lines = lang_registry.read_source_text(path).splitlines()
+    except OSError:
         return ""
     return lines[line_number - 1].strip() if 0 < line_number <= len(lines) else ""
 
@@ -3365,12 +3365,12 @@ def _python_references_and_calls(
         return [], []
 
     try:
-        source = path.read_text(encoding="utf-8")
+        source = lang_registry.read_source_text(path)
         tree = _cached_ast_parse(source)
-    except (OSError, SyntaxError, UnicodeDecodeError):
+    except (OSError, SyntaxError):
         return [], []
 
-    lines = source.splitlines()
+    lines = lang_registry.split_source_lines(source)
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
@@ -4981,8 +4981,8 @@ def _score_import_entry(entry: dict[str, Any], terms: list[str]) -> int:
 
 def _score_file_source_terms(path: str, terms: list[str]) -> int:
     try:
-        source = Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(Path(path))
+    except OSError:
         return 0
     return score_term_overlap(terms, source)
 
@@ -7099,8 +7099,8 @@ def _best_test_function_candidate(
 def _javascript_test_function_candidates(test_path: str) -> tuple[str, ...]:
     path = Path(test_path)
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return ()
     describe_pattern = re.compile(r"""\bdescribe(?:\.(?:only|skip))?\s*\(\s*["']([^"']+)["']""")
     test_pattern = re.compile(
@@ -7196,8 +7196,8 @@ def _framework_test_pattern_bonus(
 def _javascript_test_file_uses_node_test(test_path: str) -> bool:
     path = Path(test_path)
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return False
     return bool(
         re.search(
