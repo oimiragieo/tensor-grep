@@ -2941,7 +2941,7 @@
   },
   {
     "module": "cli/bootstrap.py",
-    "lineno": 354,
+    "lineno": 353,
     "enclosing_symbol": "_read_project_version_fallback",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -2951,7 +2951,7 @@
   },
   {
     "module": "cli/bootstrap.py",
-    "lineno": 364,
+    "lineno": 363,
     "enclosing_symbol": "_print_version",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
