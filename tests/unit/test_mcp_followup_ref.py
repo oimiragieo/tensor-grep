@@ -395,9 +395,7 @@ def test_equivalent_spelling_of_the_same_root_resolves(repo: Path) -> None:
         ttl_seconds=60,
         secret=_SECRET,
     )
-    payload = resolve_followup_ref(
-        ref, current_root=repo / "sub" / "..", params={}, secret=_SECRET
-    )
+    payload = resolve_followup_ref(ref, current_root=repo / "sub" / "..", params={}, secret=_SECRET)
     assert payload["path"] == "src.py"
 
 
@@ -433,9 +431,11 @@ def test_same_root_distinguishes_directories_that_differ_only_by_case(tmp_path: 
         import shutil
         import subprocess
 
+        if shutil.which("fsutil") is None:
+            pytest.skip("fsutil is not on PATH")
         shutil.rmtree(upper)
-        enabled = subprocess.run(  # noqa: S603
-            ["fsutil", "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],  # noqa: S607
+        enabled = subprocess.run(
+            ["fsutil", "file", "setCaseSensitiveInfo", str(tmp_path), "enable"],
             capture_output=True,
             check=False,
         )

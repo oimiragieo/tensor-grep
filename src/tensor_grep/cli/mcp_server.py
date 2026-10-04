@@ -31,6 +31,7 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli import mcp_arg_validation as _arg_validation
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
@@ -174,7 +175,8 @@ def _mcp_server_version() -> str:
 # existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.9.0"  # 1.8.0 was P3: unified `incomplete` envelope
+# 1.10.0 (Part K2): invalid_input for bad tg_search/tg_find/AST-language/rewrite args; file cap remediable.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.10.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -2799,6 +2801,16 @@ def tg_session_blast_radius_plan(
         return _sanitized_tool_error_text("tg_session_blast_radius_plan", exc)
 
 
+def _find_invalid_input(query: str, path: str, message: str) -> str:
+    payload = _envelope_base(
+        routing_backend=_FIND_ROUTING_BACKEND,
+        routing_reason=_FIND_ROUTING_REASON,
+        include_schema_version=False,
+    )
+    payload.update(query=query, path=path, error={"code": "invalid_input", "message": message})
+    return json.dumps(payload, indent=2)
+
+
 @_register_legacy_tool  # type: ignore
 def tg_find(
     query: str,
@@ -2847,33 +2859,11 @@ def tg_find(
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            payload = _envelope_base(
-                routing_backend=_FIND_ROUTING_BACKEND,
-                routing_reason=_FIND_ROUTING_REASON,
-                include_schema_version=False,
-            )
-            payload["query"] = query
-            payload["path"] = "[refused]"
-            payload["error"] = {"code": "invalid_input", "message": str(exc)}
-            return json.dumps(payload, indent=2)
+            return _find_invalid_input(query, "[refused]", str(exc))
 
-        refusal = (
-            "query must not be empty."
-            if not isinstance(query, str) or not query.strip()
-            else "limit must be >= 1."
-            if limit < 1
-            else None
-        )
+        refusal = _arg_validation.tg_find_refusal(query, limit)
         if refusal is not None:
-            payload = _envelope_base(
-                routing_backend=_FIND_ROUTING_BACKEND,
-                routing_reason=_FIND_ROUTING_REASON,
-                include_schema_version=False,
-            )
-            payload["query"] = query
-            payload["path"] = path
-            payload["error"] = {"code": "invalid_input", "message": refusal}
-            return json.dumps(payload, indent=2)
+            return _find_invalid_input(query, path, refusal)
 
         try:
             result = _execute_find(
@@ -2949,53 +2939,7 @@ def tg_find(
         return _sanitized_tool_error_text("tg_find", exc)
 
 
-# council wave-2b r21: rg permits Unicode letters/numbers in type names (ignore/src/types.rs TypesBuilder::add);
-# reject only option-shaped or separator-bearing input. `[^\W_]` = any Unicode letter or digit.
-_RG_TYPE_NAME_RE = re.compile(r"^[^\W_][\w+.-]*$")
-
-
-def _tg_search_invalid_argument(
-    *, context: int | None, max_count: int | None, type_filter: str | None
-) -> str | None:
-    if context is not None and context < 0:
-        return "context must be >= 0."
-    if max_count is not None and max_count < 0:
-        return "max_count must be >= 0."
-    if type_filter and not _RG_TYPE_NAME_RE.fullmatch(type_filter):
-        return "type_filter must be a file type name such as 'py' or 'js'."
-    return None
-
-
-def _classify_search_backend_error(exc: BaseException) -> str | None:
-    """Return "regex" / "file_type" when an rg failure is a caller-argument error, else None."""
-    text = str(exc)
-    if "regex parse error" in text:
-        return "regex"
-    if "unrecognized file type" in text:
-        return "file_type"
-    return None
-
-
-def _search_invalid_input_response(
-    pattern: str, message: str, *, path: str, structured_json: bool
-) -> str:
-    if not structured_json:
-        return f"Search failed: {message}"
-    payload = {
-        "pattern": pattern,
-        "path": path,
-        "total_matches": 0,
-        "total_files": 0,
-        "rendered_match_count": 0,
-        "rendered_file_count": 0,
-        "matches": [],
-        "truncated": False,
-        "result_incomplete": True,
-        "incomplete_reason": message,
-        **_incomplete_class_fragment(None),
-        "error": {"code": "invalid_input", "message": message},
-    }
-    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+_search_invalid_input_response = _arg_validation.search_invalid_input_response
 
 
 @_register_legacy_tool  # type: ignore
@@ -3071,32 +3015,11 @@ def tg_search(
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            if structured_json:
-                payload = {
-                    "pattern": search_pattern,
-                    "path": "[refused]",
-                    "total_matches": 0,
-                    "total_files": 0,
-                    "rendered_match_count": 0,
-                    "rendered_file_count": 0,
-                    "matches": [],
-                    "truncated": False,
-                    "result_incomplete": True,
-                    "incomplete_reason": str(exc),
-                    # Routed through the helper for STRUCTURAL coverage: every serialized
-                    # `result_incomplete` payload passes through one place, so a future auditor can
-                    # verify the seam mechanically. This site legitimately contributes {} -- nothing
-                    # was walked, so no completeness class applies. `error.code` carries the signal.
-                    **_incomplete_class_fragment(None),
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                }
-                # M14: this no-scan error envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-            return f"Search failed: {exc}"
+            return _search_invalid_input_response(
+                search_pattern, str(exc), path="[refused]", structured_json=structured_json
+            )
 
-        invalid_arg = _tg_search_invalid_argument(
-            context=context, max_count=max_count, type_filter=type_filter
-        )
+        invalid_arg = _arg_validation.tg_search_invalid_argument(context, max_count, type_filter)
         if invalid_arg is not None:
             return _search_invalid_input_response(
                 search_pattern, invalid_arg, path=path, structured_json=structured_json
@@ -3304,7 +3227,7 @@ def tg_search(
             )
             if all_results.is_empty:
                 if structured_json:
-                    payload = {
+                    payload: dict[str, Any] = {
                         "pattern": search_pattern,
                         "path": path,
                         "total_matches": 0,
@@ -3482,31 +3405,12 @@ def tg_search(
 
             return "\n".join(_bounds._cap_output_lines(output))
 
-        except BackendExecutionError as e:
-            # Classify via a helper so the exception text is read OFF the except arm (SEC-007
-            # ratchet) and only a constant message ever reaches the wire.
-            error_kind = _classify_search_backend_error(e)
-            if error_kind == "regex":
-                return _search_invalid_input_response(
-                    search_pattern,
-                    "pattern is not a valid regular expression.",
-                    path=path,
-                    structured_json=structured_json,
-                )
-            if error_kind == "file_type":  # council wave-2b r3: e.g. type_filter="c++"
-                return _search_invalid_input_response(
-                    search_pattern,
-                    "type_filter is not a file type rg knows (see `rg --type-list`).",
-                    path=path,
-                    structured_json=structured_json,
-                )
-            return _sanitized_tool_error_text("tg_search", e)
-        except re.error:  # council wave-2b r1: CPU/Python backends (incl. the per-file fallback)
+        except (BackendExecutionError, re.error) as e:
+            invalid = _arg_validation.search_error_message(e)
+            if invalid is None:
+                return _sanitized_tool_error_text("tg_search", e)
             return _search_invalid_input_response(
-                search_pattern,
-                "pattern is not a valid regular expression.",
-                path=path,
-                structured_json=structured_json,
+                search_pattern, invalid, path=path, structured_json=structured_json
             )
         except Exception as e:
             return _sanitized_tool_error_text("tg_search", e)
@@ -3577,24 +3481,11 @@ def tg_ast_search(
                 )
             return f"AST search failed: {exc}"
 
-        if lang and lang.strip():
-            from tensor_grep.backends.ast_backend import (
-                get_supported_languages,
-                normalize_ast_language,
+        lang_error = _arg_validation.unsupported_ast_language_message(lang)
+        if lang_error is not None:
+            return _ast_error_result(
+                "invalid_input", lang_error, pattern, lang, path, structured_json
             )
-
-            try:
-                normalize_ast_language(lang)
-            except ValueError:
-                return _ast_error_result(
-                    "invalid_input",
-                    f"Unsupported AST language {lang.strip()[:64]!r}. "
-                    f"Supported languages: {', '.join(get_supported_languages())}.",
-                    pattern,
-                    lang,
-                    path,
-                    structured_json,
-                )
 
         normalized_max_repo_files = max(1, int(max_repo_files))
         config = SearchConfig(ast=True, lang=lang, no_messages=True)

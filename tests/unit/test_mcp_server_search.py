@@ -1378,14 +1378,14 @@ def test_tg_search_rejects_bad_args_as_invalid_input(tmp_path, monkeypatch, kwar
 
 
 def test_tg_search_valid_zero_context_and_cap_are_not_rejected(tmp_path, monkeypatch):
-    from tensor_grep.cli import mcp_server
+    from tensor_grep.cli import mcp_arg_validation, mcp_server
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
     # council wave-2b r21: Unicode type name accepted
-    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("écriture") is not None
-    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("--pre") is None
-    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("a,b") is None
+    assert mcp_arg_validation.RG_TYPE_NAME_RE.fullmatch("écriture") is not None
+    assert mcp_arg_validation.RG_TYPE_NAME_RE.fullmatch("--pre") is None
+    assert mcp_arg_validation.RG_TYPE_NAME_RE.fullmatch("a,b") is None
     for kwargs in (
         {"context": 0, "max_count": 0},
         {"max_count": 1},

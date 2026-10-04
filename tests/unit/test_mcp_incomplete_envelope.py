@@ -353,12 +353,10 @@ def test_contract_version_bumped_for_incomplete_envelope() -> None:
 
 
 def test_max_repo_files_cap_is_budget_remediable_scan_limit():
-    raw = json.dumps(
-        {
-            "truncated": True,
-            "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
-        }
-    )
+    raw = json.dumps({
+        "truncated": True,
+        "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
+    })
     inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
     assert inc["cause"] == "scan_limit" and inc["budget_remediable"] is True
 
@@ -370,13 +368,11 @@ def test_scan_limit_of_unknown_shape_stays_fail_closed():
 
 
 def test_unreadable_paths_still_outrank_the_max_repo_files_cap():
-    raw = json.dumps(
-        {
-            "truncated": True,
-            "unreadable_paths": {"count": 1},
-            "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
-        }
-    )
+    raw = json.dumps({
+        "truncated": True,
+        "unreadable_paths": {"count": 1},
+        "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
+    })
     inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
     assert inc["cause"] == "unreadable_path" and inc["budget_remediable"] is False
 
@@ -386,14 +382,12 @@ def test_backend_failure_beside_the_file_cap_stays_non_remediable():
     # incomplete_reason and the scan keeps going, so the same envelope can also carry the
     # cause-less max_repo_files scan_limit. No larger budget repairs a backend failure, so the
     # cap inference must not mark it remediable.
-    raw = json.dumps(
-        {
-            "truncated": True,
-            "result_incomplete": True,
-            "incomplete_reason": "AST backend failed on a.py",
-            "scan_limit": {"max_repo_files": 1, "scanned_files": 1, "possibly_truncated": True},
-        }
-    )
+    raw = json.dumps({
+        "truncated": True,
+        "result_incomplete": True,
+        "incomplete_reason": "AST backend failed on a.py",
+        "scan_limit": {"max_repo_files": 1, "scanned_files": 1, "possibly_truncated": True},
+    })
     inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
     assert inc["cause"] == "AST backend failed on a.py" and inc["budget_remediable"] is False
 
