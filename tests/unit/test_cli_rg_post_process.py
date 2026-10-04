@@ -604,13 +604,79 @@ def test_json_filename_with_colon_and_digits_is_parsed_via_nul(tmp_path):
     ]
 
 
+@pytest.mark.parametrize(
+    "null_data, content",
+    [
+        (False, b"x\nfoo\ny\nz\nw\nv\nfoo\n"),  # two context groups: rg would print `--` between
+        (True, b"x\x00foo\x00y\x00z\x00w\x00v\x00foo\x00"),
+    ],
+    ids=["lf", "null-data"],
+)
+def test_a_file_named_double_dash_parses_as_a_path_never_as_a_separator(
+    monkeypatch, tmp_path, null_data, content
+):
+    # round 11 follow-up: the request passes --no-context-separator, so rg never prints `--` and
+    # the parser has no separator case: a path that is literally `--` is just a path
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    (tmp_path / "--").write_bytes(content)
+    monkeypatch.chdir(tmp_path)
+    flags = ["--null-data"] if null_data else []
+    term = b"\x00" if null_data else b"\n"
+    raw = subprocess.run(
+        [
+            str(resolve_ripgrep_binary()),
+            "--no-config",
+            "-n",
+            "--column",
+            "--with-filename",
+            "--null",
+            "--no-heading",
+            "--no-context-separator",
+            "-C1",
+            "-o",
+            *flags,
+            "-e",
+            "foo",
+            "--",
+            "--",
+        ],
+        capture_output=True,
+        check=False,
+    ).stdout
+    if null_data:  # NUL both ends the path and terminates the record: pairs
+        parts = raw.split(b"\x00")
+        parts.pop()
+        expected = [(p.decode(), b.decode()) for p, b in zip(parts[0::2], parts[1::2], strict=True)]
+    else:
+        expected = [
+            (path.decode(), body.decode())
+            for path, _, body in (chunk.partition(b"\x00") for chunk in raw.split(term) if chunk)
+        ]
+    assert expected and all(path == "--" for path, _ in expected)
+
+    cfg = SearchConfig(query_pattern="foo", only_matching=True, context=1, null_data=null_data)
+    got = RipgrepBackend().search("--", "foo", cfg).matches
+    assert [m.file for m in got] == ["--"] * len(expected)
+    assert [m.rg_kind for m in got] == ["context", "match", "context", "context", "match"]
+    assert [m.line_number for m in got] == [1, 2, 3, 6, 7]
+    assert [m.text for m in got] == ["x", "foo", "y", "v", "foo"]
+    # the match columns are rg's own (0-based start 0 here); context entries carry none
+    assert [(m.submatches[0]["start"] if m.submatches else None) for m in got] == [
+        None,
+        0,
+        None,
+        None,
+        0,
+    ]
+
+
 def test_plain_output_parser_handles_hostile_paths_separators_and_inverted_lines():
     from tensor_grep.backends.rg_plain_output import parse_rg_plain_output
 
     raw = (
         b"dir/a:1:2:b.txt\x001-ctx 5:6:7\n"  # context text that LOOKS like line:col
         b"dir/a:1:2:b.txt\x002:4:ab:7:8\n"  # match text containing more ':' digits
-        b"--\n"
         b"dir/a:1:2:b.txt\x009:1:\n"  # empty text (a zero-width match)
     )
     got = parse_rg_plain_output(raw)

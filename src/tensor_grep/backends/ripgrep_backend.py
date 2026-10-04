@@ -368,6 +368,7 @@ class RipgrepBackend(ComputeBackend):
                 "--with-filename",
                 "--null",
                 "--no-heading",
+                "--no-context-separator",
                 "--no-byte-offset",
                 "--color",
                 "never",

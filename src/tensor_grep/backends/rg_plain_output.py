@@ -10,7 +10,10 @@ tests against the installed rg):
     <path> NUL <line> ':' <col> ':' <text> TERM     a match line (`-o` token, `-r` line, ...)
     <path> NUL <line> ':' <text> TERM               an INVERTED (-v) line: rg prints NO column
     <path> NUL <line> '-' <text> TERM               a context line (-A/-B/-C): '-' and no column
-    '--' TERM                                       separator between non-adjacent context groups
+
+The request passes `--no-context-separator`, so rg never prints the `--` group separator and the
+parser has no separator case at all: a file literally named `--` is just a path (verified with rg
+15.1: with the flag the stream is the same minus the `--` lines, in LF and NUL modes).
 
 `TERM` is LF normally and NUL under `--null-data` (an LF in the text is then content). A multi-line
 `-U -o` match is printed as one such line PER physical line, each with its own `line:col:` prefix;
@@ -45,17 +48,6 @@ def parse_rg_plain_output(
     pos, size = 0, len(stdout)
     while pos < size:
         nul = stdout.find(b"\0", pos)
-        end_of_chunk = stdout.find(term, pos)
-        # `--` TERM is the context-group separator. In LF mode no NUL may precede its TERM (a
-        # path is always followed by NUL first); under --null-data TERM is NUL, so a bare `--`
-        # chunk is taken as the separator (a file literally named `--` is not supported there).
-        if (
-            end_of_chunk != -1
-            and stdout[pos:end_of_chunk] == b"--"
-            and (null_data or nul == -1 or end_of_chunk < nul)
-        ):
-            pos = end_of_chunk + 1
-            continue
         if nul == -1:
             raise _bad("missing the NUL that ends a path")
         path = stdout[pos:nul].decode("utf-8", errors="replace")
