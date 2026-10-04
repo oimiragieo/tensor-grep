@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import sys
 import time
 import uuid
 from collections.abc import Iterator
@@ -146,14 +147,74 @@ def _link_from_stat(st: os.stat_result) -> bool:
 
 
 class _BudgetExceeded(_PopulationWalkError):
-    """A byte budget was crossed WHILE reading (the file grew after the size check).
+    """A byte budget was crossed WHILE reading (`per_file_byte_limit` / `aggregate_byte_limit`).
 
-    `consumed` is every byte actually read (including the one-byte probe past the limit); the
-    caller charges it so an overflow is never refunded."""
+    Every byte read is already charged to the `_ByteLedger` (including the one-byte probe past
+    the limit), so an overflow is never refunded."""
 
-    def __init__(self, reason: str, consumed: int) -> None:
-        super().__init__(reason)
-        self.consumed = consumed
+
+class _ByteLedger:
+    """ONE ledger for every byte a walk consumes: leaf content, marker digests, CACHEDIR.TAG
+    heads and link text. Each reader reads at most `min(per_file_limit, remaining) + 1` bytes
+    and is charged exactly what it read (probe byte included); crossing a limit raises
+    `_BudgetExceeded`. `consumed` is the walk's `scanned_bytes`."""
+
+    def __init__(self, per_file_limit: int, aggregate_limit: int) -> None:
+        self.per_file_limit = per_file_limit
+        self.remaining = aggregate_limit
+        self.consumed = 0
+
+    @classmethod
+    def unlimited(cls) -> _ByteLedger:
+        return cls(sys.maxsize, sys.maxsize)
+
+    def _cap(self) -> int:
+        return max(0, min(self.per_file_limit, self.remaining))
+
+    def _charge(self, n: int) -> None:
+        self.consumed += n
+        self.remaining -= n
+
+    def _overflow(self, item_total: int, start_remaining: int) -> _BudgetExceeded | None:
+        if item_total > self.per_file_limit:
+            return _BudgetExceeded("per_file_byte_limit")
+        if item_total > start_remaining:
+            return _BudgetExceeded("aggregate_byte_limit")
+        return None
+
+    def iter_chunks(self, handle: BinaryIO, hard_cap: int | None = None) -> Iterator[bytes]:
+        """Yield chunks of one item, charging each. `hard_cap` (markers) raises
+        `marker_too_large` rather than recording a truncated digest."""
+        start = self.remaining
+        limit = self._cap() if hard_cap is None else min(self._cap(), hard_cap)
+        total = 0
+        while chunk := handle.read(min(65536, limit + 1 - total)):
+            total += len(chunk)
+            self._charge(len(chunk))
+            if hard_cap is not None and total > hard_cap:
+                raise _PopulationWalkError("marker_too_large")
+            exceeded = self._overflow(total, start)
+            if exceeded is not None:
+                raise exceeded
+            yield chunk
+
+    def take_head(self, handle: BinaryIO, n: int) -> bytes:
+        """One bounded read of at most `n` bytes (CACHEDIR.TAG first line), charged."""
+        start = self.remaining
+        data = handle.read(min(n, self._cap() + 1))
+        self._charge(len(data))
+        exceeded = self._overflow(len(data), start)
+        if exceeded is not None:
+            raise exceeded
+        return data
+
+    def charge_link(self, nbytes: int) -> None:
+        """Charge a link target measured in BYTES (not characters)."""
+        start = self.remaining
+        self._charge(nbytes)
+        exceeded = self._overflow(nbytes, start)
+        if exceeded is not None:
+            raise exceeded
 
 
 def _open_regular_no_follow(
@@ -208,42 +269,38 @@ def _regular_marker(path: Path) -> bool:
     return _marker_stat(path) is not None
 
 
-def _cachedir_tag_valid(tag: Path) -> bool:
+def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
     """The FIRST LINE must be exactly the signature, then LF, CRLF or EOF (bounded read)."""
     st = _marker_stat(tag)
     if st is None:
         # The caller saw a regular file an instant ago; it was swapped for something else.
         raise _PopulationWalkError("unreadable_path")
     with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
-        head = handle.read(128)
+        head = ledger.take_head(handle, 128)
     sig = _CACHEDIR_TAG_SIGNATURE
     return head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
 
 
-def _marker_digest(path: Path) -> str:
+def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
     """sha256 of the WHOLE marker so a changed marker is detectable at verify.
 
     Never records a truncated digest as complete: a marker larger than _MARKER_HASH_CAP raises
     `marker_too_large`, and a read failure raises `unreadable_path` (no sentinel digest that
     would compare equal at mint and verify). Both make the population incomplete."""
     hasher = hashlib.sha256()
-    total = 0
     st = _marker_stat(path)
     if st is None:
         raise _PopulationWalkError("unreadable_path")  # swapped for a non-regular object
     try:
         with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
-            while chunk := handle.read(65536):
-                total += len(chunk)
-                if total > _MARKER_HASH_CAP:
-                    raise _PopulationWalkError("marker_too_large")
+            for chunk in ledger.iter_chunks(handle, hard_cap=_MARKER_HASH_CAP):
                 hasher.update(chunk)
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
     return hasher.hexdigest()
 
 
-def _content_prune_marker(path: Path) -> str | None:
+def _content_prune_marker(path: Path, ledger: _ByteLedger) -> str | None:
     """Name of the regular-file marker that makes `path` an unambiguous build/cache tree."""
     for marker in _BUILD_ROOT_MARKERS:
         if _regular_marker(path / marker):
@@ -251,18 +308,22 @@ def _content_prune_marker(path: Path) -> str | None:
     if _regular_marker(path / _CMAKE_CACHE) and not (path / _CMAKE_SOURCE).exists():
         return _CMAKE_CACHE  # out-of-source CMake build tree only
     tag = path / "CACHEDIR.TAG"
-    if _regular_marker(tag) and _cachedir_tag_valid(tag):
+    if _regular_marker(tag) and _cachedir_tag_valid(tag, ledger):
         return "CACHEDIR.TAG"
     return None
 
 
-def _is_pruned_dir(path: Path) -> bool:
+def _is_pruned_dir(path: Path, ledger: _ByteLedger | None = None) -> bool:
     """Unambiguous dependency/cache/build-root trees only (G-03: build/dist/target may hold source)."""
-    return path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path) is not None
+    ledger = ledger or _ByteLedger.unlimited()
+    return path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path, ledger) is not None
 
 
 def _population_paths(
-    root: Path, pruned: list[str], content_pruned: dict[str, str] | None = None
+    root: Path,
+    pruned: list[str],
+    content_pruned: dict[str, str] | None = None,
+    ledger: _ByteLedger | None = None,
 ) -> Iterator[str]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
 
@@ -278,6 +339,7 @@ def _population_paths(
     def _on_error(exc: OSError) -> None:
         raise _PopulationWalkError("unreadable_path") from exc
 
+    ledger = ledger or _ByteLedger.unlimited()
     visited = 0
     n_name = n_content = 0
     for dirpath, dirnames, filenames in _os_walk(root, followlinks=False, onerror=_on_error):
@@ -299,7 +361,7 @@ def _population_paths(
                     d
                 )  # a directory symlink/junction is a leaf: never descended, never skipped
                 continue
-            marker = _content_prune_marker(child)
+            marker = _content_prune_marker(child, ledger)
             if marker is not None or d in _ALWAYS_PRUNED_DIRS:
                 rel = (rel_dir / d).as_posix()
                 if len(pruned) < _MAX_REPORTED_PRUNED:
@@ -309,7 +371,7 @@ def _population_paths(
                         if n_content >= _MAX_CONTENT_PRUNED_DIRS:
                             raise _PopulationWalkError("pruned_dir_limit", "content")
                         n_content += 1
-                        content_pruned[rel] = f"{marker}:{_marker_digest(child / marker)}"
+                        content_pruned[rel] = f"{marker}:{_marker_digest(child / marker, ledger)}"
                     else:
                         if n_name >= _MAX_NAME_PRUNED_DIRS:
                             raise _PopulationWalkError("pruned_dir_limit", "name")
@@ -363,13 +425,10 @@ def compute_file_fingerprint(path: str | Path) -> str:
     return "file:" + hasher.hexdigest()
 
 
-def _fingerprint_enumerated(
-    path: Path, max_file_bytes: int, remaining_bytes: int
-) -> tuple[str, int]:
+def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
     """Fingerprint a leaf the walker ENUMERATED; every doubt is `unreadable_path`.
 
-    Returns `(fingerprint, bytes_consumed)`; the caller charges `bytes_consumed` (what was
-    ACTUALLY read) to the aggregate budget.
+    Every byte read (content, or link text measured in BYTES) is charged to `ledger`.
 
     Unlike the standalone `compute_file_fingerprint` (which keeps its "" contract for direct
     callers), a path that was listed moments ago must not read as absent or as an empty
@@ -390,24 +449,17 @@ def _fingerprint_enumerated(
         raise _PopulationWalkError("unreadable_path") from exc
     if _link_from_stat(st):
         target = os.fsencode(os.readlink(path))
-        return "symlink:" + hashlib.sha256(target).hexdigest(), len(target)
+        ledger.charge_link(len(target))
+        return "symlink:" + hashlib.sha256(target).hexdigest()
     if stat.S_ISDIR(st.st_mode):
         raise _PopulationWalkError("unreadable_path")
     if not stat.S_ISREG(st.st_mode):
-        return f"other:{stat.S_IFMT(st.st_mode):o}", 0  # never opened: a fifo would block
+        return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
     with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
-        cap = max(0, min(max_file_bytes, remaining_bytes))
         hasher = hashlib.sha256()
-        total = 0
-        while chunk := handle.read(min(65536, cap + 1 - total)):
-            total += len(chunk)
-            if total > cap:
-                raise _BudgetExceeded(
-                    "per_file_byte_limit" if total > max_file_bytes else "aggregate_byte_limit",
-                    total,
-                )
+        for chunk in ledger.iter_chunks(handle):
             hasher.update(chunk)
-    return "file:" + hasher.hexdigest(), total
+    return "file:" + hasher.hexdigest()
 
 
 def _walk_tracked_files_bounded(
@@ -427,14 +479,14 @@ def _walk_tracked_files_bounded(
     root = Path(repo_root)
     result: dict[str, str] = {}
     scanned_files = 0
-    scanned_bytes = 0
+    ledger = _ByteLedger(max_file_bytes, max_aggregate_bytes)
     incomplete_reason: str | None = None
     limit_kind: str | None = None
     pruned: list[str] = []
     content_pruned: dict[str, str] = {}
 
     try:
-        for rel in _population_paths(root, pruned, content_pruned):
+        for rel in _population_paths(root, pruned, content_pruned, ledger):
             item = root / rel
 
             if scanned_files >= max_files:
@@ -443,7 +495,11 @@ def _walk_tracked_files_bounded(
 
             try:
                 size_st = _lstat(item)  # ONE lstat sizes the leaf (links: link-text length)
-                size = len(os.readlink(item)) if _link_from_stat(size_st) else size_st.st_size
+                size = (
+                    len(os.fsencode(os.readlink(item)))
+                    if _link_from_stat(size_st)
+                    else size_st.st_size
+                )
             except OSError:
                 # A file that vanishes or becomes unreadable mid-walk must not silently
                 # disappear from `result` while the population still reports "complete" --
@@ -451,35 +507,30 @@ def _walk_tracked_files_bounded(
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
-            if size > max_file_bytes:
+            if size > ledger.per_file_limit:
                 incomplete_reason = "per_file_byte_limit"
                 scanned_files += 1
                 continue
 
-            if scanned_bytes + size > max_aggregate_bytes:
+            if size > ledger.remaining:
                 incomplete_reason = "aggregate_byte_limit"
                 break
 
             try:
-                fingerprint, consumed = _fingerprint_enumerated(
-                    item, max_file_bytes, max_aggregate_bytes - scanned_bytes
-                )
+                fingerprint = _fingerprint_enumerated(item, ledger)
             except _BudgetExceeded as exc:
-                scanned_bytes += exc.consumed  # never refund what was actually read
+                # every byte read is already on the ledger: nothing is refunded
                 incomplete_reason = exc.reason
-                if exc.reason == "per_file_byte_limit" and scanned_bytes <= max_aggregate_bytes:
+                if exc.reason == "per_file_byte_limit" and ledger.remaining >= 0:
                     scanned_files += 1
                     continue
-                incomplete_reason = (
-                    "aggregate_byte_limit" if (scanned_bytes > max_aggregate_bytes) else exc.reason
-                )
+                incomplete_reason = "aggregate_byte_limit" if ledger.remaining < 0 else exc.reason
                 break
             except OSError:
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
             result[rel] = fingerprint
             scanned_files += 1
-            scanned_bytes += consumed
     except _PopulationWalkError as exc:
         if incomplete_reason is None:
             incomplete_reason = exc.reason
@@ -496,7 +547,7 @@ def _walk_tracked_files_bounded(
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
-            "scanned_bytes": scanned_bytes,
+            "scanned_bytes": ledger.consumed,
         }
     else:
         population = {
@@ -508,7 +559,7 @@ def _walk_tracked_files_bounded(
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
-            "scanned_bytes": scanned_bytes,
+            "scanned_bytes": ledger.consumed,
         }
     return result, population
 

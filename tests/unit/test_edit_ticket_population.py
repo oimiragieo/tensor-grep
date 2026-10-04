@@ -1290,3 +1290,83 @@ def test_fifo_swapped_in_before_marker_read_does_not_hang(
     )
     outcome = json.loads(done.stdout.strip().splitlines()[-1])
     assert outcome == {"status": "incomplete", "reason": "unreadable_path"}
+
+
+# ---- one ledger for every byte the walker consumes ----
+
+
+def _symlink_or_skip(link: Path, target: str) -> None:
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation not permitted here: {exc}")
+
+
+def test_marker_bytes_are_charged_to_the_budget(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"x" * 11)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "per_file_byte_limit"
+    assert population["scanned_bytes"] == 11  # every byte read, including the probe byte
+
+
+def test_cachedir_tag_head_bytes_are_charged_to_the_budget(tmp_path: Path) -> None:
+    d = tmp_path / "cache"
+    d.mkdir()
+    (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG)  # 44 bytes
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=20, max_aggregate_bytes=1000
+    )
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "per_file_byte_limit"
+    assert population["scanned_bytes"] >= 21
+
+
+def test_link_target_is_measured_in_bytes_not_characters(tmp_path: Path) -> None:
+    target = "é" * 60  # 60 characters, 120 UTF-8 bytes
+    _symlink_or_skip(tmp_path / "alias", target)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=100, max_aggregate_bytes=100
+    )
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "per_file_byte_limit"
+
+
+def test_marker_of_exactly_the_limit_is_complete_and_fully_charged(tmp_path: Path) -> None:
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"x" * 10)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 10
+
+
+def test_link_of_exactly_the_limit_is_complete_and_fully_charged(tmp_path: Path) -> None:
+    _symlink_or_skip(tmp_path / "alias", "t" * 10)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=10
+    )
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 10
+
+
+def test_markers_files_and_links_share_one_aggregate_ledger(tmp_path: Path) -> None:
+    # order: marker (dir classification) 8, a.bin 10, b_link 8, then c.bin hits the aggregate
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"m" * 8)
+    (tmp_path / "a.bin").write_bytes(b"a" * 10)
+    _symlink_or_skip(tmp_path / "b_link", "t" * 8)
+    (tmp_path / "c.bin").write_bytes(b"c" * 10)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=30)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "aggregate_byte_limit"
+    # 8 + 10 + 8 actually read; c.bin (10 bytes) exceeds the remaining 4 at its size check, so
+    # nothing of it is read (and nothing is charged for it)
+    assert population["scanned_bytes"] == 8 + 10 + 8
