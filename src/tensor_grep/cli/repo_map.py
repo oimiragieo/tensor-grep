@@ -28,6 +28,7 @@ from tensor_grep.cli import (
     lang_java,
     lang_php,
     lang_registry,
+    lang_suffixes,
 )
 from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
@@ -596,8 +597,8 @@ _VENDOR_CACHE_DIR_COMPONENTS: frozenset[str] = frozenset(
         "site_packages",  # older virtualenv layout
     }
 )
-_JS_TS_SUFFIXES = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
-_TS_SUFFIXES = {".ts", ".tsx"}
+_JS_TS_SUFFIXES = set(lang_suffixes.JS_TS_SUFFIXES)
+_TS_SUFFIXES = set(lang_suffixes.TS_SUFFIXES)
 _RUST_SUFFIXES = {".rs"}
 _JAVA_SUFFIXES = {".java"}
 # Top-10 language campaign (Phase 2, C++): matches lang_cpp.py's LanguageSpec.suffixes AND
@@ -622,7 +623,6 @@ _TEST_DIR_NAMES = {"__tests__", "spec", "specs", "test", "tests"}
 _SOURCE_FIRST_SUFFIXES = {
     ".c",
     ".cc",
-    ".cjs",
     ".cpp",
     ".cs",
     ".css",
@@ -633,17 +633,21 @@ _SOURCE_FIRST_SUFFIXES = {
     ".hpp",
     ".hxx",
     ".java",
-    ".js",
-    ".jsx",
     ".kt",
     ".lua",
-    ".mjs",
     ".php",
     ".py",
     ".rs",
     ".swift",
-    ".tsx",
-    ".ts",
+    # Scan-universe only (no extractor yet): the existing spec-less coverage gap fires for these.
+    ".cu",
+    ".cuh",
+    ".csx",
+    ".inl",
+    ".ipp",
+    ".phtml",
+    ".tpp",
+    *lang_suffixes.JS_TS_SUFFIXES,
 }
 _RENDER_PROFILES = {"full", "compact", "llm"}
 _JS_RUNNER_ORDER = ("jest", "vitest", "mocha")
@@ -3827,7 +3831,7 @@ lang_registry.register_language(
 lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="typescript",
-        suffixes=frozenset({".ts", ".tsx"}),
+        suffixes=frozenset(lang_suffixes.TS_SUFFIXES),
         parser_for_path=lambda path: _self._typescript_parser(tsx=path.suffix.lower() == ".tsx"),
         extract_imports_and_symbols=_typescript_imports_and_symbols,
         **_JS_TS_REGISTRY_SHARED_KWARGS,

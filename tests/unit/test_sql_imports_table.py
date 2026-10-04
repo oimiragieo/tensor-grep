@@ -845,3 +845,15 @@ def test_sql_imports_read_failure_after_successful_stat_is_disclosed(
     assert "imports_unreadable_files" in payload["incomplete_reason"]
     assert payload["unreadable_paths_count"] == 1
     assert any(Path(p).name == "denied.py" for p in payload["unreadable_paths"])
+
+
+def test_sql_imports_python_syntax_error_file_is_flagged_not_zero_imports(tmp_path: Path) -> None:
+    """G1.2: an unparseable Python file is disclosed, not silently read as "zero imports"."""
+    proj = tmp_path / "proj"
+    _write(proj / "ok.py", "import os\n")
+    _write(proj / "bad.py", "import sys\ndef broken(:\n")
+
+    result = runner.invoke(app, ["sql", str(proj), "SELECT * FROM imports", "--json"])
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.stdout)
+    assert payload["incomplete_reason"] == ["imports_unsupported_files"]

@@ -94,6 +94,16 @@ def _sample_name(path: Path, root: Path | None) -> str:
     return path.as_posix()
 
 
+def _stat_key(path: Path) -> tuple[str, int | None, int | None]:
+    """(path, mtime_ns, size) -- an unstatable file keys as (path, None, None); the classifier
+    then reports it as `unreadable`, so nothing is lost here."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return (str(path), None, None)
+    return (str(path), stat.st_mtime_ns, stat.st_size)
+
+
 _MEMO: tuple[Any, dict[tuple[str, str], dict[str, Any]]] | None = None
 
 
@@ -102,16 +112,10 @@ def _classify(files: list[Path], root: Path | None) -> dict[tuple[str, str], dic
     global _MEMO
     from tensor_grep.cli import repo_map as _rm
 
-    signature: list[tuple[str, int | None, int | None]] = []
-    for current in files:
-        if lang_registry.spec_for_path(current) is None:
-            continue
-        try:
-            stat = current.stat()
-            signature.append((str(current), stat.st_mtime_ns, stat.st_size))
-        except OSError:
-            signature.append((str(current), None, None))
-    key = (_rm._max_parse_bytes(), str(root), tuple(signature))
+    signature = tuple(
+        _stat_key(current) for current in files if lang_registry.spec_for_path(current) is not None
+    )
+    key = (_rm._max_parse_bytes(), str(root), signature)
     memo = _MEMO
     if memo is not None and memo[0] == key:
         return memo[1]
@@ -129,7 +133,7 @@ def _classify_uncached(
     cap = _rm._max_parse_bytes()
     buckets: dict[tuple[str, str], dict[str, Any]] = {}
 
-    def add(kind: str, language: str, path: Path, cause: str | None = None) -> None:
+    def record(kind: str, language: str, path: Path, cause: str | None = None) -> None:
         bucket = buckets.setdefault((kind, language), {"files": [], "causes": set()})
         bucket["files"].append(_sample_name(path, root))
         if cause:
@@ -143,31 +147,31 @@ def _classify_uncached(
         try:
             size = current.stat().st_size
         except OSError:
-            add("unreadable", language, current)
+            record("unreadable", language, current)
             continue
         if size > cap:
-            add("parse-cap", language, current)
+            record("parse-cap", language, current)
             continue
         try:
             text = _rm._read_source_text_cached(str(current))
         except OSError:
-            add("unreadable", language, current)
+            record("unreadable", language, current)
             continue
         if current.suffix.lower() == ".py":
             try:
                 _rm._cached_ast_parse(text)
             except SyntaxError as exc:
                 cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else None
-                add("syntax-error", language, current, cause)
+                record("syntax-error", language, current, cause)
         if _REPLACEMENT_CHAR in text:
             # A VALID UTF-8 file may legitimately contain a literal U+FFFD, so confirm with a
             # strict decode (only for files that already contain one -- rare).
             try:
                 current.read_bytes().decode("utf-8-sig")
             except UnicodeDecodeError:
-                add("lossy-decode", language, current)
+                record("lossy-decode", language, current)
             except OSError:
-                add("unreadable", language, current)
+                record("unreadable", language, current)
     return buckets
 
 
@@ -361,13 +365,7 @@ def attach_found_answer_gaps(payload: dict[str, Any], repo_map: dict[str, Any]) 
     from tensor_grep.cli import repo_map as _rm
 
     files, tests = _rm._repo_map_file_and_test_universe(repo_map)
-    gaps = [
-        gap
-        for gap in _rm._language_coverage_gaps_for_universe(
-            [*files, *tests], _rm._repo_map_root_dir(repo_map)
-        )
-        if gap.get("affects_completeness") != "never"
-    ]
+    gaps = universe_gaps([*files, *tests], _rm._repo_map_root_dir(repo_map))
     if gaps:
         payload["resolution_gaps"] = gaps
         apply_coverage_gap_incompleteness(payload, gaps, answer_empty=False)

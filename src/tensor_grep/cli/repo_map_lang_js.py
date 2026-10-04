@@ -1054,7 +1054,7 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
     if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
 
-    if path.suffix.lower() in {".ts", ".tsx"}:
+    if path.suffix.lower() in _self._TS_SUFFIXES:
         parser = _self._typescript_parser(tsx=path.suffix.lower() == ".tsx")
     else:
         parser = _self._javascript_parser()

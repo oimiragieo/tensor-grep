@@ -598,18 +598,23 @@ def test_source_valid_utf8_js_control(tmp_path):
     assert _json_of(result)["sources"]
 
 
-def test_source_definition_found_but_extraction_empty_with_blocking_gap_exits_2(
-    tmp_path, monkeypatch
-):
-    (tmp_path / "bad.py").write_bytes(b"def lossy_target():\n    return 1\n# caf\xe9\n")
-    monkeypatch.setattr(repo_map, "_python_symbol_sources", lambda *_a, **_k: [])
-    monkeypatch.setattr(repo_map, "_regex_symbol_sources", lambda *_a, **_k: [])
-    result = _cli(["source", "--json", str(tmp_path), "lossy_target"])
-    assert result.exit_code == 2, result.output
-    payload = _json_of(result)
+def test_source_definition_found_but_extraction_empty_with_blocking_gap_exits_2(tmp_path):
+    # A stale symbol row (the definition exists in the map but the extractor finds no source for
+    # it) in a file that also carries a blocking lossy-decode gap: the EMPTY source answer must
+    # be incomplete, not a quiet exit 1.
+    bad = tmp_path / "bad.py"
+    bad.write_bytes(b"def other():\n    return 1\n# caf\xe9\n")
+    rmap = repo_map.build_repo_map(tmp_path)
+    rmap["symbols"] = [
+        *rmap["symbols"],
+        {"name": "ghost", "kind": "function", "file": str(bad), "line": 1},
+    ]
+    payload = repo_map.build_symbol_source_from_map(rmap, "ghost")
     assert payload["definitions"] and not payload["sources"]
+    assert payload["result_incomplete"] is True
     assert payload["incomplete_reason_class"] == "coverage_gap"
     assert "bad.py" in json.dumps(payload["resolution_gaps"])
+    assert cli_main._annotate_result_completeness(payload)[1] is True
 
 
 # --------------------------------------------------------------------------------------------
@@ -646,3 +651,39 @@ def test_python_symbol_source_and_alias_controls_without_separators(tmp_path):
     )
     sources = repo_map._python_symbol_sources(tmp_path / "m.py", "alpha")
     assert [s["source"].strip() for s in sources] == ["def alpha():\n    return 1"]
+
+
+# --------------------------------------------------------------------------------------------
+# G1.4 .mts/.cts register as TypeScript end to end; resolver-less importers are UNKNOWN
+# --------------------------------------------------------------------------------------------
+
+_GENERIC_METHOD = "class Box { method<T>(x: T): T { return x; } }\n"
+
+
+@pytest.mark.parametrize("suffix", [".ts", ".mts", ".cts"])
+def test_typescript_family_suffixes_give_defs_and_complete_source(tmp_path, suffix):
+    (tmp_path / f"box{suffix}").write_text(_GENERIC_METHOD, encoding="utf-8")
+    defs = _cli(["defs", "--json", str(tmp_path), "method"])
+    assert defs.exit_code == 0, defs.output
+    assert _json_of(defs)["definitions"]
+    source = _cli(["source", "--json", str(tmp_path), "method"])
+    assert source.exit_code == 0, source.output
+    sources = _json_of(source)["sources"]
+    assert sources and "return x" in json.dumps(sources)
+
+
+def test_mjs_class_method_still_uses_the_javascript_grammar(tmp_path):
+    (tmp_path / "box.mjs").write_text(
+        "class Box {\n  method(x) { return x; }\n}\n", encoding="utf-8"
+    )
+    result = _cli(["source", "--json", str(tmp_path), "method"])
+    assert result.exit_code == 0, result.output
+    assert "return x" in json.dumps(_json_of(result)["sources"])
+
+
+@pytest.mark.parametrize("suffix", [".mts", ".cts", ".ts"])
+def test_inventory_classifies_ts_family_as_typescript_code(tmp_path, suffix):
+    from tensor_grep.cli import inventory
+
+    assert inventory._LANGUAGE_BY_SUFFIX[suffix] == "typescript"
+    assert suffix in inventory._CODE_SUFFIXES
