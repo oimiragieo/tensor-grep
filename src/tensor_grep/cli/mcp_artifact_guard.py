@@ -83,4 +83,11 @@ def _authorize_artifact_write_path(
             or (isinstance(reason, str) and reason in allowed_routing_reasons)
         ):
             raise ArtifactWriteRefused(label)
-    return resolved, WriteAuthorization(str(resolved), identity, parent_id, label)
+    ancestor = None
+    if parent_id is None:
+        existing = parent
+        while not existing.exists() and existing.parent != existing:
+            existing = existing.parent
+        if existing.is_dir():
+            ancestor = (str(existing), dir_identity(existing))
+    return resolved, WriteAuthorization(str(resolved), identity, parent_id, label, ancestor)

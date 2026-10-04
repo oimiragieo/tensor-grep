@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from dataclasses import replace as _dc_replace
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -96,6 +98,9 @@ class WriteAuthorization:
     identity: tuple[int, int, int, int] | None
     parent_identity: tuple[int, int] | None
     label: str = "target"
+    # When the parent was ABSENT at approval: the nearest EXISTING ancestor and its identity. The
+    # writer creates the missing components itself, under this ancestor, and refuses if it moved.
+    ancestor: tuple[str, tuple[int, int]] | None = None
 
 
 _WRITE_AUTHORIZATIONS: ContextVar[dict[str, WriteAuthorization] | None] = ContextVar(
@@ -153,6 +158,50 @@ def _enforce_parent(path: Path, auth: WriteAuthorization) -> None:
         ) from None
 
 
+def _is_link_or_junction(path: str | Path) -> bool:
+    st = os.lstat(path)
+    reparse = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+    return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & reparse)
+
+
+def _create_missing_parents(path: Path, auth: WriteAuthorization) -> WriteAuthorization:
+    """The authorized parent was ABSENT: create each missing component ourselves (``os.mkdir``
+    fails if someone else got there first -> refuse), reject a symlink/junction, keep every new
+    directory under the authorized existing ancestor, and return the authorization with the NEW
+    parent's identity captured, so the pre-publish check verifies exactly what we created."""
+    label = auth.label
+    if auth.ancestor is None:
+        raise WriteAuthorizationError(f"{label} parent was not authorized for creation (refused)")
+    ancestor_path, ancestor_id = auth.ancestor
+    try:
+        if _is_link_or_junction(ancestor_path) or dir_identity(Path(ancestor_path)) != ancestor_id:
+            raise WriteAuthorizationError(
+                f"{label} parent changed after it was authorized (refused)"
+            )
+        missing: list[Path] = []
+        probe = path.parent
+        while os.path.normcase(str(probe)) != os.path.normcase(ancestor_path):
+            missing.append(probe)
+            if probe.parent == probe:
+                raise WriteAuthorizationError(f"{label} parent is outside its ancestor (refused)")
+            probe = probe.parent
+        real_ancestor = os.path.normcase(os.path.realpath(ancestor_path))
+        for component in reversed(missing):
+            os.mkdir(component)  # FileExistsError: created by someone else -> refuse
+            if _is_link_or_junction(component):
+                raise WriteAuthorizationError(f"{label} parent is a link (refused)")
+            real = os.path.normcase(os.path.realpath(component))
+            if os.path.commonpath([real, real_ancestor]) != real_ancestor:
+                raise WriteAuthorizationError(f"{label} parent escaped its ancestor (refused)")
+        return _dc_replace(auth, parent_identity=dir_identity(path.parent))
+    except WriteAuthorizationError:
+        raise
+    except OSError:  # incl. FileExistsError from the mkdir above
+        raise WriteAuthorizationError(
+            f"{label} parent changed after it was authorized (refused)"
+        ) from None
+
+
 def _enforce_authorization(path: Path, auth: WriteAuthorization) -> None:
     """Immediately-before-publish re-check (run before EACH replace attempt)."""
     _enforce_parent(path, auth)
@@ -185,7 +234,10 @@ def atomic_write_bytes_anchored(
             raise WriteAuthorizationError(
                 f"write target is not an authorized artifact path (refused): {path.name}"
             )
-        _enforce_parent(path, auth)  # BEFORE mkdir/temp creation can touch a swapped parent
+        if auth.parent_identity is None:
+            auth = _create_missing_parents(path, auth)
+        else:
+            _enforce_parent(path, auth)  # BEFORE temp creation can touch a swapped parent
         if auth.identity is None:
             replace = False  # approved as ABSENT: publish no-clobber, never replace
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -230,6 +282,9 @@ def atomic_write_bytes_anchored(
                 raise WriteAuthorizationError(
                     f"{auth.label} appeared after it was authorized (refused)"
                 ) from None
+            # The hard link left a SECOND name for the published bytes: drop the temp name now
+            # (before the directory fsync), so only the authorized artifact remains.
+            tmp_path.unlink(missing_ok=True)
     except BaseException:
         # If publish fails, make sure the sibling temp is removed before control exits.
         tmp_path.unlink(missing_ok=True)

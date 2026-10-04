@@ -1785,3 +1785,90 @@ def test_replace_retry_rechecks_identity_before_each_attempt(tmp_path, monkeypat
             _index_lock.atomic_write_bytes(target, b'{"kind": "k"}')
     assert calls["replace"] == 1  # the second attempt never happened
     assert b"swapped" in target.read_bytes()
+
+
+# --- Codex round 3: missing-parent artifact paths, and no leftover temp hard link ---
+
+
+def test_new_nested_baseline_path_with_missing_parents_is_published(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    assert not (tmp_path / "a").exists()
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="a/b/base.json")
+    )
+    assert "error" not in out, out
+    written = json.loads((tmp_path / "a" / "b" / "base.json").read_text(encoding="utf-8"))
+    assert written["kind"] == "ruleset-scan-baseline"
+    assert [p.name for p in (tmp_path / "a" / "b").iterdir()] == ["base.json"]
+
+
+def test_new_nested_review_bundle_path_with_missing_parents_is_published(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    _write_audit_manifest(manifest)
+    out = json.loads(
+        mcp_server.tg_review_bundle_create(
+            manifest_path=str(manifest), output_path="reports/deep/bundle.json"
+        )
+    )
+    assert "error" not in out, out
+    bundle = tmp_path / "reports" / "deep" / "bundle.json"
+    assert json.loads(bundle.read_text(encoding="utf-8"))["routing_reason"] == (
+        "review-bundle-create"
+    )
+    assert [p.name for p in bundle.parent.iterdir()] == ["bundle.json"]
+
+
+def test_missing_parent_created_by_someone_else_before_the_write_is_refused(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    other = tmp_path.parent / (tmp_path.name + "_elsewhere")
+    other.mkdir()
+
+    def someone_else_creates_the_parent_as_a_link():
+        _link_dir(tmp_path / "reports", other)
+
+    _swap_before_scan_write(monkeypatch, someone_else_creates_the_parent_as_a_link)
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="reports/base.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert list(other.iterdir()) == []
+
+
+@pytest.mark.parametrize("pre_existing", [False, True])
+def test_publish_leaves_only_the_authorized_artifact_in_the_directory(
+    tmp_path, monkeypatch, pre_existing
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    runs = 2 if pre_existing else 1  # run 1 = no-clobber publish, run 2 = replace publish
+    for _ in range(runs):
+        out = json.loads(
+            mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="out/base.json")
+        )
+        assert "error" not in out, out
+        assert sorted(p.name for p in out_dir.iterdir()) == ["base.json"]
+        assert os.stat(out_dir / "base.json").st_nlink == 1
+
+
+def test_unauthorized_scope_writer_leaves_no_temp_names_on_success(tmp_path):
+    from tensor_grep.cli import _index_lock
+
+    target = tmp_path / "plain.json"
+    _index_lock.atomic_write_bytes_anchored(target, b"{}", replace=False)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["plain.json"]
+    assert os.stat(target).st_nlink == 1
+    _index_lock.atomic_write_bytes_anchored(target, b"{}", replace=True)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["plain.json"]
