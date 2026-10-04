@@ -51,6 +51,7 @@ _win_owner_and_dacl = _winsec.owner_and_dacl_sids
 _win_dacl_entries = _winsec.owner_and_dacl_entries  # (owner SID, [(SID, access mask)])
 _win_create_restricted = _winsec.create_new_restricted  # CREATE_NEW with a user-only descriptor
 _lstat = os.lstat  # private seam: tests patch this, never the global os.lstat
+_link_secret = os.link  # seam on the PRODUCTION dir_fd publish (crash tests inject here)
 _win_create_dir_restricted = _winsec.create_directory_restricted  # user-only, protected
 
 
@@ -394,7 +395,10 @@ def _verify_attestation(metadata: dict[str, Any], root: Path) -> bool:
 
 # The closed sets the stop / status exit table (``session_daemon_stop_cli``) recognises. Every reason
 # and proof a producer below can emit must be a member (a test derives the producers' literals).
+_METADATA_REASONS = {"unreadable": "metadata_unreadable", "invalid": "metadata_invalid"}
 _UNCONFIRMED_REASONS = (
+    "metadata_unreadable",
+    "metadata_invalid",
     "pid_unproven",
     "termination_failed",
     "no_bound_process_handle",
@@ -420,6 +424,39 @@ def _unconfirmed_fields(state: str, delivered: bool, endpoint_ok: bool = True) -
     return {"running": True, "stopped": False, "stop_method": "none", "unconfirmed_reason": reason}
 
 
+def _read_metadata_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def _metadata_state(path: Path) -> tuple[str, dict[str, Any] | None]:
+    """``(state, metadata)`` with the states told apart: ``absent`` (no such file), ``unreadable`` (any
+    other OSError), ``invalid`` (not UTF-8 / not JSON / not an object) and ``ok``. Only ``absent`` is
+    proof that no daemon recorded itself; the others mean "something is there that we cannot read"."""
+    try:
+        raw = _read_metadata_text(path)
+    except FileNotFoundError:
+        return "absent", None
+    except UnicodeDecodeError:
+        return "invalid", None
+    except OSError:
+        return "unreadable", None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return "invalid", None
+    return ("ok", data) if isinstance(data, dict) else ("invalid", None)
+
+
+def _metadata_unconfirmed(state: str) -> dict[str, Any]:
+    """Unconfirmed stop result for unreadable / invalid ``daemon.json`` (the file is kept)."""
+    return {
+        "running": True,
+        "stopped": False,
+        "stop_method": "none",
+        "unconfirmed_reason": _METADATA_REASONS[state],
+    }
+
+
 def _stale_unconfirmed(
     metadata: dict[str, Any] | None, state: str, timeout_seconds: float
 ) -> dict[str, Any] | None:
@@ -429,8 +466,8 @@ def _stale_unconfirmed(
     at all (so it is never silently treated as stopped)."""
     if state != "gone":
         return _unconfirmed_fields(state, False)
-    if not metadata:
-        return None  # nothing recorded: nothing alive to be unsure about
+    if metadata is None:
+        return None  # the file is ABSENT: nothing recorded, nothing alive to be unsure about
     host, port = metadata.get("host", DAEMON_HOST), metadata.get("port")
     if _valid_daemon_port(port) is None or not _is_loopback_host(host):
         return _unconfirmed_fields("gone", False, endpoint_ok=False)
@@ -961,7 +998,7 @@ def _write_secret_posix(path: Path, payload: dict[str, Any]) -> None:
                 handle.write(data)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.link(tmp_name, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)  # fails if it exists
+            _link_secret(tmp_name, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)  # fails if it exists
         finally:
             try:
                 os.unlink(tmp_name, dir_fd=dfd)

@@ -24,6 +24,7 @@ from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, repla
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
+    _METADATA_REASONS,
     DAEMON_HOST,
     _attestation_fields,
     _await_endpoint_refused,
@@ -36,6 +37,8 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _endpoint_flag,
     _is_loopback_host,
     _load_or_create_user_secret,
+    _metadata_state,
+    _metadata_unconfirmed,
     _ping_proof_fields,
     _process_info,
     _read_user_secret,
@@ -216,13 +219,9 @@ def _nearby_daemon_roots(path: str = ".") -> list[Path]:
 
 
 def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
-    metadata_path = _daemon_metadata_path(root)
-    if not metadata_path.exists():
-        return None
-    try:
-        return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError):
-        return None
+    """The metadata dict, or ``None`` for absent / unreadable / invalid. Callers that must tell
+    absence from damage use ``_metadata_state`` (only ABSENT is proof that nothing is recorded)."""
+    return _metadata_state(_daemon_metadata_path(root))[1]
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
@@ -658,7 +657,16 @@ def _merge_live_daemon_stats(status: dict[str, Any], *, token: str = "") -> dict
 
 def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
-    metadata = _read_daemon_metadata(root)
+    meta_state, metadata = _metadata_state(_daemon_metadata_path(root))
+    if meta_state in ("unreadable", "invalid"):  # damage is not absence
+        return {
+            "version": _SESSION_VERSION,
+            "root": str(root),
+            "discovered": False,
+            "running": False,
+            "stale_metadata": True,
+            "metadata_error": _METADATA_REASONS[meta_state],
+        }
     if metadata is None:
         for discovered_root in _nearby_daemon_roots(path):
             if discovered_root == root:
@@ -878,7 +886,13 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     if metadata is None:
         # audit I7: cooperative probe failed, but a stale daemon may still be running (e.g. its
         # socket is wedged). Fall back to terminating the recorded pid if it validates.
-        stale_metadata = _read_daemon_metadata(root)
+        meta_state, stale_metadata = _metadata_state(_daemon_metadata_path(root))
+        if meta_state in ("unreadable", "invalid"):  # damage is not absence: keep the file
+            return {
+                "version": _SESSION_VERSION,
+                "root": str(root),
+                **_metadata_unconfirmed(meta_state),
+            }
         killed = _terminate_daemon_by_pid(stale_metadata, root=root)
         # Stale metadata is removed only after PROVEN absence: the process is gone ("gone") or, after
         # a delivered signal, the connection is refused. A live process we could not stop (ours but
@@ -903,7 +917,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
-            **_stale_success_fields(killed, bool(stale_metadata)),
+            **_stale_success_fields(killed, stale_metadata is not None),
         }
     response: dict[str, Any]
     try:

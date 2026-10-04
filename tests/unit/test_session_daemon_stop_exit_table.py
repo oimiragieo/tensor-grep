@@ -52,6 +52,8 @@ def _unconfirmed_payloads() -> list[dict[str, Any]]:
         ("ours", "gone", "unverifiable", "unknown-state"), (True, False), (True, False)
     ):
         shapes.append(trust._unconfirmed_fields(state, delivered, endpoint_ok))
+    for damage in trust._METADATA_REASONS:  # unreadable / invalid daemon.json
+        shapes.append(trust._metadata_unconfirmed(damage))
     return shapes
 
 
@@ -130,6 +132,7 @@ def test_the_producers_reasons_and_proofs_are_all_in_the_table() -> None:
         "unconfirmed_reason",
         "stop_method",
     }
+    reasons |= set(trust._METADATA_REASONS.values())
     assert reasons <= set(trust._UNCONFIRMED_REASONS), reasons - set(trust._UNCONFIRMED_REASONS)
     proofs = literals(trust._stop_success) | literals(trust._stale_success_fields)
     proofs = {p for p in proofs if p.endswith("_refused") or p == "no_metadata"}
@@ -145,6 +148,8 @@ def test_the_producers_reasons_and_proofs_are_all_in_the_table() -> None:
         ({"running": True, "host": "127.0.0.1", "port": 1, "pid": 2}, 0),
         ({"running": False, "discovered": False}, 0),  # no metadata at all
         ({"running": False, "stale_metadata": True, "endpoint_accepting_connections": False}, 2),
+        ({"running": False, "stale_metadata": True, "metadata_error": "metadata_invalid"}, 2),
+        ({"running": False, "metadata_error": "metadata_unreadable"}, 2),
         ({"running": False, "stale_metadata": True, "endpoint_accepting_connections": True}, 2),
         ({"running": False, "endpoint_accepting_connections": True}, 2),
         ({"running": True, "error": {"code": "x"}}, 2),

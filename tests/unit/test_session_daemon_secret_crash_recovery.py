@@ -32,12 +32,17 @@ _CRASHING_WRITER = textwrap.dedent(
     import os, sys
     from tensor_grep.cli import _index_lock, session_daemon_trust as trust
 
-    def _link_then_die(src, dst):
-        os.link(str(src), str(dst))   # the secret is now published under BOTH names ...
+    _real_link = os.link
+
+    def _link_then_die(*args, **kwargs):
+        _real_link(*args, **kwargs)   # the secret is now published under BOTH names ...
         os._exit(7)                    # ... and the writer is killed before the temp is unlinked
 
-    _index_lock._publish_bytes_no_clobber = _link_then_die   # POSIX writer (shared helper)
-    trust._publish_bytes_no_clobber = _link_then_die         # Windows writer
+    # Inject on every PRODUCTION publish path: the supported POSIX dir_fd writer (trust._link_secret),
+    # the POSIX path-based fallback (shared helper) and the Windows writer.
+    trust._link_secret = _link_then_die
+    _index_lock._publish_bytes_no_clobber = _link_then_die
+    trust._publish_bytes_no_clobber = _link_then_die
     trust._load_or_create_user_secret()
     os._exit(0)
     """

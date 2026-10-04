@@ -24,6 +24,8 @@ from typing import Any
 import typer
 
 _REASONS = {
+    "metadata_invalid": "daemon.json exists but is not valid JSON / not a JSON object, so it was kept",
+    "metadata_unreadable": "daemon.json exists but could not be read, so it was kept",
     "pid_unproven": "the recorded pid could not be proven to be this root's daemon, so it was not signalled",
     "termination_failed": "the daemon process could not be terminated",
     "endpoint_still_accepting_connections": "the daemon is still accepting connections",
@@ -59,7 +61,11 @@ def status_exit_code(payload: Any) -> int:
         return 0
     if running is not False:
         return 2
-    if payload.get("stale_metadata") or payload.get("endpoint_accepting_connections"):
+    if (
+        payload.get("stale_metadata")
+        or payload.get("endpoint_accepting_connections")
+        or payload.get("metadata_error")
+    ):
         return 2
     return 0
 
@@ -149,9 +155,12 @@ def run_session_daemon_status(
     code = status_exit_code(payload)
     if code != 0 and payload.get("running") is not True:
         listening = "yes" if payload.get("endpoint_accepting_connections") else "no"
+        damage = payload.get("metadata_error")
         message = (
-            "Session daemon status could not be confirmed: daemon.json exists but the daemon did not "
-            f"authenticate (endpoint accepting connections: {listening})."
+            f"Session daemon status could not be confirmed ({damage}): daemon.json is damaged."
+            if damage
+            else "Session daemon status could not be confirmed: daemon.json exists but the daemon "
+            f"did not authenticate (endpoint accepting connections: {listening})."
         )
         if "error" in payload:
             payload = {**payload, "status_reply_error": payload["error"]}

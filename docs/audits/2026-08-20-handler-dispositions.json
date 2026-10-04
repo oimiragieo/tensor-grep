@@ -3091,7 +3091,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 139,
+    "lineno": 146,
     "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1618,
+    "lineno": 1632,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1695,
+    "lineno": 1709,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
