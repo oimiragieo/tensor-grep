@@ -21,10 +21,12 @@ Threat model (bug hunt G-03/G-08):
   directories -> `dir_count_limit`. Symlink leaves are fingerprinted as `symlink:<target>` and
   never followed.
 * Residuals: a `pyvenv.cfg` inside a SUBdirectory that also holds hand-edited source prunes
-  that subdirectory (the walk root is never pruned); a marker planted together with NEW files
-  hides them (same class as creating a new `node_modules/`); a marker planted into an EXISTING
-  source dir after minting shows those files as drift (caught); a marker planted BEFORE minting
-  is outside the cooperative threat model.
+  that subdirectory (the walk root is never pruned); a marker planted BEFORE minting is outside
+  the cooperative threat model.
+* Every pruned directory (by name or by marker) is recorded at mint in `pruned_set`; at verify
+  a pruned directory that did not exist at mint is `newly_pruned:<dir>` (fail closed: an agent
+  that runs `npm install` mid-ticket must re-mint or declare it), a changed marker is
+  `marker_changed:<dir>`, a dropped content-prune is `no_longer_pruned:<dir>`.
 """
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ _CMAKE_SOURCE = "CMakeLists.txt"
 _MAX_REPORTED_PRUNED = 200
 _MAX_WALK_DIRS = 200_000
 _MAX_CONTENT_PRUNED = 2_000
+_NAME_PRUNED = "name"
 _MARKER_HASH_CAP = 16 * 1024 * 1024
 
 _DEFAULT_MAX_FILES = 20_000
@@ -173,8 +176,9 @@ def _population_paths(
 ) -> Iterator[str]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
 
-    `content_pruned` (root-relative dir -> "<marker>:<sha256 of marker>") records every directory
-    pruned by CONTENT so verify can detect a marker planted/changed/removed after minting.
+    `content_pruned` (root-relative dir -> "<marker>:<sha256 of marker>", or "name" for a
+    directory pruned only by NAME) records EVERY pruned directory so verify can detect a
+    directory that was pruned/created or a marker planted/changed/removed after minting.
     Directory symlinks are yielded as LEAVES (fingerprinted as `symlink:<target>`), checked
     BEFORE any marker classification, and never descended.
 
@@ -203,10 +207,14 @@ def _population_paths(
                 rel = (rel_dir / d).as_posix()
                 if len(pruned) < _MAX_REPORTED_PRUNED:
                     pruned.append(rel)
-                if marker is not None and content_pruned is not None:
+                if content_pruned is not None:
                     if len(content_pruned) >= _MAX_CONTENT_PRUNED:
                         raise _PopulationWalkError("pruned_dir_limit")
-                    content_pruned[rel] = f"{marker}:{_marker_digest(child / marker)}"
+                    content_pruned[rel] = (
+                        f"{marker}:{_marker_digest(child / marker)}"
+                        if marker is not None
+                        else _NAME_PRUNED
+                    )
             else:
                 keep.append(d)
         dirnames[:] = keep
@@ -294,7 +302,7 @@ def _walk_tracked_files_bounded(
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
-            "content_pruned": dict(sorted(content_pruned.items())),
+            "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
@@ -306,7 +314,7 @@ def _walk_tracked_files_bounded(
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
-            "content_pruned": dict(sorted(content_pruned.items())),
+            "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
@@ -391,14 +399,16 @@ def _content_pruned_violations(minted: dict[str, Any], current: dict[str, Any]) 
     walk (the declared file then reads as deleted and undeclared siblings are never seen), so
     any difference in the pruned set or in a marker's bytes is a violation. Tickets minted
     before this field existed carry no record and are skipped (documented legacy path)."""
-    before = minted.get("content_pruned")
+    before = minted.get("pruned_set")
     if not isinstance(before, dict):
         return []
-    after = current.get("content_pruned") or {}
+    after = current.get("pruned_set") or {}
     out: list[str] = []
     for rel in sorted(set(before) | set(after)):
         if rel not in before:
             out.append(f"newly_pruned:{rel}")
+        elif before[rel] == _NAME_PRUNED:
+            continue  # existed at mint, pruned by name: its contents stay out of scope
         elif rel not in after:
             out.append(f"no_longer_pruned:{rel}")
         elif before[rel] != after[rel]:

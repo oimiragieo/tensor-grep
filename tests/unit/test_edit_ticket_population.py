@@ -518,7 +518,7 @@ def test_pruned_dir_marker_change_and_unprune_are_violations(tmp_path: Path) -> 
     (env / "pyvenv.cfg").write_text("home = a\n", encoding="utf-8")
     (env / "lib.py").write_text("1\n", encoding="utf-8")
     ticket = _ticket(tmp_path)
-    assert ticket.population_status["content_pruned"]  # recorded at mint
+    assert ticket.population_status["pruned_set"]  # recorded at mint
     # unchanged: PASS (positive control)
     assert (
         verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])["verdict"]
@@ -609,3 +609,76 @@ def test_malformed_cachedir_tag_does_not_prune_and_edit_fails_verify(
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "FAIL"
     assert result["violations"] == ["pkg/m.py"]
+
+
+@pytest.mark.parametrize(
+    ("rel", "expected"),
+    [
+        ("src/node_modules/evil.py", "newly_pruned:src/node_modules"),
+        ("__pycache__/x.py", "newly_pruned:__pycache__"),
+        ("pkg/.tox/e.py", "newly_pruned:pkg/.tox"),
+        (".nox/e.py", "newly_pruned:.nox"),
+        ("lib/site-packages/e.py", "newly_pruned:lib/site-packages"),
+    ],
+)
+def test_newly_created_name_pruned_dir_is_a_violation(
+    tmp_path: Path, rel: str, expected: str
+) -> None:
+    # A whole NEW directory with an always-pruned name hides undeclared files from the verify
+    # walk. Fail closed: a pruned directory that did not exist at mint is a violation.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    evil = tmp_path / rel
+    evil.parent.mkdir(parents=True, exist_ok=True)
+    evil.write_text("boom\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == [expected]
+
+
+def test_newly_pruned_violation_names_the_directory(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    ticket = _ticket(tmp_path)
+    (tmp_path / "src" / "node_modules").mkdir()
+    (tmp_path / "src" / "node_modules" / "evil.py").write_text("x\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["newly_pruned:src/node_modules"]
+
+
+def test_preexisting_name_pruned_dir_with_changes_inside_passes(tmp_path: Path) -> None:
+    # Control: contents of a name-pruned dir that existed at mint stay out of scope, as designed.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    nm = tmp_path / "node_modules" / "pkg"
+    nm.mkdir(parents=True)
+    (nm / "index.js").write_text("1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["pruned_set"]["node_modules"] == "name"
+    (nm / "index.js").write_text("2\n", encoding="utf-8")
+    (nm / "new.js").write_text("3\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def test_legacy_ticket_without_pruned_set_skips_the_pruned_check(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    legacy_dict = ticket.to_dict()
+    del legacy_dict["population_status"]["pruned_set"]
+    legacy = edit_ticket_service.EditReadyTicketV1.from_dict(legacy_dict)
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "e.js").write_text("x\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=legacy, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def test_pruned_dir_budget_makes_population_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for i in range(5):
+        (tmp_path / f"d{i}" / "node_modules").mkdir(parents=True)
+    monkeypatch.setattr(edit_ticket_service, "_MAX_CONTENT_PRUNED", 3, raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "pruned_dir_limit"
