@@ -315,6 +315,15 @@ def _read_exact_or_eof(handle: BinaryIO, n: int, ledger: _ByteLedger) -> bytes:
     return b"".join(parts)
 
 
+def _close_fd(fd: int) -> None:
+    """Close a directory / file descriptor; a failing `close()` (EIO) releases the descriptor
+    anyway and must NOT abort the remaining cleanup (which would leak every other fd)."""
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+
+
 def _open_regular_no_follow(
     path: str | Path, expected_ident: tuple[int, int] | None = None
 ) -> BinaryIO:
@@ -351,7 +360,7 @@ def _open_regular_no_follow(
         # budgeted read, so the byte budget would bound nothing. Every read reaches the raw fd.
         return _fdopen(fd, "rb", buffering=0)  # type: ignore[return-value]
     except BaseException:
-        os.close(fd)
+        _close_fd(fd)
         raise
 
 
@@ -546,7 +555,7 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
         listing = _listing(frame.fd)  # may raise (onerror): the stack already owns frame.fd
         if listing is None:
             stack.pop()  # `frame` is the top: closed here, exactly once, and no longer owned
-            os.close(frame.fd)
+            _close_fd(frame.fd)
             return
         dirs, files = listing
         st = os.fstat(frame.fd)
@@ -575,7 +584,7 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
             frame = stack[-1]
             if not frame.pending:
                 stack.pop()
-                os.close(frame.fd)
+                _close_fd(frame.fd)
                 continue
             name = frame.pending.pop()
             child = os.path.join(frame.path, name)
@@ -584,9 +593,11 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
             yield from _enter(_own(child, child_fd))
+    except OSError as exc:  # fstat / any other call inside the walk: never an escaping OSError
+        raise _PopulationWalkError("unreadable_path") from exc
     finally:
         while stack:
-            os.close(stack.pop().fd)
+            _close_fd(stack.pop().fd)
 
 
 def _os_open_dir(path: str, flags: int) -> int:
@@ -764,6 +775,8 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
             yield from _enter(_own(child, child_held))
+    except OSError as exc:  # any other call inside the walk: never an escaping OSError
+        raise _PopulationWalkError("unreadable_path") from exc
     finally:
         while stack:
             stack.pop().held.close()
@@ -846,10 +859,10 @@ def _authenticated_child(child: Path, child_st: os.stat_result) -> Iterator[None
         finally:
             fds.pop(key, None)
     finally:
-        os.close(fd)
+        _close_fd(fd)
 
 
-def _population_paths(
+def _population_paths_impl(
     root: Path,
     pruned: list[str],
     content_pruned: dict[str, str] | None = None,
@@ -1029,6 +1042,27 @@ def _population_paths(
         raise _PopulationWalkError("unreadable_path")
 
 
+def _population_paths(
+    root: Path,
+    pruned: list[str],
+    content_pruned: dict[str, str] | None = None,
+    ledger: _ByteLedger | None = None,
+    root_ident: tuple[int, int] | None = None,
+    root_identity_out: list[int] | None = None,
+) -> Generator[tuple[str, str | None], None, None]:
+    """The single boundary of the walk: no OSError raised by ANY filesystem call inside it (open,
+    listing, stat / fstat, reparse or identity checks, reads, hashing) escapes as an exception.
+    It becomes `_PopulationWalkError("unreadable_path")` here, while the specific reasons
+    (`marker_too_large`, the byte limits, ...) and the `onerror` swallow semantics pass through
+    untouched. Only OSError is converted: programming errors still surface."""
+    try:
+        yield from _population_paths_impl(
+            root, pruned, content_pruned, ledger, root_ident, root_identity_out
+        )
+    except OSError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
+
+
 _FINGERPRINT_TAGS = ("file:", "symlink:", "other:")
 
 
@@ -1206,6 +1240,9 @@ def _walk_tracked_files_bounded(
         if incomplete_reason is None:
             incomplete_reason = exc.reason
             limit_kind = exc.kind
+    except OSError:  # backstop: an OSError is never an exception for mint / verify
+        if incomplete_reason is None:
+            incomplete_reason = "unreadable_path"
     finally:
         if paths is not None:
             paths.close()  # release held directory handles / dirfds even on an early break

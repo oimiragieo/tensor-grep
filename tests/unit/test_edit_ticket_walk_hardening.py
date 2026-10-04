@@ -1561,8 +1561,12 @@ def test_fd_walk_closes_the_fd_exactly_once_when_fstat_fails_after_listing(
     world = _FdWorld()
     world.install(monkeypatch, [])
     world.fail_fstat = {100}
-    with pytest.raises(OSError):
-        _drain(edit_ticket_service._fd_walk(str(tmp_path), _raise_walk_error))
+    # An OSError from a filesystem call inside the walk is NOT an exception for the caller: the
+    # population is incomplete (unreadable_path). Driven through the real entry point.
+    monkeypatch.setattr(edit_ticket_service, "_walk_impl", edit_ticket_service._fd_walk)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
     assert world.closed == [100]
 
 
@@ -1663,3 +1667,161 @@ def test_hold_dir_closes_the_handle_exactly_once_when_a_post_acquire_call_raises
     with pytest.raises(RuntimeError):
         edit_ticket_service._hold_dir(tmp_path)
     assert len(closes) == 1  # acquired, failed, closed exactly once
+
+
+# ---- round 24: no OSError from any filesystem call inside a walk may escape ----
+
+
+class _Injector:
+    """Counts calls and raises OSError(EIO) on the `fail_at`-th (0-based); -1 never fails."""
+
+    def __init__(self, fail_at: int = -1) -> None:
+        self.calls = 0
+        self.fail_at = fail_at
+
+    def wrap(self, fn):  # type: ignore[no-untyped-def]
+        def inner(*a: object, **k: object) -> object:
+            index = self.calls
+            self.calls += 1
+            if index == self.fail_at:
+                raise OSError(5, "EIO injected")
+            return fn(*a, **k)
+
+        return inner
+
+
+_CENSUS_OS_SITES = ["lstat", "stat", "scandir", "fstat", "open", "readlink", "close"]
+_CENSUS_K32_SITES = ["CreateFileW", "GetFileInformationByHandle"]
+
+
+def _census_tree(root: Path) -> None:
+    (root / "pkg").mkdir(parents=True)
+    (root / "pkg" / "m.py").write_text("x = 1\n", encoding="utf-8")
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (root / "env").mkdir()
+    (root / "env" / "pyvenv.cfg").write_bytes(b"home = x\n")  # marker (digest read)
+    (root / "cache").mkdir()
+    (root / "cache" / "CACHEDIR.TAG").write_bytes(_BAD_TAG)  # invalid tag -> emitted leaf
+    (root / "cache" / "x.py").write_text("1\n", encoding="utf-8")
+    (root / "tagged").mkdir()
+    (root / "tagged" / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG)  # valid tag -> pruned
+    (root / "node_modules").mkdir()  # name-pruned
+    try:
+        (root / "alias.py").symlink_to("app.py")  # link leaf (readlink)
+    except (OSError, NotImplementedError):
+        pass
+
+
+class _Accounting:
+    """Handles acquired by CreateFileW vs CloseHandle calls (Windows held handles)."""
+
+    def __init__(self) -> None:
+        self.opened = 0
+        self.closed = 0
+
+
+def _install_census(
+    monkeypatch: pytest.MonkeyPatch, site: str, fail_at: int
+) -> tuple[_Injector, _Accounting]:
+    injector = _Injector(fail_at)
+    accounting = _Accounting()
+    if sys.platform == "win32":
+        k32 = edit_ticket_service._k32
+        real_create = k32.CreateFileW
+        real_close = k32.CloseHandle
+
+        def _create(*a: object) -> object:
+            handle = real_create(*a)
+            if handle is not None and handle != edit_ticket_service._INVALID_HANDLE:
+                accounting.opened += 1
+            return handle
+
+        def _close(handle: object) -> object:
+            accounting.closed += 1
+            return real_close(handle)
+
+        monkeypatch.setattr(k32, "CreateFileW", _create, raising=False)
+        monkeypatch.setattr(k32, "CloseHandle", _close, raising=False)
+        if site in _CENSUS_K32_SITES:
+            monkeypatch.setattr(k32, site, injector.wrap(getattr(k32, site)), raising=False)
+    if site in _CENSUS_OS_SITES:
+        real = getattr(os, site)
+        monkeypatch.setattr(edit_ticket_service, "os", _OsProxy(os, **{site: injector.wrap(real)}))
+    return injector, accounting
+
+
+def _census_sites() -> list[str]:
+    return _CENSUS_OS_SITES + (_CENSUS_K32_SITES if sys.platform == "win32" else [])
+
+
+def _call_count(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str) -> int:
+    with monkeypatch.context() as m:
+        injector, _acc = _install_census(m, site, -1)
+        _walk_tracked_files_bounded(tmp_path)
+        return injector.calls
+
+
+@pytest.mark.parametrize("site", _CENSUS_OS_SITES + _CENSUS_K32_SITES)
+def test_no_oserror_from_any_filesystem_call_site_escapes_the_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str
+) -> None:
+    if site in _CENSUS_K32_SITES and sys.platform != "win32":
+        pytest.skip("held-handle API is Windows-only")
+    _census_tree(tmp_path)
+    baseline_files, baseline_pop = _walk_tracked_files_bounded(tmp_path)
+    assert baseline_pop["status"] == "complete"
+    total = _call_count(tmp_path, monkeypatch, site)
+    if total == 0:
+        pytest.skip(f"{site} is not exercised by the walk on this platform")
+    for index in range(total):
+        with monkeypatch.context() as m:
+            _inj, acc = _install_census(m, site, index)
+            files, population = _walk_tracked_files_bounded(tmp_path)  # must not raise
+        if sys.platform == "win32":
+            assert acc.opened == acc.closed, (site, index, acc.opened, acc.closed)
+        if population["status"] == "incomplete":
+            assert population["reason"] in {
+                "unreadable_path",
+                "per_file_byte_limit",
+                "aggregate_byte_limit",
+            }, (site, index, population["reason"])
+        else:
+            # absorbed BY DESIGN ("cannot classify a marker -> walk it"): strictly MORE coverage,
+            # never less, so it can only add violations at verify
+            assert set(baseline_files) <= set(files), (site, index)
+            assert set(population["pruned_set"]) <= set(baseline_pop["pruned_set"]), (site, index)
+
+
+@pytest.mark.parametrize("site", _CENSUS_OS_SITES + _CENSUS_K32_SITES)
+def test_public_mint_and_verify_survive_an_oserror_at_every_call_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, site: str
+) -> None:
+    if site in _CENSUS_K32_SITES and sys.platform != "win32":
+        pytest.skip("held-handle API is Windows-only")
+    _census_tree(tmp_path)
+    clean = _ticket(tmp_path)
+    assert clean.population_status["status"] == "complete"
+    total = _call_count(tmp_path, monkeypatch, site)
+    if total == 0:
+        pytest.skip(f"{site} is not exercised by the walk on this platform")
+    for index in sorted({0, total // 2, total - 1}):
+        with monkeypatch.context() as m:
+            _inj, acc = _install_census(m, site, index)
+            minted = _ticket(tmp_path)  # public mint: must not raise
+        if sys.platform == "win32":
+            assert acc.opened == acc.closed, (site, index)
+        if minted.population_status["status"] == "complete":
+            assert set(minted.pre_edit_fingerprints) >= set(clean.pre_edit_fingerprints)
+        with monkeypatch.context() as m:
+            _inj, acc = _install_census(m, site, index)
+            result = verify_edit_ticket(  # public verify: must not raise
+                repo_root=str(tmp_path), ticket=clean, modified_files=[]
+            )
+        if sys.platform == "win32":
+            assert acc.opened == acc.closed, (site, index)
+        assert result["verdict"] in {"PASS", "FAIL"}
+        if result["verdict"] == "FAIL":
+            assert result["reason"] in {
+                "verify_population_incomplete",
+                "edit_contract_violated",
+            }, (site, index, result["reason"])
