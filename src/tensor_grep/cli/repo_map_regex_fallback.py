@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_lang_js import _js_ts_dynamic_import_hit as _js_ts_dynamic_import_hit
 
 # Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
@@ -40,6 +41,19 @@ else:
     _self = _RepoMapProxy()
 
 
+# A WHOLE identifier token: a leading non-digit word char followed by everything up to a
+# delimiter (council wave-2a r5/r8). Capturing only `[^\W\d]\w*` would cut `caf\u00e9` / a
+# decomposed name at the first non-`\w` char and emit a truncated symbol; the full token is then
+# vetted by `lang_registry.is_clean_symbol_name` (`_clean_name_match`), which rejects it whole.
+_IDENT = r"""[^\W\d][^\s()\[\]{}<>;,=:.'"/#]*"""
+
+
+def _clean_name_match(match: re.Match[str] | None) -> re.Match[str] | None:
+    if match is None or not lang_registry.is_clean_symbol_name(match.group(1)):
+        return None
+    return match
+
+
 def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
     if path.suffix.lower() not in _self._JS_TS_SUFFIXES | _self._RUST_SUFFIXES:
         return [], []
@@ -57,32 +71,42 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
             import_match = re.match(r'^\s*import\s+.*?from\s+["\']([^"\']+)["\']', line)
             export_from_match = re.match(r'^\s*export\s+.*?from\s+["\']([^"\']+)["\']', line)
             require_match = re.match(
-                r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|[A-Za-z_][A-Za-z0-9_]*)"
+                r"^\s*(?:const|let|var)\s+(?:\{[^}]+\}|" + _IDENT + r")"
                 r'\s*=\s*require\(["\']([^"\']+)["\']\)',
                 line,
             )
-            class_match = re.match(
-                r"^\s*(?:export\s+)?(?:default\s+)?class\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            class_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:export\s+)?(?:default\s+)?class\s+(" + _IDENT + r")",
+                    line,
+                )
             )
-            function_match = re.match(
-                r"^\s*(?:export\s+)?(?:default\s+)?function\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            function_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:export\s+)?(?:default\s+)?function\s+(" + _IDENT + r")",
+                    line,
+                )
             )
-            variable_function_match = re.match(
-                r"^\s*(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
+            variable_function_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:const|let|var)\s+(" + _IDENT + r")\s*=\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)",
+                    line,
+                )
             )
-            commonjs_export_function_match = re.match(
-                r"^\s*(?:module\.)?exports\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
+            commonjs_export_function_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:module\.)?exports\.(" + _IDENT + r")\s*=\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)",
+                    line,
+                )
             )
-            object_export_function_match = re.match(
-                r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*"
-                r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)",
-                line,
+            object_export_function_match = _clean_name_match(
+                re.match(
+                    r"^\s*(" + _IDENT + r")\s*:\s*"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)",
+                    line,
+                )
             )
             if import_match:
                 imports.append(import_match.group(1))
@@ -139,21 +163,29 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
                 )
         elif path.suffix.lower() in _self._RUST_SUFFIXES:
             use_match = re.match(r"^\s*use\s+([^;]+);", line)
-            fn_match = re.match(
-                r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            fn_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:pub(?:\([^)]*\))?\s+)?fn\s+(" + _IDENT + r")",
+                    line,
+                )
             )
-            struct_match = re.match(
-                r"^\s*(?:pub\s+)?struct\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            struct_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:pub\s+)?struct\s+(" + _IDENT + r")",
+                    line,
+                )
             )
-            enum_match = re.match(
-                r"^\s*(?:pub\s+)?enum\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            enum_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:pub\s+)?enum\s+(" + _IDENT + r")",
+                    line,
+                )
             )
-            trait_match = re.match(
-                r"^\s*(?:pub\s+)?trait\s+([A-Za-z_][A-Za-z0-9_]*)",
-                line,
+            trait_match = _clean_name_match(
+                re.match(
+                    r"^\s*(?:pub\s+)?trait\s+(" + _IDENT + r")",
+                    line,
+                )
             )
             if use_match:
                 imports.append(use_match.group(1).strip())
@@ -334,21 +366,21 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
                 "function",
                 re.compile(
                     rf"^\s*(?:const|let|var)\s+({escaped_symbol})\s*=\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)"
                 ),
             ),
             (
                 "function",
                 re.compile(
                     rf"^\s*(?:module\.)?exports\.({escaped_symbol})\s*=\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)"
                 ),
             ),
             (
                 "function",
                 re.compile(
                     rf"^\s*({escaped_symbol})\s*:\s*"
-                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|[A-Za-z_][A-Za-z0-9_]*\s*=>)"
+                    r"(?:async\s+)?(?:function\b|\([^)]*\)\s*=>|" + _IDENT + r"\s*=>)"
                 ),
             ),
         ]

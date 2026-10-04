@@ -2414,7 +2414,7 @@ def _symbol_navigation_provenance_for_path(path: str) -> str:
     )
 
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^(?:[^\W\d]|\$)[\w$]*$")
 _FALLBACK_SOURCE_SUFFIXES = {
     ".adoc",
     ".cfg",
@@ -2447,7 +2447,7 @@ def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
 
 
 def _is_clean_symbol_name(name: str) -> bool:
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
+    return lang_registry.is_clean_symbol_name(name)
 
 
 def _symbol_record(
