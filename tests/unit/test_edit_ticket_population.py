@@ -461,7 +461,7 @@ def test_unreadable_fingerprint_marks_incomplete_not_crash(
 ) -> None:
     (tmp_path / "a.py").write_text("1\n", encoding="utf-8")
 
-    def _boom(_p: object) -> str:
+    def _boom(*_a: object, **_k: object) -> str:
         raise PermissionError("denied")
 
     # the walker fingerprints enumerated leaves through its own fail-closed helper
@@ -1086,3 +1086,119 @@ def test_standalone_fingerprint_of_missing_path_keeps_empty_string_contract(
     tmp_path: Path,
 ) -> None:
     assert edit_ticket_service.compute_file_fingerprint(tmp_path / "missing.py") == ""
+
+
+def _growing_lstat(victim: Path, grow_by: int, grow_after_call: int = 2):
+    """An `_lstat` seam that appends `grow_by` bytes to `victim` (same inode) right after the
+    walker's size-check stat (its 2nd stat of that file)."""
+    real = os.lstat
+    calls = {"n": 0}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        result = real(path, *a, **k)
+        if Path(str(path)) == victim:
+            calls["n"] += 1
+            if calls["n"] == grow_after_call:
+                with open(victim, "ab") as handle:
+                    handle.write(b"y" * grow_by)
+        return result
+
+    return _lstat
+
+
+def test_file_growing_after_size_check_hits_the_per_file_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    victim = tmp_path / "grow.bin"
+    victim.write_bytes(b"x" * 5)
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 20), raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_file_bytes=10)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "per_file_byte_limit"
+
+
+def test_file_growing_after_size_check_hits_the_aggregate_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    victim = tmp_path / "grow.bin"
+    victim.write_bytes(b"x" * 5)
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 20), raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=10)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "aggregate_byte_limit"
+
+
+def test_scanned_bytes_charges_the_bytes_actually_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    victim = tmp_path / "grow.bin"
+    victim.write_bytes(b"x" * 5)
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _growing_lstat(victim, 3), raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 8  # 5 at the size check + 3 grown = what was read
+
+
+def test_file_of_exactly_the_per_file_limit_is_complete(tmp_path: Path) -> None:
+    (tmp_path / "exact.bin").write_bytes(b"x" * 10)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_file_bytes=10)
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 10
+
+
+def test_files_summing_to_exactly_the_aggregate_limit_are_complete(tmp_path: Path) -> None:
+    (tmp_path / "a.bin").write_bytes(b"x" * 5)
+    (tmp_path / "b.bin").write_bytes(b"y" * 5)
+    _files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=10)
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 10
+
+
+_FIFO_CHILD = """
+import json, os, sys
+from pathlib import Path
+from tensor_grep.cli import edit_ticket_service as svc
+
+root = Path(sys.argv[1])
+victim = root / "f.py"
+real = os.lstat
+state = {"n": 0}
+
+def seam(path, *a, **k):
+    result = real(path, *a, **k)
+    if Path(str(path)) == victim:
+        state["n"] += 1
+        if state["n"] == 3:  # the fingerprint stat saw a regular file; now swap in a FIFO
+            os.unlink(victim)
+            os.mkfifo(victim)
+    return result
+
+svc._lstat = seam
+files, population = svc._walk_tracked_files_bounded(root)
+print(json.dumps({"status": population["status"], "reason": population["reason"]}))
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFOs only (no FIFO at a Windows path)")
+def test_fifo_swapped_in_after_lstat_does_not_hang_and_is_unreadable_path(tmp_path: Path) -> None:
+    # open(O_RDONLY) on a FIFO blocks for a writer. Run in a SUBPROCESS with a hard timeout:
+    # a hang raises TimeoutExpired, which FAILS this test (never a pass).
+    import json
+
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "f.py").write_text("x = 1\n", encoding="utf-8")
+    script = tmp_path / "child.py"
+    script.write_text(_FIFO_CHILD, encoding="utf-8")
+    src_dir = str(Path(edit_ticket_service.__file__).resolve().parents[2])
+    env = {**os.environ, "PYTHONPATH": src_dir}
+    done = subprocess.run(
+        [sys.executable, str(script), str(work)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+        check=True,
+    )
+    outcome = json.loads(done.stdout.strip().splitlines()[-1])
+    assert outcome == {"status": "incomplete", "reason": "unreadable_path"}

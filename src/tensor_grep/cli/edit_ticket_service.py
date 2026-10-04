@@ -145,6 +145,10 @@ def _link_from_stat(st: os.stat_result) -> bool:
     return bool(tag) and tag == mount_point
 
 
+class _BudgetExceeded(_PopulationWalkError):
+    """A byte budget was crossed WHILE reading (the file grew after the size check)."""
+
+
 def _regular_marker(path: Path) -> bool:
     """A marker counts only as a REGULAR, non-symlink file (never follow a marker link)."""
     try:
@@ -300,26 +304,44 @@ def compute_file_fingerprint(path: str | Path) -> str:
     return "file:" + hasher.hexdigest()
 
 
-def _fingerprint_enumerated(path: Path) -> str:
+def _fingerprint_enumerated(
+    path: Path, max_file_bytes: int, remaining_bytes: int
+) -> tuple[str, int]:
     """Fingerprint a leaf the walker ENUMERATED; every doubt is `unreadable_path`.
+
+    Returns `(fingerprint, bytes_consumed)`; the caller charges `bytes_consumed` (what was
+    ACTUALLY read) to the aggregate budget.
 
     Unlike the standalone `compute_file_fingerprint` (which keeps its "" contract for direct
     callers), a path that was listed moments ago must not read as absent or as an empty
     directory: a vanished path or a non-link directory raises, so the population is incomplete.
     A regular file is opened ONCE and hashed through that handle after `fstat` confirms it is
     a regular file with the identity `lstat` saw, so the object classified is the object
-    hashed (no check-then-use window). Links: one lstat plus readlink."""
+    hashed (no check-then-use window). The hash loop enforces BOTH byte limits while reading
+    (at most limit+1 bytes), so a file that grows after the size check cannot bypass a budget.
+    Links: one lstat plus readlink.
+
+    POSIX: `O_NONBLOCK` makes `open()` of a FIFO swapped in after the lstat return at once
+    instead of waiting for a writer; `fstat` then rejects it. Windows has no FIFO at a
+    filesystem path (a named pipe lives in a different namespace), so the lstat/fstat checks
+    are sufficient there."""
     try:
         st = _lstat(path)
     except FileNotFoundError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
     if _link_from_stat(st):
-        return "symlink:" + hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+        target = os.fsencode(os.readlink(path))
+        return "symlink:" + hashlib.sha256(target).hexdigest(), len(target)
     if stat.S_ISDIR(st.st_mode):
         raise _PopulationWalkError("unreadable_path")
     if not stat.S_ISREG(st.st_mode):
-        return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+        return f"other:{stat.S_IFMT(st.st_mode):o}", 0  # never opened: a fifo would block
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     fd = os.open(path, flags)
     with os.fdopen(fd, "rb") as handle:
         fst = os.fstat(handle.fileno())
@@ -327,10 +349,17 @@ def _fingerprint_enumerated(path: Path) -> str:
             raise _PopulationWalkError("unreadable_path")
         if st.st_ino and fst.st_ino and (st.st_ino, st.st_dev) != (fst.st_ino, fst.st_dev):
             raise _PopulationWalkError("unreadable_path")  # replaced between lstat and open
+        cap = min(max_file_bytes, remaining_bytes)
         hasher = hashlib.sha256()
-        while chunk := handle.read(65536):
+        total = 0
+        while chunk := handle.read(min(65536, cap + 1 - total)):
+            total += len(chunk)
+            if total > cap:
+                raise _BudgetExceeded(
+                    "per_file_byte_limit" if total > max_file_bytes else "aggregate_byte_limit"
+                )
             hasher.update(chunk)
-    return "file:" + hasher.hexdigest()
+    return "file:" + hasher.hexdigest(), total
 
 
 def _walk_tracked_files_bounded(
@@ -384,12 +413,21 @@ def _walk_tracked_files_bounded(
                 break
 
             try:
-                result[rel] = _fingerprint_enumerated(item)
+                fingerprint, consumed = _fingerprint_enumerated(
+                    item, max_file_bytes, max_aggregate_bytes - scanned_bytes
+                )
+            except _BudgetExceeded as exc:
+                incomplete_reason = exc.reason
+                if exc.reason == "per_file_byte_limit":
+                    scanned_files += 1
+                    continue
+                break
             except OSError:
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
+            result[rel] = fingerprint
             scanned_files += 1
-            scanned_bytes += size
+            scanned_bytes += consumed
     except _PopulationWalkError as exc:
         if incomplete_reason is None:
             incomplete_reason = exc.reason
