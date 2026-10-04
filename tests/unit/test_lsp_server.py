@@ -795,3 +795,70 @@ def test_lsp_initialize_to_prepare_rename_end_to_end_utf8(tmp_path: Path) -> Non
     assert prepared.placeholder == "create_invoice"
     assert prepared.range.start.character == 4
     assert prepared.range.end.character == 4 + len("create_invoice")
+
+
+def _open_text(server, uri, text):
+    did_open(
+        server,
+        DidOpenTextDocumentParams(
+            text_document=TextDocumentItem(uri=uri, language_id="python", version=1, text=text)
+        ),
+    )
+
+
+def _did_change(server, uri, *changes):
+    from lsprotocol.types import DidChangeTextDocumentParams, VersionedTextDocumentIdentifier
+
+    lsp_module.did_change(
+        server,
+        DidChangeTextDocumentParams(
+            text_document=VersionedTextDocumentIdentifier(uri=uri, version=2),
+            content_changes=list(changes),
+        ),
+    )
+
+
+def _partial(sl, sc, el, ec, text):
+    from lsprotocol.types import Range, TextDocumentContentChangePartial
+
+    return TextDocumentContentChangePartial(
+        range=Range(start=Position(line=sl, character=sc), end=Position(line=el, character=ec)),
+        text=text,
+    )
+
+
+def test_did_change_applies_ranged_edit_to_cached_document(tmp_path: Path) -> None:
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _open_text(server, uri, "def foo():\n    pass\n")
+    _did_change(server, uri, _partial(0, 4, 0, 7, "bar"))
+    assert server.documents_cache[uri] == "def bar():\n    pass\n"
+
+
+def test_did_change_applies_multiple_edits_in_order_and_whole_document(tmp_path: Path) -> None:
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _open_text(server, uri, "ab\ncd\n")
+    _did_change(server, uri, _partial(1, 0, 1, 2, ""), _partial(1, 0, 1, 0, "xyz"))
+    assert server.documents_cache[uri] == "ab\nxyz\n"
+    _did_change(server, uri, TextDocumentContentChangeWholeDocument(text="fresh\n"))
+    assert server.documents_cache[uri] == "fresh\n"
+
+
+def test_did_change_honors_utf16_columns_and_crlf(tmp_path: Path) -> None:
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _open_text(server, uri, "\U0001f600 x\r\nb\r\n")
+    _did_change(server, uri, _partial(0, 3, 0, 4, "y"), _partial(1, 0, 1, 1, "B"))
+    assert server.documents_cache[uri] == "\U0001f600 y\r\nB\r\n"
+
+
+def test_did_change_ranged_edit_on_unopened_document_never_caches_a_fragment(
+    tmp_path: Path,
+) -> None:
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _did_change(server, uri, _partial(0, 0, 0, 0, "bar"))
+    assert uri not in server.documents_cache
