@@ -1666,3 +1666,22 @@ def test_small_responses_are_returned_untouched_by_the_final_bound():
     payload = json.loads(out)
     assert "pattern_truncated" not in payload
     assert not payload.get("output_truncated")
+
+
+def test_final_row_trim_recomputes_file_and_omission_counters_exactly():
+    from tensor_grep.cli import mcp_server
+
+    hits = [MatchLine(line_number=1, text="x" * 400, file=f"f{i}.txt") for i in range(1000)]
+    big_pattern = "\U0001f600" * 1024  # 1024 chars, ~12 KB escaped: not clipped, eats the budget
+    with _stub_rg_search(hits):
+        out = mcp_server.tg_search(big_pattern, ".", max_results=5000, max_files=5000)
+    _assert_bounded(out)
+    payload = json.loads(out)
+    kept = payload["matches"]
+    assert payload["output_truncated"] is True
+    assert 0 < len(kept) < 1000
+    assert payload["rendered_match_count"] == len(kept)
+    assert payload["rendered_file_count"] == len({row["file"] for row in kept})
+    assert payload["omitted_matches"] == 1000 - len(kept)
+    assert payload["omitted_files"] == 1000 - len({row["file"] for row in kept})
+    assert payload["truncated"] is True

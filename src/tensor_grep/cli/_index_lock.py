@@ -4,7 +4,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -30,15 +30,23 @@ class IndexLockTimeoutError(RuntimeError):
 
 
 def replace_with_retry(
-    src: str | Path, dst: str | Path, *, attempts: int = 10, delay_s: float = 0.02
+    src: str | Path,
+    dst: str | Path,
+    *,
+    attempts: int = 10,
+    delay_s: float = 0.02,
+    precheck: Callable[[], None] | None = None,
 ) -> None:
     """``os.replace`` retried on the Windows-only transient ``PermissionError`` (WinError 5) that
     fires when the destination is momentarily held open by a concurrent reader / AV scanner / the
     search indexer. On POSIX ``os.replace`` is atomic and never raises this, so the retry is a
     no-op there. Fails CLOSED: re-raises the last error after ``attempts`` rather than leaving a
-    stale index (Backend Fail-Closed Contract)."""
+    stale index (Backend Fail-Closed Contract). ``precheck`` (default none) runs before EACH
+    attempt, so a retry sleep never widens an authorization window (it may raise to abort)."""
     src_s, dst_s = str(src), str(dst)
     for attempt in range(attempts):
+        if precheck is not None:
+            precheck()
         try:
             os.replace(src_s, dst_s)
             return
@@ -63,17 +71,26 @@ def _publish_bytes_no_clobber(src: Path, dst: Path) -> None:
 
 
 class WriteAuthorizationError(OSError):
-    """The target of an authorized write changed between authorization and publish."""
+    """An authorized write was refused: its target changed (or was never authorized) between the
+    MCP artifact guard's approval and the publish."""
 
 
 @dataclass(frozen=True)
 class WriteAuthorization:
-    """A check-time approval carried to the write (closes the check-then-write window).
+    """A check-time approval carried to the write (narrows the check-then-write window).
 
-    ``path`` is the resolved target. ``identity is None`` means the target was ABSENT when it was
-    approved, so the publish must be no-clobber. Otherwise ``identity`` is the approved existing
-    file's ``(st_dev, st_ino, st_size, st_mtime_ns)`` (from ``lstat``) and ``parent_identity`` the
-    parent directory's ``(st_dev, st_ino)``; the write is refused if either changed."""
+    ``path`` is the exact target string the guard authorized (absolute, normalized, NEVER
+    re-resolved at write time). ``identity is None`` means the target was ABSENT when approved, so
+    the publish must be no-clobber. Otherwise ``identity`` is the approved existing file's
+    ``(st_dev, st_ino, st_size, st_mtime_ns)`` (``lstat``). ``parent_identity`` is the parent
+    directory's ``(st_dev, st_ino)`` (``stat``, i.e. what the parent RESOLVES to); the write is
+    refused if the parent now resolves elsewhere (symlink/junction swap) or the file changed.
+
+    Residual R-11 (accepted, docs/audits/2026-10-03-bughunt-tracker.md): a sub-millisecond window
+    between the final identity re-check and ``os.replace`` is not closed. Windows has no
+    handle-relative conditional replace, and an attacker who can rename or replace files in the
+    user's workspace can overwrite the target directly without tg. This guard defends against an
+    agent being tricked by path naming, not against a concurrent filesystem adversary."""
 
     path: str
     identity: tuple[int, int, int, int] | None
@@ -87,7 +104,9 @@ _WRITE_AUTHORIZATIONS: ContextVar[dict[str, WriteAuthorization] | None] = Contex
 
 
 def _authorization_key(path: str | Path) -> str:
-    return os.path.normcase(str(Path(path).resolve()))
+    """Lexical key: absolute + normalized, deliberately NOT ``resolve()``d, so a swapped parent
+    can never map a write onto a different (unauthorized) key."""
+    return os.path.normcase(os.path.abspath(str(path)))
 
 
 def file_identity(path: Path) -> tuple[int, int, int, int]:
@@ -102,23 +121,45 @@ def dir_identity(path: Path) -> tuple[int, int]:
 
 @contextmanager
 def write_authorizations(auths: Iterable[WriteAuthorization]) -> Iterator[None]:
-    """Make ``auths`` binding for any ``atomic_write_bytes_anchored`` to those paths within this
-    context. Default-off: writers to other paths are unchanged."""
+    """Make ``auths`` binding within this context. While a NON-EMPTY set is active, every
+    ``atomic_write_bytes_anchored`` must target an authorized path (anything else is refused:
+    fail closed). An empty set leaves writers unchanged (default-off)."""
     mapping = {_authorization_key(a.path): a for a in auths}
-    token = _WRITE_AUTHORIZATIONS.set(mapping)
+    token = _WRITE_AUTHORIZATIONS.set(mapping or None)
     try:
         yield
     finally:
         _WRITE_AUTHORIZATIONS.reset(token)
 
 
-def _enforce_authorization(path: Path, auth: WriteAuthorization) -> None:
-    """Immediately-before-publish identity re-check for an authorized existing target."""
-    assert auth.identity is not None
+def _enforce_parent(path: Path, auth: WriteAuthorization) -> None:
+    """The parent must still resolve to the directory that was authorized."""
     try:
-        unchanged = file_identity(path) == auth.identity and (
-            auth.parent_identity is None or dir_identity(path.parent) == auth.parent_identity
-        )
+        if auth.parent_identity is None:
+            # Parent did not exist when approved: it must still not exist (the writer creates it).
+            if path.parent.exists():
+                raise WriteAuthorizationError(
+                    f"{auth.label} parent appeared after it was authorized (refused)"
+                )
+        elif dir_identity(path.parent) != auth.parent_identity:
+            raise WriteAuthorizationError(
+                f"{auth.label} parent changed after it was authorized (refused)"
+            )
+    except WriteAuthorizationError:
+        raise
+    except OSError:
+        raise WriteAuthorizationError(
+            f"{auth.label} parent changed after it was authorized (refused)"
+        ) from None
+
+
+def _enforce_authorization(path: Path, auth: WriteAuthorization) -> None:
+    """Immediately-before-publish re-check (run before EACH replace attempt)."""
+    _enforce_parent(path, auth)
+    if auth.identity is None:
+        return
+    try:
+        unchanged = file_identity(path) == auth.identity
     except OSError:
         unchanged = False
     if not unchanged:
@@ -136,13 +177,20 @@ def atomic_write_bytes_anchored(
     - ``replace=False`` performs a fail-closed, no-clobber publish that refuses to
       create over an existing destination.
     """
+    registry = _WRITE_AUTHORIZATIONS.get()
+    auth = None
+    if registry:
+        auth = registry.get(_authorization_key(path))
+        if auth is None:  # an authorization scope is active and this target is not in it
+            raise WriteAuthorizationError(
+                f"write target is not an authorized artifact path (refused): {path.name}"
+            )
+        _enforce_parent(path, auth)  # BEFORE mkdir/temp creation can touch a swapped parent
+        if auth.identity is None:
+            replace = False  # approved as ABSENT: publish no-clobber, never replace
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise OSError(f"Refusing to write through a symlink: {path}")
-    registry = _WRITE_AUTHORIZATIONS.get()
-    auth = registry.get(_authorization_key(path)) if registry else None
-    if auth is not None and auth.identity is None:
-        replace = False  # approved as ABSENT: publish no-clobber, never replace
 
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     create_mode = 0o666 if mode is None else mode
@@ -165,11 +213,15 @@ def atomic_write_bytes_anchored(
             pass
 
     try:
-        if auth is not None and auth.identity is not None:
-            _enforce_authorization(path, auth)
         if replace:
-            replace_with_retry(tmp_path, path)
+            replace_with_retry(
+                tmp_path,
+                path,
+                precheck=(lambda: _enforce_authorization(path, auth)) if auth else None,
+            )
         else:
+            if auth is not None:
+                _enforce_authorization(path, auth)
             try:
                 _publish_bytes_no_clobber(tmp_path, path)
             except FileExistsError:

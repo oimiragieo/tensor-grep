@@ -46,7 +46,14 @@ def _authorize_artifact_write_path(
     Returns the resolved path AND a ``WriteAuthorization`` that the caller must make binding
     around the write (``_index_lock.write_authorizations``): an ABSENT target is then published
     no-clobber, and an approved existing artifact is re-identified immediately before the
-    replace. Without it the approval would be lost before the write (check-then-write race)."""
+    replace. Without it the approval would be lost before the write (check-then-write race).
+
+    Residual R-11 (accepted; docs/audits/2026-10-03-bughunt-tracker.md): a sub-millisecond window
+    remains between the writer's final identity re-check (run before EACH replace attempt) and
+    ``os.replace``. Windows has no handle-relative conditional replace, and an attacker who can
+    rename or replace files in the user's workspace can overwrite the target directly without tg.
+    This guard defends against an agent being tricked by path naming, not against a concurrent
+    filesystem adversary."""
     resolved = _confine_write_path(candidate, anchor, label=label)
     rel_parts = resolved.relative_to(anchor.expanduser().resolve()).parts
     if resolved.suffix.lower() != ".json" or any(p.casefold() == ".git" for p in rel_parts):

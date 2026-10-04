@@ -125,29 +125,42 @@ def _clip_strings(node: dict[str, Any], *, skip: frozenset[str] = frozenset()) -
     return changed
 
 
+def _set_rows(doc: dict[str, Any], rows: list[Any], total_rows: int) -> None:
+    """Install ``rows`` and recompute every counter that describes them from the retained rows and
+    the ORIGINAL totals (``total_matches`` / ``total_files`` are never changed), so a trim here
+    cannot leave a count from an earlier, larger render behind."""
+    doc["matches"] = rows
+    files = {row.get("file") for row in rows if isinstance(row, dict)}
+    if isinstance(doc.get("rendered_match_count"), int):
+        doc["rendered_match_count"] = len(rows)
+    if isinstance(doc.get("rendered_file_count"), int):
+        doc["rendered_file_count"] = len(files)
+    if isinstance(doc.get("total_matches"), int) and isinstance(doc.get("omitted_matches"), int):
+        doc["omitted_matches"] = max(0, doc["total_matches"] - len(rows))
+    if isinstance(doc.get("total_files"), int) and isinstance(doc.get("omitted_files"), int):
+        doc["omitted_files"] = max(0, doc["total_files"] - len(files))
+    if len(rows) < total_rows:
+        doc["truncated"] = True
+
+
 def _bound_json_envelope(doc: dict[str, Any]) -> dict[str, Any] | None:
     """Bound ``doc`` in place when it exceeds the response budget; None when it already fits."""
     if _json_size(doc) <= _MCP_RESPONSE_MAX_BYTES:
         return None
     _clip_strings(doc, skip=frozenset({"matches"}))
+    doc["output_truncated"] = True  # present while measuring: it is part of the final size
     rows = doc.get("matches")
     if _json_size(doc) > _MCP_RESPONSE_MAX_BYTES and isinstance(rows, list) and rows:
         all_rows = rows
-        lo, hi = 0, len(all_rows)  # largest k with size(rows[:k]) <= budget (monotonic)
+        lo, hi = 0, len(all_rows)  # largest k whose FULL envelope fits (monotonic in k)
         while lo < hi:
             mid = (lo + hi + 1) // 2
-            doc["matches"] = all_rows[:mid]
+            _set_rows(doc, all_rows[:mid], len(all_rows))
             if _json_size(doc) <= _MCP_RESPONSE_MAX_BYTES:
                 lo = mid
             else:
                 hi = mid - 1
-        doc["matches"] = all_rows[:lo]
-        if isinstance(doc.get("rendered_match_count"), int):
-            doc["rendered_match_count"] = lo
-        if isinstance(doc.get("omitted_matches"), int):
-            doc["omitted_matches"] += len(all_rows) - lo
-        doc["truncated"] = True
-    doc["output_truncated"] = True
+        _set_rows(doc, all_rows[:lo], len(all_rows))
     return doc
 
 

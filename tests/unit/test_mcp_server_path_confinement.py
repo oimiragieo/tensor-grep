@@ -1691,3 +1691,97 @@ def test_review_bundle_output_is_not_clobbered_when_target_changes_after_the_che
     )
     assert out2["error"]["code"] == "invalid_input"
     assert late.read_bytes() == b'{"mine": 1}\n'
+
+
+def _link_dir(link: Path, target: Path) -> None:
+    """Symlink, or a directory junction on Windows when symlinks are not permitted."""
+    try:
+        os.symlink(target, link, target_is_directory=True)
+        return
+    except (OSError, NotImplementedError):
+        pass
+    if os.name == "nt":
+        import subprocess
+
+        done = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)], capture_output=True, check=False
+        )
+        if done.returncode == 0:
+            return
+    pytest.skip("neither symlinks nor junctions are permitted here")
+
+
+@pytest.mark.parametrize("pre_existing", [True, False])
+def test_parent_swapped_for_a_link_before_the_write_is_refused(tmp_path, monkeypatch, pre_existing):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    other = tmp_path.parent / (tmp_path.name + "_other")
+    other.mkdir()
+    foreign = other / "victim.json"
+    foreign.write_bytes(b'{"not": "an artifact"}\n')
+    if pre_existing:
+        first = json.loads(
+            mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="sub/victim.json")
+        )
+        assert "error" not in first  # positive control: the normal write works
+
+    def swap_parent():
+        sub.rename(tmp_path / "sub_real")
+        _link_dir(sub, other)
+
+    _swap_before_scan_write(monkeypatch, swap_parent)
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="sub/victim.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert foreign.read_bytes() == b'{"not": "an artifact"}\n'
+    assert [p.name for p in other.iterdir()] == ["victim.json"]  # no temp left in the other dir
+
+
+def test_write_to_an_unauthorized_path_inside_an_active_scope_fails_closed(tmp_path):
+    from tensor_grep.cli import _index_lock
+
+    allowed = tmp_path / "ok.json"
+    auth = _index_lock.WriteAuthorization(str(allowed), None, _index_lock.dir_identity(tmp_path))
+    elsewhere = tmp_path / "elsewhere.json"
+    with _index_lock.write_authorizations([auth]):
+        with pytest.raises(_index_lock.WriteAuthorizationError):
+            _index_lock.atomic_write_bytes(elsewhere, b"x")
+        _index_lock.atomic_write_bytes(allowed, b"{}")  # the authorized path still works
+    assert not elsewhere.exists()
+    assert allowed.read_bytes() == b"{}"
+    _index_lock.atomic_write_bytes(elsewhere, b"x")  # outside any scope: unchanged behaviour
+    assert elsewhere.read_bytes() == b"x"
+
+
+def test_replace_retry_rechecks_identity_before_each_attempt(tmp_path, monkeypatch):
+    from tensor_grep.cli import _index_lock
+
+    target = tmp_path / "t.json"
+    target.write_bytes(b'{"kind": "k"}')
+    auth = _index_lock.WriteAuthorization(
+        str(target),
+        _index_lock.file_identity(target),
+        _index_lock.dir_identity(tmp_path),
+    )
+    calls = {"replace": 0}
+    real_replace = os.replace
+
+    def flaky_replace(src, dst):
+        calls["replace"] += 1
+        if calls["replace"] == 1:
+            target.write_bytes(b'{"swapped": "while the retry slept, longer content"}')
+            raise PermissionError("transient")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(_index_lock.os, "replace", flaky_replace)
+    monkeypatch.setattr(_index_lock.time, "sleep", lambda _s: None)
+    with _index_lock.write_authorizations([auth]):
+        with pytest.raises(_index_lock.WriteAuthorizationError):
+            _index_lock.atomic_write_bytes(target, b'{"kind": "k"}')
+    assert calls["replace"] == 1  # the second attempt never happened
+    assert b"swapped" in target.read_bytes()
