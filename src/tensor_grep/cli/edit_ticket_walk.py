@@ -792,12 +792,20 @@ def _exists(path: str | Path) -> bool:
 
 
 def _same_identity(a: tuple[int, int], b: tuple[int, int]) -> bool:
-    """(st_dev, st_ino) equality; a zero inode or zero dev means "unknown" and is not compared."""
+    """(st_dev, st_ino) equality; a zero inode or zero dev means "unknown" and is not compared.
+
+    Windows: CPython <= 3.11 reports `st_dev` as the 32-bit volume serial while 3.12+ reports the
+    64-bit FILE_ID_INFO serial (the held handle's identity uses the 64-bit one), and the 32-bit
+    serial is the low half of the 64-bit one: only the low 32 bits are comparable across versions.
+    Comparing the full values made EVERY walk on Windows py3.11 `unreadable_path`."""
     if not (a[1] and b[1]):
         return True
     if a[1] != b[1]:
         return False
-    return not (a[0] and b[0] and a[0] != b[0])
+    dev_a, dev_b = a[0], b[0]
+    if sys.platform == "win32":
+        dev_a, dev_b = dev_a & 0xFFFFFFFF, dev_b & 0xFFFFFFFF
+    return not (dev_a and dev_b and dev_a != dev_b)
 
 
 @contextlib.contextmanager
@@ -920,14 +928,7 @@ def _population_paths_impl(
             if handle is not None and getattr(handle, "ident", None) is not None:
                 # The identity of the directory the LISTING came from (open dirfd / held
                 # handle), not of whatever a pathname resolves to now.
-                if not handle.is_dir or (
-                    ident[1]
-                    and handle.ident[1]
-                    and (
-                        ident[1] != handle.ident[1]
-                        or (ident[0] and handle.ident[0] and ident[0] != handle.ident[0])
-                    )
-                ):
+                if not handle.is_dir or not _same_identity(ident, tuple(handle.ident)):
                     raise _PopulationWalkError("unreadable_path")  # swapped after classification
             else:  # a custom walker without a handle: fall back to a pathname check
                 try:

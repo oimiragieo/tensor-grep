@@ -902,3 +902,37 @@ def test_no_close_in_the_walk_modules_ignores_its_result() -> None:
             ):
                 offenders.append(f"{name}:{node.lineno} _close_fd result discarded")
     assert not offenders, offenders
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows device-number representations")
+def test_windows_32bit_volume_serial_matches_the_64bit_file_id_serial() -> None:
+    # CPython <= 3.11 reports st_dev as the 32-bit volume serial; 3.12+ reports the 64-bit
+    # FILE_ID_INFO serial. The held handle's identity uses the 64-bit one. Comparing them
+    # exactly made EVERY walk on Windows py3.11 `unreadable_path` (CI: windows-latest, 3.11).
+    serial64 = 14794157465549117039
+    serial32 = serial64 & 0xFFFFFFFF
+    index = 33495522242563183
+    assert edit_ticket_walk._same_identity((serial32, index), (serial64, index))
+    assert edit_ticket_walk._same_identity((serial64, index), (serial32, index))
+    assert not edit_ticket_walk._same_identity((serial32 ^ 1, index), (serial64, index))
+    assert not edit_ticket_walk._same_identity((serial32, index + 1), (serial64, index))
+
+
+def test_root_and_child_handles_are_compared_with_the_same_identity_rule(tmp_path: Path) -> None:
+    # a walk whose handle idents use the other width of the device number must still be complete
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "m.py").write_text("x = 1\n", encoding="utf-8")
+    real = edit_ticket_walk._default_walk
+
+    def _walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
+        for dirpath, dirnames, filenames, handle in real(top, onerror):
+            if handle is not None and sys.platform == "win32":
+                dev, ino = handle.ident
+                handle = edit_ticket_walk._DirHandle(((dev & 0xFFFFFFFF), ino), handle.is_dir)
+            yield dirpath, dirnames, filenames, handle
+
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(edit_ticket_walk, "_walk_impl", _walk)
+        files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete", population
+    assert "sub/m.py" in files
