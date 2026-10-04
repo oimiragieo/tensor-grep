@@ -986,14 +986,17 @@ def test_pattern_warning_ignores_legit_zero_match_pattern():
         assert backend.pattern_warning("zzz($A)", SearchConfig(ast=True, lang="python")) is None
 
 
-def test_pattern_warning_never_raises_on_backend_error_or_unsupported_language():
+def test_pattern_warning_propagates_backend_errors_and_ignores_unsupported_language():
     backend = AstGrepWrapperBackend()
     config = SearchConfig(ast=True, lang="python")
     with (
         patch.object(backend, "is_available", return_value=True),
         patch.object(backend, "_run_ast_grep_command", side_effect=BackendExecutionError("x")),
     ):
-        assert backend.pattern_warning("def (", config) is None
+        # Changed deliberately (round 10): a failed probe used to read as "valid" (fail-open), so
+        # an empty-directory search with an unparseable pattern came back as a clean empty result.
+        with pytest.raises(BackendExecutionError):
+            backend.pattern_warning("def (", config)
     assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="not-a-lang")) is None
 
 
@@ -1021,7 +1024,8 @@ def test_multiline_pattern_warning_is_captured_from_the_real_search_invocation()
     assert warning is not None
     assert "ERROR node" in warning
     # keyed by pattern: a different pattern on the same backend is not tainted
-    assert backend.pattern_warning("ok($A)\n  x", SearchConfig(ast=True, lang="python")) is None
+    with patch.object(backend, "is_available", return_value=False):  # no live probe here
+        assert backend.pattern_warning("ok($A)\n  x", SearchConfig(ast=True, lang="python")) is None
 
 
 def test_multiline_cannot_parse_rule_failure_is_reported_without_leaking_the_temp_path():
@@ -1065,3 +1069,32 @@ def test_multiline_pattern_without_a_recorded_problem_is_probed_like_a_single_li
         patch.object(backend, "_run_ast_grep_command", return_value=clean),
     ):
         assert backend.pattern_warning("def $A():\n    pass", config) is None
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stderr", "expect"),
+    [
+        (0, "", None),
+        (1, "", None),
+        (8, "Error: Cannot parse query as a valid pattern.\n", "parsed as a valid"),
+        (2, "Error: Cannot parse query as a valid pattern.\n", "parsed as a valid"),
+        (0, "Warning: Pattern contains an ERROR node\n", "ERROR node"),
+        (1, "some other failure\n", BackendExecutionError),
+        (3, "", BackendExecutionError),
+    ],
+)
+def test_pattern_probe_result_is_an_explicit_allowlist(returncode, stderr, expect):
+    backend = AstGrepWrapperBackend()
+    run = subprocess.CompletedProcess(args=[], returncode=returncode, stdout="[]", stderr=stderr)
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=run),
+    ):
+        if expect is BackendExecutionError:
+            with pytest.raises(BackendExecutionError):
+                backend.pattern_warning("p", config)
+        elif expect is None:
+            assert backend.pattern_warning("p", config) is None
+        else:
+            assert expect in backend.pattern_warning("p", config)

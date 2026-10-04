@@ -29,11 +29,23 @@ def _utf8(text: str) -> bytes:
     return text.encode("utf-8")
 
 
+def _span_text(data: bytes, start: int, end: int) -> str:
+    """Decode ONE candidate span (strict, falling back to replacement for invalid bytes) so
+    "visible" is decided with the same Unicode semantics as the final ``str.strip()`` -- a
+    ``bytes.strip`` treats U+2003 / U+00A0 as visible. Spans do not overlap, so the total decode
+    work across the examined candidates stays linear in the line."""
+    chunk = data[start:end]
+    try:
+        return chunk.decode("utf-8")
+    except UnicodeDecodeError:
+        return chunk.decode("utf-8", "replace")
+
+
 def _anchor_char(raw: str, match: Any) -> int | None:
     """Char index (in ``raw``) to centre the window on, or None to use the stripped head.
 
     Preference, falling through until one is usable: (1) the first submatch whose BYTE span holds
-    a non-whitespace byte (ripgrep reports byte offsets; a regex such as ` +|NEEDLE` can report a
+    a non-whitespace character (ripgrep reports byte offsets; a regex such as ` +|NEEDLE` can report a
     whitespace-only first submatch that would blank the window); (2) the first non-whitespace
     character of the line; (3) None -> the stripped head.
 
@@ -49,7 +61,7 @@ def _anchor_char(raw: str, match: Any) -> int | None:
                 end = int(sub.get("end", start))
             except (TypeError, ValueError, AttributeError):
                 continue
-            if data[start:end].strip():
+            if _span_text(data, start, end).strip():  # SAME Unicode semantics as the final strip
                 return len(data[:start].decode("utf-8", "ignore"))
     first_visible = len(raw) - len(raw.lstrip())
     return first_visible if first_visible < len(raw) else None

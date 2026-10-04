@@ -7,6 +7,8 @@ import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
 from tensor_grep.core.result import MatchLine, SearchResult
@@ -1894,3 +1896,54 @@ def test_malformed_single_line_pattern_on_an_empty_directory_still_invalid_input
 ):
     out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "def (")
     assert out["error"]["code"] == "invalid_input"
+
+
+# --- Codex round 10: probe failures are not "valid"; Unicode whitespace is not "visible" ---
+
+
+@pytest.mark.parametrize(("ws_char", "width"), [(chr(0x2003), 3), (chr(0x00A0), 2)])
+def test_unicode_whitespace_submatch_does_not_hide_the_visible_match(ws_char, width):
+    from tensor_grep.cli import mcp_server
+
+    line = "x" + ws_char * 1000 + "NEEDLE" + "b" * 500
+    ws_end = 1 + 1000 * width
+    hit = _rg_hit(line, [(1, ws_end), (ws_end, ws_end + 6)])  # regex \s+|NEEDLE
+    with _stub_rg_search([hit]):
+        row = json.loads(mcp_server.tg_search(r"\s+|NEEDLE", "."))["matches"][0]
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    with _stub_rg_search([hit]):
+        plain = mcp_server.tg_search(r"\s+|NEEDLE", ".", structured_json=False)
+    assert "NEEDLE" in plain
+    assert "[truncated" in plain
+
+
+def test_probe_timeout_is_an_error_not_an_empty_success(tmp_path, monkeypatch):
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.cli import mcp_server
+
+    if not AstGrepWrapperBackend().is_available():
+        pytest.skip("ast-grep binary not installed")
+    monkeypatch.chdir(tmp_path)
+
+    def timed_out(self, cmd, *, input_text=None):
+        raise BackendExecutionError("ast-grep command timed out after 1s")
+
+    monkeypatch.setattr(AstGrepWrapperBackend, "_run_ast_grep_command", timed_out)
+    out = json.loads(mcp_server.tg_ast_search("def $A():", "python", ".", structured_json=True))
+    assert "error" in out
+    assert out.get("total_matches") != 0 or "error" in out
+    assert out["error"]["code"] != "invalid_input"
+
+
+def test_empty_pattern_on_an_empty_directory_is_invalid_input(tmp_path, monkeypatch):
+    out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "")
+    assert out["error"]["code"] == "invalid_input"
+
+
+def test_valid_pattern_on_an_empty_directory_is_still_a_clean_empty_result(tmp_path, monkeypatch):
+    out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "zzz($A)")
+    assert "error" not in out
+    assert out["total_matches"] == 0
+    assert out["result_incomplete"] is False
