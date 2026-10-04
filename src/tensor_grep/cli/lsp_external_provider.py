@@ -10,6 +10,7 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Any, cast
 
+from tensor_grep.cli.lsp_probe_budget import ProbeBudget
 from tensor_grep.cli.lsp_provider_setup import (
     canonical_language,
     direct_managed_node_command,
@@ -19,6 +20,11 @@ from tensor_grep.cli.lsp_provider_setup import (
 )
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
+)
+from tensor_grep.cli.process_containment import (
+    Containment,
+    close_streams_bounded,
+    spawn_contained,
 )
 
 
@@ -361,6 +367,7 @@ class ExternalLSPClient:
         self.workspace_root = workspace_root.resolve()
         self.command = _provider_command(language)
         self.process: subprocess.Popen[Any] | None = None
+        self._containment: Containment | None = None
         self._request_id = 0
         self._lock = threading.Lock()
         # Serializes start()'s check-then-spawn so concurrent daemon worker threads sharing this
@@ -496,11 +503,9 @@ class ExternalLSPClient:
             # External/PATH providers, managed native .exe binaries, and all POSIX are
             # unchanged (wrap_windows_batch_command is a no-op except for a real .cmd/.bat).
             spawn_argv = wrap_windows_batch_command(list(self.command))
-        # cwd stays workspace_root: the resolved argv contains zero CWD-searchable names, so
-        # this launch is safe. Residual (not exploitable here — these servers are
-        # worker-thread based): a server that itself spawns a bare-name grandchild at runtime
-        # could recur one level down.
-        self.process = subprocess.Popen(
+        # cwd stays workspace_root: the resolved argv has zero CWD-searchable names, so this
+        # launch is safe. Spawned in a Job Object / process group so cleanup kills descendants.
+        self.process, self._containment = spawn_contained(
             spawn_argv,
             cwd=str(self.workspace_root),
             stdin=subprocess.PIPE,
@@ -572,6 +577,7 @@ class ExternalLSPClient:
             # Deadline-bounded stop (doctor probe): graceful shutdown gets half the slice,
             # then terminate/kill waits share the rest; never longer than the default bound.
             stop_timeout_seconds = min(stop_timeout_seconds, max(float(grace) / 2.0, 0.05))
+        containment = self._containment
         self._request_shutdown_for_stop(stop_timeout_seconds)
         with self._lock:
             try:
@@ -584,7 +590,9 @@ class ExternalLSPClient:
             except Exception:
                 pass
             try:
-                process.terminate()
+                # Kill the WHOLE tree before closing pipes: a surviving grandchild holds the
+                # inherited handles and would block close() (see process_containment).
+                containment.terminate() if containment is not None else process.terminate()
             except Exception:
                 pass
         stop_errors: list[str] = []
@@ -592,7 +600,7 @@ class ExternalLSPClient:
             process.wait(timeout=stop_timeout_seconds)
         except subprocess.TimeoutExpired:
             try:
-                process.kill()
+                containment.kill() if containment is not None else process.kill()
             except Exception as exc:
                 stop_errors.append(f"kill failed: {exc}")
             try:
@@ -600,12 +608,16 @@ class ExternalLSPClient:
             except Exception as exc:
                 stop_errors.append(f"did not exit after kill: {exc!r}")
         finally:
-            for stream in (process.stdout, process.stderr):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except Exception:
-                    pass
+            if containment is not None:
+                containment.kill()  # stragglers that outlived the leader
+                containment.release()
+            try:  # bounded: abandons a close() still blocked on a pipe someone else holds
+                for name in close_streams_bounded(
+                    [process.stdout, process.stderr], stop_timeout_seconds
+                ):
+                    stop_errors.append(f"pipe close abandoned ({name})")
+            except Exception:
+                pass
         if stop_errors:  # the handle is dropped below; keep the pid and the root cause visible
             self.last_error = f"LSP child pid {process.pid} not stopped ({'; '.join(stop_errors)})"
         if reader_thread is not None and reader_thread.is_alive():
@@ -614,7 +626,7 @@ class ExternalLSPClient:
             stderr_thread.join(timeout=stop_timeout_seconds)
         with self._lock:
             if self.process is process:
-                self.process = None
+                self.process = self._containment = None
             self._opened_documents.clear()
             self.capabilities = {}
             self.initialized = False
@@ -813,6 +825,7 @@ class ExternalLSPClient:
             "command_source": _command_source(self.command),
             "managed_provider_root": str(_managed_provider_root()),
             "running": self.process is not None and self.process.poll() is None,
+            "process_containment": self._containment.level if self._containment else None,
             "initialized": self.initialized,
             "capabilities": dict(self.capabilities),
             "lsp_provider_response": self.lsp_provider_response,
@@ -1329,15 +1342,6 @@ class ExternalLSPProviderManager:
         stop_after_probe: bool = False,
         deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
-        # ABSOLUTE deadline (time.monotonic() timestamp): initialize, every semantic request
-        # and cleanup all draw from it. A small slice is reserved for cleanup.
-        cleanup_seconds: float | None = None
-        probe_deadline: float | None = None
-        if deadline_monotonic is not None:
-            total_budget = max(deadline_monotonic - time.monotonic(), 0.0)
-            cleanup_seconds = min(_DEFAULT_LSP_STOP_TIMEOUT_SECONDS, 0.1 * total_budget)
-            probe_deadline = deadline_monotonic - cleanup_seconds
-            client.stop_grace_seconds = cleanup_seconds
         timeout = (
             max(float(probe_timeout_seconds), 0.0)
             if probe_timeout_seconds is not None
@@ -1349,20 +1353,12 @@ class ExternalLSPProviderManager:
         original_initialize_timeout = client.initialize_timeout_seconds
         probe_succeeded = False
         probe_error: Exception | None = None
-
-        def _arm_phase_timeout() -> None:
-            phase_timeout = timeout
-            if probe_deadline is not None:
-                remaining = probe_deadline - time.monotonic()
-                if remaining <= 0:
-                    raise LSPTransportError("doctor LSP probe deadline exhausted")
-                phase_timeout = min(timeout, remaining)
-            client.request_timeout_seconds = phase_timeout
-            client.initialize_timeout_seconds = phase_timeout
+        budget = ProbeBudget(deadline_monotonic, timeout, _DEFAULT_LSP_STOP_TIMEOUT_SECONDS)
+        client.stop_grace_seconds = budget.cleanup_seconds
 
         try:
             try:
-                _arm_phase_timeout()
+                budget.arm(client)
                 client.start()
                 phase = "did_open"
                 client.ensure_document(
@@ -1371,7 +1367,7 @@ class ExternalLSPProviderManager:
                     language_id=probe["language_id"],
                 )
                 phase = "document_symbol"
-                _arm_phase_timeout()
+                budget.arm(client)
                 result = client.request(
                     "textDocument/documentSymbol",
                     {"textDocument": {"uri": probe["uri"]}},

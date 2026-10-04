@@ -591,7 +591,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 73,
+    "lineno": 75,
     "enclosing_symbol": "_upgrade_running_session_daemon_snapshot",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -601,7 +601,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 92,
+    "lineno": 94,
     "enclosing_symbol": "_restart_session_daemon_after_upgrade",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -611,7 +611,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 106,
+    "lineno": 108,
     "enclosing_symbol": "_restart_session_daemon_after_upgrade",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -621,7 +621,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 370,
+    "lineno": 435,
     "enclosing_symbol": "_doctor_ast_grep_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -631,7 +631,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 398,
+    "lineno": 463,
     "enclosing_symbol": "_doctor_rust_core_extension_available",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -641,7 +641,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 415,
+    "lineno": 480,
     "enclosing_symbol": "_doctor_rust_binary_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -651,7 +651,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 722,
+    "lineno": 787,
     "enclosing_symbol": "_doctor_tg_candidate_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -661,7 +661,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1038,
+    "lineno": 1103,
     "enclosing_symbol": "_doctor_gpu_tier_installed",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -671,7 +671,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1054,
+    "lineno": 1119,
     "enclosing_symbol": "_doctor_gpu_tier_usable",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -681,7 +681,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1073,
+    "lineno": 1138,
     "enclosing_symbol": "_doctor_gpu_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -691,7 +691,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1306,
+    "lineno": 1371,
     "enclosing_symbol": "_doctor_ast_cache_status",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -701,7 +701,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1343,
+    "lineno": 1408,
     "enclosing_symbol": "_doctor_resident_worker_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3271,7 +3271,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 554,
+    "lineno": 562,
     "enclosing_symbol": "_start_locked",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3281,7 +3281,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 571,
+    "lineno": 585,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3291,7 +3291,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 576,
+    "lineno": 590,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3301,7 +3301,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 580,
+    "lineno": 596,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3311,7 +3311,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 588,
+    "lineno": 604,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 3,
     "category": "LOGGED-DEGRADE",
@@ -3321,7 +3321,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 592,
+    "lineno": 608,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 4,
     "category": "LOGGED-DEGRADE",
@@ -3331,7 +3331,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 599,
+    "lineno": 619,
     "enclosing_symbol": "stop",
     "handler_index_within_symbol": 5,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3341,7 +3341,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 645,
+    "lineno": 665,
     "enclosing_symbol": "_request_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3351,7 +3351,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 769,
+    "lineno": 785,
     "enclosing_symbol": "_notify_document_closed",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3361,7 +3361,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 929,
+    "lineno": 946,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3371,7 +3371,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 933,
+    "lineno": 950,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -3381,7 +3381,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 963,
+    "lineno": 980,
     "enclosing_symbol": "_reader_loop",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3391,7 +3391,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1050,
+    "lineno": 1067,
     "enclosing_symbol": "wait_until_ready",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3401,7 +3401,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1121,
+    "lineno": 1138,
     "enclosing_symbol": "_stderr_loop",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
