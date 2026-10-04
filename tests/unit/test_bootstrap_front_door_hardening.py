@@ -340,8 +340,49 @@ _DIFF_POOL = [
     "--hostname-bin", "--hostname-bin=x", "x", "foo", "src", "-i", "-ii", "-iF", "-e", "-efoo",
     "-f", "-g", "*.py", "--json", "--cpu", "-l", "--", "-", "-m", "5", "-m5", "-ih", "-hi", "-Vi",
     "--hyperlink-format=a{host}", "--regexp=foo", "-t", "py", "--glob", "--type", "-A", "-C2",
-    "--color", "never",
+    "--color", "never", "--format", "--lang", "--gpu-device-ids", "-T", "-r", "--replace",
+    "--iglob", "-e=", "-e=foo", "--glob=*.py", "-w", "-c", "txt",
 ]  # fmt: skip
+
+
+# An INDEPENDENT model of rg's argv grammar (not the PR's tokenizer): which exec-capable flags rg
+# reads in OPTION position. The oracle for the differential must not be the code under test.
+_MODEL_SHORT_VAL = set("efEmjgdtTABCMr")
+_MODEL_LONG_VAL = {
+    "regexp", "file", "encoding", "max-count", "threads", "glob", "max-depth", "type", "type-not",
+    "after-context", "before-context", "context", "max-columns", "replace", "pre", "pre-glob",
+    "dfa-size-limit", "engine", "regex-size-limit", "iglob", "ignore-file", "max-filesize",
+    "type-add", "type-clear", "color", "colors", "context-separator", "field-context-separator",
+    "field-match-separator", "hostname-bin", "hyperlink-format", "path-separator", "sort",
+    "sortr", "generate", "format", "lang", "gpu-device-ids",
+}  # fmt: skip
+_MODEL_EXEC_LONG = {"pre", "pre-glob", "hostname-bin", "search-zip"}
+
+
+def _model_execy(argv):
+    i = 0
+    while i < len(argv):
+        t = argv[i]
+        if t == "--":
+            return False
+        if t == "-" or not t.startswith("-"):
+            i += 1
+            continue
+        if t.startswith("--"):
+            name = t[2:].split("=", 1)[0]
+            if name in _MODEL_EXEC_LONG:
+                return True
+            i += 2 if name in _MODEL_LONG_VAL and "=" not in t else 1
+            continue
+        consumed_next = False
+        for j, ch in enumerate(t[1:], start=1):
+            if ch == "z":
+                return True
+            if ch in _MODEL_SHORT_VAL:
+                consumed_next = j == len(t) - 1
+                break
+        i += 2 if consumed_next else 1
+    return False
 
 
 def test_no_argv_gains_an_exec_flag_in_option_position_versus_main():
@@ -355,6 +396,85 @@ def test_no_argv_gains_an_exec_flag_in_option_position_versus_main():
         mine = _nav.bootstrap_native_tg_search_argv(list(argv))
         theirs = legacy(list(argv))
         checked += 1
-        if _nav._exec_capable_flag_present(mine) and not _nav._exec_capable_flag_present(theirs):
+        if _model_execy(mine) and not _model_execy(theirs):
             regressions += 1
     assert checked == 4000 and regressions == 0
+
+
+# --- confirmation gate of #1201: a bare `-` is a positional, never "all options" ------------------
+
+_BARE_DASH_REPROS = [
+    ["--cpu", "-t", "txt", "-w", "-"],
+    ["--json", "-g", "*.txt", "-i", "-"],
+    ["--json", "--glob", "*.txt", "-c", "-"],
+    ["-", "-r", "--", "--no-pre"],
+    ["--iglob", "*", "--no-pre", "-r", "-z", "-"],
+    ["--json", "-i", "-"],
+]
+
+
+@pytest.mark.parametrize("argv", _BARE_DASH_REPROS, ids=lambda a: " ".join(a))
+def test_bare_dash_positional_argv_is_left_unchanged(argv):
+    assert _nav.bootstrap_native_tg_search_argv(argv) == argv
+
+
+def _rg_out(cwd, argv):
+    out = subprocess.run(
+        [_RG, "--no-config", *[t for t in argv if t != "--cpu"]],
+        cwd=cwd,
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    # drop the timing-bearing JSON "summary"/"end" lines: they differ run to run
+    kept = [ln for ln in out.stdout.splitlines() if "elapsed" not in ln]
+    return out.returncode, kept
+
+
+@_needs_rg
+@pytest.mark.parametrize("argv", _BARE_DASH_REPROS, ids=lambda a: " ".join(a))
+def test_bare_dash_repro_builds_to_the_same_rg_result(_files_dir, argv):
+    (_files_dir / "b.txt").write_text("a - b\n", encoding="utf-8")
+    raw = _rg_out(_files_dir, argv)
+    built = _rg_out(_files_dir, _nav.bootstrap_native_tg_search_argv(argv))
+    assert raw == built, (argv, raw, built)
+
+
+@_needs_rg
+def test_bare_dash_headline_really_differs_when_the_sentinel_is_wrongly_inserted(_files_dir):
+    # positive control: the oracle can see the bug (pattern `-w` over stdin vs pattern `-` on cwd)
+    (_files_dir / "b.txt").write_text("a - b\n", encoding="utf-8")
+    raw = _rg_out(_files_dir, ["-t", "txt", "-w", "-"])
+    wrong = _rg_out(_files_dir, ["-t", "txt", "--", "-w", "-"])
+    assert raw[0] == 0 and wrong[0] != raw[0]
+
+
+_RG_VALID_POOL = [
+    "-", "-w", "-c", "-i", "-n", "-l", "-t", "txt", "-g", "*.txt", "-e", "foo", "-efoo", "-r", "X",
+    "--glob=*.txt", "-e=foo", "-T", "py", "-m", "1", "-A", "1", "--json", "foo", "-F", "-v", "-o",
+    "b.txt", "--iglob", "*", "--no-heading", "-S", "--hidden", "--",
+]  # fmt: skip
+
+
+@_needs_rg
+def test_argv_main_left_alone_and_the_pr_rewrote_reads_the_same_in_rg(_files_dir):
+    """Contract (b): for a VALID raw argv (rg exit 0/1) that main did not rewrite, the PR's rewrite
+    must make rg do the same thing (same exit code and output). Exec flags are not in the pool."""
+    (_files_dir / "b.txt").write_text("foo - b\n", encoding="utf-8")
+    legacy = _legacy_builder()
+    rng = random.Random(7)
+    compared = 0
+    for _ in range(6000):
+        argv = [rng.choice(_RG_VALID_POOL) for _ in range(rng.randint(1, 6))]
+        built = _nav.bootstrap_native_tg_search_argv(list(argv))
+        if built == argv or legacy(list(argv)) != argv:
+            continue  # not a case where the PR rewrote what main left alone
+        raw = _rg_out(_files_dir, argv)
+        if raw[0] not in (0, 1):
+            continue  # invalid raw argv: nothing to preserve
+        compared += 1
+        assert raw == _rg_out(_files_dir, built), (argv, built)
+        if compared >= 120:
+            break

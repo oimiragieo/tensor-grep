@@ -19,6 +19,7 @@ from tensor_grep.cli.bootstrap_search_guards import (
     _parse,
     flag_present,
     has_end_of_options,
+    positionals,
 )
 
 # rg's own short-flag clustering, verified against ripgrep 15.1.0 by probing every letter.
@@ -335,7 +336,12 @@ def _first_dash_led_pattern_index_after_tg_flags(
     # `-zebra` is `-z -e bra` and `--pre=sh -efoo` carries `-e`, yet both keep the sentinel.
     if relaxed and flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS):
         return None
-    if all(token.startswith("-") for token in remainder):
+    # A bare `-` is a real rg positional (stdin / the literal pattern `-`), not an option, so a
+    # remainder holding one is not "all options, no pattern" (`--cpu -t txt -w -`). A relaxation:
+    # only without an exec-capable flag.
+    if all(token.startswith("-") for token in remainder) and not (
+        relaxed and positionals(remainder)
+    ):
         return index
     if (
         len(remainder) >= 2
