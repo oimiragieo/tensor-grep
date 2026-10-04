@@ -327,8 +327,9 @@ def _open_regular_no_follow(
         # UNBUFFERED: a buffered handle would pull a whole buffer from the OS for a 10-byte
         # budgeted read, so the byte budget would bound nothing. Every read reaches the raw fd.
         return _fdopen(fd, "rb", buffering=0)  # type: ignore[return-value]
-    except BaseException:
-        _close_fd(fd)
+    except BaseException as open_error:
+        if not _close_fd(fd):
+            raise _PopulationWalkError("cleanup_failed") from open_error
         raise
 
 
@@ -630,9 +631,14 @@ if sys.platform == "win32":
     _INVALID_HANDLE = ctypes.c_void_p(-1).value
 
     def _close_win_handle(handle: Any) -> None:
-        """`CloseHandle` returns FALSE on failure: that is an error, not a no-op."""
-        if not _k32.CloseHandle(handle):
-            raise OSError(ctypes.get_last_error(), "CloseHandle failed")
+        """The ONE checked `CloseHandle`: FALSE is an error, not a no-op. A failed close is
+        retried once; if it still fails the handle is not released and the caller must record
+        it (`OSError` here, `cleanup_failed` in the population)."""
+        if _k32.CloseHandle(handle):
+            return
+        if _k32.CloseHandle(handle):  # one retry
+            return
+        raise OSError(ctypes.get_last_error(), "CloseHandle failed")
 
     def _hold_dir(path: str | Path) -> _DirHandle:
         """Hold `path` open WITHOUT FILE_SHARE_DELETE (it cannot be renamed, deleted or replaced
@@ -668,8 +674,13 @@ if sys.platform == "win32":
                 handle, 18, ctypes.byref(id_info), ctypes.sizeof(id_info)
             )
             ident = (int(id_info.VolumeSerialNumber) if got_id else 0, index)
-        except BaseException:
-            _k32.CloseHandle(handle)
+        except BaseException as acquire_error:
+            try:
+                _close_win_handle(handle)  # checked + retried, same helper as the drain
+            except OSError:
+                # the handle could not be released: never drop it silently, whatever the
+                # acquisition error was, the population is `cleanup_failed`
+                raise _PopulationWalkError("cleanup_failed") from acquire_error
             raise
         return _DirHandle(ident, True, lambda: _close_win_handle(handle))
 

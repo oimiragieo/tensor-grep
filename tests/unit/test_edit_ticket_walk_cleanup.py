@@ -503,9 +503,12 @@ def test_closehandle_returning_false_makes_the_population_incomplete_never_pass(
     state = {"n": 0}
 
     def _false_once(handle: object) -> object:
-        real_close(handle)  # the OS handle really is released
         state["n"] += 1
-        return 0 if state["n"] == 1 else 1  # but the call REPORTS failure once
+        if state["n"] <= 2:  # the first close AND its single retry both REPORT failure
+            if state["n"] == 1:
+                real_close(handle)  # the OS handle really is released (no test-side leak)
+            return 0
+        return real_close(handle)
 
     monkeypatch.setattr(k32, "CloseHandle", _false_once, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
@@ -686,13 +689,15 @@ class _BoomEntry:
 def test_fd_walk_entry_type_failure_is_unreadable_path_and_closes_every_fd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # The boom entry is installed AS THE ROOT LISTING through world.install (assigning
+    # world.tree[100] afterwards was overwritten by the root allocation, so is_dir() was never
+    # reached). Driven at the walker itself: if the OSError were swallowed (entry listed as a
+    # file) the root tuple would be yielded normally and nothing would raise.
     world = _FdWorld()
-    world.install(monkeypatch, [])
-    world.tree[100] = [_BoomEntry()]  # type: ignore[list-item]
-    monkeypatch.setattr(edit_ticket_walk, "_walk_impl", edit_ticket_walk._fd_walk)
-    _files, population = _walk_tracked_files_bounded(tmp_path)
-    assert population["status"] == "incomplete"
-    assert population["reason"] == "unreadable_path"
+    world.install(monkeypatch, [_BoomEntry()])  # type: ignore[list-item]
+    with pytest.raises(edit_ticket_walk._PopulationWalkError) as excinfo:
+        _drain(edit_ticket_walk._fd_walk(str(tmp_path), _raise_walk_error))
+    assert excinfo.value.reason == "unreadable_path"
     assert world.closed == [100]
 
 
@@ -747,3 +752,153 @@ def test_path_resolve_failure_in_the_root_comparison_never_raises_from_verify(
     monkeypatch.setattr(Path, "resolve", _boom)
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] in {"PASS", "FAIL"}  # lexical comparison fallback; no exception
+
+
+# ---- closure audit: a handle acquired by _hold_dir is released even when the failure path's
+# ---- CloseHandle fails; every close in the walk module goes through a checked helper
+
+
+def _handle_is_released(handle: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    flags = wintypes.DWORD(0)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetHandleInformation.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    k32.GetHandleInformation.restype = wintypes.BOOL
+    return not k32.GetHandleInformation(handle, ctypes.byref(flags))  # fails for a dead handle
+
+
+def _record_created_handles(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    k32 = edit_ticket_walk._k32
+    real_create = k32.CreateFileW
+    created: list[int] = []
+
+    def _create(*a: object) -> object:
+        handle = real_create(*a)
+        if handle is not None and handle != edit_ticket_walk._INVALID_HANDLE:
+            created.append(int(handle))
+        return handle
+
+    monkeypatch.setattr(k32, "CreateFileW", _create, raising=False)
+    return created
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="held directory handles are Windows-only")
+def test_every_held_handle_is_really_released_after_a_normal_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "m.py").write_text("x = 1\n", encoding="utf-8")
+    created = _record_created_handles(monkeypatch)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert created
+    for handle in created:
+        assert _handle_is_released(handle), f"handle {handle} is still valid after the walk"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="held directory handles are Windows-only")
+def test_acquisition_failure_cleanup_retries_a_false_closehandle_and_releases_the_handle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    k32 = edit_ticket_walk._k32
+    created = _record_created_handles(monkeypatch)
+    real_close = k32.CloseHandle
+    state = {"calls": 0}
+
+    def _false_once(handle: object) -> object:
+        state["calls"] += 1
+        return 0 if state["calls"] == 1 else real_close(handle)  # first attempt FAILS, retry works
+
+    def _query_fails(*a: object) -> object:
+        return 0
+
+    monkeypatch.setattr(k32, "GetFileInformationByHandle", _query_fails, raising=False)
+    monkeypatch.setattr(k32, "CloseHandle", _false_once, raising=False)
+    with pytest.raises(OSError):  # the ORIGINAL acquisition error still propagates
+        edit_ticket_walk._hold_dir(tmp_path)
+    assert state["calls"] == 2  # one retry
+    assert created and all(_handle_is_released(h) for h in created)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="held directory handles are Windows-only")
+def test_acquisition_failure_with_a_failing_closehandle_is_cleanup_failed_never_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    clean = _ticket(tmp_path)
+    k32 = edit_ticket_walk._k32
+    created = _record_created_handles(monkeypatch)
+    real_close = k32.CloseHandle
+
+    def _query_fails(*a: object) -> object:
+        return 0
+
+    def _close_always_false(handle: object) -> object:
+        return 0  # the failure path's CloseHandle fails, and so does its retry
+
+    try:
+        with monkeypatch.context() as m:
+            m.setattr(k32, "GetFileInformationByHandle", _query_fails, raising=False)
+            m.setattr(k32, "CloseHandle", _close_always_false, raising=False)
+            with pytest.raises(edit_ticket_walk._PopulationWalkError) as excinfo:
+                edit_ticket_walk._hold_dir(tmp_path)
+            assert excinfo.value.reason == "cleanup_failed"
+            _files, population = _walk_tracked_files_bounded(tmp_path)
+            assert population["status"] == "incomplete"
+            assert population["reason"] == "cleanup_failed"
+            minted = _ticket(tmp_path)
+            assert minted.population_status["status"] == "incomplete"
+            result = verify_edit_ticket(repo_root=str(tmp_path), ticket=clean, modified_files=[])
+            assert result["verdict"] == "FAIL"
+            assert result["reason"] == "verify_population_incomplete"
+    finally:
+        for handle in created:  # the injected double failure really leaked them: release now
+            real_close(handle)
+
+
+def test_no_close_in_the_walk_modules_ignores_its_result() -> None:
+    """AST census: `CloseHandle` / `os.close` are called only inside the checked helpers, and no
+    caller of `_close_fd` throws its result away."""
+    import ast
+
+    src_dir = Path(edit_ticket_service.__file__).resolve().parent
+    checked_helpers = {"_close_win_handle", "_close_fd"}
+    offenders: list[str] = []
+    for name in ("edit_ticket_walk.py", "edit_ticket_service.py"):
+        tree = ast.parse((src_dir / name).read_text(encoding="utf-8"))
+        parents: dict[int, ast.AST] = {}
+        for node in ast.walk(tree):
+            for child in ast.iter_child_nodes(node):
+                parents[id(child)] = node
+
+        def enclosing(node: ast.AST, parents: dict[int, ast.AST] = parents) -> str:
+            cur: ast.AST | None = node
+            while cur is not None:
+                if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    return cur.name
+                cur = parents.get(id(cur))
+            return "<module>"
+
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            recv = node.func.value
+            recv_name = recv.id if isinstance(recv, ast.Name) else ""
+            if node.func.attr == "CloseHandle" and recv_name == "_k32":
+                if enclosing(node) not in checked_helpers:
+                    offenders.append(f"{name}:{node.lineno} CloseHandle outside a checked helper")
+            if node.func.attr == "close" and recv_name == "os":
+                if enclosing(node) not in checked_helpers:
+                    offenders.append(f"{name}:{node.lineno} os.close outside a checked helper")
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Call)
+                and isinstance(node.value.func, ast.Name)
+                and node.value.func.id in {"_close_fd", "_close_win_handle"}
+                and node.value.func.id == "_close_fd"
+            ):
+                offenders.append(f"{name}:{node.lineno} _close_fd result discarded")
+    assert not offenders, offenders
