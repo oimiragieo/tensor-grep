@@ -673,12 +673,40 @@ def test_legacy_ticket_without_pruned_set_skips_the_pruned_check(tmp_path: Path)
     assert result["verdict"] == "PASS"
 
 
-def test_pruned_dir_budget_makes_population_incomplete(
+def test_many_name_pruned_dirs_stay_complete_and_verify_passes(tmp_path: Path) -> None:
+    # Name-pruned entries are tiny (a path and "name"): a large Python/JS repo with thousands
+    # of __pycache__ dirs must NOT fail closed. 3000 > the old shared cap of 2000.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    for i in range(3000):
+        (tmp_path / f"p{i:04d}" / "__pycache__").mkdir(parents=True)
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["status"] == "complete"
+    assert len(ticket.population_status["pruned_set"]) == 3000
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def test_content_pruned_budget_makes_population_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    for i in range(5):
+        d = tmp_path / f"env{i}"
+        d.mkdir()
+        (d / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+    monkeypatch.setattr(edit_ticket_service, "_MAX_CONTENT_PRUNED_DIRS", 3, raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "pruned_dir_limit"
+    assert population["limit_kind"] == "content"
+
+
+def test_name_pruned_budget_makes_population_incomplete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for i in range(5):
         (tmp_path / f"d{i}" / "node_modules").mkdir(parents=True)
-    monkeypatch.setattr(edit_ticket_service, "_MAX_CONTENT_PRUNED", 3, raising=False)
+    monkeypatch.setattr(edit_ticket_service, "_MAX_NAME_PRUNED_DIRS", 3, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "pruned_dir_limit"
+    assert population["limit_kind"] == "name"

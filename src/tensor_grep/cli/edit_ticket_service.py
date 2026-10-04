@@ -63,7 +63,10 @@ _CMAKE_CACHE = "CMakeCache.txt"
 _CMAKE_SOURCE = "CMakeLists.txt"
 _MAX_REPORTED_PRUNED = 200
 _MAX_WALK_DIRS = 200_000
-_MAX_CONTENT_PRUNED = 2_000
+# Separate budgets: a name-pruned entry is a path and the string "name" (cheap), a
+# content-pruned entry costs a marker read and a hash.
+_MAX_NAME_PRUNED_DIRS = 50_000
+_MAX_CONTENT_PRUNED_DIRS = 2_000
 _NAME_PRUNED = "name"
 _MARKER_HASH_CAP = 16 * 1024 * 1024
 
@@ -115,9 +118,10 @@ class EditReadyTicketV1:
 class _PopulationWalkError(Exception):
     """Directory enumeration failed or the dir budget was hit: the population is incomplete."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, kind: str | None = None) -> None:
         super().__init__(reason)
         self.reason = reason
+        self.kind = kind  # which pruned-dir cap was hit: "name" or "content"
 
 
 def _regular_marker(path: Path) -> bool:
@@ -189,6 +193,7 @@ def _population_paths(
         raise _PopulationWalkError("unreadable_path") from exc
 
     visited = 0
+    n_name = n_content = 0
     for dirpath, dirnames, filenames in _os_walk(root, followlinks=False, onerror=_on_error):
         visited += 1
         if visited > _MAX_WALK_DIRS:
@@ -208,13 +213,16 @@ def _population_paths(
                 if len(pruned) < _MAX_REPORTED_PRUNED:
                     pruned.append(rel)
                 if content_pruned is not None:
-                    if len(content_pruned) >= _MAX_CONTENT_PRUNED:
-                        raise _PopulationWalkError("pruned_dir_limit")
-                    content_pruned[rel] = (
-                        f"{marker}:{_marker_digest(child / marker)}"
-                        if marker is not None
-                        else _NAME_PRUNED
-                    )
+                    if marker is not None:
+                        if n_content >= _MAX_CONTENT_PRUNED_DIRS:
+                            raise _PopulationWalkError("pruned_dir_limit", "content")
+                        n_content += 1
+                        content_pruned[rel] = f"{marker}:{_marker_digest(child / marker)}"
+                    else:
+                        if n_name >= _MAX_NAME_PRUNED_DIRS:
+                            raise _PopulationWalkError("pruned_dir_limit", "name")
+                        n_name += 1
+                        content_pruned[rel] = _NAME_PRUNED
             else:
                 keep.append(d)
         dirnames[:] = keep
@@ -255,6 +263,7 @@ def _walk_tracked_files_bounded(
     scanned_files = 0
     scanned_bytes = 0
     incomplete_reason: str | None = None
+    limit_kind: str | None = None
     pruned: list[str] = []
     content_pruned: dict[str, str] = {}
 
@@ -292,13 +301,16 @@ def _walk_tracked_files_bounded(
             scanned_files += 1
             scanned_bytes += size
     except _PopulationWalkError as exc:
-        incomplete_reason = incomplete_reason or exc.reason
+        if incomplete_reason is None:
+            incomplete_reason = exc.reason
+            limit_kind = exc.kind
 
     if incomplete_reason is not None:
         population = {
             "verified": False,
             "status": "incomplete",
             "reason": incomplete_reason,
+            "limit_kind": limit_kind,
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
