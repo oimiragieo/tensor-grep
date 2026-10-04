@@ -10692,16 +10692,23 @@ def _ensure_primary_source_in_sources(
     if not primary_file or not primary_symbol_name:
         return sources
     primary_span = edit_plan_seed.get("primary_span") or primary_symbol
-    if any(
-        _source_includes_primary_symbol(
-            source,
-            primary_file=primary_file,
-            primary_symbol_name=primary_symbol_name,
-            primary_span=primary_span,
-        )
-        for source in sources
-    ):
-        return sources
+    primary_index = next(
+        (
+            index
+            for index, source in enumerate(sources)
+            if _source_includes_primary_symbol(
+                source,
+                primary_file=primary_file,
+                primary_symbol_name=primary_symbol_name,
+                primary_span=primary_span,
+            )
+        ),
+        None,
+    )
+    if primary_index is not None:
+        if primary_index == 0:
+            return sources
+        return [sources[primary_index], *sources[:primary_index], *sources[primary_index + 1 :]]
 
     primary_source: dict[str, Any] | None = None
     primary_source_payload = _self.build_symbol_source_from_map(
