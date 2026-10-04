@@ -97,6 +97,8 @@ LONG_VALUE = {
     "--type-not",
 }
 
+#: (`--files` is handled in `rg_roots`: verified live against rg 15.1.0, `rg --files --unrestricted -- --sortr`
+#: searches the PATH `--sortr`, and `rg --files '*.py'` errors on the missing PATH `*.py`.)
 #: Flags that SUPPLY THE PATTERN. If any of these appears in the option region, rg does NOT
 #: treat the first bare positional as the pattern -- every bare positional is a PATH. rg's
 #: grammar is ORDER-INDEPENDENT here: `rg sub -eneedle` == `rg -eneedle sub` (verified live).
@@ -108,6 +110,7 @@ def rg_roots(argv: list[str]) -> list[str]:
     """Return the PATH positionals rg would search. Empty list == implicit cwd root."""
     positionals: list[str] = []
     pattern_from_flag = False
+    files_mode = False  # `--files` lists files: rg takes NO pattern, every positional is a PATH
     end_of_opts = False
     i = 0
     while i < len(argv):
@@ -124,6 +127,8 @@ def rg_roots(argv: list[str]) -> list[str]:
             name, sep, _value = arg.partition("=")
             if name in PATTERN_SOURCE_LONG:
                 pattern_from_flag = True
+            if name == "--files":
+                files_mode = True
             if not sep and name in LONG_VALUE:
                 i += 1  # value lives in the next argv token
             i += 1
@@ -141,7 +146,7 @@ def rg_roots(argv: list[str]) -> list[str]:
             continue
         positionals.append(arg)
         i += 1
-    if pattern_from_flag:
+    if pattern_from_flag or files_mode:
         return positionals
     return positionals[1:]  # the first bare positional is the PATTERN
 
