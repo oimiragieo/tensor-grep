@@ -10,7 +10,8 @@ from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
 from tensor_grep.cli.commands import PYTHON_FULL_HELP_COMMANDS as _PYTHON_FULL_HELP_COMMANDS
 from tensor_grep.cli.runtime_paths import (
     env_flag_enabled,
-    resolve_native_tg_binary,
+    resolve_native_tg_binary,  # noqa: F401 - kept bound: bootstrap_search_guards.resolve_native_or_exit
+    # reads it as `bootstrap.resolve_native_tg_binary`, and ~90 tests monkeypatch this name.
     resolve_ripgrep_binary,
 )
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess

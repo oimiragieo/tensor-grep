@@ -328,12 +328,16 @@ def test_requires_full_cli_help_scan_is_flagged_if_it_regresses_to_a_raw_members
 
 def test_broad_root_ignores_a_flag_value_that_looks_like_a_root():
     # `-g .claude` is a glob VALUE, `foo` the pattern, `src` the only path.
-    assert bootstrap._search_args_include_guarded_broad_root(["-g", ".claude", "foo", "src"]) is False
+    assert (
+        bootstrap._search_args_include_guarded_broad_root(["-g", ".claude", "foo", "src"]) is False
+    )
 
 
 def test_broad_root_still_refuses_a_genuine_guarded_path():  # positive control
     assert bootstrap._search_args_include_guarded_broad_root(["foo", ".claude"]) is True
-    assert bootstrap._search_args_include_guarded_broad_root(["-g", "*.py", "foo", ".claude"]) is True
+    assert (
+        bootstrap._search_args_include_guarded_broad_root(["-g", "*.py", "foo", ".claude"]) is True
+    )
 
 
 def test_broad_root_pattern_with_default_scope_is_not_a_root():
