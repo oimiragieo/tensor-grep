@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any
 
 _os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
+_marker_open = open  # private seam for the marker read
 
 _ALWAYS_PRUNED_DIRS = frozenset({
     "node_modules",
@@ -124,6 +125,14 @@ class _PopulationWalkError(Exception):
         self.kind = kind  # which pruned-dir cap was hit: "name" or "content"
 
 
+def _is_link(path: str | Path) -> bool:
+    """A symlink OR (Windows) NTFS junction. Neither is ever followed or descended."""
+    if os.path.islink(path):
+        return True
+    isjunction = getattr(os.path, "isjunction", None)
+    return bool(isjunction is not None and isjunction(path))
+
+
 def _regular_marker(path: Path) -> bool:
     """A marker counts only as a REGULAR, non-symlink file (never follow a marker link)."""
     try:
@@ -144,16 +153,22 @@ def _cachedir_tag_valid(tag: Path) -> bool:
 
 
 def _marker_digest(path: Path) -> str:
-    """sha256 of the marker's bytes (bounded) so a changed marker is detectable at verify."""
+    """sha256 of the WHOLE marker so a changed marker is detectable at verify.
+
+    Never records a truncated digest as complete: a marker larger than _MARKER_HASH_CAP raises
+    `marker_too_large`, and a read failure raises `unreadable_path` (no sentinel digest that
+    would compare equal at mint and verify). Both make the population incomplete."""
     hasher = hashlib.sha256()
-    remaining = _MARKER_HASH_CAP
+    total = 0
     try:
-        with open(path, "rb") as handle:
-            while remaining > 0 and (chunk := handle.read(min(65536, remaining))):
+        with _marker_open(path, "rb") as handle:
+            while chunk := handle.read(65536):
+                total += len(chunk)
+                if total > _MARKER_HASH_CAP:
+                    raise _PopulationWalkError("marker_too_large")
                 hasher.update(chunk)
-                remaining -= len(chunk)
-    except OSError:
-        return "unreadable"
+    except OSError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
     return hasher.hexdigest()
 
 
@@ -204,8 +219,10 @@ def _population_paths(
         leaves: list[str] = list(filenames)
         for d in sorted(dirnames):
             child = current / d
-            if os.path.islink(child):
-                leaves.append(d)  # a directory symlink is a leaf: never descended, never skipped
+            if _is_link(child):
+                leaves.append(
+                    d
+                )  # a directory symlink/junction is a leaf: never descended, never skipped
                 continue
             marker = _content_prune_marker(child)
             if marker is not None or d in _ALWAYS_PRUNED_DIRS:
@@ -232,7 +249,7 @@ def _population_paths(
 
 def compute_file_fingerprint(path: str | Path) -> str:
     p = Path(path)
-    if p.is_symlink():
+    if _is_link(p):
         # Never follow a leaf link: its target may be out-of-root or huge (G-08).
         return hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(p))).hexdigest()
     if not p.is_file():
@@ -276,7 +293,7 @@ def _walk_tracked_files_bounded(
                 break
 
             try:
-                size = len(os.readlink(item)) if item.is_symlink() else item.stat().st_size
+                size = len(os.readlink(item)) if _is_link(item) else item.stat().st_size
             except OSError:
                 # A file that vanishes or becomes unreadable mid-walk must not silently
                 # disappear from `result` while the population still reports "complete" --

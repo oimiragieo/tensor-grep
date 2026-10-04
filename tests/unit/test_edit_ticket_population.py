@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -710,3 +712,108 @@ def test_name_pruned_budget_makes_population_incomplete(
     assert population["status"] == "incomplete"
     assert population["reason"] == "pruned_dir_limit"
     assert population["limit_kind"] == "name"
+
+
+def test_marker_edit_beyond_hash_cap_is_not_recorded_as_complete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A digest of only the first CAP bytes cannot see an edit past the cap. Never record a
+    # truncated digest as complete: a marker larger than the cap makes the population
+    # incomplete (marker_too_large), so mint and verify fail closed.
+    monkeypatch.setattr(edit_ticket_service, "_MARKER_HASH_CAP", 64, raising=False)
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    env = tmp_path / "env"
+    env.mkdir()
+    marker = env / "pyvenv.cfg"
+    marker.write_bytes(b"x" * 64 + b"A")
+    ticket = _ticket(tmp_path)
+    marker.write_bytes(b"x" * 64 + b"B")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert ticket.population_status["status"] == "incomplete"
+    assert ticket.population_status["reason"] == "marker_too_large"
+
+
+def test_marker_exactly_at_cap_is_hashed_in_full(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # positive control: the cap is inclusive
+    monkeypatch.setattr(edit_ticket_service, "_MARKER_HASH_CAP", 64, raising=False)
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"x" * 64)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+
+
+def test_unreadable_marker_makes_population_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_text("home = x\n", encoding="utf-8")
+
+    def _denied(*_a: object, **_k: object) -> object:
+        raise PermissionError(13, "denied")
+
+    # private seam for the marker read; raising=False keeps the test collectable on main
+    monkeypatch.setattr(edit_ticket_service, "_marker_open", _denied, raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert "unreadable" not in population["pruned_set"].values()
+
+
+def _make_junction(link: Path, target: Path) -> None:
+    subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        check=True,
+        timeout=30,
+        capture_output=True,
+    )
+
+
+def _remove_junction(link: Path) -> None:
+    # rmdir on a junction removes the link only, never the target's contents
+    if os.path.lexists(link):
+        os.rmdir(link)
+
+
+windows_only = pytest.mark.skipif(sys.platform != "win32", reason="NTFS junctions are Windows-only")
+
+
+@windows_only
+def test_unchanged_junction_passes_verify(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (tmp_path / "dir-a").mkdir()
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    link = root / "alias"
+    _make_junction(link, tmp_path / "dir-a")
+    try:
+        ticket = _ticket(root)
+        assert "alias" in ticket.pre_edit_fingerprints
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "PASS"
+    finally:
+        _remove_junction(link)
+
+
+@windows_only
+def test_repointed_junction_to_identical_marker_fails_verify(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    for name in ("dir-a", "dir-b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "pyvenv.cfg").write_text("home = same\n", encoding="utf-8")
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    link = root / "alias"
+    _make_junction(link, tmp_path / "dir-a")
+    try:
+        ticket = _ticket(root)
+        _remove_junction(link)
+        _make_junction(link, tmp_path / "dir-b")
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert "alias" in result["violations"]
+    finally:
+        _remove_junction(link)
