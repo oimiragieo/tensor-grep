@@ -8,10 +8,12 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -199,6 +201,7 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
     deleted_paths: set[Path]
     mode_changed_files: set[Path]
     submodule_changed_files: set[Path]
+    new_oids: dict[Path, str]
 
     def __init__(self) -> None:
         super().__init__()
@@ -206,9 +209,10 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
         self.deleted_paths = set()
         self.mode_changed_files = set()
         self.submodule_changed_files = set()
+        self.new_oids = {}
 
 
-_INDEX_LINE_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+( [0-7]{6})?$")
+_INDEX_LINE_RE = re.compile(r"^index ([0-9a-f]+)\.\.([0-9a-f]+)( [0-7]{6})?$")
 _MODE_LINE_RE = re.compile(r"^(old|new) mode [0-7]{6}$")
 _FILE_MODE_LINE_RE = re.compile(r"^(new|deleted) file mode [0-7]{6}$")
 _SIMILARITY_LINE_RE = re.compile(r"^similarity index [0-9]{1,3}%$")
@@ -463,6 +467,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     is_added = False
     mode_changed = False
     is_submodule = False
+    new_oid: str | None = None
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
@@ -482,6 +487,10 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             result.submodule_changed_files.add(dest)
         if mode_changed and dest is not None and not is_deleted:
             result.mode_changed_files.add(dest)
+        # the `index <old>..<new>` line names the blob of the NEW side of this record
+        oid_dest = current_file or dest
+        if new_oid and oid_dest is not None and not set(new_oid) <= {"0"}:
+            result.new_oids[oid_dest] = new_oid
 
     # Split on literal LF only: str.splitlines() also breaks on U+2028/U+0085/U+000B/U+000C and
     # friends, which are legal in file names and would truncate the parsed path.
@@ -506,10 +515,15 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             is_added = False
             mode_changed = False
             is_submodule = False
+            new_oid = None
             continue
 
         if in_header and _GITLINK_INDEX_RE.match(line):
             is_submodule = True
+            continue
+
+        if in_header and (index_match := _INDEX_LINE_RE.match(line)):
+            new_oid = index_match.group(2)
             continue
 
         if in_header and line.startswith("new file mode "):
@@ -723,6 +737,159 @@ def _extraction_errors() -> tuple[type[BaseException], ...]:
     )
 
 
+class _BlobUnavailable(Exception):
+    """The content a diff record describes could not be read or did not match its oid."""
+
+
+class _BlobOverCap(Exception):
+    """The blob exceeds the per-file parse byte cap the extractors themselves enforce."""
+
+
+_OID_RE = re.compile(r"^[0-9a-f]{4,64}$")
+
+
+def _git_cmd(*args: str) -> list[str]:
+    return ["git", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", *args]
+
+
+def _run_git_for_content(
+    root: Path, args: list[str], *, text: bool
+) -> subprocess.CompletedProcess[Any]:
+    try:
+        return run_subprocess(
+            _git_cmd(*args),
+            cwd=str(root),
+            stdout=-1,
+            stderr=-1,
+            text=text,
+            env=_git_env(),
+            timeout_seconds=configured_git_timeout_seconds(),
+        )
+    except (OSError, ValueError, subprocess.TimeoutExpired, TimeoutError) as exc:
+        raise _BlobUnavailable(str(exc)) from exc
+
+
+def _read_blob(root: Path, oid: str, max_bytes: int) -> bytes:
+    """Read the blob `oid` with git (hardened argv/env). Size is checked BEFORE the read."""
+    if not _OID_RE.match(oid):  # hex only, so it can never be an option (CWE-88)
+        raise _BlobUnavailable(f"not a plausible object id: {oid!r}")
+    size_proc = _run_git_for_content(root, ["cat-file", "-s", oid], text=True)
+    try:
+        size = int((size_proc.stdout or "").strip())
+    except ValueError as exc:
+        raise _BlobUnavailable(f"cannot size blob {oid}") from exc
+    if size_proc.returncode != 0:
+        raise _BlobUnavailable(f"git cat-file -s {oid} failed")
+    if size > max_bytes:
+        raise _BlobOverCap(f"blob {oid} is {size} bytes (cap {max_bytes})")
+    proc = _run_git_for_content(root, ["cat-file", "blob", oid], text=False)
+    if proc.returncode != 0:
+        raise _BlobUnavailable(f"git cat-file blob {oid} failed")
+    data: bytes = proc.stdout or b""
+    return data
+
+
+def _worktree_hash(root: Path, rel_path: Path) -> str | None:
+    """The object id git would give the working-tree file (filters/EOL conversion applied)."""
+    try:
+        proc = _run_git_for_content(root, ["hash-object", "--", str(rel_path)], text=True)
+    except _BlobUnavailable:
+        return None
+    out = (proc.stdout or "").strip()
+    return out if proc.returncode == 0 and _OID_RE.match(out) else None
+
+
+def _blob_hash_matches(data: bytes, oid_prefix: str) -> bool:
+    header = f"blob {len(data)}\0".encode()
+    return any(
+        algo(header + data, usedforsecurity=False).hexdigest().startswith(oid_prefix)
+        for algo in (hashlib.sha1, hashlib.sha256)
+    )
+
+
+def _extract_symbols(extract_path: Path) -> list[dict[str, Any]]:
+    """Run the registry's extractor for `extract_path`; raises the narrow extraction errors."""
+    spec = lang_registry.spec_for_path(extract_path)
+    symbols: list[dict[str, Any]]
+    if spec is not None and spec.extract_imports_and_symbols is not None:
+        imports, symbols = spec.extract_imports_and_symbols(extract_path)
+    else:
+        imports, symbols = repo_map._imports_and_symbols_for_path(extract_path)
+    if not symbols and not imports:
+        # The Python extractor swallows its own read/decode/parse failures and returns
+        # ([], []), indistinguishable from a symbol-free file. Re-check ONLY empty Python
+        # results (so normal files cost nothing), with the extractor's reader rules (strict
+        # UTF-8, then ast.parse). Tree-sitter languages' parse-gap is owned by wave 2a G1
+        # (r25 disposition for diff_impact.py:164/:169), deliberately not rebuilt here.
+        # Same language decision as the registry (which lowercases suffixes): `app.PY` is
+        # handled by the Python extractor, so it gets the same re-check.
+        if extract_path.suffix.lower() == ".py" or (
+            spec is not None and spec is lang_registry.spec_for_path("x.py")
+        ):
+            ast.parse(extract_path.read_text(encoding="utf-8"))
+    return symbols
+
+
+def _overlapping_symbols(
+    symbols: list[dict[str, Any]], rel_path: Path, line_ranges: list[tuple[int, int]]
+) -> list[dict[str, Any]]:
+    found: list[dict[str, Any]] = []
+    for sym in symbols:
+        s_start = int(sym.get("start_line", sym.get("line", 1)))
+        s_end = int(sym.get("end_line", s_start))
+
+        # Check overlap between [s_start, s_end] and any [r_start, r_end]
+        overlaps = any(max(s_start, r_start) <= min(s_end, r_end) for r_start, r_end in line_ranges)
+        if overlaps:
+            sym_copy = dict(sym)
+            sym_copy["file"] = str(rel_path).replace("\\", "/")
+            found.append(sym_copy)
+    return found
+
+
+def _map_blob_path(
+    rel_path: Path,
+    line_ranges: list[tuple[int, int]],
+    root: Path,
+    submodule_paths: set[Path],
+    binary_paths: set[Path],
+    new_oid: str | None,
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    """Analyse the content the diff DESCRIBES (a git blob), never an unrelated working tree."""
+    if rel_path in submodule_paths:  # a gitlink names a commit, not a blob: disclosed separately
+        return "deleted", None, []
+    if rel_path in binary_paths:  # binary content has no source lines to map
+        return "analyzed", None, []
+    if new_oid is None:
+        # no `index` line: nothing was read from the new side (e.g. a pure mode change)
+        if not line_ranges:
+            return "analyzed", None, []
+        return "not_analyzed", "blob_unavailable", []
+    try:
+        data = _read_blob(root, new_oid, repo_map._max_parse_bytes())
+    except _BlobOverCap:
+        return "not_analyzed", "over_cap", []
+    except _BlobUnavailable:
+        return "not_analyzed", "blob_unavailable", []
+    if not _blob_hash_matches(data, new_oid):
+        return "not_analyzed", "blob_unavailable", []
+
+    # Extractors take a PATH: write the bytes to a temp file OUTSIDE the repo with the same
+    # suffix (so the registry picks the same extractor), and always delete it.
+    fd, name = tempfile.mkstemp(suffix=rel_path.suffix, prefix="tg-blob-")
+    tmp_path = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        try:
+            symbols = _extract_symbols(tmp_path)
+        except _extraction_errors() as exc:  # narrow on purpose
+            return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
+
+
 def _map_one_path(
     rel_path: Path,
     line_ranges: list[tuple[int, int]],
@@ -730,14 +897,22 @@ def _map_one_path(
     deleted_paths: set[Path],
     submodule_paths: set[Path],
     binary_paths: set[Path] | None = None,
+    new_oid: str | None = None,
+    content_mode: str = "unverified",
 ) -> tuple[str, str | None, list[dict[str, Any]]]:
     """Map ONE changed path to exactly one outcome: (outcome, reason, symbols).
 
     Outcomes: "analyzed" (extractor succeeded, identity unchanged); "deleted" (a deliberate,
     separately disclosed handling: a deleted file or a submodule gitlink that is no longer a
     regular file); "not_analyzed" with a reason (path_escapes_root, file_missing,
-    extraction_failed: <ExceptionType>, path_changed_during_analysis). There is no branch that
-    returns nothing, so a changed path can never leave the mapper unaccounted for.
+    extraction_failed: <ExceptionType>, path_changed_during_analysis, blob_unavailable,
+    over_cap). There is no branch that returns nothing, so a changed path can never leave the
+    mapper unaccounted for.
+
+    `content_mode` says where the new-side bytes come from: "blob" (staged / revision-range
+    diffs: the git object named by the record's `index` line), "worktree" (the working-tree file,
+    hash-verified against that line), or "unverified" (no git context, e.g. caller-supplied diff
+    text: the working-tree file as-is).
     """
     # An explicit deletion is classified FIRST, before any working-tree inspection: what a deleted
     # path leaves behind (e.g. a symlink surviving a `git rm --cached`) says nothing about it. A
@@ -745,6 +920,10 @@ def _map_one_path(
     # is still analysed, so the exemption never suppresses a surviving source file.
     if rel_path in deleted_paths and not line_ranges and rel_path not in (binary_paths or set()):
         return "deleted", None, []
+    if content_mode == "blob":
+        return _map_blob_path(
+            rel_path, line_ranges, root, submodule_paths, binary_paths or set(), new_oid
+        )
     full_path = root / rel_path
     # Reuse repo_map's containment guard (resolves symlinks/`..` on both sides): a diff path,
     # or a symlink in the repo, must never make us open a file outside `root`.
@@ -754,27 +933,23 @@ def _map_one_path(
         if rel_path in submodule_paths:  # a gitlink is a directory/absent: disclosed separately
             return "deleted", None, []
         return "not_analyzed", "file_missing", []
+    try:
+        if full_path.stat().st_size > repo_map._max_parse_bytes():
+            return "not_analyzed", "over_cap", []  # the extractors return ([], []) over the cap
+    except OSError:
+        return "not_analyzed", "file_missing", []
 
     before = _file_identity(full_path)
+    if content_mode == "worktree" and new_oid and not full_path.is_symlink():
+        # The diff's new-side oid is the hash of the working-tree file AS DIFFED. If it no longer
+        # matches, the file changed after the diff was taken: not the content the diff describes.
+        actual = _worktree_hash(root, rel_path)
+        if actual is None:
+            return "not_analyzed", "blob_unavailable", []
+        if not actual.startswith(new_oid):
+            return "not_analyzed", "path_changed_during_analysis", []
     try:
-        spec = lang_registry.spec_for_path(full_path)
-        symbols: list[dict[str, Any]]
-        if spec is not None and spec.extract_imports_and_symbols is not None:
-            imports, symbols = spec.extract_imports_and_symbols(full_path)
-        else:
-            imports, symbols = repo_map._imports_and_symbols_for_path(full_path)
-        if not symbols and not imports:
-            # The Python extractor swallows its own read/decode/parse failures and returns
-            # ([], []), indistinguishable from a symbol-free file. Re-check ONLY empty Python
-            # results (so normal files cost nothing), with the extractor's reader rules (strict
-            # UTF-8, then ast.parse). Tree-sitter languages' parse-gap is owned by wave 2a G1
-            # (r25 disposition for diff_impact.py:164/:169), deliberately not rebuilt here.
-            # Same language decision as the registry (which lowercases suffixes): `app.PY` is
-            # handled by the Python extractor, so it gets the same re-check.
-            if full_path.suffix.lower() == ".py" or (
-                spec is not None and spec is lang_registry.spec_for_path("x.py")
-            ):
-                ast.parse(full_path.read_text(encoding="utf-8"))
+        symbols = _extract_symbols(full_path)
     except _extraction_errors() as exc:  # narrow on purpose: anything else is a bug, not a gap
         return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
 
@@ -787,24 +962,14 @@ def _map_one_path(
     ):
         return "not_analyzed", "path_changed_during_analysis", []
 
-    found: list[dict[str, Any]] = []
-    for sym in symbols:
-        s_start = int(sym.get("start_line", sym.get("line", 1)))
-        s_end = int(sym.get("end_line", s_start))
-
-        # Check overlap between [s_start, s_end] and any [r_start, r_end]
-        overlaps = any(max(s_start, r_start) <= min(s_end, r_end) for r_start, r_end in line_ranges)
-        if overlaps:
-            sym_copy = dict(sym)
-            sym_copy["file"] = str(rel_path).replace("\\", "/")
-            found.append(sym_copy)
-    return "analyzed", None, found
+    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
 
 
 def map_changed_lines_to_symbols(
     changed_files_with_lines: dict[Path, list[tuple[int, int]]],
     root: Path,
     not_analyzed: list[dict[str, str]] | None = None,
+    content_mode: str = "unverified",
 ) -> list[dict[str, Any]]:
     """Use LANGUAGE_REGISTRY (or _imports_and_symbols_for_path fallback) to extract symbols for each file,
 
@@ -827,6 +992,7 @@ def map_changed_lines_to_symbols(
         getattr(changed_files_with_lines, "submodule_changed_files", set())
     )
     binary_paths: set[Path] = set(getattr(changed_files_with_lines, "binary_files", set()))
+    new_oids: dict[Path, str] = dict(getattr(changed_files_with_lines, "new_oids", {}))
     changed_symbols: list[dict[str, Any]] = []
     analyzed: set[Path] = set()
     deleted: set[Path] = set()
@@ -834,7 +1000,14 @@ def map_changed_lines_to_symbols(
 
     for rel_path, line_ranges in changed_files_with_lines.items():
         outcome, reason, symbols = _map_one_path(
-            rel_path, line_ranges, root, deleted_paths, submodule_paths, binary_paths
+            rel_path,
+            line_ranges,
+            root,
+            deleted_paths,
+            submodule_paths,
+            binary_paths,
+            new_oids.get(rel_path),
+            content_mode,
         )
         if outcome == "analyzed":
             analyzed.add(rel_path)
@@ -903,6 +1076,17 @@ def _calculate_risk_tier(
     if blast_radius_score >= 0.15 or affected_files_count >= 3 or callers_count >= 5:
         return "medium"
     return "low"
+
+
+def _content_mode(ref: str | None, staged: bool, *, from_git: bool) -> str:
+    """Where the new side of the diff lives: the index/a revision ("blob") or the working tree."""
+    if not from_git:
+        return "unverified"  # caller-supplied diff text: no repository to read blobs from
+    if staged:
+        return "blob"  # `--cached` (with or without a ref): the new side is the index
+    if ref is not None and (".." in ref or "^!" in ref or "^-" in ref):
+        return "blob"  # `A..B` / `A...B` / `R^!`: the new side is a revision, not the working tree
+    return "worktree"  # no ref, or a single rev compared with the working tree
 
 
 def _empty_payload(
@@ -995,7 +1179,10 @@ def build_diff_blast_radius(
     not_analyzed_paths: list[dict[str, str]] = []
     try:
         changed_symbols = map_changed_lines_to_symbols(
-            changed_files_with_lines, root, not_analyzed_paths
+            changed_files_with_lines,
+            root,
+            not_analyzed_paths,
+            _content_mode(ref, staged, from_git=diff_text is None),
         )
     except DiffError as exc:
         return _empty_payload(root, ref, staged, partial=True, reason=exc.reason, error=str(exc))

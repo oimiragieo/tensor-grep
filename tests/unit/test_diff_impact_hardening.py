@@ -9,6 +9,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -465,27 +466,6 @@ def test_containment_swap_before_the_check_fails_closed_through_the_builder(
     assert "leaked" not in {s["name"] for s in payload["changed_symbols"]}
 
 
-def test_staged_add_whose_working_tree_file_is_gone_exits_2(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    # Finding 2: `git add new.py` then delete new.py without staging the removal.
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "keep.py").write_text("x = 1\n", encoding="utf-8")
-    _git(repo, "add", "--all")
-    _git(repo, "commit", "-qm", "i")
-    (repo / "new.py").write_text("def added():\n    return 1\n", encoding="utf-8")
-    _git(repo, "add", "--", "new.py")
-    (repo / "new.py").unlink()
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
-    assert res.exit_code == 2, res.stdout
-    data = json.loads(res.stdout)
-    assert data["not_analyzed_paths"] == [{"path": "new.py", "reason": "file_missing"}]
-    assert data["incomplete_reason"] == "file_missing"
-    assert data["exit_reason"] == "incomplete"
-
-
 class _Spec:
     def __init__(self, fn: Any) -> None:
         self.extract_imports_and_symbols = fn
@@ -818,4 +798,221 @@ def test_valid_uppercase_python_file_with_symbols_reports_them(
     assert res.exit_code == 0, res.stdout
     data = json.loads(res.stdout)
     assert [s["name"] for s in data["changed_symbols"]] == ["changed"]
+    assert data["not_analyzed_paths"] == []
+
+
+def _commit_app(repo: Path, body: bytes, name: str = "app.py") -> None:
+    (repo / name).write_bytes(body)
+    _git(repo, "add", "--", name)
+    _git(repo, "commit", "-qm", f"c-{name}")
+
+
+def _staged_function_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def old():\n    return 1\n")
+    (repo / "app.py").write_bytes(
+        b"def old():\n    return 1\n\n\ndef staged_function():\n    return 2\n"
+    )
+    _git(repo, "add", "--", "app.py")
+    (repo / "app.py").write_bytes(b"x = 1\n")  # unrelated, symbol-free working-tree content
+    return repo
+
+
+def test_staged_diff_is_analysed_from_the_index_blob_not_the_working_tree(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _staged_function_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 0, res.stdout
+    data = json.loads(res.stdout)
+    assert [s["name"] for s in data["changed_symbols"]] == ["staged_function"]
+    assert data["changed_symbols"][0]["file"] == "app.py"  # the ORIGINAL repo-relative path
+    assert data["not_analyzed_paths"] == []
+
+
+def test_revision_range_is_analysed_from_the_destination_blob(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    _commit_app(repo, b"def a():\n    return 1\n\n\ndef b_in_range():\n    return 2\n")
+    (repo / "app.py").write_bytes(b"x = 1\n")  # the working tree has since diverged
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "HEAD~1..HEAD"])
+    assert res.exit_code == 0, res.stdout
+    data = json.loads(res.stdout)
+    assert [s["name"] for s in data["changed_symbols"]] == ["b_in_range"]
+
+
+def test_unstaged_control_still_uses_and_verifies_the_working_tree(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    assert [s["name"] for s in json.loads(res.stdout)["changed_symbols"]] == ["a"]
+
+
+def test_unstaged_crlf_working_tree_with_autocrlf_is_not_a_hash_mismatch(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "core.autocrlf", "true")
+    _commit_app(repo, b"def a():\r\n    return 1\r\n")
+    (repo / "app.py").write_bytes(b"def a():\r\n    return 2\r\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    assert [s["name"] for s in json.loads(res.stdout)["changed_symbols"]] == ["a"]
+
+
+def test_working_tree_that_changed_after_the_diff_was_taken_fails_closed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
+    monkeypatch.setattr(di, "_worktree_hash", lambda root, rel: "0" * 40)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["partial"] is True
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "path_changed_during_analysis"}
+    ]
+
+
+def test_blob_read_failure_is_blob_unavailable_and_exits_2(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _staged_function_repo(tmp_path)
+
+    def broken(root: Path, oid: str, max_bytes: int) -> bytes:
+        raise di._BlobUnavailable("simulated read failure")
+
+    monkeypatch.setattr(di, "_read_blob", broken)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [{"path": "app.py", "reason": "blob_unavailable"}]
+    assert data["incomplete_reason"] == "blob_unavailable"
+
+
+def test_blob_bytes_that_do_not_match_the_diff_oid_are_blob_unavailable(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _staged_function_repo(tmp_path)
+    monkeypatch.setattr(di, "_read_blob", lambda root, oid, max_bytes: b"def forged():\n    pass\n")
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["partial"] is True
+    assert payload["not_analyzed_paths"] == [{"path": "app.py", "reason": "blob_unavailable"}]
+    assert "forged" not in {s["name"] for s in payload["changed_symbols"]}
+
+
+def test_over_cap_blob_is_not_analyzed(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = _staged_function_repo(tmp_path)
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "10")
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["partial"] is True
+    assert payload["not_analyzed_paths"] == [{"path": "app.py", "reason": "over_cap"}]
+
+
+def test_temp_file_is_deleted_on_success_and_when_extraction_raises(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _staged_function_repo(tmp_path)
+    made: list[Path] = []
+    real_mkstemp = tempfile.mkstemp
+
+    def tracking(*a: Any, **k: Any) -> Any:
+        fd, name = real_mkstemp(*a, **k)
+        made.append(Path(name))
+        return fd, name
+
+    monkeypatch.setattr(di.tempfile, "mkstemp", tracking)
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["partial"] is False
+    assert len(made) == 1 and made[0].suffix == ".py"
+    assert not made[0].exists()
+    assert not str(made[0]).startswith(str(repo))  # never inside the repository
+
+    made.clear()
+    real_spec = di.lang_registry.spec_for_path
+    fired: list[str] = []
+
+    def one_shot(path: Any) -> Any:  # fail only the mapper's extraction, not the repo-map scan
+        if not fired:
+            fired.append("x")
+            return _Spec(_raiser(PermissionError("denied")))
+        return real_spec(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", one_shot)
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "extraction_failed: PermissionError"}
+    ]
+    assert len(made) == 1 and not made[0].exists()
+
+
+def test_staged_add_whose_working_tree_file_is_gone_is_analysed_from_the_index(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"x = 1\n", "keep.py")
+    (repo / "new.py").write_bytes(b"def added():\n    return 1\n")
+    _git(repo, "add", "--", "new.py")
+    (repo / "new.py").unlink()
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 0, res.stdout
+    assert [s["name"] for s in json.loads(res.stdout)["changed_symbols"]] == ["added"]
+
+
+def test_staged_syntax_error_in_the_blob_is_extraction_failed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\ndef broken(:\n")
+    _git(repo, "add", "--", "app.py")
+    (repo / "app.py").write_bytes(b"def a():\n    return 1\n")  # clean working tree, bad index
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 2, res.stdout
+    assert json.loads(res.stdout)["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "extraction_failed: SyntaxError"}
+    ]
+
+
+def test_staged_deleted_binary_and_submodule_paths_keep_their_handling(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def gone():\n    return 1\n", "gone.py")
+    (repo / "data.bin").write_bytes(b"\x00\x01\x02")
+    _git(repo, "add", "--", "data.bin")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{'1' * 40},vendor/lib")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "rm", "-q", "--", "gone.py")
+    (repo / "data.bin").write_bytes(b"\x00\x09\x08")
+    _git(repo, "add", "--", "data.bin")
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{'2' * 40},vendor/lib")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 0, res.stdout
+    data = json.loads(res.stdout)
+    assert data["deleted_files"] == ["gone.py"]
+    assert data["binary_files"] == ["data.bin"]
+    assert data["submodule_changed_files"] == ["vendor/lib"]
     assert data["not_analyzed_paths"] == []
