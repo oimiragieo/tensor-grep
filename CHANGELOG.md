@@ -1,6 +1,173 @@
 # CHANGELOG
 
 
+## v1.123.13 (2026-10-04)
+
+### Bug Fixes
+
+- **mcp**: Bound blast-radius depth and search output, confine artifact writes, fail closed on
+  malformed AST patterns ([#1198](https://github.com/oimiragieo/tensor-grep/pull/1198),
+  [`f5ef431`](https://github.com/oimiragieo/tensor-grep/commit/f5ef431deb1f4e7fd2277636552aa938522229ab))
+
+Bound blast-radius depth and MCP search output, confine MCP artifact writes to authorized paths, and
+  fail closed on malformed AST patterns (wave-1 Part C of the 2026-10-03 bug hunt). Codex
+  adversarial audit SHIP at round 14; CI green on c6fdde0.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Chores
+
+- **scripts**: Add ci_verdict.py -- labelled CI verdict for a SHA, never a windowed run list
+  ([#1191](https://github.com/oimiragieo/tensor-grep/pull/1191),
+  [`cb9abb5`](https://github.com/oimiragieo/tensor-grep/commit/cb9abb554d0499e069c1d6de539c787b20fd7fee))
+
+Adds scripts/ci_verdict.py: a labelled CI verdict for one commit SHA via the actions/runs head_sha
+  API, with offline-tested classify() and exit codes 0-5. Independent gate: SHIP (see PR comment).
+
+### Continuous Integration
+
+- Retry crates.io downloads harder and disable HTTP/2 multiplexing workflow-wide
+  ([#1192](https://github.com/oimiragieo/tensor-grep/pull/1192),
+  [`9358f80`](https://github.com/oimiragieo/tensor-grep/commit/9358f803fd2bc24199e9cc895b56827fda38fe29))
+
+Three CI failures in the last 40 were crates.io download flakes (`curl [16] Error in the HTTP2
+  framing layer`: runs 34422217982, 36804480083, 37146572663 -- the last on the 7527e8f main push).
+  Only the release prefetch steps set CARGO_NET_RETRY; test-rust-core and the other cargo lanes did
+  not. Set CARGO_NET_RETRY=10, CARGO_HTTP_TIMEOUT=60 and CARGO_HTTP_MULTIPLEXING=false at workflow
+  level (cargo's documented workaround for HTTP/2 framing errors) instead of re-running red lanes.
+
+test_ci_cost_os_gate_permissions pins the workflow env exactly and is updated in step; it fails
+  against the old ci.yml (negative control) and passes with the new one.
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **agents**: Lead each law with its current rule; move incident receipts to
+  docs/agent-laws-receipts.md ([#1188](https://github.com/oimiragieo/tensor-grep/pull/1188),
+  [`cc8bbc9`](https://github.com/oimiragieo/tensor-grep/commit/cc8bbc9e1ea9427ab477569028b99afe2354fc67))
+
+* docs(agents): lead each law with its current rule; move incident receipts to
+  docs/agent-laws-receipts.md
+
+AGENTS.md is read by every agent every session. Each A-law, verification-oracle Form and dated
+  section now keeps its identity (A-number, Form number, dated heading line) followed by the rule in
+  present tense at normal volume, and a `Receipts: docs/agent-laws-receipts.md#...` pointer.
+  Emphasis stays only on the A12 CPU-safe rule, the push-race burst-then-hold rule and the Backend
+  Fail-Closed contract, each with its reason.
+
+The original text of all 215 laws/Forms/dated sections, the 2026-07 handoff addenda, the historical
+  "Recent fix commits" list and the pre-v1.17.11 release proof move verbatim into the new
+  docs/agent-laws-receipts.md (same order, one section each, anchored by A-number / Form N / heading
+  slug). Lines pinned by tests and release scripts stay in AGENTS.md. Dated headings stay
+  byte-identical because skills and source comments cite them by name.
+
+Counts unchanged: 162 A-laws (same A-number set), 10 Forms, 43 dated headings. AGENTS.md 3904 ->
+  2261 lines. The receipts page is added to mkdocs exclude_docs so it is not published to the docs
+  site.
+
+Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+* docs(agents): address faithfulness review -- A31/A53 scope, F1-consistent merge wording,
+  GitHub-safe receipt anchors
+
+- A31, A53, A142 title, A107: restore scope/precision lost in condensing. - CI Cost Discipline:
+  point at the `changes` job (CODE_FILES/DOC_FILES) instead of a copied path list. -
+  Constraint-REASON and Release Class sections: merge wording consistent with Push Discipline and
+  the semantic-release publisher. - Handoff: cuda gate scope, reworded fix-commit and
+  historical-proof lead-ins (pinned lines kept). - Form 1 and Form 6: restore the dropped premises.
+  - Receipts: simplify three headings so pointers resolve under both mkdocs and GitHub slugging;
+  note GitHub slugging under the H1.
+
+* docs(agents): A142 title names the full hold; point the historical-proof lead-in at
+  release_docs_current_tag
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+---------
+
+Co-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>
+
+- **audits**: Add the 2026-10-03 bug-hunt tracker and the approved wave-1 plan
+  ([#1193](https://github.com/oimiragieo/tensor-grep/pull/1193),
+  [`094dc97`](https://github.com/oimiragieo/tensor-grep/commit/094dc972ac91c49543c1a719805de5f5a28034e8))
+
+Adds the bug-hunt tracker and the approved wave-1 plan (docs only, no release).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **board**: Reconcile to v1.123.12 and record the prompt-audit closeout
+  ([#1189](https://github.com/oimiragieo/tensor-grep/pull/1189),
+  [`e60f6ed`](https://github.com/oimiragieo/tensor-grep/commit/e60f6ed43afb1e9fe079a929fdf58f8bc6345f09))
+
+Post-release drift sweep (tensor-grep-release-drift-check) for v1.123.12: language tier 10/0, skill
+  count 37, tree-sitter packages 10, mcp maintenance MAINTAINED (1.30.0 >= 1.29.0). One stamp fixed:
+  tensor-grep-prepare now reads "Last verified ... not re-run since" like its siblings.
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Testing
+
+- **ci**: Fail when a unit test shells out to a binary CI does not install without a skip guard
+  ([#1190](https://github.com/oimiragieo/tensor-grep/pull/1190),
+  [`4a8a24a`](https://github.com/oimiragieo/tensor-grep/commit/4a8a24a1d813e25cd5f1d10824939425528e164a))
+
+* test(ci): fail when a unit test shells out to a binary CI does not install without a skip guard
+
+Commit 00695cd added a unit test that ran gitleaks unguarded; test-python does not install it, so
+  every lane raised FileNotFoundError and main was red for four pushes.
+
+tests/unit/test_no_unguarded_external_binaries.py AST-scans tests/unit/*.py for
+  subprocess.*/os.system calls whose argv[0] is a string literal naming a binary outside
+  CI_PROVIDED_BINARIES (git, tg, python, uv, cargo/rustc/rustup, each cited to ci.yml test-python)
+  and requires a lexical skip guard (skip/importorskip/skipif/which/platform check) on the function,
+  class, or module. A guard-less helper is accepted only when every caller is guarded. In-memory
+  positive and negative controls prove the gate can fail.
+
+Real tree: clean. The three icacls helpers are guarded by their callers' win32 skipif.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+* test(ci): bind unguarded-binary gate guards to the binary and scan all of tests/
+
+Review fixes for the gate in this PR: - A guard must name the binary: shutil.which("<same
+  literal>"), a skipif mentioning it, or an unconditional skip. A platform check exempts only
+  OS-native binaries (cmd/icacls/powershell/reg); an unrelated which() or module-level which("git")
+  no longer exempts gitleaks. Class scope no longer lets a sibling method's guard leak. - Scan
+  tests/**/*.py (CI runs `pytest tests`), skipping tests/fixtures, with a >=400-file vacuity floor.
+  Real tree remains clean. - Resolve subprocess/os aliases, `from subprocess import run`, args=
+  keyword, .exe suffix. - A guard-less helper referenced other than as a direct call target is
+  unguarded. - Allowlist trimmed to what the tree uses (git, tg, python, uv);
+  python3/cargo/rustc/rustup removed. - Controls added: wrong-binary platform/which guards, reduced
+  00695cd copy, aliases, helper escape.
+
+* test(ci): make falsy skipif and conditional skip() non-guards in the binary gate
+
+Confirmation-round fixes: - C1: a constant skipif condition guarded only if TRUTHY;
+  skipif(False)/condition=False/ module pytestmark skipif(False) no longer exempt a call. - I1:
+  pytest.skip(...) inside an if/ifexp/while counts only when that test binds the binary (or is a
+  platform check for OS-native binaries), or inside except FileNotFoundError/OSError. Inline
+  platform/CI-env skips and module-level allow_module_level platform skips no longer exempt
+  gitleaks; `if shutil.which("gitleaks") is None: pytest.skip()` still passes. - Attribute skip
+  restricted to pytest.skip / <x>.mark.skip (pytest import aliases resolved); a locally defined `def
+  skip` is not pytest's. - KNOWN LIMITS now lists asyncio.create_subprocess_*, os.exec*, os.popen,
+  subprocess.getoutput.
+
+Real tree stays clean (>=400 files scanned).
+
+* test(ci): tighten except-handler and nested-scope skip handling in the binary gate
+
+- An enclosing except OSError/FileNotFoundError handler counts only when no nearer non-binding
+  if/while condition was seen between the skip and the handler. - The parent climb stops at nested
+  def/async def/lambda boundaries below the scope root; a skip inside a never-called nested function
+  or lambda is not a guard. - KNOWN LIMITS states that a shutil.which("<binary>") call anywhere in
+  scope suffices on its own, regardless of branch or polarity.
+
+---------
+
+Co-authored-by: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.12 (2026-10-03)
 
 ### Bug Fixes
