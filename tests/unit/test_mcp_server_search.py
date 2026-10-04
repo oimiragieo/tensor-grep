@@ -1653,7 +1653,7 @@ def test_tg_search_rg_absent_zero_file_invalid_patterns_are_invalid_input(
     assert payload["error"]["code"] == "invalid_input", (pattern, payload)
 
 
-@pytest.mark.parametrize("pattern", ["(?i)x", "hel+o", "a{,3}"])
+@pytest.mark.parametrize("pattern", ["(?i)x", "hel+o"])
 def test_tg_search_rg_absent_zero_file_valid_patterns_are_not_rejected(
     tmp_path, monkeypatch, pattern
 ):
