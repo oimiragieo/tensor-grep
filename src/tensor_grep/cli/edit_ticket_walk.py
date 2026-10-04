@@ -791,22 +791,28 @@ def _exists(path: str | Path) -> bool:
     return True
 
 
+# True only where the PATHNAME stat really supplies a 32-bit volume serial: CPython <= 3.11 on
+# Windows. On 3.12+ it never does (st_dev is the 64-bit FILE_ID_INFO serial), and everywhere else
+# st_dev is compared exactly. A module constant so tests can exercise both regimes.
+_PATHNAME_STAT_DEV_IS_32BIT = sys.platform == "win32" and sys.version_info < (3, 12)
+
+
 def _same_identity(a: tuple[int, int], b: tuple[int, int]) -> bool:
     """(st_dev, st_ino) equality; a zero inode or zero dev means "unknown" and is not compared.
 
-    Windows: CPython <= 3.11 reports `st_dev` as the 32-bit volume serial while 3.12+ reports the
-    64-bit FILE_ID_INFO serial (the held handle's identity uses the 64-bit one), and the 32-bit
-    serial is the low half of the 64-bit one. So a MIXED-width pair (one side fits in 32 bits, the
-    other is wider) is compared on the low half only; when both sides have the same width (every
-    pair on 3.12+) the comparison is exact, so two different 64-bit serials that merely share a
-    low half never match. POSIX is always exact. Comparing exactly everywhere made EVERY walk on
-    Windows py3.11 `unreadable_path`."""
+    Windows CPython <= 3.11 reports `st_dev` as the 32-bit volume serial while the held handle's
+    identity uses the 64-bit FILE_ID_INFO serial (whose low half is the 32-bit serial). ONLY in
+    that regime (`_PATHNAME_STAT_DEV_IS_32BIT`), and only for a MIXED-width pair (exactly one side
+    fits in 32 bits), is the low half compared. Everywhere else, including every pair on 3.12+
+    (where a genuine 64-bit serial may merely be numerically small), the comparison is exact, so
+    two different volumes that share a low half never match. Comparing exactly everywhere made
+    EVERY walk on Windows py3.11 `unreadable_path`."""
     if not (a[1] and b[1]):
         return True
     if a[1] != b[1]:
         return False
     dev_a, dev_b = a[0], b[0]
-    if sys.platform == "win32" and (dev_a <= 0xFFFFFFFF) != (dev_b <= 0xFFFFFFFF):
+    if _PATHNAME_STAT_DEV_IS_32BIT and (dev_a <= 0xFFFFFFFF) != (dev_b <= 0xFFFFFFFF):
         dev_a, dev_b = dev_a & 0xFFFFFFFF, dev_b & 0xFFFFFFFF
     return not (dev_a and dev_b and dev_a != dev_b)
 

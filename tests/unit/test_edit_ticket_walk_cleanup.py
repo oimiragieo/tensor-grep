@@ -904,11 +904,14 @@ def test_no_close_in_the_walk_modules_ignores_its_result() -> None:
     assert not offenders, offenders
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Windows device-number representations")
-def test_mixed_width_windows_device_numbers_match_only_on_their_low_half() -> None:
+def test_mixed_width_windows_device_numbers_match_only_on_their_low_half(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # CPython <= 3.11 reports st_dev as the 32-bit volume serial; 3.12+ reports the 64-bit
     # FILE_ID_INFO serial. The held handle's identity uses the 64-bit one. Comparing them
     # exactly made EVERY walk on Windows py3.11 `unreadable_path` (CI: windows-latest, 3.11).
+    # the 3.11-on-Windows regime (pathname stat carries the 32-bit serial), whatever the host
+    monkeypatch.setattr(edit_ticket_walk, "_PATHNAME_STAT_DEV_IS_32BIT", True)
     serial64 = 14794157465549117039
     serial32 = serial64 & 0xFFFFFFFF
     index = 33495522242563183
@@ -958,6 +961,29 @@ def test_root_and_child_handles_are_compared_with_the_same_identity_rule(tmp_pat
 
     with pytest.MonkeyPatch.context() as m:
         m.setattr(edit_ticket_walk, "_walk_impl", _walk)
+        # emulate the 3.11-on-Windows regime: the handle idents here carry the 32-bit serial
+        m.setattr(edit_ticket_walk, "_PATHNAME_STAT_DEV_IS_32BIT", True)
         files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "complete", population
     assert "sub/m.py" in files
+
+
+def test_python_312_path_compares_exactly_even_for_a_small_64bit_serial(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # On 3.12+ the pathname stat NEVER supplies a 32-bit serial: a genuine 64-bit volume serial
+    # whose VALUE is below 2**32 looks "mixed width" next to a larger one, but a different volume
+    # with matching low halves and the same file index must NOT match.
+    index = 33495522242563183
+    small = (0x0540966F, index)  # a real 64-bit serial that happens to be < 2**32
+    other = (0x222222220540966F, index)  # a different volume with the same low half
+    monkeypatch.setattr(edit_ticket_walk, "_PATHNAME_STAT_DEV_IS_32BIT", False)  # 3.12+ regime
+    assert not edit_ticket_walk._same_identity(small, other)
+    assert not edit_ticket_walk._same_identity(other, small)
+    monkeypatch.setattr(edit_ticket_walk, "_PATHNAME_STAT_DEV_IS_32BIT", True)  # 3.11 regime
+    assert edit_ticket_walk._same_identity(small, other)  # only here is the low-half rule used
+
+
+def test_the_32bit_regime_flag_follows_platform_and_python_version() -> None:
+    expected = sys.platform == "win32" and sys.version_info < (3, 12)
+    assert expected == edit_ticket_walk._PATHNAME_STAT_DEV_IS_32BIT
