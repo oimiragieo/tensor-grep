@@ -6302,7 +6302,7 @@ def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
 
 # Secondary (supporting-context) fields trimmed BEFORE the primary answer array when a
 # defs/refs/callers/impact payload exceeds --max-tokens (design #96, answer-first shrink order).
-_SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths")
+_SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths", "imports")
 
 
 def build_context_pack(
