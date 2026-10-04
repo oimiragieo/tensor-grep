@@ -3404,7 +3404,7 @@ def tg_search(
 
             return "\n".join(_bounds._cap_output_lines(output))
 
-        except (BackendExecutionError, re.error, ValueError) as e:
+        except _av.SEARCH_ERRORS as e:
             invalid = _av.search_error_message(e)
             if invalid is None:
                 return _sanitized_tool_error_text("tg_search", e)

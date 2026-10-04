@@ -1616,7 +1616,15 @@ def _verdict(raw):
     return ("error", payload["error"]["code"]) if payload.get("error") else ("ok", None)
 
 
-@pytest.mark.parametrize("pattern", _EQUIVALENCE_PATTERNS)
+_HOSTILE_PATTERNS = [
+    pytest.param("(" * 100000, id="open-parens-x100000"),
+    pytest.param("a{99999999999999999999}", id="huge-repeat-count"),
+]
+
+
+@pytest.mark.parametrize(
+    "pattern", [pytest.param(p, id=repr(p)) for p in _EQUIVALENCE_PATTERNS] + _HOSTILE_PATTERNS
+)
 def test_tg_search_zero_file_verdict_equals_one_file_verdict_with_rg_absent(
     tmp_path, monkeypatch, pattern
 ):
@@ -1658,14 +1666,17 @@ def test_tg_search_rg_absent_zero_file_valid_patterns_are_not_rejected(
     assert "error" not in payload, (pattern, payload)
 
 
-@pytest.mark.parametrize(
-    "pattern", ["(" * 100000, "a{99999999999999999999}"], ids=["open-parens", "huge-repeat"]
-)
-def test_tg_search_zero_file_hostile_patterns_do_not_crash(tmp_path, monkeypatch, pattern):
+@pytest.mark.parametrize("pattern", _HOSTILE_PATTERNS)
+def test_tg_search_hostile_pattern_is_a_structured_invalid_input_on_both_paths(
+    tmp_path, monkeypatch, pattern
+):
+    # No suppression anywhere: a parser blow-up (RecursionError / OverflowError / ...) is the same
+    # structured invalid_input for a zero-file search and a one-file search.
     from tensor_grep.cli import mcp_server, runtime_paths
 
     monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
-    out = mcp_server.tg_search(pattern, str(tmp_path), glob="*.no-such-ext")
-    assert isinstance(out, str)
+    for kwargs in ({"glob": "*.no-such-ext"}, {}):
+        payload = json.loads(mcp_server.tg_search(pattern, str(tmp_path), **kwargs))
+        assert payload["error"]["code"] == "invalid_input", (kwargs, payload)

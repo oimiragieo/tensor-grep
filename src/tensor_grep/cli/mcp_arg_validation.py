@@ -43,6 +43,16 @@ def search_arg_error(
     return None
 
 
+# Everything tg_search's backend arm maps through ``search_error_message`` (ValueError covers
+# InvalidRegexError and other parser rejections).
+SEARCH_ERRORS = (
+    BackendExecutionError,
+    re.error,
+    ArithmeticError,
+    RecursionError,
+    MemoryError,
+    ValueError,
+)
 REGEX_INVALID_MESSAGE = "pattern is not a valid regular expression."
 FILE_TYPE_UNKNOWN_MESSAGE = "type_filter is not a file type rg knows (see `rg --type-list`)."
 
@@ -57,7 +67,9 @@ def search_error_message(exc: BaseException) -> str | None:
     text is read here, OFF the except arm, so the SEC-007 narrow-handler ratchet sees no exception
     formatting on a wire-facing arm and only a constant message reaches the caller.
     """
-    if isinstance(exc, (re.error, InvalidRegexError)):
+    if isinstance(exc, (re.error, InvalidRegexError, ArithmeticError, RecursionError, MemoryError)):
+        # Parser blow-ups on a hostile pattern ("(" * 100000, "a{99999999999999999999}"):
+        # a structured refusal on BOTH the zero-file and the per-file path.
         return REGEX_INVALID_MESSAGE
     text = str(exc).lower()
     if "regex parse error" in text or "error parsing regex" in text or "invalid regex" in text:
@@ -129,9 +141,9 @@ def probe_backend(backend: Any, pattern: str, config: Any) -> bool:
     complete empty success. Run the SAME call the per-file loop makes (``backend.search``, same
     config, same ``BackendExecutionError`` -> CPU-fallback step) on one empty file and let its
     exception propagate to the caller's ``except`` arm -- the zero-file verdict equals the
-    one-file verdict by construction, with no regex rules of our own. A hostile pattern that
-    crashes the parser with something that is not the backend's invalid-regex signal means
-    "cannot tell" and is accepted. Always returns False (usable as ``files_scanned or probe(..)``).
+    one-file verdict by construction, with no regex rules of our own and NO error suppression:
+    every failure goes through the same ``search_error_message`` mapping as a per-file failure.
+    Always returns False (usable as ``files_scanned or probe(..)``).
     """
     from tensor_grep.cli.backend_fallback import search_with_cpu_fallback
 
@@ -139,12 +151,7 @@ def probe_backend(backend: Any, pattern: str, config: Any) -> bool:
         probe = str(Path(tmp) / "probe.txt")
         Path(probe).write_bytes(b"")
         try:
-            try:
-                backend.search(probe, pattern, config=config)
-            except BackendExecutionError as exc:
-                search_with_cpu_fallback(probe, pattern, config, exc)
-        except InvalidRegexError:
-            raise
-        except (RecursionError, OverflowError, MemoryError, ValueError):
-            return False
+            backend.search(probe, pattern, config=config)
+        except BackendExecutionError as exc:
+            search_with_cpu_fallback(probe, pattern, config, exc)
     return False
