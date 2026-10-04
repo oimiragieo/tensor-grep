@@ -52,6 +52,7 @@ from tensor_grep.cli.main import (
 from tensor_grep.cli.main import (
     _run_ast_scan_payload as _run_ast_scan_payload,
 )
+from tensor_grep.cli.mcp_path_errors import PathConfinementError as PathConfinementError
 from tensor_grep.cli.orient_capsule import (
     build_orient_capsule_json as build_orient_capsule_json,
 )
@@ -906,13 +907,6 @@ def _meta_missing_param_error(tool: str, action: str, param: str) -> str:
         "message": f"{tool} action={action!r} requires '{param}'.",
     }
     return json.dumps(payload, indent=2)
-
-
-class PathConfinementError(ValueError):
-    """Raised when a path escapes the allowed MCP root anchor."""
-
-    def __init__(self, label: str):
-        super().__init__(f"{label} must stay within the MCP root (refused)")
 
 
 _TRUSTED_EXCEPTION_CLASSES[PathConfinementError] = "PathConfinementError"

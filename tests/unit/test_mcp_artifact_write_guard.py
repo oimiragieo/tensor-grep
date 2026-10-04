@@ -683,3 +683,100 @@ def test_existing_aliases_of_one_file_are_refused_by_resolved_identity(tmp_path)
             pass
     assert "write_baseline" in str(excinfo.value)
     assert "write_suppressions" in str(excinfo.value)
+
+
+# --- Codex round 13: the .git rule is root-relative; the guard modules import cold ---
+
+
+@pytest.mark.parametrize("scan_root", [".git", ".git/subdir", "sub/.git", "sub/.GIT/deeper"])
+def test_scan_root_inside_dot_git_is_refused_even_for_a_plain_artifact_name(
+    tmp_path, monkeypatch, scan_root
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / scan_root).mkdir(parents=True)
+    (tmp_path / scan_root / "src.py").write_text("x = 1\n", encoding="utf-8")
+    before = sorted(p.name for p in (tmp_path / scan_root).iterdir())
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=scan_root, write_baseline="new.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert sorted(p.name for p in (tmp_path / scan_root).iterdir()) == before  # nothing written
+
+
+def test_dot_git_component_below_an_ordinary_anchor_is_still_refused(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="sub/.git/new.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert not (tmp_path / "sub").exists()
+
+
+def test_legitimate_root_and_nested_anchor_are_still_allowed(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pkg").mkdir()
+    (tmp_path / "pkg" / "src.py").write_text("x = 1\n", encoding="utf-8")
+    for anchor in (".", "pkg"):
+        out = json.loads(
+            mcp_server.tg_ruleset_scan("secrets-basic", path=anchor, write_baseline="ok.json")
+        )
+        assert "error" not in out, out
+        assert (tmp_path / anchor / "ok.json").is_file()
+
+
+_COLD_IMPORT_MODULES = [
+    "tensor_grep.cli.mcp_artifact_guard",
+    "tensor_grep.cli.mcp_path_errors",
+    # mcp_audit_tools is a split-out tail of mcp_server BY DESIGN (it binds `_self` to the already
+    # loading server module, see its docstring), so its supported cold entry is via the server.
+    "tensor_grep.cli.mcp_server, tensor_grep.cli.mcp_audit_tools",
+    "tensor_grep.cli.mcp_server",
+    "tensor_grep.cli.mcp_search_bounds",
+    "tensor_grep.cli._index_lock",
+]
+
+
+@pytest.mark.parametrize("module", _COLD_IMPORT_MODULES)
+def test_each_new_module_imports_cold_in_a_fresh_interpreter(module):
+    import subprocess
+    import sys
+
+    import tensor_grep
+
+    src_root = str(Path(tensor_grep.__file__).resolve().parents[1])
+    env = {**os.environ, "PYTHONPATH": src_root}
+    done = subprocess.run(
+        [sys.executable, "-c", f"import {module}"],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-800:]
+
+
+def test_guard_symbol_imports_cold_in_a_fresh_interpreter():
+    import subprocess
+    import sys
+
+    import tensor_grep
+
+    src_root = str(Path(tensor_grep.__file__).resolve().parents[1])
+    code = "from tensor_grep.cli.mcp_artifact_guard import _authorize_artifact_write_path"
+    done = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": src_root},
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr[-800:]

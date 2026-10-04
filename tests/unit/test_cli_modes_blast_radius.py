@@ -1,3 +1,4 @@
+import builtins
 import io
 import json
 import re
@@ -1940,7 +1941,10 @@ def test_blast_radius_huge_max_depth_iterates_only_realised_depths(tmp_path, mon
         assert len(candidate) <= 10_000, f"unbounded range({args}) in blast-radius"
         return candidate
 
-    monkeypatch.setattr(repo_map, "range", guarded_range, raising=False)
+    # Patch the builtin, NOT `repo_map.range`: scripts/bare_call_ratchet.py counts every symbol the
+    # tests monkeypatch on a Route A module, so patching `repo_map.range` would turn each bare
+    # `range(...)` call in repo_map.py into a ratchet violation.
+    monkeypatch.setattr(builtins, "range", guarded_range)
     huge = repo_map.build_symbol_blast_radius("foo", tmp_path, max_depth=10**9)
     assert huge["caller_tree"] == baseline["caller_tree"]
     assert huge["files"] == baseline["files"]

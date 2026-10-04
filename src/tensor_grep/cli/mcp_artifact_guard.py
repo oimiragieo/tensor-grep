@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from tensor_grep.cli._index_lock import WriteAuthorization, dir_identity, file_identity
-from tensor_grep.cli.mcp_server import PathConfinementError, _confine_write_path
+from tensor_grep.cli.mcp_path_errors import PathConfinementError
 
 # Full-parse cap, far above any real baseline/bundle so reruns keep working while one probe's
 # memory stays bounded. An existing target larger than this is refused (fail closed).
@@ -37,6 +37,7 @@ def _authorize_artifact_write_path(
     label: str,
     allowed_kinds: frozenset[str] = frozenset(),
     allowed_routing_reasons: frozenset[str] = frozenset(),
+    root: Path | None = None,
 ) -> tuple[Path, WriteAuthorization]:
     """Confine like ``_confine_write_path``, then refuse any target that is not a ``.json`` file
     outside ``.git``, or that already exists and is not a prior tg artifact (``kind`` /
@@ -54,8 +55,21 @@ def _authorize_artifact_write_path(
     rename or replace files in the user's workspace can overwrite the target directly without tg.
     This guard defends against an agent being tricked by path naming, not against a concurrent
     filesystem adversary."""
+    # Imported here, not at module level: mcp_server imports mcp_audit_tools, which imports this
+    # module, so a module-level import would make a cold import of this module fail.
+    from tensor_grep.cli.mcp_server import _confine_write_path, _mcp_root
+
     resolved = _confine_write_path(candidate, anchor, label=label)
-    rel_parts = resolved.relative_to(anchor.expanduser().resolve()).parts
+    # Forbidden-component rules are decided relative to the TRUSTED MCP ROOT, never the caller's
+    # scan anchor: a scan root of `<root>/.git` would otherwise make `.git` invisible (the
+    # artifact would look like a plain `new.json`). Rules: (1) the target must be a `.json` file;
+    # (2) no path component of the target below the MCP root may be `.git` -- this covers the
+    # scan anchor itself AND the artifact's own path.
+    trusted_root = (root if root is not None else _mcp_root()).expanduser().resolve()
+    try:
+        rel_parts = resolved.relative_to(trusted_root).parts
+    except ValueError:
+        raise ArtifactWriteRefused(label) from None
     if resolved.suffix.lower() != ".json" or any(p.casefold() == ".git" for p in rel_parts):
         raise ArtifactWriteRefused(label)
     parent = resolved.parent

@@ -435,6 +435,7 @@ def tg_ruleset_scan(
                     max_evidence_snippet_chars=max_evidence_snippet_chars,
                 )
         except WriteAuthorizationError as exc:
+            _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
                 write_scope.refusal_message(exc), code="invalid_input", ruleset=ruleset, path=path
             )
@@ -1045,6 +1046,7 @@ def tg_review_bundle_create(
                 )
             return _self._inject_mcp_contract_fields(bundle_json)
         except WriteAuthorizationError as exc:
+            _log_tool_exception("tg_review_bundle_create", exc)
             return _review_bundle_error(
                 output_scope.refusal_message(exc),
                 code="invalid_input",
