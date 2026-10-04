@@ -3,17 +3,20 @@
 Lives outside ``mcp_server.py`` because that file is under a file-size ratchet (it may only
 shrink). Everything here is PURE: it returns a constant, non-leaking message (or a payload dict)
 and never touches the wire itself -- ``mcp_server`` stamps the contract fields and returns it.
-No import of ``mcp_server`` at module scope (circular); the only I/O is the optional rg probe in
-``regex_is_invalid``.
+No import of ``mcp_server`` at module scope (circular). The one backend interaction is
+``probe_backend`` (a zero-file search runs the backend's own call on an empty file).
 """
 
 from __future__ import annotations
 
 import json
 import re
-import warnings
+import tempfile
+from pathlib import Path
 from typing import Any
 
+from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.backends.cpu_backend import InvalidRegexError
 from tensor_grep.cli.incompleteness import incomplete_class_fragment
 
 # council wave-2b r21: rg permits Unicode letters/numbers in type names
@@ -48,15 +51,16 @@ def search_error_message(exc: BaseException) -> str | None:
     """Return a constant ``invalid_input`` message when a search failure is a caller-argument
     error (bad regex, unknown rg file type), else None.
 
-    Reads the exception text here, OFF the except arm, so the SEC-007 narrow-handler ratchet
-    still sees no exception formatting on a wire-facing arm and only a constant message ever
-    reaches the caller. ``re.error`` is what the CPU/Python backends raise for a bad regex
-    (council wave-2b r1); rg exits 2 with ``regex parse error`` / ``unrecognized file type``.
+    The invalid-regex test mirrors ``cli/main.py::_is_invalid_regex_error`` and
+    ``backends/rust_backend.py::_is_invalid_regex_error``: ``re.error`` / ``InvalidRegexError``
+    (what the CPU and Rust backends raise) or rg's / the Rust engine's message text. The exception
+    text is read here, OFF the except arm, so the SEC-007 narrow-handler ratchet sees no exception
+    formatting on a wire-facing arm and only a constant message reaches the caller.
     """
-    if isinstance(exc, re.error):
+    if isinstance(exc, (re.error, InvalidRegexError)):
         return REGEX_INVALID_MESSAGE
-    text = str(exc)
-    if "regex parse error" in text:
+    text = str(exc).lower()
+    if "regex parse error" in text or "error parsing regex" in text or "invalid regex" in text:
         return REGEX_INVALID_MESSAGE
     if "unrecognized file type" in text:  # council wave-2b r3: e.g. type_filter="c++"
         return FILE_TYPE_UNKNOWN_MESSAGE
@@ -118,107 +122,29 @@ def unsupported_ast_language_message(lang: str | None) -> str | None:
     return None
 
 
-# Python `re` messages for syntax errors that the Rust regex grammar (rg / tg native) ALSO rejects
-# (same rule set as the front door's bootstrap_search_guards, each confirmed against rg 15.x):
-# an unclosed group, an unmatched ")", a reversed repetition range, a trailing backslash, an
-# unterminated class. Everything else Python rejects (`\p{Greek}`, `(?<n>x)`, possessive
-# quantifiers, ...) can be valid Rust, so it is never pre-rejected.
-_AGREED_RE_ERRORS = (
-    "missing ), unterminated subpattern",
-    "min repeat greater than max repeat",
-    "bad escape (end of pattern)",
-)
+def probe_backend(backend: Any, pattern: str, config: Any) -> bool:
+    """Give a zero-file search the verdict a one-file search would have got.
 
-
-def _python_agrees_invalid(pattern: str) -> bool:
-    """True when Python ``re`` rejects ``pattern`` for a reason Rust regex also rejects it.
-
-    "Cannot tell" (a hostile pattern crashing the parser with something that is not ``re.error``)
-    is NOT proof of invalidity and returns False. "nothing to repeat" counts only for a leading
-    quantifier (start, or after ``(`` / ``|``; rg accepts ``^*``). Python and Rust parse classes
-    differently (``[[:alpha:](]`` is a valid Rust class), so with a ``[`` present only the
-    unterminated-class error counts.
+    When the walk selected no file the backend parser never ran, so a bad regex came back as a
+    complete empty success. Run the SAME call the per-file loop makes (``backend.search``, same
+    config, same ``BackendExecutionError`` -> CPU-fallback step) on one empty file and let its
+    exception propagate to the caller's ``except`` arm -- the zero-file verdict equals the
+    one-file verdict by construction, with no regex rules of our own. A hostile pattern that
+    crashes the parser with something that is not the backend's invalid-regex signal means
+    "cannot tell" and is accepted. Always returns False (usable as ``files_scanned or probe(..)``).
     """
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
+    from tensor_grep.cli.backend_fallback import search_with_cpu_fallback
+
+    with tempfile.TemporaryDirectory(prefix="tg-regex-probe-") as tmp:
+        probe = str(Path(tmp) / "probe.txt")
+        Path(probe).write_bytes(b"")
         try:
-            re.compile(pattern)
+            try:
+                backend.search(probe, pattern, config=config)
+            except BackendExecutionError as exc:
+                search_with_cpu_fallback(probe, pattern, config, exc)
+        except InvalidRegexError:
+            raise
         except (RecursionError, OverflowError, MemoryError, ValueError):
             return False
-        except re.error as exc:
-            if "[" in pattern:
-                return exc.msg == "unterminated character set"
-            if ")" in pattern and (len(pattern) - len(pattern.rstrip(chr(92)))) % 2:
-                # rg 15.1 accepts `)\`, `a)\` ... (measured): a ")" plus a dangling backslash
-                # is not an agreed error even though Python reports the ")" first.
-                return False
-            if exc.msg in _AGREED_RE_ERRORS:
-                return True
-            if exc.msg == "unbalanced parenthesis":
-                # rg 15.1 accepts `)(` (measured), so an unmatched ")" only counts with no "(" at all.
-                return "(" not in pattern
-            pos = exc.pos or 0
-            return exc.msg == "nothing to repeat" and (pos == 0 or pattern[pos - 1] in "(|")
     return False
-
-
-_REGEX_META = frozenset(chr(92) + "^$.|?*+()[]{}")
-
-
-def _rg_rejects_regex(pattern: str) -> bool | None:
-    """Ask rg itself (empty stdin, same default grammar). None = rg absent / cannot tell.
-
-    Measured ~180 ms per probe on a loaded Windows box, so a pattern with no regex metacharacter
-    (always valid) skips it.
-    """
-    import subprocess
-
-    if _REGEX_META.isdisjoint(pattern):
-        return False
-
-    from tensor_grep.cli import runtime_paths
-
-    binary = runtime_paths.resolve_ripgrep_binary()
-    if binary is None:
-        return None
-    try:
-        proc = subprocess.run(
-            [str(binary), "--no-config", "-e", pattern],
-            input=b"",
-            capture_output=True,
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if proc.returncode in (0, 1):
-        return False
-    return b"regex parse error" in proc.stderr
-
-
-def regex_is_invalid(pattern: str, *, fixed_strings: bool) -> bool:
-    """True only when ``pattern`` is a syntax error for the engine that will run it.
-
-    rg's own grammar decides when rg is present (never rejects an rg-valid pattern). Without rg
-    only errors invalid in BOTH Python ``re`` and Rust regex are reported. A literal
-    (``fixed_strings``) pattern is never a regex. Runs BEFORE the walk, so a pattern is refused
-    even when the glob/type filter selects no file and no backend parser would ever see it.
-    """
-    if fixed_strings:
-        return False
-    verdict = _rg_rejects_regex(pattern)
-    if verdict is not None:
-        return verdict
-    return _python_agrees_invalid(pattern)
-
-
-def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> bool:
-    """Raise ``re.error`` when ``pattern`` is a syntax error and NO file reached a backend.
-
-    Called only after a walk that scanned zero files: the backend parser (which normally reports
-    a bad regex, mapped to ``invalid_input``) never ran, so without this the caller would get a
-    complete empty success. Searches that touch files never pay the rg probe.
-    """
-    if regex_is_invalid(pattern, fixed_strings=fixed_strings):
-        raise re.error(REGEX_INVALID_MESSAGE)
-    return False  # truthy-or-raise shape lets mcp_server call it as one expression

@@ -3119,7 +3119,7 @@ def tg_search(
                     if result.total_files > 0 or result.total_matches > 0:
                         all_results.total_files += 1
                     _merge_runtime_routing(all_results, result)
-                files_scanned or _av.raise_if_regex_invalid(search_pattern, fixed_strings)
+                files_scanned or _av.probe_backend(backend, search_pattern, config)
                 # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
                 # coarser defensive cap than max_repo_files -- it can trip first and
                 # truncate the walk below max_repo_files without ever hitting the
@@ -3404,7 +3404,7 @@ def tg_search(
 
             return "\n".join(_bounds._cap_output_lines(output))
 
-        except (BackendExecutionError, re.error) as e:
+        except (BackendExecutionError, re.error, ValueError) as e:
             invalid = _av.search_error_message(e)
             if invalid is None:
                 return _sanitized_tool_error_text("tg_search", e)
