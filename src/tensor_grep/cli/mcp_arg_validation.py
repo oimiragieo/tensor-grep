@@ -9,10 +9,11 @@ No import of ``mcp_server`` at module scope (circular). The one backend interact
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import re
 import tempfile
-from pathlib import Path
 from typing import Any
 
 from tensor_grep.backends.base import BackendExecutionError
@@ -147,11 +148,16 @@ def probe_backend(backend: Any, pattern: str, config: Any) -> bool:
     """
     from tensor_grep.cli.backend_fallback import search_with_cpu_fallback
 
-    with tempfile.TemporaryDirectory(prefix="tg-regex-probe-") as tmp:
-        probe = str(Path(tmp) / "probe.txt")
-        Path(probe).write_bytes(b"")
-        try:
-            backend.search(probe, pattern, config=config)
-        except BackendExecutionError as exc:
-            search_with_cpu_fallback(probe, pattern, config, exc)
+    # An empty file in the OS temp dir (never the repo / search root); mkstemp creates it, so this
+    # code writes nothing. Removed on every path, BaseException included. No cache or index entry
+    # is ever made for this path: only `backend.search` (a read) is called on it.
+    fd, probe = tempfile.mkstemp(prefix="tg-probe-", suffix=".txt")
+    os.close(fd)
+    try:
+        backend.search(probe, pattern, config=config)
+    except BackendExecutionError as exc:
+        search_with_cpu_fallback(probe, pattern, config, exc)
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(probe)
     return False

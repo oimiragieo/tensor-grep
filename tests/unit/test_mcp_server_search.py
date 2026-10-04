@@ -1680,3 +1680,32 @@ def test_tg_search_hostile_pattern_is_a_structured_invalid_input_on_both_paths(
     for kwargs in ({"glob": "*.no-such-ext"}, {}):
         payload = json.loads(mcp_server.tg_search(pattern, str(tmp_path), **kwargs))
         assert payload["error"]["code"] == "invalid_input", (kwargs, payload)
+
+
+@pytest.mark.parametrize("exc_type", [None, ValueError, KeyboardInterrupt])
+def test_probe_backend_uses_an_os_temp_file_and_always_removes_it(exc_type):
+    import os
+    import tempfile
+
+    from tensor_grep.cli import mcp_arg_validation
+
+    seen = []
+
+    class _Backend:
+        def search(self, path, pattern, config=None):
+            seen.append(path)
+            assert os.path.getsize(path) == 0
+            if exc_type is not None:
+                raise exc_type("boom")
+
+    if exc_type is None:
+        mcp_arg_validation.probe_backend(_Backend(), "x", None)
+    else:
+        with pytest.raises(exc_type):
+            mcp_arg_validation.probe_backend(_Backend(), "x", None)
+    assert len(seen) == 1
+    assert (
+        os.path.dirname(seen[0]) == os.path.realpath(tempfile.gettempdir())
+        or os.path.dirname(seen[0]) == tempfile.gettempdir()
+    )
+    assert not os.path.exists(seen[0])
