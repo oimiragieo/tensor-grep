@@ -438,7 +438,12 @@ def _windows_prepend_path_part(path_value: str | None, preferred_dir: Path) -> t
     return rendered, rendered != (path_value or "")
 
 
-def _windows_user_path_value() -> str | None:
+def _windows_user_path_value_and_type() -> tuple[str, int | None] | None:
+    """The persistent User PATH and its registry type from ONE read.
+
+    ``("", None)``: the value is genuinely absent (nothing to preserve). ``None``: not Windows, no
+    winreg, or the value is not text (never overwrite it). Any other ``OSError`` PROPAGATES: an
+    unreadable PATH is not an empty one, and writing over it would destroy the user's PATH."""
     if not sys.platform.startswith("win"):
         return None
     try:
@@ -447,20 +452,31 @@ def _windows_user_path_value() -> str | None:
         return None
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
-            value, _value_type = winreg.QueryValueEx(key, "Path")
-    except OSError:
-        return ""
-    return value if isinstance(value, str) else ""
+            value, value_type = winreg.QueryValueEx(key, "Path")
+    except FileNotFoundError:
+        return "", None
+    return (value, value_type) if isinstance(value, str) else None
 
 
-def _set_windows_user_path_value(path_value: str) -> None:
+def _windows_user_path_value() -> str | None:
+    result = _windows_user_path_value_and_type()
+    return None if result is None else result[0]
+
+
+def _set_windows_user_path_value(path_value: str, existing_type: int | None = None) -> None:
     if not sys.platform.startswith("win"):
         return
     try:
         import winreg  # type: ignore[import-not-found]
     except ImportError as exc:
         raise OSError("winreg is unavailable") from exc
-    value_type = winreg.REG_EXPAND_SZ if "%" in path_value else winreg.REG_SZ
+    # The type comes from the caller's ONE successful read: a second (failing) read here must not
+    # silently downgrade REG_EXPAND_SZ to REG_SZ.
+    value_type = (
+        winreg.REG_EXPAND_SZ
+        if existing_type == winreg.REG_EXPAND_SZ or "%" in path_value
+        else winreg.REG_SZ
+    )
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_SET_VALUE) as key:
         winreg.SetValueEx(key, "Path", 0, value_type, path_value)
 
@@ -694,11 +710,13 @@ def _ensure_windows_managed_native_first_on_path(native_path: Path) -> str | Non
 
     messages: list[str] = []
     try:
-        user_path = _windows_user_path_value()
-        reordered_user_path, user_changed = _windows_prepend_path_part(user_path, managed_dir)
-        if user_changed:
-            _set_windows_user_path_value(reordered_user_path)
-            messages.append("persistent User PATH")
+        user_read = _windows_user_path_value_and_type()
+        if user_read is not None:
+            user_path, user_path_type = user_read
+            reordered_user_path, user_changed = _windows_prepend_path_part(user_path, managed_dir)
+            if user_changed:
+                _set_windows_user_path_value(reordered_user_path, existing_type=user_path_type)
+                messages.append("persistent User PATH")
     except OSError as exc:
         messages.append(f"User PATH repair warning: {exc}")
 
