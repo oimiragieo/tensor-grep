@@ -984,3 +984,115 @@ def test_real_repo_mode_only_change_is_reported(tmp_path: Path) -> None:
     assert payload["changed_files"] == ["run.sh"]
     assert payload["mode_changed_files"] == ["run.sh"]
     assert payload["deleted_files"] == []
+
+
+def _stage_gitlink(repo: Path, sha: str, path: str = "vendor/lib") -> None:
+    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},{path}")
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("diff.submodule", "log"), ("diff.submodule", "diff"), ("diff.ignoreSubmodules", "all")],
+)
+def test_changed_gitlink_is_disclosed_under_hostile_submodule_config(
+    tmp_path: Path, key: str, value: str
+) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", key, value)
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "keep.py")
+    _stage_gitlink(tmp_path, "1" * 40)
+    _git(tmp_path, "commit", "-qm", "i")
+    _stage_gitlink(tmp_path, "2" * 40)
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["changed_files"] == ["vendor/lib"]
+    assert payload["submodule_changed_files"] == ["vendor/lib"]
+    assert "submodule_changes_not_analyzed" in payload["downgrade_reasons"]
+    assert payload["deleted_files"] == []
+    assert payload["partial"] is False
+
+
+def test_parse_gitlink_shapes_are_disclosed_with_empty_ranges() -> None:
+    diff = (
+        "diff --git a/vendor/lib b/vendor/lib\nindex 1111111..2222222 160000\n"
+        "--- a/vendor/lib\n+++ b/vendor/lib\n@@ -1 +1 @@\n"
+        "-Subproject commit 1111111\n+Subproject commit 2222222\n"
+        "diff --git a/new/mod b/new/mod\nnew file mode 160000\nindex 0000000..3333333\n"
+        "--- /dev/null\n+++ b/new/mod\n@@ -0,0 +1 @@\n+Subproject commit 3333333\n"
+        "diff --git a/old/mod b/old/mod\ndeleted file mode 160000\nindex 4444444..0000000\n"
+        "--- a/old/mod\n+++ /dev/null\n@@ -1 +0,0 @@\n-Subproject commit 4444444\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("vendor/lib"): [], Path("new/mod"): [], Path("old/mod"): []}
+    assert parsed.submodule_changed_files == {
+        Path("vendor/lib"),
+        Path("new/mod"),
+        Path("old/mod"),
+    }
+    assert parsed.deleted_paths == {Path("old/mod")}
+
+
+def test_argv_pins_submodule_and_rename_shape(monkeypatch: Any) -> None:
+    seen: list[list[str]] = []
+
+    class P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess",
+        lambda cmd, **k: seen.append(list(cmd)) or P(),
+    )
+    extract_diff_hunks_from_git()
+    for flag in ("--submodule=short", "--ignore-submodules=none", "--find-renames"):
+        assert flag in seen[0]
+
+
+def _make_subdir_repo(repo: Path) -> None:
+    _init_repo(repo)
+    (repo / "sub").mkdir()
+    (repo / "sub" / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (repo / "sub" / "app.py").write_text(
+        "from lib import helper\n\n\ndef run():\n    return helper()\n", encoding="utf-8"
+    )
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "sub" / "lib.py").write_text("def helper():\n    return 2\n", encoding="utf-8")
+
+
+def test_running_from_a_subdirectory_matches_running_from_the_top_level(
+    tmp_path: Path,
+) -> None:
+    _make_subdir_repo(tmp_path)
+    top = build_diff_blast_radius(root=tmp_path)
+    sub = build_diff_blast_radius(root=tmp_path / "sub")
+    assert {s["name"] for s in top["changed_symbols"]} == {"helper"}
+    assert {s["name"] for s in sub["changed_symbols"]} == {"helper"}
+    assert sub["changed_files"] == top["changed_files"] == ["sub/lib.py"]
+    assert sub["callers"] == top["callers"]
+    assert sub["affected_files"] == top["affected_files"]
+    assert sub["root"] == top["root"]
+
+
+def test_cli_from_a_subdirectory_reports_changed_symbols(tmp_path: Path, monkeypatch: Any) -> None:
+    _make_subdir_repo(tmp_path)
+    monkeypatch.chdir(tmp_path / "sub")
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    data = json.loads(res.stdout)
+    assert [s["name"] for s in data["changed_symbols"]] == ["helper"]
+    assert data["partial"] is False
+
+
+def test_staged_pure_rename_is_not_a_change_even_with_renames_disabled(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", "diff.renames", "false")
+    (tmp_path / "old.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "old.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    _git(tmp_path, "mv", "old.py", "new.py")
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["changed_files"] == []
+    assert payload["deleted_files"] == []

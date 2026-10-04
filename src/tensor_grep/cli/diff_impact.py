@@ -30,6 +30,7 @@ from tensor_grep.cli.subprocess_policy import (
 _DIFF_HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
+_GITLINK_INDEX_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ 160000$")
 _C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
 
 
@@ -109,18 +110,21 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
     A plain dict subclass so existing callers and equality checks keep working. Several kinds of
     entry have an empty range list, so "no ranges" never means "deleted": identity is explicit.
     `deleted_paths` comes only from `deleted file mode`; `binary_files` from `Binary files ...
-    differ` outside a deletion; `mode_changed_files` from `old mode`/`new mode`.
+    differ` outside a deletion; `mode_changed_files` from `old mode`/`new mode`; `submodule_changed_files` from a 160000
+    (gitlink) mode, whose `Subproject commit` hunk is not source and carries no ranges.
     """
 
     binary_files: set[Path]
     deleted_paths: set[Path]
     mode_changed_files: set[Path]
+    submodule_changed_files: set[Path]
 
     def __init__(self) -> None:
         super().__init__()
         self.binary_files = set()
         self.deleted_paths = set()
         self.mode_changed_files = set()
+        self.submodule_changed_files = set()
 
 
 def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
@@ -137,6 +141,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     is_deleted = False
     is_added = False
     mode_changed = False
+    is_submodule = False
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
@@ -150,6 +155,9 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             result.deleted_paths.add(header_path)
         elif dest is not None and (is_added or mode_changed):
             result.setdefault(dest, [])
+        if is_submodule and dest is not None:
+            result[dest] = []  # a gitlink hunk is "Subproject commit <sha>", not source lines
+            result.submodule_changed_files.add(dest)
         if mode_changed and dest is not None and not is_deleted:
             result.mode_changed_files.add(dest)
 
@@ -167,14 +175,21 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             is_deleted = False
             is_added = False
             mode_changed = False
+            is_submodule = False
+            continue
+
+        if in_header and _GITLINK_INDEX_RE.match(line):
+            is_submodule = True
             continue
 
         if in_header and line.startswith("new file mode "):
             is_added = True
+            is_submodule = is_submodule or line.endswith(" 160000")
             continue
 
         if in_header and line.startswith(("old mode ", "new mode ")):
             mode_changed = True
+            is_submodule = is_submodule or line.endswith(" 160000")
             continue
 
         if in_header and line.startswith(("rename to ", "copy to ")):
@@ -201,6 +216,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             # Empty and binary deletions emit no ---/+++ lines; the diff --git header is the only
             # place the path appears. Recorded at flush time from this per-file state.
             is_deleted = True
+            is_submodule = is_submodule or line.endswith(" 160000")
             continue
 
         if in_header and line.startswith("--- "):
@@ -258,6 +274,47 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     return result
 
 
+def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
+    """Return the git top level containing `root`; raise DiffError (fail closed) when unknown.
+
+    `git diff --no-relative` reports top-level-relative paths, so every join, symbol extraction
+    and repo-map scan must be rooted at the top level, not at the caller's working directory.
+    """
+    timeout = deadline_capped_timeout_seconds(
+        configured_git_timeout_seconds(), deadline_monotonic=deadline_monotonic
+    )
+    if timeout is None:
+        raise DiffError("deadline_exceeded")
+    cmd = [
+        "git",
+        "-c",
+        "core.quotepath=false",
+        "-c",
+        "core.fsmonitor=false",
+        "rev-parse",
+        "--show-toplevel",
+    ]
+    try:
+        proc = run_subprocess(
+            cmd,
+            cwd=str(root),
+            stdout=-1,
+            stderr=-1,
+            text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
+            timeout_seconds=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise DiffError("git_diff_timeout") from exc
+    except (OSError, ValueError, TimeoutError) as exc:
+        raise DiffError("git_diff_failed", str(exc)) from exc
+    top = (proc.stdout or "").rstrip("\r\n")
+    if proc.returncode != 0 or not top:
+        raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500] or "no git top level")
+    return Path(top).resolve()
+
+
 def extract_diff_hunks_from_git(
     ref: str | None = None,
     staged: bool = False,
@@ -274,7 +331,8 @@ def extract_diff_hunks_from_git(
         # get to run an fsmonitor hook during our read (council round 3, defence in depth).
         # No --no-renames (council round 5): it would turn a pure rename into delete-all + add-all,
         # reporting the old path as deleted and the whole new file as changed, where main reports
-        # nothing; the header-state parser reads `---/+++` and handles rename diffs as main does.
+        # nothing. The opposite is also pinned (--find-renames below): diff.renames=false in a
+        # user's config would produce exactly that delete-all + add-all for a pure rename.
         "git",
         "-c",
         "core.quotepath=false",
@@ -291,6 +349,11 @@ def extract_diff_hunks_from_git(
         "--no-color",
         "--no-relative",
         "--inter-hunk-context=0",
+        # diff.submodule=log|diff replaces the gitlink hunk with a headerless "Submodule ..." line
+        # and diff.ignoreSubmodules=all hides it; both made a changed gitlink read as no_changes.
+        "--submodule=short",
+        "--ignore-submodules=none",
+        "--find-renames",
         "--src-prefix=a/",
         "--dst-prefix=b/",
     ]
@@ -443,6 +506,7 @@ def _empty_payload(
         "deleted_files": [],
         "binary_files": [],
         "mode_changed_files": [],
+        "submodule_changed_files": [],
         "result_incomplete": partial,
         "incomplete_reason": reason if partial else None,
     }
@@ -477,6 +541,9 @@ def build_diff_blast_radius(
         changed_files_with_lines = parse_git_diff_hunks(diff_text)
     else:
         try:
+            if ref is not None:
+                _validate_ref(ref)  # before ANY git invocation, including rev-parse
+            root = _git_toplevel(root, deadline_monotonic)
             changed_files_with_lines = extract_diff_hunks_from_git(
                 ref=ref,
                 staged=staged,
@@ -496,6 +563,10 @@ def build_diff_blast_radius(
     deleted_files = sorted(str(p).replace("\\", "/") for p in deleted_paths)
     mode_paths: set[Path] = getattr(changed_files_with_lines, "mode_changed_files", set())
     mode_changed_files = sorted(str(p).replace("\\", "/") for p in mode_paths)
+    submodule_paths: set[Path] = getattr(changed_files_with_lines, "submodule_changed_files", set())
+    submodule_changed_files = sorted(str(p).replace("\\", "/") for p in submodule_paths)
+    if submodule_changed_files:
+        downgrade_reasons.append("submodule_changes_not_analyzed")
     if binary_files:
         downgrade_reasons.append("binary_files_not_analyzed")
     if deleted_files:
@@ -614,6 +685,7 @@ def build_diff_blast_radius(
         "deleted_files": deleted_files,
         "binary_files": binary_files,
         "mode_changed_files": mode_changed_files,
+        "submodule_changed_files": submodule_changed_files,
         "result_incomplete": partial,
         "incomplete_reason": (partial_reasons[0] if partial and partial_reasons else None),
     }
