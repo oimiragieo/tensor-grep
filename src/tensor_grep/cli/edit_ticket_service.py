@@ -165,6 +165,13 @@ class _ByteLedger:
         self.per_file_limit = per_file_limit
         self.remaining = aggregate_limit
         self.consumed = 0
+        self._item_start = aggregate_limit
+        self._item_total = 0
+
+    def begin_item(self) -> None:
+        """Start accounting one file/marker/tag (per-file limit and aggregate start point)."""
+        self._item_start = self.remaining
+        self._item_total = 0
 
     @classmethod
     def unlimited(cls) -> _ByteLedger:
@@ -184,31 +191,37 @@ class _ByteLedger:
             return _BudgetExceeded("aggregate_byte_limit")
         return None
 
-    def iter_chunks(self, handle: BinaryIO, hard_cap: int | None = None) -> Iterator[bytes]:
-        """Yield chunks of one item, charging each. `hard_cap` (markers) raises
-        `marker_too_large` rather than recording a truncated digest."""
-        start = self.remaining
-        limit = self._cap() if hard_cap is None else min(self._cap(), hard_cap)
-        total = 0
-        while chunk := handle.read(min(65536, limit + 1 - total)):
-            total += len(chunk)
-            self._charge(len(chunk))
-            if hard_cap is not None and total > hard_cap:
-                raise _PopulationWalkError("marker_too_large")
-            exceeded = self._overflow(total, start)
-            if exceeded is not None:
-                raise exceeded
-            yield chunk
+    def read_budgeted(self, handle: BinaryIO, n: int) -> bytes:
+        """ONE raw read of at most `n` bytes, bounded by the budget and CHARGED.
 
-    def take_head(self, handle: BinaryIO, n: int) -> bytes:
-        """One bounded read of at most `n` bytes (CACHEDIR.TAG first line), charged."""
-        start = self.remaining
-        data = handle.read(min(n, self._cap() + 1))
+        Returns b"" only at real EOF. A raw (unbuffered) read may legally return fewer than
+        requested bytes before EOF, so callers needing a full block use `_read_exact_or_eof`.
+        Reads at most `min(per_file_limit, remaining) + 1` bytes of the item in total."""
+        want = min(n, self._cap() + 1 - self._item_total)
+        if want <= 0:
+            return b""
+        data = handle.read(want)
+        self._item_total += len(data)
         self._charge(len(data))
-        exceeded = self._overflow(len(data), start)
+        exceeded = self._overflow(self._item_total, self._item_start)
         if exceeded is not None:
             raise exceeded
         return data
+
+    def iter_chunks(self, handle: BinaryIO, hard_cap: int | None = None) -> Iterator[bytes]:
+        """Yield the chunks of one item until REAL EOF, charging each. `hard_cap` (markers)
+        raises `marker_too_large` rather than recording a truncated digest."""
+        self.begin_item()
+        while True:
+            if hard_cap is not None and self._item_total > hard_cap:
+                raise _PopulationWalkError("marker_too_large")
+            n = 65536 if hard_cap is None else min(65536, hard_cap + 1 - self._item_total)
+            chunk = _read_exact_or_eof(handle, n, self)
+            if not chunk:
+                return
+            if hard_cap is not None and self._item_total > hard_cap:
+                raise _PopulationWalkError("marker_too_large")
+            yield chunk
 
     def charge_link(self, nbytes: int) -> None:
         """Charge a link target measured in BYTES (not characters)."""
@@ -217,6 +230,24 @@ class _ByteLedger:
         exceeded = self._overflow(nbytes, start)
         if exceeded is not None:
             raise exceeded
+
+
+def _read_exact_or_eof(handle: BinaryIO, n: int, ledger: _ByteLedger) -> bytes:
+    """Read until `n` bytes are collected or a read returns b"" (REAL EOF), charging every read.
+
+    An unbuffered raw `read(n)` may legally return fewer than `n` bytes before EOF, so a short
+    read is NEVER treated as end-of-file: a CACHEDIR.TAG holding the signature followed by junk
+    must not look like "signature then EOF". The ONE primitive every budgeted read goes through
+    (leaf hash, marker digest, tag head)."""
+    parts: list[bytes] = []
+    got = 0
+    while got < n:
+        chunk = ledger.read_budgeted(handle, n - got)
+        if not chunk:
+            break
+        parts.append(chunk)
+        got += len(chunk)
+    return b"".join(parts)
 
 
 def _open_regular_no_follow(
@@ -274,13 +305,23 @@ def _regular_marker(path: Path) -> bool:
 
 
 def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
-    """The FIRST LINE must be exactly the signature, then LF, CRLF or EOF (bounded read)."""
+    """The FIRST LINE must be exactly the signature, then LF, CRLF or CONFIRMED EOF.
+
+    CRLF is accepted (the spec's signature line ends at the newline and a tag edited on Windows
+    ends in CRLF; the existing exact-match tests pin it); a bare CR or any other tail is not a
+    signature line. The head is gathered with `_read_exact_or_eof`, so `head == sig` means the
+    file REALLY ended after the signature, never "the read happened to stop there". Any
+    OSError (open, read or close) is `unreadable_path`."""
     st = _marker_stat(tag)
     if st is None:
         # The caller saw a regular file an instant ago; it was swapped for something else.
         raise _PopulationWalkError("unreadable_path")
-    with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
-        head = ledger.take_head(handle, 128)
+    try:
+        with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
+            ledger.begin_item()
+            head = _read_exact_or_eof(handle, 128, ledger)
+    except OSError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
     sig = _CACHEDIR_TAG_SIGNATURE
     return head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
 

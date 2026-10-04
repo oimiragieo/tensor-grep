@@ -1499,3 +1499,144 @@ def test_oversized_link_target_is_rejected_after_the_single_read(
     assert population["status"] == "incomplete"
     assert population["reason"] == "per_file_byte_limit"
     assert population["scanned_bytes"] == 11  # the one read is charged
+
+
+# ---- raw reads may be short (round 11) and may fail mid-read ----
+
+
+def _fdopen_with(max_per_read: int | None = None, fail_on_read: bool = False):
+    """An `_fdopen` seam returning an UNBUFFERED handle whose reads return at most
+    `max_per_read` bytes (a legal short read) or raise OSError(EIO) on the first read."""
+    import io
+
+    real_fdopen = os.fdopen
+
+    def _fdopen(fd: int, mode: str = "r", buffering: int = -1, *a: object, **k: object) -> object:
+        inner = real_fdopen(fd, "rb", buffering=0)
+
+        class _Raw(io.RawIOBase):
+            def readable(self) -> bool:
+                return True
+
+            def readinto(self, buf: bytearray) -> int:
+                if fail_on_read:
+                    raise OSError(5, "simulated EIO during read")
+                view = memoryview(buf)
+                if max_per_read is not None:
+                    view = view[:max_per_read]
+                return inner.readinto(view) or 0  # type: ignore[attr-defined]
+
+            def fileno(self) -> int:
+                return inner.fileno()  # type: ignore[attr-defined]
+
+            def close(self) -> None:
+                inner.close()  # type: ignore[attr-defined]
+                super().close()
+
+        return _Raw()
+
+    return _fdopen
+
+
+@pytest.mark.parametrize("per_read", [1, 43])
+def test_short_read_of_a_malformed_cachedir_tag_does_not_prune_or_hide_an_edit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, per_read: int
+) -> None:
+    # 43 == len(signature): a read that returns exactly the signature bytes of a longer file is
+    # NOT end-of-file. `head == sig` used to accept it, prune pkg/ and hide an undeclared edit.
+    monkeypatch.setattr(
+        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
+    )
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "CACHEDIR.TAG").write_bytes(
+        b"Signature: 8a477f597d28d172789f06886806bc55NOT-A-SIGNATURE-LINE"
+    )
+    core = pkg / "core.py"
+    core.write_text("x = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    assert "pkg/core.py" in ticket.pre_edit_fingerprints
+    core.write_text("x = 2\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["pkg/core.py"]
+
+
+@pytest.mark.parametrize("per_read", [1, 43])
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n", b""])
+def test_short_reads_of_a_valid_cachedir_tag_still_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, per_read: int, ending: bytes
+) -> None:
+    monkeypatch.setattr(
+        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=per_read), raising=False
+    )
+    d = tmp_path / "cache"
+    d.mkdir()
+    tail = b"# a comment line\n" if ending else b""
+    (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG.rstrip(b"\n") + ending + tail)
+    (d / "x.py").write_text("1\n", encoding="utf-8")
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert "cache/x.py" not in files
+    assert "cache" in population["pruned_dirs"]
+
+
+def test_signature_followed_by_a_lone_carriage_return_is_not_a_valid_tag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # CRLF is accepted (a Windows-edited tag), a bare CR or any other tail is not
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
+    d = tmp_path / "cache"
+    d.mkdir()
+    (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG.rstrip(b"\n") + b"\r")
+    (d / "x.py").write_text("1\n", encoding="utf-8")
+    files, _population = _walk_tracked_files_bounded(tmp_path)
+    assert "cache/x.py" in files
+
+
+def test_short_read_leaf_fingerprint_equals_the_full_read_fingerprint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "f.py").write_bytes(b"x = 1\n" * 5000)
+    full, _p = _walk_tracked_files_bounded(tmp_path)
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=7), raising=False)
+    short, _p2 = _walk_tracked_files_bounded(tmp_path)
+    assert short == full
+
+
+def test_short_read_marker_digest_equals_the_full_read_digest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"home = x\n" * 100)
+    _f, full = _walk_tracked_files_bounded(tmp_path)
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=3), raising=False)
+    _f2, short = _walk_tracked_files_bounded(tmp_path)
+    assert short["pruned_set"] == full["pruned_set"]
+
+
+def _tree_for(kind: str, tmp_path: Path) -> None:
+    if kind == "tag":
+        d = tmp_path / "cache"
+        d.mkdir()
+        (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG)
+    elif kind == "marker":
+        d = tmp_path / "env"
+        d.mkdir()
+        (d / "pyvenv.cfg").write_bytes(b"home = x\n")
+    else:
+        (tmp_path / "f.py").write_bytes(b"x = 1\n")
+
+
+@pytest.mark.parametrize("kind", ["tag", "marker", "leaf"])
+def test_oserror_during_read_is_unreadable_path_not_a_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    _tree_for(kind, tmp_path)
+    monkeypatch.setattr(
+        edit_ticket_service, "_fdopen", _fdopen_with(fail_on_read=True), raising=False
+    )
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
