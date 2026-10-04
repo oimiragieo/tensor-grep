@@ -37,7 +37,10 @@ _STRINGZILLA_FLAGS = frozenset({"-F", "-i", "-s", "-S"})
 
 
 def _unsupported_flags(
-    flags: list[str], supported: frozenset[str], config: SearchConfig
+    flags: list[str],
+    supported: frozenset[str],
+    config: SearchConfig,
+    rg_available: bool = True,
 ) -> list[str]:
     bad = [flag for flag in flags if flag not in supported]
     # "-S" is only exact for patterns whose case rg's smart-case scan reads literally.
@@ -45,9 +48,12 @@ def _unsupported_flags(
         bad.append("-S")
     # -o / -r output is rg's own: the non-rg engines return no per-match offsets or replacement
     # text, and rebuilding it in Python was wrong (capture alternatives, ReDoS, lossy bytes).
-    if config.only_matching:
+    # With rg available these route to rg. WITHOUT rg, main served -o/-r from the selected engine
+    # (golden contract `only_matching_*` / `replace_*` on the no-rg lanes), so they are not refused
+    # here: the rg JSON printer must never turn a request main served into an error.
+    if rg_available and config.only_matching:
         bad.append("-o")
-    if config.replace_str is not None:
+    if rg_available and config.replace_str is not None:
         bad.append("-r")
     # Case-insensitive + non-ASCII pattern: lower()/re.IGNORECASE are not rg's Unicode case
     # folding (backends/unicode_fold.py). An ASCII pattern is still checked against the file
@@ -79,12 +85,12 @@ def _enforce_semantics_support(
     }.get(name)
     if supported is None:
         return backend, reason  # rg itself, AST, NLP, GPU engines own their semantics
-    bad = _unsupported_flags(flags, supported, config)
+    bad = _unsupported_flags(flags, supported, config, rg_available)
     if not bad:
         return backend, reason
     if rg_available:
         return rg_backend, "semantics_require_rg"
-    if name != "CPUBackend" and not _unsupported_flags(flags, _CPU_FLAGS, config):
+    if name != "CPUBackend" and not _unsupported_flags(flags, _CPU_FLAGS, config, rg_available):
         return CPUBackend(), "semantics_python_cpu"
     raise BackendExecutionError(
         f"{name} cannot honour {bad} and the 'rg' backend is unavailable; refusing to run a "

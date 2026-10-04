@@ -93,6 +93,17 @@ def _strict(raw: bytes, path: str, line_number: int) -> str:
         ) from exc
 
 
+def effective_crlf(config: SearchConfig) -> bool:
+    """The `--crlf` rg ACTUALLY receives: `_pattern_semantics_flags` emits `--no-crlf` after
+    `--crlf`, and rg is last-wins, so the negation wins whenever both are set."""
+    return bool(config.crlf and not config.no_crlf)
+
+
+def effective_multiline(config: SearchConfig) -> bool:
+    """The `-U` rg ACTUALLY receives (`--no-multiline` is emitted after `--multiline`)."""
+    return bool(config.multiline and not config.no_multiline)
+
+
 def render_json_record(
     data: dict[str, object],
     kind: str,
@@ -111,7 +122,7 @@ def render_json_record(
     raw_subs = data.get("submatches")
     subs = [s for s in raw_subs if isinstance(s, dict)] if isinstance(raw_subs, list) else []
     if not subs:  # context lines / -v lines (and a match rg reports without offsets): as printed
-        tail = b"\r" if config.crlf and not block.endswith(delim) else b""
+        tail = b"\r" if effective_crlf(config) and not block.endswith(delim) else b""
         text = _strict(strip_record_terminator(block, delim) + tail, path, line_number)
         label = "context" if kind == "context" else ("inverted" if inverted else "match")
         return [MatchLine(line_number=line_number, text=text, file=path, rg_kind=label)]
@@ -154,7 +165,7 @@ def render_json_record(
         delim in strip_record_terminator(block, delim)
         or any(delim in match_raw for _s, _e, match_raw, _r in spans)
     )
-    if not lines_mode and kind != "context" and config.multiline and probe is not None:
+    if not lines_mode and kind != "context" and effective_multiline(config) and probe is not None:
         # A single-line block with no terminator in any match is ambiguous under -U: the printer is
         # in lines mode iff the searcher used its multi-line strategy (the regex can match a
         # terminator), which rg does not report. It only matters when the two modes would print
@@ -164,15 +175,23 @@ def render_json_record(
         ]
         differs = (
             any(not item or delim in item for item in printed_items)  # empty / multi-line text
-            or (config.crlf and not config.only_matching)  # -r alone: CRLF tail per piece
+            or (
+                effective_crlf(config) and not config.only_matching
+            )  # -r alone: CRLF tail per piece
         )
         if differs and probe(block):
             lines_mode = True
 
-    def entry(text_raw: bytes, row: int, col0: int, *, ended: bool = False) -> MatchLine:
+    def entry(
+        text_raw: bytes, row: int, col0: int, *, ended: bool = False, split: bool = False
+    ) -> MatchLine:
         # under --crlf rg ends every printed line with CRLF -- unless the text already ended with
         # the terminator it would have added
-        tail = b"\r" if config.crlf and not ended and not text_raw.endswith(b"\r") else b""
+        tail = (
+            b"\r"
+            if effective_crlf(config) and not ended and not (split and text_raw.endswith(b"\r"))
+            else b""
+        )
         token = _strict(text_raw + tail, path, row)
         sub = {"match": {"text": token}, "start": col0, "end": col0 + len(text_raw)}
         return MatchLine(line_number=row, text=token, file=path, rg_kind=label, submatches=(sub,))
@@ -190,6 +209,7 @@ def render_json_record(
                 piece,
                 line_number + offset,
                 new_starts[0],
+                split=True,
             )
             for offset, piece in enumerate(pieces_out)
         ]
@@ -205,7 +225,7 @@ def render_json_record(
             pieces_out = printed.split(delim)
             for offset, piece in enumerate(pieces_out):
                 if piece:  # each piece is a line the -o printer terminates itself
-                    out.append(entry(piece, counter + offset, col0))
+                    out.append(entry(piece, counter + offset, col0, split=True))
             counter += printed.count(delim)
         else:  # verbatim: one entry, at most one trailing terminator dropped
             out.append(

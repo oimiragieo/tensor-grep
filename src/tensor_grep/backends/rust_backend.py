@@ -167,10 +167,26 @@ class RustCoreBackend(ComputeBackend):
                 ) from exc
         rg = RipgrepBackend()._get_binary_name()
         if rg is None:
-            raise BackendExecutionError(
-                "binary-file match check for a regex pattern requires the 'rg' binary; "
-                "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
-            )
+            # No rg: keep main's route (Python re over the bytes) rather than turning a request
+            # main served into an error; the semantics differ only for exotic regex syntax.
+            try:
+                haystack = Path(file_path).read_bytes()
+            except OSError:
+                return False
+            ignore_case = effective_ignore_case(config, pattern)
+            try:
+                return (
+                    re.search(
+                        (re.escape(pattern) if "-F" in flags else pattern).encode(
+                            "utf-8", errors="surrogateescape"
+                        ),
+                        haystack,
+                        flags=re.IGNORECASE if ignore_case else 0,
+                    )
+                    is not None
+                )
+            except re.error as exc:
+                raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
         cmd = [str(rg), "-a", "-q", "--no-config", *flags]
         cmd += ["-e", pattern, "--", file_path]
         proc = run_subprocess(

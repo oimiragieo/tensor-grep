@@ -85,43 +85,6 @@ def test_ascii_literal_controls_keep_existing_behaviour(tmp_path):
     assert _search("--replace", "x", "foo", f).output.strip() == "x bar"
 
 
-def test_lines_without_rg_data_are_refused_not_rebuilt_in_python():
-    # design: Python never rebuilds rg's -o/-r output; a line with no rg data is refused
-    from tensor_grep.backends.base import BackendExecutionError
-    from tensor_grep.cli.rg_post_process import post_process_matches
-
-    line = MatchLine(line_number=1, text="foo bar", file="f.txt")
-    with pytest.raises(BackendExecutionError):
-        post_process_matches(
-            [line], "foo", SearchConfig(query_pattern="foo", replace_str="x"), False
-        )
-    with pytest.raises(BackendExecutionError):
-        post_process_matches([line], "foo", SearchConfig(only_matching=True), True)
-    rg_line = MatchLine(line_number=1, text="foo", file="f.txt", rg_kind="match")
-    assert post_process_matches([rg_line], "foo", SearchConfig(only_matching=True), True) == [
-        rg_line
-    ]
-    # no -o / -r requested: nothing to guard
-    assert post_process_matches([line], "foo", SearchConfig(), False) == [line]
-
-
-def test_post_process_module_no_longer_evaluates_the_user_pattern():
-    import ast
-    import inspect
-
-    from tensor_grep.cli import rg_post_process
-
-    tree = ast.parse(inspect.getsource(rg_post_process))
-    imported = {n.names[0].name for n in ast.walk(tree) if isinstance(n, ast.Import)} | {
-        n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
-    }
-    assert "re" not in imported
-    assert not any(
-        isinstance(n, ast.Attribute) and n.attr in {"compile", "search", "findall", "match"}
-        for n in ast.walk(tree)
-    )
-
-
 @pytest.mark.parametrize("template, expected", [("x", "x"), ("[$1]", "[FOO]")])
 def test_post_processing_of_rg_matches_never_redecides_smart_case(tmp_path, template, expected):
     # the audit repro at the seam: rg matched FOOX for `foo\S` under -S; extraction and
@@ -608,6 +571,34 @@ def test_multiline_o_is_split_per_line_like_rg_even_with_text_mode(tmp_path):
     assert _rg_run(r"\n", f, "-a", "-U", "-o").returncode == 0
 
 
+@pytest.mark.parametrize(
+    "extra", [["-o"], ["-r", "X"], ["-o", "-r", "X"], ["-C", "1"], ["-C", "1", "-o"]]
+)
+@pytest.mark.parametrize("negated", [False, True])
+def test_no_crlf_wins_over_crlf_like_rg(tmp_path, extra, negated):
+    # round 15: the renderer used the raw --crlf and gave "foo\r" where rg (last wins) gives "foo".
+    # SearchConfig keeps separate booleans and the backend emits --crlf then --no-crlf, so with
+    # both set rg receives (and the renderer must use) the negation. Compared with rg directly.
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"x\nfoo\ny\n")
+    rg_extra = ["--crlf", "--no-crlf"] if negated else ["--crlf"]
+    kw = {"only_matching": "-o" in extra, "crlf": True, "no_crlf": negated}
+    if "-r" in extra:
+        kw["replace_str"] = "X"
+    if "-C" in extra:
+        kw["context"] = 1
+    cfg = SearchConfig(query_pattern="foo", **kw)
+    expected = _reference_entries(
+        _rg_run("foo", f, "-n", "--column", "--no-context-separator", *rg_extra, *extra).stdout,
+        null_data=False,
+        inverted=False,
+    )
+    got = _printer_entries(f, "foo", cfg)
+    assert got == expected
+    if negated:
+        assert all(not e[3].endswith("\r") for e in got)
+
+
 def test_json_trailing_newline_in_a_match_is_not_a_phantom_entry(tmp_path):
     # audit (round 9): `-U -o 'foo\n'` on foo/bar -> rg reports ONE match, 1:1:foo
     f = tmp_path / "a.txt"
@@ -903,6 +894,8 @@ def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tm
         "no_final_terminator": 0,
         "text_flag": 0,
         "crlf_flag": 0,
+        "negated_crlf": 0,
+        "negated_multiline": 0,
         "skipped": 0,
         "compared": 0,
     }
@@ -927,6 +920,10 @@ def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tm
             # while its JSON merges several records into one block, so the plain layout cannot be
             # derived from the JSON fields. The two flags are fuzzed separately, never together.
             flags["crlf"] = False
+        # a flag together with its negation: SearchConfig keeps booleans and the backend emits the
+        # positive flag first and the negation after it, so rg (last wins) sees the negation win
+        flags["no_crlf"] = rng.random() < 0.1
+        flags["no_multiline"] = rng.random() < 0.06
         rg_flags = ["--no-config", "-n", "--column", "-I", "--no-context-separator"]
         if only:
             rg_flags.append("-o")
@@ -934,6 +931,8 @@ def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tm
             rg_flags += ["-r", replace_str]
         if flags["multiline"]:
             rg_flags.append("-U")
+        if flags["no_multiline"]:
+            rg_flags.append("--no-multiline")
         if flags["text"]:
             rg_flags.append("-a")
         if flags["context"]:
@@ -942,6 +941,8 @@ def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tm
             rg_flags.append("-v")
         if flags["crlf"]:
             rg_flags.append("--crlf")
+        if flags["no_crlf"]:
+            rg_flags.append("--no-crlf")
         if null_data:
             rg_flags.append("--null-data")
         ref = subprocess.run(
@@ -976,7 +977,9 @@ def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tm
         seen["empty_output_exit0"] += int(ref.returncode == 0 and not ref.stdout)
         seen["no_final_terminator"] += int(not content.endswith((b"\n", b"\0")))
         seen["text_flag"] += int(flags["text"])
-        seen["crlf_flag"] += int(flags["crlf"])
+        seen["crlf_flag"] += int(flags["crlf"] and not flags["no_crlf"])
+        seen["negated_crlf"] += int(flags["crlf"] and flags["no_crlf"])
+        seen["negated_multiline"] += int(flags["multiline"] and flags["no_multiline"])
         if got != expected:
             mismatches.append(
                 f"case {case}: pattern={pattern!r} replace={replace_str!r} only={only} "
@@ -1287,3 +1290,36 @@ def test_only_matching_and_replace_are_unsupported_on_non_rg_engines():
                 engine, "x", cfg, _pattern_semantics_flags(cfg), rg, True
             )
             assert backend is rg and reason == "semantics_require_rg", (kw, type(engine))
+
+
+def test_without_rg_only_matching_and_replace_keep_main_route():
+    # CI regression vs main: with rg absent, `-o`/`-r` were refused. Main served them from the
+    # selected engine, so the engine is kept (never an error) when rg is unavailable.
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend, _pattern_semantics_flags
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.pipeline import _enforce_semantics_support
+
+    for kw in (
+        {"only_matching": True},
+        {"replace_str": "x"},
+        {"only_matching": True, "replace_str": "x"},
+    ):
+        cfg = SearchConfig(query_pattern="foo", **kw)
+        for engine in (RustCoreBackend(), CPUBackend()):
+            backend, _ = _enforce_semantics_support(
+                engine, "x", cfg, _pattern_semantics_flags(cfg), RipgrepBackend(), False
+            )
+            assert backend is engine, (kw, type(engine))
+
+
+def test_engine_lines_get_mains_o_and_r_post_processing_when_rg_did_not_render_them():
+    from tensor_grep.cli.rg_post_process import post_process_matches
+
+    line = MatchLine(line_number=1, text="say hello hello", file="f")
+    cfg = SearchConfig(query_pattern="hello", only_matching=True)
+    assert [m.text for m in post_process_matches([line], "hello", cfg, True)] == ["hello", "hello"]
+    cfg = SearchConfig(query_pattern="(h)ello", replace_str="$1!")
+    assert [m.text for m in post_process_matches([line], "(h)ello", cfg, False)] == ["say h! h!"]
+    rendered = MatchLine(line_number=1, text="x", file="f", rg_kind="match")
+    assert post_process_matches([rendered], "hello", cfg, False) == [rendered]

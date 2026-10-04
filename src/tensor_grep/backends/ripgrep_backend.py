@@ -7,11 +7,12 @@ from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.rg_json_render import (
-    field_bytes as _field_bytes,
-)
-from tensor_grep.backends.rg_json_render import (
+    effective_multiline,
     render_json_record,
     strip_record_terminator,
+)
+from tensor_grep.backends.rg_json_render import (
+    field_bytes as _field_bytes,
 )
 from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 from tensor_grep.cli.subprocess_policy import (
@@ -225,7 +226,7 @@ class RipgrepBackend(ComputeBackend):
 
         probe = (
             self._multiline_strategy_probe(pattern, render_cfg)
-            if render_cfg is not None and render_cfg.multiline
+            if render_cfg is not None and effective_multiline(render_cfg)
             else None
         )
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)

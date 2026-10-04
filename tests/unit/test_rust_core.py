@@ -417,14 +417,29 @@ def test_binary_notice_check_does_not_use_python_re():
     from tensor_grep.backends import rust_backend as rb
 
     src = textwrap.dedent(inspect.getsource(rb.RustCoreBackend._binary_file_matches_pattern))
+    # Closure directive (PR #1195): WITHOUT rg the check keeps main's Python-re route instead of
+    # refusing (a request main served must not become an error), so `re` is allowed -- but ONLY
+    # in the `rg is None` branch; with rg present the pattern always goes to rg.
+    tree = ast.parse(src)
+    guarded = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Compare)
+        and isinstance(node.test.left, ast.Name)
+        and node.test.left.id == "rg"
+    ]
+    assert len(guarded) == 1
+    in_branch = {id(n) for stmt in guarded[0].body for n in ast.walk(stmt)}
     uses_re = [
         node
-        for node in ast.walk(ast.parse(src))
+        for node in ast.walk(tree)
         if isinstance(node, ast.Attribute)
         and isinstance(node.value, ast.Name)
         and node.value.id == "re"
+        and id(node) not in in_branch
     ]
-    assert not uses_re, "user pattern must not be evaluated by Python re"
+    assert not uses_re, "user pattern must only reach Python re when rg is absent"
 
 
 def test_binary_notice_check_redos_pattern_goes_through_rg(tmp_path):
@@ -480,8 +495,8 @@ def test_plain_fixed_string_binary_check_works_without_rg(monkeypatch, tmp_path)
     assert check(str(f), "NEEDLE", SearchConfig(fixed_strings=True)) is True
     assert check(str(f), "ABSENT", SearchConfig(fixed_strings=True)) is False
     assert rb._file_contains_literal(str(f), b"NEEDLE", chunk_size=4096) is True
-    with pytest.raises(rb.BackendExecutionError):  # fail-closed: an unsupported flag needs rg
-        check(str(f), "needle", SearchConfig(fixed_strings=True, ignore_case=True))
+    # no rg: main's route (Python re over the bytes) answers instead of an error
+    assert check(str(f), "needle", SearchConfig(fixed_strings=True, ignore_case=True)) is True
 
 
 def test_first_nul_offset_is_chunked(tmp_path):
@@ -673,8 +688,9 @@ def test_newline_literal_is_delegated_to_rg_not_shortcut(monkeypatch, tmp_path, 
     f.write_bytes(b"\x00foo\nbar\n")
     cfg = SearchConfig(fixed_strings=True)
     monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
-    with pytest.raises(rb.BackendExecutionError):  # no rg -> fail closed, never True
-        rb.RustCoreBackend._binary_file_matches_pattern(str(f), pattern, cfg)
+    # no rg -> main's route: a literal substring test over the bytes (the file contains it)
+    got = rb.RustCoreBackend._binary_file_matches_pattern(str(f), pattern, cfg)
+    assert got is (chr(10) in pattern)
     monkeypatch.undo()
     _rg_or_skip()
     check = rb.RustCoreBackend._binary_file_matches_pattern
