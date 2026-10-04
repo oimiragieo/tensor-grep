@@ -133,7 +133,11 @@ def _is_link(path: str | Path) -> bool:
     works on Python 3.11, which has no `os.path.isjunction` (added in 3.12; relying on it
     would treat a junction as an ordinary directory there). An lstat failure PROPAGATES
     (callers turn it into `unreadable_path`): "cannot tell" is never "not a link"."""
-    st = _lstat(path)
+    return _link_from_stat(_lstat(path))
+
+
+def _link_from_stat(st: os.stat_result) -> bool:
+    """Link classification from an already-taken lstat (single stat, no second look)."""
     if stat.S_ISLNK(st.st_mode):
         return True
     mount_point = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
@@ -256,6 +260,15 @@ def _population_paths(
                 keep.append(d)
         dirnames[:] = keep
         for name in sorted(leaves):
+            # os.walk swallows a DirEntry.is_dir() failure (no onerror) and lists the directory
+            # among `filenames`; fingerprinting it as a leaf would omit its whole subtree. A
+            # directory is a leaf only when it is a link/junction.
+            try:
+                leaf_st = _lstat(current / name)
+            except OSError as exc:
+                raise _PopulationWalkError("unreadable_path") from exc
+            if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
+                raise _PopulationWalkError("unreadable_path")
             yield (rel_dir / name).as_posix()
 
 
@@ -270,13 +283,14 @@ def compute_file_fingerprint(path: str | Path) -> str:
     "" means the path no longer exists. Untagged hex is the OLD format, which collided: a
     regular file holding b"symlink:victim.py" hashed like a link to victim.py."""
     p = Path(path)
-    if _is_link(p):
-        # Never follow a leaf link: its target may be out-of-root or huge (G-08).
-        return "symlink:" + hashlib.sha256(os.fsencode(os.readlink(p))).hexdigest()
     try:
-        mode = _lstat(p).st_mode
+        st = _lstat(p)  # ONE lstat classifies link / regular / other
     except FileNotFoundError:
         return ""
+    if _link_from_stat(st):
+        # Never follow a leaf link: its target may be out-of-root or huge (G-08).
+        return "symlink:" + hashlib.sha256(os.fsencode(os.readlink(p))).hexdigest()
+    mode = st.st_mode
     if not stat.S_ISREG(mode):
         return f"other:{stat.S_IFMT(mode):o}"
     hasher = hashlib.sha256()

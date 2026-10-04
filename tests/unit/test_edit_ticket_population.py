@@ -952,3 +952,47 @@ def test_untagged_legacy_fingerprints_fail_closed_as_format_outdated(tmp_path: P
     assert result["verdict"] == "FAIL"
     assert result["reason"] == "ticket_format_outdated"
     assert result["violations"] == ["ticket_format_outdated"]
+
+
+def test_directory_listed_among_filenames_is_unreadable_path_not_a_leaf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # When DirEntry.is_dir() raises but stat succeeds, os.walk swallows the error (no onerror)
+    # and lists the directory among `filenames`. Fingerprinting it as a leaf would omit the
+    # whole subtree and report a complete population.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text("x = 1\n", encoding="utf-8")
+    real_walk = os.walk
+
+    def walk_misclassifying_src(top, *a, **k):
+        for dirpath, dirnames, filenames in real_walk(top, *a, **k):
+            if "src" in dirnames:
+                dirnames.remove("src")
+                filenames.append("src")
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(edit_ticket_service, "_os_walk", walk_misclassifying_src, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert not any(v.startswith("other:") for v in files.values())
+
+
+def test_missing_path_fingerprint_is_empty_string_not_an_exception(tmp_path: Path) -> None:
+    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "missing" / "x") == ""
+    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "nope.py") == ""
+
+
+def test_non_notfound_lstat_failure_in_fingerprint_still_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "f.py"
+    target.write_text("1\n", encoding="utf-8")
+
+    def _denied(*_a: object, **_k: object) -> os.stat_result:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _denied, raising=False)
+    with pytest.raises(PermissionError):
+        edit_ticket_service.compute_file_fingerprint(target)
