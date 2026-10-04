@@ -22,20 +22,27 @@ from uuid import uuid4
 
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
+    DAEMON_HOST,
+    _daemon_ping_proof,
+    _daemon_secret_path,
+    _is_loopback_host,
+    _load_or_create_user_secret,
+    _ping_proof_fields,
+    _read_user_secret,
+    _verify_ping_reply,
+)
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
     _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
-    _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
     _SESSION_VERSION,
     WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
-    _configured_positive_int,
     _ensure_session_not_stale,
     _index_path,
-    _json_size_bytes,
     _load_index,
     _resolve_request_session_target,
     _resolve_root,
@@ -43,7 +50,6 @@ from tensor_grep.cli.session_store import (
     _session_payload_path,
     _sessions_dir,
     _SessionServeCache,
-    _SessionServeResponseCacheEntry,
     _write_index,
     _write_json_atomic,
     open_session,
@@ -53,7 +59,7 @@ from tensor_grep.cli.session_store import (
 
 _DAEMON_METADATA_FILE = "daemon.json"
 _DAEMON_START_LOCK_FILE = ".daemon-start.lock"
-_DAEMON_HOST = "127.0.0.1"
+_DAEMON_HOST = DAEMON_HOST
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 # moat P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
@@ -73,7 +79,6 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_RESPONSE_TIMEOUT_ENV = "TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS"
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
-_DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
 _DAEMON_RESPONSE_CACHE_SCOPE = (
     "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
@@ -522,6 +527,8 @@ def _daemon_request(
     response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
     token: str = "",
 ) -> dict[str, Any]:
+    if not _is_loopback_host(host):
+        raise ValueError(f"refusing non-loopback session daemon host: {host!r}")
     # audit S3: every request must carry the per-daemon token. Inject it here so the in-process
     # client (which read the token from the 0600 daemon.json) authenticates transparently.
     if token:
@@ -570,17 +577,28 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     metadata = _read_daemon_metadata(root)
     if metadata is None:
         return None
+    host = metadata.get("host", _DAEMON_HOST)
+    if not _is_loopback_host(host):
+        return None
+    try:
+        connected_port = int(metadata["port"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    nonce = secrets.token_hex(16)
     try:
         response = _daemon_request(
-            str(metadata.get("host", _DAEMON_HOST)),
-            int(metadata["port"]),
-            {"command": "ping"},
+            str(host),
+            connected_port,
+            {"command": "ping", "nonce": nonce},
             response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
             token=_daemon_token(metadata),
         )
     except Exception:
         return None
     if not response.get("ok"):
+        return None
+    # F-01: daemon.json is repo-controlled, so "ok" proves nothing -- require the per-user HMAC.
+    if not _verify_ping_reply(response, nonce, root, connected_port):
         return None
     # Task #94 PR-1 safety addition: a daemon can survive a `tg upgrade` (daemons live up to
     # TG_SESSION_DAEMON_MAX_UPTIME_SECONDS, 24h default) and keep serving stale-code responses
@@ -1647,94 +1665,6 @@ def _attach_demand_metrics(status: dict[str, Any], metrics_root: Path) -> dict[s
     return status
 
 
-class _SessionResponseCache:
-    def __init__(
-        self,
-        max_entries: int = _DAEMON_RESPONSE_CACHE_MAX_ENTRIES,
-        max_size_bytes: int | None = None,
-    ) -> None:
-        self._max_entries = max(1, max_entries)
-        self._max_size_bytes = (
-            _configured_positive_int(
-                _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
-                _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
-            )
-            if max_size_bytes is None
-            else max(1, int(max_size_bytes))
-        )
-        self._entries: OrderedDict[tuple[str, ...], _SessionServeResponseCacheEntry] = OrderedDict()
-        self._size_bytes = 0
-        self._hits = 0
-        self._misses = 0
-        self._puts = 0
-        self._oversized_skips = 0
-        self._lock = threading.RLock()
-
-    def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
-        with self._lock:
-            entry = self._entries.pop(key, None)
-            if entry is None:
-                self._misses += 1
-                return None
-            self._hits += 1
-            self._entries[key] = entry
-            return copy.deepcopy(entry.payload)
-
-    def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
-        with self._lock:
-            self._puts += 1
-            size_bytes = _json_size_bytes(response)
-            if size_bytes > self._max_size_bytes:
-                self._oversized_skips += 1
-                return
-            previous = self._entries.pop(key, None)
-            if previous is not None:
-                self._size_bytes -= previous.size_bytes
-            entry = _SessionServeResponseCacheEntry(
-                payload=copy.deepcopy(response),
-                size_bytes=size_bytes,
-            )
-            self._entries[key] = entry
-            self._size_bytes += entry.size_bytes
-            while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
-                _, evicted = self._entries.popitem(last=False)
-                self._size_bytes -= evicted.size_bytes
-
-    @property
-    def hits(self) -> int:
-        with self._lock:
-            return self._hits
-
-    @property
-    def misses(self) -> int:
-        with self._lock:
-            return self._misses
-
-    @property
-    def puts(self) -> int:
-        with self._lock:
-            return self._puts
-
-    @property
-    def entry_count(self) -> int:
-        with self._lock:
-            return len(self._entries)
-
-    @property
-    def size_bytes(self) -> int:
-        with self._lock:
-            return self._size_bytes
-
-    @property
-    def max_size_bytes(self) -> int:
-        return self._max_size_bytes
-
-    @property
-    def oversized_skips(self) -> int:
-        with self._lock:
-            return self._oversized_skips
-
-
 class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -1879,6 +1809,11 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 return
             if command == "ping":
                 response = {"version": _SESSION_VERSION, "ok": True}
+                response.update(
+                    _ping_proof_fields(
+                        request.get("nonce"), server.root, int(server.server_address[1])
+                    )
+                )
                 self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
                 self.wfile.flush()
                 return
@@ -2081,6 +2016,8 @@ def run_session_daemon_server(path: str = ".") -> None:
     # audit S3: generate a per-daemon token and publish it (0600) so only local clients that can
     # read daemon.json may issue commands.
     token = secrets.token_urlsafe(32)
+    if _load_or_create_user_secret() is None:
+        raise RuntimeError("cannot establish per-user daemon secret; refusing to serve")
     with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
         # tg-ledger step-0: load any prior demand-metrics history for this root before serving,
         # so a daemon restart never clobbers the day-bucket counts a prior run already persisted.
