@@ -20,6 +20,8 @@ import json
 import os
 import re
 import secrets
+import select
+import signal
 import socket
 import stat as _stat
 import sys
@@ -176,38 +178,146 @@ def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str
     return _classify_daemon_pid(metadata, root)[0]
 
 
-def _terminate_identified(identity: tuple[int, float, list[str]]) -> bool:
-    """Signal the classified process only if it is STILL that process (PID-reuse guard).
+_pidfd_open = getattr(os, "pidfd_open", None)  # Linux 5.3+ (Python 3.9+); seam for tests
+_pidfd_send_signal = getattr(signal, "pidfd_send_signal", None)  # seam for tests
+_PID_CREATE_TIME_TOLERANCE = 0.01  # seconds; psutil and GetProcessTimes read the same FILETIME
+_last_guard_level: str | None = None
 
-    The create_time and argv captured at classification must be unchanged when the signal is sent,
-    and the signal goes through a freshly built ``psutil.Process`` (which itself refuses a pid whose
-    create_time moved), so a recycled pid is never signalled.
-    """
-    pid, created, argv = identity
-    try:
-        if _process_info(pid) != (argv, created):
-            return False
-    except Exception:
-        return False
-    process_cls: Any = None
+
+def _last_pid_guard_level() -> str | None:
+    """Containment level used by the most recent real pid escalation (``None`` if none)."""
+    return _last_guard_level
+
+
+def _pid_guard_field(used: bool) -> dict[str, str]:
+    """``{"pid_reuse_guard": level}`` for a stop result, only when a pid escalation delivered."""
+    return {"pid_reuse_guard": _last_guard_level or "unknown"} if used else {}
+
+
+def _psutil_process_cls() -> Any:
     try:
         import psutil  # type: ignore[import-not-found]
+    except ImportError:
+        return None
+    return psutil.Process
 
-        process_cls = psutil.Process
-    except Exception:
-        process_cls = None
-    try:
+
+class _PidGuard:
+    """``"recheck"``: no kernel object pins the pid, so the create_time/argv re-read is the guard
+    and a window of microseconds remains between that re-read and the signal."""
+
+    level = "recheck"
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def verify(self, created: float) -> bool:
+        return True  # the caller re-reads _process_info after the guard exists
+
+    def terminate(self) -> bool:
+        process_cls = _psutil_process_cls()
         if process_cls is not None:
-            process_cls(pid).terminate()
-        elif os.name == "nt":
-            import signal
-
-            os.kill(pid, signal.SIGTERM)
+            process_cls(self.pid).terminate()  # psutil itself refuses a pid whose create_time moved
         else:
-            os.kill(pid, 15)
+            os.kill(self.pid, signal.SIGTERM)
+        return True
+
+    def wait(self, seconds: float) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+
+class _PidfdGuard(_PidGuard):
+    """``"pidfd"`` (Linux 5.3+): an open pidfd pins the process; the signal goes through it."""
+
+    level = "pidfd"
+
+    def __init__(self, pid: int, fd: int) -> None:
+        super().__init__(pid)
+        self.fd = fd
+
+    def terminate(self) -> bool:
+        assert _pidfd_send_signal is not None
+        _pidfd_send_signal(self.fd, signal.SIGTERM)
+        return True
+
+    def wait(self, seconds: float) -> None:
+        select.select([self.fd], [], [], seconds)  # a pidfd becomes readable when the process exits
+
+    def close(self) -> None:
+        os.close(self.fd)
+
+
+class _WinGuard(_PidGuard):
+    """``"handle"`` (Windows): an open process handle pins the process. The create time is read
+    from THAT handle and ``TerminateProcess`` is called on THAT handle, never a fresh OpenProcess."""
+
+    level = "handle"
+
+    def __init__(self, pid: int, handle: Any) -> None:
+        super().__init__(pid)
+        self.handle = handle
+
+    def verify(self, created: float) -> bool:
+        actual = _winsec.process_create_time(self.handle)
+        return actual is not None and abs(actual - created) <= _PID_CREATE_TIME_TOLERANCE
+
+    def terminate(self) -> bool:
+        return bool(_winsec.terminate_process(self.handle))
+
+    def wait(self, seconds: float) -> None:
+        _winsec.wait_process(self.handle, int(seconds * 1000))
+
+    def close(self) -> None:
+        _winsec.close_handle(self.handle)
+
+
+def _open_pid_guard(pid: int) -> _PidGuard | None:
+    """The strongest available guard for ``pid``; ``None`` if the process cannot be opened."""
+    if sys.platform == "win32":
+        handle = _winsec.open_process(pid)
+        return _WinGuard(pid, handle) if handle is not None else None
+    if _pidfd_open is not None and _pidfd_send_signal is not None:
+        try:
+            return _PidfdGuard(pid, _pidfd_open(pid))
+        except ProcessLookupError:
+            return None
+        except OSError:
+            pass  # EPERM / ENOSYS / EINVAL: fall back to the create_time re-check
+    return _PidGuard(pid)
+
+
+def _terminate_identified(
+    identity: tuple[int, float, list[str]], wait_seconds: float = 5.0
+) -> bool:
+    """Signal the classified process, pinned against PID reuse by the strongest available primitive.
+
+    The guard (Windows process handle / Linux pidfd) is opened FIRST and only then are the create
+    time and argv re-verified against the classification; from that moment the pid cannot name a
+    different process, so the signal sent through the same handle/pidfd hits exactly the verified
+    one. Without either primitive (macOS, old kernels) the create_time re-check remains and the
+    stop result records ``pid_reuse_guard: "recheck"``. The guard is always released.
+    """
+    global _last_guard_level
+    pid, created, argv = identity
+    _last_guard_level = None
+    guard = _open_pid_guard(pid)
+    if guard is None:
+        return False
+    try:
+        if not guard.verify(created) or _process_info(pid) != (argv, created):
+            return False
+        if not guard.terminate():
+            return False
+        _last_guard_level = guard.level
+        guard.wait(wait_seconds)  # bounded; the caller still requires a refused connection
+        return True
     except Exception:
         return False
-    return True
+    finally:
+        guard.close()
 
 
 def _await_endpoint_refused(

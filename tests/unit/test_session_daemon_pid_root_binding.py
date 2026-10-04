@@ -73,10 +73,19 @@ def _reap(proc: subprocess.Popen[bytes]) -> None:
     proc.wait(timeout=10)
 
 
+def _real_ct(proc: subprocess.Popen[bytes]) -> float:
+    """The sleeper's REAL create time: the Windows process handle verifies it, so a fabricated
+    value would (correctly) be refused as PID reuse."""
+    psutil = pytest.importorskip("psutil")
+    return float(psutil.Process(proc.pid).create_time())
+
+
 def _fake_info(
-    proc: subprocess.Popen[bytes], argv: list[str], create_time: float = 1000.0
+    proc: subprocess.Popen[bytes], argv: list[str], create_time: float | None = None
 ) -> Callable[[int], tuple[list[str], float]]:
     """Seam double: report ``argv`` for the real, harmless sleeper process ``proc``."""
+    if create_time is None:
+        create_time = _real_ct(proc)
 
     def _info(pid: int) -> tuple[list[str], float]:
         if pid != proc.pid:
@@ -221,6 +230,9 @@ def test_a_real_daemon_serving_this_root_is_signalled_control(
         assert result["running"] is False
         assert result["stopped"] is True
         assert result["stop_method"] == "pid"
+        assert result["pid_reuse_guard"] in {"handle", "pidfd", "recheck"}
+        if sys.platform == "win32":
+            assert result["pid_reuse_guard"] == "handle"
         import psutil
 
         for _ in range(100):
@@ -251,8 +263,8 @@ def test_seam_different_root_refused_and_same_root_signalled(
     mine = _sleeper()
     try:
         infos = {
-            victim.pid: ([_PY, "-m", _MODULE, "--root", str(other)], 1.0),
-            mine.pid: ([_PY, "-m", _MODULE, "--root", str(root)], 2.0),
+            victim.pid: ([_PY, "-m", _MODULE, "--root", str(other)], _real_ct(victim)),
+            mine.pid: ([_PY, "-m", _MODULE, "--root", str(root)], _real_ct(mine)),
         }
         monkeypatch.setattr(trust, "_process_info", lambda pid: infos[pid])
         assert sd._terminate_daemon_by_pid({"pid": victim.pid}, root=root) is False
@@ -331,7 +343,7 @@ def test_an_unchanged_create_time_is_signalled_control(
         monkeypatch.setattr(
             trust,
             "_process_info",
-            _fake_info(mine, [_PY, "-m", _MODULE, "--root", str(root)], 1000.0),
+            _fake_info(mine, [_PY, "-m", _MODULE, "--root", str(root)]),
         )
         assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
         mine.wait(timeout=10)

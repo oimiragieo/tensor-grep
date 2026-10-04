@@ -34,6 +34,7 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _DaemonRefreshFailed,
     _is_loopback_host,
     _load_or_create_user_secret,
+    _pid_guard_field,
     _ping_proof_fields,
     _process_info,
     _read_user_secret,
@@ -906,6 +907,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
             "running": False,
             "stopped": killed,
             "stop_method": "pid" if killed else "none",
+            **_pid_guard_field(killed),
         }
     response: dict[str, Any]
     try:
@@ -965,6 +967,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     response["root"] = str(root)
     response["stopped"] = stop_method != "none"  # "none": no evidence it ended
     response["stop_method"] = stop_method
+    response.update(_pid_guard_field(stop_method == "pid"))
     return response
 
 

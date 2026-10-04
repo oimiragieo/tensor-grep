@@ -377,3 +377,70 @@ def write_all(handle: Any, data: bytes) -> bool:
             return False
         offset += written.value
     return bool(k32.FlushFileBuffers(handle))
+
+
+def open_process(pid: int) -> Any | None:
+    """``OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)``.
+
+    While the returned handle is open the pid cannot be recycled for another process, so anything
+    verified and done through it concerns exactly this process. ``None`` on any failure."""
+    if sys.platform != "win32" or pid <= 0:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    handle = k32.OpenProcess(0x0001 | 0x1000 | 0x00100000, False, pid)
+    return handle if handle else None
+
+
+def process_create_time(handle: Any) -> float | None:
+    """Creation time (seconds since the Unix epoch) of the process behind ``handle``
+    (``GetProcessTimes``), directly comparable with ``psutil``'s ``create_time()``."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k32.GetProcessTimes.restype = wintypes.BOOL
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not k32.GetProcessTimes(
+        handle,
+        ctypes.byref(created),
+        ctypes.byref(exited),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    ):
+        return None
+    ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+    return ticks / 10_000_000 - 11644473600
+
+
+def terminate_process(handle: Any, exit_code: int = 1) -> bool:
+    """``TerminateProcess(handle, exit_code)``: terminates exactly the process behind ``handle``."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.TerminateProcess.argtypes = [ctypes.c_void_p, wintypes.UINT]
+    k32.TerminateProcess.restype = wintypes.BOOL
+    return bool(k32.TerminateProcess(handle, exit_code))
+
+
+def wait_process(handle: Any, timeout_ms: int) -> bool:
+    """``WaitForSingleObject`` bounded by ``timeout_ms``; True once the process has exited."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    k32.WaitForSingleObject.restype = wintypes.DWORD
+    return int(k32.WaitForSingleObject(handle, max(0, int(timeout_ms)))) == 0

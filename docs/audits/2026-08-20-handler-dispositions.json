@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 327,
+    "lineno": 328,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3081,7 +3081,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 493,
+    "lineno": 494,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3091,7 +3091,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 136,
+    "lineno": 138,
     "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3101,7 +3101,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 144,
+    "lineno": 146,
     "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3111,7 +3111,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 166,
+    "lineno": 168,
     "enclosing_symbol": "_classify_daemon_pid",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3121,7 +3121,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 583,
+    "lineno": 584,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 643,
+    "lineno": 644,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 918,
+    "lineno": 920,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1616,
+    "lineno": 1619,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1693,
+    "lineno": 1696,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3171,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1824,
+    "lineno": 1827,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3181,7 +3181,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1915,
+    "lineno": 1918,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -3191,7 +3191,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1953,
+    "lineno": 1956,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3201,7 +3201,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 2000,
+    "lineno": 2003,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3381,32 +3381,12 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 190,
+    "lineno": 317,
     "enclosing_symbol": "_terminate_identified",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around the identity re-read `_process_info(pid)` in _terminate_identified (the PID-reuse guard): any failure to re-read argv/create_time returns False.",
-    "reason": "Fails closed: if the process cannot be re-read, or its create_time/argv changed since classification, NOTHING is signalled and the caller reports the stop as unconfirmed (running True / stopped False). Nothing is swallowed into a success.",
-    "hardened_in": null
-  },
-  {
-    "module": "cli/session_daemon_trust.py",
-    "lineno": 197,
-    "enclosing_symbol": "_terminate_identified",
-    "handler_index_within_symbol": 1,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around `import psutil` in _terminate_identified: when psutil cannot be imported the signal falls back to os.kill, which is reachable only after the identity re-read above succeeded.",
-    "reason": "Not a swallow: it selects the signalling primitive. In production the classification itself already required psutil, so this branch only exists for test seams; the PID-reuse re-check has already passed when it runs.",
-    "hardened_in": null
-  },
-  {
-    "module": "cli/session_daemon_trust.py",
-    "lineno": 208,
-    "enclosing_symbol": "_terminate_identified",
-    "handler_index_within_symbol": 2,
-    "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around the actual terminate call (psutil.Process(pid).terminate() or os.kill): a failure (NoSuchProcess, AccessDenied, OSError) returns False.",
-    "reason": "Reported as 'not signalled', never as a stop: the caller then reports running True / stopped False and keeps daemon.json, and a delivered signal is in any case only believed after the endpoint REFUSES connections.",
+    "evidence": "except Exception around the whole guarded escalation in _terminate_identified (guard.verify, the _process_info re-read, guard.terminate, guard.wait): any failure (NoSuchProcess, AccessDenied, OSError, a vanished process) returns False; the guard (Windows process handle / Linux pidfd) is released in the finally clause.",
+    "reason": "Fails closed: if the process cannot be opened, re-read or signalled, or its create_time/argv changed since classification, NOTHING is reported as signalled and the caller reports the stop as unconfirmed (running True / stopped False); a delivered signal is in any case only believed after the endpoint REFUSES connections. Nothing is swallowed into a success.",
     "hardened_in": null
   }
 ]
