@@ -23,7 +23,6 @@ RG_TYPE_NAME_RE = re.compile(r"^[^\W_][\w+.-]*$")
 
 def tg_search_invalid_argument(
     pattern: str,
-    fixed_strings: bool,
     context: int | None,
     max_count: int | None,
     type_filter: str | None,
@@ -37,8 +36,6 @@ def tg_search_invalid_argument(
         return "max_count must be >= 0."
     if type_filter and not RG_TYPE_NAME_RE.fullmatch(type_filter):
         return "type_filter must be a file type name such as 'py' or 'js'."
-    if regex_is_invalid(pattern, fixed_strings=fixed_strings):
-        return REGEX_INVALID_MESSAGE
     return None
 
 
@@ -184,3 +181,14 @@ def regex_is_invalid(pattern: str, *, fixed_strings: bool) -> bool:
     except (RecursionError, OverflowError):
         return False
     return False
+
+
+def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> None:
+    """Raise ``re.error`` when ``pattern`` is a syntax error and NO file reached a backend.
+
+    Called only after a walk that scanned zero files: the backend parser (which normally reports
+    a bad regex, mapped to ``invalid_input``) never ran, so without this the caller would get a
+    complete empty success. Searches that touch files never pay the rg probe.
+    """
+    if regex_is_invalid(pattern, fixed_strings=fixed_strings):
+        raise re.error(REGEX_INVALID_MESSAGE)

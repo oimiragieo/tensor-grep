@@ -1563,3 +1563,47 @@ def test_tg_search_missing_pattern_is_structured_invalid_input(tmp_path, monkeyp
     assert payload["error"]["code"] == "invalid_input"
     text = mcp_server.tg_search(None, str(tmp_path), structured_json=False)
     assert text == "Search failed: either pattern or query is required."
+
+
+@pytest.mark.parametrize("rg_present", [True, False])
+def test_tg_search_regex_probe_is_not_spawned_when_files_are_selected(
+    tmp_path, monkeypatch, rg_present
+):
+    # Latency guard: the rg validity probe (~180 ms) must only run when NO file reached a
+    # backend; a normal search lets the backend report a bad regex itself.
+    import subprocess
+
+    from tensor_grep.cli import mcp_arg_validation, mcp_server, runtime_paths
+
+    if rg_present:
+        if shutil.which("rg") is None:
+            pytest.skip("needs rg")
+    else:
+        monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    seam_calls = []
+    real_probe = mcp_arg_validation._rg_rejects_regex
+
+    def counting_probe(pattern):
+        seam_calls.append(pattern)
+        return real_probe(pattern)
+
+    monkeypatch.setattr(mcp_arg_validation, "_rg_rejects_regex", counting_probe)
+    probes = []
+    real_run = subprocess.run
+
+    def counting_run(cmd, *args, **kwargs):
+        if isinstance(cmd, (list, tuple)) and "--no-config" in cmd and "-e" in cmd:
+            probes.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", counting_run)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello world\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search("hel+o.(world)", str(tmp_path)))
+    assert "error" not in payload, payload
+    assert payload["total_matches"] == 1
+    assert probes == [] and seam_calls == []
+    # positive control: the probe seam does fire when the walk selects nothing (rg absent)
+    if not rg_present:
+        json.loads(mcp_server.tg_search("hel+o.(world)", str(tmp_path), glob="*.no-such-ext"))
+        assert len(seam_calls) == 1

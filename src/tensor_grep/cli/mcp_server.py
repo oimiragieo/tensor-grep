@@ -31,7 +31,7 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
-from tensor_grep.cli import mcp_arg_validation as _arg_validation
+from tensor_grep.cli import mcp_arg_validation as _av
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
@@ -2861,7 +2861,7 @@ def tg_find(
         except PathConfinementError as exc:
             return _find_invalid_input(query, "[refused]", str(exc))
 
-        refusal = _arg_validation.tg_find_refusal(query, limit)
+        refusal = _av.tg_find_refusal(query, limit)
         if refusal is not None:
             return _find_invalid_input(query, path, refusal)
 
@@ -2939,7 +2939,7 @@ def tg_find(
         return _sanitized_tool_error_text("tg_find", exc)
 
 
-_search_invalid_input_response = _arg_validation.search_invalid_input_response
+_search_invalid_input_response = _av.search_invalid_input_response
 
 
 @_register_legacy_tool  # type: ignore
@@ -3017,8 +3017,8 @@ def tg_search(
                 search_pattern, str(exc), path="[refused]", structured_json=structured_json
             )
 
-        invalid_arg = _arg_validation.tg_search_invalid_argument(
-            search_pattern, fixed_strings, context, max_count, type_filter
+        invalid_arg = _av.tg_search_invalid_argument(
+            search_pattern, context, max_count, type_filter
         )
         if invalid_arg is not None:
             return _search_invalid_input_response(
@@ -3121,6 +3121,7 @@ def tg_search(
                     if result.total_files > 0 or result.total_matches > 0:
                         all_results.total_files += 1
                     _merge_runtime_routing(all_results, result)
+                files_scanned or _av.raise_if_regex_invalid(search_pattern, fixed_strings)
                 # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
                 # coarser defensive cap than max_repo_files -- it can trip first and
                 # truncate the walk below max_repo_files without ever hitting the
@@ -3406,7 +3407,7 @@ def tg_search(
             return "\n".join(_bounds._cap_output_lines(output))
 
         except (BackendExecutionError, re.error) as e:
-            invalid = _arg_validation.search_error_message(e)
+            invalid = _av.search_error_message(e)
             if invalid is None:
                 return _sanitized_tool_error_text("tg_search", e)
             return _search_invalid_input_response(
@@ -3481,7 +3482,7 @@ def tg_ast_search(
                 )
             return f"AST search failed: {exc}"
 
-        lang_error = _arg_validation.unsupported_ast_language_message(lang)
+        lang_error = _av.unsupported_ast_language_message(lang)
         if lang_error is not None:
             return _ast_error_result(
                 "invalid_input", lang_error, pattern, lang, path, structured_json
