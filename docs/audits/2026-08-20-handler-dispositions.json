@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 318,
+    "lineno": 320,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3081,7 +3081,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 487,
+    "lineno": 489,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3091,7 +3091,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 491,
+    "lineno": 493,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3101,7 +3101,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 596,
+    "lineno": 598,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3111,7 +3111,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 654,
+    "lineno": 656,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3121,7 +3121,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 913,
+    "lineno": 915,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1584,
+    "lineno": 1586,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1661,
+    "lineno": 1663,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1792,
+    "lineno": 1794,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,19 +3161,29 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1883,
+    "lineno": 1885,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
-    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again; since 2026-10-02 the response's serve_cache.refresh_trigger names the exception class that caused the rebuild. A failure of the rebuild or of the second serve is not caught and propagates to the outer handler.",
-    "reason": "The original exception object is still discarded and not logged, but HARDENED 2026-10-02 (HANDLER-CENSUS-W3-j): the response now carries an in-band marker, serve_cache.refresh_trigger, with the exception class name (absent on the normal path; narrowing the catch was rejected because the set of errors that legitimately warrant a refresh, e.g. a missing or corrupt payload, is not enumerable). It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as an invalid_request error carrying the second error, and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug still triggers a full rebuild (now visible as refresh_trigger), and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
+    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again; since 2026-10-02 the response's serve_cache.refresh_trigger names the exception class that caused the rebuild. A failure of the rebuild or of the second serve is caught by the nested handler recorded as index 2 and re-raised as _DaemonRefreshFailed.",
+    "reason": "The original exception object is still discarded and not logged, but HARDENED 2026-10-02 (HANDLER-CENSUS-W3-j): the response now carries an in-band marker, serve_cache.refresh_trigger, with the exception class name (absent on the normal path; narrowing the catch was rejected because the set of errors that legitimately warrant a refresh, e.g. a missing or corrupt payload, is not enumerable). It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as a refresh_failed error carrying the trigger, the original error and the rebuild error (bug-hunt F-03), and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug still triggers a full rebuild (now visible as refresh_trigger), and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
     "hardened_in": "HANDLER-CENSUS-W3-j"
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1956,
+    "lineno": 1923,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the stale-session rebuild (refresh_session, the payload reload and the second _serve_daemon_response_with_cache call) in the refresh_on_stale branch of _SessionDaemonHandler.handle: the exception is wrapped as _DaemonRefreshFailed(trigger, original_error, rebuild_error) and raised from the original; the outer _DaemonRefreshFailed clause turns it into an error response with code 'refresh_failed'.",
+    "reason": "Nothing is swallowed: the failure is re-raised immediately with the original trigger and both error messages attached, and the client receives a structured refresh_failed error (not a success-shaped result and no longer mislabeled invalid_request, which hid the trigger). The inflight counter is still released by the outer finally. The failure is not logged server-side, same as the surrounding request containment.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 1970,
+    "enclosing_symbol": "handle",
+    "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception around the whole authenticated request body in _SessionDaemonHandler.handle: the exception is converted into a {version, session_id, error: {code: 'invalid_request', message: str(exc)}} response, the finally block decrements inflight_requests under the request lock, and the response is written and flushed to the client socket after the try. Unauthorized requests return earlier with an 'unauthorized' error and never reach this handler.",
     "reason": "A deliberate per-request containment point of a long-lived threaded daemon: one failing request must not kill the handler thread or the server, and the client receives a structured error with the message instead of a success-shaped result, so a request that was not served is never reported as served. The inflight counter is released in finally, so the lifecycle monitor cannot be pinned by a failed request. The failure is not logged server-side, and a client that ignores the error key would treat the response as data, which is the protocol contract.",

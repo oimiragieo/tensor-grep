@@ -27,10 +27,12 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     DAEMON_HOST,
     _daemon_ping_proof,
     _daemon_secret_path,
+    _DaemonRefreshFailed,
     _is_loopback_host,
     _load_or_create_user_secret,
     _ping_proof_fields,
     _read_user_secret,
+    _refresh_failed_error,
     _verify_ping_reply,
 )
 from tensor_grep.cli.session_store import (
@@ -1885,6 +1887,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     if not refresh_on_stale:
                         raise
                     refresh_trigger = type(exc).__name__  # ANY error rebuilds; name it (disclosed)
+                    original_error = str(exc)
                     load_started_at = monotonic()
                     # Task #304: bound the staleness-triggered rebuild with the SAME budget the
                     # warm daemon already applies to `agent`/`orient`/context-render
@@ -1894,28 +1897,33 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     # could be exceeded roughly twofold, the truncation disclosed nowhere. Reusing
                     # the existing constant (not a second one) keeps the daemon budgets from
                     # drifting, so a reader can tell which one applied to a request.
-                    refresh_session(
-                        request_session_id,
-                        request_path,
-                        payload_cache=server.payload_cache,
-                        deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
-                    )
-                    server.payload_cache.record_refresh()
-                    payload, cache_status = _load_payload_with_status_retry(
-                        server.payload_cache,
-                        request_session_id,
-                        request_path,
-                    )
-                    loaded_at = monotonic()
-                    response, response_cache_status = _serve_daemon_response_with_cache(
-                        server=server,
-                        command=command,
-                        session_id=request_session_id,
-                        path=request_path,
-                        request=request,
-                        payload=payload,
-                    )
-                    served_at = monotonic()
+                    try:
+                        refresh_session(
+                            request_session_id,
+                            request_path,
+                            payload_cache=server.payload_cache,
+                            deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
+                        )
+                        server.payload_cache.record_refresh()
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                        )
+                        loaded_at = monotonic()
+                        response, response_cache_status = _serve_daemon_response_with_cache(
+                            server=server,
+                            command=command,
+                            session_id=request_session_id,
+                            path=request_path,
+                            request=request,
+                            payload=payload,
+                        )
+                        served_at = monotonic()
+                    except Exception as rebuild_exc:
+                        raise _DaemonRefreshFailed(
+                            refresh_trigger, original_error, str(rebuild_exc)
+                        ) from rebuild_exc
                 response["serve_cache"] = {
                     "status": cache_status,
                     "session_count": server.payload_cache.session_count,
@@ -1953,6 +1961,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         build_metric: max(0.0, served_at - loaded_at),
                         "total_seconds": max(0.0, served_at - overall_started_at),
                     }
+        except _DaemonRefreshFailed as failed:
+            response = {
+                "version": _SESSION_VERSION,
+                "session_id": request_session_id,
+                "error": _refresh_failed_error(failed),
+            }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,
