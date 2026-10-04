@@ -28,6 +28,7 @@ import hashlib
 import hmac
 import json
 import math
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,6 +110,16 @@ def _canonical_payload(
 def _sign(payload: dict[str, Any], secret: bytes) -> str:
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hmac.new(secret, canonical, hashlib.sha256).hexdigest()
+
+
+def _same_root(minted: str, current: Path) -> bool:
+    """council wave-2b r6: an AUTHORIZATION decision -- compare filesystem identity, never a
+    lexical normcase (which conflates `Repo`/`repo` in case-sensitive Windows directories).
+    Fail closed when identity cannot be established (missing root, OSError)."""
+    try:
+        return os.path.samefile(str(minted), str(current))
+    except (OSError, ValueError, TypeError):
+        return False
 
 
 def _is_finite_number(value: Any) -> bool:
@@ -238,13 +249,14 @@ def resolve_followup_ref(
             "malformed", message=f"malformed follow-up reference: {exc}"
         ) from exc
 
-    if not hmac.compare_digest(_sign(payload, secret), signature):
+    expected_sig = _sign(payload, secret).encode("utf-8")
+    if not hmac.compare_digest(expected_sig, signature.encode("utf-8", "surrogatepass")):
         raise FollowupRefError("tampered", message="follow-up reference signature mismatch")
 
     if payload["v"] != _TOKEN_VERSION:
         raise FollowupRefError("unsupported_version", message="unsupported reference version")
 
-    if payload["root"] != str(current_root):
+    if not _same_root(payload["root"], current_root):
         raise FollowupRefError("cross_root", message="reference minted under a different root")
 
     if _params_hash(params) != payload["params_hash"]:
