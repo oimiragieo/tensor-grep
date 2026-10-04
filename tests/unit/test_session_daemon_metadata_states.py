@@ -10,6 +10,7 @@ ABSENT may produce ``proof "no_metadata"``; UNREADABLE and INVALID keep the file
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -164,3 +165,62 @@ def test_the_cli_exits_2_for_invalid_metadata_in_both_modes(tmp_path: Path) -> N
                 assert payload["running"] is not None
                 assert "error" in payload
     assert _meta_path(root).read_bytes() == b"{"
+
+
+# ---- a dangling link at daemon.json is an EXISTING entry, never "absent" ----
+
+
+def _dangling_symlink(path: Path, tmp_path: Path) -> None:
+    target = tmp_path / "gone-target"
+    try:
+        path.symlink_to(target)  # the target never exists
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink creation not permitted")
+
+
+def _dangling_junction(path: Path, tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    if sys.platform != "win32":
+        pytest.skip("junctions are a Windows reparse-point variant")
+    target = tmp_path / "junction-target"
+    target.mkdir()
+    done = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(path), str(target)], capture_output=True, check=False
+    )
+    if done.returncode != 0:
+        pytest.skip("cannot create a junction here")
+    target.rmdir()  # the junction now dangles
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_a_dangling_link_is_unreadable_not_absent_for_stop_and_status(
+    tmp_path: Path, kind: str
+) -> None:
+    root = tmp_path.resolve()
+    path = _meta_path(root)
+    (_dangling_symlink if kind == "symlink" else _dangling_junction)(path, tmp_path)
+    assert os.path.lexists(path), "precondition: the dangling entry exists"
+    assert trust._metadata_state(path) == ("unreadable", None)
+    stopped = sd.stop_session_daemon(str(root))
+    assert stopped.get("proof") != "no_metadata", "a dangling link was taken as proof of absence"
+    assert stopped["running"] is True
+    assert stopped["unconfirmed_reason"] == "metadata_unreadable"
+    assert cli.stop_exit_code(stopped) == 2
+    status = sd.get_session_daemon_status(str(root))
+    assert status["metadata_error"] == "metadata_unreadable"
+    assert cli.status_exit_code(status) == 2
+    assert os.path.lexists(path), "the entry must be kept"
+
+
+def test_a_failed_inspection_of_a_missing_file_is_unreadable_not_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "daemon.json"  # genuinely missing, but the lstat that would prove it fails
+
+    def _boom(_p: Any) -> Any:
+        raise PermissionError("cannot inspect")
+
+    monkeypatch.setattr(trust, "_lstat", _boom)
+    assert trust._metadata_state(path) == ("unreadable", None)

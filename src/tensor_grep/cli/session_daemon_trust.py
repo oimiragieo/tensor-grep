@@ -435,7 +435,15 @@ def _metadata_state(path: Path) -> tuple[str, dict[str, Any] | None]:
     try:
         raw = _read_metadata_text(path)
     except FileNotFoundError:
-        return "absent", None
+        # "not found" through the path is NOT yet absence: a dangling symlink / junction is an
+        # existing entry. Absent ONLY if lstat (which does not follow links) also says not-found.
+        try:
+            _lstat(path)
+        except FileNotFoundError:
+            return "absent", None
+        except OSError:
+            return "unreadable", None  # cannot inspect: never assume absence
+        return "unreadable", None  # the entry exists (e.g. a dangling link): keep it
     except UnicodeDecodeError:
         return "invalid", None
     except OSError:
