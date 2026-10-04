@@ -259,9 +259,20 @@ def _truncate_evidence_snippet(text: str, max_chars: int) -> dict[str, object]:
     return {"text": normalized[:max_chars], "truncated": True}
 
 
+def _read_ruleset_json(path: str, label: str) -> tuple[Path, object]:
+    resolved = Path(path).expanduser().resolve()
+    try:
+        text = resolved.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ValueError(f"Ruleset {label} file '{resolved}' could not be read: {exc}") from exc
+    try:
+        return resolved, json.loads(text)
+    except ValueError as exc:
+        raise ValueError(f"Ruleset {label} file '{resolved}' is not valid JSON: {exc}") from exc
+
+
 def _load_ruleset_baseline(path: str) -> dict[str, object]:
-    baseline_path = Path(path).expanduser().resolve()
-    payload = json.loads(baseline_path.read_text(encoding="utf-8"))
+    baseline_path, payload = _read_ruleset_json(path, "baseline")
     if not isinstance(payload, dict):
         raise ValueError("Ruleset baseline must be a JSON object.")
     fingerprints = payload.get("fingerprints")
@@ -276,8 +287,7 @@ def _load_ruleset_baseline(path: str) -> dict[str, object]:
 
 
 def _load_ruleset_suppressions(path: str) -> dict[str, object]:
-    suppressions_path = Path(path).expanduser().resolve()
-    payload = json.loads(suppressions_path.read_text(encoding="utf-8"))
+    suppressions_path, payload = _read_ruleset_json(path, "suppressions")
     if not isinstance(payload, dict):
         raise ValueError("Ruleset suppressions must be a JSON object.")
     entries_payload = payload.get("entries")
@@ -413,7 +423,9 @@ def _occurrence_has_inline_suppression(
         source_path = _resolve_ruleset_source_path(occurrence_file, root_dir)
         cache_key = str(source_path)
         if cache_key not in source_cache:
-            source_cache[cache_key] = source_path.read_text(encoding="utf-8").splitlines()
+            source_cache[cache_key] = source_path.read_text(
+                encoding="utf-8", errors="replace"
+            ).splitlines()
         source_lines = source_cache[cache_key]
     except OSError:
         return False
