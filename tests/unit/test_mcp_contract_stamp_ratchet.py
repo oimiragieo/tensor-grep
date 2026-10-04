@@ -74,6 +74,7 @@ import asyncio
 import contextlib
 import importlib.util
 import json
+import os
 import sys
 import types
 from collections.abc import Iterator
@@ -461,10 +462,19 @@ def _mcp_census(
     model is installed, absent, or corrupt.
     """
     original_dense_available, retrieval_dense = _force_dense_unavailable()
+    # Bound the tg_doctor external-LSP sweep: the census checks the contract STAMP, not LSP
+    # health, and a box with real language servers would otherwise spend minutes probing them.
+    lsp_budget_env = "TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS"
+    original_lsp_budget = os.environ.get(lsp_budget_env)
+    os.environ[lsp_budget_env] = "2"
     try:
         return _mcp_census_run(expected, root=root, outside_dir=outside_dir)
     finally:
         retrieval_dense.dense_available = original_dense_available
+        if original_lsp_budget is None:
+            os.environ.pop(lsp_budget_env, None)
+        else:
+            os.environ[lsp_budget_env] = original_lsp_budget
 
 
 def _mcp_census_run(

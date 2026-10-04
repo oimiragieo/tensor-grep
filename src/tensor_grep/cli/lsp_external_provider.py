@@ -7,9 +7,17 @@ import subprocess
 import threading
 import time
 from collections import OrderedDict
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
+from tensor_grep.cli.lsp_probe_budget import ProbeBudget, client_lock, remaining_seconds
+from tensor_grep.cli.lsp_proof_fields import (
+    _attach_lsp_proof_fields as _attach_lsp_proof_fields,
+)
+from tensor_grep.cli.lsp_proof_fields import (
+    _provider_health_status as _provider_health_status,
+)
 from tensor_grep.cli.lsp_provider_setup import (
     canonical_language,
     direct_managed_node_command,
@@ -19,6 +27,20 @@ from tensor_grep.cli.lsp_provider_setup import (
 )
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
+)
+from tensor_grep.cli.lsp_readiness import ReadinessMixin
+from tensor_grep.cli.lsp_session import (
+    ProviderSession,
+    SessionBackedState,
+    proof_request,
+    reset_after_stop,
+)
+from tensor_grep.cli.lsp_transport_writer import bounded_stdin
+from tensor_grep.cli.process_containment import (
+    ContainmentUnavailableError,
+    cleanup_budget_seconds,
+    spawn_contained,
+    teardown_provider,
 )
 
 
@@ -172,10 +194,13 @@ def _write_message(stream: Any, payload: dict[str, Any]) -> None:
     encoded = body.encode("utf-8")
     framed = f"Content-Length: {len(encoded)}\r\n\r\n".encode("ascii") + encoded
     try:
-        stream.write(framed)
-    except TypeError:
-        stream.write(framed.decode("utf-8"))
-    stream.flush()
+        try:
+            stream.write(framed)
+        except TypeError:
+            stream.write(framed.decode("utf-8"))
+        stream.flush()
+    except OSError as exc:  # broken pipe / EINVAL: the provider is gone or was killed
+        raise LSPTransportError(f"LSP write failed: {exc}") from exc
 
 
 def _provider_command(language: str) -> list[str]:
@@ -346,7 +371,7 @@ def _lookup_configuration_section(settings: dict[str, Any], section: object) -> 
     return current
 
 
-class ExternalLSPClient:
+class ExternalLSPClient(ReadinessMixin, SessionBackedState):
     def __init__(
         self,
         *,
@@ -360,13 +385,13 @@ class ExternalLSPClient:
         self.language = language
         self.workspace_root = workspace_root.resolve()
         self.command = _provider_command(language)
-        self.process: subprocess.Popen[Any] | None = None
+        self._session = ProviderSession()
         self._request_id = 0
         self._lock = threading.Lock()
         # Serializes start()'s check-then-spawn so concurrent daemon worker threads sharing this
         # cached client cannot both Popen (round-6 r9). SEPARATE from _lock: start()'s initialize
         # handshake calls request() which takes _lock, so reusing it would re-entrant-deadlock.
-        self._start_lock = threading.Lock()
+        self._start_lock = threading.RLock()
         self._max_open_documents = (
             _configured_positive_int(
                 _LSP_PROVIDER_OPEN_DOCUMENT_MAX_ENTRIES_ENV_VAR,
@@ -375,23 +400,6 @@ class ExternalLSPClient:
             if max_open_documents is None
             else max(1, int(max_open_documents))
         )
-        self._opened_documents: OrderedDict[str, None] = OrderedDict()
-        self._message_queue: queue.Queue[dict[str, Any] | None] = queue.Queue()
-        # audit B12: per-request-id response slots for correct demultiplexing.
-        # Maps request_id -> Queue that receives exactly one response dict (or
-        # _CLOSED_SENTINEL on EOF).  Guarded by _lock.
-        self._pending_requests: dict[int, queue.Queue[dict[str, Any]]] = {}
-        # audit B12: responses whose slot is not yet registered (a pre-queued/early
-        # response that the reader dispatched before request() registered its slot).
-        # A bounded buffer so request() can still claim it; without this the demux
-        # would silently drop such responses where the old shared queue buffered them.
-        self._orphan_responses: dict[int, dict[str, Any]] = {}
-        # audit B15: monotonically-incrementing per-URI document version counter.
-        # Keyed by URI; never decremented.  Guarded by _lock.
-        self._doc_versions: dict[str, int] = {}
-        self._reader_thread: threading.Thread | None = None
-        self._stderr_thread: threading.Thread | None = None
-        self._stderr_tail: list[str] = []
         self._debug_trace_enabled = False
         self._debug_trace_started_monotonic = time.monotonic()
         self._debug_trace: list[dict[str, Any]] = []
@@ -410,20 +418,17 @@ class ExternalLSPClient:
             else max(float(initialize_timeout_seconds), 0.0)
         )
         self.retry_cooldown_seconds = retry_cooldown_seconds
-        self.capabilities: dict[str, Any] = {}
+        # When set (doctor probe under a deadline), stop() uses this slice instead of the
+        # default bound -- including the stop() that start() runs after a failed initialize.
+        self.stop_grace_seconds: float | None = None
+        self._starting = False
+        self.deadline_monotonic: float | None = None  # absolute probe deadline (see ProbeBudget)
+        self.probe_budget: ProbeBudget | None = None  # the probe now running on this client
+        self.unusable = False  # set when teardown could not take the client lock in time
+        self.teardown_error: str | None = None
+        self.containment_error: str | None = None  # set when the tree could not be contained
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
-        self.initialized = False
-        self.lsp_provider_response = False
-        # P0-2 readiness gate (warm-LSP moat): track server indexing via workDoneProgress tokens
-        # so the first references/definitions per (root,language) can wait for the index to
-        # settle instead of answering from a half-built index (the 2-of-14 under-return).
-        # Guarded by _lock. _index_ready is the cached "settled" verdict; any new
-        # create/begin re-invalidates it (server re-indexing after file churn).
-        self._active_progress_tokens: set[str] = set()
-        self._progress_end_count = 0
-        self._progress_activity_seen = False
-        self._index_ready = False
 
     def enable_debug_trace(self) -> None:
         self._debug_trace_enabled = True
@@ -433,8 +438,11 @@ class ExternalLSPClient:
     def debug_trace(self) -> list[dict[str, Any]]:
         return list(self._debug_trace)
 
+    def current_session(self) -> ProviderSession:
+        return cast(ProviderSession, self._session)
+
     def stderr_tail(self) -> list[str]:
-        return list(self._stderr_tail)
+        return list(self._session.stderr_tail)
 
     def _record_debug_trace(
         self,
@@ -462,22 +470,36 @@ class ExternalLSPClient:
         self._debug_trace.append(entry)
 
     def start(self) -> None:
-        # Fast path (no lock): already running.
-        if self.process is not None and self.process.poll() is None:
+        self._ensure_started()
+
+    def _ensure_started(self) -> None:
+        if self.unusable:
+            raise LSPTransportError(
+                self.last_error or "LSP client is unusable after failed teardown"
+            )
+        process = self._session.process  # fast path (no lock): already running
+        if process is not None and process.poll() is None:
             return
         # Serialize the check-then-spawn (round-6 r9): two daemon worker threads calling into the
         # SAME cached client (get_client is shared per (root,language)) must not both pass the None
         # check and both Popen, orphaning one child. Double-checked under _start_lock.
-        with self._start_lock:
-            if self.process is not None and self.process.poll() is None:
+        with client_lock(self, lock=self._start_lock):
+            if self._starting:  # re-entered by our own initialize handshake: never respawn
                 return
-            self._start_locked()
+            process = self._session.process
+            if process is not None and process.poll() is None:
+                return
+            self._starting = True
+            try:
+                self._start_locked()
+            finally:
+                self._starting = False
 
     def _start_locked(self) -> None:
         if self.disabled_until_monotonic > time.monotonic():
             raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
-        if self.process is not None:
-            self.stop()
+        if self._session.process is not None:
+            self._stop(self._session)
         managed_root = _managed_provider_root()
         try:
             spawn_argv = direct_managed_node_command(list(self.command), root=managed_root)
@@ -493,32 +515,56 @@ class ExternalLSPClient:
             # External/PATH providers, managed native .exe binaries, and all POSIX are
             # unchanged (wrap_windows_batch_command is a no-op except for a real .cmd/.bat).
             spawn_argv = wrap_windows_batch_command(list(self.command))
-        # cwd stays workspace_root: the resolved argv contains zero CWD-searchable names, so
-        # this launch is safe. Residual (not exploitable here — these servers are
-        # worker-thread based): a server that itself spawns a bare-name grandchild at runtime
-        # could recur one level down.
-        self.process = subprocess.Popen(
-            spawn_argv,
-            cwd=str(self.workspace_root),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=managed_provider_env(self.command, managed_root=managed_root),
-        )
+        # cwd is workspace_root (safe: argv has no CWD-searchable names); contained spawn.
+        session = ProviderSession(self._session.generation + 1)
+        try:
+            session.process, session.containment = spawn_contained(
+                spawn_argv,
+                cwd=str(self.workspace_root),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=managed_provider_env(self.command, managed_root=managed_root),
+            )
+        except ContainmentUnavailableError as exc:  # fail closed: the provider was NOT launched
+            self.containment_error = str(exc)
+            self.last_error = f"containment_unavailable: {exc}"
+            raise LSPTransportError(self.last_error) from exc
+        try:
+            with client_lock(self):
+                self._session = session  # NEW state: stale teardowns/readers cannot reach it
+                if self.probe_budget is not None:
+                    self.probe_budget.bind(session)
+        except BaseException:
+            # `session` owns the spawned provider from the moment of spawn. If it cannot be
+            # published (the lock wait hit the probe deadline) it must not leak: kill the tree,
+            # release containment and pipes inside the cleanup budget, then re-raise.
+            teardown_provider(
+                session.process,
+                session.containment,
+                deadline=time.monotonic()
+                + cleanup_budget_seconds(
+                    self.request_timeout_seconds,
+                    _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+                    self.stop_grace_seconds,
+                ),
+            )
+            raise
         self._record_debug_trace(
             event="process_start",
             detail={"command": spawn_argv, "cwd": str(self.workspace_root)},
         )
-        self._message_queue = queue.Queue()
-        self._pending_requests = {}
-        self._orphan_responses = {}
-        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self._reader_thread.start()
-        self._stderr_tail = []
-        self._stderr_thread = threading.Thread(target=self._stderr_loop, daemon=True)
-        self._stderr_thread.start()
+        session.reader_thread = threading.Thread(
+            target=self._reader_loop, args=(session,), daemon=True
+        )
+        session.reader_thread.start()
+        session.stderr_thread = threading.Thread(
+            target=self._stderr_loop, args=(session,), daemon=True
+        )
+        session.stderr_thread.start()
         try:
-            result = self.request(
+            result = self._request(
+                session,
                 "initialize",
                 {
                     "processId": None,
@@ -543,124 +589,127 @@ class ExternalLSPClient:
         except LSPTransportError as exc:
             self.last_error = str(exc)
             self.disabled_until_monotonic = time.monotonic() + self.retry_cooldown_seconds
-            self.stop()
+            self._stop(session)
             raise
         if isinstance(result, dict):
-            self.capabilities = dict(result.get("capabilities", {}))
-        self.notify("initialized", {})
-        self.initialized = True
+            session.capabilities = dict(result.get("capabilities", {}))
+        self._notify(session, "initialized", {})
+        session.initialized = True
         try:
-            self.notify("workspace/didChangeConfiguration", _configuration_settings(self.language))
+            self._notify(
+                session,
+                "workspace/didChangeConfiguration",
+                _configuration_settings(self.language),
+            )
         except Exception:
             pass
 
-    def stop(self) -> None:
-        process = self.process
+    def stop(self, grace_seconds: float | None = None) -> None:
+        self._stop(self._session, grace_seconds)
+
+    def _stop(self, session: ProviderSession, grace_seconds: float | None = None) -> None:
+        # everything below touches ONLY the captured session
+        process = session.process
         if process is None:
             return
-        reader_thread = self._reader_thread
-        stderr_thread = self._stderr_thread
-        stop_timeout_seconds = min(
-            max(float(self.request_timeout_seconds), 0.0),
-            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+        reader_thread = session.reader_thread
+        stderr_thread = session.stderr_thread
+        grace = grace_seconds if grace_seconds is not None else self.stop_grace_seconds
+        budget = cleanup_budget_seconds(
+            self.request_timeout_seconds, _DEFAULT_LSP_STOP_TIMEOUT_SECONDS, grace
         )
-        self._request_shutdown_for_stop()
-        with self._lock:
-            try:
-                self._write_notification("exit", None)
-            except Exception:
-                pass
-            try:
-                if process.stdin is not None:
-                    process.stdin.close()
-            except Exception:
-                pass
-            try:
-                process.terminate()
-            except Exception:
-                pass
-        stop_errors: list[str] = []
-        try:
-            process.wait(timeout=stop_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            try:
-                process.kill()
-            except Exception as exc:
-                stop_errors.append(f"kill failed: {exc}")
-            try:
-                process.wait(timeout=stop_timeout_seconds)
-            except Exception as exc:
-                stop_errors.append(f"did not exit after kill: {exc!r}")
-        finally:
-            for stream in (process.stdout, process.stderr):
-                try:
-                    if stream is not None:
-                        stream.close()
-                except Exception:
-                    pass
-        if stop_errors:  # the handle is dropped below; keep the pid and the root cause visible
-            self.last_error = f"LSP child pid {process.pid} not stopped ({'; '.join(stop_errors)})"
+        deadline = time.monotonic() + budget
+        errors = teardown_provider(
+            process,
+            session.containment,
+            deadline=deadline,
+            graceful=partial(self._graceful_shutdown_for_stop, session),
+        )
+        self.teardown_error = None
+        if errors:  # the handle is dropped below; keep the pid and the root cause visible
+            self.teardown_error = (
+                f"LSP child pid {getattr(process, 'pid', '?')} not stopped ({'; '.join(errors)})"
+            )
+            self.last_error = self.teardown_error
+        stop_timeout_seconds = max(deadline - time.monotonic(), 0.05)
         if reader_thread is not None and reader_thread.is_alive():
             reader_thread.join(timeout=stop_timeout_seconds)
         if stderr_thread is not None and stderr_thread.is_alive():
             stderr_thread.join(timeout=stop_timeout_seconds)
-        with self._lock:
-            if self.process is process:
-                self.process = None
-            self._opened_documents.clear()
-            self.capabilities = {}
-            self.initialized = False
-            self.lsp_provider_response = False
-            if self._reader_thread is reader_thread:
-                self._reader_thread = None
-            if self._stderr_thread is stderr_thread:
-                self._stderr_thread = None
-            self._message_queue = queue.Queue()
-            # audit B12: unblock any callers still waiting in request().
-            for slot in self._pending_requests.values():
-                slot.put_nowait(_CLOSED_SENTINEL)
-            self._pending_requests = {}
-            self._orphan_responses = {}
-            self._doc_versions = {}
+        if not self._lock.acquire(timeout=max(deadline - time.monotonic(), 0.0)):
+            self.unusable = True
+            self.teardown_error = self.last_error = "teardown lock unavailable: client unusable"
+            return
+        try:
+            if self._session is session:  # the ONLY shared write; a replacement is never touched
+                self._session = ProviderSession(session.generation)
+        finally:
+            self._lock.release()
+        reset_after_stop(session, _CLOSED_SENTINEL)
 
-    def _request_shutdown_for_stop(self) -> None:
-        # audit B12: use a per-id slot so the shutdown request cannot race with
-        # any concurrent request() calls that are still in flight.
-        process = self.process
-        if process is None or process.stdin is None:
+    def _graceful_shutdown_for_stop(self, session: ProviderSession, timeout: float) -> None:
+        self._request_shutdown_for_stop(session, timeout)
+        try:
+            with client_lock(self, timeout):
+                if self._session is not session:
+                    return  # abandoned: a replacement provider owns this client now
+                try:
+                    self._write_notification("exit", None)
+                except Exception:
+                    pass
+        except TimeoutError:
+            return
+
+    def _request_shutdown_for_stop(self, session: ProviderSession, timeout: float) -> None:
+        # audit B12: per-id slot so the shutdown cannot race concurrent request() calls.
+        if session.process is None or session.process.stdin is None:
             return
         slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
+        request_id: int | None = None
         try:
-            with self._lock:
+            with client_lock(self, timeout):
+                if self._session is not session:
+                    return
                 self._request_id += 1
                 request_id = self._request_id
-                self._pending_requests[request_id] = slot
+                session.pending_requests[request_id] = slot
                 self._write_request(request_id, "shutdown", None)
-                buffered = self._orphan_responses.pop(request_id, None)
+                buffered = session.orphan_responses.pop(request_id, None)
             if buffered is not None:
                 try:
                     slot.put_nowait(buffered)
                 except queue.Full:
                     pass
+            try:
+                slot.get(timeout=timeout)
+            except queue.Empty:
+                pass
         except Exception:
             return
-        timeout_seconds = min(
-            max(float(self.request_timeout_seconds), 0.0),
-            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
-        )
-        try:
-            slot.get(timeout=timeout_seconds)
-        except queue.Empty:
-            pass
         finally:
-            with self._lock:
-                self._pending_requests.pop(request_id, None)
+            if request_id is not None:
+                session.pending_requests.pop(request_id, None)
 
-    def request(self, method: str, params: dict[str, Any]) -> Any:
+    def request(self, method: str, params: dict[str, Any], *, proof: bool = False) -> Any:
+        self.start()  # lifecycle entry: the one public->public call (see the census test)
+        return self._request(self._session, method, params, proof)
+
+    def _reject(
+        self, event: str, method: str, request_id: int | None, reason: str, **detail: Any
+    ) -> LSPTransportError:
+        self.last_error = reason
+        self._record_debug_trace(
+            event=event, method=method, request_id=request_id, detail=detail or None
+        )
+        return LSPTransportError(reason)
+
+    def _request(
+        self, session: ProviderSession, method: str, params: dict[str, Any], proof: bool = False
+    ) -> Any:
         # audit B12: each in-flight request gets its own one-shot Queue so that
         # concurrent calls cannot steal each other's responses.
-        self.start()
-        if self.process is None or self.process.stdin is None or self.process.stdout is None:
+        process = session.process
+        if process is None or process.stdin is None or process.stdout is None:
             raise LSPTransportError("LSP process is not available")
         timeout_seconds = (
             self.initialize_timeout_seconds
@@ -668,47 +717,47 @@ class ExternalLSPClient:
             else self.request_timeout_seconds
         )
         slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
-        with self._lock:
-            self._request_id += 1
-            request_id = self._request_id
-            self._pending_requests[request_id] = slot
-            self._write_request(request_id, method, params)
-            # Claim a response that the reader dispatched before this slot existed.
-            buffered = self._orphan_responses.pop(request_id, None)
-        if buffered is not None:
-            try:
-                slot.put_nowait(buffered)
-            except queue.Full:
-                pass
-        try:
+        pending = session.pending_requests
+        request_id: int | None = None
+        try:  # registration, the write and the wait share ONE cleanup scope: no slot can leak
+            with client_lock(self):
+                self._request_id += 1
+                request_id = self._request_id
+                pending[request_id] = slot
+                self._write_request(request_id, method, params, session=session)
+                # Claim a response that the reader dispatched before this slot existed.
+                buffered = session.orphan_responses.pop(request_id, None)
+            if buffered is not None:
+                try:
+                    slot.put_nowait(buffered)
+                except queue.Full:
+                    pass
+            timeout_seconds = remaining_seconds(self, timeout_seconds)  # after lock + write
             try:
                 message = slot.get(timeout=timeout_seconds)
             except queue.Empty as exc:
-                self.last_error = f"timeout waiting for LSP response: {method}"
-                self._record_debug_trace(
-                    event="request_timeout",
-                    method=method,
-                    request_id=request_id,
-                    detail={"timeout_seconds": timeout_seconds},
-                )
-                raise LSPTransportError(self.last_error) from exc
+                raise self._reject(
+                    "request_timeout",
+                    method,
+                    request_id,
+                    f"timeout waiting for LSP response: {method}",
+                    timeout_seconds=timeout_seconds,
+                ) from exc
             if message is _CLOSED_SENTINEL:
-                self.last_error = f"LSP process closed during request: {method}"
-                self._record_debug_trace(
-                    event="request_closed",
-                    method=method,
-                    request_id=request_id,
+                raise self._reject(
+                    "request_closed",
+                    method,
+                    request_id,
+                    f"LSP process closed during request: {method}",
                 )
-                raise LSPTransportError(self.last_error)
             if "error" in message:
-                self.last_error = str(message["error"])
-                self._record_debug_trace(
-                    event="receive_error",
-                    method=method,
-                    request_id=request_id,
-                    detail={"error": message["error"]},
+                raise self._reject(
+                    "receive_error",
+                    method,
+                    request_id,
+                    str(message["error"]),
+                    error=message["error"],
                 )
-                raise LSPTransportError(self.last_error)
             self.last_error = None
             self._record_debug_trace(
                 event="receive_response",
@@ -716,56 +765,70 @@ class ExternalLSPClient:
                 request_id=request_id,
                 detail={"result_type": type(message.get("result")).__name__},
             )
+            if proof:  # recorded on the session that ANSWERED, with no later step to fail
+                session.lsp_provider_response = True
             return message.get("result")
         finally:
-            with self._lock:
-                self._pending_requests.pop(request_id, None)
+            if request_id is not None:
+                pending.pop(request_id, None)
+                session.orphan_responses.pop(request_id, None)
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
-        if self.process is None or self.process.stdin is None:
+        self._notify(self._session, method, params)
+
+    def _notify(self, session: ProviderSession, method: str, params: dict[str, Any]) -> None:
+        if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
-        with self._lock:
-            self._write_notification(method, params)
+        with client_lock(self):
+            self._write_notification(method, params, session=session)
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
-        if uri in self._opened_documents:
-            self._opened_documents.move_to_end(uri)
+        self.start()
+        session = self._session
+        if uri in session.opened_documents:
+            session.opened_documents.move_to_end(uri)
             return
         evicted_uri = (
-            next(iter(self._opened_documents))
-            if len(self._opened_documents) >= self._max_open_documents
+            next(iter(session.opened_documents))
+            if len(session.opened_documents) >= self._max_open_documents
             else None
         )
         # audit B15: record the initial version so did_change can monotonically
         # increment from it.
-        with self._lock:
-            self._doc_versions[uri] = 1
-        self.notify(
-            "textDocument/didOpen",
-            {
-                "textDocument": {
-                    "uri": uri,
-                    "languageId": language_id,
-                    "version": 1,
-                    "text": text,
-                }
-            },
-        )
-        self._opened_documents[uri] = None
+        with client_lock(self):
+            session.doc_versions[uri] = 1
+        try:
+            self._notify(
+                session,
+                "textDocument/didOpen",
+                {
+                    "textDocument": {
+                        "uri": uri,
+                        "languageId": language_id,
+                        "version": 1,
+                        "text": text,
+                    }
+                },
+            )
+        except BaseException:
+            session.doc_versions.pop(uri, None)  # a failed open leaves no bookkeeping
+            raise
+        session.opened_documents[uri] = None
         if evicted_uri is not None:
-            self._opened_documents.pop(evicted_uri, None)
-            self._notify_document_closed(evicted_uri)
+            session.opened_documents.pop(evicted_uri, None)
+            self._notify_document_closed(evicted_uri, session)
 
-    def _notify_document_closed(self, uri: str) -> None:
+    def _notify_document_closed(self, uri: str, session: ProviderSession | None = None) -> None:
+        session = session or self._session
         # Audit LOW (leak): evict the per-URI version counter on close, mirroring the
         # _opened_documents cleanup. Both removal paths (open-eviction and close_document)
         # funnel through here, so _doc_versions no longer grows unbounded across a
         # long-lived client's lifetime. _doc_versions is _lock-guarded (see did_change).
-        with self._lock:
-            self._doc_versions.pop(uri, None)
+        with client_lock(self):
+            session.doc_versions.pop(uri, None)
         try:
-            self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+            self._notify(session, "textDocument/didClose", {"textDocument": {"uri": uri}})
         except Exception:
             self._record_debug_trace(
                 event="document_close_failed",
@@ -774,21 +837,24 @@ class ExternalLSPClient:
             )
 
     def close_document(self, *, uri: str) -> None:
-        if uri not in self._opened_documents:
+        session = self._session
+        if uri not in session.opened_documents:
             return
-        self._opened_documents.pop(uri, None)
-        self._notify_document_closed(uri)
+        session.opened_documents.pop(uri, None)
+        self._notify_document_closed(uri, session)
 
     def did_change(self, *, uri: str, text: str, version: int = 1) -> None:
+        session = self._session
         # audit B15: ignore the caller-supplied version (which can be non-monotonic
         # when multiple editors send version=1) and use an internal counter instead.
-        if uri not in self._opened_documents:
+        if uri not in session.opened_documents:
             return
-        with self._lock:
-            current_version = self._doc_versions.get(uri, 1)
+        with client_lock(self):
+            current_version = session.doc_versions.get(uri, 1)
             next_version = max(current_version + 1, version + 1)
-            self._doc_versions[uri] = next_version
-        self.notify(
+            session.doc_versions[uri] = next_version
+        self._notify(
+            session,
             "textDocument/didChange",
             {
                 "textDocument": {"uri": uri, "version": next_version},
@@ -797,33 +863,51 @@ class ExternalLSPClient:
         )
 
     def did_save(self, *, uri: str) -> None:
-        if uri not in self._opened_documents:
+        session = self._session
+        if uri not in session.opened_documents:
             return
-        self.notify("textDocument/didSave", {"textDocument": {"uri": uri}})
+        self._notify(session, "textDocument/didSave", {"textDocument": {"uri": uri}})
 
     def status(self) -> dict[str, Any]:
+        session = self._session
         return {
             "language": self.language,
             "workspace_root": str(self.workspace_root),
             "command": list(self.command),
             "command_source": _command_source(self.command),
             "managed_provider_root": str(_managed_provider_root()),
-            "running": self.process is not None and self.process.poll() is None,
-            "initialized": self.initialized,
-            "capabilities": dict(self.capabilities),
-            "lsp_provider_response": self.lsp_provider_response,
+            "running": session.process is not None and session.process.poll() is None,
+            "process_containment": session.containment.level if session.containment else None,
+            "initialized": session.initialized,
+            "capabilities": dict(session.capabilities),
+            "lsp_provider_response": session.lsp_provider_response,
             "last_error": self.last_error,
-            "opened_documents": len(self._opened_documents),
+            "opened_documents": len(session.opened_documents),
             "max_open_documents": self._max_open_documents,
-            "stderr_tail": self.stderr_tail(),
+            "stderr_tail": list(session.stderr_tail),
             "request_timeout_seconds": self.request_timeout_seconds,
             "initialize_timeout_seconds": self.initialize_timeout_seconds,
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
         }
 
-    def _write_request(self, request_id: int, method: str, params: dict[str, Any] | None) -> None:
-        if self.process is None or self.process.stdin is None:
+    def _writable(self, session: ProviderSession | None) -> ProviderSession:
+        """The session a transport write targets; the caller holds the client lock. A write for a
+        session that is no longer current is refused, so nothing reaches a replacement provider."""
+        session = session or self._session
+        if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
+        if self._session is not session:
+            raise LSPTransportError("LSP session was replaced")
+        return session
+
+    def _write_request(
+        self,
+        request_id: int,
+        method: str,
+        params: dict[str, Any] | None,
+        session: ProviderSession | None = None,
+    ) -> None:
+        session = self._writable(session)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
         if params is not None:
             payload["params"] = params
@@ -833,11 +917,12 @@ class ExternalLSPClient:
             request_id=request_id,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_notification(self, method: str, params: dict[str, Any] | None) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_notification(
+        self, method: str, params: dict[str, Any] | None, session: ProviderSession | None = None
+    ) -> None:
+        session = self._writable(session)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
@@ -846,25 +931,29 @@ class ExternalLSPClient:
             method=method,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(
-            self.process.stdin,
-            payload,
-        )
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_response(self, request_id: object, result: Any) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_response(
+        self, request_id: object, result: Any, session: ProviderSession | None = None
+    ) -> None:
+        session = self._writable(session)
         payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
         self._record_debug_trace(
             event="send_response",
             request_id=request_id,
             detail={"result_type": type(result).__name__},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_error_response(self, request_id: object, *, code: int, message: str) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_error_response(
+        self,
+        request_id: object,
+        *,
+        code: int,
+        message: str,
+        session: ProviderSession | None = None,
+    ) -> None:
+        session = self._writable(session)
         payload = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -875,7 +964,7 @@ class ExternalLSPClient:
             request_id=request_id,
             detail={"code": code, "message": message},
         )
-        _write_message(self.process.stdin, payload)
+        _write_message(bounded_stdin(self, session), payload)
 
     def _configuration_response(self, params: object) -> list[Any]:
         settings = _configuration_settings(self.language).get("settings", {})
@@ -892,9 +981,14 @@ class ExternalLSPClient:
             for item in items
         ]
 
-    def _handle_server_request(self, message: dict[str, Any]) -> bool:
+    def _handle_server_request(
+        self, message: dict[str, Any], session: ProviderSession | None = None
+    ) -> bool:
         if "id" not in message or "method" not in message:
             return False
+        session = session or self._session
+        if self._session is not session:
+            return True  # stale reader: its provider was replaced; answer nothing
         method = str(message.get("method"))
         request_id = message.get("id")
         try:
@@ -913,42 +1007,48 @@ class ExternalLSPClient:
                 # begun token counts as active: the create->begin window must not read as "ready".
                 token = (message.get("params") or {}).get("token")
                 if token is not None:
-                    self._note_progress_started(str(token))
+                    self._note_progress_started(str(token), session)
                 result = None
             else:
-                with self._lock:
+                with client_lock(self, follow_deadline=False):
                     self._write_error_response(
                         request_id,
                         code=-32601,
                         message=f"Unsupported LSP server request: {method}",
+                        session=session,
                     )
                 return True
-            with self._lock:
-                self._write_response(request_id, result)
+            with client_lock(self, follow_deadline=False):
+                self._write_response(request_id, result, session=session)
             return True
         except Exception as exc:
             try:
-                with self._lock:
-                    self._write_error_response(request_id, code=-32603, message=str(exc))
+                with client_lock(self, follow_deadline=False):
+                    self._write_error_response(
+                        request_id, code=-32603, message=str(exc), session=session
+                    )
             except Exception:
                 pass
             return True
 
-    def _reader_loop(self) -> None:
+    def _reader_loop(self, session: ProviderSession | None = None) -> None:
         # audit B12: route each response to the per-id slot registered by request().
-        process = self.process
+        session = session or self._session
+        process = session.process
         if process is None or process.stdout is None:
-            self._broadcast_closed()
+            self._broadcast_closed(session)
             return
         try:
             while True:
                 message = _read_message(process.stdout)
                 if message is None:
                     self._record_debug_trace(event="process_stdout_closed")
-                    self._broadcast_closed()
+                    self._broadcast_closed(session)
                     self._terminate_after_reader_exit(process)
                     return
-                if self._handle_server_request(message):
+                if self._session is not session:
+                    return  # stale reader: its process was replaced
+                if self._handle_server_request(message, session):
                     continue
                 self._record_debug_trace(
                     event="receive_message",
@@ -959,11 +1059,11 @@ class ExternalLSPClient:
                         "has_error": "error" in message,
                     },
                 )
-                self._dispatch_response(message)
+                self._dispatch_response(message, session)
         except Exception as exc:
             self.last_error = str(exc)
             self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
-            self._broadcast_closed()
+            self._broadcast_closed(session)
             self._terminate_after_reader_exit(process)
 
     def _terminate_after_reader_exit(self, process: Any) -> None:
@@ -978,96 +1078,12 @@ class ExternalLSPClient:
             except OSError:
                 pass  # already gone (or not ours to signal); stop() owns the escalation
 
-    def _note_progress_started(self, token: str) -> None:
-        with self._lock:
-            self._active_progress_tokens.add(token)
-            self._progress_activity_seen = True
-            self._index_ready = False  # a new indexing round re-invalidates readiness
-
-    def _note_progress_ended(self, token: str) -> None:
-        with self._lock:
-            self._active_progress_tokens.discard(token)
-            self._progress_activity_seen = True
-            self._progress_end_count += 1
-
-    def _handle_progress_notification(self, message: dict[str, Any]) -> bool:
-        """P0-2: consume $/progress begin/report/end (previously dropped as id-less noise)."""
-        if message.get("method") != "$/progress":
-            return False
-        params = message.get("params") or {}
-        token = params.get("token")
-        kind = (params.get("value") or {}).get("kind")
-        if token is None:
-            return True
-        if kind == "begin":
-            self._note_progress_started(str(token))
-        elif kind == "end":
-            self._note_progress_ended(str(token))
-        # "report" -> in-flight; activity noted at begin. Nothing to do.
-        return True
-
-    def wait_until_ready(
-        self,
-        deadline_monotonic: float,
-        *,
-        probe: Any = None,
-        no_progress_grace_seconds: float = 1.0,
-        poll_interval_seconds: float = 0.05,
-    ) -> bool:
-        """Block until the server's workspace index has settled, or the deadline passes.
-
-        Ready means: at least one workDoneProgress round has ENDED and none is active. For
-        servers that never advertise progress, ``probe`` (a callable returning the current
-        workspace/symbol hit count) is polled until stable across two consecutive polls; with
-        no probe, we proceed best-effort after ``no_progress_grace_seconds`` of silence rather
-        than burning the whole deadline. Returns False ONLY on a genuine timeout while indexing
-        is demonstrably still in flight — and a timeout must NEVER arm
-        ``disabled_until_monotonic`` (that cooldown is reserved for real initialize failures;
-        arming it here would blackball the language for 30s of daemon uptime after one slow
-        first index).
-        """
-        started_monotonic = time.monotonic()
-        previous_probe_value: Any = None
-        while True:
-            with self._lock:
-                if self._index_ready:
-                    return True
-                active = bool(self._active_progress_tokens)
-                ended = self._progress_end_count > 0
-                activity = self._progress_activity_seen
-            if ended and not active:
-                with self._lock:
-                    self._index_ready = True
-                return True
-            now = time.monotonic()
-            if now >= deadline_monotonic:
-                return False
-            if not activity:
-                # No progress signal from this server (some don't emit workDoneProgress).
-                if probe is not None:
-                    try:
-                        current_probe_value = probe()
-                    except Exception:
-                        current_probe_value = None
-                    if (
-                        current_probe_value is not None
-                        and current_probe_value == previous_probe_value
-                    ):
-                        # Two consecutive stable polls -> index settled.
-                        with self._lock:
-                            self._index_ready = True
-                        return True
-                    previous_probe_value = current_probe_value
-                elif now - started_monotonic >= max(no_progress_grace_seconds, 0.0):
-                    # Silent server, no probe: best-effort after the grace window.
-                    with self._lock:
-                        self._index_ready = True
-                    return True
-            time.sleep(max(0.0, min(poll_interval_seconds, deadline_monotonic - now)))
-
-    def _dispatch_response(self, message: dict[str, Any]) -> None:
+    def _dispatch_response(
+        self, message: dict[str, Any], session: ProviderSession | None = None
+    ) -> None:
         """Route a response message to the correct per-id slot (audit B12)."""
-        if self._handle_progress_notification(message):
+        session = session or self._session
+        if self._handle_progress_notification(message, session):
             return
         raw_id = message.get("id")
         if raw_id is None:
@@ -1077,34 +1093,38 @@ class ExternalLSPClient:
             request_id = int(raw_id)
         except (TypeError, ValueError):
             return
-        with self._lock:
-            slot = self._pending_requests.get(request_id)
+        with client_lock(self, follow_deadline=False):
+            if self._session is not session:
+                return  # stale reader: never touch a replacement's slots or orphan buffer
+            slot = session.pending_requests.get(request_id)
             if slot is None:
                 # The response arrived before request() registered its slot (e.g. a
                 # pre-queued response). Buffer it so request() can claim it on
                 # registration; bound the buffer so late/duplicate responses for
                 # ids that will never be requested cannot leak.
-                self._orphan_responses[request_id] = message
-                while len(self._orphan_responses) > _MAX_ORPHAN_RESPONSES:
-                    self._orphan_responses.pop(next(iter(self._orphan_responses)))
+                session.orphan_responses[request_id] = message
+                while len(session.orphan_responses) > _MAX_ORPHAN_RESPONSES:
+                    session.orphan_responses.pop(next(iter(session.orphan_responses)))
                 return
         try:
             slot.put_nowait(message)
         except queue.Full:
             pass  # duplicate response; ignore
 
-    def _broadcast_closed(self) -> None:
+    def _broadcast_closed(self, session: ProviderSession | None = None) -> None:
         """Signal all pending request slots that the process has closed (audit B12)."""
-        with self._lock:
-            pending = list(self._pending_requests.values())
+        session = session or self._session
+        with client_lock(self, follow_deadline=False):
+            pending = list(session.pending_requests.values())
         for slot in pending:
             try:
                 slot.put_nowait(_CLOSED_SENTINEL)
             except queue.Full:
                 pass
 
-    def _stderr_loop(self) -> None:
-        process = self.process
+    def _stderr_loop(self, session: ProviderSession | None = None) -> None:
+        session = session or self._session
+        process = session.process
         if process is None or process.stderr is None:
             return
         try:
@@ -1114,9 +1134,9 @@ class ExternalLSPClient:
                 text = line.rstrip("\r\n")
                 if not text:
                     continue
-                self._stderr_tail.append(text)
-                if len(self._stderr_tail) > 50:
-                    del self._stderr_tail[:-50]
+                session.stderr_tail.append(text)
+                if len(session.stderr_tail) > 50:
+                    del session.stderr_tail[:-50]
                 self._record_debug_trace(event="stderr", detail={"message": text})
         except Exception as exc:
             self._record_debug_trace(event="stderr_error", detail={"message": str(exc)})
@@ -1177,6 +1197,7 @@ class ExternalLSPProviderManager:
         workspace_root: Path,
         verify_health: bool = False,
         probe_timeout_seconds: float | None = None,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         key = (language.lower(), str(workspace_root.resolve()))
         current = self._cached_client(key)
@@ -1187,6 +1208,7 @@ class ExternalLSPProviderManager:
                     language=language,
                     workspace_root=workspace_root,
                     probe_timeout_seconds=probe_timeout_seconds,
+                    deadline_monotonic=deadline_monotonic,
                 )
             status = current.status()
             status["available"] = True
@@ -1246,6 +1268,7 @@ class ExternalLSPProviderManager:
                 workspace_root=workspace_root,
                 probe_timeout_seconds=probe_request_timeout,
                 stop_after_probe=True,
+                deadline_monotonic=deadline_monotonic,
             )
         return _attach_lsp_proof_fields({
             "language": language.lower(),
@@ -1320,6 +1343,7 @@ class ExternalLSPProviderManager:
         workspace_root: Path,
         probe_timeout_seconds: float | None,
         stop_after_probe: bool = False,
+        deadline_monotonic: float | None = None,
     ) -> dict[str, Any]:
         timeout = (
             max(float(probe_timeout_seconds), 0.0)
@@ -1332,11 +1356,16 @@ class ExternalLSPProviderManager:
         original_initialize_timeout = client.initialize_timeout_seconds
         probe_succeeded = False
         probe_error: Exception | None = None
-        client.request_timeout_seconds = timeout
-        client.initialize_timeout_seconds = timeout
+        stopped = False
+        budget = ProbeBudget(deadline_monotonic, timeout, _DEFAULT_LSP_STOP_TIMEOUT_SECONDS)
+        client.stop_grace_seconds = budget.cleanup_seconds
+        probe_session: ProviderSession | None = None
+        budget.start_watchdog(client)
         try:
             try:
+                budget.arm(client)
                 client.start()
+                probe_session = client.current_session()
                 phase = "did_open"
                 client.ensure_document(
                     uri=probe["uri"],
@@ -1344,7 +1373,9 @@ class ExternalLSPProviderManager:
                     language_id=probe["language_id"],
                 )
                 phase = "document_symbol"
-                result = client.request(
+                budget.arm(client)
+                result = proof_request(
+                    client,
                     "textDocument/documentSymbol",
                     {"textDocument": {"uri": probe["uri"]}},
                 )
@@ -1352,32 +1383,49 @@ class ExternalLSPProviderManager:
                     raise LSPTransportError(
                         "semantic documentSymbol probe returned no matching symbol"
                     )
+                held = probe_session  # success needs THIS session's recorded proof, read under
+                verdict = budget.settle(  # the same lock as the watchdog decision
+                    lambda: held.lsp_provider_response and client.current_session() is held
+                )
+                if verdict == "deadline":
+                    raise TimeoutError("doctor LSP probe deadline exceeded")
+                if verdict == "no_proof":
+                    raise LSPTransportError("the provider response was not recorded as proof")
                 probe_succeeded = True
-                client.lsp_provider_response = True
             except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
-                probe_error = exc
-                client.lsp_provider_response = False
+                probe_error = budget.explain(exc)
+                if probe_session is not None:
+                    probe_session.lsp_provider_response = False
             finally:
+                budget.cancel()
                 client.request_timeout_seconds = original_request_timeout
                 client.initialize_timeout_seconds = original_initialize_timeout
-            status = client.status()
+            status = client.status()  # snapshot BEFORE teardown clears the client's state
             status["available"] = True
             status["health_check"] = "semantic-document-symbol"
             status["health_phase"] = phase
             status["probe_timeout_seconds"] = timeout
             status["probe_document_uri"] = probe["uri"]
             status["probe_symbol"] = probe["symbol"]
-            if probe_succeeded:
+            if stop_after_probe:  # finish teardown FIRST so its failures reach the report
+                client.stop()
+                stopped = True
+            teardown_error = client.teardown_error if stop_after_probe else None
+            if probe_succeeded and not teardown_error:
                 status["health_status"] = "ready"
             else:
-                status["health_status"] = "unhealthy"
+                unhealthy = "containment_unavailable" if client.containment_error else "unhealthy"
+                status["health_status"] = unhealthy
                 status["lsp_provider_response"] = False
-                if probe_error is not None:
-                    status["last_error"] = status.get("last_error") or str(probe_error)
+                if teardown_error:
+                    status["cleanup_error"] = teardown_error
+                reasons = [budget.reason(status.get("last_error"), probe_error), teardown_error]
+                status["last_error"] = "; ".join(str(r) for r in reasons if r) or None
             return _attach_lsp_proof_fields(status)
         finally:
-            if stop_after_probe:
-                client.stop()
+            if stop_after_probe and not stopped:
+                client.stop()  # honours client.stop_grace_seconds (set above under a deadline)
+            client.stop_grace_seconds = None
 
     def stop_all(self) -> None:
         clients = self._pop_all_clients()
@@ -1401,69 +1449,3 @@ def _command_source(command: list[str]) -> str:
     except OSError:
         return "path"
     return "managed"
-
-
-def _provider_health_status(status: dict[str, Any]) -> str:
-    if not status.get("available"):
-        return "missing"
-    if status.get("last_error"):
-        return "unhealthy"
-    if status.get("running") and (status.get("initialized") or status.get("capabilities")):
-        return "ready"
-    if status.get("running"):
-        return "running_unverified"
-    return "available_unverified"
-
-
-def _attach_lsp_proof_fields(status: dict[str, Any]) -> dict[str, Any]:
-    health_status = str(status.get("health_status", _provider_health_status(status)))
-    health_check = str(status.get("health_check", "not_run"))
-    status.setdefault("lsp_provider_response", False)
-    lsp_proof = (
-        bool(status.get("available"))
-        and health_status == "ready"
-        and status.get("lsp_provider_response") is True
-    )
-    status["health_status"] = health_status
-    status["health_check"] = health_check
-    status["lsp_proof"] = lsp_proof
-    if lsp_proof:
-        status.pop("not_lsp_proof_reason", None)
-        stderr_tail = [str(item) for item in status.get("stderr_tail", []) if str(item)]
-        provider_warnings = [
-            item
-            for item in stderr_tail
-            if "sre module mismatch" in item.lower()
-            or "_sre" in item.lower()
-            or "abi mismatch" in item.lower()
-        ]
-        other_stderr = [item for item in stderr_tail if item not in provider_warnings]
-        if provider_warnings:
-            status["provider_warnings"] = provider_warnings[-3:]
-            status["provider_warning_status"] = "non_current_diagnostic"
-            status["provider_warning_remediation"] = (
-                "Managed provider proof succeeded, but provider stderr previously reported a "
-                "Python runtime or stdlib mismatch. Re-run `tg lsp-setup` after clearing "
-                "inherited PYTHONHOME/PYTHONPATH or inspect `tg doctor --with-lsp --json`."
-            )
-            status["stderr_tail"] = []
-            status["stderr_tail_suppressed"] = True
-            if other_stderr:
-                status["provider_recent_stderr"] = other_stderr[-3:]
-        elif stderr_tail:
-            status["provider_recent_stderr"] = stderr_tail[-3:]
-            status["stderr_tail"] = []
-            status["stderr_tail_suppressed"] = True
-        return status
-    if not status.get("available"):
-        reason = "Provider binary is unavailable."
-    elif health_status == "available_unverified" and health_check == "not_run":
-        reason = "Provider binary is available but health was not verified."
-    elif health_status == "unhealthy":
-        reason = "Provider semantic health probe failed or timed out."
-    elif health_status == "ready" and status.get("lsp_provider_response") is not True:
-        reason = "Provider initialized, but semantic health has not been verified in this session."
-    else:
-        reason = "Provider has not completed a successful initialization probe."
-    status["not_lsp_proof_reason"] = reason
-    return status

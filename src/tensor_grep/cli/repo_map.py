@@ -31,6 +31,7 @@ from tensor_grep.cli import (
 )
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
+from tensor_grep.cli.lsp_session import proof_request as _proof_request
 from tensor_grep.cli.repo_map_cache import (
     _MTIME_CACHE_CLEAR_REGISTRY as _MTIME_CACHE_CLEAR_REGISTRY,
 )
@@ -11573,7 +11574,7 @@ def _external_workspace_symbols(
                 current_client: Any = client,
                 query: str = symbol,
             ) -> Any:
-                return current_client.request("workspace/symbol", {"query": query})
+                return _proof_request(current_client, "workspace/symbol", {"query": query})
 
             result = _run_lsp_with_operation_budget(
                 client,
@@ -11611,7 +11612,6 @@ def _external_workspace_symbols(
                 "lsp_provider_response": True,
                 "lsp_operation": "workspace/symbol",
             })
-            client.lsp_provider_response = True
     matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, int, int, str]] = set()
@@ -11795,7 +11795,8 @@ def _external_definitions(
                 line: int = definition_line,
                 character: int = definition_character,
             ) -> Any:
-                return current_client.request(
+                return _proof_request(
+                    current_client,
                     "textDocument/definition",
                     {
                         "textDocument": {"uri": uri},
@@ -11834,7 +11835,6 @@ def _external_definitions(
                 "lsp_operation": "textDocument/definition",
                 "lsp_resolution_basis": "native-definition-anchor",
             })
-            client.lsp_provider_response = True
 
     return _dedupe_lsp_definition_rows(definitions) or workspace_matches
 
@@ -11902,7 +11902,8 @@ def _external_references(
                 line: int = definition_line,
                 character: int = definition_character,
             ) -> Any:
-                return current_client.request(
+                return _proof_request(
+                    current_client,
                     "textDocument/references",
                     {
                         "textDocument": {"uri": uri},
@@ -11955,7 +11956,6 @@ def _external_references(
                 "lsp_proof": True,
                 "lsp_operation": "textDocument/references",
             })
-            client.lsp_provider_response = True
     references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
     deduped: list[dict[str, Any]] = []
     seen_refs: set[tuple[str, int, int]] = set()
