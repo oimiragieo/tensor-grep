@@ -17,6 +17,7 @@ import pytest
 from typer.testing import CliRunner
 
 import tensor_grep.cli.diff_impact as di
+import tensor_grep.cli.diff_impact_git as dig
 from tensor_grep.cli.diff_impact import (
     build_diff_blast_radius,
     map_changed_lines_to_symbols,
@@ -1016,3 +1017,114 @@ def test_staged_deleted_binary_and_submodule_paths_keep_their_handling(
     assert data["binary_files"] == ["data.bin"]
     assert data["submodule_changed_files"] == ["vendor/lib"]
     assert data["not_analyzed_paths"] == []
+
+
+def _many_files_repo(tmp_path: Path, count: int = 50) -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    for i in range(count):
+        (repo / f"mod_{i:02d}.py").write_text(f"def f_{i}():\n    return 1\n", encoding="utf-8")
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "base")
+    for i in range(count):
+        (repo / f"mod_{i:02d}.py").write_text(f"def f_{i}():\n    return 2\n", encoding="utf-8")
+    return repo
+
+
+def _count_content_spawns(monkeypatch: Any) -> list[list[str]]:
+    """Every git process spawned to read blobs or hash files, via either spawn seam."""
+    spawned: list[list[str]] = []
+    real_run = di.run_subprocess
+
+    def run_spy(cmd: Any, **kwargs: Any) -> Any:
+        if any(a in ("cat-file", "hash-object") for a in cmd):
+            spawned.append(list(cmd))
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(di, "run_subprocess", run_spy)
+    real_spawn = getattr(dig, "spawn_git", None)
+    if real_spawn is not None:
+
+        def spawn_spy(root: Path, args: list[str]) -> Any:
+            spawned.append(list(args))
+            return real_spawn(root, args)
+
+        monkeypatch.setattr(dig, "spawn_git", spawn_spy)
+    return spawned
+
+
+def test_staged_fifty_file_diff_uses_one_batch_process_not_per_file_spawns(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _many_files_repo(tmp_path)
+    _git(repo, "add", "--all")
+    spawned = _count_content_spawns(monkeypatch)
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert len(payload["changed_symbols"]) == 50
+    assert payload["not_analyzed_paths"] == []
+    assert len(spawned) <= 2, spawned[:3]  # PINNED: one `cat-file --batch`, never ~100
+    assert any("--batch" in a for a in spawned)
+
+
+def test_unstaged_fifty_file_diff_uses_one_hash_process_not_per_file_spawns(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _many_files_repo(tmp_path)
+    spawned = _count_content_spawns(monkeypatch)
+    payload = build_diff_blast_radius(root=repo)
+    assert len(payload["changed_symbols"]) == 50
+    assert payload["not_analyzed_paths"] == []
+    assert len(spawned) <= 2, spawned[:3]  # PINNED: one `hash-object --stdin-paths`, never ~50
+    assert any("--stdin-paths" in a for a in spawned)
+
+
+def test_batch_session_is_closed_after_the_run(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = _many_files_repo(tmp_path, count=3)
+    _git(repo, "add", "--all")
+    procs: list[Any] = []
+    real_spawn = dig.spawn_git
+
+    def tracking(root: Path, args: list[str]) -> Any:
+        proc = real_spawn(root, args)
+        procs.append(proc)
+        return proc
+
+    monkeypatch.setattr(dig, "spawn_git", tracking)
+    build_diff_blast_radius(root=repo, staged=True)
+    assert len(procs) == 1
+    assert procs[0].poll() is not None  # terminated, not left running
+
+
+def test_over_cap_blob_is_skipped_without_poisoning_the_batch(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def small():\n    return 1\n", "small.py")
+    _commit_app(repo, b"def big():\n    return 1\n" + b"# pad\n" * 50, "big.py")
+    (repo / "small.py").write_bytes(b"def small():\n    return 2\n")
+    (repo / "big.py").write_bytes(b"def big():\n    return 2\n" + b"# pad\n" * 50)
+    _git(repo, "add", "--all")
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "100")
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["not_analyzed_paths"] == [{"path": "big.py", "reason": "over_cap"}]
+    assert [s["name"] for s in payload["changed_symbols"]] == ["small"]  # still served after it
+
+
+def test_cat_file_batch_reply_shapes_map_to_blob_unavailable(monkeypatch: Any) -> None:
+    import io
+
+    cases = [
+        b"",  # process closed its output
+        b"abc1234 missing\n",
+        b"abc1234 ambiguous\n",
+        b"garbage header\n",
+        b"abc1234 tree 4\nxxxx\n",  # not a blob
+        b"abc1234 blob 10\nshort\n",  # truncated content
+    ]
+    for reply in cases:
+        with pytest.raises(di._BlobUnavailable):
+            di._parse_cat_file_reply(io.BytesIO(reply), 1000)
+    with pytest.raises(di._BlobOverCap):
+        di._parse_cat_file_reply(io.BytesIO(b"abc1234 blob 5000\n" + b"x" * 5000 + b"\n"), 1000)
+    assert di._parse_cat_file_reply(io.BytesIO(b"abc1234 blob 3\nabc\n"), 1000) == b"abc"

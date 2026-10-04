@@ -8,6 +8,7 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 from __future__ import annotations
 
 import ast
+import contextlib
 import hashlib
 import json
 import os
@@ -18,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import diff_impact_git as _dig
 from tensor_grep.cli import lang_registry, repo_map
 from tensor_grep.cli.repo_map import (
     _deadline_monotonic_from_seconds,
@@ -31,6 +33,17 @@ from tensor_grep.cli.subprocess_policy import (
     run_subprocess,
 )
 
+# Re-exported under the historical private names (tests and callers patch them here).
+_ACTIVE_SESSIONS = _dig._ACTIVE_SESSIONS
+_OID_RE = _dig.OID_RE
+_BlobOverCap = _dig.BlobOverCap
+_BlobUnavailable = _dig.BlobUnavailable
+_c_quote_path = _dig.c_quote_path
+_content_sessions = _dig.content_sessions
+_git_env = _dig.git_env
+_parse_cat_file_reply = _dig.parse_cat_file_reply
+_parse_hash_reply = _dig.parse_hash_reply
+
 # Digit groups are bounded: an unbounded \d+ let a 5000-digit hunk number reach int() and raise
 # a bare ValueError that bypassed every DiffError handler (and the CLI exit-2 path).
 _DIFF_HUNK_RE = re.compile(
@@ -39,39 +52,6 @@ _DIFF_HUNK_RE = re.compile(
 )
 _GITLINK_INDEX_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ 160000$")
 _C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
-
-
-# Environment variables that change `git diff` output or which repository/index git reads. The
-# argv pins the config twin of these; this is the environment twin. GIT_DIR/GIT_WORK_TREE/
-# GIT_INDEX_FILE are stripped unconditionally (decided: the cwd plus `rev-parse --show-toplevel`
-# decide the repo, so an inherited redirect, e.g. from a hook, cannot point us at another one).
-_GIT_ENV_STRIP = frozenset({
-    "GIT_DIFF_OPTS",
-    "GIT_EXTERNAL_DIFF",
-    "GIT_PAGER",
-    "PAGER",
-    "GIT_CONFIG_PARAMETERS",
-    "GIT_CONFIG_COUNT",
-    "GIT_DIFF_PATH_COUNTER",
-    "GIT_DIFF_PATH_TOTAL",
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_INDEX_FILE",
-    "GIT_COMMON_DIR",
-})
-_GIT_ENV_STRIP_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
-
-
-def _git_env() -> dict[str, str]:
-    """A copy of os.environ safe for a read-only `git diff` (stable, non-localized output)."""
-    env = {
-        k: v
-        for k, v in os.environ.items()
-        if k.upper() not in _GIT_ENV_STRIP and not k.upper().startswith(_GIT_ENV_STRIP_PREFIXES)
-    }
-    env["GIT_TERMINAL_PROMPT"] = "0"
-    env["LC_ALL"] = "C"
-    return env
 
 
 class DiffError(RuntimeError):
@@ -737,66 +717,32 @@ def _extraction_errors() -> tuple[type[BaseException], ...]:
     )
 
 
-class _BlobUnavailable(Exception):
-    """The content a diff record describes could not be read or did not match its oid."""
-
-
-class _BlobOverCap(Exception):
-    """The blob exceeds the per-file parse byte cap the extractors themselves enforce."""
-
-
-_OID_RE = re.compile(r"^[0-9a-f]{4,64}$")
-
-
-def _git_cmd(*args: str) -> list[str]:
-    return ["git", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false", *args]
-
-
-def _run_git_for_content(
-    root: Path, args: list[str], *, text: bool
-) -> subprocess.CompletedProcess[Any]:
-    try:
-        return run_subprocess(
-            _git_cmd(*args),
-            cwd=str(root),
-            stdout=-1,
-            stderr=-1,
-            text=text,
-            env=_git_env(),
-            timeout_seconds=configured_git_timeout_seconds(),
-        )
-    except (OSError, ValueError, subprocess.TimeoutExpired, TimeoutError) as exc:
-        raise _BlobUnavailable(str(exc)) from exc
-
-
 def _read_blob(root: Path, oid: str, max_bytes: int) -> bytes:
-    """Read the blob `oid` with git (hardened argv/env). Size is checked BEFORE the read."""
+    """Read the blob `oid` through the run's single `git cat-file --batch` process."""
     if not _OID_RE.match(oid):  # hex only, so it can never be an option (CWE-88)
         raise _BlobUnavailable(f"not a plausible object id: {oid!r}")
-    size_proc = _run_git_for_content(root, ["cat-file", "-s", oid], text=True)
-    try:
-        size = int((size_proc.stdout or "").strip())
-    except ValueError as exc:
-        raise _BlobUnavailable(f"cannot size blob {oid}") from exc
-    if size_proc.returncode != 0:
-        raise _BlobUnavailable(f"git cat-file -s {oid} failed")
-    if size > max_bytes:
-        raise _BlobOverCap(f"blob {oid} is {size} bytes (cap {max_bytes})")
-    proc = _run_git_for_content(root, ["cat-file", "blob", oid], text=False)
-    if proc.returncode != 0:
-        raise _BlobUnavailable(f"git cat-file blob {oid} failed")
-    data: bytes = proc.stdout or b""
-    return data
+    active = _ACTIVE_SESSIONS.get()
+    if active is not None:
+        data: bytes = active.cat().exchange(oid, lambda out: _parse_cat_file_reply(out, max_bytes))
+        return data
+    with _content_sessions(root) as one_shot:  # direct caller outside a mapping run
+        data = one_shot.cat().exchange(oid, lambda out: _parse_cat_file_reply(out, max_bytes))
+        return data
 
 
 def _worktree_hash(root: Path, rel_path: Path) -> str | None:
     """The object id git would give the working-tree file (filters/EOL conversion applied)."""
+    request = _c_quote_path(str(rel_path))
     try:
-        proc = _run_git_for_content(root, ["hash-object", "--", str(rel_path)], text=True)
+        active = _ACTIVE_SESSIONS.get()
+        if active is not None:
+            result: str | None = active.hasher().exchange(request, _parse_hash_reply)
+            return result
+        with _content_sessions(root) as one_shot:
+            result = one_shot.hasher().exchange(request, _parse_hash_reply)
+            return result
     except _BlobUnavailable:
         return None
-    out = (proc.stdout or "").strip()
-    return out if proc.returncode == 0 and _OID_RE.match(out) else None
 
 
 def _blob_hash_matches(data: bytes, oid_prefix: str) -> bool:
@@ -998,25 +944,27 @@ def map_changed_lines_to_symbols(
     deleted: set[Path] = set()
     failed: dict[Path, str] = {}
 
-    for rel_path, line_ranges in changed_files_with_lines.items():
-        outcome, reason, symbols = _map_one_path(
-            rel_path,
-            line_ranges,
-            root,
-            deleted_paths,
-            submodule_paths,
-            binary_paths,
-            new_oids.get(rel_path),
-            content_mode,
-        )
-        if outcome == "analyzed":
-            analyzed.add(rel_path)
-            changed_symbols.extend(symbols)
-        elif outcome == "deleted":
-            deleted.add(rel_path)
-        elif outcome == "not_analyzed" and reason:
-            failed[rel_path] = reason
-        # any other outcome leaves the path unaccounted for, which the invariant below rejects
+    sessions = _content_sessions(root) if content_mode != "unverified" else contextlib.nullcontext()
+    with sessions:
+        for rel_path, line_ranges in changed_files_with_lines.items():
+            outcome, reason, symbols = _map_one_path(
+                rel_path,
+                line_ranges,
+                root,
+                deleted_paths,
+                submodule_paths,
+                binary_paths,
+                new_oids.get(rel_path),
+                content_mode,
+            )
+            if outcome == "analyzed":
+                analyzed.add(rel_path)
+                changed_symbols.extend(symbols)
+            elif outcome == "deleted":
+                deleted.add(rel_path)
+            elif outcome == "not_analyzed" and reason:
+                failed[rel_path] = reason
+            # any other outcome leaves the path unaccounted for, which the invariant below rejects
 
     accounted = len(analyzed) + len(deleted) + len(failed)
     expected = set(changed_files_with_lines)
