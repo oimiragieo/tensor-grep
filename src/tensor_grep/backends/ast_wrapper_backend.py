@@ -210,10 +210,11 @@ class AstGrepWrapperBackend(ComputeBackend):
 
     def pattern_warning(self, pattern: str, config: SearchConfig | None = None) -> str | None:
         """Return a malformed-pattern message for ``pattern``, or None. Prefers the signal already
-        captured from the real search invocation (any pattern, multiline included); otherwise a
-        single-line pattern is probed with an empty-stdin run, where ast-grep's 'Pattern contains
-        an ERROR node' warning fires only when the pattern itself is malformed, never for a valid
-        pattern that merely matches nothing. Never raises."""
+        captured from the real search invocation (any pattern, multiline included); otherwise the
+        pattern (single- or multi-line) is probed with an empty-stdin run, INDEPENDENT of whether
+        any file was scanned: ast-grep's 'Pattern contains an ERROR node' warning fires only when
+        the pattern itself is malformed, never for a valid pattern that merely matches nothing.
+        Never raises."""
         recorded = self._pattern_problems.get(pattern)
         if recorded:
             return recorded
@@ -221,7 +222,7 @@ class AstGrepWrapperBackend(ComputeBackend):
             lang = normalize_ast_language(config.lang) if config and config.lang else None
         except ValueError:
             return None
-        if not lang or "\n" in pattern or "\r" in pattern or not self.is_available():
+        if not lang or not self.is_available():
             return None
         cmd = [self._get_binary_name(), "run", "--json", "-p", pattern, "--lang", lang, "--stdin"]
         try:

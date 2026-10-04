@@ -1805,3 +1805,92 @@ def test_normal_single_submatch_window_is_unchanged():
     assert "NEEDLE" in row["text"]
     assert row["text_truncated"] is True
     assert row["text"].startswith("a" * 100 + "NEEDLE")
+
+
+# --- Codex round 9: linear-time window anchor; pattern validity independent of scanned files ---
+
+
+def test_window_anchor_over_128k_whitespace_submatches_is_linear_and_keeps_the_match(
+    monkeypatch,
+):
+    import time
+
+    from tensor_grep.cli import mcp_search_bounds
+
+    calls = {"encode": 0}
+    real_utf8 = getattr(mcp_search_bounds, "_utf8", lambda text: text.encode("utf-8"))
+
+    def counting_utf8(text):
+        calls["encode"] += 1
+        return real_utf8(text)
+
+    monkeypatch.setattr(mcp_search_bounds, "_utf8", counting_utf8, raising=False)
+    spaces = 128_000
+    line = " " * spaces + "NEEDLE" + "b" * 500
+    subs = (
+        *({"match": {"text": " "}, "start": i, "end": i + 1} for i in range(spaces)),
+        {"match": {"text": "NEEDLE"}, "start": spaces, "end": spaces + 6},
+    )
+    hit = MatchLine(line_number=1, text=line, file="a.txt", submatches=subs)
+    started = time.perf_counter()
+    row = mcp_search_bounds._bounded_match_row("a.txt", hit)
+    elapsed = time.perf_counter() - started
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    assert calls["encode"] <= 1  # the line is encoded at most once, not once per submatch
+    assert elapsed < 1.0, elapsed  # was ~3.4 s when quadratic; generous bound for a loaded CI box
+
+
+def test_window_anchor_normal_cases_are_unchanged_by_the_bounded_scan():
+    from tensor_grep.cli import mcp_search_bounds
+
+    line = "a" * 1500 + "NEEDLE" + "b" * 300
+    hit = MatchLine(
+        line_number=1,
+        text=line,
+        file="a.txt",
+        submatches=({"match": {"text": "NEEDLE"}, "start": 1500, "end": 1506},),
+    )
+    row = mcp_search_bounds._bounded_match_row("a.txt", hit)
+    assert row["text"].startswith("a" * 100 + "NEEDLE")
+    # a later real submatch beyond the examined prefix still anchors via the visible-char fallback
+    ws = " " * 3000 + "NEEDLE" + "b" * 500
+    many = (*({"start": i, "end": i + 1} for i in range(3000)), {"start": 3000, "end": 3006})
+    row2 = mcp_search_bounds._bounded_match_row(
+        "a.txt", MatchLine(line_number=1, text=ws, file="a.txt", submatches=many)
+    )
+    assert "NEEDLE" in row2["text"]
+
+
+def _real_ast_search_empty_dir(tmp_path, monkeypatch, pattern):
+    import pytest
+
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.cli import mcp_server
+
+    if not AstGrepWrapperBackend().is_available():
+        pytest.skip("ast-grep binary not installed")
+    monkeypatch.chdir(tmp_path)
+    return json.loads(mcp_server.tg_ast_search(pattern, "python", ".", structured_json=True))
+
+
+def test_malformed_multiline_pattern_on_an_empty_directory_is_invalid_input(tmp_path, monkeypatch):
+    out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "def (\n    pass")
+    assert out["error"]["code"] == "invalid_input"
+    assert "ERROR node" in out["error"]["message"]
+
+
+def test_valid_multiline_pattern_on_an_empty_directory_is_a_clean_empty_result(
+    tmp_path, monkeypatch
+):
+    out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "def $A():\n    pass")
+    assert "error" not in out
+    assert out["total_matches"] == 0
+    assert out["result_incomplete"] is False
+
+
+def test_malformed_single_line_pattern_on_an_empty_directory_still_invalid_input(
+    tmp_path, monkeypatch
+):
+    out = _real_ast_search_empty_dir(tmp_path, monkeypatch, "def (")
+    assert out["error"]["code"] == "invalid_input"

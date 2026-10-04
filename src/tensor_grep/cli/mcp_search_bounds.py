@@ -9,6 +9,7 @@ can import them at module level without a cycle.
 from __future__ import annotations
 
 import functools
+import itertools
 import json
 from typing import Any
 
@@ -21,25 +22,35 @@ _MCP_OUTPUT_TRUNCATED_NOTICE = (
 )
 
 
-def _byte_to_char(raw: str, byte_offset: int) -> int:
-    return len(raw.encode("utf-8")[:byte_offset].decode("utf-8", "ignore"))
+_MCP_MAX_SUBMATCHES_EXAMINED = 1000
+
+
+def _utf8(text: str) -> bytes:
+    return text.encode("utf-8")
 
 
 def _anchor_char(raw: str, match: Any) -> int | None:
     """Char index (in ``raw``) to centre the window on, or None to use the stripped head.
 
-    Preference, falling through until one is usable: (1) the first submatch whose span holds a
-    non-whitespace character (ripgrep reports BYTE offsets into the raw line; a regex such as
-    ` +|NEEDLE` can report a whitespace-only first submatch that would blank the window); (2) the
-    first non-whitespace character of the line; (3) None -> the stripped head."""
-    for sub in getattr(match, "submatches", None) or ():
-        try:
-            start = _byte_to_char(raw, int(sub.get("start", 0)))
-            end = _byte_to_char(raw, int(sub.get("end", sub.get("start", 0))))
-        except (TypeError, ValueError, AttributeError):
-            continue
-        if raw[start:end].strip():
-            return start
+    Preference, falling through until one is usable: (1) the first submatch whose BYTE span holds
+    a non-whitespace byte (ripgrep reports byte offsets; a regex such as ` +|NEEDLE` can report a
+    whitespace-only first submatch that would blank the window); (2) the first non-whitespace
+    character of the line; (3) None -> the stripped head.
+
+    Linear work: the line is encoded ONCE, spans are tested with ``bytes.strip`` (no decoding),
+    at most ``_MCP_MAX_SUBMATCHES_EXAMINED`` submatches are examined (a 128k-submatch line must not
+    cost 128k encodes), and only the CHOSEN offset is converted to a character index."""
+    subs = getattr(match, "submatches", None)
+    if subs:
+        data = _utf8(raw)
+        for sub in itertools.islice(subs, _MCP_MAX_SUBMATCHES_EXAMINED):
+            try:
+                start = int(sub.get("start", 0))
+                end = int(sub.get("end", start))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if data[start:end].strip():
+                return len(data[:start].decode("utf-8", "ignore"))
     first_visible = len(raw) - len(raw.lstrip())
     return first_visible if first_visible < len(raw) else None
 

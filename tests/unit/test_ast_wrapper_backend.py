@@ -995,7 +995,6 @@ def test_pattern_warning_never_raises_on_backend_error_or_unsupported_language()
     ):
         assert backend.pattern_warning("def (", config) is None
     assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="not-a-lang")) is None
-    assert backend.pattern_warning("a\nb", config) is None
 
 
 def _multiline_backend_run(pattern, *, returncode, stderr, stdout="[]"):
@@ -1042,11 +1041,27 @@ def test_valid_multiline_pattern_records_no_problem():
     assert warning is None
 
 
-def test_single_line_pattern_without_a_recorded_problem_is_not_probed_when_multiline():
+def test_multiline_pattern_without_a_recorded_problem_is_probed_like_a_single_line_one():
+    """Changed deliberately (round 9): a multiline pattern used to skip validation, so a malformed
+    one on an empty directory (no file scanned, nothing recorded) came back as a clean empty
+    result. It is now probed with the same empty-stdin run."""
     backend = AstGrepWrapperBackend()
+    warned = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    clean = subprocess.CompletedProcess(args=[], returncode=1, stdout="[]", stderr="")
+    config = SearchConfig(ast=True, lang="python")
     with (
         patch.object(backend, "is_available", return_value=True),
-        patch.object(backend, "_run_ast_grep_command") as run,
+        patch.object(backend, "_run_ast_grep_command", return_value=warned) as run,
     ):
-        assert backend.pattern_warning("a\nb", SearchConfig(ast=True, lang="python")) is None
-        run.assert_not_called()
+        assert "ERROR node" in backend.pattern_warning("def (\n    pass", config)
+        assert run.call_count == 1
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=clean),
+    ):
+        assert backend.pattern_warning("def $A():\n    pass", config) is None
