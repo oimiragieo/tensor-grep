@@ -29,6 +29,7 @@ from tensor_grep.cli import (
     lang_php,
     lang_registry,
 )
+from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.cli.lsp_session import proof_request as _proof_request
@@ -401,9 +402,6 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
-from tensor_grep.cli.repo_map_shell_inert import MANUAL_QUOTING_NOTE as _MANUAL_QUOTING_NOTE
-from tensor_grep.cli.repo_map_shell_inert import is_shell_inert_filter as _is_shell_inert_filter
-from tensor_grep.cli.repo_map_shell_inert import is_shell_inert_path as _is_shell_inert_path
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -7092,38 +7090,11 @@ def _best_test_function_candidate(
     primary_symbol_name: str | None,
     query: str | None,
 ) -> str | None:
-    candidates = [name for name in candidates if _is_shell_inert_filter(name)]
-    if not candidates:
-        return None
-    if len(candidates) == 1:
-        return candidates[0]
-
-    symbol_terms = _candidate_terms(primary_symbol_name)
-    query_terms = _candidate_terms(query)
-    best_name: str | None = None
-    best_score = 0
-    for candidate in candidates:
-        haystack = candidate.lower()
-        score = 0
-        if symbol_terms:
-            if all(term in haystack for term in symbol_terms):
-                score += 6
-            score += sum(2 for term in symbol_terms if term in haystack)
-        if query_terms:
-            score += sum(1 for term in query_terms if term in haystack)
-        if score > 0 and candidate.startswith("test_"):
-            score += 1
-        if score > best_score or (
-            score == best_score
-            and score > 0
-            and best_name is not None
-            and len(candidate) < len(best_name)
-        ):
-            best_name = candidate
-            best_score = score
-    if best_score <= 0:
-        return None
-    return best_name
+    return _inert.best_test_function_candidate(
+        candidates,
+        symbol_terms=_candidate_terms(primary_symbol_name),
+        query_terms=_candidate_terms(query),
+    )
 
 
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
@@ -7275,7 +7246,7 @@ def _cargo_test_command_for_primary_file(
     except (OSError, RuntimeError):
         pass
     relative_manifest = _relative_validation_path(manifest, repo_root)
-    if not _is_shell_inert_path(relative_manifest):
+    if not _inert.is_shell_inert_path(relative_manifest):
         return None
     return f"cargo test --manifest-path {relative_manifest}"
 
@@ -7456,15 +7427,8 @@ def _suggested_validation_command_for_primary_file(
         argv = ["vitest", "run", relative_test]
     else:
         argv = ["jest", relative_test]
-    if not _is_shell_inert_path(relative_test):
-        # Unknown paste shell: never interpolate an unsafe path into a command string.
-        return {
-            "argv": argv,
-            "command_omitted": _MANUAL_QUOTING_NOTE,
-            "target_test": relative_test,
-            "basis": "test-neighbor-heuristic",
-            "verified": False,
-        }
+    if not _inert.is_shell_inert_path(relative_test):  # unknown paste shell: fail closed
+        return _inert.unsafe_neighbour_entry(argv, relative_test)
     command = " ".join(argv)
 
     return {
@@ -7695,10 +7659,10 @@ def _raw_validation_plan_for_tests(
         suffix = path.suffix.lower()
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
-        if not _is_shell_inert_path(relative_path):
+        if not _inert.is_shell_inert_path(relative_path):
             unsafe_validation_paths.append(relative_path)
-            include_python_fallback = include_python_fallback or suffix == ".py"
-            include_rust_fallback = include_rust_fallback or suffix in _RUST_SUFFIXES
+            include_python_fallback |= suffix == ".py"
+            include_rust_fallback |= suffix in _RUST_SUFFIXES
             continue
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
@@ -7911,13 +7875,7 @@ def _raw_validation_plan_for_tests(
             detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
         )
 
-    if unsafe_validation_paths:
-        # Fail closed: the unsafe path is disclosed RAW, in a field, never inside a command.
-        for step in plan:
-            if step.get("scope") == "repo":
-                step["omitted_unsafe_paths"] = sorted(set(unsafe_validation_paths))
-                step["omitted_note"] = _MANUAL_QUOTING_NOTE
-                break
+    _inert.disclose_unsafe_paths(plan, unsafe_validation_paths)
     return plan
 
 
@@ -10708,23 +10666,18 @@ def _ensure_primary_source_in_sources(
     if not primary_file or not primary_symbol_name:
         return sources
     primary_span = edit_plan_seed.get("primary_span") or primary_symbol
-    primary_index = next(
-        (
-            index
-            for index, source in enumerate(sources)
-            if _source_includes_primary_symbol(
-                source,
-                primary_file=primary_file,
-                primary_symbol_name=primary_symbol_name,
-                primary_span=primary_span,
-            )
-        ),
-        None,
-    )
-    if primary_index is not None:
-        if primary_index == 0:
-            return sources
-        return [sources[primary_index], *sources[:primary_index], *sources[primary_index + 1 :]]
+    hits = [
+        i
+        for i, source in enumerate(sources)
+        if _source_includes_primary_symbol(
+            source,
+            primary_file=primary_file,
+            primary_symbol_name=primary_symbol_name,
+            primary_span=primary_span,
+        )
+    ]
+    if hits:  # present: move it to the front so a greedy source budget cannot starve it
+        return [sources[hits[0]], *sources[: hits[0]], *sources[hits[0] + 1 :]]
 
     primary_source: dict[str, Any] | None = None
     primary_source_payload = _self.build_symbol_source_from_map(
