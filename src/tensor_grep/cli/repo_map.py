@@ -401,6 +401,9 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
+from tensor_grep.cli.repo_map_shell_inert import MANUAL_QUOTING_NOTE as _MANUAL_QUOTING_NOTE
+from tensor_grep.cli.repo_map_shell_inert import is_shell_inert_filter as _is_shell_inert_filter
+from tensor_grep.cli.repo_map_shell_inert import is_shell_inert_path as _is_shell_inert_path
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
@@ -2414,7 +2417,7 @@ def _symbol_navigation_provenance_for_path(path: str) -> str:
     )
 
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^(?:[^\W\d]|\$)[\w$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 _FALLBACK_SOURCE_SUFFIXES = {
     ".adoc",
     ".cfg",
@@ -7070,7 +7073,7 @@ def _relative_validation_path(path: Path, repo_root: Path) -> str:
 def _shell_safe_arg(value: str) -> str:
     if not value:
         return '""'
-    if any(char.isspace() or char in "\"';&|<>()*?[]" for char in value):
+    if any(char.isspace() for char in value) or '"' in value:
         escaped = value.replace('"', '\\"')
         return f'"{escaped}"'
     return value
@@ -7089,6 +7092,7 @@ def _best_test_function_candidate(
     primary_symbol_name: str | None,
     query: str | None,
 ) -> str | None:
+    candidates = [name for name in candidates if _is_shell_inert_filter(name)]
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -7271,6 +7275,8 @@ def _cargo_test_command_for_primary_file(
     except (OSError, RuntimeError):
         pass
     relative_manifest = _relative_validation_path(manifest, repo_root)
+    if not _is_shell_inert_path(relative_manifest):
+        return None
     return f"cargo test --manifest-path {relative_manifest}"
 
 
@@ -7444,13 +7450,22 @@ def _suggested_validation_command_for_primary_file(
         return None
     relative_test = _relative_validation_path(test_path, root)
     suffix = source_path.suffix.lower()
-    quoted_test = _shell_safe_arg(relative_test)
     if suffix == ".py":
-        command = f"pytest {quoted_test}"
+        argv = ["pytest", relative_test]
     elif suffix in _TS_SUFFIXES:
-        command = f"vitest run {quoted_test}"
+        argv = ["vitest", "run", relative_test]
     else:
-        command = f"jest {quoted_test}"
+        argv = ["jest", relative_test]
+    if not _is_shell_inert_path(relative_test):
+        # Unknown paste shell: never interpolate an unsafe path into a command string.
+        return {
+            "argv": argv,
+            "command_omitted": _MANUAL_QUOTING_NOTE,
+            "target_test": relative_test,
+            "basis": "test-neighbor-heuristic",
+            "verified": False,
+        }
+    command = " ".join(argv)
 
     return {
         "command": command,
@@ -7646,6 +7661,7 @@ def _raw_validation_plan_for_tests(
     requested_javascript_runners: list[str] = []
     include_python_fallback = False
     include_rust_fallback = False
+    unsafe_validation_paths: list[str] = []
 
     def remember_runner(runner: str) -> None:
         if runner not in requested_javascript_runners:
@@ -7679,7 +7695,11 @@ def _raw_validation_plan_for_tests(
         suffix = path.suffix.lower()
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
-        command_path = _shell_safe_arg(relative_path)
+        if not _is_shell_inert_path(relative_path):
+            unsafe_validation_paths.append(relative_path)
+            include_python_fallback = include_python_fallback or suffix == ".py"
+            include_rust_fallback = include_rust_fallback or suffix in _RUST_SUFFIXES
+            continue
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
         )
@@ -7694,7 +7714,7 @@ def _raw_validation_plan_for_tests(
                 )
                 if test_filter:
                     add_step(
-                        f"uv run pytest {command_path} -k {test_filter} -q",
+                        f"uv run pytest {relative_path} -k {test_filter} -q",
                         scope="symbol",
                         runner="pytest",
                         target=relative_path,
@@ -7702,7 +7722,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
             add_step(
-                f"uv run pytest {command_path} -q",
+                f"uv run pytest {relative_path} -q",
                 scope="file",
                 runner="pytest",
                 target=relative_path,
@@ -7726,7 +7746,7 @@ def _raw_validation_plan_for_tests(
                 remember_runner(runner)
                 if test_filter:
                     add_step(
-                        _javascript_runner_specific_command(runner, command_path, test_filter),
+                        _javascript_runner_specific_command(runner, relative_path, test_filter),
                         scope="symbol",
                         runner=runner,
                         target=relative_path,
@@ -7734,7 +7754,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
                 add_step(
-                    _javascript_runner_file_command(runner, command_path),
+                    _javascript_runner_file_command(runner, relative_path),
                     scope="file",
                     runner=runner,
                     target=relative_path,
@@ -7762,7 +7782,7 @@ def _raw_validation_plan_for_tests(
             )
             if script_uses_node_test or primary_file_uses_node_test:
                 add_step(
-                    _javascript_node_test_file_command(command_path),
+                    _javascript_node_test_file_command(relative_path),
                     scope="file",
                     runner="node:test",
                     target=relative_path,
@@ -7773,7 +7793,7 @@ def _raw_validation_plan_for_tests(
                 remember_runner(runner)
                 if test_filter:
                     add_step(
-                        _javascript_runner_specific_command(runner, command_path, test_filter),
+                        _javascript_runner_specific_command(runner, relative_path, test_filter),
                         scope="symbol",
                         runner=runner,
                         target=relative_path,
@@ -7781,7 +7801,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
                 add_step(
-                    _javascript_runner_file_command(runner, command_path),
+                    _javascript_runner_file_command(runner, relative_path),
                     scope="file",
                     runner=runner,
                     target=relative_path,
@@ -7891,6 +7911,13 @@ def _raw_validation_plan_for_tests(
             detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
         )
 
+    if unsafe_validation_paths:
+        # Fail closed: the unsafe path is disclosed RAW, in a field, never inside a command.
+        for step in plan:
+            if step.get("scope") == "repo":
+                step["omitted_unsafe_paths"] = sorted(set(unsafe_validation_paths))
+                step["omitted_note"] = _MANUAL_QUOTING_NOTE
+                break
     return plan
 
 

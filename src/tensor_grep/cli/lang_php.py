@@ -198,7 +198,7 @@ from tensor_grep.cli import lang_registry
 # ``lang_go.py``'s own copies of the same three -- if any of them ever change there.
 # ---------------------------------------------------------------------------
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^(?:[^\W\d]|\$)[\w$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 
 
 def _is_clean_symbol_name(name: str) -> bool:

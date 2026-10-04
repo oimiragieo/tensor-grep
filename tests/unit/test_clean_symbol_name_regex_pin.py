@@ -37,40 +37,77 @@ def test_every_copy_is_discovered_and_byte_identical() -> None:
     assert len(patterns) == 1
 
 
+# Explicit escapes so precomposed / decomposed / non-ASCII fixtures cannot look identical.
+_VALID = [
+    "gr\u00f6\u00dfe",
+    "Caf\u00e9",
+    "cafe\u0301",  # e + U+0301 COMBINING ACUTE ACCENT: Mn is XID_Continue
+    "\u2118x",  # U+2118 SCRIPT CAPITAL P: Other_ID_Start, category Sm (not \w)
+    "x\u2160",  # U+2160 ROMAN NUMERAL ONE: Nl is XID_Continue
+    "\u540d\u524d",
+    "_x",
+    "$x",
+    "a$b",
+    "a1",
+]
+_INVALID = [
+    "a\u00b2",  # U+00B2 SUPERSCRIPT TWO: \w matches it, but it is not XID_Continue
+    "\u00b2abc",
+    "\u00bdabc",
+    "\u0663abc",
+    "1abc",
+    "",
+    "a-b",
+    "a b",
+    "a.b",
+    "a::b",
+]
+
+
 @pytest.mark.parametrize("name", _MODULES)
-@pytest.mark.parametrize("ident", ["größe", "Café", "名前", "_x", "$x", "a1"])
-def test_unicode_and_ascii_identifiers_accepted(name: str, ident: str) -> None:
+@pytest.mark.parametrize("ident", _VALID)
+def test_regex_prefilter_accepts_valid_identifiers(name: str, ident: str) -> None:
     assert _mod(name)._CLEAN_SYMBOL_NAME_RE.match(ident) is not None
 
 
 @pytest.mark.parametrize("name", _MODULES)
-@pytest.mark.parametrize("ident", ["1abc", "a-b", "a b", "", "a.b", "a::b", "٣abc"])
-def test_non_identifiers_rejected(name: str, ident: str) -> None:
+@pytest.mark.parametrize("ident", ["", "a-b", "a b", "a.b", "a::b", "a\tb"])
+def test_regex_prefilter_rejects_structural_non_names(name: str, ident: str) -> None:
     assert _mod(name)._CLEAN_SYMBOL_NAME_RE.match(ident) is None
 
 
-@pytest.mark.parametrize("ident", ["²abc", "½abc", "٣abc", "1abc", ""])
-def test_shared_predicate_rejects_non_xid_start(ident: str) -> None:
-    # council wave-2a r4: `[^\W\d]` admits No-category numerics (², ½); the predicate does not
-    from tensor_grep.cli import lang_registry
-
-    assert lang_registry.is_clean_symbol_name(ident) is False
-
-
-@pytest.mark.parametrize("ident", ["größe", "Café", "名前", "_x", "$x", "a1"])
-def test_shared_predicate_accepts_identifiers(ident: str) -> None:
+@pytest.mark.parametrize("ident", _VALID)
+def test_shared_predicate_accepts_valid_identifiers(ident: str) -> None:
     from tensor_grep.cli import lang_registry
 
     assert lang_registry.is_clean_symbol_name(ident) is True
 
 
+@pytest.mark.parametrize("ident", _INVALID)
+def test_shared_predicate_rejects_invalid_identifiers(ident: str) -> None:
+    from tensor_grep.cli import lang_registry
+
+    assert lang_registry.is_clean_symbol_name(ident) is False
+
+
+@pytest.mark.parametrize("ident", [*_VALID, *_INVALID])
+def test_shared_predicate_agrees_with_str_isidentifier(ident: str) -> None:
+    # `$` is the one language-allowed extra character; everything else is Python's XID rule.
+    from tensor_grep.cli import lang_registry
+
+    expected = bool(ident) and ident.replace("$", "_").isidentifier()
+    assert lang_registry.is_clean_symbol_name(ident) is expected
+
+
 @pytest.mark.parametrize("name", _MODULES)
-@pytest.mark.parametrize("ident", ["²abc", "½abc"])
-def test_every_module_wrapper_rejects_non_xid_start(name: str, ident: str) -> None:
-    # every per-module `_is_clean_symbol_name` must route through the shared predicate
-    if not hasattr(_mod(name), "_is_clean_symbol_name"):
+@pytest.mark.parametrize("ident", [*_VALID, *_INVALID])
+def test_every_module_wrapper_matches_the_shared_predicate(name: str, ident: str) -> None:
+    from tensor_grep.cli import lang_registry
+
+    module = _mod(name)
+    if not hasattr(module, "_is_clean_symbol_name"):
         pytest.skip("module has no wrapper")
-    assert _mod(name)._is_clean_symbol_name(ident) is False
+    assert module._is_clean_symbol_name(ident) is lang_registry.is_clean_symbol_name(ident)
 
 
 @pytest.mark.parametrize(
@@ -94,33 +131,34 @@ def test_non_ascii_symbol_defs_resolve(
     assert len(payload["definitions"]) == 1
 
 
-def test_regex_fallback_does_not_truncate_non_ascii_function_names(tmp_path: Path) -> None:
-    target = tmp_path / "a.js"
-    target.write_text("function café() {\n  return 1;\n}\n", encoding="utf-8")
+def _fallback_names(tmp_path: Path, source: str, suffix: str = ".js") -> list[str]:
+    target = tmp_path / f"fixture{suffix}"
+    target.write_text(source, encoding="utf-8")
     _imports, symbols = repo_map._regex_imports_and_symbols(target)
-    assert [s["name"] for s in symbols] == ["café"]
+    return [s["name"] for s in symbols]
 
 
-def test_regex_fallback_rejects_non_xid_start_and_decomposed_names(tmp_path: Path) -> None:
-    # explicit escapes so the precomposed / decomposed fixtures cannot look identical (r13)
-    bad_numeric = tmp_path / "b.js"
-    bad_numeric.write_text("function ²abc() {}\n", encoding="utf-8")
-    _i, symbols = repo_map._regex_imports_and_symbols(bad_numeric)
-    assert symbols == []
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        ("function caf\u00e9() {}\n", ["caf\u00e9"]),  # precomposed U+00E9
+        ("function cafe\u0301() {}\n", ["cafe\u0301"]),  # decomposed: whole name, never `cafe`
+        ("function \u2118x() {}\n", ["\u2118x"]),
+        ("function x\u2160() {}\n", ["x\u2160"]),
+        ("class \u540d\u524d {}\n", ["\u540d\u524d"]),
+        ("function a\u00b2() {}\n", []),  # invalid continuation: no symbol, not `a`
+        ("function \u00b2abc() {}\n", []),
+        ("function foo/*c*/() {}\n", ["foo"]),
+        ("function foo_bar1() {}\n", ["foo_bar1"]),  # ASCII control: unchanged
+        ("const handler = async () => 1;\n", ["handler"]),
+    ],
+)
+def test_regex_fallback_extracts_exact_whole_names(
+    tmp_path: Path, source: str, expected: list[str]
+) -> None:
+    assert _fallback_names(tmp_path, source) == expected
 
-    decomposed = tmp_path / "c.js"  # `e` + U+0301 COMBINING ACUTE ACCENT
-    decomposed.write_text("function café() {}\n", encoding="utf-8")
-    _i, symbols = repo_map._regex_imports_and_symbols(decomposed)
-    assert symbols == []  # never the truncated `cafe`
 
-    precomposed = tmp_path / "d.js"  # U+00E9
-    precomposed.write_text("function café() {}\n", encoding="utf-8")
-    _i, symbols = repo_map._regex_imports_and_symbols(precomposed)
-    assert [s["name"] for s in symbols] == ["café"]
-
-
-def test_regex_fallback_comment_glued_to_name_still_yields_the_name(tmp_path: Path) -> None:
-    target = tmp_path / "e.js"
-    target.write_text("function foo/*c*/() {}\n", encoding="utf-8")
-    _i, symbols = repo_map._regex_imports_and_symbols(target)
-    assert [s["name"] for s in symbols] == ["foo"]
+def test_regex_fallback_rust_whole_names_and_delimiters(tmp_path: Path) -> None:
+    source = "pub fn caf\u00e9<T>(x: T) {}\nstruct Foo;\nfn a\u00b2() {}\n"
+    assert _fallback_names(tmp_path, source, ".rs") == ["caf\u00e9", "Foo"]

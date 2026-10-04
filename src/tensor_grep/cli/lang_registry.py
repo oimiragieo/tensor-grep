@@ -37,17 +37,19 @@ from typing import Any
 # predicate every copy's ``_is_clean_symbol_name`` wrapper delegates to.
 # ---------------------------------------------------------------------------
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^(?:[^\W\d]|\$)[\w$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 
 
 def is_clean_symbol_name(name: str) -> bool:
-    """The ONE identifier-shape predicate every ``_is_clean_symbol_name`` wrapper delegates to.
+    """The ONE identifier verdict every ``_is_clean_symbol_name`` wrapper delegates to.
 
-    The regex accepts any word-character identifier (Unicode letters/digits, ``_``, ``$``) but lets
-    No-category numerics (``²``, ``½``) start a name; ``str.isidentifier`` implements the Unicode
-    XID_Start rule, so those are rejected here while ``é`` / ``名`` / ``_`` are accepted.
+    The regex copies are a structural prefilter only (no whitespace / ASCII punctuation). The
+    verdict validates the WHOLE name with ``str.isidentifier`` (Unicode XID_Start/XID_Continue),
+    after mapping ``$`` -- the one extra character these languages allow -- to ``_``. So a
+    decomposed ``cafe`` + U+0301, ``\u2118x`` and ``x\u2160`` are accepted, while
+    ``a\u00b2`` (a No-category character the word-character class admits) is rejected.
     """
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name)) and (name[0] == "$" or name[0].isidentifier())
+    return bool(_CLEAN_SYMBOL_NAME_RE.match(name)) and name.replace("$", "_").isidentifier()
 
 
 def _is_clean_symbol_name(name: str) -> bool:

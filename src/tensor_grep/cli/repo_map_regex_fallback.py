@@ -41,11 +41,13 @@ else:
     _self = _RepoMapProxy()
 
 
-# A WHOLE identifier token: a leading non-digit word char followed by everything up to a
-# delimiter (council wave-2a r5/r8). Capturing only `[^\W\d]\w*` would cut `caf\u00e9` / a
-# decomposed name at the first non-`\w` char and emit a truncated symbol; the full token is then
-# vetted by `lang_registry.is_clean_symbol_name` (`_clean_name_match`), which rejects it whole.
-_IDENT = r"""[^\W\d][^\s()\[\]{}<>;,=:.'"/#]*"""
+# A WHOLE identifier token: any non-digit, non-`$` start followed by everything up to a
+# delimiter (council wave-2a r5/r8). Valid names can begin with a symbol-category
+# Other_ID_Start character or carry combining marks, which `[^\W\d]\w*` would cut or
+# miss, so the token is captured wide and then vetted WHOLE by
+# `lang_registry.is_clean_symbol_name` (`_clean_name_match`): a name is emitted exactly as
+# written or not at all, never truncated.
+_IDENT = r"""[^\s\d$()\[\]{}<>;,=:.'"/#][^\s()\[\]{}<>;,=:.'"/#]*"""
 
 
 def _clean_name_match(match: re.Match[str] | None) -> re.Match[str] | None:
