@@ -239,13 +239,57 @@ def _read_exact_or_eof(handle: BinaryIO, n: int, ledger: _ByteLedger) -> bytes:
     return b"".join(parts)
 
 
-def _close_fd(fd: int) -> None:
-    """Close a directory / file descriptor; a failing `close()` (EIO) releases the descriptor
-    anyway and must NOT abort the remaining cleanup (which would leak every other fd)."""
+def _close_fd(fd: int) -> bool:
+    """Close a directory / file descriptor; returns False if `close()` failed (EIO).
+
+    A failing close releases the descriptor anyway and must NOT abort the remaining cleanup
+    (which would leak every other fd), but it must not be forgotten either: the caller records
+    it so the population can never come back complete (`_raise_if_cleanup_failed`)."""
     try:
         os.close(fd)
     except OSError:
-        pass
+        return False
+    return True
+
+
+def _raise_if_cleanup_failed(failures: int) -> None:
+    """Raise `cleanup_failed` for a cleanup that lost a close, unless a REAL error is already
+    unwinding (that error is kept: the population is incomplete either way). Used at the end of
+    a `finally`: normal completion and `GeneratorExit` (an explicit `close()`) both surface it."""
+    if not failures:
+        return
+    inflight = sys.exc_info()[1]
+    if inflight is None or isinstance(inflight, GeneratorExit):
+        raise _PopulationWalkError("cleanup_failed")
+
+
+def _close_held(held: Any) -> None:
+    """Close one held handle in normal flow; a failure is `cleanup_failed`, never silent."""
+    try:
+        held.close()
+    except OSError as exc:
+        raise _PopulationWalkError("cleanup_failed") from exc
+
+
+def _drain_fd_stack(stack: list[Any]) -> int:
+    """Close EVERY owned fd, whatever individual closes do; returns the number that failed."""
+    failures = 0
+    while stack:
+        if not _close_fd(stack.pop().fd):
+            failures += 1
+    return failures
+
+
+def _drain_held_stack(stack: list[Any]) -> int:
+    """Close EVERY owned held handle, whatever individual closes do; returns failures."""
+    failures = 0
+    while stack:
+        frame = stack.pop()
+        try:
+            frame.held.close()
+        except OSError:
+            failures += 1
+    return failures
 
 
 def _open_regular_no_follow(
@@ -481,7 +525,8 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
         listing = _listing(frame.fd)  # may raise (onerror): the stack already owns frame.fd
         if listing is None:
             stack.pop()  # `frame` is the top: closed here, exactly once, and no longer owned
-            _close_fd(frame.fd)
+            if not _close_fd(frame.fd):
+                raise _PopulationWalkError("cleanup_failed")
             return
         dirs, files = listing
         st = os.fstat(frame.fd)
@@ -510,7 +555,8 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
             frame = stack[-1]
             if not frame.pending:
                 stack.pop()
-                _close_fd(frame.fd)
+                if not _close_fd(frame.fd):
+                    raise _PopulationWalkError("cleanup_failed")
                 continue
             name = frame.pending.pop()
             child = os.path.join(frame.path, name)
@@ -522,8 +568,7 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
     except OSError as exc:  # fstat / any other call inside the walk: never an escaping OSError
         raise _PopulationWalkError("unreadable_path") from exc
     finally:
-        while stack:
-            _close_fd(stack.pop().fd)
+        _raise_if_cleanup_failed(_drain_fd_stack(stack))
 
 
 def _os_open_dir(path: str, flags: int) -> int:
@@ -584,6 +629,11 @@ if sys.platform == "win32":
     _k32.CloseHandle.restype = wintypes.BOOL
     _INVALID_HANDLE = ctypes.c_void_p(-1).value
 
+    def _close_win_handle(handle: Any) -> None:
+        """`CloseHandle` returns FALSE on failure: that is an error, not a no-op."""
+        if not _k32.CloseHandle(handle):
+            raise OSError(ctypes.get_last_error(), "CloseHandle failed")
+
     def _hold_dir(path: str | Path) -> _DirHandle:
         """Hold `path` open WITHOUT FILE_SHARE_DELETE (it cannot be renamed, deleted or replaced
         while held); it must be a plain directory, not a reparse point (symlink / junction)."""
@@ -621,7 +671,7 @@ if sys.platform == "win32":
         except BaseException:
             _k32.CloseHandle(handle)
             raise
-        return _DirHandle(ident, True, lambda: _k32.CloseHandle(handle))
+        return _DirHandle(ident, True, lambda: _close_win_handle(handle))
 
 else:
 
@@ -678,7 +728,7 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
     def _enter(frame: _HeldFrame) -> Iterator[tuple[str, list[str], list[str], Any]]:
         listing = _listing(frame.path)  # may raise (onerror): the stack already owns the handle
         if listing is None:
-            stack.pop().held.close()  # popped and closed here, exactly once
+            _close_held(stack.pop().held)  # popped and closed here, exactly once
             return
         dirs, files = listing
         yield frame.path, dirs, files, frame.held
@@ -695,7 +745,7 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
         while stack:
             frame = stack[-1]
             if not frame.pending:
-                stack.pop().held.close()
+                _close_held(stack.pop().held)
                 continue
             child = os.path.join(frame.path, frame.pending.pop())
             try:
@@ -706,8 +756,7 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
     except OSError as exc:  # any other call inside the walk: never an escaping OSError
         raise _PopulationWalkError("unreadable_path") from exc
     finally:
-        while stack:
-            stack.pop().held.close()
+        _raise_if_cleanup_failed(_drain_held_stack(stack))
 
 
 def _default_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
@@ -763,7 +812,15 @@ def _authenticated_child(child: Path, child_st: os.stat_result) -> Iterator[None
                 raise _PopulationWalkError("unreadable_path")
             yield
         finally:
-            held.close()
+            close_failed = False
+            try:
+                held.close()
+            except OSError:
+                close_failed = True
+            # evaluated OUTSIDE the except block (inside it `sys.exc_info()` is the close error
+            # itself): keeps an in-flight walk error, otherwise surfaces `cleanup_failed`
+            if close_failed:
+                _raise_if_cleanup_failed(1)
         return
     flags = (
         os.O_RDONLY
@@ -787,7 +844,9 @@ def _authenticated_child(child: Path, child_st: os.stat_result) -> Iterator[None
         finally:
             fds.pop(key, None)
     finally:
-        _close_fd(fd)
+        closed_ok = _close_fd(fd)
+        if not closed_ok:
+            _raise_if_cleanup_failed(1)
 
 
 def _population_paths_impl(

@@ -114,7 +114,7 @@ def _walk_tracked_files_bounded(
     # A legitimate root alias (a checkout behind a symlink or junction, e.g. macOS /tmp and
     # /var) is resolved ONCE, explicitly; the RESOLVED root is authenticated by lstat and its
     # identity recorded. Every descendant stays no-follow.
-    root = Path(os.path.realpath(repo_root))
+    root = Path(repo_root)  # replaced by the resolved root INSIDE the boundary below
     root_identity: list[int] | None = None
     result: dict[str, str] = {}
     scanned_files = 0
@@ -126,7 +126,9 @@ def _walk_tracked_files_bounded(
 
     paths: Generator[tuple[str, str | None], None, None] | None = None
     handle_root_identity: list[int] = []
+    cleanup_failed = False
     try:
+        root = Path(os.path.realpath(repo_root))  # a filesystem call: inside the boundary
         try:
             root_st = _walk._lstat(root)
         except OSError as exc:
@@ -202,7 +204,12 @@ def _walk_tracked_files_bounded(
             incomplete_reason = "unreadable_path"
     finally:
         if paths is not None:
-            paths.close()  # release held directory handles / dirfds even on an early break
+            try:
+                paths.close()  # release held directory handles / dirfds even on an early break
+            except (_PopulationWalkError, OSError):
+                cleanup_failed = True  # a lost close can never come back as a complete population
+    if cleanup_failed and incomplete_reason is None:
+        incomplete_reason = "cleanup_failed"
     if handle_root_identity:
         root_identity = handle_root_identity  # recorded from the walked HANDLE, not a pathname
 
