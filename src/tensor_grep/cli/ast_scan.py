@@ -696,8 +696,57 @@ def _regex_rule_targets_file(rule_language: str, file_path: str) -> bool:
     return file_language == normalize_ast_language(rule_language, default=file_language)
 
 
+# Extensions ast-grep itself applies per language (its builtin language table). The native
+# symbol-graph registry behind `_target_language_for_path` knows only ~10 languages, so on its own
+# it silently omits unreadable Ruby/Kotlin/Swift/... files from the disclosure. Keyed by the
+# normalized names `normalize_ast_language` produces. Mirrors ast-grep, not tg's own parsers.
+_AST_GREP_LANGUAGE_SUFFIXES: dict[str, frozenset[str]] = {
+    "bash": frozenset({
+        ".bash",
+        ".bats",
+        ".cgi",
+        ".command",
+        ".env",
+        ".fcgi",
+        ".ksh",
+        ".sh",
+        ".tool",
+        ".zsh",
+    }),
+    "c": frozenset({".c", ".h"}),
+    "cpp": frozenset({".cc", ".hpp", ".cpp", ".c++", ".hh", ".cxx", ".cu", ".ino", ".h", ".hxx"}),
+    "csharp": frozenset({".cs"}),
+    "css": frozenset({".css"}),
+    "elixir": frozenset({".ex", ".exs"}),
+    "go": frozenset({".go"}),
+    "haskell": frozenset({".hs"}),
+    "hcl": frozenset({".hcl", ".tf", ".tfvars"}),
+    "html": frozenset({".html", ".htm", ".xhtml"}),
+    "java": frozenset({".java"}),
+    "javascript": frozenset({".js", ".mjs", ".cjs", ".jsx"}),
+    "json": frozenset({".json"}),
+    "kotlin": frozenset({".kt", ".ktm", ".kts"}),
+    "lua": frozenset({".lua"}),
+    "nix": frozenset({".nix"}),
+    "php": frozenset({".php"}),
+    "python": frozenset({".py", ".py3", ".pyi", ".bzl"}),
+    "ruby": frozenset({".rb", ".rbw", ".gemspec"}),
+    "rust": frozenset({".rs"}),
+    "scala": frozenset({".scala", ".sc", ".sbt"}),
+    "solidity": frozenset({".sol"}),
+    "swift": frozenset({".swift"}),
+    "tsx": frozenset({".tsx"}),
+    "typescript": frozenset({".ts", ".cts", ".mts"}),
+    "yaml": frozenset({".yml", ".yaml"}),
+}
+
+
 def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> list[str]:
-    """Files an AST rule would scan that are not valid UTF-8 (ast-grep skips them silently)."""
+    """Files an AST rule would scan that are not valid UTF-8 (ast-grep skips them silently).
+
+    "Would scan" is "could this rule's language apply to this file": the ast-grep extension table
+    OR the native symbol-graph classification, not just the latter.
+    """
     import codecs
 
     from tensor_grep.cli.repo_map import _target_language_for_path
@@ -705,9 +754,15 @@ def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> l
     wanted = set(ast_languages)
     if "tsx" in wanted:
         wanted.add("typescript")  # _target_language_for_path maps .tsx -> "typescript"
+    wanted_suffixes: set[str] = set()
+    for language in ast_languages:
+        wanted_suffixes.update(_AST_GREP_LANGUAGE_SUFFIXES.get(language, ()))
     bad: list[str] = []
     for current_file in files:
-        if _target_language_for_path(current_file) not in wanted:
+        if (
+            _target_language_for_path(current_file) not in wanted
+            and Path(current_file).suffix.lower() not in wanted_suffixes
+        ):
             continue
         decoder = codecs.getincrementaldecoder("utf-8")()
         try:

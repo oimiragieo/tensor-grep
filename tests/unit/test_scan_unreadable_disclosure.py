@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 # `engine: "regex"` is the discriminator at main.py:6459 that routes a rule to the regex leg.
 # The builtin packs (auth-safe etc.) are all AST metavar patterns and never reach it -- an
 # earlier draft of this test used auth-safe and exercised NOTHING, which is why the rule below
@@ -255,3 +257,48 @@ def test_same_language_native_then_wrapper_still_discloses(tmp_path, monkeypatch
         rule_backends=[("python", _NativeBackend()), ("python", AstGrepWrapperBackend())],
     )
     assert any("lat.py" in s for s in payload["unreadable_paths"]["sample"])
+
+
+@pytest.mark.parametrize(
+    ("language", "name", "data"),
+    [
+        ("ruby", "bad.rb", b"# caf\xe9\nputs(1)\n"),
+        ("ruby", "bad.gemspec", b"# caf\xe9\nputs(1)\n"),
+        ("kotlin", "bad.kt", b"// caf\xe9\nfun f() {}\n"),
+        ("kotlin", "bad.kts", b"// caf\xe9\nfun f() {}\n"),
+        ("swift", "bad.swift", b"// caf\xe9\nlet x = 1\n"),
+        ("scala", "bad.scala", b"// caf\xe9\nobject A\n"),
+        ("lua", "bad.lua", b"-- caf\xe9\nprint(1)\n"),
+        ("bash", "bad.sh", b"# caf\xe9\necho 1\n"),
+        ("elixir", "bad.ex", b"# caf\xe9\nIO.puts(1)\n"),
+        ("haskell", "bad.hs", b"-- caf\xe9\nmain = print 1\n"),
+        ("css", "bad.css", b"/* caf\xe9 */\na {}\n"),
+        ("html", "bad.html", b"<!-- caf\xe9 --><p></p>\n"),
+        ("yaml", "bad.yml", b"# caf\xe9\na: 1\n"),
+        ("json", "bad.json", b'{"a": "caf\xe9"}\n'),
+        ("solidity", "bad.sol", b"// caf\xe9\ncontract A {}\n"),
+        ("hcl", "bad.tf", b"# caf\xe9\na = 1\n"),
+        ("nix", "bad.nix", b"# caf\xe9\n{}\n"),
+    ],
+)
+def test_scan_discloses_non_utf8_file_for_wrapper_only_languages(
+    tmp_path, monkeypatch, language, name, data
+):
+    # Codex audit: `_target_language_for_path` knows only the symbol-graph languages, so an
+    # unreadable Ruby/Kotlin/... file was silently omitted and the rule read `clear`.
+    (tmp_path / name).write_bytes(data)
+    payload = _ast_scan(tmp_path, monkeypatch, language=language)
+    assert payload["partial"] is True and payload["partial_reason"] == "unreadable_path"
+    assert any(name in s for s in payload["unreadable_paths"]["sample"])
+
+
+def test_non_utf8_ruby_file_under_a_python_only_rule_is_not_flagged(tmp_path, monkeypatch):
+    (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "bad.rb").write_bytes(b"# caf\xe9\nputs(1)\n")
+    (tmp_path / "bad.kt").write_bytes(b"// caf\xe9\n")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch, language="python")
+
+
+def test_non_utf8_kotlin_file_under_a_ruby_rule_is_not_flagged(tmp_path, monkeypatch):
+    (tmp_path / "bad.kt").write_bytes(b"// caf\xe9\n")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch, language="ruby")
