@@ -604,6 +604,150 @@ def test_json_filename_with_colon_and_digits_is_parsed_via_nul(tmp_path):
     ]
 
 
+# ---------------------------------------------------------------------------------------------
+# Round 12: user flags that change rg's OUTPUT FORMAT must not break the internal record stream.
+# Differential: every conflicting user flag must give exactly the entries of the plain request.
+# ---------------------------------------------------------------------------------------------
+_FMT_CONTENT = b"a\nfoo bar foo\nb\n\nc\nfoo\nd\n"
+
+
+def _rendered_entries(path, pattern, **extra):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    cfg = SearchConfig(query_pattern=pattern, only_matching=True, context=1, **extra)
+    matches = RipgrepBackend().search(str(path), pattern, cfg).matches
+    return [(m.line_number, m.rg_kind, m.text) for m in matches]
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"field_match_separator": "@"},
+        {"field_context_separator": "@"},
+        {"field_match_separator": "9", "field_context_separator": "9"},
+        {"context_separator": "XX"},
+        {"stats": True},
+        {"heading": True},
+        {"color": "always"},
+        {"pretty": True},
+        {"line_number": False},
+        {"no_filename": True},
+        {"hyperlink_format": "default"},
+        {"path_separator": "/"},
+    ],
+    ids=lambda e: ",".join(f"{k}={v}" for k, v in e.items()),
+)
+def test_pinned_output_format_flags_override_conflicting_user_values(tmp_path, extra):
+    f = tmp_path / "a.txt"
+    f.write_bytes(_FMT_CONTENT)
+    baseline = _rendered_entries(f, "foo")
+    assert [kind for _, kind, _ in baseline].count("match") == 3
+    assert _rendered_entries(f, "foo", **extra) == baseline
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"text": True},
+        {"binary": True},
+        {"trim": True},
+        {"max_columns": 5},
+        {"max_columns_preview": True},
+        {"vimgrep": True},
+        {"passthru": True},
+        {"byte_offset": True},
+    ],
+    ids=lambda e: ",".join(e),
+)
+def test_flags_that_change_the_text_itself_are_refused_as_invalid_input(tmp_path, extra):
+    # these alter the TEXT (truncate, strip, re-print every line, prefix offsets) or admit NUL into
+    # it; the internal stream cannot honour them faithfully, so structured -o/-r refuses them
+    from tensor_grep.backends.base import InvalidInputError
+
+    f = tmp_path / "a.txt"
+    f.write_bytes(_FMT_CONTENT)
+    with pytest.raises(InvalidInputError) as info:
+        _rendered_entries(f, "foo", **extra)
+    assert info.value.error_kind == "invalid_input"
+
+
+def test_structured_refusal_is_a_structured_invalid_input_exit_2(tmp_path):
+    import json
+
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\n")
+    proc = _py_door_bytes("--json", "--vimgrep", "-o", "foo", str(f))
+    assert proc.returncode == 2, proc.stderr[-300:]
+    doc = json.loads(proc.stdout)
+    assert doc["error"] == "invalid_input" and "Traceback" not in proc.stderr.decode()
+
+
+def test_stats_flag_with_structured_o_exits_zero_and_tg_owns_the_statistics(tmp_path):
+    # round 12 repro: rg's --stats summary went to stdout and was parsed as a record (exit 2).
+    # Decision: rg's own summary is suppressed (--no-stats pinned); tg's `--stats` is tg's own.
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"  foo bar baz qux foo\nz\n")
+    proc, doc = _json_matches("--stats", "-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [m["text"] for m in doc["matches"]] == ["foo", "foo"]
+
+
+def test_field_match_separator_repro_exits_zero(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"  foo bar baz qux foo\nz\n")
+    proc, doc = _json_matches("--field-match-separator", "@", "-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["line_number"], m["column"]) for m in doc["matches"]] == [(1, 3), (1, 19)]
+
+
+@pytest.mark.parametrize(
+    "template, expected_text",
+    [
+        ("X\nY", "  X\nY bar baz qux X\nY"),
+        ("X\n\nY", "  X\n\nY bar baz qux X\n\nY"),
+    ],
+)
+def test_multiline_replacement_is_continuation_lines_of_one_record(
+    tmp_path, template, expected_text
+):
+    # round 12: `-r 'X\nY'` makes rg print `<path>NUL1:3:  X` / `Y bar ...` -- the second line
+    # has no NUL, so it continues the previous record
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"  foo bar baz qux foo\nz\n")
+    _cfg, matches = _tg_matches(f, "foo", template=template)
+    assert [(m.line_number, m.text) for m in matches] == [(1, expected_text)]
+    rg_plain = _rg_run("foo", f, "-r", template).stdout
+    assert rg_plain == expected_text.encode() + b"\n"  # rg's own plain text agrees
+
+
+def test_multiline_replacement_next_to_a_context_line(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"before\nfoo\nafter\n")
+    cfg_extra = {"context": 1}
+    _cfg, matches = _tg_matches(f, "foo", template="X\n\nY", **cfg_extra)
+    assert [(m.line_number, m.rg_kind, m.text) for m in matches] == [
+        (1, "context", "before"),
+        (2, "match", "X\n\nY"),
+        (3, "context", "after"),
+    ]
+
+
+def test_null_data_replacement_keeps_lf_content_and_nul_terminated_records(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"a\nfoo\x00b\x00foo\n\x00")
+    _cfg, matches = _tg_matches(f, "foo", template="X", null_data=True)
+    assert [(m.line_number, m.text) for m in matches] == [(1, "a\nX"), (3, "X\n")]
+
+
+def test_binary_file_notice_is_a_binary_notice_entry_not_a_parse_error(tmp_path):
+    f = tmp_path / "bin.txt"
+    f.write_bytes(b"foo\nbar\x00baz foo\nfoo\n")
+    proc, doc = _json_matches("-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    (entry,) = doc["matches"]
+    assert entry["text"].startswith("binary file matches (found")
+
+
 @pytest.mark.parametrize(
     "null_data, content",
     [

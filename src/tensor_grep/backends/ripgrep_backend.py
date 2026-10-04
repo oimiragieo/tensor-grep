@@ -355,24 +355,19 @@ class RipgrepBackend(ComputeBackend):
         in backends/rg_plain_output.py); nothing is derived from offsets here. rg's exit status is
         kept: 0 with no output is a successful search with zero entries.
         """
-        from tensor_grep.backends.rg_plain_output import parse_rg_plain_output
+        from tensor_grep.backends.rg_plain_output import (
+            PINNED_FORMAT_FLAGS,
+            parse_rg_plain_output,
+            refuse_unrepresentable_flags,
+        )
 
+        refuse_unrepresentable_flags(config)
         cmd = self._build_cmd(
             file_path=file_path,
             pattern=pattern,
             config=config,
             json_mode=False,
-            extra_flags=(
-                "-n",
-                "--column",
-                "--with-filename",
-                "--null",
-                "--no-heading",
-                "--no-context-separator",
-                "--no-byte-offset",
-                "--color",
-                "never",
-            ),
+            extra_flags=PINNED_FORMAT_FLAGS,
         )
         inverted = bool(config.invert_match and not config.no_invert_match)
         timed_out = False

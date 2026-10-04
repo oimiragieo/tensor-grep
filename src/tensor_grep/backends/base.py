@@ -13,6 +13,9 @@ class BackendExecutionError(RuntimeError):
     retry on the CPU fallback (audit B2/I1).
     """
 
+    # machine-readable `error` for the CLI's structured error envelope (exit 2)
+    error_kind = "backend_error"
+
 
 class ComputeBackend(Protocol):
     def search(
@@ -20,3 +23,9 @@ class ComputeBackend(Protocol):
     ) -> SearchResult: ...
 
     def is_available(self) -> bool: ...
+
+
+class InvalidInputError(BackendExecutionError):
+    """The request combines flags the backend cannot honour faithfully (structured exit 2)."""
+
+    error_kind = "invalid_input"
