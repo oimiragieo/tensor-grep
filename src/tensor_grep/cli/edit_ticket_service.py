@@ -724,6 +724,8 @@ def _population_paths(
     pruned: list[str],
     content_pruned: dict[str, str] | None = None,
     ledger: _ByteLedger | None = None,
+    root_ident: tuple[int, int] | None = None,
+    root_identity_out: list[int] | None = None,
 ) -> Generator[tuple[str, str | None], None, None]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
 
@@ -756,6 +758,17 @@ def _population_paths(
         current = Path(dirpath)
         if first:
             first = False
+            # The ROOT tuple's directory handle (open dirfd / held handle) is the directory that
+            # actually SUPPLIED this listing. It must be the directory the root pathname
+            # lstat authenticated, and the identity recorded for the ticket is the HANDLE's.
+            h_ident = getattr(handle, "ident", None) if handle is not None else None
+            if h_ident is not None:
+                if not handle.is_dir or (
+                    root_ident is not None and not _same_identity(root_ident, tuple(h_ident))
+                ):
+                    raise _PopulationWalkError("unreadable_path")  # root swapped before opening
+                if root_identity_out is not None:
+                    root_identity_out[:] = [int(h_ident[0]), int(h_ident[1])]
         else:
             ident = expected.pop(str(current), None)
             if ident is None:
@@ -963,7 +976,8 @@ def _walk_tracked_files_bounded(
     pruned: list[str] = []
     content_pruned: dict[str, str] = {}
 
-    paths = _population_paths(root, pruned, content_pruned, ledger)
+    paths: Generator[tuple[str, str | None], None, None] | None = None
+    handle_root_identity: list[int] = []
     try:
         try:
             root_st = _lstat(root)
@@ -971,7 +985,15 @@ def _walk_tracked_files_bounded(
             raise _PopulationWalkError("unreadable_path") from exc
         if not stat.S_ISDIR(root_st.st_mode) or _link_from_stat(root_st):
             raise _PopulationWalkError("unreadable_path")
-        root_identity = [root_st.st_dev, root_st.st_ino]
+        root_identity = [root_st.st_dev, root_st.st_ino]  # fallback for handle-less walkers
+        paths = _population_paths(
+            root,
+            pruned,
+            content_pruned,
+            ledger,
+            root_ident=(root_st.st_dev, root_st.st_ino),
+            root_identity_out=handle_root_identity,
+        )
         for rel, emitted_fp in paths:
             item = root / rel
 
@@ -1028,7 +1050,10 @@ def _walk_tracked_files_bounded(
             incomplete_reason = exc.reason
             limit_kind = exc.kind
     finally:
-        paths.close()  # release held directory handles / dirfds even on an early break
+        if paths is not None:
+            paths.close()  # release held directory handles / dirfds even on an early break
+    if handle_root_identity:
+        root_identity = handle_root_identity  # recorded from the walked HANDLE, not a pathname
 
     if incomplete_reason is not None:
         population = {

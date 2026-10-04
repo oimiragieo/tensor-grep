@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -966,3 +967,79 @@ def test_ticket_without_a_recorded_root_identity_is_refused(tmp_path: Path) -> N
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=legacy, modified_files=[])
     assert result["verdict"] == "FAIL"
     assert result["reason"] == "ticket_format_outdated"
+
+
+# ---- round 18: the root identity comes from the directory that SUPPLIED the listing ----
+
+
+def test_root_handle_with_a_different_inode_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex's seam probe: the first tuple's handle is not the directory the root pathname lstat
+    # authenticated. It used to be skipped entirely and the population was "complete".
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    real = edit_ticket_service._default_walk
+    DirHandle = edit_ticket_service._DirHandle
+
+    def _walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
+        for dirpath, dirnames, filenames, handle in real(top, onerror):
+            if handle is not None and handle.ident is not None:
+                handle = DirHandle((handle.ident[0], handle.ident[1] + 1), True)
+            yield dirpath, dirnames, filenames, handle
+            return  # the root tuple is all this probe needs
+
+    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _walk, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert "app.py" not in files
+
+
+def _swap_root_before_the_walk_opens_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> dict[str, object]:
+    """Deterministic race through the `_walk_impl` seam: AFTER the walker's root `lstat` and
+    BEFORE the real walker opens the root, rename the root aside and put a real directory with
+    only the unchanged `app.py` in its place; restore the original after the walk."""
+    real = edit_ticket_service._default_walk
+    state: dict[str, object] = {"swapped": False}
+
+    def _walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
+        root = Path(str(top))
+        saved = root.with_name(root.name + ".saved")
+        os.rename(root, saved)
+        root.mkdir()
+        (root / "app.py").write_bytes((saved / "app.py").read_bytes())
+        state["swapped"] = True
+        try:
+            yield from real(top, onerror)
+        finally:
+            shutil.rmtree(root)
+            os.rename(saved, root)
+
+    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _walk, raising=False)
+    return state
+
+
+def test_root_swapped_for_a_lookalike_directory_before_the_walk_opens_it_never_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(repo)
+    (repo / "evil.py").write_text("boom\n", encoding="utf-8")  # undeclared, in the ORIGINAL
+    state = _swap_root_before_the_walk_opens_it(monkeypatch, tmp_path)
+    result = verify_edit_ticket(repo_root=str(repo), ticket=ticket, modified_files=[])
+    assert state["swapped"], "the swap point was never reached (seam not driven)"
+    assert result["verdict"] == "FAIL"  # incomplete (root identity mismatch); never PASS
+
+
+def test_root_identity_is_recorded_from_the_walked_handle(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    st = os.lstat(os.path.realpath(tmp_path))
+    ident = ticket.population_status["root_identity"]
+    assert ident[1] == st.st_ino  # same directory, now sourced from the handle
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
