@@ -211,6 +211,13 @@ def extract_diff_hunks_from_git(
         "-U0",
         "--no-ext-diff",
         "--no-textconv",
+        # User git config can change the output SHAPE; pin it (each has a hostile-config test):
+        # color.ui/color.diff=always wraps headers in ANSI escapes (parser matched nothing),
+        # diff.relative=true rewrites paths against the cwd, and diff.interHunkContext merges
+        # neighbouring hunks into ranges that include unchanged lines.
+        "--no-color",
+        "--no-relative",
+        "--inter-hunk-context=0",
         "--src-prefix=a/",
         "--dst-prefix=b/",
     ]

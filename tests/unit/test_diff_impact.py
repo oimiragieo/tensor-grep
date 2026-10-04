@@ -632,3 +632,82 @@ def test_cli_empty_ref_is_invalid_ref(tmp_path: Path, monkeypatch: Any) -> None:
     res = runner.invoke(app, ["diff-impact", "--json", ""])
     assert res.exit_code == 2
     assert json.loads(res.stdout)["incomplete_reason"] == "invalid_ref"
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("color.ui", "always"),
+        ("color.diff", "always"),
+        ("diff.noprefix", "true"),
+        ("diff.mnemonicPrefix", "true"),
+        ("diff.srcPrefix", "SRC/"),
+        ("diff.dstPrefix", "DST/"),
+        ("diff.renames", "false"),
+        ("diff.renames", "copies"),
+        ("diff.context", "7"),
+        ("diff.interHunkContext", "50"),
+        ("diff.external", "false"),
+        ("diff.relative", "true"),
+    ],
+)
+def test_hostile_user_git_config_does_not_change_the_parse(
+    tmp_path: Path, key: str, value: str
+) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", key, value)
+    (tmp_path / "sub").mkdir()
+    body = "".join(f"line{i}\n" for i in range(1, 21))
+    (tmp_path / "a.py").write_text(body, encoding="utf-8")
+    (tmp_path / "sub" / "b.py").write_text(body, encoding="utf-8")
+    _git(tmp_path, "add", "--", "a.py", "sub/b.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    edited = body.replace("line3\n", "LINE3\n").replace("line9\n", "LINE9\n")
+    (tmp_path / "a.py").write_text(edited, encoding="utf-8")
+    (tmp_path / "sub" / "b.py").write_text(edited, encoding="utf-8")
+
+    hunks = extract_diff_hunks_from_git(root=tmp_path)
+    # exact ranges: interHunkContext must not merge the two edits into one 3..9 range
+    assert hunks == {
+        Path("a.py"): [(3, 3), (9, 9)],
+        Path("sub/b.py"): [(3, 3), (9, 9)],
+    }
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["changed_files"] == ["a.py", "sub/b.py"]
+    assert not payload["partial"]
+
+
+def test_diff_relative_config_in_subdirectory_root_keeps_repo_relative_paths(
+    tmp_path: Path,
+) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "sub" / "b.py").write_text("y = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "a.py", "sub/b.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "a.py").write_text("x = 2\n", encoding="utf-8")
+    (tmp_path / "sub" / "b.py").write_text("y = 2\n", encoding="utf-8")
+    plain = extract_diff_hunks_from_git(root=tmp_path / "sub")
+    _git(tmp_path, "config", "diff.relative", "true")
+    hostile = extract_diff_hunks_from_git(root=tmp_path / "sub")
+    assert hostile == plain
+    assert Path("a.py") in hostile
+
+
+def test_argv_pins_output_shape_overrides(monkeypatch: Any) -> None:
+    seen: list[list[str]] = []
+
+    class P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess",
+        lambda cmd, **k: seen.append(list(cmd)) or P(),
+    )
+    extract_diff_hunks_from_git()
+    for flag in ("--no-color", "--no-relative"):
+        assert flag in seen[0]
+    assert "--inter-hunk-context=0" in seen[0]
