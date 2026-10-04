@@ -711,3 +711,88 @@ def test_argv_pins_output_shape_overrides(monkeypatch: Any) -> None:
     for flag in ("--no-color", "--no-relative"):
         assert flag in seen[0]
     assert "--inter-hunk-context=0" in seen[0]
+
+
+def test_parse_binary_modified_and_added_lines_are_recorded() -> None:
+    diff = (
+        "diff --git a/data.bin b/data.bin\nindex 1111111..2222222 100644\n"
+        "Binary files a/data.bin and b/data.bin differ\n"
+        "diff --git a/sp ace.bin b/sp ace.bin\nnew file mode 100644\nindex 0000000..3333333\n"
+        "Binary files /dev/null and b/sp ace.bin differ\n"
+        'diff --git "a/caf\\303\\251.bin" "b/caf\\303\\251.bin"\nindex 1111111..2222222 100644\n'
+        "Binary files a/caf\\303\\251.bin and b/caf\\303\\251.bin differ\n"
+        "diff --git a/old.bin b/new.bin\nsimilarity index 90%\nrename from old.bin\n"
+        "rename to new.bin\nindex 1111111..2222222 100644\n"
+        "Binary files a/old.bin and b/new.bin differ\n"
+        "diff --git a/gone.bin b/gone.bin\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        "Binary files a/gone.bin and /dev/null differ\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {
+        Path("data.bin"): [],
+        Path("sp ace.bin"): [],
+        Path("café.bin"): [],
+        Path("new.bin"): [],
+        Path("gone.bin"): [],
+    }
+    # the deleted binary is a deletion, not a "binary" entry
+    assert getattr(parsed, "binary_files", None) == {
+        Path("data.bin"),
+        Path("sp ace.bin"),
+        Path("café.bin"),
+        Path("new.bin"),
+    }
+
+
+def test_parse_pure_rename_of_binary_without_content_change_is_not_a_change() -> None:
+    diff = (
+        "diff --git a/old.bin b/new.bin\nsimilarity index 100%\nrename from old.bin\n"
+        "rename to new.bin\n"
+    )
+    assert parse_git_diff_hunks(diff) == {}
+
+
+def test_real_repo_modified_binary_file_is_reported(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01\x02\xff\x00")
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "data.bin", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "data.bin").write_bytes(b"\x00\x09\x08\xfe\x00\x00")
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["changed_files"] == ["data.bin"]
+    assert payload["binary_files"] == ["data.bin"]
+    assert payload["deleted_files"] == []
+    assert "binary_files_not_analyzed" in payload["downgrade_reasons"]
+    assert payload["partial"] is False
+
+
+def test_real_repo_added_binary_file_is_reported(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "new.bin").write_bytes(b"\x00\x01\x02\xff")
+    _git(tmp_path, "add", "--", "new.bin")
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["changed_files"] == ["new.bin"]
+    assert payload["binary_files"] == ["new.bin"]
+    assert "binary_files_not_analyzed" in payload["downgrade_reasons"]
+
+
+def test_cli_modified_binary_file_is_not_no_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "data.bin").write_bytes(b"\x00\x01\x02")
+    _git(tmp_path, "add", "--", "data.bin")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "data.bin").write_bytes(b"\x00\x05\x06\x07")
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    data = json.loads(res.stdout)
+    assert data["binary_files"] == ["data.bin"]
+    assert data["exit_reason"] == "ok"
+    assert res.exit_code == 0
+
+
+def test_payloads_always_carry_binary_files_key() -> None:
+    assert build_diff_blast_radius(diff_text="")["binary_files"] == []

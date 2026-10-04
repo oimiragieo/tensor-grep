@@ -103,13 +103,29 @@ def _diff_git_line_path(rest: str) -> Path | None:
     return a_path
 
 
-def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
+class DiffHunks(dict[Path, list[tuple[int, int]]]):
+    """Parsed diff ranges per file, plus the added/modified binary files (which have no ranges).
+
+    A plain dict subclass so existing callers and equality checks keep working; `binary_files`
+    lets callers tell a modified binary (empty ranges) from a deletion (also empty ranges).
+    """
+
+    binary_files: set[Path]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.binary_files = set()
+
+
+def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     """Parse git diff hunk headers `@@ -l,s +start,count @@` into mapped 1-indexed line ranges per file.
 
     Returns a dict mapping relative file Path to a list of (start_line, end_line) inclusive tuples.
-    Deleted files map to an empty range list.
+    Deleted files map to an empty range list. Added or modified binary files also map to an empty
+    list and are additionally recorded in the result's `binary_files` set.
     """
-    result: dict[Path, list[tuple[int, int]]] = {}
+    result = DiffHunks()
+    rename_path: Path | None = None
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
@@ -124,6 +140,27 @@ def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
             old_path = None
             current_file = None
             header_path = _diff_git_line_path(line[len("diff --git ") :])
+            rename_path = None
+            continue
+
+        if in_header and line.startswith("rename to "):
+            operand = line[len("rename to ") :]
+            # _git_header_path strips an a/ or b/ prefix, so give it one to strip
+            rename_path = _git_header_path(
+                f'"b/{operand[1:]}' if operand.startswith('"') else f"b/{operand}"
+            )
+            continue
+
+        if (
+            in_header
+            and line.startswith("Binary files ")
+            and line.endswith(" differ")
+            and not line.endswith(" and /dev/null differ")
+        ):
+            binary_path = header_path or rename_path
+            if binary_path is not None:
+                result.setdefault(binary_path, [])
+                result.binary_files.add(binary_path)
             continue
 
         if in_header and line.startswith("deleted file mode ") and header_path is not None:
@@ -368,6 +405,7 @@ def _empty_payload(
         "file_count": 0,
         "test_count": 0,
         "deleted_files": [],
+        "binary_files": [],
         "result_incomplete": partial,
         "incomplete_reason": reason if partial else None,
     }
@@ -397,7 +435,7 @@ def build_diff_blast_radius(
     downgrade_reasons: list[str] = []
     partial_reasons: list[str] = []
     partial = False
-
+    changed_files_with_lines: dict[Path, list[tuple[int, int]]]
     if diff_text is not None:
         changed_files_with_lines = parse_git_diff_hunks(diff_text)
     else:
@@ -415,9 +453,15 @@ def build_diff_blast_radius(
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
+    binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
+    binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
     deleted_files = sorted(
-        str(p).replace("\\", "/") for p, ranges in changed_files_with_lines.items() if not ranges
+        str(p).replace("\\", "/")
+        for p, ranges in changed_files_with_lines.items()
+        if not ranges and p not in binary_paths
     )
+    if binary_files:
+        downgrade_reasons.append("binary_files_not_analyzed")
     if deleted_files:
         downgrade_reasons.append("deleted_files_symbols_not_analyzed")
 
@@ -532,6 +576,7 @@ def build_diff_blast_radius(
         "file_count": len(sorted_affected_files),
         "test_count": len(sorted_tests),
         "deleted_files": deleted_files,
+        "binary_files": binary_files,
         "result_incomplete": partial,
         "incomplete_reason": (partial_reasons[0] if partial and partial_reasons else None),
     }
