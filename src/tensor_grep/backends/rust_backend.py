@@ -3,6 +3,7 @@ from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
 
@@ -207,10 +208,7 @@ class RustCoreBackend(ComputeBackend):
         no_ignore_vcs = False
 
         if config:
-            if config.ignore_case and not config.case_sensitive:
-                # explicit -s beats -i (rg last-wins; core/case_semantics.effective_ignore_case).
-                # smart case on this path is forwarded to rg separately, so it is not folded in.
-                ignore_case = True
+            ignore_case = effective_ignore_case(config, pattern)
             if config.fixed_strings:
                 fixed_strings = True
             if config.invert_match:

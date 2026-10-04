@@ -73,6 +73,7 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
+from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
@@ -1990,9 +1991,7 @@ def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return
 
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
+    flags = case_regex_flags(config, pattern)
 
     candidate = pattern
     if config.line_regexp:
@@ -2651,9 +2650,7 @@ def _replace_lines(
     if config.replace_str is None:
         return matches
 
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
+    flags = case_regex_flags(config, pattern)
 
     if config.fixed_strings:
         regex = re.compile(re.escape(pattern), flags)
@@ -2702,9 +2699,7 @@ _expand_ripgrep_replacement = _rg_replacement.expand_ripgrep_replacement
 def _only_matching_lines(
     matches: list["MatchLine"], pattern: str, config: "SearchConfig"
 ) -> list["MatchLine"]:
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
+    flags = case_regex_flags(config, pattern)
 
     if config.fixed_strings:
         regex = re.compile(re.escape(pattern), flags)

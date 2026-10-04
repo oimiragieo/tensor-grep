@@ -1,6 +1,7 @@
 import json
 
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -55,10 +56,7 @@ def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> i
     if config.word_regexp or config.line_regexp:
         return None  # first-occurrence find() ignores -w/-x boundaries -- omit, never guess
     # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
-    ignore_case = bool(
-        config.ignore_case
-        or (config.smart_case and not config.case_sensitive and pattern.islower())
-    )
+    ignore_case = effective_ignore_case(config, pattern)
     index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
     if index < 0:
         return None

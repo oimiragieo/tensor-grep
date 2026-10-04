@@ -7,6 +7,8 @@ Mirrors how ``RipgrepBackend`` forwards the flags (``_pattern_semantics_flags``)
 
 from __future__ import annotations
 
+import re
+
 from tensor_grep.core.config import SearchConfig
 
 
@@ -20,3 +22,8 @@ def effective_ignore_case(config: SearchConfig | None, pattern: str) -> bool:
         return True
     # smart case: insensitive only when the pattern has no uppercase letter
     return bool(config.smart_case and not any(ch.isupper() for ch in pattern))
+
+
+def case_regex_flags(config: SearchConfig | None, pattern: str) -> int:
+    """``re`` flags for the Python engines: ``re.IGNORECASE`` iff ``effective_ignore_case``."""
+    return re.IGNORECASE if effective_ignore_case(config, pattern) else 0

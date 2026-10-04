@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
@@ -430,7 +431,7 @@ class StringZillaBackend(ComputeBackend):
             # longer used for line-splitting -- see the split_source_lines comment below.
             import stringzilla as sz  # noqa: F401
 
-            ignore_case = bool(config and config.ignore_case)
+            ignore_case = effective_ignore_case(config, pattern)
             if config and config.fixed_strings:
                 indexed = self._search_with_index(file_path, pattern, config, ignore_case)
                 if indexed is not None:

@@ -4,6 +4,7 @@ from collections import defaultdict
 from tensor_grep.backends.rust_backend import _first_nul_offset
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.json_fmt import _REGEX_META, _literal_column_index
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -65,10 +66,7 @@ class RipgrepFormatter(OutputFormatter):
         if self.config.word_regexp or self.config.line_regexp:
             return self._approximate_column()  # find() ignores -w/-x boundaries -- never guess
         # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
-        ignore_case = bool(
-            self.config.ignore_case
-            or (self.config.smart_case and not self.config.case_sensitive and pattern.islower())
-        )
+        ignore_case = effective_ignore_case(self.config, pattern)
         index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
         if index < 0:
             return self._approximate_column()
