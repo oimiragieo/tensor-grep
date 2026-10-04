@@ -11,7 +11,6 @@ import pytest
 from typer.testing import CliRunner
 
 import tensor_grep.cli.diff_impact as di
-
 from tensor_grep.cli.diff_impact import (
     _calculate_risk_tier,
     _is_test_path,
@@ -371,7 +370,7 @@ def test_extract_diff_hunks_rejects_option_like_ref_without_running_git(
     try:
         di.extract_diff_hunks_from_git(ref=ref)
         raised: BaseException | None = None
-    except Exception as exc:  # noqa: BLE001 - deliberate: classify after the behavioural check
+    except Exception as exc:
         raised = exc
     assert calls == [], "an option-like ref must be refused BEFORE git is invoked"
     assert type(raised).__name__ == "DiffError" and getattr(raised, "reason", None) == "invalid_ref"
@@ -480,3 +479,56 @@ def test_real_repo_spaces_nonascii_and_deleted(tmp_path: Path) -> None:
     assert payload["deleted_files"] == ["lib.py"]
     assert "deleted_files_symbols_not_analyzed" in payload["downgrade_reasons"]
     assert payload["partial"] is False  # orchestrator decision: deletions do not force exit 2
+
+
+def test_cli_diff_impact_bogus_fail_on_risk_is_usage_error(monkeypatch: Any) -> None:
+    monkeypatch.setattr("tensor_grep.cli.diff_impact.extract_diff_hunks_from_git", lambda **k: {})
+    res = runner.invoke(app, ["diff-impact", "--fail-on-risk", "bogus"])
+    assert res.exit_code == 2
+    # click 8.4.2 (uv.lock) separates streams; the error is echoed to stderr (council round 2)
+    assert "fail-on-risk" in (res.stdout or "") + (res.stderr or "")
+
+
+def _payload(**overrides: Any) -> dict[str, Any]:
+    base: dict[str, Any] = {
+        "root": ".",
+        "ref": None,
+        "staged": False,
+        "changed_files": ["a.py"],
+        "changed_symbols": [],
+        "callers": [],
+        "affected_files": ["a.py"],
+        "affected_tests": [],
+        "blast_radius_score": 0.5,
+        "risk_tier": "medium",
+        "partial": False,
+        "downgrade_reasons": [],
+        "symbol_count": 0,
+        "caller_count": 0,
+        "file_count": 1,
+        "test_count": 0,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_cli_diff_impact_exit_reason_and_strict_threshold(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.build_diff_blast_radius", lambda **k: _payload()
+    )
+    equal = runner.invoke(app, ["diff-impact", "--json", "--fail-threshold", "0.5"])
+    assert equal.exit_code == 0  # strict '>' per help text ("exceeds")
+    assert json.loads(equal.stdout)["exit_reason"] == "ok"
+    breach = runner.invoke(app, ["diff-impact", "--json", "--fail-on-risk", "medium"])
+    assert breach.exit_code == 2
+    assert json.loads(breach.stdout)["exit_reason"] == "gate_breached"
+
+
+def test_cli_diff_impact_exit_reason_incomplete(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.build_diff_blast_radius",
+        lambda **k: _payload(partial=True, downgrade_reasons=["git_diff_failed"]),
+    )
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2
+    assert json.loads(res.stdout)["exit_reason"] == "incomplete"

@@ -505,23 +505,16 @@ def diff_impact_command(
     """CLI implementation for diff-impact command."""
     import typer
 
+    risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+    if fail_on_risk is not None and fail_on_risk.lower() not in risk_rank:
+        typer.echo("Error: --fail-on-risk must be one of low, medium, high, critical", err=True)
+        raise typer.Exit(2)
+
     payload = build_diff_blast_radius(
         ref=ref,
         staged=staged,
         deadline_seconds=deadline,
     )
-
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        from tensor_grep.cli import main as cli_main
-
-        cli_main._emit_scan_incompleteness_banner(payload)
-        typer.echo(
-            f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
-            f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
-            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
-        )
 
     breached = False
     if (
@@ -530,13 +523,37 @@ def diff_impact_command(
     ):
         breached = True
     if fail_on_risk is not None:
-        risk_rank = {"low": 1, "medium": 2, "high": 3, "critical": 4}
         current_rank = risk_rank.get(str(payload.get("risk_tier", "low")).lower(), 1)
-        target_rank = risk_rank.get(fail_on_risk.lower(), 1)
-        if current_rank >= target_rank:
+        if current_rank >= risk_rank[fail_on_risk.lower()]:
             breached = True
 
-    if payload.get("partial") or repo_map._scan_did_not_finish(payload) or breached:
+    incomplete = bool(payload.get("partial") or repo_map._scan_did_not_finish(payload))
+    if incomplete:
+        exit_reason = "incomplete"
+    elif breached:
+        exit_reason = "gate_breached"
+    elif not payload.get("changed_files"):
+        exit_reason = "no_changes"
+    else:
+        exit_reason = "ok"
+    payload["gate_breached"] = breached
+    payload["exit_reason"] = exit_reason
+
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2))
+    else:
+        from tensor_grep.cli import main as cli_main
+
+        cli_main._emit_scan_incompleteness_banner(payload)
+        if payload.get("result_incomplete"):
+            typer.echo(f"Diff impact INCOMPLETE: {payload.get('incomplete_reason')}", err=True)
+        typer.echo(
+            f"Diff impact: changed_files={payload['file_count']} changed_symbols={payload['symbol_count']} "
+            f"callers={payload['caller_count']} affected_files={len(payload['affected_files'])} "
+            f"affected_tests={payload['test_count']} score={payload['blast_radius_score']} risk={payload['risk_tier']}"
+        )
+
+    if incomplete or breached:
         raise typer.Exit(2)
 
     if not payload.get("changed_files"):
