@@ -35,18 +35,72 @@ import hashlib
 import os
 import stat
 import sys
+import threading
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Generator, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, BinaryIO
 
-_os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
-_os_open = os.open  # private seam: the ONE safe open of every file read from the walked tree
+# ---------------------------------------------------------------------------------------------
+# Enumeration is BOUND TO AN OPEN DIRECTORY, never to a pathname lookup.
+#
+# A pathname `lstat` cannot authenticate which directory supplied a listing (A is moved aside, a
+# symlink to an empty dir takes its name, the walker lists the impostor, A is restored before the
+# tuple is yielded). So:
+#   POSIX   - `os.fwalk(follow_symlinks=False)` lists through an open dirfd; every leaf is then
+#             stat'ed / opened / readlink'ed RELATIVE to that dirfd (`dir_fd=`), and the dirfd's
+#             own `fstat` identity is compared with the identity recorded at classification.
+#   Windows - no `dir_fd`: every directory in the current root-to-leaf chain is HELD open
+#             (`CreateFileW`, FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES, OPEN_EXISTING,
+#             BACKUP_SEMANTICS | OPEN_REPARSE_POINT, share READ|WRITE but NOT DELETE) for as long
+#             as it is walked, so it cannot be renamed, deleted or replaced; the handle must not
+#             be a reparse point and its file id must match the recorded identity.
+# The per-directory dirfd registry below makes the path-taking seams (`_lstat`, `_os_open`,
+# `_readlink`) use `dir_fd=` automatically while a directory's tuple is being processed.
+# ---------------------------------------------------------------------------------------------
+_dir_ctx = threading.local()
+
+
+def _ctx_dirfds() -> dict[str, int]:
+    fds: dict[str, int] | None = getattr(_dir_ctx, "fds", None)
+    if fds is None:
+        fds = {}
+        _dir_ctx.fds = fds
+    return fds
+
+
+def _dirfd_and_name(path: str | Path) -> tuple[int | None, str]:
+    p = Path(path)
+    return _ctx_dirfds().get(str(p.parent)), p.name
+
+
+def _default_lstat(path: str | Path) -> os.stat_result:
+    fd, name = _dirfd_and_name(path)
+    if fd is None:
+        return os.lstat(path)
+    return os.stat(name, dir_fd=fd, follow_symlinks=False)
+
+
+def _default_os_open(path: str | Path, flags: int) -> int:
+    fd, name = _dirfd_and_name(path)
+    if fd is None:
+        return os.open(path, flags)
+    return os.open(name, flags, dir_fd=fd)
+
+
+def _default_readlink(path: str | Path) -> str:
+    fd, name = _dirfd_and_name(path)
+    if fd is None:
+        return os.readlink(path)
+    return os.readlink(name, dir_fd=fd)
+
+
+_os_open = _default_os_open  # private seam: the ONE safe open of every file read from the tree
 _fdopen = os.fdopen  # private seam: wraps the opened fd (unbuffered)
-_readlink = os.readlink  # private seam: link targets are read ONCE per link
-_lstat = os.lstat  # private seam for link classification
+_readlink = _default_readlink  # private seam: link targets are read ONCE per link
+_lstat = _default_lstat  # private seam for link classification
 
 _ALWAYS_PRUNED_DIRS = frozenset({
     "node_modules",
@@ -170,7 +224,7 @@ class _ByteLedger:
         # Results of a SINGLE read session over a CACHEDIR.TAG (header classification and the
         # digest/leaf hash come from the same handle and the same per-file allowance).
         self.tag_digests: dict[str, str] = {}
-        self.leaf_fingerprints: dict[str, str] = {}
+        self.leaf_fingerprints: dict[str, tuple[str, tuple[int, int, int, int, int]]] = {}
 
     def begin_item(self) -> None:
         """Start accounting one file/marker/tag (per-file limit and aggregate start point)."""
@@ -318,6 +372,16 @@ def _regular_marker(path: Path) -> bool:
     return _marker_stat(path) is not None
 
 
+def _stat_snapshot(st: os.stat_result) -> tuple[int, int, int, int, int]:
+    """(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns) of a stat result.
+
+    On Windows `st_ctime` differs between `os.fstat(handle)` and `os.lstat(path)` for the SAME
+    unchanged file (measured: 79 of 300 files), so it is excluded there (0); identity, size and
+    mtime still pin the file. POSIX keeps ctime (inode change time)."""
+    ctime = 0 if sys.platform == "win32" else st.st_ctime_ns
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, ctime)
+
+
 def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
     """Classify a CACHEDIR.TAG and hash it in ONE open handle and ONE per-file ledger session.
 
@@ -337,7 +401,9 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
         raise _PopulationWalkError("unreadable_path")
     try:
         with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
-            size_at_open = os.fstat(handle.fileno()).st_size
+            opened = os.fstat(handle.fileno())
+            size_at_open = opened.st_size
+            snapshot = _stat_snapshot(opened)
             ledger.begin_item()
             head = _read_exact_or_eof(handle, 128, ledger)
             sig = _CACHEDIR_TAG_SIGNATURE
@@ -352,7 +418,7 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
     if valid:
         ledger.tag_digests[str(tag)] = hasher.hexdigest()
     else:
-        ledger.leaf_fingerprints[str(tag)] = "file:" + hasher.hexdigest()
+        ledger.leaf_fingerprints[str(tag)] = ("file:" + hasher.hexdigest(), snapshot)
     return valid
 
 
@@ -383,7 +449,7 @@ def _content_prune_marker(path: Path, ledger: _ByteLedger) -> str | None:
     for marker in _BUILD_ROOT_MARKERS:
         if _regular_marker(path / marker):
             return marker
-    if _regular_marker(path / _CMAKE_CACHE) and not (path / _CMAKE_SOURCE).exists():
+    if _regular_marker(path / _CMAKE_CACHE) and not _exists(path / _CMAKE_SOURCE):
         return _CMAKE_CACHE  # out-of-source CMake build tree only
     tag = path / "CACHEDIR.TAG"
     if _regular_marker(tag) and _cachedir_tag_valid(tag, ledger):
@@ -397,12 +463,206 @@ def _is_pruned_dir(path: Path, ledger: _ByteLedger | None = None) -> bool:
     return path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path, ledger) is not None
 
 
+class _DirHandle:
+    """The held/open directory a tuple was listed from. `ident` is its (st_dev, st_ino)."""
+
+    def __init__(self, ident: tuple[int, int], is_dir: bool = True, closer: Any = None) -> None:
+        self.ident = ident
+        self.is_dir = is_dir
+        self._closer = closer
+
+    def close(self) -> None:
+        closer, self._closer = self._closer, None
+        if closer is not None:
+            closer()
+
+
+def _fwalk_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
+    """POSIX: list through an open dirfd; register it so leaf ops are `dir_fd`-relative."""
+    fwalk = getattr(os, "fwalk")  # noqa: B009 - absent on Windows (and from its typeshed)
+    fds = _ctx_dirfds()
+    for dirpath, dirnames, filenames, dirfd in fwalk(
+        os.fspath(top), topdown=True, onerror=onerror, follow_symlinks=False
+    ):
+        st = os.fstat(dirfd)
+        key = str(Path(dirpath))
+        fds[key] = dirfd
+        try:
+            yield (
+                dirpath,
+                dirnames,
+                filenames,
+                _DirHandle((st.st_dev, st.st_ino), stat.S_ISDIR(st.st_mode)),
+            )
+        finally:
+            fds.pop(key, None)
+
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
+
+    class _FILETIME(ctypes.Structure):
+        _fields_ = (("lo", wintypes.DWORD), ("hi", wintypes.DWORD))
+
+    class _BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+        _fields_ = (
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", _FILETIME),
+            ("ftLastAccessTime", _FILETIME),
+            ("ftLastWriteTime", _FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        )
+
+    class _FILE_ID_INFO(ctypes.Structure):
+        _fields_ = (
+            ("VolumeSerialNumber", ctypes.c_ulonglong),
+            ("FileId", ctypes.c_ubyte * 16),
+        )
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.GetFileInformationByHandleEx.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    )
+    _k32.GetFileInformationByHandleEx.restype = wintypes.BOOL
+    _k32.CreateFileW.argtypes = (
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    )
+    _k32.CreateFileW.restype = wintypes.HANDLE
+    _k32.GetFileInformationByHandle.argtypes = (
+        wintypes.HANDLE,
+        ctypes.POINTER(_BY_HANDLE_FILE_INFORMATION),
+    )
+    _k32.GetFileInformationByHandle.restype = wintypes.BOOL
+    _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _k32.CloseHandle.restype = wintypes.BOOL
+    _INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+    def _hold_dir(path: str | Path) -> _DirHandle:
+        """Hold `path` open WITHOUT FILE_SHARE_DELETE (it cannot be renamed, deleted or replaced
+        while held); it must be a plain directory, not a reparse point (symlink / junction)."""
+        # FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES; share READ | WRITE only;
+        # FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT (open the link itself)
+        handle = _k32.CreateFileW(
+            os.path.abspath(path),
+            0x0001 | 0x0080,
+            0x1 | 0x2,
+            None,
+            3,
+            0x02000000 | 0x00200000,
+            None,
+        )
+        if handle is None or handle == _INVALID_HANDLE:
+            raise OSError(ctypes.get_last_error(), "cannot hold directory", str(path))
+        info = _BY_HANDLE_FILE_INFORMATION()
+        if not _k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+            err = ctypes.get_last_error()
+            _k32.CloseHandle(handle)
+            raise OSError(err, "cannot query held directory", str(path))
+        if info.dwFileAttributes & 0x400 or not info.dwFileAttributes & 0x10:  # reparse / not dir
+            _k32.CloseHandle(handle)
+            raise _PopulationWalkError("unreadable_path")
+        # Same identity os.lstat reports: st_dev = 64-bit volume serial (FILE_ID_INFO), st_ino
+        # = file index. If FILE_ID_INFO is unavailable, dev is 0 and only the index is compared.
+        index = (int(info.nFileIndexHigh) << 32) | int(info.nFileIndexLow)
+        id_info = _FILE_ID_INFO()
+        got_id = _k32.GetFileInformationByHandleEx(  # FileIdInfo == 18
+            handle, 18, ctypes.byref(id_info), ctypes.sizeof(id_info)
+        )
+        ident = (int(id_info.VolumeSerialNumber) if got_id else 0, index)
+        return _DirHandle(ident, True, lambda: _k32.CloseHandle(handle))
+
+else:
+
+    def _hold_dir(path: str | Path) -> _DirHandle:  # pragma: no cover - POSIX uses fwalk
+        raise OSError("held directory handles are Windows-only")
+
+
+def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
+    """Windows: a top-down walk holding every directory of the current chain open."""
+    top_s = os.fspath(top)
+    try:
+        held = _hold_dir(top_s)
+    except OSError as exc:
+        onerror(exc)
+        return
+    try:
+        yield from _held_walk_rec(top_s, held, onerror)
+    finally:
+        held.close()
+
+
+def _held_walk_rec(
+    path: str, held: _DirHandle, onerror: Any
+) -> Iterator[tuple[str, list[str], list[str], Any]]:
+    try:
+        with os.scandir(path) as it:
+            entries = list(it)
+    except OSError as exc:
+        onerror(exc)
+        return
+    dirs: list[str] = []
+    files: list[str] = []
+    for entry in entries:
+        try:
+            is_dir = entry.is_dir()
+        except OSError:
+            is_dir = False  # listed as a file; the leaf check refuses a directory there
+        (dirs if is_dir else files).append(entry.name)
+    yield path, dirs, files, held
+    for name in list(dirs):  # the consumer prunes `dirs` in place
+        child = os.path.join(path, name)
+        try:
+            child_held = _hold_dir(child)
+        except OSError as exc:
+            raise _PopulationWalkError("unreadable_path") from exc
+        try:
+            yield from _held_walk_rec(child, child_held, onerror)
+        finally:
+            child_held.close()
+
+
+def _default_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
+    if hasattr(os, "fwalk"):
+        yield from _fwalk_walk(top, onerror)
+    else:
+        yield from _held_walk(top, onerror)
+
+
+_walk_impl = _default_walk  # private seam: tests drive/wrap the walk through this
+
+
+def _exists(path: str | Path) -> bool:
+    """`Path.exists()` through the dir-fd aware `_lstat` seam ("cannot tell" counts as existing)."""
+    try:
+        _lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 def _population_paths(
     root: Path,
     pruned: list[str],
     content_pruned: dict[str, str] | None = None,
     ledger: _ByteLedger | None = None,
-) -> Iterator[str]:
+) -> Generator[str, None, None]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
 
     `content_pruned` (root-relative dir -> "<marker>:<sha256 of marker>", or "name" for a
@@ -425,7 +685,7 @@ def _population_paths(
     # after our check; so each kept directory must be yielded back, and unchanged.
     expected: dict[str, tuple[int, int]] = {}
     first = True
-    for dirpath, dirnames, filenames in _os_walk(root, followlinks=False, onerror=_on_error):
+    for dirpath, dirnames, filenames, handle in _walk_impl(root, _on_error):
         visited += 1
         if visited > _MAX_WALK_DIRS:
             raise _PopulationWalkError("dir_count_limit")
@@ -436,16 +696,29 @@ def _population_paths(
             ident = expected.pop(str(current), None)
             if ident is None:
                 raise _PopulationWalkError("unreadable_path")  # a directory we never kept
-            try:
-                now = _lstat(current)
-            except OSError as exc:
-                raise _PopulationWalkError("unreadable_path") from exc
-            if (
-                _link_from_stat(now)
-                or not stat.S_ISDIR(now.st_mode)
-                or (ident[1] and now.st_ino and ident != (now.st_dev, now.st_ino))
-            ):
-                raise _PopulationWalkError("unreadable_path")  # swapped after classification
+            if handle is not None and getattr(handle, "ident", None) is not None:
+                # The identity of the directory the LISTING came from (open dirfd / held
+                # handle), not of whatever a pathname resolves to now.
+                if not handle.is_dir or (
+                    ident[1]
+                    and handle.ident[1]
+                    and (
+                        ident[1] != handle.ident[1]
+                        or (ident[0] and handle.ident[0] and ident[0] != handle.ident[0])
+                    )
+                ):
+                    raise _PopulationWalkError("unreadable_path")  # swapped after classification
+            else:  # a custom walker without a handle: fall back to a pathname check
+                try:
+                    now = _lstat(current)
+                except OSError as exc:
+                    raise _PopulationWalkError("unreadable_path") from exc
+                if (
+                    _link_from_stat(now)
+                    or not stat.S_ISDIR(now.st_mode)
+                    or (ident[1] and now.st_ino and ident != (now.st_dev, now.st_ino))
+                ):
+                    raise _PopulationWalkError("unreadable_path")  # swapped after classification
         rel_dir = current.relative_to(root)
         keep: list[str] = []
         leaves: list[str] = list(filenames)
@@ -567,7 +840,13 @@ def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
         return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
     cached = ledger.leaf_fingerprints.pop(str(path), None)
     if cached is not None:
-        return cached  # already read, and charged, in the CACHEDIR.TAG classification session
+        # Already read, and charged, in the CACHEDIR.TAG classification session. Reuse ONLY if
+        # the file is exactly the one that session read (identity, size, mtime, ctime from the
+        # OPENED handle's fstat); otherwise fail closed. Never re-read: that would double-charge.
+        fingerprint, snapshot = cached
+        if snapshot != _stat_snapshot(st):
+            raise _PopulationWalkError("unreadable_path")
+        return fingerprint
     with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
         size_at_open = os.fstat(handle.fileno()).st_size
         hasher = hashlib.sha256()
@@ -604,8 +883,9 @@ def _walk_tracked_files_bounded(
     pruned: list[str] = []
     content_pruned: dict[str, str] = {}
 
+    paths = _population_paths(root, pruned, content_pruned, ledger)
     try:
-        for rel in _population_paths(root, pruned, content_pruned, ledger):
+        for rel in paths:
             item = root / rel
 
             if scanned_files >= max_files:
@@ -655,6 +935,8 @@ def _walk_tracked_files_bounded(
         if incomplete_reason is None:
             incomplete_reason = exc.reason
             limit_kind = exc.kind
+    finally:
+        paths.close()  # release held directory handles / dirfds even on an early break
 
     if incomplete_reason is not None:
         population = {
