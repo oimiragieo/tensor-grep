@@ -1096,3 +1096,118 @@ def test_staged_pure_rename_is_not_a_change_even_with_renames_disabled(
     payload = build_diff_blast_radius(root=tmp_path, staged=True)
     assert payload["changed_files"] == []
     assert payload["deleted_files"] == []
+
+
+def _two_function_repo(repo: Path) -> None:
+    _init_repo(repo)
+    body = "".join(f"line{i}\n" for i in range(1, 31))
+    (repo / "mod.py").write_text(body, encoding="utf-8")
+    _git(repo, "add", "--", "mod.py")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "mod.py").write_text(body.replace("line10\n", "LINE10\n"), encoding="utf-8")
+
+
+def test_positive_control_normal_env_gives_exact_ranges(tmp_path: Path) -> None:
+    _two_function_repo(tmp_path)
+    assert extract_diff_hunks_from_git(root=tmp_path) == {Path("mod.py"): [(10, 10)]}
+
+
+def test_git_diff_opts_env_cannot_widen_the_hunks(tmp_path: Path, monkeypatch: Any) -> None:
+    _two_function_repo(tmp_path)
+    monkeypatch.setenv("GIT_DIFF_OPTS", "--unified=100")
+    assert extract_diff_hunks_from_git(root=tmp_path) == {Path("mod.py"): [(10, 10)]}
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["changed_files"] == ["mod.py"]
+
+
+def test_env_injected_git_config_cannot_hide_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    _two_function_repo(tmp_path)
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "3")
+    for i, (key, value) in enumerate([
+        ("color.ui", "always"),
+        ("diff.context", "50"),
+        ("diff.ignoreSubmodules", "all"),
+    ]):
+        monkeypatch.setenv(f"GIT_CONFIG_KEY_{i}", key)
+        monkeypatch.setenv(f"GIT_CONFIG_VALUE_{i}", value)
+    monkeypatch.setenv("GIT_CONFIG_PARAMETERS", "'color.ui=always' 'diff.context=50'")
+    assert extract_diff_hunks_from_git(root=tmp_path) == {Path("mod.py"): [(10, 10)]}
+
+
+def test_git_dir_and_index_file_env_cannot_redirect_which_repo_is_read(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "real"
+    other = tmp_path / "other"
+    _two_function_repo(repo)
+    _init_repo(other)
+    monkeypatch.setenv("GIT_DIR", str(other / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(other))
+    monkeypatch.setenv("GIT_INDEX_FILE", str(other / ".git" / "index"))
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["changed_files"] == ["mod.py"]
+
+
+def test_git_env_strips_diff_and_repo_redirecting_variables(monkeypatch: Any) -> None:
+    for name in (
+        "GIT_DIFF_OPTS",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_KEY_17",
+        "GIT_DIFF_PATH_COUNTER",
+        "GIT_DIFF_PATH_TOTAL",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+    ):
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("LC_ALL", "de_DE.UTF-8")
+    monkeypatch.setenv("KEEP_ME", "1")
+    env = di._git_env()
+    for name in (
+        "GIT_DIFF_OPTS",
+        "GIT_EXTERNAL_DIFF",
+        "GIT_PAGER",
+        "PAGER",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_KEY_17",
+        "GIT_DIFF_PATH_COUNTER",
+        "GIT_DIFF_PATH_TOTAL",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+    ):
+        assert name not in env, name
+    assert env["LC_ALL"] == "C"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["KEEP_ME"] == "1"
+
+
+def test_every_git_subprocess_receives_the_sanitised_env(monkeypatch: Any) -> None:
+    calls: list[dict[str, Any]] = []
+
+    class P:
+        returncode = 0
+        stdout = "C:/repo\n"
+        stderr = ""
+
+    monkeypatch.setenv("GIT_DIFF_OPTS", "--unified=100")
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess",
+        lambda cmd, **k: calls.append({"cmd": list(cmd), **k}) or P(),
+    )
+    di._git_toplevel(Path("."))
+    extract_diff_hunks_from_git()
+    assert len(calls) == 2
+    for call in calls:
+        env = call.get("env")
+        assert env is not None, call["cmd"]
+        assert "GIT_DIFF_OPTS" not in env

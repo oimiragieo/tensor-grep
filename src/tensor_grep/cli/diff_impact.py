@@ -8,6 +8,7 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -32,6 +33,39 @@ _DIFF_HUNK_RE = re.compile(
 )
 _GITLINK_INDEX_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+ 160000$")
 _C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
+
+
+# Environment variables that change `git diff` output or which repository/index git reads. The
+# argv pins the config twin of these; this is the environment twin. GIT_DIR/GIT_WORK_TREE/
+# GIT_INDEX_FILE are stripped unconditionally (decided: the cwd plus `rev-parse --show-toplevel`
+# decide the repo, so an inherited redirect, e.g. from a hook, cannot point us at another one).
+_GIT_ENV_STRIP = frozenset({
+    "GIT_DIFF_OPTS",
+    "GIT_EXTERNAL_DIFF",
+    "GIT_PAGER",
+    "PAGER",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_DIFF_PATH_COUNTER",
+    "GIT_DIFF_PATH_TOTAL",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+})
+_GIT_ENV_STRIP_PREFIXES = ("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")
+
+
+def _git_env() -> dict[str, str]:
+    """A copy of os.environ safe for a read-only `git diff` (stable, non-localized output)."""
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k.upper() not in _GIT_ENV_STRIP and not k.upper().startswith(_GIT_ENV_STRIP_PREFIXES)
+    }
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["LC_ALL"] = "C"
+    return env
 
 
 class DiffError(RuntimeError):
@@ -303,6 +337,7 @@ def _git_toplevel(root: Path, deadline_monotonic: float | None = None) -> Path:
             text=True,
             encoding="utf-8",
             errors="surrogateescape",
+            env=_git_env(),
             timeout_seconds=timeout,
         )
     except subprocess.TimeoutExpired as exc:
@@ -376,6 +411,7 @@ def extract_diff_hunks_from_git(
             text=True,
             encoding="utf-8",
             errors="surrogateescape",
+            env=_git_env(),
             timeout_seconds=timeout,
         )
     except subprocess.TimeoutExpired as exc:
