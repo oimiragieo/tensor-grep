@@ -374,6 +374,7 @@ class _TagResult(NamedTuple):
 
     valid: bool
     sha256: str  # hex digest of the whole file, from the bytes actually read in the session
+    ident: tuple[int, int]  # (st_dev, st_ino) of the OPENED handle (fstat) that was read
 
 
 def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> _TagResult:
@@ -397,7 +398,8 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> _TagResult:
         raise _PopulationWalkError("unreadable_path")
     try:
         with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
-            size_at_open = os.fstat(handle.fileno()).st_size
+            opened = os.fstat(handle.fileno())
+            size_at_open = opened.st_size
             ledger.begin_item()
             head = _read_exact_or_eof(handle, 128, ledger)
             sig = _CACHEDIR_TAG_SIGNATURE
@@ -409,7 +411,7 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> _TagResult:
                 raise _PopulationWalkError("unreadable_path")
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
-    return _TagResult(valid, hasher.hexdigest())
+    return _TagResult(valid, hasher.hexdigest(), (opened.st_dev, opened.st_ino))
 
 
 def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
@@ -439,7 +441,9 @@ class _Classified(NamedTuple):
 
     marker: str | None
     tag_digest: str | None = None  # whole-file sha256 of a VALID CACHEDIR.TAG (same session)
-    tag_leaf: str | None = None  # final leaf fingerprint of an INVALID CACHEDIR.TAG (same session)
+    # final leaf fingerprint of an INVALID CACHEDIR.TAG (same session) and the (st_dev, st_ino)
+    # of the OPENED handle it was read from
+    tag_leaf: tuple[str, tuple[int, int]] | None = None
 
 
 def _content_prune_marker(path: Path, ledger: _ByteLedger) -> _Classified:
@@ -454,7 +458,7 @@ def _content_prune_marker(path: Path, ledger: _ByteLedger) -> _Classified:
         result = _cachedir_tag_valid(tag, ledger)
         if result.valid:
             return _Classified("CACHEDIR.TAG", tag_digest=result.sha256)
-        return _Classified(None, tag_leaf="file:" + result.sha256)
+        return _Classified(None, tag_leaf=("file:" + result.sha256, result.ident))
     return _Classified(None)
 
 
@@ -749,7 +753,7 @@ def _population_paths(
     # after our check; so each kept directory must be yielded back, and unchanged.
     expected: dict[str, tuple[int, int]] = {}
     # leaf path -> fingerprint already computed (once) in a marker-classification session
-    emitted: dict[str, str] = {}
+    emitted: dict[str, tuple[str, tuple[int, int]]] = {}
     first = True
     for dirpath, dirnames, filenames, handle in _walk_impl(root, _on_error):
         visited += 1
@@ -855,19 +859,33 @@ def _population_paths(
                 expected[str(child)] = (child_st.st_dev, child_st.st_ino)
         dirnames[:] = keep
         for name in sorted(leaves):
-            done_fp = emitted.pop(str(current / name), None)
-            if done_fp is not None:
-                yield (rel_dir / name).as_posix(), done_fp  # already fingerprinted: no re-read
-                continue
             # os.walk swallows a DirEntry.is_dir() failure (no onerror) and lists the directory
             # among `filenames`; fingerprinting it as a leaf would omit its whole subtree. A
-            # directory is a leaf only when it is a link/junction.
+            # directory is a leaf only when it is a link/junction. EVERY leaf gets this lstat and
+            # type check, including one whose fingerprint was already computed.
             try:
                 leaf_st = _lstat(current / name)
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
             if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
                 raise _PopulationWalkError("unreadable_path")
+            done = emitted.pop(str(current / name), None)
+            if done is not None:
+                # An invalid CACHEDIR.TAG was read, charged and hashed in its classification
+                # session. Its emitted fingerprint may be used (no re-read, no re-charge) only if
+                # what is here NOW is still a regular, non-link file with the identity of the
+                # handle those bytes came from. This authorizes using bytes already read in THIS
+                # walk from THIS object; it is not a metadata-keyed cache (size/mtime are never
+                # compared), so an in-place rewrite cannot fool it into trusting other bytes.
+                done_fp, done_ident = done
+                if (
+                    _link_from_stat(leaf_st)
+                    or not stat.S_ISREG(leaf_st.st_mode)
+                    or not _same_identity(done_ident, (leaf_st.st_dev, leaf_st.st_ino))
+                ):
+                    raise _PopulationWalkError("unreadable_path")
+                yield (rel_dir / name).as_posix(), done_fp
+                continue
             yield (rel_dir / name).as_posix(), None
     if first:
         # The walk never yielded the ROOT tuple (os.fwalk(follow_symlinks=False) silently yields

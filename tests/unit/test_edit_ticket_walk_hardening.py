@@ -1117,3 +1117,90 @@ def test_unchanged_node_modules_still_name_prunes_and_verifies_pass(tmp_path: Pa
     assert ticket.population_status["pruned_set"]["node_modules"] == "name"
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "PASS"
+
+
+# ---- round 20: the emitted invalid-tag fingerprint still goes through the leaf checks ----
+
+
+def _swap_tag_at_leaf_stage(
+    monkeypatch: pytest.MonkeyPatch, tag: Path, swap: object
+) -> dict[str, int]:
+    """Run `swap()` at the tag's LEAF-stage `_lstat` (its 3rd: calls 1-2 are the classification
+    session), i.e. after the walker listed it in `filenames` and hashed it, before it is
+    accepted as a leaf. Records how many times the tag was lstat'ed."""
+    real = os.lstat
+    state = {"calls": 0}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        if Path(str(path)) == tag:
+            state["calls"] += 1
+            if state["calls"] == 3:
+                swap()  # type: ignore[operator]
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    return state
+
+
+def _tag_dir_to_directory(tag: Path) -> None:
+    os.unlink(tag)
+    tag.mkdir()
+    (tag / "evil.py").write_bytes(b"boom\n")
+
+
+def _tag_to_new_inode(tag: Path) -> None:
+    other = tag.parent / "CACHEDIR.TAG.new"
+    other.write_bytes(b"Signature: 8a477f597d28d172789f06886806bc55 YY")
+    os.replace(other, tag)
+
+
+def _tag_to_symlink(tag: Path) -> None:
+    target = tag.parent / "elsewhere.txt"
+    target.write_bytes(b"x")
+    os.unlink(tag)
+    try:
+        tag.symlink_to(target)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation not permitted here: {exc}")
+
+
+@pytest.mark.parametrize(
+    "swap",
+    [_tag_dir_to_directory, _tag_to_new_inode, _tag_to_symlink],
+    ids=["dir", "inode", "link"],
+)
+def test_emitted_tag_fingerprint_is_not_accepted_for_a_swapped_leaf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: object
+) -> None:
+    tag, _bad = _tag_tree(tmp_path)
+    state = _swap_tag_at_leaf_stage(monkeypatch, tag, lambda: swap(tag))  # type: ignore[operator]
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert state["calls"] >= 3, "the tag never reached its leaf-stage lstat (shortcut skipped it)"
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert "cache/CACHEDIR.TAG" not in files
+
+
+def test_tag_replaced_by_a_directory_with_evil_py_never_passes_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    tag, _bad = _tag_tree(tmp_path)
+    ticket = _ticket(tmp_path)
+    _swap_tag_at_leaf_stage(monkeypatch, tag, lambda: _tag_dir_to_directory(tag))
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "verify_population_incomplete"
+
+
+def test_unchanged_invalid_tag_uses_the_emitted_fingerprint_with_one_read_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # control
+    counter = _raw_read_counter(monkeypatch)
+    tag, bad = _tag_tree(tmp_path)
+    state = _swap_tag_at_leaf_stage(monkeypatch, tag, lambda: None)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert state["calls"] >= 3  # the leaf-stage lstat/type/identity check DID run
+    assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
+    assert counter["opens"] == 1  # exactly one read session
+    assert counter["raw_bytes"] <= len(bad) + 1
