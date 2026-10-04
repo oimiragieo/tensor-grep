@@ -450,7 +450,7 @@ def test_oversize_symlink_target_is_not_followed(tmp_path: Path) -> None:
     assert population["status"] == "complete"
     assert (
         files["link.bin"]
-        == hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(root / "link.bin"))).hexdigest()
+        == "symlink:" + hashlib.sha256(os.fsencode(os.readlink(root / "link.bin"))).hexdigest()
     )
 
 
@@ -865,3 +865,90 @@ def test_lstat_failure_while_classifying_a_directory_is_unreadable_path(
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
+
+
+def test_file_whose_bytes_mimic_the_link_domain_cannot_be_swapped_for_a_symlink(
+    tmp_path: Path,
+) -> None:
+    # Fingerprint domains must not overlap: a regular file containing exactly b"symlink:victim.py"
+    # used to hash identically to a symlink to victim.py.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "victim.py").write_text("v = 1\n", encoding="utf-8")
+    alias = tmp_path / "alias.py"
+    alias.write_bytes(b"symlink:victim.py")
+    ticket = _ticket(tmp_path)
+    alias.unlink()
+    try:
+        alias.symlink_to("victim.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation not permitted here: {exc}")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert "alias.py" in result["violations"]
+
+
+@windows_only
+def test_file_mimicking_junction_domain_cannot_be_swapped_for_a_junction(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (tmp_path / "dir-a").mkdir()
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    probe = root / "probe"
+    _make_junction(probe, tmp_path / "dir-a")
+    try:
+        link_text = os.readlink(probe)
+    finally:
+        _remove_junction(probe)
+    alias = root / "alias"
+    alias.write_bytes(b"symlink:" + os.fsencode(link_text))
+    ticket = _ticket(root)
+    alias.unlink()
+    _make_junction(alias, tmp_path / "dir-a")
+    try:
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert "alias" in result["violations"]
+    finally:
+        _remove_junction(alias)
+
+
+def test_fingerprints_are_type_tagged(tmp_path: Path) -> None:
+    (tmp_path / "f.py").write_text("x\n", encoding="utf-8")
+    (tmp_path / "t.py").write_text("y\n", encoding="utf-8")
+    try:
+        (tmp_path / "l.py").symlink_to("t.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation not permitted here: {exc}")
+    files, _population = _walk_tracked_files_bounded(tmp_path)
+    assert files["f.py"].startswith("file:")
+    assert files["l.py"] == "symlink:" + hashlib.sha256(b"t.py").hexdigest()
+
+
+def test_unchanged_link_passes_verify_with_tagged_fingerprints(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "victim.py").write_text("v = 1\n", encoding="utf-8")
+    try:
+        (tmp_path / "alias.py").symlink_to("victim.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"symlink creation not permitted here: {exc}")
+    ticket = _ticket(tmp_path)
+    assert ticket.pre_edit_fingerprints["alias.py"].startswith("symlink:")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def test_untagged_legacy_fingerprints_fail_closed_as_format_outdated(tmp_path: Path) -> None:
+    # Decision: an old-format ticket (bare hex fingerprints) is REFUSED, never tagged on read.
+    # Old tickets could hold links hashed by the old scheme, so re-tagging them `file:` would
+    # re-open the collision for exactly the tickets that predate the fix.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    legacy_dict = ticket.to_dict()
+    legacy_dict["pre_edit_fingerprints"] = {
+        k: v.split(":", 1)[1] for k, v in ticket.pre_edit_fingerprints.items()
+    }
+    legacy = edit_ticket_service.EditReadyTicketV1.from_dict(legacy_dict)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=legacy, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "ticket_format_outdated"
+    assert result["violations"] == ["ticket_format_outdated"]

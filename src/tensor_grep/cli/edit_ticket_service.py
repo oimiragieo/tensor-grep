@@ -259,18 +259,31 @@ def _population_paths(
             yield (rel_dir / name).as_posix()
 
 
+_FINGERPRINT_TAGS = ("file:", "symlink:", "other:")
+
+
 def compute_file_fingerprint(path: str | Path) -> str:
+    """Type-tagged fingerprint so the domains of different object types cannot overlap.
+
+    `file:<sha256 of content>`, `symlink:<sha256 of link text>` (symlinks and junctions, never
+    followed; G-08), `other:<S_IFMT octal>` for any other object (fifo, socket, device).
+    "" means the path no longer exists. Untagged hex is the OLD format, which collided: a
+    regular file holding b"symlink:victim.py" hashed like a link to victim.py."""
     p = Path(path)
     if _is_link(p):
         # Never follow a leaf link: its target may be out-of-root or huge (G-08).
-        return hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(p))).hexdigest()
-    if not p.is_file():
+        return "symlink:" + hashlib.sha256(os.fsencode(os.readlink(p))).hexdigest()
+    try:
+        mode = _lstat(p).st_mode
+    except FileNotFoundError:
         return ""
+    if not stat.S_ISREG(mode):
+        return f"other:{stat.S_IFMT(mode):o}"
     hasher = hashlib.sha256()
     with open(p, "rb") as f:
         while chunk := f.read(65536):
             hasher.update(chunk)
-    return hasher.hexdigest()
+    return "file:" + hasher.hexdigest()
 
 
 def _walk_tracked_files_bounded(
@@ -467,6 +480,17 @@ def verify_edit_ticket(
     # fingerprints for files a budget cut off, so drift there is undetectable -- never let an
     # incomplete population reach PASS. "unknown" (legacy tickets predating this field) is
     # deliberately NOT treated as incomplete -- that is the documented compatibility path.
+    # Old-format (untagged) fingerprints are REFUSED, never re-tagged on read: old tickets could
+    # hold links hashed by the colliding scheme, so tagging them `file:` would keep the hole
+    # open for exactly the tickets that predate the fix. Re-mint.
+    if any(not fp.startswith(_FINGERPRINT_TAGS) for fp in ticket.pre_edit_fingerprints.values()):
+        return {
+            "verdict": "FAIL",
+            "reason": "ticket_format_outdated",
+            "violations": ["ticket_format_outdated"],
+            "ticket_id": ticket.ticket_id,
+        }
+
     if ticket.population_status.get("status") == "incomplete":
         return {
             "verdict": "FAIL",
