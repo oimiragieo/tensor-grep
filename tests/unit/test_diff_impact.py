@@ -64,7 +64,7 @@ def test_parse_git_diff_hunks_basic() -> None:
     assert demo_path in parsed
     # Deleted file should be ignored
     deleted_path = Path("src/tensor_grep/cli/deleted.py")
-    assert deleted_path not in parsed
+    assert parsed[deleted_path] == []
 
     ranges = parsed[demo_path]
     # Hunk 1: @@ -10,3 +10,5 @@ -> lines 10 to 14
@@ -421,3 +421,62 @@ def test_git_failure_is_incomplete_not_no_changes(tmp_path: Path, monkeypatch: A
     assert not (tmp_path / "x").exists()
     assert res.exit_code == 2
     assert json.loads(res.stdout)["incomplete_reason"] == "invalid_ref"
+
+
+def test_parse_handles_spaces_quotes_and_deleted_files() -> None:
+    diff = (
+        "diff --git a/sp ace.py b/sp ace.py\n--- a/sp ace.py\t\n+++ b/sp ace.py\t\n"
+        "@@ -1 +1 @@\n-x\n+--- y\n"
+        'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\n'
+        '--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n@@ -2,0 +3,2 @@\n+a\n+b\n'
+        "diff --git a/lib.py b/lib.py\ndeleted file mode 100644\n"
+        "--- a/lib.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed[Path("sp ace.py")] == [(1, 1)]
+    assert parsed[Path("café.py")] == [(3, 4)]
+    assert parsed[Path("lib.py")] == []
+
+
+def test_deleted_file_hunk_body_lines_are_never_parsed_as_headers() -> None:
+    # Council round 5: removed lines whose CONTENT starts with "-- " / "++ " render as
+    # "--- ..." / "+++ ..." inside a deleted file's hunk body; they must not become paths.
+    diff = (
+        "diff --git a/old.py b/old.py\ndeleted file mode 100644\n"
+        "--- a/old.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n--- x\n-++ y\n"
+        "diff --git a/keep.py b/keep.py\n--- a/keep.py\n+++ b/keep.py\n@@ -3,0 +4,1 @@\n+z\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("old.py"): [], Path("keep.py"): [(4, 4)]}
+
+
+def test_rename_with_edit_maps_to_the_new_path() -> None:
+    diff = (
+        "diff --git a/old.py b/new.py\nsimilarity index 90%\nrename from old.py\nrename to new.py\n"
+        "--- a/old.py\n+++ b/new.py\n@@ -2,0 +3,1 @@\n+x\n"
+    )
+    assert parse_git_diff_hunks(diff) == {Path("new.py"): [(3, 3)]}
+
+
+def test_git_header_path_unquotes_escaped_quote() -> None:
+    assert di._git_header_path('"a/q\\"x.py"') == Path('q"x.py')
+    assert di._git_header_path("/dev/null") is None
+
+
+def test_real_repo_spaces_nonascii_and_deleted(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "café.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "sp ace.py").write_text("def b():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("from lib import helper\nhelper()\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "lib.py", "café.py", "sp ace.py", "app.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "café.py").write_text("def a():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "sp ace.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+    (tmp_path / "lib.py").unlink()
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["changed_files"] == ["café.py", "lib.py", "sp ace.py"]
+    assert {s["name"] for s in payload["changed_symbols"]} == {"a", "b"}
+    assert payload["deleted_files"] == ["lib.py"]
+    assert "deleted_files_symbols_not_analyzed" in payload["downgrade_reasons"]
+    assert payload["partial"] is False  # orchestrator decision: deletions do not force exit 2

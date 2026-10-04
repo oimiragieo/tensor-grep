@@ -30,8 +30,7 @@ from tensor_grep.cli.subprocess_policy import (
 _DIFF_HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
-_DIFF_GIT_FILE_RE = re.compile(r"^diff --git a/(?P<old_path>.+) b/(?P<new_path>.+)$")
-_DIFF_PLUS_FILE_RE = re.compile(r"^\+\+\+ b/(?P<new_path>.+)$")
+_C_ESCAPES = {"a": 7, "b": 8, "f": 12, "n": 10, "r": 13, "t": 9, "v": 11, "\\": 92, '"': 34}
 
 
 class DiffError(RuntimeError):
@@ -48,42 +47,73 @@ def _validate_ref(ref: str) -> str:
     return ref
 
 
+def _git_header_path(raw: str) -> Path | None:
+    """Decode a ---/+++ header operand ('/dev/null' -> None, quoted C-string -> text)."""
+    if raw == "/dev/null":
+        return None
+    if len(raw) >= 2 and raw.startswith('"') and raw.endswith('"'):
+        body, out, i = raw[1:-1], bytearray(), 0
+        while i < len(body):
+            ch = body[i]
+            if ch == "\\" and i + 1 < len(body):
+                nxt = body[i + 1]
+                if nxt in "01234567":
+                    j = i + 1
+                    while j < len(body) and j < i + 4 and body[j] in "01234567":
+                        j += 1
+                    out.append(int(body[i + 1 : j], 8) & 0xFF)
+                    i = j
+                    continue
+                if nxt in _C_ESCAPES:
+                    out.append(_C_ESCAPES[nxt])
+                    i += 2
+                    continue
+            out.extend(ch.encode("utf-8", errors="surrogateescape"))
+            i += 1
+        raw = out.decode("utf-8", errors="surrogateescape")
+    elif raw.endswith("\t"):
+        raw = raw[:-1]
+    return Path(raw[2:]) if raw[:2] in ("a/", "b/") else Path(raw)
+
+
 def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
     """Parse git diff hunk headers `@@ -l,s +start,count @@` into mapped 1-indexed line ranges per file.
 
     Returns a dict mapping relative file Path to a list of (start_line, end_line) inclusive tuples.
-    Deleted files (/dev/null) are omitted.
+    Deleted files map to an empty range list.
     """
     result: dict[Path, list[tuple[int, int]]] = {}
     current_file: Path | None = None
-    is_deleted = False
+    old_path: Path | None = None
+    in_header = False
 
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
-            match = _DIFF_GIT_FILE_RE.match(line)
-            if match:
-                current_file = Path(match.group("new_path"))
-                is_deleted = False
-            else:
-                current_file = None
-                is_deleted = False
+            in_header = True
+            old_path = None
+            current_file = None
             continue
 
-        if line.startswith("+++ "):
-            if line.startswith("+++ /dev/null"):
-                is_deleted = True
-                current_file = None
-            else:
-                match = _DIFF_PLUS_FILE_RE.match(line)
-                if match:
-                    current_file = Path(match.group("new_path"))
-                    is_deleted = False
+        if in_header and line.startswith("--- "):
+            old_path = _git_header_path(line[4:])
             continue
 
-        if is_deleted or current_file is None:
+        if in_header and line.startswith("+++ "):
+            new_path = _git_header_path(line[4:])
+            if new_path is None:
+                if old_path is not None:
+                    result.setdefault(old_path, [])
+                current_file = None
+            else:
+                current_file = new_path
             continue
 
         if line.startswith("@@ "):
+            # Council round 5: ANY hunk line ends header state; headers never follow a hunk, so
+            # removed lines rendered as "--- x" / "+++ y" in a body are never parsed as paths.
+            in_header = False
+            if current_file is None:
+                continue
             match = _DIFF_HUNK_RE.match(line)
             if match:
                 start = int(match.group("new_start"))
@@ -320,6 +350,7 @@ def build_diff_blast_radius(
     root = root.resolve()
 
     downgrade_reasons: list[str] = []
+    partial_reasons: list[str] = []
     partial = False
 
     if diff_text is not None:
@@ -339,6 +370,12 @@ def build_diff_blast_radius(
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
+    # A deleted BINARY or EMPTY file has no ---/+++ header lines, so it is not listed here.
+    deleted_files = sorted(
+        str(p).replace("\\", "/") for p, ranges in changed_files_with_lines.items() if not ranges
+    )
+    if deleted_files:
+        downgrade_reasons.append("deleted_files_symbols_not_analyzed")
 
     # If no files or symbols changed
     if not changed_files:
@@ -354,6 +391,7 @@ def build_diff_blast_radius(
     if _scan_did_not_finish(repo_m):
         partial = True
         downgrade_reasons.append("repo_map_scan_incomplete")
+        partial_reasons.append("repo_map_scan_incomplete")
 
     union_callers: list[dict[str, Any]] = []
     seen_callers: set[tuple[str, str, int]] = set()
@@ -372,6 +410,7 @@ def build_diff_blast_radius(
             partial = True
             if "deadline_exceeded" not in downgrade_reasons:
                 downgrade_reasons.append("deadline_exceeded")
+                partial_reasons.append("deadline_exceeded")
             break
 
         sym_radius = build_symbol_blast_radius_from_map(
@@ -385,6 +424,7 @@ def build_diff_blast_radius(
             partial = True
             if "symbol_blast_radius_partial" not in downgrade_reasons:
                 downgrade_reasons.append("symbol_blast_radius_partial")
+                partial_reasons.append("symbol_blast_radius_partial")
 
         # Collect callers
         for c in sym_radius.get("callers", []):
@@ -447,6 +487,9 @@ def build_diff_blast_radius(
         "caller_count": len(union_callers),
         "file_count": len(sorted_affected_files),
         "test_count": len(sorted_tests),
+        "deleted_files": deleted_files,
+        "result_incomplete": partial,
+        "incomplete_reason": (partial_reasons[0] if partial and partial_reasons else None),
     }
 
 
