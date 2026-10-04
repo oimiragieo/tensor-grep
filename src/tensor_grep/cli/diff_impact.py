@@ -689,9 +689,7 @@ def extract_diff_hunks_from_git(
             cwd=str(root),
             stdout=-1,
             stderr=-1,
-            text=True,
-            encoding="utf-8",
-            errors="surrogateescape",
+            text=False,  # bytes: text mode would turn a lone CR in file content into LF
             env=_git_env(),
             timeout_seconds=timeout,
         )
@@ -703,7 +701,9 @@ def extract_diff_hunks_from_git(
     if proc.returncode != 0:
         raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
 
-    return _parse_checked(proc.stdout or "")
+    raw = proc.stdout or b""
+    output = raw if isinstance(raw, str) else raw.decode("utf-8", errors="surrogateescape")
+    return _parse_checked(output)
 
 
 def _file_identity(path: Path) -> tuple[int, int, Path] | None:
@@ -826,6 +826,8 @@ def _map_blob_path(
         return "not_analyzed", "blob_unavailable", []
     if not _blob_hash_matches(data, new_oid):
         return "not_analyzed", "blob_unavailable", []
+    if _dig.has_ambiguous_line_breaks(data):
+        return "not_analyzed", "line_numbering_mismatch", []
     try:
         symbols = _symbols_from_bytes(data, rel_path.suffix)
     except _extraction_errors() as exc:  # narrow on purpose
@@ -833,13 +835,9 @@ def _map_blob_path(
     return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
 
 
-def _read_snapshot(path: Path, cap: int) -> bytes:
-    """Read at most `cap` bytes of `path` from ONE open; raises _BlobOverCap above the cap."""
-    with open(path, "rb") as handle:
-        data = handle.read(cap + 1)
-    if len(data) > cap:
-        raise _BlobOverCap(f"{path} exceeds the {cap}-byte parse cap")
-    return data
+def _read_snapshot(root: Path, rel_path: Path, cap: int) -> bytes:
+    """Read at most `cap` bytes of `rel_path` through one confined, non-blocking handle."""
+    return _dig.read_regular_file_confined(root, rel_path, cap)
 
 
 def _map_file_snapshot(
@@ -864,21 +862,25 @@ def _map_file_snapshot(
     cap = repo_map._max_parse_bytes()
     before = _file_identity(full_path)
     try:
-        snapshot = _read_snapshot(full_path, cap)
+        snapshot = _read_snapshot(root, rel_path, cap)
     except _BlobOverCap:
         return "not_analyzed", "over_cap", []  # the extractors return ([], []) over the cap
-    except OSError as exc:
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    except _dig.PathChanged:
+        return "not_analyzed", "path_changed_during_analysis", []
+    except _dig.UnreadablePath:
+        return "not_analyzed", "unreadable_path", []
     if content_mode == "worktree" and new_oid:
         if _dig.classify_worktree_content(snapshot, new_oid) == "transformed":
             try:
-                again: bytes | None = _read_snapshot(full_path, cap)
-            except (_BlobOverCap, OSError):
+                again: bytes | None = _read_snapshot(root, rel_path, cap)
+            except (_BlobOverCap, _dig.PathChanged, _dig.UnreadablePath):
                 again = None
             reason = (
                 "content_transformed_by_git_filter" if again == snapshot else "content_not_verified"
             )
             return "not_analyzed", reason, []
+    if _dig.has_ambiguous_line_breaks(snapshot):
+        return "not_analyzed", "line_numbering_mismatch", []
     try:
         symbols = _symbols_from_bytes(snapshot, rel_path.suffix)
     except _extraction_errors() as exc:  # narrow on purpose

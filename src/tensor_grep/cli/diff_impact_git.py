@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import errno
 import hashlib
 import os
 import re
+import stat
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -271,3 +274,214 @@ def content_sessions(
     finally:
         _ACTIVE_SESSIONS.reset(token)
         sessions.close()
+
+
+# ---------------------------------------------------------------------------------------------
+# Line numbering: git numbers lines by LF. Python's universal-newline reading also breaks on a
+# lone CR, and `str.splitlines()` (used by several extractors) additionally breaks on VT, FF,
+# FS, GS, RS, NEL, LS and PS. Content containing any of these can shift an extractor's line
+# numbers away from git's, silently moving a changed symbol out of its diff range, so such
+# content is REPORTED instead of analysed (rejecting is simpler than translating coordinates).
+# ---------------------------------------------------------------------------------------------
+_AMBIGUOUS_LINE_BREAK_RE = re.compile(
+    rb"\r(?!\n)|[\x0b\x0c\x1c\x1d\x1e]|\xc2\x85|\xe2\x80[\xa8\xa9]"
+)
+
+
+def has_ambiguous_line_breaks(data: bytes) -> bool:
+    return _AMBIGUOUS_LINE_BREAK_RE.search(data) is not None
+
+
+# ---------------------------------------------------------------------------------------------
+# Confined, non-blocking read of one working-tree file.
+# ---------------------------------------------------------------------------------------------
+class PathChanged(Exception):
+    """The path is no longer the regular in-root file the diff described (swapped/vanished)."""
+
+
+class UnreadablePath(Exception):
+    """The path could not be opened or read (permissions, I/O error)."""
+
+
+_READ_CHUNK = 65536
+_PATH_CHANGED_ERRNOS = {
+    errno.ELOOP,
+    errno.ENOTDIR,
+    errno.ENXIO,
+    errno.EISDIR,
+    errno.ENOENT,
+    getattr(errno, "EMLINK", -1),
+}
+
+
+def _read_fd_bounded(read: Callable[[int], bytes], cap: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = cap + 1
+    while remaining > 0:
+        block = read(min(remaining, _READ_CHUNK))
+        if not block:
+            break
+        chunks.append(block)
+        remaining -= len(block)
+    data = b"".join(chunks)
+    if len(data) > cap:
+        raise BlobOverCap(f"file exceeds the {cap}-byte parse cap")
+    return data
+
+
+if sys.platform != "win32":
+
+    def _read_confined_posix(root: Path, rel_path: Path, cap: int) -> bytes:
+        parts = rel_path.parts
+        if not parts or rel_path.is_absolute() or any(p in ("", ".", "..") for p in parts):
+            raise PathChanged(f"not a plain relative path: {rel_path}")
+        opened: list[int] = []
+        try:
+            current = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+            opened.append(current)
+            for component in parts[:-1]:  # one component at a time, never following a symlink
+                current = os.open(
+                    component,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+                    dir_fd=current,
+                )
+                opened.append(current)
+            # O_NONBLOCK: opening a FIFO with no writer must return, never block forever.
+            fd = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=current,
+            )
+            opened.append(fd)
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise PathChanged(f"{rel_path} is not a regular file")
+            return _read_fd_bounded(lambda n: os.read(fd, n), cap)
+        except OSError as exc:
+            if exc.errno in _PATH_CHANGED_ERRNOS:
+                raise PathChanged(str(exc)) from exc
+            raise UnreadablePath(str(exc)) from exc
+        finally:
+            for descriptor in reversed(opened):
+                with contextlib.suppress(OSError):
+                    os.close(descriptor)
+
+    # Read at most `cap` bytes of the regular file `rel_path` under `root`, through ONE handle.
+    # Never follows a symlink or reparse point (final component OR any parent), never blocks on a
+    # FIFO or device, and refuses anything that is not a regular file inside `root`. Raises
+    # PathChanged (swapped/vanished/not a regular file), UnreadablePath, or BlobOverCap.
+    read_regular_file_confined = _read_confined_posix
+
+else:
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    class _ByHandleFileInformation(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    _k32.CreateFileW.restype = wintypes.HANDLE
+    _k32.GetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(_ByHandleFileInformation),
+    ]
+    _k32.GetFileInformationByHandle.restype = wintypes.BOOL
+    _k32.GetFileType.argtypes = [wintypes.HANDLE]
+    _k32.GetFileType.restype = wintypes.DWORD
+    _k32.GetFinalPathNameByHandleW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    _k32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    _k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _k32.CloseHandle.restype = wintypes.BOOL
+
+    _GENERIC_READ = 0x80000000
+    _SHARE_ALL = 0x7
+    _OPEN_EXISTING = 3
+    _FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+    _ATTR_DIRECTORY = 0x10
+    _ATTR_REPARSE_POINT = 0x400
+    _FILE_TYPE_DISK = 1
+    _INVALID_HANDLE = ctypes.c_void_p(-1).value
+
+    def _strip_win_prefix(path: str) -> str:
+        if path.startswith("\\\\?\\UNC\\"):
+            return "\\\\" + path[8:]
+        if path.startswith("\\\\?\\"):
+            return path[4:]
+        return path
+
+    def _read_confined_windows(root: Path, rel_path: Path, cap: int) -> bytes:
+        parts = rel_path.parts
+        if not parts or rel_path.is_absolute() or any(p in ("", ".", "..") for p in parts):
+            raise PathChanged(f"not a plain relative path: {rel_path}")
+        # FILE_FLAG_OPEN_REPARSE_POINT: if the final component was swapped for a symlink or
+        # junction we open the LINK ITSELF (and reject it) instead of following it.
+        handle = _k32.CreateFileW(
+            os.path.join(str(root), *parts),
+            _GENERIC_READ,
+            _SHARE_ALL,
+            None,
+            _OPEN_EXISTING,
+            _FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+        if handle is None or handle == _INVALID_HANDLE:
+            code = ctypes.get_last_error()
+            if code in (2, 3):  # file / path not found: it vanished or a parent changed
+                raise PathChanged(f"{rel_path} is gone (error {code})")
+            raise UnreadablePath(f"CreateFileW failed with error {code}")
+        fd: int | None = None
+        try:
+            info = _ByHandleFileInformation()
+            if not _k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+                raise UnreadablePath("GetFileInformationByHandle failed")
+            if (
+                info.dwFileAttributes & (_ATTR_REPARSE_POINT | _ATTR_DIRECTORY)
+                or _k32.GetFileType(handle) != _FILE_TYPE_DISK
+            ):
+                raise PathChanged(f"{rel_path} is a reparse point or not a regular file")
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = _k32.GetFinalPathNameByHandleW(handle, buffer, 32768, 0)
+            if length == 0 or length >= 32768:
+                raise UnreadablePath("GetFinalPathNameByHandleW failed")
+            final = os.path.normcase(_strip_win_prefix(buffer.value))
+            root_real = os.path.normcase(_strip_win_prefix(os.path.realpath(root))).rstrip("\\")
+            if final != root_real and not final.startswith(root_real + "\\"):
+                raise PathChanged(f"{rel_path} resolves outside the repository root")
+            fd = msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+            handle = None  # the descriptor now owns the handle
+            return _read_fd_bounded(lambda n: os.read(fd, n), cap)  # type: ignore[arg-type]
+        except OSError as exc:
+            raise UnreadablePath(str(exc)) from exc
+        finally:
+            if fd is not None:
+                with contextlib.suppress(OSError):
+                    os.close(fd)
+            elif handle is not None:
+                _k32.CloseHandle(handle)
+
+    read_regular_file_confined = _read_confined_windows

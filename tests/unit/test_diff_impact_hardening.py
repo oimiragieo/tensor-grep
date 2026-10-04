@@ -1338,12 +1338,12 @@ def test_foreign_bytes_around_the_read_are_never_analysed(
     calls: list[int] = []
     real = di._read_snapshot
 
-    def scripted(path: Path, cap: int) -> bytes:
+    def scripted(root: Path, rel: Path, cap: int) -> bytes:
         index = len(calls)
         calls.append(index)
-        if path.name == "app.py" and index < len(schedule):
+        if rel.name == "app.py" and index < len(schedule):
             return schedule[index]
-        return real(path, cap)
+        return real(root, rel, cap)
 
     monkeypatch.setattr(di, "_read_snapshot", scripted)
     payload = build_diff_blast_radius(root=repo)
@@ -1364,7 +1364,7 @@ def test_unstable_content_is_content_not_verified_and_stable_is_filter_transform
     monkeypatch.setattr(
         di,
         "_read_snapshot",
-        lambda path, cap: next(seq) if path.name == "app.py" else real(path, cap),
+        lambda root, rel, cap: next(seq) if rel.name == "app.py" else real(root, rel, cap),
     )
     payload = build_diff_blast_radius(root=repo)
     assert payload["not_analyzed_paths"] == [{"path": "app.py", "reason": "content_not_verified"}]
@@ -1467,3 +1467,193 @@ def test_sha256_repository_staged_blob_is_read_and_verified(tmp_path: Path) -> N
     _git(repo, "add", "--", "app.py")
     payload = build_diff_blast_radius(root=repo, staged=True)
     assert [s["name"] for s in payload["changed_symbols"]] == ["a"]
+
+
+# ---------------------------------------------------------------- line numbering = git's LF numbering
+def _numbering_repo(tmp_path: Path, after: bytes, autocrlf: str = "false") -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "core.autocrlf", autocrlf)
+    _commit_app(repo, b"# comment\n")
+    (repo / "app.py").write_bytes(after)
+    return repo
+
+
+@pytest.mark.parametrize(
+    ("label", "content"),
+    [
+        ("lone CR", b"# comment\rdef hidden():\r    return 2\r\n"),
+        ("form feed", b"# comment\x0cdef hidden():\n    return 2\n"),
+        ("vertical tab", b"# comment\x0bdef hidden():\n    return 2\n"),
+        ("file separator", b"# comment\x1cdef hidden():\n    return 2\n"),
+        ("NEL", "# comment\u0085def hidden():\n    return 2\n".encode()),
+        ("LINE SEPARATOR in a string", 'x = "a\u2028b"\ndef hidden():\n    return 2\n'.encode()),
+        ("PARAGRAPH SEPARATOR", "# c\u2029\ndef hidden():\n    return 2\n".encode()),
+    ],
+)
+def test_content_whose_extractor_line_numbering_differs_from_gits_is_never_analysed(
+    tmp_path: Path, monkeypatch: Any, label: str, content: bytes
+) -> None:
+    repo = _numbering_repo(tmp_path, content)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, (label, res.stdout)
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [{"path": "app.py", "reason": "line_numbering_mismatch"}]
+    assert "hidden" not in {s["name"] for s in data["changed_symbols"]}
+
+
+def test_lone_cr_with_crlf_normalisation_branch_is_also_rejected(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    # mixes real CRLF (matches git's normalised view with autocrlf) with a lone CR
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "core.autocrlf", "true")
+    _commit_app(repo, b"# comment\r\n")
+    (repo / "app.py").write_bytes(b"# comment\r\ndef hidden():\r    return 2\r\n")
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "line_numbering_mismatch"}
+    ]
+
+
+def test_staged_blob_with_a_lone_cr_is_rejected_too(tmp_path: Path) -> None:
+    repo = _numbering_repo(tmp_path, b"# comment\rdef hidden():\r    return 2\r\n")
+    _git(repo, "add", "--", "app.py")
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "line_numbering_mismatch"}
+    ]
+
+
+def test_crlf_only_content_is_still_analysed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "core.autocrlf", "false")
+    _commit_app(repo, b"# comment\r\n")
+    (repo / "app.py").write_bytes(b"# comment\r\ndef shown():\r\n    return 2\r\n")
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["shown"]
+    assert payload["not_analyzed_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        b"a\rb",
+        b"a\x0cb",
+        b"a\x0bb",
+        b"a\x1cb",
+        b"a\x1db",
+        b"a\x1eb",
+        b"a\xc2\x85b",
+        b"a\xe2\x80\xa8b",
+        b"a\xe2\x80\xa9b",
+    ],
+)
+def test_ambiguous_line_break_detector_flags_every_splitlines_only_separator(data: bytes) -> None:
+    assert dig.has_ambiguous_line_breaks(data) is True
+
+
+@pytest.mark.parametrize(
+    "data", [b"", b"a\nb\n", b"a\r\nb\r\n", b"x = '\xc3\xa9'\n", b"a\r\n\r\nb"]
+)
+def test_ambiguous_line_break_detector_accepts_lf_and_crlf(data: bytes) -> None:
+    assert dig.has_ambiguous_line_breaks(data) is False
+
+
+# ---------------------------------------------------------------- confined, non-blocking open
+def test_confined_read_returns_the_bytes_of_an_ordinary_file(tmp_path: Path) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "app.py").write_bytes(b"x = 1\n")
+    assert dig.read_regular_file_confined(tmp_path, Path("sub/app.py"), 1000) == b"x = 1\n"
+
+
+def test_confined_read_enforces_the_byte_cap(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_bytes(b"x" * 50)
+    with pytest.raises(dig.BlobOverCap):
+        dig.read_regular_file_confined(tmp_path, Path("app.py"), 10)
+    assert dig.read_regular_file_confined(tmp_path, Path("app.py"), 50) == b"x" * 50
+
+
+def test_confined_read_refuses_a_symlink_swapped_in_before_the_open(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(b"OUTSIDE SECRET\n")
+    try:
+        (root / "app.py").symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    with pytest.raises(dig.PathChanged):
+        dig.read_regular_file_confined(root, Path("app.py"), 1000)
+
+
+def test_confined_read_refuses_a_swapped_in_directory_symlink(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    (outside_dir / "app.py").write_bytes(b"OUTSIDE SECRET\n")
+    try:
+        (root / "sub").symlink_to(outside_dir, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create directory symlinks here: {exc}")
+    with pytest.raises(dig.PathChanged):
+        dig.read_regular_file_confined(root, Path("sub/app.py"), 1000)
+
+
+def test_confined_read_refuses_a_directory_and_a_missing_file(tmp_path: Path) -> None:
+    (tmp_path / "d").mkdir()
+    with pytest.raises((dig.PathChanged, dig.UnreadablePath)):
+        dig.read_regular_file_confined(tmp_path, Path("d"), 1000)
+    with pytest.raises((dig.PathChanged, dig.UnreadablePath)):
+        dig.read_regular_file_confined(tmp_path, Path("nope.py"), 1000)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs are POSIX-only")
+def test_fifo_swapped_in_returns_promptly_instead_of_blocking(tmp_path: Path) -> None:
+    script = tmp_path / "child.py"
+    script.write_text(
+        "import os, sys\n"
+        "from pathlib import Path\n"
+        f"sys.path.insert(0, {str(Path(di.__file__).resolve().parents[2])!r})\n"
+        "import tensor_grep.cli.diff_impact_git as dig\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        "os.mkfifo(root / 'app.py')  # no writer: a plain open() would block forever\n"
+        "try:\n"
+        "    dig.read_regular_file_confined(root, Path('app.py'), 1000)\n"
+        "    print('READ')\n"
+        "except dig.PathChanged:\n"
+        "    print('PATH_CHANGED')\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [sys.executable, str(script)], capture_output=True, text=True, timeout=60, check=False
+    )  # the subprocess timeout is the test's own hang guard
+    assert proc.stdout.strip() == "PATH_CHANGED", proc.stderr[-400:]
+
+
+def test_snapshot_swapped_to_an_outside_symlink_with_identical_bytes_is_still_refused(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    outside = tmp_path / "outside.py"
+    outside.write_bytes(ORIGINAL)  # identical bytes: only confinement can refuse it
+    real = dig.read_regular_file_confined
+
+    def swap_then_read(root: Path, rel: Path, cap: int) -> bytes:
+        try:
+            (root / rel).unlink()
+            (root / rel).symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"cannot create symlinks here: {exc}")
+        return real(root, rel, cap)
+
+    monkeypatch.setattr(dig, "read_regular_file_confined", swap_then_read)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "path_changed_during_analysis"}
+    ]
+    assert payload["changed_symbols"] == []
