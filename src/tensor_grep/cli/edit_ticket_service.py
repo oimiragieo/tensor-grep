@@ -850,6 +850,11 @@ def _population_paths(
             if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
                 raise _PopulationWalkError("unreadable_path")
             yield (rel_dir / name).as_posix(), None
+    if first:
+        # The walk never yielded the ROOT tuple (os.fwalk(follow_symlinks=False) silently yields
+        # nothing for a symlink root; the held chain on Windows must have held the root): an
+        # empty walk is NOT an empty population.
+        raise _PopulationWalkError("unreadable_path")
     if expected:  # a kept directory was never visited: it vanished or became a link
         raise _PopulationWalkError("unreadable_path")
 
@@ -945,7 +950,11 @@ def _walk_tracked_files_bounded(
     Lazy generator (`_population_paths`) consumed by the file/byte budgets; see the module
     docstring for the prune set and threat model.
     """
-    root = Path(repo_root)
+    # A legitimate root alias (a checkout behind a symlink or junction, e.g. macOS /tmp and
+    # /var) is resolved ONCE, explicitly; the RESOLVED root is authenticated by lstat and its
+    # identity recorded. Every descendant stays no-follow.
+    root = Path(os.path.realpath(repo_root))
+    root_identity: list[int] | None = None
     result: dict[str, str] = {}
     scanned_files = 0
     ledger = _ByteLedger(max_file_bytes, max_aggregate_bytes)
@@ -956,6 +965,13 @@ def _walk_tracked_files_bounded(
 
     paths = _population_paths(root, pruned, content_pruned, ledger)
     try:
+        try:
+            root_st = _lstat(root)
+        except OSError as exc:
+            raise _PopulationWalkError("unreadable_path") from exc
+        if not stat.S_ISDIR(root_st.st_mode) or _link_from_stat(root_st):
+            raise _PopulationWalkError("unreadable_path")
+        root_identity = [root_st.st_dev, root_st.st_ino]
         for rel, emitted_fp in paths:
             item = root / rel
 
@@ -1022,6 +1038,7 @@ def _walk_tracked_files_bounded(
             "limit_kind": limit_kind,
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
+            "root_identity": root_identity,
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
@@ -1034,6 +1051,7 @@ def _walk_tracked_files_bounded(
             "reason": None,
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
+            "root_identity": root_identity,
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
@@ -1158,6 +1176,7 @@ def verify_edit_ticket(
         not isinstance(pop.get("pruned_set"), dict)
         or pop.get("population_policy") != "agt04-v2"
         or not pop.get("population_source")
+        or not pop.get("root_identity")
     ) or any(not fp.startswith(_FINGERPRINT_TAGS) for fp in ticket.pre_edit_fingerprints.values()):
         return {
             "verdict": "FAIL",
@@ -1217,6 +1236,16 @@ def verify_edit_ticket(
             "verdict": "FAIL",
             "reason": "verify_population_incomplete",
             "violations": [],
+            "ticket_id": ticket.ticket_id,
+        }
+    if list(ticket.population_status.get("root_identity") or []) != list(
+        current_population.get("root_identity") or []
+    ):
+        # the (resolved) repo root now is a different directory than the one minted from
+        return {
+            "verdict": "FAIL",
+            "reason": "verify_population_incomplete",
+            "violations": ["root_identity_changed"],
             "ticket_id": ticket.ticket_id,
         }
     all_paths = set(ticket.pre_edit_fingerprints) | set(current_fps)

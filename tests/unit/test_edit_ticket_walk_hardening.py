@@ -866,3 +866,103 @@ def test_a_changed_marker_inside_a_name_pruned_dir_does_not_violate_the_ticket(
     (nm / "pyvenv.cfg").write_text("home = b\n", encoding="utf-8")
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "PASS"
+
+
+# ---- round 17: a symlinked / junctioned repo root ----
+
+
+def _unlink_dir_link(link: Path) -> None:
+    try:
+        os.unlink(link)
+    except OSError:
+        os.rmdir(link)  # Windows directory symlink / junction
+
+
+def _root_alias(tmp_path: Path, kind: str, target: Path) -> Path:
+    alias = tmp_path / "repo"
+    _link_dir(alias, target, kind)
+    return alias
+
+
+def _real_tree(tmp_path: Path, name: str = "real") -> Path:
+    real = tmp_path / name
+    real.mkdir()
+    (real / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (real / "secret.py").write_text("s = 1\n", encoding="utf-8")
+    return real
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_symlinked_root_edit_to_an_undeclared_file_fails_verify(tmp_path: Path, kind: str) -> None:
+    # os.fwalk(follow_symlinks=False) yields NOTHING for a symlink root: the old walk was an
+    # empty "complete" population and any undeclared edit verified PASS.
+    real = _real_tree(tmp_path)
+    alias = _root_alias(tmp_path, kind, real)
+    try:
+        ticket = _ticket(alias)
+        assert ticket.population_status["status"] == "complete"
+        assert "secret.py" in ticket.pre_edit_fingerprints
+        (real / "secret.py").write_text("s = 2\n", encoding="utf-8")
+        result = verify_edit_ticket(repo_root=str(alias), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert result["violations"] == ["secret.py"]
+    finally:
+        _unlink_dir_link(alias)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_unchanged_tree_verifies_pass_through_a_root_alias(tmp_path: Path, kind: str) -> None:
+    real = _real_tree(tmp_path)
+    alias = _root_alias(tmp_path, kind, real)
+    try:
+        ticket = _ticket(alias)
+        assert ticket.population_status["status"] == "complete"
+        result = verify_edit_ticket(repo_root=str(alias), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "PASS"
+    finally:
+        _unlink_dir_link(alias)
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_retargeted_root_alias_between_mint_and_verify_never_passes(
+    tmp_path: Path, kind: str
+) -> None:
+    real1 = _real_tree(tmp_path, "real1")
+    real2 = _real_tree(tmp_path, "real2")  # identical content, different directory
+    alias = _root_alias(tmp_path, kind, real1)
+    try:
+        ticket = _ticket(alias)
+        _unlink_dir_link(alias)
+        _link_dir(alias, real2, kind)
+        result = verify_edit_ticket(repo_root=str(alias), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert result["violations"] == ["root_identity_changed"]
+    finally:
+        _unlink_dir_link(alias)
+
+
+def test_a_walk_that_never_visits_the_root_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+
+    def _empty_walk(top: object, onerror: object):  # type: ignore[no-untyped-def]
+        return iter(())
+
+    monkeypatch.setattr(edit_ticket_service, "_walk_impl", _empty_walk, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert files == {}
+
+
+def test_ticket_without_a_recorded_root_identity_is_refused(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["root_identity"]
+    legacy_dict = ticket.to_dict()
+    del legacy_dict["population_status"]["root_identity"]
+    legacy = edit_ticket_service.EditReadyTicketV1.from_dict(legacy_dict)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=legacy, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "ticket_format_outdated"
