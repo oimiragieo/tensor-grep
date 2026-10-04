@@ -562,6 +562,21 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("-v")
             if config.no_invert_match:
                 cmd.append("--no-invert-match")
+            if config.smart_case and not (config.ignore_case or config.case_sensitive):
+                cmd.append("-S")  # explicit -i/-s win; rg is last-flag-wins
+            if config.stop_on_nonmatch:
+                cmd.append("--stop-on-nonmatch")
+            if config.null_data:
+                cmd.append("--null-data")
+            engine = str(config.engine or "default").lower()
+            if engine in {"pcre2", "auto"}:
+                cmd.extend(["--engine", engine])
+            elif engine != "default":
+                raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
+            if config.dfa_size_limit:
+                cmd.extend(["--dfa-size-limit", str(config.dfa_size_limit)])
+            if config.regex_size_limit:
+                cmd.extend(["--regex-size-limit", str(config.regex_size_limit)])
             if config.word_regexp:
                 cmd.append("-w")
             if config.line_regexp:
