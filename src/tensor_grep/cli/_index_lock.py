@@ -186,13 +186,13 @@ def _is_link_or_junction(path: str | Path) -> bool:
     return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & reparse)
 
 
-def _create_missing_parents(
-    path: Path, auth: WriteAuthorization, scope: WriteScope
-) -> WriteAuthorization:
-    """The authorized parent was ABSENT: create each missing component ourselves (``os.mkdir``
-    fails if someone else got there first -> refuse), reject a symlink/junction, keep every new
-    directory under the authorized existing ancestor, and return the authorization with the NEW
-    parent's identity captured, so the pre-publish check verifies exactly what we created."""
+def _plan_missing_parents(path: Path, auth: WriteAuthorization, scope: WriteScope) -> list[Path]:
+    """THE single walk over every directory component between the authorized existing ancestor and
+    the target's parent, shared by the pre-publish sweep and the writer so they can never
+    disagree. Returns the components still to be created, top-down. Refuses (raises) on:
+    an ancestor that moved or became a link; a path outside the ancestor; any component that
+    ALREADY EXISTS unless this scope created it and it is still that very real directory (not a
+    link/junction, identity intact) -- i.e. a directory made by anyone else."""
     label = auth.label
     if auth.ancestor is None:
         raise WriteAuthorizationError(f"{label} parent was not authorized for creation (refused)")
@@ -202,21 +202,20 @@ def _create_missing_parents(
             raise WriteAuthorizationError(
                 f"{label} parent changed after it was authorized (refused)"
             )
-        missing: list[Path] = []
+        components: list[Path] = []
         probe = path.parent
         while os.path.normcase(str(probe)) != os.path.normcase(ancestor_path):
-            missing.append(probe)
+            components.append(probe)
             if probe.parent == probe:
                 raise WriteAuthorizationError(f"{label} parent is outside its ancestor (refused)")
             probe = probe.parent
-        real_ancestor = os.path.normcase(os.path.realpath(ancestor_path))
-        for component in reversed(missing):
-            key = os.path.normcase(str(component))
+        missing: list[Path] = []
+        for component in reversed(components):
             if os.path.lexists(component):
-                # Reusable ONLY if this scope created it and it is still that very real directory.
-                recorded = scope.created_dirs.get(key)
+                recorded = scope.created_dirs.get(os.path.normcase(str(component)))
                 if (
                     recorded is None
+                    or missing  # an existing child under a still-missing parent: inconsistent
                     or _is_link_or_junction(component)
                     or dir_identity(component) != recorded
                 ):
@@ -224,13 +223,37 @@ def _create_missing_parents(
                         f"{label} parent was created by someone else (refused)"
                     )
                 continue
+            missing.append(component)
+        return missing
+    except WriteAuthorizationError:
+        raise
+    except OSError:
+        raise WriteAuthorizationError(
+            f"{label} parent changed after it was authorized (refused)"
+        ) from None
+
+
+def _create_missing_parents(
+    path: Path, auth: WriteAuthorization, scope: WriteScope
+) -> WriteAuthorization:
+    """The authorized parent was ABSENT: create the components :func:`_plan_missing_parents`
+    approved (``os.mkdir`` fails if someone else got there first -> refuse), reject a
+    symlink/junction, keep every new directory under the authorized existing ancestor, record
+    each in the scope, and return the authorization with the NEW parent's identity captured, so
+    the pre-publish check verifies exactly what we created."""
+    label = auth.label
+    missing = _plan_missing_parents(path, auth, scope)
+    assert auth.ancestor is not None
+    real_ancestor = os.path.normcase(os.path.realpath(auth.ancestor[0]))
+    try:
+        for component in missing:
             os.mkdir(component)  # FileExistsError: created by someone else -> refuse
             if _is_link_or_junction(component):
                 raise WriteAuthorizationError(f"{label} parent is a link (refused)")
             real = os.path.normcase(os.path.realpath(component))
             if os.path.commonpath([real, real_ancestor]) != real_ancestor:
                 raise WriteAuthorizationError(f"{label} parent escaped its ancestor (refused)")
-            scope.created_dirs[key] = dir_identity(component)
+            scope.created_dirs[os.path.normcase(str(component))] = dir_identity(component)
         return _dc_replace(auth, parent_identity=dir_identity(path.parent))
     except WriteAuthorizationError:
         raise
@@ -257,26 +280,10 @@ def _preflight_all(scope: WriteScope) -> None:
     """Refuse BEFORE the first publish if ANY output of the scope can no longer be written
     (parent/ancestor/identity re-verified for every authorization), so a multi-output request is
     not left half-published by a refusal that was already visible."""
-    for key, auth in scope.auths.items():
-        target = Path(key)
+    for auth in scope.auths.values():
+        target = Path(auth.path)
         if auth.parent_identity is None:
-            if os.path.lexists(target.parent):
-                raise WriteAuthorizationError(
-                    f"{auth.label} parent appeared after it was authorized (refused)"
-                )
-            if auth.ancestor is not None:
-                ancestor_path, ancestor_id = auth.ancestor
-                try:
-                    intact = (
-                        not _is_link_or_junction(ancestor_path)
-                        and dir_identity(Path(ancestor_path)) == ancestor_id
-                    )
-                except OSError:
-                    intact = False
-                if not intact:
-                    raise WriteAuthorizationError(
-                        f"{auth.label} parent changed after it was authorized (refused)"
-                    )
+            _plan_missing_parents(Path(auth.path), auth, scope)  # same walk the writer uses
         else:
             _enforce_authorization(target, auth)
             if auth.identity is None and os.path.lexists(target):
