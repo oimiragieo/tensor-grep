@@ -1206,26 +1206,6 @@ def test_external_setters_are_gone_so_nothing_can_certify_the_wrong_session(
             setattr(client, name, True)
 
 
-def test_late_mark_certifies_the_responding_session_never_a_replacement(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from tensor_grep.cli import repo_map
-
-    client = _client(tmp_path, monkeypatch)
-    session_a = install_session(client, process=_FakeProcess())
-    client._tls.session = session_a  # A answered this thread's request
-    session_b = install_session(client, process=_FakeProcess())  # restart before the mark
-
-    repo_map._mark_lsp_provider_response(client)  # the paused repo_map site resumes
-
-    assert session_a.lsp_provider_response is False
-    assert session_b.lsp_provider_response is False, "a replacement was certified by a stale mark"
-
-    client._tls.session = session_b  # a response that really came from B
-    repo_map._mark_lsp_provider_response(client)
-    assert session_b.lsp_provider_response is True
-
-
 def test_readiness_state_belongs_to_the_session_and_starts_fresh(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1258,6 +1238,11 @@ def _public_layer_violations(source: str, class_names: tuple[str, ...]) -> list[
     violations: list[str] = []
     for name, fn in public.items():
         reads = 0
+        identity_checks = {
+            id(n.left)
+            for n in ast.walk(fn)
+            if isinstance(n, ast.Compare) and any(isinstance(o, (ast.Is, ast.IsNot)) for o in n.ops)
+        }
         for node in ast.walk(fn):
             if (
                 isinstance(node, ast.Call)
@@ -1274,6 +1259,7 @@ def _public_layer_violations(source: str, class_names: tuple[str, ...]) -> list[
                 and node.value.id == "self"
                 and node.attr == "_session"
                 and isinstance(node.ctx, ast.Load)
+                and id(node) not in identity_checks
             ):
                 reads += 1
         if reads > 1:
@@ -1443,3 +1429,254 @@ def test_document_operation_resumed_after_a_restart_writes_nothing_to_the_replac
         assert session_b.opened_documents == {} and session_b.doc_versions == {}
     finally:
         gate.set()
+
+
+# --- round-10 ---------------------------------------------------------------------------------
+
+
+def test_wait_until_ready_never_succeeds_for_a_replaced_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    install_session(client, process=_FakeProcess())
+    paused = threading.Event()
+    gate = threading.Event()
+    calls: list[int] = []
+
+    def probe() -> int:
+        calls.append(1)
+        if len(calls) == 2:
+            paused.set()
+            gate.wait(timeout=20)  # the probe is paused; provider B is published meanwhile
+        return 0
+
+    result: list[bool] = []
+    waiter = threading.Thread(
+        target=lambda: result.append(
+            client.wait_until_ready(time.monotonic() + 10, probe=probe, poll_interval_seconds=0.01)
+        ),
+        daemon=True,
+    )
+    waiter.start()
+    try:
+        assert paused.wait(timeout=10)
+        install_session(client, process=_FakeProcess(), active_progress_tokens={"indexing"})
+        gate.set()
+        waiter.join(timeout=10)
+        assert not waiter.is_alive()
+        assert result == [False], "readiness was reported for a replaced, still-indexing provider"
+    finally:
+        gate.set()
+
+
+def test_proof_is_recorded_on_the_answering_session_even_if_the_lock_is_contended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    process = _FakeProcess()
+    process.stdin = _RecordingStdin()  # type: ignore[assignment]
+    process.stdout = io.BytesIO()  # type: ignore[assignment]
+    session = install_session(client, process=process, initialized=True)
+    held = threading.Event()
+    gate = threading.Event()
+
+    def holder() -> None:
+        with client._lock:
+            held.set()
+            gate.wait(timeout=20)
+
+    def answer(request_id: int, session: Any) -> None:
+        # The lock is taken by someone else right after the write returns, and the "server"
+        # answers only once that holder has it: the response is accepted under contention.
+        threading.Thread(target=holder, daemon=True).start()
+
+        def deliver() -> None:
+            held.wait(timeout=10)
+            session.pending_requests[request_id].put_nowait({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": [1],
+            })
+
+        threading.Thread(target=deliver, daemon=True).start()
+
+    monkeypatch.setattr(
+        client, "_write_request", lambda i, m, p, session=None: answer(i, client._session)
+    )
+    try:
+        start = time.monotonic()
+        result, _ = _bounded(lambda: client.request("workspace/symbol", {}, proof=True))
+        assert result == [1]
+        assert time.monotonic() - start < 5, "recording proof must not wait for the lock"
+        assert session.lsp_provider_response is True
+        assert client.status()["lsp_provider_response"] is True
+    finally:
+        gate.set()
+
+
+def test_probe_without_recorded_session_proof_is_never_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        lsp_external_provider, "_provider_command", lambda language: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        lsp_external_provider, "_document_symbol_result_contains", lambda r, s: True
+    )
+
+    class _NoProofClient(lsp_external_provider.ExternalLSPClient):
+        def start(self) -> None:
+            install_session(
+                self, process=_FakeProcess(wait_times_out_first=False), initialized=True
+            )
+
+        def ensure_document(self, **kwargs: Any) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, Any], *, proof: bool = False) -> Any:
+            return [{"name": "x"}]  # a valid answer that was NOT recorded as proof
+
+    client = _NoProofClient(language="python", workspace_root=tmp_path)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    status = manager._verified_provider_status(
+        client=client,
+        language="python",
+        workspace_root=tmp_path,
+        probe_timeout_seconds=2.0,
+        stop_after_probe=True,
+    )
+    assert status["health_status"] != "ready" and status["lsp_proof"] is False
+
+
+def _no_slots_left(session: Any) -> bool:
+    return session.pending_requests == {} and session.orphan_responses == {}
+
+
+def test_failed_requests_leave_no_pending_slots_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.lsp_transport_writer import DeadlineWriter
+
+    client = _client(tmp_path, monkeypatch)
+    client.request_timeout_seconds = 0.2
+    process = _FakeProcess()
+    process.stdin = _RecordingStdin()  # type: ignore[assignment]
+    process.stdout = io.BytesIO()  # type: ignore[assignment]
+
+    # (a) dead writer
+    session = install_session(client, process=process, initialized=True)
+    writer = DeadlineWriter(process.stdin)
+    writer.dead = True
+    session.writer = writer
+    for _ in range(3):
+        with pytest.raises(lsp_external_provider.LSPTransportError):
+            client.request("workspace/symbol", {})
+    assert _no_slots_left(session), session.pending_requests
+
+    # (b) response timeout (healthy write, nobody answers)
+    session = install_session(client, process=process, initialized=True)
+    with pytest.raises(lsp_external_provider.LSPTransportError):
+        client.request("workspace/symbol", {})
+    assert _no_slots_left(session)
+
+    # (c) deadline expiry before/while registering
+    session = install_session(client, process=process, initialized=True)
+    client.deadline_monotonic = time.monotonic() - 1.0
+    try:
+        with pytest.raises(TimeoutError):
+            client.request("workspace/symbol", {})
+    finally:
+        client.deadline_monotonic = None
+    assert _no_slots_left(session)
+
+    # (d) any BaseException out of the write
+    class _Cancelled(BaseException):
+        pass
+
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise _Cancelled
+
+    session = install_session(client, process=process, initialized=True)
+    monkeypatch.setattr(client, "_write_request", boom)
+    with pytest.raises(_Cancelled):
+        client.request("workspace/symbol", {})
+    assert _no_slots_left(session)
+
+
+def test_failed_open_leaves_no_document_bookkeeping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    session = install_session(client, process=_FakeProcess(), initialized=True)
+    monkeypatch.setattr(client, "start", lambda: None)
+
+    def fail(*args: Any, **kwargs: Any) -> None:
+        raise lsp_external_provider.LSPTransportError("open failed")
+
+    monkeypatch.setattr(client, "_notify", fail)
+    with pytest.raises(lsp_external_provider.LSPTransportError):
+        client.ensure_document(uri="file:///a.py", text="x", language_id="python")
+    assert session.doc_versions == {} and session.opened_documents == {}
+
+
+_WAIT_CENSUS_ALLOWLIST = {
+    "_request": "slot.get: the slot is private to the captured session; teardown wakes it with the closed sentinel",
+    "_request_shutdown_for_stop": "slot.get: private to the captured session; bounded by timeout",
+    "_dispatch_response": "bounded orphan-buffer trim under the lock; nothing sleeps or wakes",
+}
+
+
+def _unchecked_waits(source: str, classes: tuple[str, ...]) -> list[str]:
+    """Every `while`, `.wait(` and `.get(timeout=...)` inside a client method must be followed by
+    (or, for loops, contain) an identity check `self._session is [not] <x>`."""
+    import ast
+
+    out: list[str] = []
+    for cls in ast.walk(ast.parse(source)):
+        if not (isinstance(cls, ast.ClassDef) and cls.name in classes):
+            continue
+        for fn in cls.body:
+            if not isinstance(fn, ast.FunctionDef):
+                continue
+            checks = [
+                n.lineno
+                for n in ast.walk(fn)
+                if isinstance(n, ast.Compare)
+                and isinstance(n.left, ast.Attribute)
+                and n.left.attr == "_session"
+                and any(isinstance(op, (ast.Is, ast.IsNot)) for op in n.ops)
+            ]
+            for node in ast.walk(fn):
+                is_loop = isinstance(node, ast.While)
+                is_wait = (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and (
+                        node.func.attr == "wait"
+                        or (
+                            node.func.attr == "get"
+                            and any(k.arg == "timeout" for k in node.keywords)
+                        )
+                    )
+                )
+                if not (is_loop or is_wait):
+                    continue
+                if is_loop:
+                    end = max(getattr(n, "lineno", 0) for n in ast.walk(node))
+                    ok = any(node.lineno <= c <= end for c in checks)
+                else:
+                    ok = any(c >= node.lineno for c in checks)
+                if not ok and fn.name not in _WAIT_CENSUS_ALLOWLIST:
+                    out.append(f"{fn.name}:{node.lineno}")
+    return out
+
+
+def test_every_wait_or_loop_rechecks_session_identity_after_waking() -> None:
+    from tensor_grep.cli import lsp_readiness
+
+    for module in (lsp_external_provider, lsp_readiness):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        found = _unchecked_waits(source, ("ExternalLSPClient", "ReadinessMixin"))
+        assert found == [], f"{module.__name__}: wait/loop without an identity re-check: {found}"
+    sample = "class ExternalLSPClient:\n    def f(self):\n        while True:\n            pass\n"
+    assert _unchecked_waits(sample, ("ExternalLSPClient",)) == ["f:3"]

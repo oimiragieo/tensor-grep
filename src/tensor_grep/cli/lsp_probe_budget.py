@@ -79,18 +79,21 @@ class ProbeBudget:
                 return
             self._cancelled.wait(0.05)
 
-    def settle(self) -> bool:
-        """Decide success atomically with the watchdog: True only if it has not fired and the
-        probe deadline has not passed. Once False, the probe can never become ``ready``; once
-        True, the watchdog can no longer fire for this probe."""
+    def settle(self, proof: Any = None) -> str:
+        """Decide success atomically with the watchdog. ``"ok"`` only if it has not fired, the
+        probe deadline has not passed AND (when given) ``proof()`` -- the session's recorded
+        proof, read under the same lock -- holds. ``"deadline"``: can never become ready.
+        ``"no_proof"``: the response was not recorded as proof for this session."""
         with self._decision:
             if self.fired.is_set():
-                return False
+                return "deadline"
             if self._probe_deadline is not None and time.monotonic() >= self._probe_deadline:
                 self.fired.set()
-                return False
+                return "deadline"
+            if proof is not None and not proof():
+                return "no_proof"
             self._settled = True
-            return True
+            return "ok"
 
     def cancel(self) -> None:
         self._cancelled.set()

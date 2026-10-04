@@ -102,10 +102,21 @@ class SessionBackedState:
     _stderr_tail = session_field("stderr_tail")
 
 
-def mark_responding_session(client: Any) -> None:
-    """Certify the session that ANSWERED this thread's last request, never whichever session is
-    current now (a late mark after a restart is a no-op). Tolerates non-ExternalLSPClient doubles."""
-    responding = getattr(client, "responding_session", None)
-    mark = getattr(client, "mark_provider_response", None)
-    if callable(responding) and callable(mark):
-        mark(responding())
+def proof_request(client: Any, method: str, params: dict[str, Any]) -> Any:
+    """``client.request`` for a request whose valid response counts as LSP proof.
+
+    ExternalLSPClient records the proof ON THE SESSION that answered, inside ``_request``, so no
+    later (lockable, restartable) step is involved. A request implementation without a ``proof``
+    parameter (a test double) is treated as proof-bearing for the session that was current when
+    the call began; that object is its own, so a restart cannot redirect the mark.
+    """
+    import inspect
+
+    if "proof" in inspect.signature(client.request).parameters:
+        return client.request(method, params, proof=True)
+    current = getattr(client, "current_session", None)
+    session = current() if callable(current) else None
+    result = client.request(method, params)
+    if session is not None:
+        session.lsp_provider_response = True
+    return result

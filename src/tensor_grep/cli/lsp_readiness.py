@@ -81,38 +81,40 @@ class ReadinessMixin:
         started_monotonic = time.monotonic()
         previous_probe_value: Any = None
         while True:
-            with self._lock:
+            with self._lock:  # ONE critical section: identity, readiness and the success decision
+                if self._session is not session:
+                    return False  # the provider was replaced; its readiness is not ours to claim
                 if session.index_ready:
                     return True
                 active = bool(session.active_progress_tokens)
-                ended = session.progress_end_count > 0
                 activity = session.progress_activity_seen
-            if ended and not active:
-                with self._lock:
+                if session.progress_end_count > 0 and not active:
                     session.index_ready = True
-                return True
+                    return True
             now = time.monotonic()
             if now >= deadline_monotonic:
                 return False
             if not activity:
                 # No progress signal from this server (some don't emit workDoneProgress).
+                settled = False
                 if probe is not None:
                     try:
                         current_probe_value = probe()
                     except Exception:
                         current_probe_value = None
-                    if (
+                    # Two consecutive stable polls -> index settled.
+                    settled = (
                         current_probe_value is not None
                         and current_probe_value == previous_probe_value
-                    ):
-                        # Two consecutive stable polls -> index settled.
-                        with self._lock:
-                            session.index_ready = True
-                        return True
+                    )
                     previous_probe_value = current_probe_value
                 elif now - started_monotonic >= max(no_progress_grace_seconds, 0.0):
-                    # Silent server, no probe: best-effort after the grace window.
-                    with self._lock:
-                        session.index_ready = True
-                    return True
+                    settled = True  # silent server, no probe: best-effort after the grace window
+                if settled:
+                    with self._lock:  # re-check identity AND live tokens before succeeding
+                        if self._session is not session:
+                            return False
+                        if not session.active_progress_tokens:
+                            session.index_ready = True
+                            return True
             time.sleep(max(0.0, min(poll_interval_seconds, deadline_monotonic - now)))
