@@ -104,45 +104,77 @@ def _diff_git_line_path(rest: str) -> Path | None:
 
 
 class DiffHunks(dict[Path, list[tuple[int, int]]]):
-    """Parsed diff ranges per file, plus the added/modified binary files (which have no ranges).
+    """Parsed diff ranges per file, plus explicit identity sets for rangeless entries.
 
-    A plain dict subclass so existing callers and equality checks keep working; `binary_files`
-    lets callers tell a modified binary (empty ranges) from a deletion (also empty ranges).
+    A plain dict subclass so existing callers and equality checks keep working. Several kinds of
+    entry have an empty range list, so "no ranges" never means "deleted": identity is explicit.
+    `deleted_paths` comes only from `deleted file mode`; `binary_files` from `Binary files ...
+    differ` outside a deletion; `mode_changed_files` from `old mode`/`new mode`.
     """
 
     binary_files: set[Path]
+    deleted_paths: set[Path]
+    mode_changed_files: set[Path]
 
     def __init__(self) -> None:
         super().__init__()
         self.binary_files = set()
+        self.deleted_paths = set()
+        self.mode_changed_files = set()
 
 
 def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     """Parse git diff hunk headers `@@ -l,s +start,count @@` into mapped 1-indexed line ranges per file.
 
     Returns a dict mapping relative file Path to a list of (start_line, end_line) inclusive tuples.
-    Deleted files map to an empty range list. Added or modified binary files also map to an empty
-    list and are additionally recorded in the result's `binary_files` set.
+    Deleted files map to an empty range list and are recorded in `deleted_paths`. Added or
+    modified binary files, empty added files and mode-only changes also map to an empty list
+    (binary ones are additionally in `binary_files`, mode changes in `mode_changed_files`).
+    A pure rename or copy with no content or mode change is NOT a change and yields no entry.
     """
     result = DiffHunks()
     rename_path: Path | None = None
     is_deleted = False
+    is_added = False
+    mode_changed = False
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
     header_path: Path | None = None
+
+    def flush_header_only_entry() -> None:
+        # Header-only entries (no ---/+++/@@ lines) carry their change in the header flags.
+        dest = rename_path or header_path
+        if is_deleted and header_path is not None:
+            result.setdefault(header_path, [])
+            result.deleted_paths.add(header_path)
+        elif dest is not None and (is_added or mode_changed):
+            result.setdefault(dest, [])
+        if mode_changed and dest is not None and not is_deleted:
+            result.mode_changed_files.add(dest)
 
     # Split on literal LF only: str.splitlines() also breaks on U+2028/U+0085/U+000B/U+000C and
     # friends, which are legal in file names and would truncate the parsed path.
     for raw_line in diff_text.split("\n"):
         line = raw_line[:-1] if raw_line.endswith("\r") else raw_line
         if line.startswith("diff --git "):
+            flush_header_only_entry()
             in_header = True
             old_path = None
             current_file = None
             header_path = _diff_git_line_path(line[len("diff --git ") :])
             rename_path = None
             is_deleted = False
+            is_added = False
+            mode_changed = False
+            continue
+
+        if in_header and line.startswith("new file mode "):
+            is_added = True
+            continue
+
+        if in_header and line.startswith(("old mode ", "new mode ")):
+            mode_changed = True
             continue
 
         if in_header and line.startswith(("rename to ", "copy to ")):
@@ -166,11 +198,9 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             continue
 
         if in_header and line.startswith("deleted file mode "):
-            is_deleted = True
             # Empty and binary deletions emit no ---/+++ lines; the diff --git header is the only
-            # place the path appears.
-            if header_path is not None:
-                result.setdefault(header_path, [])
+            # place the path appears. Recorded at flush time from this per-file state.
+            is_deleted = True
             continue
 
         if in_header and line.startswith("--- "):
@@ -208,6 +238,8 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
 
                 ranges = result.setdefault(current_file, [])
                 ranges.append((line_start, line_end))
+
+    flush_header_only_entry()
 
     # Normalize / merge adjacent or overlapping ranges per file
     for file_path, ranges in list(result.items()):
@@ -410,6 +442,7 @@ def _empty_payload(
         "test_count": 0,
         "deleted_files": [],
         "binary_files": [],
+        "mode_changed_files": [],
         "result_incomplete": partial,
         "incomplete_reason": reason if partial else None,
     }
@@ -459,11 +492,10 @@ def build_diff_blast_radius(
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
     binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
     binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
-    deleted_files = sorted(
-        str(p).replace("\\", "/")
-        for p, ranges in changed_files_with_lines.items()
-        if not ranges and p not in binary_paths
-    )
+    deleted_paths: set[Path] = getattr(changed_files_with_lines, "deleted_paths", set())
+    deleted_files = sorted(str(p).replace("\\", "/") for p in deleted_paths)
+    mode_paths: set[Path] = getattr(changed_files_with_lines, "mode_changed_files", set())
+    mode_changed_files = sorted(str(p).replace("\\", "/") for p in mode_paths)
     if binary_files:
         downgrade_reasons.append("binary_files_not_analyzed")
     if deleted_files:
@@ -581,6 +613,7 @@ def build_diff_blast_radius(
         "test_count": len(sorted_tests),
         "deleted_files": deleted_files,
         "binary_files": binary_files,
+        "mode_changed_files": mode_changed_files,
         "result_incomplete": partial,
         "incomplete_reason": (partial_reasons[0] if partial and partial_reasons else None),
     }

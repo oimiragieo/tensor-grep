@@ -886,3 +886,101 @@ def test_real_repo_edited_binary_copy_is_reported(tmp_path: Path) -> None:
     payload = build_diff_blast_radius(root=tmp_path, staged=True)
     assert "new.bin" in payload["binary_files"], raw
     assert "new.bin" in payload["changed_files"]
+
+
+def test_parse_header_only_added_file_is_recorded_and_not_deleted() -> None:
+    diff = (
+        "diff --git a/empty.py b/empty.py\nnew file mode 100644\nindex 0000000..e69de29\n"
+        'diff --git "a/caf\\303\\251.py" "b/caf\\303\\251.py"\nnew file mode 100644\n'
+        "index 0000000..e69de29\n"
+        "diff --git a/sp ace.py b/sp ace.py\nnew file mode 100644\nindex 0000000..e69de29\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("empty.py"): [], Path("café.py"): [], Path("sp ace.py"): []}
+    assert parsed.deleted_paths == set()
+    assert parsed.binary_files == set()
+
+
+def test_parse_added_file_with_content_keeps_its_ranges() -> None:
+    diff = (
+        "diff --git a/n.py b/n.py\nnew file mode 100644\nindex 0000000..1111111\n"
+        "--- /dev/null\n+++ b/n.py\n@@ -0,0 +1,2 @@\n+a\n+b\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("n.py"): [(1, 2)]}
+    assert parsed.deleted_paths == set()
+
+
+def test_parse_deletion_identity_comes_only_from_deleted_file_mode() -> None:
+    diff = (
+        "diff --git a/gone.py b/gone.py\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        "--- a/gone.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-x\n"
+        "diff --git a/empty.py b/empty.py\nnew file mode 100644\nindex 0000000..e69de29\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("gone.py"): [], Path("empty.py"): []}
+    assert parsed.deleted_paths == {Path("gone.py")}
+
+
+def test_parse_mode_only_change_is_recorded_and_disclosed() -> None:
+    diff = (
+        "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n"
+        "diff --git a/sp ace.sh b/sp ace.sh\nold mode 100644\nnew mode 100755\n"
+        "diff --git a/old.sh b/new.sh\nold mode 100644\nnew mode 100755\nsimilarity index 100%\n"
+        "rename from old.sh\nrename to new.sh\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("run.sh"): [], Path("sp ace.sh"): [], Path("new.sh"): []}
+    assert parsed.mode_changed_files == {Path("run.sh"), Path("sp ace.sh"), Path("new.sh")}
+    assert parsed.deleted_paths == set()
+
+
+def test_parse_mode_change_with_content_edit_keeps_ranges_and_is_disclosed() -> None:
+    diff = (
+        "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\nindex 1111111..2222222\n"
+        "--- a/run.sh\n+++ b/run.sh\n@@ -2,0 +3,1 @@\n+x\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("run.sh"): [(3, 3)]}
+    assert parsed.mode_changed_files == {Path("run.sh")}
+
+
+def test_real_repo_empty_staged_addition_is_a_change(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "empty.py").write_text("", encoding="utf-8")
+    _git(tmp_path, "add", "--", "empty.py")
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["changed_files"] == ["empty.py"]
+    assert payload["deleted_files"] == []
+    assert "deleted_files_symbols_not_analyzed" not in payload["downgrade_reasons"]
+
+
+def test_cli_empty_staged_addition_is_not_no_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "keep.py")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "empty.py").write_text("", encoding="utf-8")
+    _git(tmp_path, "add", "--", "empty.py")
+    monkeypatch.chdir(tmp_path)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    data = json.loads(res.stdout)
+    assert data["changed_files"] == ["empty.py"]
+    assert data["exit_reason"] == "ok"
+    assert res.exit_code == 0
+
+
+def test_real_repo_mode_only_change_is_reported(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", "core.fileMode", "true")
+    (tmp_path / "run.sh").write_text("echo hi\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "run.sh")
+    _git(tmp_path, "commit", "-qm", "i")
+    _git(tmp_path, "update-index", "--chmod=+x", "--", "run.sh")
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["changed_files"] == ["run.sh"]
+    assert payload["mode_changed_files"] == ["run.sh"]
+    assert payload["deleted_files"] == []
