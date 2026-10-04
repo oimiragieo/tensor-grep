@@ -892,67 +892,222 @@ def test_resumed_old_shutdown_worker_sends_nothing_to_a_really_restarted_provide
         client.stop()
 
 
-# --- round-7 finding 1: no probe-reachable lock acquisition may be unbounded ------------
+# --- round-7/8: GENERAL lock census (every lock, every method) ----------------------------
 
-_LOCK_GUARDED_METHODS = (
-    "request",
-    "notify",
-    "ensure_document",
-    "_notify_document_closed",
-    "did_change",
-    "_start_locked",
-    "_graceful_shutdown_for_stop",
-    "_request_shutdown_for_stop",
-    "_handle_server_request",
-    "_dispatch_response",
-    "_broadcast_closed",
-)
+# Methods that may take a lock WITHOUT `client_lock`, each with the reason it never matters to a
+# probe. Anything not listed (and not an `.acquire(timeout=...)`) must go through `client_lock`.
+_LOCK_CENSUS_ALLOWLIST = {
+    "get_client": "manager cache dict; in-memory section, no I/O; runs before a probe starts",
+    "_cached_client": "manager cache dict; in-memory section, no I/O; runs before a probe starts",
+    "_pop_all_clients": "manager cache dict; in-memory section, no I/O; used by stop_all cleanup",
+    "wait_until_ready": "navigation readiness wait; never runs inside a doctor probe",
+}
 
 
-def _bare_lock_acquisitions(source: str, methods: tuple[str, ...]) -> tuple[list[str], set[str]]:
+def _bare_lock_acquisitions(source: str) -> tuple[list[str], set[str]]:
+    """Every `with <x>.<...lock>` and `<x>.<...lock>.acquire(...)` without a `timeout=`,
+    reported as `function:line`; plus the set of functions that contain any lock use."""
     import ast
 
-    tree = ast.parse(source)
     found: list[str] = []
-    seen: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name in methods:
-            seen.add(node.name)
-            for inner in ast.walk(node):
-                if isinstance(inner, ast.With):
-                    for item in inner.items:
-                        ctx = item.context_expr
-                        if (
-                            isinstance(ctx, ast.Attribute)
-                            and ctx.attr in {"_lock", "_start_lock"}
-                            and isinstance(ctx.value, ast.Name)
-                            and ctx.value.id == "self"
-                        ):
-                            found.append(f"{node.name}:{inner.lineno}")
-                if (
-                    isinstance(inner, ast.Call)
-                    and isinstance(inner.func, ast.Attribute)
-                    and inner.func.attr == "acquire"
-                    and isinstance(inner.func.value, ast.Attribute)
-                    and inner.func.value.attr == "_lock"
-                ):
-                    found.append(f"{node.name}:{inner.lineno}:acquire")
-    return found, seen
+    users: set[str] = set()
+
+    def is_lock(node: ast.AST) -> bool:
+        return isinstance(node, ast.Attribute) and node.attr.endswith("lock")
+
+    for fn in ast.walk(ast.parse(source)):
+        if not isinstance(fn, ast.FunctionDef):
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.With):
+                for item in node.items:
+                    if is_lock(item.context_expr):
+                        found.append(f"{fn.name}:{node.lineno}")
+                        users.add(fn.name)
+            elif (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "acquire"
+                and is_lock(node.func.value)
+            ):
+                users.add(fn.name)
+                if not any(kw.arg == "timeout" for kw in node.keywords):
+                    found.append(f"{fn.name}:{node.lineno}:acquire")
+    return found, users
 
 
-def test_no_probe_reachable_method_takes_the_client_lock_unbounded() -> None:
-    source = Path(lsp_external_provider.__file__).read_text(encoding="utf-8")
-    found, seen = _bare_lock_acquisitions(source, _LOCK_GUARDED_METHODS)
-    assert seen == set(_LOCK_GUARDED_METHODS), (
-        f"census is vacuous; missing {set(_LOCK_GUARDED_METHODS) - seen}"
+def test_every_lock_acquisition_in_the_provider_modules_is_deadline_aware_or_allowlisted() -> None:
+    from tensor_grep.cli import lsp_readiness
+
+    seen_users: set[str] = set()
+    violations: list[str] = []
+    for module in (lsp_external_provider, lsp_readiness):
+        source = Path(module.__file__).read_text(encoding="utf-8")
+        found, users = _bare_lock_acquisitions(source)
+        seen_users |= users
+        violations += [v for v in found if v.split(":")[0] not in _LOCK_CENSUS_ALLOWLIST]
+    assert violations == [], f"unbounded lock acquisition outside client_lock: {violations}"
+    stale = set(_LOCK_CENSUS_ALLOWLIST) - seen_users
+    assert not stale, f"allowlist entries without a lock use (remove them): {stale}"
+
+
+def test_lock_census_detects_bare_with_and_acquire_and_accepts_timeout_acquire() -> None:
+    sample = (
+        "class C:\n"
+        "    def a(self):\n        with self._start_lock:\n            pass\n"
+        "    def b(self):\n        self._lock.acquire()\n"
+        "    def c(self):\n        self._lock.acquire(timeout=1.0)\n"
     )
-    assert found == [], f"bare lock acquisition in probe-reachable methods: {found}"
+    found, users = _bare_lock_acquisitions(sample)
+    assert found == ["a:3", "b:6:acquire"] and users == {"a", "b", "c"}
 
 
-def test_lock_census_detects_a_bare_acquisition() -> None:
-    sample = "class C:\n    def request(self):\n        with self._lock:\n            pass\n"
-    found, seen = _bare_lock_acquisitions(sample, ("request",))
-    assert seen == {"request"} and found == ["request:3"]
+def test_internal_code_never_uses_the_forwarding_attributes() -> None:
+    """Only the compatibility layer (SessionBackedState) may spell a forwarded name on `self`;
+    every other method must use the session it captured, so a stale reader/teardown can never
+    resolve to the replacement session."""
+    import ast
+
+    from tensor_grep.cli import lsp_readiness, lsp_session
+
+    session_src = Path(lsp_session.__file__).read_text(encoding="utf-8")
+    forwarded = _forwarded_names(session_src)
+    assert len(forwarded) >= 10, forwarded
+    offenders: list[str] = []
+    for module in (lsp_external_provider, lsp_readiness):
+        tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef):
+                for node in ast.walk(fn):
+                    if (
+                        isinstance(node, ast.Attribute)
+                        and isinstance(node.value, ast.Name)
+                        and node.value.id == "self"
+                        and node.attr in forwarded
+                    ):
+                        offenders.append(f"{module.__name__}.{fn.name}:{node.lineno}:{node.attr}")
+    assert offenders == [], f"forwarded attribute used internally: {offenders}"
+    assert _forwarded_names(
+        "class SessionBackedState:\n    process = session_field('process')\n"
+    ) == {"process"}
+
+
+def _forwarded_names(session_source: str) -> set[str]:
+    import ast
+
+    names: set[str] = set()
+    for node in ast.walk(ast.parse(session_source)):
+        if isinstance(node, ast.ClassDef) and node.name == "SessionBackedState":
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and isinstance(stmt.value, ast.Call)
+                    and getattr(stmt.value.func, "id", "") == "session_field"
+                ):
+                    names.update(t.id for t in stmt.targets if isinstance(t, ast.Name))
+    return names
+
+
+# --- round-8 finding 1: a spawned provider is never leaked by a failed publication ---------
+
+
+class _RecordingContainment:
+    level = "job_object"
+    degraded = False
+    pid = 4343
+
+    def __init__(self) -> None:
+        self.terminated = 0
+        self.killed = 0
+        self.released = 0
+
+    def terminate(self) -> list[str]:
+        self.terminated += 1
+        return []
+
+    def kill(self) -> list[str]:
+        self.killed += 1
+        return []
+
+    def survivors(self, deadline: float) -> list[str]:
+        return []
+
+    def release(self) -> None:
+        self.released += 1
+
+
+def test_spawned_provider_is_torn_down_when_session_publication_times_out(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    fake = _FakeProcess(wait_times_out_first=False)
+    containment = _RecordingContainment()
+    monkeypatch.setattr(
+        lsp_external_provider, "spawn_contained", lambda argv, **kwargs: (fake, containment)
+    )
+    held = threading.Event()
+    gate = threading.Event()
+
+    def holder() -> None:
+        with client._lock:
+            held.set()
+            gate.wait(timeout=10)
+
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    assert held.wait(timeout=5)
+    client.deadline_monotonic = time.monotonic() + 0.3  # the probe's absolute deadline
+    try:
+        with pytest.raises(TimeoutError):
+            _bounded(client.start)
+    finally:
+        gate.set()
+        thread.join(timeout=10)
+    assert fake.terminate_calls >= 1, "the spawned provider process leaked"
+    assert containment.terminated + containment.killed >= 1, "the process tree was not killed"
+    assert containment.released == 1, "the containment (Job handle) was not released"
+    assert client._session.process is None, "the failed spawn must not become the session"
+
+
+# --- round-8 finding 2: a stale reader cannot reach the replacement session ----------------
+
+
+def test_stale_reader_stages_cannot_touch_a_replacement_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _live_client(tmp_path, monkeypatch)
+    client.start()
+    session_a = client._session
+    client.stop()
+    client.start()  # REAL restart into provider B
+    session_b = client._session
+    assert session_b is not session_a
+    try:
+        slot: queue.Queue[Any] = queue.Queue(maxsize=1)
+        session_b.pending_requests[5] = slot
+        orphans_before = dict(session_b.orphan_responses)
+        writer_b = session_b.writer
+        sent: list[Any] = []
+        monkeypatch.setattr(
+            lsp_external_provider, "_write_message", lambda stream, payload: sent.append(payload)
+        )
+
+        # reader A, paused after its identity check, resumes with a RESPONSE and a SERVER REQUEST
+        client._dispatch_response({"jsonrpc": "2.0", "id": 5, "result": "stale"}, session_a)
+        client._dispatch_response({"jsonrpc": "2.0", "id": 99, "result": "orphan?"}, session_a)
+        handled = client._handle_server_request(
+            {"jsonrpc": "2.0", "id": 9, "method": "workspace/configuration", "params": {}},
+            session_a,
+        )
+
+        assert handled is True
+        assert slot.empty(), "stale response resolved B's pending request"
+        assert session_b.pending_requests == {5: slot}
+        assert session_b.orphan_responses == orphans_before, "B's orphan buffer was written"
+        assert session_b.writer is writer_b
+        assert sent == [], f"a write reached the replacement provider: {sent}"
+    finally:
+        client.stop()
 
 
 def test_probe_ends_within_budget_when_the_client_lock_is_held(
@@ -1004,4 +1159,40 @@ def test_probe_ends_within_budget_when_the_client_lock_is_held(
     assert elapsed <= budget + _MARGIN, f"probe took {elapsed:.2f}s for a {budget}s budget"
     assert status["health_status"] != "ready"
     assert status["lsp_proof"] is False
+    assert "deadline" in str(status["last_error"]).lower(), status["last_error"]
+
+
+def test_probe_ends_within_budget_when_the_start_lock_is_held(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    held = threading.Event()
+    gate = threading.Event()
+
+    def holder() -> None:
+        with client._start_lock:
+            held.set()
+            gate.wait(timeout=10)
+
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    assert held.wait(timeout=5)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    budget = 0.3
+    try:
+        status, elapsed = _bounded(
+            lambda: manager._verified_provider_status(
+                client=client,
+                language="python",
+                workspace_root=tmp_path,
+                probe_timeout_seconds=5.0,
+                stop_after_probe=True,
+                deadline_monotonic=time.monotonic() + budget,
+            )
+        )
+    finally:
+        gate.set()
+        thread.join(timeout=10)
+    assert elapsed <= budget + _MARGIN, f"probe took {elapsed:.2f}s for a {budget}s budget"
+    assert status["health_status"] != "ready"
     assert "deadline" in str(status["last_error"]).lower(), status["last_error"]

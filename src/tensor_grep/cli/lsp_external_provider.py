@@ -22,6 +22,7 @@ from tensor_grep.cli.lsp_provider_setup import (
 from tensor_grep.cli.lsp_provider_setup import (
     managed_provider_root as _managed_provider_root,
 )
+from tensor_grep.cli.lsp_readiness import ReadinessMixin
 from tensor_grep.cli.lsp_session import ProviderSession, SessionBackedState, reset_after_stop
 from tensor_grep.cli.lsp_transport_writer import bounded_stdin
 from tensor_grep.cli.process_containment import (
@@ -359,7 +360,7 @@ def _lookup_configuration_section(settings: dict[str, Any], section: object) -> 
     return current
 
 
-class ExternalLSPClient(SessionBackedState):
+class ExternalLSPClient(ReadinessMixin, SessionBackedState):
     def __init__(
         self,
         *,
@@ -435,7 +436,7 @@ class ExternalLSPClient(SessionBackedState):
         return list(self._debug_trace)
 
     def stderr_tail(self) -> list[str]:
-        return list(self._stderr_tail)
+        return list(self._session.stderr_tail)
 
     def _record_debug_trace(
         self,
@@ -467,16 +468,17 @@ class ExternalLSPClient(SessionBackedState):
             raise LSPTransportError(
                 self.last_error or "LSP client is unusable after failed teardown"
             )
-        # Fast path (no lock): already running.
-        if self.process is not None and self.process.poll() is None:
+        process = self._session.process  # fast path (no lock): already running
+        if process is not None and process.poll() is None:
             return
         # Serialize the check-then-spawn (round-6 r9): two daemon worker threads calling into the
         # SAME cached client (get_client is shared per (root,language)) must not both pass the None
         # check and both Popen, orphaning one child. Double-checked under _start_lock.
-        with self._start_lock:
+        with client_lock(self, lock=self._start_lock):
             if self._starting:  # re-entered by our own initialize handshake: never respawn
                 return
-            if self.process is not None and self.process.poll() is None:
+            process = self._session.process
+            if process is not None and process.poll() is None:
                 return
             self._starting = True
             try:
@@ -487,7 +489,7 @@ class ExternalLSPClient(SessionBackedState):
     def _start_locked(self) -> None:
         if self.disabled_until_monotonic > time.monotonic():
             raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
-        if self.process is not None:
+        if self._session.process is not None:
             self.stop()
         managed_root = _managed_provider_root()
         try:
@@ -519,10 +521,24 @@ class ExternalLSPClient(SessionBackedState):
             self.containment_error = str(exc)
             self.last_error = f"containment_unavailable: {exc}"
             raise LSPTransportError(self.last_error) from exc
-        with client_lock(self):
-            self._session = (
-                session  # the replacement owns NEW state; stale teardowns cannot reach it
+        try:
+            with client_lock(self):
+                self._session = session  # NEW state: stale teardowns/readers cannot reach it
+        except BaseException:
+            # `session` owns the spawned provider from the moment of spawn. If it cannot be
+            # published (the lock wait hit the probe deadline) it must not leak: kill the tree,
+            # release containment and pipes inside the cleanup budget, then re-raise.
+            teardown_provider(
+                session.process,
+                session.containment,
+                deadline=time.monotonic()
+                + cleanup_budget_seconds(
+                    self.request_timeout_seconds,
+                    _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
+                    self.stop_grace_seconds,
+                ),
             )
+            raise
         self._record_debug_trace(
             event="process_start",
             detail={"command": spawn_argv, "cwd": str(self.workspace_root)},
@@ -564,11 +580,14 @@ class ExternalLSPClient(SessionBackedState):
             self.stop()
             raise
         if isinstance(result, dict):
-            self.capabilities = dict(result.get("capabilities", {}))
+            session.capabilities = dict(result.get("capabilities", {}))
         self.notify("initialized", {})
-        self.initialized = True
+        session.initialized = True
         try:
-            self.notify("workspace/didChangeConfiguration", _configuration_settings(self.language))
+            self.notify(
+                "workspace/didChangeConfiguration",
+                _configuration_settings(self.language),
+            )
         except Exception:
             pass
 
@@ -657,7 +676,9 @@ class ExternalLSPClient(SessionBackedState):
         # audit B12: each in-flight request gets its own one-shot Queue so that
         # concurrent calls cannot steal each other's responses.
         self.start()
-        if self.process is None or self.process.stdin is None or self.process.stdout is None:
+        session = self._session  # captured: all state below is THIS session's
+        process = session.process
+        if process is None or process.stdin is None or process.stdout is None:
             raise LSPTransportError("LSP process is not available")
         timeout_seconds = (
             self.initialize_timeout_seconds
@@ -665,14 +686,14 @@ class ExternalLSPClient(SessionBackedState):
             else self.request_timeout_seconds
         )
         slot: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1)
-        pending = self._pending_requests  # this request's session; finalised against it
+        pending = session.pending_requests  # this request's session; finalised against it
         with client_lock(self):
             self._request_id += 1
             request_id = self._request_id
             pending[request_id] = slot
-            self._write_request(request_id, method, params)
+            self._write_request(request_id, method, params, session=session)
             # Claim a response that the reader dispatched before this slot existed.
-            buffered = self._orphan_responses.pop(request_id, None)
+            buffered = session.orphan_responses.pop(request_id, None)
         if buffered is not None:
             try:
                 slot.put_nowait(buffered)
@@ -722,24 +743,26 @@ class ExternalLSPClient(SessionBackedState):
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
-        if self.process is None or self.process.stdin is None:
+        session = self._session
+        if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
         with client_lock(self):
-            self._write_notification(method, params)
+            self._write_notification(method, params, session=session)
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
-        if uri in self._opened_documents:
-            self._opened_documents.move_to_end(uri)
+        session = self._session
+        if uri in session.opened_documents:
+            session.opened_documents.move_to_end(uri)
             return
         evicted_uri = (
-            next(iter(self._opened_documents))
-            if len(self._opened_documents) >= self._max_open_documents
+            next(iter(session.opened_documents))
+            if len(session.opened_documents) >= self._max_open_documents
             else None
         )
         # audit B15: record the initial version so did_change can monotonically
         # increment from it.
         with client_lock(self):
-            self._doc_versions[uri] = 1
+            session.doc_versions[uri] = 1
         self.notify(
             "textDocument/didOpen",
             {
@@ -751,18 +774,19 @@ class ExternalLSPClient(SessionBackedState):
                 }
             },
         )
-        self._opened_documents[uri] = None
+        session.opened_documents[uri] = None
         if evicted_uri is not None:
-            self._opened_documents.pop(evicted_uri, None)
-            self._notify_document_closed(evicted_uri)
+            session.opened_documents.pop(evicted_uri, None)
+            self._notify_document_closed(evicted_uri, session)
 
-    def _notify_document_closed(self, uri: str) -> None:
+    def _notify_document_closed(self, uri: str, session: ProviderSession | None = None) -> None:
+        session = session or self._session
         # Audit LOW (leak): evict the per-URI version counter on close, mirroring the
         # _opened_documents cleanup. Both removal paths (open-eviction and close_document)
         # funnel through here, so _doc_versions no longer grows unbounded across a
         # long-lived client's lifetime. _doc_versions is _lock-guarded (see did_change).
         with client_lock(self):
-            self._doc_versions.pop(uri, None)
+            session.doc_versions.pop(uri, None)
         try:
             self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
         except Exception:
@@ -773,20 +797,22 @@ class ExternalLSPClient(SessionBackedState):
             )
 
     def close_document(self, *, uri: str) -> None:
-        if uri not in self._opened_documents:
+        session = self._session
+        if uri not in session.opened_documents:
             return
-        self._opened_documents.pop(uri, None)
-        self._notify_document_closed(uri)
+        session.opened_documents.pop(uri, None)
+        self._notify_document_closed(uri, session)
 
     def did_change(self, *, uri: str, text: str, version: int = 1) -> None:
+        session = self._session
         # audit B15: ignore the caller-supplied version (which can be non-monotonic
         # when multiple editors send version=1) and use an internal counter instead.
-        if uri not in self._opened_documents:
+        if uri not in session.opened_documents:
             return
         with client_lock(self):
-            current_version = self._doc_versions.get(uri, 1)
+            current_version = session.doc_versions.get(uri, 1)
             next_version = max(current_version + 1, version + 1)
-            self._doc_versions[uri] = next_version
+            session.doc_versions[uri] = next_version
         self.notify(
             "textDocument/didChange",
             {
@@ -796,24 +822,26 @@ class ExternalLSPClient(SessionBackedState):
         )
 
     def did_save(self, *, uri: str) -> None:
-        if uri not in self._opened_documents:
+        session = self._session
+        if uri not in session.opened_documents:
             return
         self.notify("textDocument/didSave", {"textDocument": {"uri": uri}})
 
     def status(self) -> dict[str, Any]:
+        session = self._session
         return {
             "language": self.language,
             "workspace_root": str(self.workspace_root),
             "command": list(self.command),
             "command_source": _command_source(self.command),
             "managed_provider_root": str(_managed_provider_root()),
-            "running": self.process is not None and self.process.poll() is None,
-            "process_containment": self._containment.level if self._containment else None,
-            "initialized": self.initialized,
-            "capabilities": dict(self.capabilities),
-            "lsp_provider_response": self.lsp_provider_response,
+            "running": session.process is not None and session.process.poll() is None,
+            "process_containment": session.containment.level if session.containment else None,
+            "initialized": session.initialized,
+            "capabilities": dict(session.capabilities),
+            "lsp_provider_response": session.lsp_provider_response,
             "last_error": self.last_error,
-            "opened_documents": len(self._opened_documents),
+            "opened_documents": len(session.opened_documents),
             "max_open_documents": self._max_open_documents,
             "stderr_tail": self.stderr_tail(),
             "request_timeout_seconds": self.request_timeout_seconds,
@@ -821,9 +849,24 @@ class ExternalLSPClient(SessionBackedState):
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
         }
 
-    def _write_request(self, request_id: int, method: str, params: dict[str, Any] | None) -> None:
-        if self.process is None or self.process.stdin is None:
+    def _writable(self, session: ProviderSession | None) -> ProviderSession:
+        """The session a transport write targets; the caller holds the client lock. A write for a
+        session that is no longer current is refused, so nothing reaches a replacement provider."""
+        session = session or self._session
+        if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
+        if self._session is not session:
+            raise LSPTransportError("LSP session was replaced")
+        return session
+
+    def _write_request(
+        self,
+        request_id: int,
+        method: str,
+        params: dict[str, Any] | None,
+        session: ProviderSession | None = None,
+    ) -> None:
+        session = self._writable(session)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "id": request_id, "method": method}
         if params is not None:
             payload["params"] = params
@@ -833,11 +876,12 @@ class ExternalLSPClient(SessionBackedState):
             request_id=request_id,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(bounded_stdin(self), payload)
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_notification(self, method: str, params: dict[str, Any] | None) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_notification(
+        self, method: str, params: dict[str, Any] | None, session: ProviderSession | None = None
+    ) -> None:
+        session = self._writable(session)
         payload: dict[str, Any] = {"jsonrpc": "2.0", "method": method}
         if params is not None:
             payload["params"] = params
@@ -846,22 +890,29 @@ class ExternalLSPClient(SessionBackedState):
             method=method,
             detail={"params_keys": sorted(params.keys()) if isinstance(params, dict) else []},
         )
-        _write_message(bounded_stdin(self), payload)
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_response(self, request_id: object, result: Any) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_response(
+        self, request_id: object, result: Any, session: ProviderSession | None = None
+    ) -> None:
+        session = self._writable(session)
         payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
         self._record_debug_trace(
             event="send_response",
             request_id=request_id,
             detail={"result_type": type(result).__name__},
         )
-        _write_message(bounded_stdin(self), payload)
+        _write_message(bounded_stdin(self, session), payload)
 
-    def _write_error_response(self, request_id: object, *, code: int, message: str) -> None:
-        if self.process is None or self.process.stdin is None:
-            raise LSPTransportError("LSP process is not available")
+    def _write_error_response(
+        self,
+        request_id: object,
+        *,
+        code: int,
+        message: str,
+        session: ProviderSession | None = None,
+    ) -> None:
+        session = self._writable(session)
         payload = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -872,7 +923,7 @@ class ExternalLSPClient(SessionBackedState):
             request_id=request_id,
             detail={"code": code, "message": message},
         )
-        _write_message(bounded_stdin(self), payload)
+        _write_message(bounded_stdin(self, session), payload)
 
     def _configuration_response(self, params: object) -> list[Any]:
         settings = _configuration_settings(self.language).get("settings", {})
@@ -889,9 +940,14 @@ class ExternalLSPClient(SessionBackedState):
             for item in items
         ]
 
-    def _handle_server_request(self, message: dict[str, Any]) -> bool:
+    def _handle_server_request(
+        self, message: dict[str, Any], session: ProviderSession | None = None
+    ) -> bool:
         if "id" not in message or "method" not in message:
             return False
+        session = session or self._session
+        if self._session is not session:
+            return True  # stale reader: its provider was replaced; answer nothing
         method = str(message.get("method"))
         request_id = message.get("id")
         try:
@@ -918,15 +974,18 @@ class ExternalLSPClient(SessionBackedState):
                         request_id,
                         code=-32601,
                         message=f"Unsupported LSP server request: {method}",
+                        session=session,
                     )
                 return True
             with client_lock(self, follow_deadline=False):
-                self._write_response(request_id, result)
+                self._write_response(request_id, result, session=session)
             return True
         except Exception as exc:
             try:
                 with client_lock(self, follow_deadline=False):
-                    self._write_error_response(request_id, code=-32603, message=str(exc))
+                    self._write_error_response(
+                        request_id, code=-32603, message=str(exc), session=session
+                    )
             except Exception:
                 pass
             return True
@@ -948,7 +1007,7 @@ class ExternalLSPClient(SessionBackedState):
                     return
                 if self._session is not session:
                     return  # stale reader: its process was replaced
-                if self._handle_server_request(message):
+                if self._handle_server_request(message, session):
                     continue
                 self._record_debug_trace(
                     event="receive_message",
@@ -959,7 +1018,7 @@ class ExternalLSPClient(SessionBackedState):
                         "has_error": "error" in message,
                     },
                 )
-                self._dispatch_response(message)
+                self._dispatch_response(message, session)
         except Exception as exc:
             self.last_error = str(exc)
             self._record_debug_trace(event="reader_error", detail={"message": str(exc)})
@@ -978,95 +1037,11 @@ class ExternalLSPClient(SessionBackedState):
             except OSError:
                 pass  # already gone (or not ours to signal); stop() owns the escalation
 
-    def _note_progress_started(self, token: str) -> None:
-        with self._lock:
-            self._active_progress_tokens.add(token)
-            self._progress_activity_seen = True
-            self._index_ready = False  # a new indexing round re-invalidates readiness
-
-    def _note_progress_ended(self, token: str) -> None:
-        with self._lock:
-            self._active_progress_tokens.discard(token)
-            self._progress_activity_seen = True
-            self._progress_end_count += 1
-
-    def _handle_progress_notification(self, message: dict[str, Any]) -> bool:
-        """P0-2: consume $/progress begin/report/end (previously dropped as id-less noise)."""
-        if message.get("method") != "$/progress":
-            return False
-        params = message.get("params") or {}
-        token = params.get("token")
-        kind = (params.get("value") or {}).get("kind")
-        if token is None:
-            return True
-        if kind == "begin":
-            self._note_progress_started(str(token))
-        elif kind == "end":
-            self._note_progress_ended(str(token))
-        # "report" -> in-flight; activity noted at begin. Nothing to do.
-        return True
-
-    def wait_until_ready(
-        self,
-        deadline_monotonic: float,
-        *,
-        probe: Any = None,
-        no_progress_grace_seconds: float = 1.0,
-        poll_interval_seconds: float = 0.05,
-    ) -> bool:
-        """Block until the server's workspace index has settled, or the deadline passes.
-
-        Ready means: at least one workDoneProgress round has ENDED and none is active. For
-        servers that never advertise progress, ``probe`` (a callable returning the current
-        workspace/symbol hit count) is polled until stable across two consecutive polls; with
-        no probe, we proceed best-effort after ``no_progress_grace_seconds`` of silence rather
-        than burning the whole deadline. Returns False ONLY on a genuine timeout while indexing
-        is demonstrably still in flight — and a timeout must NEVER arm
-        ``disabled_until_monotonic`` (that cooldown is reserved for real initialize failures;
-        arming it here would blackball the language for 30s of daemon uptime after one slow
-        first index).
-        """
-        started_monotonic = time.monotonic()
-        previous_probe_value: Any = None
-        while True:
-            with self._lock:
-                if self._index_ready:
-                    return True
-                active = bool(self._active_progress_tokens)
-                ended = self._progress_end_count > 0
-                activity = self._progress_activity_seen
-            if ended and not active:
-                with self._lock:
-                    self._index_ready = True
-                return True
-            now = time.monotonic()
-            if now >= deadline_monotonic:
-                return False
-            if not activity:
-                # No progress signal from this server (some don't emit workDoneProgress).
-                if probe is not None:
-                    try:
-                        current_probe_value = probe()
-                    except Exception:
-                        current_probe_value = None
-                    if (
-                        current_probe_value is not None
-                        and current_probe_value == previous_probe_value
-                    ):
-                        # Two consecutive stable polls -> index settled.
-                        with self._lock:
-                            self._index_ready = True
-                        return True
-                    previous_probe_value = current_probe_value
-                elif now - started_monotonic >= max(no_progress_grace_seconds, 0.0):
-                    # Silent server, no probe: best-effort after the grace window.
-                    with self._lock:
-                        self._index_ready = True
-                    return True
-            time.sleep(max(0.0, min(poll_interval_seconds, deadline_monotonic - now)))
-
-    def _dispatch_response(self, message: dict[str, Any]) -> None:
+    def _dispatch_response(
+        self, message: dict[str, Any], session: ProviderSession | None = None
+    ) -> None:
         """Route a response message to the correct per-id slot (audit B12)."""
+        session = session or self._session
         if self._handle_progress_notification(message):
             return
         raw_id = message.get("id")
@@ -1078,15 +1053,17 @@ class ExternalLSPClient(SessionBackedState):
         except (TypeError, ValueError):
             return
         with client_lock(self, follow_deadline=False):
-            slot = self._pending_requests.get(request_id)
+            if self._session is not session:
+                return  # stale reader: never touch a replacement's slots or orphan buffer
+            slot = session.pending_requests.get(request_id)
             if slot is None:
                 # The response arrived before request() registered its slot (e.g. a
                 # pre-queued response). Buffer it so request() can claim it on
                 # registration; bound the buffer so late/duplicate responses for
                 # ids that will never be requested cannot leak.
-                self._orphan_responses[request_id] = message
-                while len(self._orphan_responses) > _MAX_ORPHAN_RESPONSES:
-                    self._orphan_responses.pop(next(iter(self._orphan_responses)))
+                session.orphan_responses[request_id] = message
+                while len(session.orphan_responses) > _MAX_ORPHAN_RESPONSES:
+                    session.orphan_responses.pop(next(iter(session.orphan_responses)))
                 return
         try:
             slot.put_nowait(message)

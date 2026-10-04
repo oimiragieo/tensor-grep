@@ -84,11 +84,12 @@ class DeadlineStream:
         return None
 
 
-def bounded_stdin(client: Any) -> DeadlineStream:
+def bounded_stdin(client: Any, session: Any = None) -> DeadlineStream:
     """The client's stdin as a deadline-bounded stream (writer rebuilt per spawned process)."""
-    stdin = client.process.stdin
-    writer = client._writer
+    session = session or client._session
+    stdin = session.process.stdin
+    writer = session.writer
     if writer is None or writer.stream is not stdin:
-        writer = client._writer = DeadlineWriter(stdin)
+        writer = session.writer = DeadlineWriter(stdin)
     timeout = remaining_seconds(client, max(float(client.request_timeout_seconds), 0.05))
     return DeadlineStream(writer, timeout)

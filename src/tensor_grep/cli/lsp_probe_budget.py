@@ -67,7 +67,8 @@ class ProbeBudget:
                 return  # the probe already decided success before the deadline
             self.fired.set()
         while not self._cancelled.is_set():  # retry: the provider may still be spawning
-            containment, process = client._containment, client.process
+            session = client._session
+            containment, process = session.containment, session.process
             if containment is not None:
                 containment.kill()
             if process is not None:
@@ -124,7 +125,11 @@ def remaining_seconds(client: Any, default: float) -> float:
 
 @contextmanager
 def client_lock(
-    client: Any, timeout: float | None = None, *, follow_deadline: bool = True
+    client: Any,
+    timeout: float | None = None,
+    *,
+    follow_deadline: bool = True,
+    lock: Any = None,
 ) -> Iterator[None]:
     """``with client._lock`` that honours the probe deadline instead of waiting unboundedly.
 
@@ -136,10 +141,11 @@ def client_lock(
     wait = timeout
     if follow_deadline and client.deadline_monotonic is not None:
         wait = remaining_seconds(client, timeout if timeout is not None else float("inf"))
-    acquired = client._lock.acquire() if wait is None else client._lock.acquire(timeout=wait)
+    target = client._lock if lock is None else lock
+    acquired = target.acquire() if wait is None else target.acquire(timeout=wait)
     if not acquired:
         raise TimeoutError("doctor LSP probe deadline exceeded (client lock busy)")
     try:
         yield
     finally:
-        client._lock.release()
+        target.release()
