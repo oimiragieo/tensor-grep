@@ -13,6 +13,8 @@ import itertools
 import json
 from typing import Any
 
+from tensor_grep.cli.incompleteness import unified_incomplete_envelope
+
 _MCP_MATCH_TEXT_MAX_CHARS = 400
 _MCP_MATCH_WINDOW_LEAD_CHARS = 100
 _MCP_MATCHES_MAX_BYTES = 256 * 1024
@@ -201,6 +203,10 @@ def _set_rows(doc: dict[str, Any], rows: list[Any], total_rows: int) -> None:
         doc["omitted_files"] = max(0, doc["total_files"] - len(files))
     if len(rows) < total_rows:
         doc["truncated"] = True
+    if isinstance(doc.get("incomplete"), dict):
+        # The completeness envelope was stamped BEFORE this trim: re-derive it with the very
+        # helper that stamps it (never hand-built), so the final response is self-consistent.
+        doc["incomplete"] = unified_incomplete_envelope(doc)
 
 
 def _bound_json_envelope(doc: dict[str, Any]) -> dict[str, Any] | None:

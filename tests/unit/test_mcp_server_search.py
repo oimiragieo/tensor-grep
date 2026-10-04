@@ -1687,6 +1687,8 @@ def test_final_row_trim_recomputes_file_and_omission_counters_exactly():
     assert payload["omitted_matches"] == 1000 - len(kept)
     assert payload["omitted_files"] == 1000 - len({row["file"] for row in kept})
     assert payload["truncated"] is True
+    assert payload["incomplete"]["status"] is True
+    assert payload["incomplete"]["cause"] == "truncated"
 
 
 # --- Codex round 7: per-match truncation must keep the match or say so; no empty windows ---
@@ -1947,3 +1949,44 @@ def test_valid_pattern_on_an_empty_directory_is_still_a_clean_empty_result(tmp_p
     assert "error" not in out
     assert out["total_matches"] == 0
     assert out["result_incomplete"] is False
+
+
+# --- Codex round 11: the final trim must keep the completeness envelope self-consistent ---
+
+
+def test_final_envelope_trim_alone_reports_the_response_as_incomplete():
+    from tensor_grep.cli import mcp_server
+
+    hits = [MatchLine(line_number=i + 1, text="x" * 400, file="f") for i in range(548)]
+    with _stub_rg_search(hits):
+        out = mcp_server.tg_search(chr(0x1F600) * 1024, ".", max_results=548)
+    _assert_bounded(out)
+    payload = json.loads(out)
+    kept = payload["matches"]
+    assert 0 < len(kept) < 548
+    assert payload["output_truncated"] is True
+    assert payload["truncated"] is True
+    assert payload["omitted_matches"] == 548 - len(kept)
+    assert payload["incomplete"]["status"] is True
+    assert payload["incomplete"]["cause"] == "truncated"
+    assert payload["incomplete"]["budget_remediable"] is False
+
+
+def test_trimmed_response_incomplete_envelope_matches_what_the_stamping_helper_derives():
+    from tensor_grep.cli.incompleteness import unified_incomplete_envelope
+
+    hits = [MatchLine(line_number=1, text="x" * 400, file=f"f{i}.txt") for i in range(1000)]
+    from tensor_grep.cli import mcp_server
+
+    with _stub_rg_search(hits):
+        out = mcp_server.tg_search(chr(0x1F600) * 1024, ".", max_results=5000, max_files=5000)
+    payload = json.loads(out)
+    assert payload["incomplete"] == unified_incomplete_envelope(payload)
+    assert payload["incomplete"]["status"] is True
+
+
+def test_untrimmed_response_keeps_a_clear_incomplete_envelope():
+    payload = json.loads(_run_tg_search_many(10, "short line"))
+    assert "output_truncated" not in payload
+    assert payload["incomplete"]["status"] is False
+    assert payload["incomplete"]["cause"] is None

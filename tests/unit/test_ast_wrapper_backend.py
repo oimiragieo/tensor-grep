@@ -1098,3 +1098,51 @@ def test_pattern_probe_result_is_an_explicit_allowlist(returncode, stderr, expec
             assert backend.pattern_warning("p", config) is None
         else:
             assert expect in backend.pattern_warning("p", config)
+
+
+# --- Codex round 11: recorded pattern problems are keyed by (language, pattern) ---
+
+_JS_ONLY_PATTERN = "function f() { return 1; }"
+
+
+def _real_backend_or_skip():
+    backend = AstGrepWrapperBackend()
+    if not backend.is_available():
+        pytest.skip("ast-grep binary not installed")
+    return backend
+
+
+def test_recorded_python_warning_does_not_leak_into_javascript_on_a_reused_backend(tmp_path):
+    backend = _real_backend_or_skip()
+    source = tmp_path / "a.py"
+    source.write_text("def f():\n    return 1\n", encoding="utf-8")
+    py = SearchConfig(ast=True, lang="python")
+    js = SearchConfig(ast=True, lang="javascript")
+    backend.search(str(source), _JS_ONLY_PATTERN, config=py)
+    assert backend.pattern_warning(_JS_ONLY_PATTERN, py) is not None  # recorded for Python
+    fresh = AstGrepWrapperBackend()
+    expected = fresh.pattern_warning(_JS_ONLY_PATTERN, js)  # what a fresh backend says for JS
+    assert expected is None
+    assert backend.pattern_warning(_JS_ONLY_PATTERN, js) is None
+
+
+def test_recorded_warning_is_still_reused_within_the_same_language():
+    backend = AstGrepWrapperBackend()
+    warned = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    py = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=warned),
+    ):
+        backend.search("a.py", "def (", config=py)
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", side_effect=AssertionError("re-probed")),
+    ):
+        assert "ERROR node" in backend.pattern_warning("def (", py)  # no probe: reused
+        assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="Python")) is not None
