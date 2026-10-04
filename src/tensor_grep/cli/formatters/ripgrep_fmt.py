@@ -53,7 +53,11 @@ class RipgrepFormatter(OutputFormatter):
             pattern = self.config.regexp[0]
         is_literal = bool(self.config.fixed_strings) or not (_REGEX_META & set(pattern))
         if not pattern or not is_literal:
-            return 1  # a real regex is never evaluated in Python; no-column fallback
+            # KNOWN APPROXIMATION: --column/--vimgrep mandate a column field (rg never omits it),
+            # so a regex line with no authoritative offset (rg submatches / CPUBackend's Python
+            # loop populate them; the native-engine result tuples do not) prints 1 rather than a
+            # guess from re-running the user's regex. JSON omits the field instead.
+            return 1
         if self.config.word_regexp or self.config.line_regexp:
             return 1  # find() ignores -w/-x boundaries -- never guess a column
         # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
