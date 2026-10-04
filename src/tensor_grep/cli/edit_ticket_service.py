@@ -752,8 +752,11 @@ def _population_paths(
     # `os.walk` re-checks `islink` itself and SILENTLY skips a directory swapped for a link
     # after our check; so each kept directory must be yielded back, and unchanged.
     expected: dict[str, tuple[int, int]] = {}
-    # leaf path -> fingerprint already computed (once) in a marker-classification session
-    emitted: dict[str, tuple[str, tuple[int, int]]] = {}
+    # directory -> (fingerprint, (st_dev, st_ino)) of the invalid CACHEDIR.TAG that was read
+    # (once) in that directory's marker-classification session. Keyed by DIRECTORY and matched
+    # at the leaf stage by FILE IDENTITY, never by name: on a case-insensitive filesystem the
+    # tag is opened as `CACHEDIR.TAG` but enumerated as `cachedir.tag`.
+    pending: dict[str, tuple[str, tuple[int, int]]] = {}
     first = True
     for dirpath, dirnames, filenames, handle in _walk_impl(root, _on_error):
         visited += 1
@@ -840,7 +843,7 @@ def _population_paths(
                 if classified.tag_leaf is not None:
                     # an invalid tag was read, charged and hashed in its classification
                     # session: that IS its leaf fingerprint, emitted when the leaf is reached
-                    emitted[str(child / "CACHEDIR.TAG")] = classified.tag_leaf
+                    pending[str(child)] = classified.tag_leaf
                 if marker is not None and content_pruned is not None:
                     if n_content >= _MAX_CONTENT_PRUNED_DIRS:
                         raise _PopulationWalkError("pruned_dir_limit", "content")
@@ -869,24 +872,28 @@ def _population_paths(
                 raise _PopulationWalkError("unreadable_path") from exc
             if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
                 raise _PopulationWalkError("unreadable_path")
-            done = emitted.pop(str(current / name), None)
-            if done is not None:
-                # An invalid CACHEDIR.TAG was read, charged and hashed in its classification
-                # session. Its emitted fingerprint may be used (no re-read, no re-charge) only if
-                # what is here NOW is still a regular, non-link file with the identity of the
-                # handle those bytes came from. This authorizes using bytes already read in THIS
-                # walk from THIS object; it is not a metadata-keyed cache (size/mtime are never
-                # compared), so an in-place rewrite cannot fool it into trusting other bytes.
-                done_fp, done_ident = done
-                if (
-                    _link_from_stat(leaf_st)
-                    or not stat.S_ISREG(leaf_st.st_mode)
-                    or not _same_identity(done_ident, (leaf_st.st_dev, leaf_st.st_ino))
-                ):
-                    raise _PopulationWalkError("unreadable_path")
-                yield (rel_dir / name).as_posix(), done_fp
+            tag = pending.get(str(current))
+            if (
+                tag is not None
+                and tag[1][1]
+                and tag[1] == (leaf_st.st_dev, leaf_st.st_ino)
+                and stat.S_ISREG(leaf_st.st_mode)
+                and not _link_from_stat(leaf_st)
+            ):
+                # This leaf IS the object the invalid CACHEDIR.TAG classification session read
+                # (same file identity, found by identity so the filename's case is irrelevant;
+                # the fingerprint is recorded under the ENUMERATED on-disk name). Its bytes are
+                # already hashed and charged: no re-read, no re-charge. Identity authorizes
+                # using bytes already read in THIS walk from THIS object; size and mtime are
+                # never compared, so this is not a metadata-keyed cache.
+                del pending[str(current)]
+                yield (rel_dir / name).as_posix(), tag[0]
                 continue
             yield (rel_dir / name).as_posix(), None
+        if str(current) in pending:
+            # The tag object that was read and hashed is no longer among this directory's leaves
+            # (replaced by a different inode, a link, or gone): never trust its old bytes.
+            raise _PopulationWalkError("unreadable_path")
     if first:
         # The walk never yielded the ROOT tuple (os.fwalk(follow_symlinks=False) silently yields
         # nothing for a symlink root; the held chain on Windows must have held the root): an

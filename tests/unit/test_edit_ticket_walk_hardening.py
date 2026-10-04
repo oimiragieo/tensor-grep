@@ -1172,13 +1172,15 @@ def _tag_to_symlink(tag: Path) -> None:
 def test_emitted_tag_fingerprint_is_not_accepted_for_a_swapped_leaf(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, swap: object
 ) -> None:
-    tag, _bad = _tag_tree(tmp_path)
+    tag, bad = _tag_tree(tmp_path)
     state = _swap_tag_at_leaf_stage(monkeypatch, tag, lambda: swap(tag))  # type: ignore[operator]
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert state["calls"] >= 3, "the tag never reached its leaf-stage lstat (shortcut skipped it)"
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
-    assert "cache/CACHEDIR.TAG" not in files
+    # the stale emitted hash of the OLD object is never trusted (a swapped-in object is
+    # fingerprinted as an ordinary leaf, if at all, and the population is incomplete anyway)
+    assert files.get("cache/CACHEDIR.TAG") != "file:" + hashlib.sha256(bad).hexdigest()
 
 
 def test_tag_replaced_by_a_directory_with_evil_py_never_passes_verify(
@@ -1204,3 +1206,96 @@ def test_unchanged_invalid_tag_uses_the_emitted_fingerprint_with_one_read_sessio
     assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
     assert counter["opens"] == 1  # exactly one read session
     assert counter["raw_bytes"] <= len(bad) + 1
+
+
+# ---- round 21: case-insensitive filesystems (the on-disk name differs from the marker name) ----
+
+
+def _fs_is_case_insensitive(tmp_path: Path) -> bool:
+    probe = tmp_path / "CaseProbe.X"
+    probe.write_bytes(b"x")
+    try:
+        return (tmp_path / "caseprobe.x").exists()
+    finally:
+        probe.unlink()
+
+
+_BAD_TAG = b"Signature: 8a477f597d28d172789f06886806bc55 XX"  # a tag-named file, not a tag
+
+
+@pytest.mark.parametrize("on_disk", ["cachedir.tag", "CacheDir.Tag"])
+def test_invalid_tag_with_a_different_case_name_is_read_once_and_charged_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_disk: str
+) -> None:
+    if not _fs_is_case_insensitive(tmp_path):
+        pytest.skip("case-insensitive filesystem only (NTFS / default APFS)")
+    counter = _raw_read_counter(monkeypatch)
+    d = tmp_path / "cache"
+    d.mkdir()
+    (d / on_disk).write_bytes(_BAD_TAG)
+    size = len(_BAD_TAG)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=size, max_aggregate_bytes=size
+    )
+    assert population["status"] == "complete", population
+    assert counter["opens"] == 1  # one read session, not classification + a second leaf read
+    assert population["scanned_bytes"] == size  # charged exactly once
+    # pinned: the fingerprint is recorded under the ENUMERATED (real on-disk) name
+    assert f"cache/{on_disk}" in files
+    assert files[f"cache/{on_disk}"] == "file:" + hashlib.sha256(_BAD_TAG).hexdigest()
+
+
+@pytest.mark.parametrize("on_disk", ["cachedir.tag", "CacheDir.Tag"])
+def test_unchanged_tree_with_a_different_case_tag_verifies_pass_at_tight_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, on_disk: str
+) -> None:
+    if not _fs_is_case_insensitive(tmp_path):
+        pytest.skip("case-insensitive filesystem only (NTFS / default APFS)")
+    d = tmp_path / "cache"
+    d.mkdir()
+    (d / on_disk).write_bytes(_BAD_TAG)
+    _limited_walker(monkeypatch, len(_BAD_TAG))  # mint AND verify walk with both limits = size
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["status"] == "complete"
+    assert f"cache/{on_disk}" in ticket.pre_edit_fingerprints
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def test_marker_with_a_different_case_name_is_read_once_and_charged_exactly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Sweep of the same class: pyvenv.cfg is looked up by the hard-coded name in classification
+    # and its digest read through that same name (a pruned directory's markers are never
+    # enumerated as leaves), so case cannot make it a second read; pinned here.
+    if not _fs_is_case_insensitive(tmp_path):
+        pytest.skip("case-insensitive filesystem only (NTFS / default APFS)")
+    counter = _raw_read_counter(monkeypatch)
+    env = tmp_path / "env"
+    env.mkdir()
+    body = b"home = /usr/bin\n"
+    (env / "PyVenv.CFG").write_bytes(body)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=len(body), max_aggregate_bytes=len(body)
+    )
+    assert population["status"] == "complete", population
+    assert population["pruned_set"]["env"].startswith("pyvenv.cfg:")
+    assert counter["opens"] == 1
+    assert population["scanned_bytes"] == len(body)
+
+
+def test_lowercase_cachedir_tag_on_a_case_sensitive_filesystem_is_an_ordinary_leaf(
+    tmp_path: Path,
+) -> None:
+    if _fs_is_case_insensitive(tmp_path):
+        pytest.skip("case-sensitive filesystem only (Linux)")
+    d = tmp_path / "cache"
+    d.mkdir()
+    valid = b"Signature: 8a477f597d28d172789f06886806bc55\n"
+    (d / "cachedir.tag").write_bytes(valid)  # right content, wrong NAME (spec: exact name)
+    (d / "x.py").write_text("1\n", encoding="utf-8")
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert "cache" not in population["pruned_set"]  # not treated as a CACHEDIR tag
+    assert files["cache/cachedir.tag"] == "file:" + hashlib.sha256(valid).hexdigest()
+    assert "cache/x.py" in files
