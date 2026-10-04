@@ -40,8 +40,7 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
-from tensor_grep.cli.rg_post_process import only_matching_lines as _only_matching_lines
-from tensor_grep.cli.rg_post_process import replace_lines as _replace_lines
+from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version as _native_tg_version,
 )
@@ -3899,7 +3898,7 @@ def search_command(
 
     try:
         pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
-    except ConfigurationError as exc:
+    except (ConfigurationError, BackendExecutionError) as exc:
         # Task #166 finding A: Pipeline's explicit-routing guards (e.g. --gpu-device-ids with
         # no GPU backend available, or --pcre2 with no PCRE2-capable rg) deliberately raise
         # ConfigurationError as a fail-closed signal (core/pipeline.py), but this CLI boundary
@@ -4190,11 +4189,12 @@ def search_command(
             all_results.result_incomplete = True
             sys.stderr.write(f"tg: {all_results.incomplete_reason}\n")
 
-    if config.replace_str is not None and not only_matching:  # -o -r is one step
-        all_results.matches = _replace_lines(all_results.matches, pattern, config)
+    try:  # rg's own -o/-r output; a record it cannot represent exactly is a clean exit 2
+        all_results.matches = _rg_out(all_results.matches, pattern, config, only_matching)
+    except BackendExecutionError as exc:
+        _exit_search_error("backend_error", str(exc), json_mode=json)
 
     if only_matching:
-        all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
         all_results.total_matches = len(all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
         matched_file_paths = {m.file for m in all_results.matches}

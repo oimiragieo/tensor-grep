@@ -51,6 +51,17 @@ def _field_bytes(field: dict[str, object] | None) -> bytes | None:
     return None
 
 
+def _strict_line_text(data_match: dict[str, object]) -> str | None:
+    """The record's line decoded STRICTLY from rg's text-or-bytes field (no U+FFFD, ever)."""
+    raw = _field_bytes(data_match.get("lines"))  # type: ignore[arg-type]
+    if raw is None:
+        return None
+    try:
+        return strip_line_terminator(raw.decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
+
+
 def _replaced_line_text(data_match: dict[str, object]) -> str | None:
     """rg's replaced line, assembled from the line's ORIGINAL bytes and rg's own replacements.
 
@@ -256,6 +267,10 @@ class RipgrepBackend(ComputeBackend):
                     result.stdout,
                     file_path,
                     replacing=config is not None and config.replace_str is not None,
+                    transforming=config is not None
+                    and (config.replace_str is not None or config.only_matching),
+                    inverted=config is not None
+                    and bool(config.invert_match and not config.no_invert_match),
                 )
             )
 
@@ -323,6 +338,10 @@ class RipgrepBackend(ComputeBackend):
                     partial_stdout,
                     file_path,
                     replacing=config is not None and config.replace_str is not None,
+                    transforming=config is not None
+                    and (config.replace_str is not None or config.only_matching),
+                    inverted=config is not None
+                    and bool(config.invert_match and not config.no_invert_match),
                 )
             )
             reason = (
@@ -352,7 +371,11 @@ class RipgrepBackend(ComputeBackend):
 
     @staticmethod
     def _parse_ndjson_matches(
-        stdout: str, file_path: str | list[str], replacing: bool = False
+        stdout: str,
+        file_path: str | list[str],
+        replacing: bool = False,
+        transforming: bool = False,
+        inverted: bool = False,
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -406,7 +429,16 @@ class RipgrepBackend(ComputeBackend):
                             text=text,
                             file=path_str,
                             submatches=tuple(_subs) if _subs else None,
-                            replaced_text=(_replaced_line_text(data_match) if replacing else None),
+                            replaced_text=(
+                                _replaced_line_text(data_match)
+                                if replacing
+                                else (
+                                    _strict_line_text(data_match)
+                                    if inverted and transforming
+                                    else None
+                                )
+                            ),
+                            rg_kind="inverted" if inverted else "match",
                         )
                     )
                     total_matches += 1
@@ -431,8 +463,10 @@ class RipgrepBackend(ComputeBackend):
                             line_number=line_number,
                             text=text,
                             file=path_str,
-                            # context lines are printed unchanged by rg -r
-                            replaced_text=text if replacing else None,
+                            # rg prints context lines unchanged under -o/-r; decode STRICTLY
+                            # from the original bytes (None when not valid UTF-8 -> refused)
+                            replaced_text=(_strict_line_text(data_match) if transforming else None),
+                            rg_kind="context",
                         )
                     )
             except json.JSONDecodeError:
@@ -638,12 +672,18 @@ class RipgrepBackend(ComputeBackend):
         Execute ripgrep directly and stream output to stdout/stderr without JSON re-parsing.
         Returns rg's native exit code.
         """
-        cmd = self._build_cmd(
-            file_path=file_path,
-            pattern=pattern,
-            config=config,
-            json_mode=bool(config and config.json_mode),
-        )
+        try:
+            cmd = self._build_cmd(
+                file_path=file_path,
+                pattern=pattern,
+                config=config,
+                json_mode=bool(config and config.json_mode),
+            )
+        except BackendExecutionError as exc:
+            # e.g. an unsupported --engine value: exit 2 (error), never a traceback and never 1
+            # ("no match") -- the streaming route has no JSON envelope, so it is a stderr line
+            sys.stderr.write(f"Error: {exc}\n")
+            return 2
         if config and config.quiet:
             # `-q` LIVES HERE AND NOWHERE ELSE, and the reason is a regression I shipped.
             #

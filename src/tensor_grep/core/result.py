@@ -93,6 +93,9 @@ class MatchLine:
     # ORIGINAL bytes). Populated by RipgrepBackend only when a replacement was requested; None
     # otherwise, and None when the line is not valid UTF-8 (not representable as str).
     replaced_text: str | None = field(default=None, compare=False)
+    # rg record kind: "match" (ordinary), "inverted" (a -v match: printed unchanged by -o/-r)
+    # or "context" (-A/-B/-C). None for non-rg engines. Only RipgrepBackend sets it.
+    rg_kind: str | None = field(default=None, compare=False)
     container: dict[str, object] | None = field(default=None, compare=False)
     why_ranked: list[str] | None = field(default=None, compare=False)
 
