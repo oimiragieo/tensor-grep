@@ -4190,7 +4190,7 @@ def search_command(
             all_results.result_incomplete = True
             sys.stderr.write(f"tg: {all_results.incomplete_reason}\n")
 
-    if config.replace_str is not None:
+    if config.replace_str is not None and not only_matching:  # -o -r is one step
         all_results.matches = _replace_lines(all_results.matches, pattern, config)
 
     if only_matching:

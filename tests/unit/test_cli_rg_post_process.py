@@ -114,3 +114,65 @@ def test_post_processing_of_rg_matches_never_redecides_smart_case(tmp_path, temp
     only = SearchConfig(query_pattern=pattern, smart_case=True, only_matching=True)
     out = cli_main._only_matching_lines(matches, pattern, only)
     assert [m.text for m in out] == ["FOOX"]
+
+
+def _rg_o_replace(path, pattern, template, *flags):
+    import subprocess as sp
+
+    proc = sp.run(
+        [
+            str(resolve_ripgrep_binary()),
+            "--no-config",
+            *flags,
+            "-o",
+            "-r",
+            template,
+            "-e",
+            pattern,
+            "--",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return proc.stdout.splitlines()
+
+
+def _seam(tmp_path, content: bytes, pattern: str, template: str):
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import main as cli_main
+
+    f = tmp_path / "a.txt"
+    f.write_bytes(content)
+    cfg = SearchConfig(
+        query_pattern=pattern, smart_case=True, replace_str=template, only_matching=True
+    )
+    matches = RipgrepBackend().search(str(f), pattern, cfg).matches
+    assert matches and matches[0].submatches
+    return f, [m.text for m in cli_main._only_matching_lines(matches, pattern, cfg)]
+
+
+def test_only_matching_with_replace_emits_each_replaced_match_alone(tmp_path):
+    f, lines = _seam(tmp_path, b"FOOX\n", r"foo\S", "[$0]")
+    assert lines == ["[FOOX]"]
+    assert lines == _rg_o_replace(f, r"foo\S", "[$0]", "-S")
+
+
+def test_only_matching_with_replace_two_matches_on_one_line_give_two_lines(tmp_path):
+    f, lines = _seam(tmp_path, b"ab xx ab\n", "ab", "<$0>")
+    assert lines == ["<ab>", "<ab>"]
+    assert lines == _rg_o_replace(f, "ab", "<$0>", "-S")
+
+
+def test_only_matching_with_replace_capture_group(tmp_path):
+    f, lines = _seam(tmp_path, b"FOOX foox\n", r"(foo)(\S)", "$2-$1")
+    assert lines == ["X-FOO", "x-foo"]
+    assert lines == _rg_o_replace(f, r"(foo)(\S)", "$2-$1", "-S")
+
+
+def test_only_matching_with_replace_literal_template_and_end_to_end(tmp_path):
+    f = _file(tmp_path, b"FOOX\n")
+    result = _search("-S", "-o", "-r", "[$0]", r"foo\S", f)
+    assert result.exit_code == 0, (result.output, result.stderr)
+    assert result.output.splitlines() == _rg_o_replace(f, r"foo\S", "[$0]", "-S") == ["[FOOX]"]

@@ -71,6 +71,18 @@ def _expand_at_span(
     )
 
 
+def _replacement_for_span(
+    pattern: str, config: SearchConfig, text: str, raw: bytes, start: int, end: int
+) -> str:
+    """The `--replace` output for ONE rg-matched span (literal, or with `$N` groups expanded)."""
+    template = config.replace_str or ""
+    if "$" not in template:
+        return template
+    c_start = len(raw[:start].decode("utf-8", errors="replace"))
+    c_end = len(raw[:end].decode("utf-8", errors="replace"))
+    return _expand_at_span(pattern, config, text, c_start, c_end, template)
+
+
 def replace_lines(matches: list[MatchLine], pattern: str, config: SearchConfig) -> list[MatchLine]:
     if config.replace_str is None:
         return matches
@@ -85,14 +97,7 @@ def replace_lines(matches: list[MatchLine], pattern: str, config: SearchConfig) 
             cursor = 0
             for start, end in spans:
                 pieces.append(raw[cursor:start].decode("utf-8", errors="replace"))
-                if "$" in template:
-                    c_start = len(raw[:start].decode("utf-8", errors="replace"))
-                    c_end = len(raw[:end].decode("utf-8", errors="replace"))
-                    pieces.append(
-                        _expand_at_span(pattern, config, match.text, c_start, c_end, template)
-                    )
-                else:
-                    pieces.append(template)
+                pieces.append(_replacement_for_span(pattern, config, match.text, raw, start, end))
                 cursor = end
             pieces.append(raw[cursor:].decode("utf-8", errors="replace"))
             # rg's offsets index the ORIGINAL text; drop them so nothing re-reads stale spans
@@ -128,10 +133,19 @@ def only_matching_lines(
         if spans:
             raw = match.text.encode("utf-8")
             for start, end in spans:
+                if config.replace_str is not None:
+                    # rg `-o -r X`: every match alone, replacement applied to THAT span; the
+                    # regex is never re-run on already-replaced text. Empty results are kept.
+                    token_text = _replacement_for_span(pattern, config, match.text, raw, start, end)
+                    out.append(replace(match, text=token_text, submatches=None))
+                    continue
                 token_text = raw[start:end].decode("utf-8", errors="replace")
                 if token_text:
                     out.append(replace(match, text=token_text, submatches=None))
             continue
+        if config.replace_str is not None:
+            # no rg offsets (non-rg engine): historical behaviour, replace then extract
+            match = replace_lines([match], pattern, config)[0]
         if regex is None:
             regex = _compile(pattern, config, case_regex_flags(config, pattern))
         for token in regex.findall(match.text):
