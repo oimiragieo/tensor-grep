@@ -26,14 +26,16 @@ def test_unreadable_file_marks_population_incomplete_not_silently_dropped(
     unreadable = tmp_path / "unreadable.py"
     unreadable.write_text("2\n", encoding="utf-8")
 
-    real_stat = Path.stat
+    real_lstat = os.lstat
 
-    def _flaky_stat(self: Path, *args: object, **kwargs: object) -> os.stat_result:
-        if self.name == "unreadable.py":
+    def _flaky_lstat(path: object, *args: object, **kwargs: object) -> os.stat_result:
+        if Path(str(path)).name == "unreadable.py":
             raise OSError("simulated permission error")
-        return real_stat(self, *args, **kwargs)
+        return real_lstat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "stat", _flaky_stat)
+    # The walker now classifies, sizes and fingerprints each leaf through the `_lstat` seam
+    # (one stat per step) instead of `Path.stat`; the behaviour pinned here is unchanged.
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _flaky_lstat, raising=False)
 
     files, population = _walk_tracked_files_bounded(tmp_path)
 
@@ -462,7 +464,8 @@ def test_unreadable_fingerprint_marks_incomplete_not_crash(
     def _boom(_p: object) -> str:
         raise PermissionError("denied")
 
-    monkeypatch.setattr(edit_ticket_service, "compute_file_fingerprint", _boom)
+    # the walker fingerprints enumerated leaves through its own fail-closed helper
+    monkeypatch.setattr(edit_ticket_service, "_fingerprint_enumerated", _boom, raising=False)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert files == {}
     assert population["status"] == "incomplete"
@@ -996,3 +999,90 @@ def test_non_notfound_lstat_failure_in_fingerprint_still_propagates(
     monkeypatch.setattr(edit_ticket_service, "_lstat", _denied, raising=False)
     with pytest.raises(PermissionError):
         edit_ticket_service.compute_file_fingerprint(target)
+
+
+def _scripted_lstat(tmp_path: Path, victim: str, script: list[str]):
+    """An `_lstat` seam that returns a scripted answer for `victim`'s Nth stat: 'real' passes
+    through, 'dir' returns a real directory's stat (the file was replaced by a directory)."""
+    real = os.lstat
+    dir_stat = real(tmp_path)
+    calls = {"n": 0}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        if Path(str(path)).name != victim:
+            return real(path, *a, **k)
+        step = script[min(calls["n"], len(script) - 1)]
+        calls["n"] += 1
+        if step == "missing":
+            raise FileNotFoundError(2, "vanished", str(path))
+        return dir_stat if step == "dir" else real(path, *a, **k)
+
+    return _lstat, calls
+
+
+def test_file_replaced_by_directory_between_checks_is_unreadable_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # regular (leaf check) / regular (size) / directory (fingerprint stat)
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "allowed.py").write_text("x = 1\n", encoding="utf-8")
+    seam, calls = _scripted_lstat(tmp_path, "allowed.py", ["real", "real", "dir"])
+    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert calls["n"] >= 3  # the walker really did stat it three times
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert not any(v.startswith("other:") for v in files.values())
+
+
+def test_file_replaced_by_directory_never_passes_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "allowed.py").write_text("x = 1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    seam, _calls = _scripted_lstat(tmp_path, "allowed.py", ["real", "real", "dir"])
+    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "verify_population_incomplete"
+
+
+def test_file_disappearing_before_fingerprint_is_incomplete_not_empty_string(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # regular (leaf check) / regular (size check) / MISSING (fingerprint stat): the file vanished
+    # after the size check. "" would compare equal to "absent from the ticket".
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "gone.py").write_text("x = 1\n", encoding="utf-8")
+    seam, calls = _scripted_lstat(tmp_path, "gone.py", ["real", "real", "missing"])
+    monkeypatch.setattr(edit_ticket_service, "_lstat", seam, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert calls["n"] >= 3
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert files.get("gone.py") != ""
+
+
+def test_walker_fingerprints_normal_file_and_link_correctly(tmp_path: Path) -> None:
+    # positive controls for the walker's own fingerprint helper
+    (tmp_path / "f.py").write_bytes(b"x\n")
+    (tmp_path / "t.py").write_bytes(b"y\n")
+    expected = "file:" + hashlib.sha256(b"x\n").hexdigest()
+    try:
+        (tmp_path / "l.py").symlink_to("t.py")
+        link_ok = True
+    except (OSError, NotImplementedError):
+        link_ok = False
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert files["f.py"] == expected
+    assert files["f.py"] == edit_ticket_service.compute_file_fingerprint(tmp_path / "f.py")
+    if link_ok:
+        assert files["l.py"] == "symlink:" + hashlib.sha256(b"t.py").hexdigest()
+
+
+def test_standalone_fingerprint_of_missing_path_keeps_empty_string_contract(
+    tmp_path: Path,
+) -> None:
+    assert edit_ticket_service.compute_file_fingerprint(tmp_path / "missing.py") == ""

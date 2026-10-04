@@ -300,6 +300,39 @@ def compute_file_fingerprint(path: str | Path) -> str:
     return "file:" + hasher.hexdigest()
 
 
+def _fingerprint_enumerated(path: Path) -> str:
+    """Fingerprint a leaf the walker ENUMERATED; every doubt is `unreadable_path`.
+
+    Unlike the standalone `compute_file_fingerprint` (which keeps its "" contract for direct
+    callers), a path that was listed moments ago must not read as absent or as an empty
+    directory: a vanished path or a non-link directory raises, so the population is incomplete.
+    A regular file is opened ONCE and hashed through that handle after `fstat` confirms it is
+    a regular file with the identity `lstat` saw, so the object classified is the object
+    hashed (no check-then-use window). Links: one lstat plus readlink."""
+    try:
+        st = _lstat(path)
+    except FileNotFoundError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
+    if _link_from_stat(st):
+        return "symlink:" + hashlib.sha256(os.fsencode(os.readlink(path))).hexdigest()
+    if stat.S_ISDIR(st.st_mode):
+        raise _PopulationWalkError("unreadable_path")
+    if not stat.S_ISREG(st.st_mode):
+        return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        fst = os.fstat(handle.fileno())
+        if not stat.S_ISREG(fst.st_mode):
+            raise _PopulationWalkError("unreadable_path")
+        if st.st_ino and fst.st_ino and (st.st_ino, st.st_dev) != (fst.st_ino, fst.st_dev):
+            raise _PopulationWalkError("unreadable_path")  # replaced between lstat and open
+        hasher = hashlib.sha256()
+        while chunk := handle.read(65536):
+            hasher.update(chunk)
+    return "file:" + hasher.hexdigest()
+
+
 def _walk_tracked_files_bounded(
     repo_root: str | Path,
     *,
@@ -332,7 +365,8 @@ def _walk_tracked_files_bounded(
                 break
 
             try:
-                size = len(os.readlink(item)) if _is_link(item) else item.stat().st_size
+                size_st = _lstat(item)  # ONE lstat sizes the leaf (links: link-text length)
+                size = len(os.readlink(item)) if _link_from_stat(size_st) else size_st.st_size
             except OSError:
                 # A file that vanishes or becomes unreadable mid-walk must not silently
                 # disappear from `result` while the population still reports "complete" --
@@ -350,7 +384,7 @@ def _walk_tracked_files_bounded(
                 break
 
             try:
-                result[rel] = compute_file_fingerprint(item)
+                result[rel] = _fingerprint_enumerated(item)
             except OSError:
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
