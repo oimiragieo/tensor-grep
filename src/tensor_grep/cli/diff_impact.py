@@ -37,6 +37,7 @@ from tensor_grep.cli.subprocess_policy import (
 _ACTIVE_SESSIONS = _dig._ACTIVE_SESSIONS
 _OID_RE = _dig.OID_RE
 _BlobOverCap = _dig.BlobOverCap
+_BlobDeadline = _dig.BlobDeadline
 _BlobUnavailable = _dig.BlobUnavailable
 _c_quote_path = _dig.c_quote_path
 _content_sessions = _dig.content_sessions
@@ -656,6 +657,9 @@ def extract_diff_hunks_from_git(
         # diff.submodule=log|diff replaces the gitlink hunk with a headerless "Submodule ..." line
         # and diff.ignoreSubmodules=all hides it; both made a changed gitlink read as no_changes.
         "--submodule=short",
+        # Full object ids: the post-image id in each `index` line is compared with git's own hash
+        # of the content we analyse, so it must not be an abbreviation.
+        "--full-index",
         "--ignore-submodules=none",
         "--find-renames",
         "--src-prefix=a/",
@@ -741,6 +745,8 @@ def _worktree_hash(root: Path, rel_path: Path) -> str | None:
         with _content_sessions(root) as one_shot:
             result = one_shot.hasher().exchange(request, _parse_hash_reply)
             return result
+    except _BlobDeadline:
+        raise
     except _BlobUnavailable:
         return None
 
@@ -793,6 +799,22 @@ def _overlapping_symbols(
     return found
 
 
+def _symbols_from_bytes(data: bytes, suffix: str) -> list[dict[str, Any]]:
+    """Extract symbols from `data` via a temp file OUTSIDE the repo with the same `suffix`.
+
+    Extractors take a PATH, so the verified bytes are written to a temp file (same suffix, so the
+    registry picks the same extractor) that is ALWAYS deleted. Raises the narrow extraction errors.
+    """
+    fd, name = tempfile.mkstemp(suffix=suffix, prefix="tg-blob-")
+    tmp_path = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        return _extract_symbols(tmp_path)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
 def _map_blob_path(
     rel_path: Path,
     line_ranges: list[tuple[int, int]],
@@ -815,24 +837,124 @@ def _map_blob_path(
         data = _read_blob(root, new_oid, repo_map._max_parse_bytes())
     except _BlobOverCap:
         return "not_analyzed", "over_cap", []
+    except _BlobDeadline:
+        return "not_analyzed", "deadline_exceeded", []
     except _BlobUnavailable:
         return "not_analyzed", "blob_unavailable", []
     if not _blob_hash_matches(data, new_oid):
         return "not_analyzed", "blob_unavailable", []
-
-    # Extractors take a PATH: write the bytes to a temp file OUTSIDE the repo with the same
-    # suffix (so the registry picks the same extractor), and always delete it.
-    fd, name = tempfile.mkstemp(suffix=rel_path.suffix, prefix="tg-blob-")
-    tmp_path = Path(name)
     try:
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(data)
+        symbols = _symbols_from_bytes(data, rel_path.suffix)
+    except _extraction_errors() as exc:  # narrow on purpose
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
+
+
+def _read_snapshot(path: Path, cap: int) -> bytes:
+    """Read at most `cap` bytes of `path` from ONE open; raises _BlobOverCap above the cap."""
+    with open(path, "rb") as handle:
+        data = handle.read(cap + 1)
+    if len(data) > cap:
+        raise _BlobOverCap(f"{path} exceeds the {cap}-byte parse cap")
+    return data
+
+
+def _map_file_snapshot(
+    rel_path: Path,
+    line_ranges: list[tuple[int, int]],
+    root: Path,
+    full_path: Path,
+    new_oid: str | None,
+    content_mode: str,
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    """Analyse a regular working-tree file from a byte SNAPSHOT, never from a second open.
+
+    Sandwich: read S1, have git hash the file (in "worktree" mode), read S2, require S1 == S2 and
+    git's hash to EQUAL the post-image id the diff itself reported, then extract from S1. Every
+    ordering is covered: a change reverted before git reads the file hashes as the original (and
+    S1 is the original); a change still in place when git reads it hashes differently from the
+    diff's id; a change during S1/S2 makes S1 != S2. Extraction uses S1's bytes, so nothing done to
+    the file afterwards can alter what is analysed. Swap-and-restore (tracker R-12) cannot yield
+    the content of anything other than what the diff describes.
+    """
+    cap = repo_map._max_parse_bytes()
+    before = _file_identity(full_path)
+    try:
+        first = _read_snapshot(full_path, cap)
+    except _BlobOverCap:
+        return "not_analyzed", "over_cap", []  # the extractors return ([], []) over the cap
+    except OSError as exc:
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    if content_mode == "worktree" and new_oid:
+        actual = _worktree_hash(root, rel_path)
+        if actual is None:
+            return "not_analyzed", "blob_unavailable", []
+        if not actual.startswith(new_oid):
+            return "not_analyzed", "path_changed_during_analysis", []
         try:
-            symbols = _extract_symbols(tmp_path)
-        except _extraction_errors() as exc:  # narrow on purpose
-            return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
-    finally:
-        tmp_path.unlink(missing_ok=True)
+            second = _read_snapshot(full_path, cap)
+        except (_BlobOverCap, OSError):
+            return "not_analyzed", "path_changed_during_analysis", []
+        if second != first:
+            return "not_analyzed", "path_changed_during_analysis", []
+    try:
+        symbols = _symbols_from_bytes(first, rel_path.suffix)
+    except _extraction_errors() as exc:  # narrow on purpose
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    after = _file_identity(full_path)
+    if (
+        before is None
+        or after != before
+        or not repo_map._path_is_relative_to(before[2], root)
+        or not repo_map._path_is_relative_to(after[2], root)
+    ):
+        return "not_analyzed", "path_changed_during_analysis", []
+    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
+
+
+def _strip_extended_prefix(link_text: str) -> str:
+    """Windows `readlink` returns absolute targets as `\\?\\C:\\...`; drop that extended prefix."""
+    if link_text.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + link_text[8:]
+    if link_text.startswith("\\\\?\\"):
+        return link_text[4:]
+    return link_text
+
+
+def _map_symlink_snapshot(
+    rel_path: Path,
+    line_ranges: list[tuple[int, int]],
+    root: Path,
+    full_path: Path,
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    """Analyse what a working-tree symlink points at, resolved ONCE from its link text.
+
+    The target is derived from a single `readlink` snapshot (never from the live link), checked
+    against the root, and read from the RESOLVED real file in one bounded read; the link text is
+    re-read afterwards and must be unchanged. A link swapped outside the root therefore either
+    fails containment or is never consulted, and extraction runs on the snapshot bytes.
+    """
+    cap = repo_map._max_parse_bytes()
+    try:
+        link_text = os.readlink(full_path)
+        joined = os.path.join(full_path.parent, _strip_extended_prefix(link_text))
+        target = Path(joined).resolve(strict=True)
+    except OSError:
+        return "not_analyzed", "file_missing", []
+    if not repo_map._path_is_relative_to(target, root):
+        return "not_analyzed", "path_escapes_root", []
+    try:
+        data = _read_snapshot(target, cap)
+    except _BlobOverCap:
+        return "not_analyzed", "over_cap", []
+    except OSError as exc:
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+    try:
+        if os.readlink(full_path) != link_text:
+            return "not_analyzed", "path_changed_during_analysis", []
+        symbols = _symbols_from_bytes(data, rel_path.suffix)
+    except _extraction_errors() as exc:  # narrow on purpose
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
     return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
 
 
@@ -848,17 +970,17 @@ def _map_one_path(
 ) -> tuple[str, str | None, list[dict[str, Any]]]:
     """Map ONE changed path to exactly one outcome: (outcome, reason, symbols).
 
-    Outcomes: "analyzed" (extractor succeeded, identity unchanged); "deleted" (a deliberate,
-    separately disclosed handling: a deleted file or a submodule gitlink that is no longer a
-    regular file); "not_analyzed" with a reason (path_escapes_root, file_missing,
+    Outcomes: "analyzed" (extractor succeeded on a verified byte snapshot); "deleted" (a
+    deliberate, separately disclosed handling: a deleted file or a submodule gitlink that is no
+    longer a regular file); "not_analyzed" with a reason (path_escapes_root, file_missing,
     extraction_failed: <ExceptionType>, path_changed_during_analysis, blob_unavailable,
-    over_cap). There is no branch that returns nothing, so a changed path can never leave the
-    mapper unaccounted for.
+    over_cap, deadline_exceeded). There is no branch that returns nothing, so a changed path can
+    never leave the mapper unaccounted for.
 
     `content_mode` says where the new-side bytes come from: "blob" (staged / revision-range
     diffs: the git object named by the record's `index` line), "worktree" (the working-tree file,
-    hash-verified against that line), or "unverified" (no git context, e.g. caller-supplied diff
-    text: the working-tree file as-is).
+    snapshotted and hash-verified against that line), or "unverified" (no git context, e.g.
+    caller-supplied diff text: a single snapshot of the working-tree file).
     """
     # An explicit deletion is classified FIRST, before any working-tree inspection: what a deleted
     # path leaves behind (e.g. a symlink surviving a `git rm --cached`) says nothing about it. A
@@ -880,35 +1002,11 @@ def _map_one_path(
             return "deleted", None, []
         return "not_analyzed", "file_missing", []
     try:
-        if full_path.stat().st_size > repo_map._max_parse_bytes():
-            return "not_analyzed", "over_cap", []  # the extractors return ([], []) over the cap
-    except OSError:
-        return "not_analyzed", "file_missing", []
-
-    before = _file_identity(full_path)
-    if content_mode == "worktree" and new_oid and not full_path.is_symlink():
-        # The diff's new-side oid is the hash of the working-tree file AS DIFFED. If it no longer
-        # matches, the file changed after the diff was taken: not the content the diff describes.
-        actual = _worktree_hash(root, rel_path)
-        if actual is None:
-            return "not_analyzed", "blob_unavailable", []
-        if not actual.startswith(new_oid):
-            return "not_analyzed", "path_changed_during_analysis", []
-    try:
-        symbols = _extract_symbols(full_path)
-    except _extraction_errors() as exc:  # narrow on purpose: anything else is a bug, not a gap
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
-
-    after = _file_identity(full_path)
-    if (
-        before is None
-        or after != before
-        or not repo_map._path_is_relative_to(before[2], root)
-        or not repo_map._path_is_relative_to(after[2], root)
-    ):
-        return "not_analyzed", "path_changed_during_analysis", []
-
-    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
+        if full_path.is_symlink():
+            return _map_symlink_snapshot(rel_path, line_ranges, root, full_path)
+        return _map_file_snapshot(rel_path, line_ranges, root, full_path, new_oid, content_mode)
+    except _BlobDeadline:
+        return "not_analyzed", "deadline_exceeded", []
 
 
 def map_changed_lines_to_symbols(
@@ -916,6 +1014,7 @@ def map_changed_lines_to_symbols(
     root: Path,
     not_analyzed: list[dict[str, str]] | None = None,
     content_mode: str = "unverified",
+    deadline_monotonic: float | None = None,
 ) -> list[dict[str, Any]]:
     """Use LANGUAGE_REGISTRY (or _imports_and_symbols_for_path fallback) to extract symbols for each file,
 
@@ -926,12 +1025,14 @@ def map_changed_lines_to_symbols(
     equal the input paths and be disjoint, otherwise DiffError("internal_accounting_error") is
     raised: the result then fails closed instead of silently shrinking.
 
-    Swap detection (best effort): the file's identity (st_dev, st_ino, resolved path) is captured
-    before and after extraction; if it changed, or the resolved path left `root`, that file's
-    symbols are discarded (`path_changed_during_analysis`). Limits: a swap-and-restore (ABA) that
-    is back in place when extraction finishes is not caught, and the extractor still opens the
-    original pathname, so closing the race fully needs extraction through a verified/confined
-    handle (tracker R-12).
+    Content is always analysed from a verified BYTE SNAPSHOT, never from a second open of the
+    path (see _map_file_snapshot / _map_symlink_snapshot / _map_blob_path): regular files are
+    read, git-hashed, re-read and compared with each other and with the post-image id the diff
+    reports; staged/range diffs read the git blob; a symlink's target is resolved once from a
+    `readlink` snapshot and can never be read from outside `root`. This closes the swap and
+    swap-and-restore class (tracker R-12); the file's identity is still captured before and
+    after as a second, cheap check. `deadline_monotonic` bounds every git exchange and stops new
+    work once passed (the remaining paths are accounted as `deadline_exceeded`).
     """
     deleted_paths: set[Path] = set(getattr(changed_files_with_lines, "deleted_paths", set()))
     submodule_paths: set[Path] = set(
@@ -944,9 +1045,17 @@ def map_changed_lines_to_symbols(
     deleted: set[Path] = set()
     failed: dict[Path, str] = {}
 
-    sessions = _content_sessions(root) if content_mode != "unverified" else contextlib.nullcontext()
+    sessions = (
+        _content_sessions(root, deadline_monotonic)
+        if content_mode != "unverified"
+        else contextlib.nullcontext()
+    )
     with sessions:
         for rel_path, line_ranges in changed_files_with_lines.items():
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                # Past the overall deadline: start no more work, but still account for the path.
+                failed[rel_path] = "deadline_exceeded"
+                continue
             outcome, reason, symbols = _map_one_path(
                 rel_path,
                 line_ranges,
@@ -1131,6 +1240,7 @@ def build_diff_blast_radius(
             root,
             not_analyzed_paths,
             _content_mode(ref, staged, from_git=diff_text is None),
+            deadline_monotonic,
         )
     except DiffError as exc:
         return _empty_payload(root, ref, staged, partial=True, reason=exc.reason, error=str(exc))

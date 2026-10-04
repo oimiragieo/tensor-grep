@@ -13,11 +13,15 @@ import os
 import re
 import subprocess
 import threading
+import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import IO, Any
 
-from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds
+from tensor_grep.cli.subprocess_policy import (
+    configured_git_timeout_seconds,
+    deadline_capped_timeout_seconds,
+)
 
 # Environment variables that change `git diff` output or which repository/index git reads. The
 # argv pins the config twin of these; this is the environment twin. GIT_DIR/GIT_WORK_TREE/
@@ -54,6 +58,10 @@ def git_env() -> dict[str, str]:
 
 class BlobUnavailable(Exception):
     """The content a diff record describes could not be read or did not match its oid."""
+
+
+class BlobDeadline(BlobUnavailable):
+    """The overall --deadline passed: no further exchange is started and nothing is respawned."""
 
 
 class BlobOverCap(Exception):
@@ -117,7 +125,10 @@ def parse_cat_file_reply(stream: IO[bytes], max_bytes: int) -> bytes:
 
 
 def parse_hash_reply(stream: IO[bytes]) -> str | None:
-    line = stream.readline().decode("ascii", errors="replace").strip()
+    raw = stream.readline()
+    if not raw:  # EOF: the process died or the watchdog killed it, which is not "no hash"
+        raise BlobUnavailable("git hash-object closed its output")
+    line = raw.decode("ascii", errors="replace").strip()
     return line if OID_RE.match(line) else None
 
 
@@ -144,36 +155,52 @@ class _GitBatch:
     cannot poison the rest. `close()` always kills and reaps it.
     """
 
-    def __init__(self, root: Path, args: list[str]) -> None:
+    def __init__(
+        self, root: Path, args: list[str], deadline_monotonic: float | None = None
+    ) -> None:
         self.root = root
         self.args = args
+        self.deadline_monotonic = deadline_monotonic
         self.proc: subprocess.Popen[bytes] | None = None
 
+    def _expired(self) -> bool:
+        return self.deadline_monotonic is not None and time.monotonic() >= self.deadline_monotonic
+
     def _ensure(self) -> subprocess.Popen[bytes]:
+        if self._expired():  # never spawn or respawn past the deadline
+            raise BlobDeadline("overall deadline exceeded")
         if self.proc is None or self.proc.poll() is not None:
             self.close()
             self.proc = spawn_git(self.root, self.args)
         return self.proc
 
     def exchange(self, request: str, read_reply: Callable[[IO[bytes]], Any]) -> Any:
+        # Every wait is capped by the REMAINING deadline, not the full git timeout: the watchdog
+        # below is the only thing that can interrupt a blocked pipe read.
+        timeout = deadline_capped_timeout_seconds(
+            configured_git_timeout_seconds(), deadline_monotonic=self.deadline_monotonic
+        )
+        if timeout is None:
+            raise BlobDeadline("overall deadline exceeded")
         try:
             proc = self._ensure()
         except OSError as exc:
             raise BlobUnavailable(str(exc)) from exc
-        timer = threading.Timer(configured_git_timeout_seconds(), proc.kill)
+        timer = threading.Timer(timeout, proc.kill)
         timer.start()
         try:
             assert proc.stdin is not None and proc.stdout is not None
             proc.stdin.write(request.encode("utf-8", errors="surrogateescape") + b"\n")
             proc.stdin.flush()
             return read_reply(proc.stdout)
-        except (OSError, ValueError) as exc:
-            self.close()
-            raise BlobUnavailable(str(exc)) from exc
-        except BlobUnavailable:
-            if proc.poll() is not None:
+        except (OSError, ValueError, BlobUnavailable) as exc:
+            if proc.poll() is not None or isinstance(exc, (OSError, ValueError)):
                 self.close()
-            raise
+            if self._expired():  # the watchdog fired because the deadline ran out
+                raise BlobDeadline("overall deadline exceeded") from exc
+            if isinstance(exc, BlobUnavailable):
+                raise
+            raise BlobUnavailable(str(exc)) from exc
         finally:
             timer.cancel()
 
@@ -188,25 +215,28 @@ class _GitBatch:
                 with contextlib.suppress(OSError, ValueError):
                     stream.close()
         with contextlib.suppress(OSError, subprocess.TimeoutExpired):
-            proc.wait(timeout=5)
+            proc.wait(timeout=1)  # killed above: reaping is immediate, never the full timeout
 
 
 class _ContentSessions:
     """The per-run batch processes: `cat-file --batch` (blobs) and `hash-object --stdin-paths`."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, deadline_monotonic: float | None = None) -> None:
         self.root = root
+        self.deadline_monotonic = deadline_monotonic
         self._cat: _GitBatch | None = None
         self._hash: _GitBatch | None = None
 
     def cat(self) -> _GitBatch:
         if self._cat is None:
-            self._cat = _GitBatch(self.root, ["cat-file", "--batch"])
+            self._cat = _GitBatch(self.root, ["cat-file", "--batch"], self.deadline_monotonic)
         return self._cat
 
     def hasher(self) -> _GitBatch:
         if self._hash is None:
-            self._hash = _GitBatch(self.root, ["hash-object", "--stdin-paths"])
+            self._hash = _GitBatch(
+                self.root, ["hash-object", "--stdin-paths"], self.deadline_monotonic
+            )
         return self._hash
 
     def close(self) -> None:
@@ -222,8 +252,10 @@ _ACTIVE_SESSIONS: contextvars.ContextVar[_ContentSessions | None] = contextvars.
 
 
 @contextlib.contextmanager
-def content_sessions(root: Path) -> Iterator[_ContentSessions]:
-    sessions = _ContentSessions(root)
+def content_sessions(
+    root: Path, deadline_monotonic: float | None = None
+) -> Iterator[_ContentSessions]:
+    sessions = _ContentSessions(root, deadline_monotonic)
     token = _ACTIVE_SESSIONS.set(sessions)
     try:
         yield sessions

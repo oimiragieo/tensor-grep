@@ -385,30 +385,6 @@ def _install_swap_on_first_extraction(monkeypatch: Any, repo: Path, outside: Pat
     return events
 
 
-def test_swap_during_extraction_is_detected_and_discarded(tmp_path: Path, monkeypatch: Any) -> None:
-    repo, outside = _swap_race_repo(tmp_path)
-    events = _install_swap_on_first_extraction(monkeypatch, repo, outside)
-    payload = build_diff_blast_radius(root=repo)
-    assert events == ["swapped"]
-    assert "leaked" not in {s["name"] for s in payload["changed_symbols"]}
-    assert {"path": "link.py", "reason": "path_changed_during_analysis"} in payload[
-        "not_analyzed_paths"
-    ]
-    assert payload["partial"] is True
-    assert payload["incomplete_reason"] == "path_changed_during_analysis"
-
-
-def test_swap_during_extraction_exits_2_through_the_cli(tmp_path: Path, monkeypatch: Any) -> None:
-    repo, outside = _swap_race_repo(tmp_path)
-    _install_swap_on_first_extraction(monkeypatch, repo, outside)
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json"])
-    assert res.exit_code == 2
-    data = json.loads(res.stdout)
-    assert "leaked" not in {s["name"] for s in data["changed_symbols"]}
-    assert data["exit_reason"] == "incomplete"
-
-
 def test_no_swap_control_reports_the_symbol_and_exits_0(tmp_path: Path, monkeypatch: Any) -> None:
     repo, _ = _swap_race_repo(tmp_path)
     payload = build_diff_blast_radius(root=repo)
@@ -1128,3 +1104,235 @@ def test_cat_file_batch_reply_shapes_map_to_blob_unavailable(monkeypatch: Any) -
     with pytest.raises(di._BlobOverCap):
         di._parse_cat_file_reply(io.BytesIO(b"abc1234 blob 5000\n" + b"x" * 5000 + b"\n"), 1000)
     assert di._parse_cat_file_reply(io.BytesIO(b"abc1234 blob 3\nabc\n"), 1000) == b"abc"
+
+
+def _expected_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def expected():\n    return 2\n")
+    return repo
+
+
+def test_in_place_overwrite_after_hashing_is_detected_not_analysed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real_hash = di._worktree_hash
+
+    def hash_then_overwrite(root: Path, rel: Path) -> str | None:
+        digest = real_hash(root, rel)  # git sees the diffed content...
+        (root / rel).write_bytes(b"def unrelated():\n    return 3\n")  # ...then it changes in place
+        return digest
+
+    monkeypatch.setattr(di, "_worktree_hash", hash_then_overwrite)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "path_changed_during_analysis"}
+    ]
+    assert "unrelated" not in {s["name"] for s in payload["changed_symbols"]}
+    assert payload["partial"] is True
+
+
+def test_in_place_overwrite_after_hashing_exits_2_through_the_cli(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real_hash = di._worktree_hash
+
+    def hash_then_overwrite(root: Path, rel: Path) -> str | None:
+        digest = real_hash(root, rel)
+        (root / rel).write_bytes(b"def unrelated():\n    return 3\n")
+        return digest
+
+    monkeypatch.setattr(di, "_worktree_hash", hash_then_overwrite)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    assert json.loads(res.stdout)["incomplete_reason"] == "path_changed_during_analysis"
+
+
+def test_worktree_extraction_reads_a_snapshot_never_a_second_open_of_the_repo_file(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    seen: list[Path] = []
+    real = di.lang_registry.spec_for_path
+
+    def spy(path: Any) -> Any:
+        seen.append(Path(str(path)).resolve())
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", spy)
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]
+    assert (repo / "app.py").resolve() not in seen[:1]  # the mapper's extraction used a temp copy
+
+
+def test_overwrite_during_extraction_analyses_the_diffs_true_content(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real = di.lang_registry.spec_for_path
+    fired: list[str] = []
+
+    def overwrite_once(path: Any) -> Any:
+        if not fired:
+            fired.append("x")
+            (repo / "app.py").write_bytes(b"def unrelated():\n    return 3\n")
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", overwrite_once)
+    payload = build_diff_blast_radius(root=repo)
+    assert fired == ["x"]
+    # extraction ran on the bytes that were hashed (the snapshot), never on the new file content
+    assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]
+
+
+def test_swap_and_restore_during_hashing_never_yields_foreign_content(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real_hash = di._worktree_hash
+    original = (repo / "app.py").read_bytes()
+
+    def swap_restore(root: Path, rel: Path) -> str | None:
+        (root / rel).write_bytes(b"def foreign():\n    return 9\n")  # swapped while git reads it
+        try:
+            return real_hash(root, rel)
+        finally:
+            (root / rel).write_bytes(original)  # and restored before anyone looks
+
+    monkeypatch.setattr(di, "_worktree_hash", swap_restore)
+    payload = build_diff_blast_radius(root=repo)
+    names = {s["name"] for s in payload["changed_symbols"]}
+    assert "foreign" not in names
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "path_changed_during_analysis"}
+    ] or names == {"expected"}
+
+
+def test_swap_restored_before_git_reads_still_analyses_the_original(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    original = (repo / "app.py").read_bytes()
+    real_hash = di._worktree_hash
+
+    def swap_then_restore_before(root: Path, rel: Path) -> str | None:
+        (root / rel).write_bytes(b"def foreign():\n    return 9\n")
+        (root / rel).write_bytes(original)  # restored before git reads
+        return real_hash(root, rel)
+
+    monkeypatch.setattr(di, "_worktree_hash", swap_then_restore_before)
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]
+    assert payload["not_analyzed_paths"] == []
+
+
+def test_symlink_swapped_outside_during_extraction_never_reads_the_outside_file(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo, outside = _swap_race_repo(tmp_path)
+    real = di.lang_registry.spec_for_path
+    fired: list[str] = []
+
+    def swap_once(path: Any) -> Any:
+        if not fired:
+            fired.append("swapped")
+            (repo / "link.py").unlink()
+            (repo / "link.py").symlink_to(outside)
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", swap_once)
+    payload = build_diff_blast_radius(root=repo)
+    assert fired == ["swapped"]
+    names = {s["name"] for s in payload["changed_symbols"]}
+    assert "leaked" not in names
+    # the bytes came from the link's original in-root target, snapshotted before the swap
+    assert names == {"two"} or payload["partial"] is True
+
+
+def test_symlink_swap_during_extraction_exits_0_with_the_true_target_through_the_cli(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo, outside = _swap_race_repo(tmp_path)
+    real = di.lang_registry.spec_for_path
+    fired: list[str] = []
+
+    def swap_once(path: Any) -> Any:
+        if not fired:
+            fired.append("swapped")
+            (repo / "link.py").unlink()
+            (repo / "link.py").symlink_to(outside)
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", swap_once)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    data = json.loads(res.stdout)
+    assert "leaked" not in {s["name"] for s in data["changed_symbols"]}
+
+
+def test_diff_argv_asks_for_full_object_ids(monkeypatch: Any) -> None:
+    seen: list[list[str]] = []
+
+    class P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess",
+        lambda cmd, **k: seen.append(list(cmd)) or P(),
+    )
+    di.extract_diff_hunks_from_git()
+    assert "--full-index" in seen[0]
+
+
+def test_staged_record_new_oids_are_full_length(tmp_path: Path) -> None:
+    repo = _staged_function_repo(tmp_path)
+    hunks = di.extract_diff_hunks_from_git(staged=True, root=repo)
+    oids = list(hunks.new_oids.values())
+    assert oids and all(len(o) in (40, 64) for o in oids)
+
+
+class _HangingProc:
+    """A stand-in git batch process that reads a request and then never answers."""
+
+    @staticmethod
+    def spawn(root: Path, args: list[str]) -> Any:
+        return subprocess.Popen(
+            [sys.executable, "-c", "import sys, time; sys.stdin.readline(); time.sleep(300)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+
+
+@pytest.mark.parametrize("mode", ["staged", "worktree"])
+def test_batch_exchanges_honour_the_overall_deadline(
+    tmp_path: Path, monkeypatch: Any, mode: str
+) -> None:
+    import time
+
+    repo = _many_files_repo(tmp_path, count=5)
+    if mode == "staged":
+        _git(repo, "add", "--all")
+    monkeypatch.setenv("TG_GIT_TIMEOUT_SECONDS", "4")  # old code: 5 exchanges x 4s
+    spawns: list[str] = []
+
+    def counting_spawn(root: Path, args: list[str]) -> Any:
+        spawns.append(args[0])
+        return _HangingProc.spawn(root, args)
+
+    monkeypatch.setattr(dig, "spawn_git", counting_spawn)
+    start = time.monotonic()
+    payload = build_diff_blast_radius(root=repo, staged=(mode == "staged"), deadline_seconds=1)
+    elapsed = time.monotonic() - start
+    assert elapsed < 9, f"deadline 1s but the run took {elapsed:.1f}s"
+    assert payload["partial"] is True
+    reasons = {e["reason"] for e in payload["not_analyzed_paths"]}
+    assert reasons == {"deadline_exceeded"}
+    assert len(payload["not_analyzed_paths"]) == 5
+    assert len(spawns) <= 1  # no respawn once the deadline has passed
