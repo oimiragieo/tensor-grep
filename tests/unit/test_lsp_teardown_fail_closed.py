@@ -433,3 +433,196 @@ def test_setsid_grandchild_holding_the_pipes_is_reported_and_not_ready(
                 os.kill(int(pid_file.read_text()), signal.SIGKILL)
             except (ProcessLookupError, ValueError):
                 pass
+
+
+# --- round-5 finding 1: one watchdog bounds blocking transport writes ------------------
+
+
+def _sleeping_provider(tmp_path: Path) -> list[str]:
+    script = tmp_path / "unread_stdin_lsp.py"
+    script.write_text("import time\ntime.sleep(60)\n", encoding="utf-8", newline="\n")
+    return [sys.executable, str(script)]
+
+
+def _assert_sweep_bounded_and_deadline_reported(
+    statuses: list[dict[str, Any]], elapsed: float, budget: float
+) -> None:
+    assert elapsed <= budget + _MARGIN, f"sweep took {elapsed:.2f}s for a {budget}s budget"
+    assert statuses[0]["health_status"] != "ready"
+    assert statuses[0]["lsp_proof"] is False
+    reported = f"{statuses[0]['health_status']} {statuses[0]['last_error']}".lower()
+    assert "deadline" in reported or "unresponsive" in reported, reported
+
+
+def test_oversized_initialize_write_to_an_unread_stdin_is_bounded_by_the_watchdog(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    command = _sleeping_provider(tmp_path)
+    monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
+    monkeypatch.setattr(
+        lsp_external_provider,
+        "_configuration_settings",
+        lambda language: {"settings": {"blob": "x" * 3_000_000}},
+    )
+    monkeypatch.setattr(doctor_report, "_doctor_lsp_languages", lambda: ["python"])
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "1")
+    budget = 1.0
+    monkeypatch.setenv("TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS", str(budget))
+
+    statuses, elapsed = _bounded(lambda: doctor_report._doctor_lsp_provider_statuses(str(tmp_path)))
+
+    _assert_sweep_bounded_and_deadline_reported(statuses, elapsed, budget)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="deep non-ASCII workspace repro is POSIX CI")
+def test_percent_encoded_workspace_uri_larger_than_the_pipe_buffer_is_bounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    deep = tmp_path
+    for _ in range(20):
+        deep = deep / ("é" * 50)
+    deep.mkdir(parents=True)
+    command = _sleeping_provider(tmp_path)
+    monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
+    monkeypatch.setattr(doctor_report, "_doctor_lsp_languages", lambda: ["python"])
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "1")
+    budget = 1.0
+    monkeypatch.setenv("TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS", str(budget))
+
+    statuses, elapsed = _bounded(lambda: doctor_report._doctor_lsp_provider_statuses(str(deep)))
+
+    _assert_sweep_bounded_and_deadline_reported(statuses, elapsed, budget)
+
+
+# --- round-5 finding 2: graceful waiting cannot starve the forced kill and pipe close ---
+
+
+class _SleepyWaitProcess(_FakeProcess):
+    """First wait() burns its whole timeout then times out; later waits succeed."""
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self._exited:
+            return 0
+        if self._timeout_first:
+            self._timeout_first = False
+            time.sleep(timeout or 0.0)
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout or 0.0)
+        self._exited = True
+        return 0
+
+
+class _SlowCloseStream:
+    def __init__(self, delay: float) -> None:
+        self._delay = delay
+
+    def close(self) -> None:
+        time.sleep(self._delay)
+
+
+def test_slow_graceful_wait_does_not_starve_pipe_close_into_a_false_escape() -> None:
+    process = _SleepyWaitProcess()
+    process.stdout = _SlowCloseStream(0.02)  # type: ignore[assignment]
+    containment = pc.Containment(pc.LEVEL_PROCESS_GROUP, degraded=False, pid=0)
+
+    errors, _ = _bounded(
+        lambda: pc.teardown_provider(process, containment, deadline=time.monotonic() + 0.5)
+    )
+
+    assert not any("outside the provider's process group" in e for e in errors), errors
+    assert errors == [], errors
+
+
+def test_unverified_death_with_held_pipes_is_a_timeout_not_an_escape() -> None:
+    class _NeverDies(_FakeProcess):
+        def wait(self, timeout: float | None = None) -> int:
+            time.sleep(timeout or 0.0)
+            raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout or 0.0)
+
+    gate = threading.Event()
+    process = _NeverDies()
+    process.stdout = _BlockingStream(gate)  # type: ignore[assignment]
+    containment = pc.Containment(pc.LEVEL_PROCESS_GROUP, degraded=False, pid=0)
+    try:
+        errors, _ = _bounded(
+            lambda: pc.teardown_provider(process, containment, deadline=time.monotonic() + 0.3)
+        )
+    finally:
+        gate.set()
+    assert not any("outside the provider's process group" in e for e in errors), errors
+    assert any("cleanup timed out" in e for e in errors), errors
+
+
+# --- round-5 finding 3: a close() that raises is a cleanup failure ----------------------
+
+
+class _RaisingClose:
+    def close(self) -> None:
+        raise OSError("close exploded")
+
+
+def test_stream_close_error_is_returned_by_teardown() -> None:
+    process = _FakeProcess(wait_times_out_first=False)
+    process.stdout = _RaisingClose()  # type: ignore[assignment]
+    errors, _ = _bounded(
+        lambda: pc.teardown_provider(process, None, deadline=time.monotonic() + 0.5)
+    )
+    assert any("close exploded" in e for e in errors), errors
+
+
+def test_stream_close_error_reaches_cleanup_error_and_clears_lsp_proof(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        lsp_external_provider, "_provider_command", lambda language: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        lsp_external_provider, "_document_symbol_result_contains", lambda r, s: True
+    )
+
+    class _Client(lsp_external_provider.ExternalLSPClient):
+        def start(self) -> None:
+            fake = _FakeProcess(wait_times_out_first=False)
+            fake.stdout = _RaisingClose()  # type: ignore[assignment]
+            self.process = fake  # type: ignore[assignment]
+            self.initialized = True
+            self.capabilities = {"documentSymbolProvider": True}
+
+        def ensure_document(self, **kwargs: Any) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, Any]) -> Any:
+            return []
+
+    client = _Client(language="python", workspace_root=tmp_path)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    status = manager._verified_provider_status(
+        client=client,
+        language="python",
+        workspace_root=tmp_path,
+        probe_timeout_seconds=1.0,
+        stop_after_probe=True,
+    )
+    assert status["health_status"] != "ready"
+    assert status["lsp_proof"] is False
+    assert "close exploded" in str(status.get("cleanup_error"))
+
+
+# --- round-5 regression found while testing: re-entrant start() deadlock ---------------
+
+
+def test_provider_that_dies_during_startup_fails_closed_instead_of_deadlocking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """request("initialize") re-enters start(); a child that already died used to make that
+    call wait forever on the non-reentrant _start_lock held by its own thread (the probe
+    watchdog killing the child just before the handshake exposes it deterministically)."""
+    client = _client(tmp_path, monkeypatch, command=[sys.executable, "-c", "pass"])
+    real_request = client.request
+
+    def slow_request(method: str, params: dict[str, Any]) -> Any:
+        time.sleep(1.0)  # let the instantly-exiting child die before the handshake
+        return real_request(method, params)
+
+    monkeypatch.setattr(client, "request", slow_request)
+    with pytest.raises(lsp_external_provider.LSPTransportError):
+        _bounded(client.start)

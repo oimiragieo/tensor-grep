@@ -250,11 +250,24 @@ def spawn_contained(
     Raises ``ContainmentUnavailableError`` (provider NOT running) if that cannot be guaranteed.
     """
     if sys.platform != "win32":
-        if not hasattr(os, "killpg"):
-            raise ContainmentUnavailableError("os.killpg is unavailable: no process-group kill")
-        process = subprocess.Popen(argv, start_new_session=True, **popen_kwargs)
-        return process, Containment(LEVEL_PROCESS_GROUP, degraded=False, pid=_pid_of(process))
+        return _spawn_posix(argv, popen_kwargs)
+    return _spawn_windows(argv, popen_kwargs)
 
+
+def _spawn_posix(
+    argv: list[str], popen_kwargs: dict[str, Any]
+) -> tuple[subprocess.Popen[Any], Containment]:
+    if not hasattr(os, "killpg"):
+        raise ContainmentUnavailableError("os.killpg is unavailable: no process-group kill")
+    posix_process = subprocess.Popen(argv, start_new_session=True, **popen_kwargs)
+    return posix_process, Containment(
+        LEVEL_PROCESS_GROUP, degraded=False, pid=_pid_of(posix_process)
+    )
+
+
+def _spawn_windows(
+    argv: list[str], popen_kwargs: dict[str, Any]
+) -> tuple[subprocess.Popen[Any], Containment]:
     try:
         job, k32, nt = _create_kill_on_close_job()
     except (OSError, AttributeError, ImportError) as exc:
@@ -307,32 +320,43 @@ def _call(fn: Callable[[], Any], what: str, errors: list[str]) -> None:
         errors.append(f"{what} failed: {exc}")
 
 
-def close_streams_bounded(streams: list[Any], timeout_seconds: float) -> list[str]:
-    """Close each stream on a daemon thread; abandon (and report) any close still blocked.
+def close_streams_bounded(
+    streams: list[Any], timeout_seconds: float
+) -> tuple[list[str], list[str]]:
+    """Close each stream on a daemon thread. Returns ``(abandoned, failed)``.
 
+    ``abandoned`` = closes still blocked at the deadline (not proof of anything by themselves);
+    ``failed`` = closes that raised ``OSError`` (a cleanup failure, collected thread-safely).
     Kill the process tree FIRST: once every holder of the pipe is dead, close() returns.
     """
     started: list[tuple[threading.Thread, str]] = []
+    failed: list[str] = []
+    failed_lock = threading.Lock()
     for index, stream in enumerate(streams):
         if stream is None:
             continue
+        name = f"stream[{index}]"
 
-        def _close(target: Any = stream) -> None:
+        def _close(target: Any = stream, label: str = name) -> None:
             try:
                 target.close()
-            except (OSError, ValueError):
+            except OSError as exc:
+                with failed_lock:
+                    failed.append(f"stream close failed ({label}): {exc}")
+            except ValueError:  # already closed
                 pass
 
         thread = threading.Thread(target=_close, daemon=True)
         thread.start()
-        started.append((thread, f"stream[{index}]"))
+        started.append((thread, name))
     end = time.monotonic() + max(timeout_seconds, 0.0)
     abandoned: list[str] = []
     for thread, name in started:
         thread.join(timeout=max(end - time.monotonic(), 0.0))
         if thread.is_alive():
             abandoned.append(name)
-    return abandoned
+    with failed_lock:
+        return abandoned, list(failed)
 
 
 def teardown_provider(
@@ -344,9 +368,14 @@ def teardown_provider(
 ) -> list[str]:
     """Stop a provider and its whole tree inside ONE absolute monotonic ``deadline``.
 
-    Order: bounded graceful shutdown (own thread) -> terminate tree, then the direct child
-    (each at most once) -> wait -> escalate to kill (once) -> final tree kill, survivor check,
-    release -> close stdin/stdout/stderr TOGETHER, bounded. Returns failure strings.
+    The slice is split so no phase starves the next: graceful shutdown <= 30% of the total,
+    then the exit wait <= 40% of what is left; forced kill, exit verification, the survivor
+    check and the pipe close share the rest. Order: graceful (own thread) -> terminate tree,
+    then the direct child (each at most once) -> wait -> escalate to kill (once) -> final
+    tree kill, survivor check, release -> close stdin/stdout/stderr TOGETHER, bounded.
+
+    A "descendant outside the process group" is reported ONLY when the tree is verified dead
+    and the output pipes are still held; running out of time is a plain ``cleanup timed out``.
     """
 
     def left() -> float:
@@ -354,40 +383,51 @@ def teardown_provider(
 
     errors: list[str] = []
     if graceful is not None:
-        budget = left() / 2.0
-        worker = threading.Thread(target=graceful, args=(budget,), daemon=True)
+        budget = left() * 0.3
+        worker = threading.Thread(target=graceful, args=(budget * 0.8,), daemon=True)
         worker.start()
         worker.join(timeout=budget)  # an abandoned graceful thread dies when the pipes do
     if containment is not None:
         errors += containment.terminate()
     _call(process.terminate, "terminate", errors)
+    exited = False
     try:
-        process.wait(timeout=left())
+        process.wait(timeout=left() * 0.4)
+        exited = True
     except subprocess.TimeoutExpired:
         if containment is not None:
             errors += containment.kill()
         _call(process.kill, "kill", errors)
         try:
-            process.wait(timeout=left())
+            process.wait(timeout=left() * 0.6)
+            exited = True
         except subprocess.TimeoutExpired:
             errors.append("direct child did not exit after kill")
         except OSError as exc:
             errors.append(f"wait after kill failed: {exc}")
     except OSError as exc:
         errors.append(f"wait failed: {exc}")
+    tree_dead = exited
     if containment is not None:
         errors += containment.kill()  # stragglers that outlived the leader (Job: no-op)
-        errors += containment.survivors(deadline)
+        survivor_errors = containment.survivors(time.monotonic() + left() * 0.5)
+        tree_dead = tree_dead and not survivor_errors
+        errors += survivor_errors
         containment.release()
     streams = [process.stdin, process.stdout, process.stderr]
     group_only = containment is not None and containment.level == LEVEL_PROCESS_GROUP
-    for name in close_streams_bounded(streams, left()):
-        if group_only and name in ("stream[1]", "stream[2]"):
-            # The group is dead yet its output pipe is still held: a descendant left the
-            # process group (setsid). POSIX has no general primitive to stop that; detect it.
+    close_window = left()
+    abandoned, close_failures = close_streams_bounded(streams, close_window)
+    # stdin: closing flushes buffered bytes into a pipe nobody reads any more; once the tree
+    # is verified dead that EPIPE/EINVAL is the expected consequence, not a cleanup failure.
+    errors += [f for f in close_failures if not (tree_dead and "(stream[0])" in f)]
+    for name in abandoned:
+        if group_only and tree_dead and close_window >= 0.05 and name in ("stream[1]", "stream[2]"):
+            # The group is verified dead yet its output pipe is still held: a descendant left
+            # the process group (setsid). POSIX has no general primitive to stop that; detect it.
             errors.append(ESCAPE_MESSAGE)
         else:
-            errors.append(f"pipe close abandoned ({name})")
+            errors.append(f"cleanup timed out: pipe close abandoned ({name})")
     return list(dict.fromkeys(errors))
 
 
@@ -398,3 +438,15 @@ def cleanup_budget_seconds(
     if grace is not None:
         return max(float(grace), 0.05)
     return 2.0 * max(min(max(float(request_timeout), 0.0), default_stop), 0.05)
+
+
+def wake_waiters(slots: Any, sentinel: Any) -> None:
+    """Hand ``sentinel`` to every waiting one-shot queue; a slot that is already full has a
+    response queued, so its waiter wakes anyway (and ``queue.Full`` must not abort teardown)."""
+    import queue
+
+    for slot in slots:
+        try:
+            slot.put_nowait(sentinel)
+        except queue.Full:
+            pass

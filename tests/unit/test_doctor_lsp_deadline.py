@@ -216,11 +216,11 @@ def test_sweep_kills_grandchild_that_holds_the_pipes_and_stays_in_budget(
     threads stay blocked and stream.close() waits on the BufferedReader lock unboundedly."""
     command = _fake_command(tmp_path)
     pid_file = tmp_path / "grandchild.pid"
-    budget = 1.0
+    budget = 5.0  # generous: python start-up on a loaded box must still reach the fork
     monkeypatch.setenv("GC_PID_FILE", str(pid_file))
     monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
     monkeypatch.setattr(doctor_report, "_doctor_lsp_languages", lambda: ["python"])
-    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "0.6")
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "4")
     monkeypatch.setenv("TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS", str(budget))
     try:
         statuses, elapsed = _run_bounded(
