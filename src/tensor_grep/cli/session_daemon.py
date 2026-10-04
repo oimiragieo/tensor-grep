@@ -33,6 +33,7 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _ping_proof_fields,
     _read_user_secret,
     _refresh_failed_error,
+    _valid_daemon_port,
     _verify_ping_reply,
 )
 from tensor_grep.cli.session_store import (
@@ -466,11 +467,14 @@ def _daemon_identity(metadata: dict[str, Any] | None) -> tuple[int | None, int |
         return None, None
     try:
         pid: int | None = int(metadata["pid"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         pid = None
+    # Identity-only (guards unlinking daemon.json; never dials), so the tolerant int() coercion
+    # pinned by test_remove_daemon_metadata_guarded_matches_string_pid_and_port_on_disk stays --
+    # but an inf/huge float must resolve to None instead of raising OverflowError.
     try:
         port: int | None = int(metadata["port"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         port = None
     return pid, port
 
@@ -531,6 +535,8 @@ def _daemon_request(
 ) -> dict[str, Any]:
     if not _is_loopback_host(host):
         raise ValueError(f"refusing non-loopback session daemon host: {host!r}")
+    if _valid_daemon_port(port) is None:
+        raise ValueError(f"refusing malformed session daemon port: {port!r}")
     # audit S3: every request must carry the per-daemon token. Inject it here so the in-process
     # client (which read the token from the 0600 daemon.json) authenticates transparently.
     if token:
@@ -582,9 +588,8 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     host = metadata.get("host", _DAEMON_HOST)
     if not _is_loopback_host(host):
         return None
-    try:
-        connected_port = int(metadata["port"])
-    except (KeyError, TypeError, ValueError):
+    connected_port = _valid_daemon_port(metadata.get("port"))
+    if connected_port is None:
         return None
     nonce = secrets.token_hex(16)
     try:
@@ -908,7 +913,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     try:
         response = _daemon_request(
             str(metadata.get("host", _DAEMON_HOST)),
-            int(metadata["port"]),
+            metadata.get("port", 0),  # _daemon_request refuses a malformed port before connecting
             {"command": "stop"},
             token=_daemon_token(metadata),
         )
