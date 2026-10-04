@@ -103,6 +103,41 @@ class WriteAuthorization:
     ancestor: tuple[str, tuple[int, int]] | None = None
 
 
+def _output_forms(auth: WriteAuthorization) -> tuple[str, str]:
+    """(lexical, resolved) normalized forms; case-folded on Windows via ``normcase``."""
+    lexical = _authorization_key(auth.path)
+    return lexical, os.path.normcase(os.path.realpath(auth.path))
+
+
+def _find_output_conflict(auths: list[WriteAuthorization]) -> str | None:
+    """Return a refusal naming BOTH labels when two outputs are the same file (lexically, after
+    resolution, or by identity of an existing file) or when one output's path is an ANCESTOR of
+    another's (a file can never be the parent directory of a sibling output); else None."""
+    forms = [_output_forms(a) for a in auths]
+    for i, first in enumerate(auths):
+        for j in range(i + 1, len(auths)):
+            second = auths[j]
+            pair = f"{first.label} and {second.label}"
+            same = any(a == b for a in forms[i] for b in forms[j])
+            if not same:
+                try:
+                    same = os.path.samefile(first.path, second.path)
+                except OSError:
+                    same = False  # at least one does not exist yet
+            if same:
+                return f"{pair} name the same output file (refused)"
+            for x, y, parent, child in (
+                (forms[i], forms[j], first, second),
+                (forms[j], forms[i], second, first),
+            ):
+                if any(c.startswith(p + os.sep) for p in x for c in y):
+                    return (
+                        f"{parent.label} is a file path that is the parent directory of "
+                        f"{child.label} (refused)"
+                    )
+    return None
+
+
 class WriteScope:
     """One authorization scope (a context manager; see :func:`write_authorizations`).
 
@@ -112,13 +147,21 @@ class WriteScope:
     sweep over ALL outputs has run."""
 
     def __init__(self, auths: Iterable[WriteAuthorization]) -> None:
-        self.auths = {_authorization_key(a.path): a for a in auths}
+        ordered = list(auths)
+        # The whole output SET is validated up front (duplicates, file-vs-parent-directory
+        # conflicts); a conflict is raised on entry, before anything is created or published.
+        self.conflict = _find_output_conflict(ordered)
+        self.auths: dict[str, WriteAuthorization] = {}
+        for auth in ordered:  # first wins: a later entry can never silently replace an earlier one
+            self.auths.setdefault(_authorization_key(auth.path), auth)
         self.created_dirs: dict[str, tuple[int, int]] = {}
         self.written: list[str] = []
         self.preflighted = False
         self._tokens: list[Any] = []
 
     def __enter__(self) -> WriteScope:
+        if self.conflict:
+            raise WriteAuthorizationError(self.conflict)
         self._tokens.append(_WRITE_SCOPE.set(self if self.auths else None))
         return self
 

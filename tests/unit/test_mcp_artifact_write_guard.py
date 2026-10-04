@@ -601,3 +601,85 @@ def test_deep_paired_outputs_with_no_external_interference_still_publish(tmp_pat
     assert "error" not in out, out
     assert (tmp_path / "new" / "base.json").is_file()
     assert (tmp_path / "reports" / "deep" / "suppressions.json").is_file()
+
+
+# --- Codex round 6: the whole output SET is validated before anything is created or published ---
+
+
+def _only_src(tmp_path):
+    return sorted(p.name for p in tmp_path.iterdir())
+
+
+@pytest.mark.parametrize(
+    ("baseline", "suppressions"),
+    [
+        ("both.json", "both.json"),
+        ("reports/base.json", "reports/base.json/suppressions.json"),
+        ("reports/sub.json/base.json", "reports/sub.json"),
+    ],
+)
+def test_conflicting_output_paths_are_refused_before_anything_is_created(
+    tmp_path, monkeypatch, baseline, suppressions
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    before = _only_src(tmp_path)
+    out = _paired_scan(mcp_server, baseline, suppressions)
+    assert out["error"]["code"] == "invalid_input"
+    assert "write_baseline" in out["error"]["message"]
+    assert "write_suppressions" in out["error"]["message"]
+    assert "already written" not in out["error"]["message"]
+    assert _only_src(tmp_path) == before  # no file, no directory
+
+
+def test_case_only_duplicate_output_paths(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = _paired_scan(mcp_server, "Both.json", "both.json")
+    if os.name == "nt":  # case-insensitive filesystem: the same file
+        assert out["error"]["code"] == "invalid_input"
+        assert "write_baseline" in out["error"]["message"]
+        assert "write_suppressions" in out["error"]["message"]
+        assert not (tmp_path / "Both.json").exists()
+    else:  # case-sensitive: genuinely distinct siblings, the CI matrix decides
+        assert "error" not in out, out
+        assert (tmp_path / "Both.json").is_file() and (tmp_path / "both.json").is_file()
+
+
+def test_two_distinct_sibling_outputs_both_publish(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = _paired_scan(mcp_server, "base.json", "suppressions.json")
+    assert "error" not in out, out
+    assert (tmp_path / "base.json").is_file()
+    assert (tmp_path / "suppressions.json").is_file()
+
+
+def test_existing_aliases_of_one_file_are_refused_by_resolved_identity(tmp_path):
+    from tensor_grep.cli import _index_lock
+
+    real = tmp_path / "real.json"
+    real.write_text("{}", encoding="utf-8")
+    try:
+        os.link(real, tmp_path / "alias.json")
+    except OSError:
+        pytest.skip("hard links are not permitted here")
+    root = _index_lock.dir_identity(tmp_path)
+    auths = [
+        _index_lock.WriteAuthorization(
+            str(tmp_path / name), _index_lock.file_identity(tmp_path / name), root, label
+        )
+        for name, label in (("real.json", "write_baseline"), ("alias.json", "write_suppressions"))
+    ]
+    scope = _index_lock.write_authorizations(auths)
+    with pytest.raises(_index_lock.WriteAuthorizationError) as excinfo:
+        with scope:
+            pass
+    assert "write_baseline" in str(excinfo.value)
+    assert "write_suppressions" in str(excinfo.value)
