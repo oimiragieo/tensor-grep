@@ -31,6 +31,7 @@ from tensor_grep.cli import (
 )
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
+from tensor_grep.cli.lsp_session import mark_responding_session as _mark_lsp_provider_response
 from tensor_grep.cli.repo_map_cache import (
     _MTIME_CACHE_CLEAR_REGISTRY as _MTIME_CACHE_CLEAR_REGISTRY,
 )
@@ -11611,7 +11612,7 @@ def _external_workspace_symbols(
                 "lsp_provider_response": True,
                 "lsp_operation": "workspace/symbol",
             })
-            client.lsp_provider_response = True
+            _mark_lsp_provider_response(client)
     matches.sort(key=lambda item: (str(item["file"]), int(item["line"]), str(item["kind"])))
     deduped: list[dict[str, Any]] = []
     seen: set[tuple[str, int, int, str]] = set()
@@ -11834,7 +11835,7 @@ def _external_definitions(
                 "lsp_operation": "textDocument/definition",
                 "lsp_resolution_basis": "native-definition-anchor",
             })
-            client.lsp_provider_response = True
+            _mark_lsp_provider_response(client)
 
     return _dedupe_lsp_definition_rows(definitions) or workspace_matches
 
@@ -11955,7 +11956,7 @@ def _external_references(
                 "lsp_proof": True,
                 "lsp_operation": "textDocument/references",
             })
-            client.lsp_provider_response = True
+            _mark_lsp_provider_response(client)
     references.sort(key=lambda item: (str(item["file"]), int(item["line"])))
     deduped: list[dict[str, Any]] = []
     seen_refs: set[tuple[str, int, int]] = set()

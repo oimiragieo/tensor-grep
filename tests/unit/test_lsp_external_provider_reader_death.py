@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from tensor_grep.cli import lsp_external_provider as provider
+from tests.helpers.lsp_session import install_session
 
 
 @pytest.fixture(autouse=True)
@@ -199,7 +200,7 @@ def test_stop_discloses_a_child_it_could_not_kill_instead_of_dropping_it_silentl
         request_timeout_seconds=0.2,
         initialize_timeout_seconds=1.0,
     )
-    client.process = _UnkillableChild()  # type: ignore[assignment]
+    install_session(client, process=_UnkillableChild())  # type: ignore[assignment]
 
     client.stop()
 

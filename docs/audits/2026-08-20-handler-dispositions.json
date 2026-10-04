@@ -3271,7 +3271,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 591,
+    "lineno": 608,
     "enclosing_symbol": "_start_locked",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3281,7 +3281,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 642,
+    "lineno": 662,
     "enclosing_symbol": "_graceful_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3291,7 +3291,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 666,
+    "lineno": 686,
     "enclosing_symbol": "_request_shutdown_for_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3301,7 +3301,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 792,
+    "lineno": 819,
     "enclosing_symbol": "_notify_document_closed",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3311,7 +3311,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 983,
+    "lineno": 1011,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3321,7 +3321,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 989,
+    "lineno": 1017,
     "enclosing_symbol": "_handle_server_request",
     "handler_index_within_symbol": 1,
     "category": "SILENT-SWALLOW",
@@ -3331,7 +3331,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1022,
+    "lineno": 1050,
     "enclosing_symbol": "_reader_loop",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3341,7 +3341,7 @@
   },
   {
     "module": "cli/lsp_readiness.py",
-    "lineno": 95,
+    "lineno": 102,
     "enclosing_symbol": "wait_until_ready",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3351,7 +3351,7 @@
   },
   {
     "module": "cli/lsp_external_provider.py",
-    "lineno": 1100,
+    "lineno": 1128,
     "enclosing_symbol": "_stderr_loop",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",

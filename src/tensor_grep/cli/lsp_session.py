@@ -42,6 +42,12 @@ class ProviderSession:
         self.reader_thread: threading.Thread | None = None
         self.stderr_thread: threading.Thread | None = None
         self.stderr_tail: list[str] = []
+        # warm-LSP readiness (workDoneProgress) belongs to THIS provider: a fresh session starts
+        # with fresh readiness, and a stale reader can only ever touch its own session
+        self.active_progress_tokens: set[str] = set()
+        self.progress_end_count = 0
+        self.progress_activity_seen = False
+        self.index_ready = False
 
 
 def reset_after_stop(session: ProviderSession, closed_sentinel: Any) -> None:
@@ -62,19 +68,22 @@ def reset_after_stop(session: ProviderSession, closed_sentinel: Any) -> None:
 
 
 def session_field(name: str) -> property:
-    """A client attribute that reads/writes the CURRENT session's ``name`` field."""
+    """READ-ONLY client attribute reading the CURRENT session's ``name`` field.
+
+    There is deliberately no setter: an assignment through the client would land on whichever
+    session is current when it executes, which is the wrong one after a restart. Writers bind
+    to a session explicitly (``client.mark_provider_response(session)``; tests use
+    ``tests/helpers/lsp_session.install_session``).
+    """
 
     def getter(client: Any) -> Any:
         return getattr(client._session, name)
 
-    def setter(client: Any, value: Any) -> None:
-        setattr(client._session, name, value)
-
-    return property(getter, setter)
+    return property(getter)
 
 
 class SessionBackedState:
-    """Mixin: the client's per-process attributes forward to its CURRENT ``_session``."""
+    """Mixin: READ-ONLY views of the client's CURRENT ``_session`` for external readers."""
 
     _session: ProviderSession
     process = session_field("process")
@@ -91,3 +100,12 @@ class SessionBackedState:
     _reader_thread = session_field("reader_thread")
     _stderr_thread = session_field("stderr_thread")
     _stderr_tail = session_field("stderr_tail")
+
+
+def mark_responding_session(client: Any) -> None:
+    """Certify the session that ANSWERED this thread's last request, never whichever session is
+    current now (a late mark after a restart is a no-op). Tolerates non-ExternalLSPClient doubles."""
+    responding = getattr(client, "responding_session", None)
+    mark = getattr(client, "mark_provider_response", None)
+    if callable(responding) and callable(mark):
+        mark(responding())

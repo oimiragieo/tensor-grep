@@ -17,25 +17,31 @@ from tensor_grep.cli.lsp_probe_budget import client_lock
 
 
 class ReadinessMixin:
+    """Readiness state lives on the ``ProviderSession`` that produced it. Progress handlers take
+    the session their reader belongs to and, under the client lock, mutate it only if it is still
+    the current one, so a stale reader can never leave a replacement provider waiting on an old
+    provider's tokens."""
+
     _lock: Any
-    _active_progress_tokens: set[str]
-    _progress_end_count: int
-    _progress_activity_seen: bool
-    _index_ready: bool
+    _session: Any
 
-    def _note_progress_started(self, token: str) -> None:
+    def _note_progress_started(self, token: str, session: Any) -> None:
         with client_lock(self, follow_deadline=False):
-            self._active_progress_tokens.add(token)
-            self._progress_activity_seen = True
-            self._index_ready = False  # a new indexing round re-invalidates readiness
+            if self._session is not session:
+                return
+            session.active_progress_tokens.add(token)
+            session.progress_activity_seen = True
+            session.index_ready = False  # a new indexing round re-invalidates readiness
 
-    def _note_progress_ended(self, token: str) -> None:
+    def _note_progress_ended(self, token: str, session: Any) -> None:
         with client_lock(self, follow_deadline=False):
-            self._active_progress_tokens.discard(token)
-            self._progress_activity_seen = True
-            self._progress_end_count += 1
+            if self._session is not session:
+                return
+            session.active_progress_tokens.discard(token)
+            session.progress_activity_seen = True
+            session.progress_end_count += 1
 
-    def _handle_progress_notification(self, message: dict[str, Any]) -> bool:
+    def _handle_progress_notification(self, message: dict[str, Any], session: Any) -> bool:
         """P0-2: consume $/progress begin/report/end (previously dropped as id-less noise)."""
         if message.get("method") != "$/progress":
             return False
@@ -45,9 +51,9 @@ class ReadinessMixin:
         if token is None:
             return True
         if kind == "begin":
-            self._note_progress_started(str(token))
+            self._note_progress_started(str(token), session)
         elif kind == "end":
-            self._note_progress_ended(str(token))
+            self._note_progress_ended(str(token), session)
         # "report" -> in-flight; activity noted at begin. Nothing to do.
         return True
 
@@ -71,18 +77,19 @@ class ReadinessMixin:
         arming it here would blackball the language for 30s of daemon uptime after one slow
         first index).
         """
+        session = self._session  # readiness of the provider this wait began with
         started_monotonic = time.monotonic()
         previous_probe_value: Any = None
         while True:
             with self._lock:
-                if self._index_ready:
+                if session.index_ready:
                     return True
-                active = bool(self._active_progress_tokens)
-                ended = self._progress_end_count > 0
-                activity = self._progress_activity_seen
+                active = bool(session.active_progress_tokens)
+                ended = session.progress_end_count > 0
+                activity = session.progress_activity_seen
             if ended and not active:
                 with self._lock:
-                    self._index_ready = True
+                    session.index_ready = True
                 return True
             now = time.monotonic()
             if now >= deadline_monotonic:
@@ -100,12 +107,12 @@ class ReadinessMixin:
                     ):
                         # Two consecutive stable polls -> index settled.
                         with self._lock:
-                            self._index_ready = True
+                            session.index_ready = True
                         return True
                     previous_probe_value = current_probe_value
                 elif now - started_monotonic >= max(no_progress_grace_seconds, 0.0):
                     # Silent server, no probe: best-effort after the grace window.
                     with self._lock:
-                        self._index_ready = True
+                        session.index_ready = True
                     return True
             time.sleep(max(0.0, min(poll_interval_seconds, deadline_monotonic - now)))

@@ -417,15 +417,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self.containment_error: str | None = None  # set when the tree could not be contained
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
-        # P0-2 readiness gate (warm-LSP moat): track server indexing via workDoneProgress tokens
-        # so the first references/definitions per (root,language) can wait for the index to
-        # settle instead of answering from a half-built index (the 2-of-14 under-return).
-        # Guarded by _lock. _index_ready is the cached "settled" verdict; any new
-        # create/begin re-invalidates it (server re-indexing after file churn).
-        self._active_progress_tokens: set[str] = set()
-        self._progress_end_count = 0
-        self._progress_activity_seen = False
-        self._index_ready = False
+        self._tls = threading.local()  # session of this thread's last completed request
 
     def enable_debug_trace(self) -> None:
         self._debug_trace_enabled = True
@@ -434,6 +426,26 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
 
     def debug_trace(self) -> list[dict[str, Any]]:
         return list(self._debug_trace)
+
+    def current_session(self) -> ProviderSession:
+        return cast(ProviderSession, self._session)
+
+    def responding_session(self) -> ProviderSession | None:
+        """The session that answered THIS thread's most recent completed request."""
+        session: ProviderSession | None = getattr(self._tls, "session", None)
+        return session
+
+    def mark_provider_response(self, session: ProviderSession | None, value: bool = True) -> None:
+        """Certify (or clear) provider-response proof on ``session`` ONLY; a no-op if that session
+        is no longer the current one, so a late mark can never certify a replacement."""
+        if session is None:
+            return
+        try:
+            with client_lock(self, 0.5):
+                if self._session is session:
+                    session.lsp_provider_response = value
+        except TimeoutError:
+            return  # lock busy past the deadline: fail closed (never certify what we cannot bind)
 
     def stderr_tail(self) -> list[str]:
         return list(self._session.stderr_tail)
@@ -464,6 +476,9 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self._debug_trace.append(entry)
 
     def start(self) -> None:
+        self._ensure_started()
+
+    def _ensure_started(self) -> None:
         if self.unusable:
             raise LSPTransportError(
                 self.last_error or "LSP client is unusable after failed teardown"
@@ -490,7 +505,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         if self.disabled_until_monotonic > time.monotonic():
             raise LSPTransportError(self.last_error or "LSP provider temporarily unavailable")
         if self._session.process is not None:
-            self.stop()
+            self._stop(self._session)
         managed_root = _managed_provider_root()
         try:
             spawn_argv = direct_managed_node_command(list(self.command), root=managed_root)
@@ -552,7 +567,8 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         )
         session.stderr_thread.start()
         try:
-            result = self.request(
+            result = self._request(
+                session,
                 "initialize",
                 {
                     "processId": None,
@@ -577,14 +593,15 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         except LSPTransportError as exc:
             self.last_error = str(exc)
             self.disabled_until_monotonic = time.monotonic() + self.retry_cooldown_seconds
-            self.stop()
+            self._stop(session)
             raise
         if isinstance(result, dict):
             session.capabilities = dict(result.get("capabilities", {}))
-        self.notify("initialized", {})
+        self._notify(session, "initialized", {})
         session.initialized = True
         try:
-            self.notify(
+            self._notify(
+                session,
                 "workspace/didChangeConfiguration",
                 _configuration_settings(self.language),
             )
@@ -592,7 +609,10 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             pass
 
     def stop(self, grace_seconds: float | None = None) -> None:
-        session = self._session  # capture: everything below touches ONLY this session
+        self._stop(self._session, grace_seconds)
+
+    def _stop(self, session: ProviderSession, grace_seconds: float | None = None) -> None:
+        # everything below touches ONLY the captured session
         process = session.process
         if process is None:
             return
@@ -673,10 +693,12 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             session.pending_requests.pop(request_id, None)
 
     def request(self, method: str, params: dict[str, Any]) -> Any:
+        self.start()  # lifecycle entry: the one public->public call (see the census test)
+        return self._request(self._session, method, params)
+
+    def _request(self, session: ProviderSession, method: str, params: dict[str, Any]) -> Any:
         # audit B12: each in-flight request gets its own one-shot Queue so that
         # concurrent calls cannot steal each other's responses.
-        self.start()
-        session = self._session  # captured: all state below is THIS session's
         process = session.process
         if process is None or process.stdin is None or process.stdout is None:
             raise LSPTransportError("LSP process is not available")
@@ -736,6 +758,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 request_id=request_id,
                 detail={"result_type": type(message.get("result")).__name__},
             )
+            self._tls.session = session  # the session that ANSWERED (see mark_provider_response)
             return message.get("result")
         finally:
             with client_lock(self):
@@ -743,13 +766,16 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
 
     def notify(self, method: str, params: dict[str, Any]) -> None:
         self.start()
-        session = self._session
+        self._notify(self._session, method, params)
+
+    def _notify(self, session: ProviderSession, method: str, params: dict[str, Any]) -> None:
         if session.process is None or session.process.stdin is None:
             raise LSPTransportError("LSP process is not available")
         with client_lock(self):
             self._write_notification(method, params, session=session)
 
     def ensure_document(self, *, uri: str, text: str, language_id: str) -> None:
+        self.start()
         session = self._session
         if uri in session.opened_documents:
             session.opened_documents.move_to_end(uri)
@@ -763,7 +789,8 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         # increment from it.
         with client_lock(self):
             session.doc_versions[uri] = 1
-        self.notify(
+        self._notify(
+            session,
             "textDocument/didOpen",
             {
                 "textDocument": {
@@ -788,7 +815,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         with client_lock(self):
             session.doc_versions.pop(uri, None)
         try:
-            self.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+            self._notify(session, "textDocument/didClose", {"textDocument": {"uri": uri}})
         except Exception:
             self._record_debug_trace(
                 event="document_close_failed",
@@ -813,7 +840,8 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             current_version = session.doc_versions.get(uri, 1)
             next_version = max(current_version + 1, version + 1)
             session.doc_versions[uri] = next_version
-        self.notify(
+        self._notify(
+            session,
             "textDocument/didChange",
             {
                 "textDocument": {"uri": uri, "version": next_version},
@@ -825,7 +853,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         session = self._session
         if uri not in session.opened_documents:
             return
-        self.notify("textDocument/didSave", {"textDocument": {"uri": uri}})
+        self._notify(session, "textDocument/didSave", {"textDocument": {"uri": uri}})
 
     def status(self) -> dict[str, Any]:
         session = self._session
@@ -843,7 +871,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
             "last_error": self.last_error,
             "opened_documents": len(session.opened_documents),
             "max_open_documents": self._max_open_documents,
-            "stderr_tail": self.stderr_tail(),
+            "stderr_tail": list(session.stderr_tail),
             "request_timeout_seconds": self.request_timeout_seconds,
             "initialize_timeout_seconds": self.initialize_timeout_seconds,
             "cooldown_remaining_s": max(0.0, self.disabled_until_monotonic - time.monotonic()),
@@ -966,7 +994,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
                 # begun token counts as active: the create->begin window must not read as "ready".
                 token = (message.get("params") or {}).get("token")
                 if token is not None:
-                    self._note_progress_started(str(token))
+                    self._note_progress_started(str(token), session)
                 result = None
             else:
                 with client_lock(self, follow_deadline=False):
@@ -1042,7 +1070,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
     ) -> None:
         """Route a response message to the correct per-id slot (audit B12)."""
         session = session or self._session
-        if self._handle_progress_notification(message):
+        if self._handle_progress_notification(message, session):
             return
         raw_id = message.get("id")
         if raw_id is None:
@@ -1342,10 +1370,12 @@ class ExternalLSPProviderManager:
                 if not budget.settle():
                     raise TimeoutError("doctor LSP probe deadline exceeded")
                 probe_succeeded = True
-                client.lsp_provider_response = True
+                client.mark_provider_response(
+                    client.responding_session() or client.current_session()
+                )
             except (FileNotFoundError, LSPTransportError, OSError, ValueError) as exc:
                 probe_error = budget.explain(exc)
-                client.lsp_provider_response = False
+                client.mark_provider_response(client.current_session(), False)
             finally:
                 budget.cancel()
                 client.request_timeout_seconds = original_request_timeout
