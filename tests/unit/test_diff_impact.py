@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1738,26 +1739,6 @@ def test_map_changed_lines_refuses_symlink_escape_without_opening_anything(
     assert opened == []
 
 
-def test_symlink_escape_is_disclosed_in_a_real_repo(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    outside = tmp_path / "outside.py"
-    outside.write_text("def leaked():\n    return 1\n", encoding="utf-8")
-    try:
-        (repo / "link.py").symlink_to(outside)
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"cannot create symlinks here: {exc}")
-    _git(repo, "-c", "core.symlinks=true", "add", "--", "link.py")
-    _git(repo, "commit", "-qm", "i")
-    outside2 = tmp_path / "outside2.py"
-    outside2.write_text("def other():\n    return 1\n", encoding="utf-8")
-    (repo / "link.py").unlink()
-    (repo / "link.py").symlink_to(outside2)
-    payload = build_diff_blast_radius(root=repo)
-    assert payload["changed_symbols"] == []
-    assert "path_escapes_root_not_analyzed" in payload["downgrade_reasons"]
-
-
 HUGE = "9" * 5000
 
 
@@ -1797,3 +1778,111 @@ def test_cli_huge_hunk_number_exits_2(monkeypatch: Any) -> None:
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 2
     assert json.loads(res.stdout)["incomplete_reason"] == "unparsed_git_output"
+
+
+def _escaping_symlink_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """A committed in-repo symlink whose target is then re-pointed OUTSIDE the repository."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "inside.py").write_text("def inside():\n    return 1\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("def leaked():\n    return 1\n", encoding="utf-8")
+    try:
+        (repo / "link.py").symlink_to(repo / "inside.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "link.py").unlink()
+    (repo / "link.py").symlink_to(outside)
+    return repo, outside
+
+
+def test_symlink_escape_fails_closed_through_the_builder(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, outside = _escaping_symlink_repo(tmp_path)
+    opened: list[Any] = []
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", lambda path: opened.append(path) or None)
+    monkeypatch.setattr(
+        di.repo_map,
+        "_imports_and_symbols_for_path",
+        lambda path: opened.append(path) or ([], []),
+    )
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["partial"] is True
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason"] == "path_escapes_root"
+    assert "path_escapes_root" in payload["downgrade_reasons"]
+    assert payload["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+    assert payload["changed_files"] == ["link.py"]
+    assert payload["changed_symbols"] == []
+    # the repo-map scan legitimately opens in-repo files; the escaping target must never be opened
+    assert all(Path(str(o)).resolve() != outside.resolve() for o in opened)
+    assert all(Path(str(o)).resolve().is_relative_to(repo.resolve()) for o in opened)
+
+
+def test_symlink_escape_exits_2_through_the_cli(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, _ = _escaping_symlink_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2
+    data = json.loads(res.stdout)
+    assert data["exit_reason"] == "incomplete"
+    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+
+
+def test_symlink_escape_exits_2_in_a_real_subprocess(tmp_path: Path) -> None:
+    repo, _ = _escaping_symlink_repo(tmp_path)
+    src = Path(di.__file__).resolve().parents[2]
+    env = {**os.environ, "PYTHONPATH": str(src)}
+    proc = subprocess.run(
+        [sys.executable, "-m", "tensor_grep", "diff-impact", "--json"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=240,
+        check=False,
+    )
+    assert proc.returncode == 2, proc.stderr[-600:]
+    data = json.loads(proc.stdout)
+    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+    assert data["changed_symbols"] == []
+
+
+def test_in_repo_symlink_pointing_inside_the_root_is_still_analyzed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    (repo / "two.py").write_text("def two():\n    return 2\n", encoding="utf-8")
+    try:
+        (repo / "link.py").symlink_to(repo / "one.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "link.py").unlink()
+    (repo / "link.py").symlink_to(repo / "two.py")
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["changed_files"] == ["link.py"]
+    assert payload["not_analyzed_paths"] == []
+    assert payload["partial"] is False
+    assert "path_escapes_root" not in payload["downgrade_reasons"]
+
+
+def test_in_repo_symlink_pointing_inside_the_root_exits_0(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    (repo / "two.py").write_text("def two():\n    return 2\n", encoding="utf-8")
+    try:
+        (repo / "link.py").symlink_to(repo / "one.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "link.py").unlink()
+    (repo / "link.py").symlink_to(repo / "two.py")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    assert json.loads(res.stdout)["exit_reason"] == "ok"

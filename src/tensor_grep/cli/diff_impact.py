@@ -818,6 +818,7 @@ def _empty_payload(
         "file_count": 0,
         "test_count": 0,
         "deleted_files": [],
+        "not_analyzed_paths": [],
         "binary_files": [],
         "mode_changed_files": [],
         "submodule_changed_files": [],
@@ -875,8 +876,17 @@ def build_diff_blast_radius(
             )
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
-    if any(not repo_map._path_is_relative_to(root / p, root) for p in changed_files_with_lines):
-        downgrade_reasons.append("path_escapes_root_not_analyzed")
+    # A changed path (e.g. an in-repo symlink) whose real location is outside the root is never
+    # opened, and it is NOT silently dropped either: fail closed (partial -> exit 2) and list it.
+    not_analyzed_paths = [
+        {"path": str(p).replace("\\", "/"), "reason": "path_escapes_root"}
+        for p in sorted(changed_files_with_lines)
+        if not repo_map._path_is_relative_to(root / p, root)
+    ]
+    if not_analyzed_paths:
+        partial = True
+        downgrade_reasons.append("path_escapes_root")
+        partial_reasons.append("path_escapes_root")
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
     binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
     binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
@@ -1004,6 +1014,7 @@ def build_diff_blast_radius(
         "file_count": len(sorted_affected_files),
         "test_count": len(sorted_tests),
         "deleted_files": deleted_files,
+        "not_analyzed_paths": not_analyzed_paths,
         "binary_files": binary_files,
         "mode_changed_files": mode_changed_files,
         "submodule_changed_files": submodule_changed_files,
