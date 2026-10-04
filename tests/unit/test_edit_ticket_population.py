@@ -759,7 +759,7 @@ def test_unreadable_marker_makes_population_incomplete(
         raise PermissionError(13, "denied")
 
     # private seam for the marker read; raising=False keeps the test collectable on main
-    monkeypatch.setattr(edit_ticket_service, "_marker_open", _denied, raising=False)
+    monkeypatch.setattr(edit_ticket_service, "_os_open", _denied, raising=False)
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
@@ -1198,6 +1198,94 @@ def test_fifo_swapped_in_after_lstat_does_not_hang_and_is_unreadable_path(tmp_pa
         text=True,
         timeout=30,
         env=env,
+        check=True,
+    )
+    outcome = json.loads(done.stdout.strip().splitlines()[-1])
+    assert outcome == {"status": "incomplete", "reason": "unreadable_path"}
+
+
+def test_per_file_overflow_charges_the_bytes_it_consumed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Three files each grow past the per-file limit after their size check. Every overflow read
+    # (cap + 1 probe byte) must be CHARGED, so the aggregate budget eventually trips; a refund
+    # let the walk continue with the full allowance and report scanned_bytes == 0.
+    victims = [tmp_path / f"grow{i}.bin" for i in range(3)]
+    for v in victims:
+        v.write_bytes(b"x" * 5)
+    real = os.lstat
+    seen: dict[str, int] = {}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        result = real(path, *a, **k)
+        p = Path(str(path))
+        if p in victims:
+            seen[p.name] = seen.get(p.name, 0) + 1
+            if seen[p.name] == 2:  # right after the size-check stat
+                with open(p, "ab") as handle:
+                    handle.write(b"y" * 20)
+        return result
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=10, max_aggregate_bytes=30
+    )
+    # file0: cap 10 -> 11 bytes read; file1: cap 10 -> 11; file2: remaining 8 -> cap 8 -> 9 read
+    assert population["scanned_bytes"] == 11 + 11 + 9
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "aggregate_byte_limit"
+    assert files == {}
+
+
+_MARKER_FIFO_CHILD = """
+import json, os, sys
+from pathlib import Path
+from tensor_grep.cli import edit_ticket_service as svc
+
+root = Path(sys.argv[1])
+victim = root / "env" / sys.argv[2]
+real = os.lstat
+state = {"n": 0}
+
+def seam(path, *a, **k):
+    result = real(path, *a, **k)
+    if Path(str(path)) == victim:
+        state["n"] += 1
+        if state["n"] == 1:  # _regular_marker just saw a regular file; swap in a FIFO
+            os.unlink(victim)
+            os.mkfifo(victim)
+    return result
+
+svc._lstat = seam
+files, population = svc._walk_tracked_files_bounded(root)
+print(json.dumps({"status": population["status"], "reason": population["reason"]}))
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX FIFOs only (no FIFO at a Windows path)")
+@pytest.mark.parametrize(
+    ("marker", "content"),
+    [("pyvenv.cfg", b"home = x\n"), ("CACHEDIR.TAG", _CACHEDIR_SIG)],
+)
+def test_fifo_swapped_in_before_marker_read_does_not_hang(
+    tmp_path: Path, marker: str, content: bytes
+) -> None:
+    # The marker readers (_marker_digest, _cachedir_tag_valid) must use the same safe open as
+    # the leaf fingerprint. SUBPROCESS + hard timeout: a hang raises TimeoutExpired = FAIL.
+    import json
+
+    work = tmp_path / "work"
+    (work / "env").mkdir(parents=True)
+    (work / "env" / marker).write_bytes(content)
+    script = tmp_path / "child.py"
+    script.write_text(_MARKER_FIFO_CHILD, encoding="utf-8")
+    src_dir = str(Path(edit_ticket_service.__file__).resolve().parents[2])
+    done = subprocess.run(
+        [sys.executable, str(script), str(work), marker],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env={**os.environ, "PYTHONPATH": src_dir},
         check=True,
     )
     outcome = json.loads(done.stdout.strip().splitlines()[-1])

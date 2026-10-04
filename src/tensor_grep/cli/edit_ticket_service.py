@@ -39,10 +39,10 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 _os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
-_marker_open = open  # private seam for the marker read
+_os_open = os.open  # private seam: the ONE safe open of every file read from the walked tree
 _lstat = os.lstat  # private seam for link classification
 
 _ALWAYS_PRUNED_DIRS = frozenset({
@@ -146,24 +146,76 @@ def _link_from_stat(st: os.stat_result) -> bool:
 
 
 class _BudgetExceeded(_PopulationWalkError):
-    """A byte budget was crossed WHILE reading (the file grew after the size check)."""
+    """A byte budget was crossed WHILE reading (the file grew after the size check).
+
+    `consumed` is every byte actually read (including the one-byte probe past the limit); the
+    caller charges it so an overflow is never refunded."""
+
+    def __init__(self, reason: str, consumed: int) -> None:
+        super().__init__(reason)
+        self.consumed = consumed
+
+
+def _open_regular_no_follow(
+    path: str | Path, expected_ident: tuple[int, int] | None = None
+) -> BinaryIO:
+    """THE open for every file read from the walked tree (marker, tag, leaf).
+
+    `O_NOFOLLOW | O_NONBLOCK` (each via getattr) so a FIFO or link swapped in after an earlier
+    lstat neither hangs `open()` waiting for a writer nor is followed; the handle is then
+    `fstat`ed and must be a REGULAR file, with `expected_ident` (st_dev, st_ino) when given.
+    Any failure is `unreadable_path` (never "treat as absent"). Windows has no FIFO at a
+    filesystem path (a named pipe lives in a different namespace), so the fstat checks are
+    sufficient there."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        fd = _os_open(path, flags)
+    except OSError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISREG(fst.st_mode):
+            raise _PopulationWalkError("unreadable_path")
+        if (
+            expected_ident is not None
+            and expected_ident[1]
+            and fst.st_ino
+            and expected_ident != (fst.st_dev, fst.st_ino)
+        ):
+            raise _PopulationWalkError("unreadable_path")  # replaced between lstat and open
+        return os.fdopen(fd, "rb")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
+def _marker_stat(path: Path) -> os.stat_result | None:
+    """lstat of a marker if it is a REGULAR, non-symlink file, else None."""
+    try:
+        st = _lstat(path)
+    except OSError:
+        return None
+    return st if stat.S_ISREG(st.st_mode) else None
 
 
 def _regular_marker(path: Path) -> bool:
     """A marker counts only as a REGULAR, non-symlink file (never follow a marker link)."""
-    try:
-        return stat.S_ISREG(path.lstat().st_mode)
-    except OSError:
-        return False
+    return _marker_stat(path) is not None
 
 
 def _cachedir_tag_valid(tag: Path) -> bool:
     """The FIRST LINE must be exactly the signature, then LF, CRLF or EOF (bounded read)."""
-    try:
-        with open(tag, "rb") as handle:
-            head = handle.read(128)
-    except OSError:
-        return False  # cannot classify -> walk it (covered, fail-closed by budget)
+    st = _marker_stat(tag)
+    if st is None:
+        # The caller saw a regular file an instant ago; it was swapped for something else.
+        raise _PopulationWalkError("unreadable_path")
+    with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
+        head = handle.read(128)
     sig = _CACHEDIR_TAG_SIGNATURE
     return head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
 
@@ -176,8 +228,11 @@ def _marker_digest(path: Path) -> str:
     would compare equal at mint and verify). Both make the population incomplete."""
     hasher = hashlib.sha256()
     total = 0
+    st = _marker_stat(path)
+    if st is None:
+        raise _PopulationWalkError("unreadable_path")  # swapped for a non-regular object
     try:
-        with _marker_open(path, "rb") as handle:
+        with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
             while chunk := handle.read(65536):
                 total += len(chunk)
                 if total > _MARKER_HASH_CAP:
@@ -298,7 +353,11 @@ def compute_file_fingerprint(path: str | Path) -> str:
     if not stat.S_ISREG(mode):
         return f"other:{stat.S_IFMT(mode):o}"
     hasher = hashlib.sha256()
-    with open(p, "rb") as f:
+    try:
+        handle = _open_regular_no_follow(p, (st.st_dev, st.st_ino))
+    except _PopulationWalkError as exc:
+        raise OSError(f"cannot safely open {p}") from exc
+    with handle as f:
         while chunk := f.read(65536):
             hasher.update(chunk)
     return "file:" + hasher.hexdigest()
@@ -336,27 +395,16 @@ def _fingerprint_enumerated(
         raise _PopulationWalkError("unreadable_path")
     if not stat.S_ISREG(st.st_mode):
         return f"other:{stat.S_IFMT(st.st_mode):o}", 0  # never opened: a fifo would block
-    flags = (
-        os.O_RDONLY
-        | getattr(os, "O_BINARY", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
-        | getattr(os, "O_NONBLOCK", 0)
-    )
-    fd = os.open(path, flags)
-    with os.fdopen(fd, "rb") as handle:
-        fst = os.fstat(handle.fileno())
-        if not stat.S_ISREG(fst.st_mode):
-            raise _PopulationWalkError("unreadable_path")
-        if st.st_ino and fst.st_ino and (st.st_ino, st.st_dev) != (fst.st_ino, fst.st_dev):
-            raise _PopulationWalkError("unreadable_path")  # replaced between lstat and open
-        cap = min(max_file_bytes, remaining_bytes)
+    with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
+        cap = max(0, min(max_file_bytes, remaining_bytes))
         hasher = hashlib.sha256()
         total = 0
         while chunk := handle.read(min(65536, cap + 1 - total)):
             total += len(chunk)
             if total > cap:
                 raise _BudgetExceeded(
-                    "per_file_byte_limit" if total > max_file_bytes else "aggregate_byte_limit"
+                    "per_file_byte_limit" if total > max_file_bytes else "aggregate_byte_limit",
+                    total,
                 )
             hasher.update(chunk)
     return "file:" + hasher.hexdigest(), total
@@ -417,10 +465,14 @@ def _walk_tracked_files_bounded(
                     item, max_file_bytes, max_aggregate_bytes - scanned_bytes
                 )
             except _BudgetExceeded as exc:
+                scanned_bytes += exc.consumed  # never refund what was actually read
                 incomplete_reason = exc.reason
-                if exc.reason == "per_file_byte_limit":
+                if exc.reason == "per_file_byte_limit" and scanned_bytes <= max_aggregate_bytes:
                     scanned_files += 1
                     continue
+                incomplete_reason = (
+                    "aggregate_byte_limit" if (scanned_bytes > max_aggregate_bytes) else exc.reason
+                )
                 break
             except OSError:
                 incomplete_reason = incomplete_reason or "unreadable_path"
