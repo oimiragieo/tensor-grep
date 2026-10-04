@@ -1732,7 +1732,7 @@ def test_r40_every_early_return_in_the_sentinel_builder_is_accounted_for():
         "--search-zip",
     ]
     followers = [["-efoo"], ["-e", "foo"], ["src"], ["-f", "pats.txt"], ["--regexp=foo"], []]
-    leads = [[], ["--json"], ["--cpu", "-l"], ["-g", "*.py"]]
+    leads = [[], ["--json"], ["--cpu", "-l"], ["-g", "*.py"], ["-ii", "foo"]]
     sentinelled = 0
     for lead in leads:
         for ex in execs:

@@ -278,14 +278,19 @@ def _sentinel_insertion_index(search_args: list[str]) -> int | None:
     """Index to insert ``--`` before caller-influenced dash-led positionals only."""
     if has_end_of_options(search_args):  # (S) value-aware: in `-e --` the `--` is a pattern
         return None
-    if _files_mode_active(search_args) and not _exec_capable_flag_present(search_args):
+    # ONE gate for every F.1 relaxation (CWE-88): the pattern-source early return, the plausible-flag
+    # exemption and the no-pattern-mode return only apply when NO exec-capable flag is present in
+    # option position. With one present rg may RUN a command, so the pre-F.1 sentinel policy decides
+    # and no early return can skip it (`-ii foo --pre=X f` and `--files --hostname-bin X` regressed
+    # when each relaxation carried its own guard).
+    relaxed = not _exec_capable_flag_present(search_args)
+    if relaxed and _files_mode_active(search_args):
         # `--files` and the other no-pattern modes take no pattern (tokenizer rule B3): there is no
         # pattern slot, and a dash-led token is an OPTION in rg. Inserting `--` would turn `-i`
-        # into a PATH (rg exit 2). NEVER over an exec-capable flag: `--files --hostname-bin X` makes
-        # rg RUN X, so those argvs keep the sentinel decision (CWE-88, same rule as the r40 fix).
+        # into a PATH (rg exit 2).
         return None
 
-    dash_led = _first_dash_led_pattern_index_after_tg_flags(search_args)
+    dash_led = _first_dash_led_pattern_index_after_tg_flags(search_args, relaxed=relaxed)
     if dash_led is not None:
         return dash_led
 
@@ -306,8 +311,11 @@ def _first_dash_led_positional_index(search_args: list[str]) -> int | None:
     return None
 
 
-def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int | None:
-    """Pattern index when pattern is dash-led after tg-only flags."""
+def _first_dash_led_pattern_index_after_tg_flags(
+    search_args: list[str], *, relaxed: bool = True
+) -> int | None:
+    """Pattern index when pattern is dash-led after tg-only flags. ``relaxed=False`` (an
+    exec-capable flag is present) disables every F.1 relaxation in this function."""
     index = 0
     while index < len(search_args):
         arg = search_args[index]
@@ -323,11 +331,9 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
     # every dash-led token is an option (`-e --` is pattern `--`; `-kq` after it is a cluster).
     if not remainder:
         return None
-    # The early return is for the pattern-source case only, and never over an exec-capable flag:
+    # Pattern-source early return: a relaxation, so only when ``relaxed`` (no exec-capable flag):
     # `-zebra` is `-z -e bra` and `--pre=sh -efoo` carries `-e`, yet both keep the sentinel.
-    if flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS) and not _exec_capable_flag_present(
-        remainder
-    ):
+    if relaxed and flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS):
         return None
     if all(token.startswith("-") for token in remainder):
         return index
@@ -336,7 +342,7 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
         and remainder[0].startswith("-")
         and len(remainder[0]) > 2
         and not remainder[1].startswith("-")
-        and not _is_plausible_rg_flag_token(remainder[0])
+        and not (relaxed and _is_plausible_rg_flag_token(remainder[0]))
     ):
         return index
     return None

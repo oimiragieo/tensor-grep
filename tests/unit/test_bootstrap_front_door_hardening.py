@@ -277,3 +277,84 @@ def test_exec_flag_set_covers_every_rg_flag_that_can_run_a_command():
         f"rg flags that can run a command but are not in the exec set: {uncovered}"
     )
     assert {"pre", "hostname-bin"} <= found  # positive control: the scan really sees exec flags
+
+
+# --- adversarial gate of #1201: NO F.1 relaxation may skip the exec policy ------------------------
+
+import importlib.util  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_LEGACY_PATH = Path(__file__).parent / "_fixtures" / "legacy_sentinel_builder.py"
+
+
+def _legacy_builder():
+    spec = importlib.util.spec_from_file_location("legacy_sentinel_builder", _LEGACY_PATH)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.bootstrap_native_tg_search_argv
+
+
+def _plausible_prefix_rows(cmd: str) -> list[list[str]]:
+    hl = "--hyperlink-format=file://{host}/{path}"
+    return [
+        ["-ii", "foo", f"--pre={cmd}", "f.txt"],
+        ["--color", "never", "foo", f"--pre={cmd}", "f.txt"],
+        ["-C2", "foo", f"--pre={cmd}", "f.txt"],
+        ["--max-count=5", "foo", "--search-zip", "f.txt"],
+        ["--json", "-ii", "f.txt", "--files", "--hostname-bin", cmd, hl, "--color=always"],
+    ]
+
+
+def test_plausible_flag_prefix_does_not_skip_the_exec_policy(_marker):
+    cmd, _ = _marker
+    legacy = _legacy_builder()
+    for argv in _plausible_prefix_rows(cmd):
+        built = _nav.bootstrap_native_tg_search_argv(argv)
+        assert built == legacy(argv), argv  # main's decision, exactly
+        assert "--" in built and built != argv, argv  # a sentinel really was inserted
+
+
+@_needs_rg
+def test_plausible_flag_prefix_does_not_execute(_marker):
+    cmd, marker = _marker
+    (marker.parent / "f.txt").write_text("foo\n", encoding="utf-8")
+    for argv in _plausible_prefix_rows(cmd):
+        marker.unlink(missing_ok=True)
+        _rg_rc(marker.parent, _nav.bootstrap_native_tg_search_argv(argv))
+        assert not marker.exists(), f"rg EXECUTED the marker for {argv}"
+
+
+@_needs_rg
+def test_plausible_flag_prefix_marker_positive_control(_marker):
+    cmd, marker = _marker
+    (marker.parent / "f.txt").write_text("foo\n", encoding="utf-8")
+    _rg_rc(marker.parent, ["-ii", "foo", f"--pre={cmd}", "f.txt"])  # the RAW argv runs it
+    assert marker.exists()
+
+
+_DIFF_POOL = [
+    "--files", "--type-list", "-h", "--help", "-V", "--version", "--pcre2-version", "--generate",
+    "man", "--generate=man", "-z", "-zi", "-iz", "-ez", "-ze", "-izeoo", "--search-zip",
+    "--no-search-zip", "--pre", "--pre=x", "--no-pre", "--pre-glob=*", "--pre-glob",
+    "--hostname-bin", "--hostname-bin=x", "x", "foo", "src", "-i", "-ii", "-iF", "-e", "-efoo",
+    "-f", "-g", "*.py", "--json", "--cpu", "-l", "--", "-", "-m", "5", "-m5", "-ih", "-hi", "-Vi",
+    "--hyperlink-format=a{host}", "--regexp=foo", "-t", "py", "--glob", "--type", "-A", "-C2",
+    "--color", "never",
+]  # fmt: skip
+
+
+def test_no_argv_gains_an_exec_flag_in_option_position_versus_main():
+    """Whenever main's output has NO exec flag in option position, this PR's output has none either
+    (the sentinel may only be added, never withheld, in front of an exec flag)."""
+    legacy = _legacy_builder()
+    rng = random.Random(20261004)
+    checked = regressions = 0
+    for _ in range(4000):
+        argv = [rng.choice(_DIFF_POOL) for _ in range(rng.randint(1, 6))]
+        mine = _nav.bootstrap_native_tg_search_argv(list(argv))
+        theirs = legacy(list(argv))
+        checked += 1
+        if _nav._exec_capable_flag_present(mine) and not _nav._exec_capable_flag_present(theirs):
+            regressions += 1
+    assert checked == 4000 and regressions == 0
