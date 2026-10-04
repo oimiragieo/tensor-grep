@@ -12,6 +12,31 @@ import pytest
 from tests.unit.test_mcp_server_shared import _write_audit_manifest
 
 
+class _NoMatchBackend:
+    """Stand-in AST engine: finds nothing. These tests are about the artifact-write GUARD and the
+    writer, not about ast-grep, and CI does not install the ast-grep CLI -- a real
+    ``tg_ruleset_scan`` would raise ConfigurationError there before it ever reached the write."""
+
+    def search(self, *_args, **_kwargs):
+        from tensor_grep.core.result import SearchResult
+
+        return SearchResult(matches=[], total_files=0, total_matches=0)
+
+    search_many = search
+
+
+@pytest.fixture(autouse=True)
+def _scan_without_the_ast_engine(monkeypatch):
+    """Cut the scan at its backend-selection seam so the suite is independent of ast-grep.
+    ``_run_ast_scan_payload`` imports ``_select_ast_backend_for_rule`` from ``ast_workflows`` at
+    call time, so that is the module attribute to patch."""
+    from tensor_grep.cli import ast_workflows
+
+    monkeypatch.setattr(
+        ast_workflows, "_select_ast_backend_for_rule", lambda *_a, **_k: _NoMatchBackend()
+    )
+
+
 @pytest.mark.parametrize(
     "target", ["a.py", ".git/config", ".GIT/config", "notes.txt", "other.json"]
 )
