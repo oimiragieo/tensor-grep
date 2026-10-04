@@ -801,13 +801,12 @@ def test_uppercase_suffix_symbol_free_valid_file_stays_analyzed(
     assert json.loads(res.stdout)["not_analyzed_paths"] == []
 
 
-@pytest.mark.parametrize("name", ["app.PY", "app.Py"])
-def test_valid_uppercase_python_file_with_symbols_is_not_silently_symbol_free(
+@pytest.mark.parametrize("name", ["app.PY", "app.Py", "app.pY"])
+def test_valid_uppercase_python_file_with_symbols_reports_them(
     tmp_path: Path, monkeypatch: Any, name: str
 ) -> None:
-    # The Python extractor itself compares `path.suffix != ".py"` case-sensitively and returns
-    # ([], []) for `app.PY` without parsing it. A valid file with defs must not be reported as
-    # analysed-with-no-symbols: it fails closed until the extractor is fixed.
+    # The Python extractor now agrees with the registry (which lowercases suffixes), so a valid
+    # `app.PY` is analysed like `app.py`: its changed symbol is reported and the run is clean.
     repo = tmp_path / "repo"
     _init_repo(repo)
     (repo / name).write_bytes(b"def changed():\n    return 1\n")
@@ -816,12 +815,7 @@ def test_valid_uppercase_python_file_with_symbols_is_not_silently_symbol_free(
     (repo / name).write_bytes(b"def changed():\n    return 2\n")
     monkeypatch.chdir(repo)
     res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
     data = json.loads(res.stdout)
-    if data["changed_symbols"]:  # extractor fixed upstream: symbols are reported, all good
-        assert [s["name"] for s in data["changed_symbols"]] == ["changed"]
-        assert res.exit_code == 0
-    else:
-        assert res.exit_code == 2, res.stdout
-        assert data["not_analyzed_paths"] == [
-            {"path": name, "reason": "extraction_failed: UnsupportedSuffixCase"}
-        ]
+    assert [s["name"] for s in data["changed_symbols"]] == ["changed"]
+    assert data["not_analyzed_paths"] == []

@@ -1869,7 +1869,7 @@ def _parser_for_source_suffix(suffix: str) -> Any | None:
     """Select the tree-sitter parser the same way each consumer picked one inline before this
     fix -- TS suffixes (incl. tsx) get the typescript parser, the rest of the JS/TS suffix set
     gets the javascript parser, Rust gets the rust parser. Returns None for any other suffix (a
-    caller-side suffix pre-check, e.g. `path.suffix not in _JS_TS_SUFFIXES`, is expected to have
+    caller-side suffix pre-check, e.g. `path.suffix.lower() not in _JS_TS_SUFFIXES`, is expected to have
     already gated the call, matching the pre-fix per-site behavior)."""
     if suffix in _TS_SUFFIXES:
         return _self._typescript_parser(tsx=suffix == ".tsx")
@@ -1883,7 +1883,7 @@ def _parser_for_source_suffix(suffix: str) -> Any | None:
 
 
 def _parse_source_uncached(path_str: str) -> tuple[str, bytes, Any] | None:
-    parser = _parser_for_source_suffix(Path(path_str).suffix)
+    parser = _parser_for_source_suffix(Path(path_str).suffix.lower())
     if parser is None:
         return None
     try:
@@ -2874,7 +2874,7 @@ def _import_names_reference_symbol_definition(
                 module_name = candidate.rsplit(".", 1)[0]
                 if _module_path_matches_definition(module_name, definition_path):
                     return True
-            if importer_path.suffix == ".py" and _module_path_matches_definition(
+            if importer_path.suffix.lower() == ".py" and _module_path_matches_definition(
                 candidate,
                 definition_path,
             ):
@@ -3374,7 +3374,7 @@ _JAVA_IMPORT_STRIP_RE = re.compile(r"^import\s+(?:static\s+)?(.*?)\s*;?\s*$", re
 def _python_references_and_calls(
     path: Path, symbol: str
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix != ".py":
+    if path.suffix.lower() != ".py":
         return [], []
 
     try:
@@ -3828,7 +3828,7 @@ lang_registry.register_language(
     lang_registry.LanguageSpec(
         language_id="typescript",
         suffixes=frozenset({".ts", ".tsx"}),
-        parser_for_path=lambda path: _self._typescript_parser(tsx=path.suffix == ".tsx"),
+        parser_for_path=lambda path: _self._typescript_parser(tsx=path.suffix.lower() == ".tsx"),
         extract_imports_and_symbols=_typescript_imports_and_symbols,
         **_JS_TS_REGISTRY_SHARED_KWARGS,
     )
@@ -6740,9 +6740,9 @@ def _is_comment_line(path: Path, line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    if path.suffix == ".py":
+    if path.suffix.lower() == ".py":
         return stripped.startswith("#")
-    if path.suffix in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
+    if path.suffix.lower() in _JS_TS_SUFFIXES | _RUST_SUFFIXES:
         return (
             stripped.startswith("//")
             or stripped.startswith("/*")
@@ -6987,9 +6987,9 @@ def _detect_validation_runners_from_root(
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
         )
-    has_python = any(current.suffix == ".py" for current in all_files)
+    has_python = any(current.suffix.lower() == ".py" for current in all_files)
     has_python_tests = any(
-        current.suffix == ".py" and _is_test_file(current) for current in all_files
+        current.suffix.lower() == ".py" and _is_test_file(current) for current in all_files
     )
     has_python_project_marker = any(
         (root / marker).is_file()
@@ -7380,7 +7380,7 @@ def _has_python_validation_fallback_evidence(
             deadline_monotonic=deadline_monotonic,
             deadline_hit=deadline_hit,
         )
-    return any(current.suffix == ".py" and _is_test_file(current) for current in candidate_files)
+    return any(c.suffix.lower() == ".py" and _is_test_file(c) for c in candidate_files)
 
 
 _ROOT_TEST_DIR_NAMES = ("test", "tests", "__tests__")
@@ -7619,8 +7619,8 @@ def _raw_validation_plan_for_tests(
                 deadline_monotonic=deadline_monotonic,
                 deadline_hit=deadline_hit,
             )
-        local_has_python = any(current.suffix == ".py" for current in local_files)
-        local_has_rust = any(current.suffix in _RUST_SUFFIXES for current in local_files)
+        local_has_python = any(current.suffix.lower() == ".py" for current in local_files)
+        local_has_rust = any(current.suffix.lower() in _RUST_SUFFIXES for current in local_files)
         local_has_javascript = any(
             current.suffix.lower() in _JS_TS_SUFFIXES for current in local_files
         )
@@ -12350,21 +12350,21 @@ def build_symbol_source_from_map(
                 continue
             seen_files.add(str(current_path))
             current_sources = _python_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix in _JS_TS_SUFFIXES:
+            if not current_sources and current_path.suffix.lower() in _JS_TS_SUFFIXES:
                 current_sources = _js_ts_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix in _RUST_SUFFIXES:
+            if not current_sources and current_path.suffix.lower() in _RUST_SUFFIXES:
                 current_sources = _rust_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix == ".go":
+            if not current_sources and current_path.suffix.lower() == ".go":
                 current_sources = lang_go.go_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix in _JAVA_SUFFIXES:
+            if not current_sources and current_path.suffix.lower() in _JAVA_SUFFIXES:
                 current_sources = _java_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix == ".php":
+            if not current_sources and current_path.suffix.lower() == ".php":
                 current_sources = lang_php.php_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix == ".cs":
+            if not current_sources and current_path.suffix.lower() == ".cs":
                 current_sources = lang_csharp.csharp_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix == ".c":
+            if not current_sources and current_path.suffix.lower() == ".c":
                 current_sources = lang_c.c_parser_symbol_sources(current_path, symbol)
-            if not current_sources and current_path.suffix in _CPP_SUFFIXES:
+            if not current_sources and current_path.suffix.lower() in _CPP_SUFFIXES:
                 current_sources = lang_cpp.cpp_parser_symbol_sources(current_path, symbol)
             if not current_sources:
                 current_sources = _regex_symbol_sources(current_path, symbol)
@@ -13979,14 +13979,14 @@ def build_symbol_callers_from_map(
                 current.get("provenance", f"lsp-{_language_for_path(Path(str(current['file'])))}")
             )
             for current in external_refs
-            if Path(str(current.get("file", ""))).suffix in _JS_TS_SUFFIXES
+            if Path(str(current.get("file", ""))).suffix.lower() in _JS_TS_SUFFIXES
         }
         rust_external_provenance = {
             str(current["file"]): str(
                 current.get("provenance", f"lsp-{_language_for_path(Path(str(current['file'])))}")
             )
             for current in external_refs
-            if Path(str(current.get("file", ""))).suffix in _RUST_SUFFIXES
+            if Path(str(current.get("file", ""))).suffix.lower() in _RUST_SUFFIXES
         }
         python_external_files = {
             str(current["file"])
@@ -13996,12 +13996,12 @@ def build_symbol_callers_from_map(
         js_ts_external_files = {
             str(current["file"])
             for current in external_refs
-            if Path(str(current.get("file", ""))).suffix in _JS_TS_SUFFIXES
+            if Path(str(current.get("file", ""))).suffix.lower() in _JS_TS_SUFFIXES
         }
         rust_external_files = {
             str(current["file"])
             for current in external_refs
-            if Path(str(current.get("file", ""))).suffix in _RUST_SUFFIXES
+            if Path(str(current.get("file", ""))).suffix.lower() in _RUST_SUFFIXES
         }
         for external_ref in external_refs:
             text = str(external_ref.get("text", ""))
@@ -14062,7 +14062,7 @@ def build_symbol_callers_from_map(
             js_ts_files = sorted(
                 str(current)
                 for current in bounded_files
-                if Path(str(current)).suffix in _JS_TS_SUFFIXES
+                if Path(str(current)).suffix.lower() in _JS_TS_SUFFIXES
             )
             for js_ts_file in js_ts_files:
                 alias_calls = _js_ts_provider_alias_calls(
@@ -14079,7 +14079,7 @@ def build_symbol_callers_from_map(
             rust_files = sorted(
                 str(current)
                 for current in bounded_files
-                if Path(str(current)).suffix in _RUST_SUFFIXES
+                if Path(str(current)).suffix.lower() in _RUST_SUFFIXES
             )
             for rust_file in rust_files:
                 alias_calls = _rust_provider_alias_calls(

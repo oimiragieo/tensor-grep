@@ -586,19 +586,19 @@ def _render_source_block(
             omitted_ts_type_import_lines: set[int] = set()
             omitted_rust_doc_comment_lines: set[int] = set()
             omitted_rust_attribute_lines: set[int] = set()
-            if path.suffix == ".py":
+            if path.suffix.lower() == ".py":
                 omitted_docstring_lines, omitted_boilerplate_lines = (
                     _python_ast_omitted_relative_lines(
                         block, normalized_profile, strip_docstrings=optimize_context
                     )
                 )
-            elif path.suffix in _self._TS_SUFFIXES:
+            elif path.suffix.lower() in _self._TS_SUFFIXES:
                 omitted_jsdoc_lines, omitted_ts_type_import_lines = (
                     _self._ts_ast_omitted_relative_lines(block)
                 )
-            elif path.suffix in _self._JS_TS_SUFFIXES:
+            elif path.suffix.lower() in _self._JS_TS_SUFFIXES:
                 omitted_jsdoc_lines = _js_ast_omitted_relative_lines(block)
-            elif path.suffix in _self._RUST_SUFFIXES:
+            elif path.suffix.lower() in _self._RUST_SUFFIXES:
                 omitted_rust_doc_comment_lines, omitted_rust_attribute_lines = (
                     _rust_ast_omitted_relative_lines(block)
                 )

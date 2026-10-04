@@ -487,7 +487,7 @@ def java_references_and_calls(
     cross-file confirmed band. *repo_root* is accepted for registry-adapter signature parity.
     """
     del repo_root  # signature parity with Go adapter; unused by the Java package resolver
-    if path.suffix != ".java":
+    if path.suffix.lower() != ".java":
         return [], []
     if parser is None:
         return [], []

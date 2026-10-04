@@ -54,7 +54,7 @@ def _java_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any
     read/parse error returns ``([], [])``, never a partial regex degrade -- Java has no regex
     fallback (see the `.java` branch in `_imports_and_symbols_for_path` below).
     """
-    if path.suffix not in _self._JAVA_SUFFIXES:
+    if path.suffix.lower() not in _self._JAVA_SUFFIXES:
         return [], []
 
     parsed = _self._parsed_source_and_tree(str(path))
@@ -103,7 +103,7 @@ def _java_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]
     """`tg source` extractor for Java -- exact source block for a named class/interface/enum/
     record/method/constructor. Mirrors `_rust_parser_symbol_sources` exactly, reusing the shared
     cached parse product (`_parsed_source_and_tree`) instead of re-parsing directly."""
-    if path.suffix not in _self._JAVA_SUFFIXES:
+    if path.suffix.lower() not in _self._JAVA_SUFFIXES:
         return []
 
     parsed = _self._parsed_source_and_tree(str(path))
@@ -147,7 +147,7 @@ def _java_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     """`tg imports` extractor for Java -- one row per `import_declaration` STATEMENT with its
     1-based line number (mirrors `_rust_imports_with_lines`'s shape/role exactly, but tree-sitter
     -backed rather than regex-backed since Java has no regex fallback)."""
-    if path.suffix not in _self._JAVA_SUFFIXES:
+    if path.suffix.lower() not in _self._JAVA_SUFFIXES:
         return []
     try:
         file_size = path.stat().st_size
