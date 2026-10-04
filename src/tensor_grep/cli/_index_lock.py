@@ -4,8 +4,10 @@ import json
 import os
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -60,6 +62,69 @@ def _publish_bytes_no_clobber(src: Path, dst: Path) -> None:
     os.link(str(src), str(dst))
 
 
+class WriteAuthorizationError(OSError):
+    """The target of an authorized write changed between authorization and publish."""
+
+
+@dataclass(frozen=True)
+class WriteAuthorization:
+    """A check-time approval carried to the write (closes the check-then-write window).
+
+    ``path`` is the resolved target. ``identity is None`` means the target was ABSENT when it was
+    approved, so the publish must be no-clobber. Otherwise ``identity`` is the approved existing
+    file's ``(st_dev, st_ino, st_size, st_mtime_ns)`` (from ``lstat``) and ``parent_identity`` the
+    parent directory's ``(st_dev, st_ino)``; the write is refused if either changed."""
+
+    path: str
+    identity: tuple[int, int, int, int] | None
+    parent_identity: tuple[int, int] | None
+    label: str = "target"
+
+
+_WRITE_AUTHORIZATIONS: ContextVar[dict[str, WriteAuthorization] | None] = ContextVar(
+    "tg_write_authorizations", default=None
+)
+
+
+def _authorization_key(path: str | Path) -> str:
+    return os.path.normcase(str(Path(path).resolve()))
+
+
+def file_identity(path: Path) -> tuple[int, int, int, int]:
+    st = os.lstat(path)
+    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+
+
+def dir_identity(path: Path) -> tuple[int, int]:
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino)
+
+
+@contextmanager
+def write_authorizations(auths: Iterable[WriteAuthorization]) -> Iterator[None]:
+    """Make ``auths`` binding for any ``atomic_write_bytes_anchored`` to those paths within this
+    context. Default-off: writers to other paths are unchanged."""
+    mapping = {_authorization_key(a.path): a for a in auths}
+    token = _WRITE_AUTHORIZATIONS.set(mapping)
+    try:
+        yield
+    finally:
+        _WRITE_AUTHORIZATIONS.reset(token)
+
+
+def _enforce_authorization(path: Path, auth: WriteAuthorization) -> None:
+    """Immediately-before-publish identity re-check for an authorized existing target."""
+    assert auth.identity is not None
+    try:
+        unchanged = file_identity(path) == auth.identity and (
+            auth.parent_identity is None or dir_identity(path.parent) == auth.parent_identity
+        )
+    except OSError:
+        unchanged = False
+    if not unchanged:
+        raise WriteAuthorizationError(f"{auth.label} changed after it was authorized (refused)")
+
+
 def atomic_write_bytes_anchored(
     path: Path, data: bytes, *, mode: int | None = None, replace: bool = True
 ) -> None:
@@ -74,6 +139,10 @@ def atomic_write_bytes_anchored(
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
         raise OSError(f"Refusing to write through a symlink: {path}")
+    registry = _WRITE_AUTHORIZATIONS.get()
+    auth = registry.get(_authorization_key(path)) if registry else None
+    if auth is not None and auth.identity is None:
+        replace = False  # approved as ABSENT: publish no-clobber, never replace
 
     tmp_path = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     create_mode = 0o666 if mode is None else mode
@@ -96,10 +165,19 @@ def atomic_write_bytes_anchored(
             pass
 
     try:
+        if auth is not None and auth.identity is not None:
+            _enforce_authorization(path, auth)
         if replace:
             replace_with_retry(tmp_path, path)
         else:
-            _publish_bytes_no_clobber(tmp_path, path)
+            try:
+                _publish_bytes_no_clobber(tmp_path, path)
+            except FileExistsError:
+                if auth is None:
+                    raise
+                raise WriteAuthorizationError(
+                    f"{auth.label} appeared after it was authorized (refused)"
+                ) from None
     except BaseException:
         # If publish fails, make sure the sibling temp is removed before control exits.
         tmp_path.unlink(missing_ok=True)

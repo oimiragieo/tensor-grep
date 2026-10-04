@@ -1571,3 +1571,123 @@ def test_existing_artifact_over_the_probe_cap_is_refused(tmp_path, monkeypatch):
     out = _scan_with_baseline_target(tmp_path, monkeypatch, "over.json")
     assert out["error"]["code"] == "invalid_input"
     assert victim.read_bytes() == before
+
+
+# --- Codex round 1, finding 1: artifact authorization must survive until the write (TOCTOU) ---
+
+
+def _swap_before_scan_write(monkeypatch, mutate):
+    """Seam between the artifact guard and the writer: run ``mutate()`` AFTER confinement
+    approved the target and BEFORE ``_run_ast_scan_payload`` writes it."""
+    from tensor_grep.cli import mcp_server
+
+    real = mcp_server._run_ast_scan_payload
+
+    def gated(*args, **kwargs):
+        mutate()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(mcp_server, "_run_ast_scan_payload", gated)
+
+
+@pytest.mark.parametrize("param", ["write_baseline", "write_suppressions"])
+def test_absent_target_that_becomes_a_non_artifact_before_the_write_is_not_clobbered(
+    tmp_path, monkeypatch, param
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    victim = tmp_path / "late.json"
+    assert not victim.exists()
+    _swap_before_scan_write(monkeypatch, lambda: victim.write_bytes(b'{"mine": true}\n'))
+    kwargs = {param: "late.json"}
+    if param == "write_suppressions":
+        kwargs["justification"] = "x"
+    out = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", **kwargs))
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == b'{"mine": true}\n'
+    assert list(tmp_path.glob(".late.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize("param", ["write_baseline", "write_suppressions"])
+def test_approved_artifact_replaced_by_unrelated_json_before_the_write_is_not_clobbered(
+    tmp_path, monkeypatch, param
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    victim = tmp_path / "art.json"
+    kwargs = {param: "art.json"}
+    if param == "write_suppressions":
+        kwargs["justification"] = "x"
+    first = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", **kwargs))
+    assert "error" not in first  # positive control: a normal new write
+    assert victim.exists()
+    unrelated = b'{"unrelated": "json that is much longer than the artifact kind marker"}\n'
+    _swap_before_scan_write(monkeypatch, lambda: victim.write_bytes(unrelated))
+    out = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", **kwargs))
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == unrelated
+
+
+def test_normal_rerun_overwrite_of_an_approved_artifact_still_works(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    for _ in range(2):
+        out = json.loads(
+            mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="again.json")
+        )
+        assert "error" not in out
+    assert json.loads((tmp_path / "again.json").read_text(encoding="utf-8"))["kind"] == (
+        "ruleset-scan-baseline"
+    )
+
+
+def _swap_before_bundle_write(monkeypatch, mutate):
+    from tensor_grep.cli import audit_manifest
+
+    real = audit_manifest.create_review_bundle_json
+
+    def gated(*args, **kwargs):
+        mutate()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(audit_manifest, "create_review_bundle_json", gated)
+
+
+def test_review_bundle_output_is_not_clobbered_when_target_changes_after_the_check(
+    tmp_path, monkeypatch
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    manifest = tmp_path / "manifest.json"
+    _write_audit_manifest(manifest)
+    # positive controls: a normal new write, then a normal rerun overwrite
+    for _ in range(2):
+        ok = json.loads(
+            mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path="b.json")
+        )
+        assert "error" not in ok, ok
+    bundle = tmp_path / "b.json"
+    unrelated = b'{"unrelated": "json that is much longer than the bundle marker"}\n'
+    _swap_before_bundle_write(monkeypatch, lambda: bundle.write_bytes(unrelated))
+    out = json.loads(
+        mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path="b.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert bundle.read_bytes() == unrelated
+
+    late = tmp_path / "late_bundle.json"
+    _swap_before_bundle_write(monkeypatch, lambda: late.write_bytes(b'{"mine": 1}\n'))
+    out2 = json.loads(
+        mcp_server.tg_review_bundle_create(
+            manifest_path=str(manifest), output_path="late_bundle.json"
+        )
+    )
+    assert out2["error"]["code"] == "invalid_input"
+    assert late.read_bytes() == b'{"mine": 1}\n'

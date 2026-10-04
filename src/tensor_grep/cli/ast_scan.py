@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
+from tensor_grep.cli._index_lock import WriteAuthorizationError, atomic_write_bytes_anchored
 from tensor_grep.cli._main_binding import _self as _self
 
 if TYPE_CHECKING:
@@ -463,6 +463,8 @@ def _write_json_refuse_symlink(write_path: Path, data: object) -> None:
     payload = json.dumps(data, indent=2).encode()
     try:
         atomic_write_bytes_anchored(write_path, payload, mode=0o600, replace=True)
+    except WriteAuthorizationError:
+        raise  # MCP artifact guard refusal: let the tool map it to invalid_input
     except OSError as exc:
         raise ValueError(f"Refusing to write {write_path}: {exc}") from exc
 

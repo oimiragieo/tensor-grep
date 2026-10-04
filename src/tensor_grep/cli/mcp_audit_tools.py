@@ -36,8 +36,13 @@ if TYPE_CHECKING:
 else:
     _self = sys.modules["tensor_grep.cli.mcp_server"]
 
+from tensor_grep.cli._index_lock import (
+    WriteAuthorization,
+    WriteAuthorizationError,
+    write_authorizations,
+)
 from tensor_grep.cli.mcp_artifact_guard import (
-    _confine_artifact_write_path as _confine_artifact_write_path,
+    _authorize_artifact_write_path as _authorize_artifact_write_path,
 )
 from tensor_grep.cli.mcp_rewrite_tools import (
     _audit_diff_error as _audit_diff_error,
@@ -368,25 +373,26 @@ def tg_ruleset_scan(
         # downstream writer (_run_ast_scan_payload -> ... re-resolves once) sees the same
         # anchor-validated location this check validated (closes the discard/TOCTOU class).
         scan_root = Path(path).expanduser().resolve()
+        write_auths: list[WriteAuthorization] = []
         try:
             if write_baseline is not None:
-                write_baseline = str(
-                    _confine_artifact_write_path(
-                        write_baseline,
-                        scan_root,
-                        label="write_baseline",
-                        allowed_kinds=frozenset({"ruleset-scan-baseline"}),
-                    )
+                resolved_baseline, auth = _authorize_artifact_write_path(
+                    write_baseline,
+                    scan_root,
+                    label="write_baseline",
+                    allowed_kinds=frozenset({"ruleset-scan-baseline"}),
                 )
+                write_baseline = str(resolved_baseline)
+                write_auths.append(auth)
             if write_suppressions is not None:
-                write_suppressions = str(
-                    _confine_artifact_write_path(
-                        write_suppressions,
-                        scan_root,
-                        label="write_suppressions",
-                        allowed_kinds=frozenset({"ruleset-scan-suppressions"}),
-                    )
+                resolved_suppressions, auth = _authorize_artifact_write_path(
+                    write_suppressions,
+                    scan_root,
+                    label="write_suppressions",
+                    allowed_kinds=frozenset({"ruleset-scan-suppressions"}),
                 )
+                write_suppressions = str(resolved_suppressions)
+                write_auths.append(auth)
             # round-7 security (audit #81 #2): baseline_path/suppressions_path are READS that were
             # forwarded to the loader unconfined -- a file-existence + JSON-schema read-oracle over
             # any path reachable from any MCP client, even though the two WRITE siblings just above
@@ -408,24 +414,27 @@ def tg_ruleset_scan(
                 "Invalid scan path configuration", code="invalid_input", ruleset=ruleset, path=path
             )
         try:
-            payload = _self._run_ast_scan_payload(
-                project_cfg,
-                rules,
-                routing_reason=scan_routing_reason,
-                ruleset_name=scan_ruleset_name,
-                scan_globs=[glob] if glob else None,
-                scan_types=[file_type] if file_type else None,
-                scan_max_depth=max_depth,
-                allow_broad_generated_scan=allow_broad_generated_scan,
-                baseline_path=baseline_path,
-                write_baseline_path=write_baseline,
-                suppressions_path=suppressions_path,
-                write_suppressions_path=write_suppressions,
-                suppression_justification=justification,
-                include_evidence_snippets=include_evidence_snippets,
-                max_evidence_snippets_per_file=max_evidence_snippets_per_file,
-                max_evidence_snippet_chars=max_evidence_snippet_chars,
-            )
+            with write_authorizations(write_auths):
+                payload = _self._run_ast_scan_payload(
+                    project_cfg,
+                    rules,
+                    routing_reason=scan_routing_reason,
+                    ruleset_name=scan_ruleset_name,
+                    scan_globs=[glob] if glob else None,
+                    scan_types=[file_type] if file_type else None,
+                    scan_max_depth=max_depth,
+                    allow_broad_generated_scan=allow_broad_generated_scan,
+                    baseline_path=baseline_path,
+                    write_baseline_path=write_baseline,
+                    suppressions_path=suppressions_path,
+                    write_suppressions_path=write_suppressions,
+                    suppression_justification=justification,
+                    include_evidence_snippets=include_evidence_snippets,
+                    max_evidence_snippets_per_file=max_evidence_snippets_per_file,
+                    max_evidence_snippet_chars=max_evidence_snippet_chars,
+                )
+        except WriteAuthorizationError as exc:
+            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
         except BroadScanRefusedError as exc:
             _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
@@ -993,16 +1002,17 @@ def tg_review_bundle_create(
         # RESOLVED absolute path (not the raw candidate) below so create_review_bundle_json's own
         # re-resolve in audit_manifest.py sees the same anchor-validated location this check
         # validated (closes the discard/TOCTOU class).
+        output_auths: list[WriteAuthorization] = []
         if output_path is not None:
             try:
-                output_path = str(
-                    _confine_artifact_write_path(
-                        output_path,
-                        _mcp_root(),
-                        label="output_path",
-                        allowed_routing_reasons=frozenset({"review-bundle-create"}),
-                    )
+                resolved_output, output_auth = _authorize_artifact_write_path(
+                    output_path,
+                    _mcp_root(),
+                    label="output_path",
+                    allowed_routing_reasons=frozenset({"review-bundle-create"}),
                 )
+                output_path = str(resolved_output)
+                output_auths.append(output_auth)
             except PathConfinementError as exc:
                 return _review_bundle_error(
                     str(exc),
@@ -1021,14 +1031,18 @@ def tg_review_bundle_create(
             # M14: create_review_bundle_json serializes a flat CLI payload with no MCP envelope --
             # stamp at the tool seam (the error arms above already embed the const via
             # _review_bundle_error).
-            return _self._inject_mcp_contract_fields(
-                create_review_bundle_json(
+            with write_authorizations(output_auths):
+                bundle_json = create_review_bundle_json(
                     manifest_path,
                     scan_path=scan_path,
                     checkpoint_id=checkpoint_id,
                     previous_manifest=previous_manifest,
                     output_path=output_path,
                 )
+            return _self._inject_mcp_contract_fields(bundle_json)
+        except WriteAuthorizationError as exc:
+            return _review_bundle_error(
+                str(exc), code="invalid_input", routing_reason="review-bundle-create"
             )
         except FileNotFoundError as exc:
             _log_tool_exception("tg_review_bundle_create", exc)
