@@ -42,11 +42,11 @@ def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | No
 
 def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536) -> bool:
     """Bounded-memory exact byte search; carries len(needle)-1 bytes across chunk boundaries."""
-    if not needle:
-        return True
-    keep = len(needle) - 1
+    keep = max(len(needle) - 1, 0)
     tail = b""
-    with open(path, "rb") as handle:
+    with open(path, "rb") as handle:  # open FIRST: an empty needle must not hide an OSError
+        if not needle:
+            return True
         while chunk := handle.read(chunk_size):
             window = tail + chunk
             if needle in window:
@@ -207,7 +207,9 @@ class RustCoreBackend(ComputeBackend):
         no_ignore_vcs = False
 
         if config:
-            if config.ignore_case:
+            if config.ignore_case and not config.case_sensitive:
+                # explicit -s beats -i (rg last-wins; core/case_semantics.effective_ignore_case).
+                # smart case on this path is forwarded to rg separately, so it is not folded in.
                 ignore_case = True
             if config.fixed_strings:
                 fixed_strings = True

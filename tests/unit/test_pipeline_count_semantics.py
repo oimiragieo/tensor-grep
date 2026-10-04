@@ -140,6 +140,45 @@ def test_force_cpu_count_max_count_is_honoured_end_to_end(tmp_path):
     assert result.total_matches == 1
 
 
+@pytest.mark.parametrize(
+    "kw, expected",
+    [
+        ({"smart_case": True, "case_sensitive": True}, 0),  # explicit -s beats smart case
+        ({"ignore_case": True, "case_sensitive": True}, 0),  # rg last-wins: -i then -s => -s
+        ({"smart_case": True}, 1),  # lowercase query => insensitive
+        ({"ignore_case": True}, 1),
+        ({"case_sensitive": True}, 0),
+    ],
+)
+def test_count_cpu_fallback_honours_case_precedence_without_rg(tmp_path, kw, expected):
+    from tensor_grep.core.pipeline import RipgrepBackend
+
+    f = tmp_path / "a.txt"
+    f.write_text("FOO\n", encoding="utf-8")
+    cfg = SearchConfig(query_pattern="foo", count=True, **kw)
+    with patch.object(RipgrepBackend, "is_available", return_value=False):
+        p = Pipeline(force_cpu=False, config=cfg)
+        assert p.selected_backend_reason in {
+            "count_python_cpu_semantics",
+            "count_rust_fast_path",
+        }
+        result = p.backend.search(str(f), "foo", cfg)
+    assert result.total_matches == expected
+
+
+def test_effective_ignore_case_precedence_table():
+    from tensor_grep.core.case_semantics import effective_ignore_case
+
+    assert effective_ignore_case(None, "foo") is False
+    assert effective_ignore_case(SearchConfig(smart_case=True), "foo") is True
+    assert effective_ignore_case(SearchConfig(smart_case=True), "Foo") is False
+    assert effective_ignore_case(SearchConfig(smart_case=True, case_sensitive=True), "foo") is False
+    assert (
+        effective_ignore_case(SearchConfig(ignore_case=True, case_sensitive=True), "foo") is False
+    )
+    assert effective_ignore_case(SearchConfig(ignore_case=True), "Foo") is True
+
+
 @pytest.mark.parametrize("force_cpu", [False, True])
 def test_ltl_count_keeps_cpu_ltl_semantics(tmp_path, force_cpu):
     f = tmp_path / "a.txt"

@@ -36,16 +36,75 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
 
 
 def _pattern_semantics_flags(config: SearchConfig | None) -> list[str]:
-    """The rg flags that decide WHAT a pattern matches: case, fixed-vs-regex, engine, -w/-x.
+    """Every rg flag that decides WHETHER A LINE MATCHES (pattern semantics + input decoding).
 
     Single source of truth shared by ``RipgrepBackend._build_cmd`` and the binary-file match
-    check in ``rust_backend`` so the two can never drift. Relative order inside each group is
-    what rg's last-flag-wins semantics depend on (``-i`` then ``-s`` means case-sensitive).
-    Raises ``BackendExecutionError`` for an unsupported ``--engine`` value.
+    check in ``rust_backend`` so the two can never drift. Order encodes rg's last-flag-wins
+    precedence (``-i`` then ``-s`` means case-sensitive; ``--auto-hybrid-regex`` precedes
+    ``-P``/``--no-pcre2``). Raises ``BackendExecutionError`` for an unsupported ``--engine``.
+
+    CENSUS of the ``SearchConfig`` fields ``_build_cmd`` reads (asserted by
+    tests/unit/test_ripgrep_backend_field_coverage.py):
+
+    * MATCHING SEMANTICS -- forwarded here: invert_match, no_invert_match, stop_on_nonmatch,
+      null_data, dfa_size_limit, regex_size_limit, crlf, no_crlf, encoding, no_encoding,
+      multiline, no_multiline, multiline_dotall, no_multiline_dotall, auto_hybrid_regex,
+      no_auto_hybrid_regex, unicode, no_unicode, pcre2_unicode, no_pcre2_unicode, ignore_case,
+      case_sensitive, smart_case, engine, word_regexp, line_regexp, fixed_strings,
+      no_fixed_strings, pcre2, no_pcre2.
+    * OUTPUT-ONLY / TRAVERSAL -- stay in ``_build_cmd``: every ignore*/hidden/follow/glob/type/
+      sort/threads/max_depth/max_filesize/one_file_system flag (which FILES are searched),
+      count/count_matches/files_*/only_matching/replace/passthru/context/max_count/max_columns/
+      color/heading/line_number/column/vimgrep/byte_offset/with_filename/trim/stats/debug/...
+      (how results are PRINTED or how many), text/binary/no_text/no_binary (the binary check
+      always passes ``-a``), json/no_json, mmap, list_files.
+    * KNOWN GAPS of the binary check (input is not the pattern string): ``pre``/``pre_glob``/
+      ``search_zip`` (preprocessors would execute on a file we only probe) and the extra
+      pattern sources ``regexp``/``file_patterns`` (the check receives ``pattern`` directly).
     """
     flags: list[str] = []
     if not config:
         return flags
+    if config.invert_match:
+        flags.append("-v")
+    if config.no_invert_match:
+        flags.append("--no-invert-match")
+    if config.stop_on_nonmatch:
+        flags.append("--stop-on-nonmatch")
+    if config.null_data:
+        flags.append("--null-data")
+    if config.dfa_size_limit:
+        flags.extend(["--dfa-size-limit", str(config.dfa_size_limit)])
+    if config.regex_size_limit:
+        flags.extend(["--regex-size-limit", str(config.regex_size_limit)])
+    if config.crlf:
+        flags.append("--crlf")
+    if config.no_crlf:
+        flags.append("--no-crlf")
+    if config.encoding != "auto":
+        flags.extend(["--encoding", config.encoding])
+    if config.no_encoding:
+        flags.append("--no-encoding")
+    if config.multiline:
+        flags.append("--multiline")
+    if config.no_multiline:
+        flags.append("--no-multiline")
+    if config.multiline_dotall:
+        flags.append("--multiline-dotall")
+    if config.no_multiline_dotall:
+        flags.append("--no-multiline-dotall")
+    if config.auto_hybrid_regex:
+        flags.append("--auto-hybrid-regex")
+    if config.no_auto_hybrid_regex:
+        flags.append("--no-auto-hybrid-regex")
+    if config.unicode:
+        flags.append("--unicode")
+    if config.pcre2_unicode:
+        flags.append("--pcre2-unicode")
+    if config.no_pcre2_unicode:
+        flags.append("--no-pcre2-unicode")
+    if config.no_unicode:
+        flags.append("--no-unicode")
     if config.ignore_case:
         flags.append("-i")
     if config.case_sensitive:
@@ -591,50 +650,10 @@ class RipgrepBackend(ComputeBackend):
         # `config`), but worth flagging so `config=None` is never mistaken for "injection
         # covered" -- it means "no SearchConfig-derived flags at all were forwarded".
         if config:
-            if config.invert_match:
-                cmd.append("-v")
-            if config.no_invert_match:
-                cmd.append("--no-invert-match")
-            if config.stop_on_nonmatch:
-                cmd.append("--stop-on-nonmatch")
-            if config.null_data:
-                cmd.append("--null-data")
-            if config.dfa_size_limit:
-                cmd.extend(["--dfa-size-limit", str(config.dfa_size_limit)])
-            if config.regex_size_limit:
-                cmd.extend(["--regex-size-limit", str(config.regex_size_limit)])
-            if config.crlf:
-                cmd.append("--crlf")
-            if config.no_crlf:
-                cmd.append("--no-crlf")
-            if config.encoding != "auto":
-                cmd.extend(["--encoding", config.encoding])
-            if config.no_encoding:
-                cmd.append("--no-encoding")
             if not config.mmap:
                 cmd.append("--no-mmap")
             if config.no_mmap:
                 cmd.append("--no-mmap")
-            if config.multiline:
-                cmd.append("--multiline")
-            if config.no_multiline:
-                cmd.append("--no-multiline")
-            if config.multiline_dotall:
-                cmd.append("--multiline-dotall")
-            if config.no_multiline_dotall:
-                cmd.append("--no-multiline-dotall")
-            if config.auto_hybrid_regex:
-                cmd.append("--auto-hybrid-regex")
-            if config.no_auto_hybrid_regex:
-                cmd.append("--no-auto-hybrid-regex")
-            if config.unicode:
-                cmd.append("--unicode")
-            if config.pcre2_unicode:
-                cmd.append("--pcre2-unicode")
-            if config.no_pcre2_unicode:
-                cmd.append("--no-pcre2-unicode")
-            if config.no_unicode:
-                cmd.append("--no-unicode")
             if config.ignore:
                 cmd.append("--ignore")
             if config.no_ignore:

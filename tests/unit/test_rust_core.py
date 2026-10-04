@@ -597,6 +597,50 @@ def test_plain_literal_binary_check_missing_file_fails_closed(tmp_path):
         )
 
 
+def test_empty_literal_on_missing_file_fails_closed(tmp_path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    with pytest.raises(rb.BackendExecutionError):
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(tmp_path / "nonexistent.bin"), "", SearchConfig(fixed_strings=True)
+        )
+    with pytest.raises(OSError):
+        rb._file_contains_literal(str(tmp_path / "nonexistent.bin"), b"")
+
+
+def test_empty_literal_on_existing_file_is_true(tmp_path):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "b.bin"
+    f.write_bytes(b"\x00foo\n")
+    assert rb.RustCoreBackend._binary_file_matches_pattern(
+        str(f), "", SearchConfig(fixed_strings=True)
+    )
+
+
+def test_empty_literal_permission_error_fails_closed(tmp_path):
+    import os
+    import sys
+
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    if sys.platform.startswith("win") or (hasattr(os, "geteuid") and os.geteuid() == 0):
+        pytest.skip("chmod 000 is not enforced on Windows / as root")
+    f = tmp_path / "locked.bin"
+    f.write_bytes(b"\x00foo\n")
+    f.chmod(0)
+    try:
+        with pytest.raises(rb.BackendExecutionError):
+            rb.RustCoreBackend._binary_file_matches_pattern(
+                str(f), "", SearchConfig(fixed_strings=True)
+            )
+    finally:
+        f.chmod(0o600)
+
+
 def test_plain_literal_binary_check_permission_error_fails_closed(tmp_path):
     import os
     import sys
@@ -661,8 +705,39 @@ _PARITY_MATRIX = [
 ]
 
 
-@pytest.mark.parametrize("pattern, kw", _PARITY_MATRIX)
-def test_binary_check_verdict_matches_ripgrep_backend(tmp_path, pattern, kw):
+_E_ACUTE = b"\xc3\xa9\n"
+# (pattern, config kwargs, file content) -- one config per flag GROUP that decides whether a line
+# matches: engine group, unicode, crlf, null-data, multiline, size limits, invert, stop-on-nonmatch.
+_PARITY_CONTENT_MATRIX = [
+    ("(?=foo)foo", {"auto_hybrid_regex": True}, b"foo\n"),
+    ("(?=foo)foo", {"auto_hybrid_regex": True, "no_auto_hybrid_regex": True}, b"foo\n"),
+    (r"\w+", {"no_unicode": True}, _E_ACUTE),
+    (r"\w+", {"no_unicode": True, "unicode": True}, _E_ACUTE),
+    (r"\w+", {}, _E_ACUTE),
+    ("(?=\\w)\\w+", {"pcre2": True, "no_pcre2_unicode": True}, _E_ACUTE),
+    ("(?=\\w)\\w+", {"pcre2": True, "pcre2_unicode": True}, _E_ACUTE),
+    ("foo$", {"crlf": True}, b"foo\r\n"),
+    ("foo$", {"crlf": True, "no_crlf": True}, b"foo\r\n"),
+    ("^foo$", {"null_data": True}, b"foo\n"),
+    ("foo", {"invert_match": True}, b"foo\nbar\n"),
+    ("foo", {"invert_match": True, "no_invert_match": True}, b"foo\nbar\n"),
+    ("foo", {"stop_on_nonmatch": True}, b"bar\nfoo\n"),
+    (r"foo\nbar", {"multiline": True}, b"foo\nbar\n"),
+    (r"foo\nbar", {"multiline": True, "no_multiline": True}, b"foo\nbar\n"),
+    ("foo.bar", {"multiline": True, "multiline_dotall": True}, b"foo\nbar\n"),
+    (
+        "foo.bar",
+        {"multiline": True, "multiline_dotall": True, "no_multiline_dotall": True},
+        b"foo\nbar\n",
+    ),
+    ("foo", {"dfa_size_limit": "1"}, b"foo\n"),
+    ("foo", {"regex_size_limit": "1"}, b"foo\n"),
+]
+_PARITY_CASES = [(p, kw, b"foo\n") for p, kw in _PARITY_MATRIX] + _PARITY_CONTENT_MATRIX
+
+
+@pytest.mark.parametrize("pattern, kw, content", _PARITY_CASES)
+def test_binary_check_verdict_matches_ripgrep_backend(tmp_path, pattern, kw, content):
     # One source of truth: the binary check and RipgrepBackend must agree on the same bytes.
     _rg_pcre2_or_skip()
     from tensor_grep.backends import rust_backend as rb
@@ -670,9 +745,9 @@ def test_binary_check_verdict_matches_ripgrep_backend(tmp_path, pattern, kw):
     from tensor_grep.core.config import SearchConfig
 
     text_file = tmp_path / "t.txt"
-    text_file.write_bytes(b"foo\n")
+    text_file.write_bytes(content)
     binary_file = tmp_path / "b.bin"
-    binary_file.write_bytes(b"\x00\nfoo\n")  # NUL on its own line
+    binary_file.write_bytes(b"\x00\n" + content)  # NUL on its own line
     cfg = SearchConfig(**kw)
 
     def verdict(call):
