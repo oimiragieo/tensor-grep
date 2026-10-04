@@ -1991,7 +1991,7 @@ def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return
 
-    flags = case_regex_flags(config, pattern)
+    flags = case_regex_flags(config, pattern, strict=False)
 
     candidate = pattern
     if config.line_regexp:

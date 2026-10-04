@@ -23,7 +23,7 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "tensor_grep"
 _FIELDS = {"ignore_case", "smart_case"}
 _ALLOWED = {
     # the resolver itself
-    ("core/case_semantics.py", "effective_ignore_case"),
+    ("core/case_semantics.py", "*"),  # every function in the resolver module
     # rg flag EMISSION: rg itself resolves -i/-s/-S by last-flag-wins (the helper orders them)
     ("backends/ripgrep_backend.py", "_pattern_semantics_flags"),
     # routing predicate "does the native count lack an input for this flag" -- not a case decision
@@ -67,7 +67,7 @@ def _violations() -> list[str]:
             if attr is None:
                 continue
             fn = owner.get(id(node), "<module>")
-            if (rel, fn) not in _ALLOWED:
+            if (rel, fn) not in _ALLOWED and (rel, "*") not in _ALLOWED:
                 found.append(f"{rel}:{node.lineno} reads .{attr} in {fn}()")
     return found
 
@@ -90,7 +90,13 @@ def test_allowlist_has_no_stale_entries():
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr in _FIELDS:
                 seen.add((rel, owner.get(id(node), "<module>")))
-    assert not (_ALLOWED - seen), sorted(_ALLOWED - seen)
+    seen_files = {rel for rel, _ in seen}
+    stale = {
+        (rel, fn)
+        for rel, fn in _ALLOWED
+        if (fn == "*" and rel not in seen_files) or (fn != "*" and (rel, fn) not in seen)
+    }
+    assert not stale, sorted(stale)
 
 
 def test_scan_detects_the_old_expression():
