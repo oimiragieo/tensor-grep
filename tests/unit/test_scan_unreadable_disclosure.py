@@ -277,7 +277,9 @@ def test_same_language_native_then_wrapper_still_discloses(tmp_path, monkeypatch
         ("yaml", "bad.yml", b"# caf\xe9\na: 1\n"),
         ("json", "bad.json", b'{"a": "caf\xe9"}\n'),
         ("solidity", "bad.sol", b"// caf\xe9\ncontract A {}\n"),
-        ("hcl", "bad.tf", b"# caf\xe9\na = 1\n"),
+        ("hcl", "bad.hcl", b"# caf\xe9\na = 1\n"),
+        ("bash", "bad.tmux", b"# caf\xe9\necho 1\n"),
+        ("bash", "install.sh.in", b"# caf\xe9\necho 1\n"),
         ("nix", "bad.nix", b"# caf\xe9\n{}\n"),
     ],
 )
@@ -302,3 +304,88 @@ def test_non_utf8_ruby_file_under_a_python_only_rule_is_not_flagged(tmp_path, mo
 def test_non_utf8_kotlin_file_under_a_ruby_rule_is_not_flagged(tmp_path, monkeypatch):
     (tmp_path / "bad.kt").write_bytes(b"// caf\xe9\n")
     assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch, language="ruby")
+
+
+def test_non_utf8_header_under_a_cpp_only_rule_is_not_flagged(tmp_path, monkeypatch):
+    # ast-grep's cpp extensions exclude .h (it belongs to c); flagging it is a false `partial`.
+    (tmp_path / "bad.h").write_bytes(b"// caf\xe9\n")
+    (tmp_path / "bad.hxx").write_bytes(b"// caf\xe9\n")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch, language="cpp")
+    # positive control: a real cpp extension IS flagged
+    (tmp_path / "bad.cpp").write_bytes(b"// caf\xe9\n")
+    payload = _ast_scan(tmp_path, monkeypatch, language="cpp")
+    assert [s for s in payload["unreadable_paths"]["sample"] if s.endswith("bad.cpp")]
+    assert not [s for s in payload["unreadable_paths"]["sample"] if s.endswith((".h", ".hxx"))]
+
+
+def test_non_utf8_header_under_a_c_rule_is_flagged(tmp_path, monkeypatch):
+    (tmp_path / "bad.h").write_bytes(b"// caf\xe9\n")
+    payload = _ast_scan(tmp_path, monkeypatch, language="c")
+    assert any(s.endswith("bad.h") for s in payload["unreadable_paths"]["sample"])
+
+
+def test_non_utf8_terraform_file_under_an_hcl_rule_is_not_flagged(tmp_path, monkeypatch):
+    (tmp_path / "bad.tf").write_bytes(b"# caf\xe9\n")
+    (tmp_path / "bad.tfvars").write_bytes(b"# caf\xe9\n")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch, language="hcl")
+
+
+def test_ast_grep_extension_table_is_pinned_to_the_official_reference():
+    # Source: https://ast-grep.github.io/reference/languages.html ("File Extension" column),
+    # fetched 2026-10-04. Editing the table must be a deliberate change to this pin too.
+    from tensor_grep.cli import ast_scan
+
+    expected = {
+        "bash": {
+            ".bash",
+            ".bats",
+            ".cgi",
+            ".command",
+            ".env",
+            ".fcgi",
+            ".ksh",
+            ".sh",
+            ".tmux",
+            ".tool",
+            ".zsh",
+        },
+        "c": {".c", ".h"},
+        "cpp": {".cc", ".hpp", ".cpp", ".c++", ".hh", ".cxx", ".cu", ".ino"},
+        "csharp": {".cs"},
+        "css": {".css"},
+        "elixir": {".ex", ".exs"},
+        "go": {".go"},
+        "haskell": {".hs"},
+        "hcl": {".hcl"},
+        "html": {".html", ".htm", ".xhtml"},
+        "java": {".java"},
+        "javascript": {".cjs", ".js", ".mjs", ".jsx"},
+        "json": {".json"},
+        "kotlin": {".kt", ".ktm", ".kts"},
+        "lua": {".lua"},
+        "markdown": {".markdown", ".md"},
+        "nix": {".nix"},
+        "php": {".php"},
+        "python": {".py", ".py3", ".pyi", ".bzl"},
+        "ruby": {".rb", ".rbw", ".gemspec"},
+        "rust": {".rs"},
+        "scala": {".scala", ".sc", ".sbt"},
+        "solidity": {".sol"},
+        "swift": {".swift"},
+        "tsx": {".tsx"},
+        "typescript": {".ts", ".cts", ".mts"},
+        "yaml": {".yml", ".yaml"},
+    }
+    actual = {k: set(v) for k, v in ast_scan._AST_GREP_LANGUAGE_SUFFIXES.items()}
+    assert actual == expected
+    assert ast_scan._AST_GREP_LANGUAGE_NAME_ENDINGS == {"bash": (".sh.in",)}
+
+
+def test_ast_grep_language_applies_matches_double_suffix_and_markdown():
+    from tensor_grep.cli.ast_scan import _ast_grep_language_applies
+
+    assert _ast_grep_language_applies({"bash"}, "dir/install.sh.in")
+    assert not _ast_grep_language_applies({"bash"}, "dir/data.in")
+    assert _ast_grep_language_applies({"markdown"}, "README.md")
+    assert _ast_grep_language_applies({"markdown"}, "x.MARKDOWN")
+    assert not _ast_grep_language_applies({"python"}, "README.md")

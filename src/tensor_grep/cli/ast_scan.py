@@ -696,10 +696,13 @@ def _regex_rule_targets_file(rule_language: str, file_path: str) -> bool:
     return file_language == normalize_ast_language(rule_language, default=file_language)
 
 
-# Extensions ast-grep itself applies per language (its builtin language table). The native
-# symbol-graph registry behind `_target_language_for_path` knows only ~10 languages, so on its own
-# it silently omits unreadable Ruby/Kotlin/Swift/... files from the disclosure. Keyed by the
-# normalized names `normalize_ast_language` produces. Mirrors ast-grep, not tg's own parsers.
+# Extensions ast-grep itself applies per language. SOURCE: ast-grep's official language reference,
+# https://ast-grep.github.io/reference/languages.html ("File Extension" column), fetched
+# 2026-10-04 -- keep it EXACT: an extra extension flags a file ast-grep never scans (false
+# `partial`), a missing one hides an unreadable file. The native symbol-graph registry behind
+# `_target_language_for_path` knows only ~10 languages and also maps `.h` to cpp, so it cannot be
+# the scope for a wrapper rule. Keyed by the names `normalize_ast_language` produces (the
+# `markdown` entry has no tg alias; it is kept so the table equals the official one).
 _AST_GREP_LANGUAGE_SUFFIXES: dict[str, frozenset[str]] = {
     "bash": frozenset({
         ".bash",
@@ -710,23 +713,25 @@ _AST_GREP_LANGUAGE_SUFFIXES: dict[str, frozenset[str]] = {
         ".fcgi",
         ".ksh",
         ".sh",
+        ".tmux",
         ".tool",
         ".zsh",
     }),
     "c": frozenset({".c", ".h"}),
-    "cpp": frozenset({".cc", ".hpp", ".cpp", ".c++", ".hh", ".cxx", ".cu", ".ino", ".h", ".hxx"}),
+    "cpp": frozenset({".cc", ".hpp", ".cpp", ".c++", ".hh", ".cxx", ".cu", ".ino"}),
     "csharp": frozenset({".cs"}),
     "css": frozenset({".css"}),
     "elixir": frozenset({".ex", ".exs"}),
     "go": frozenset({".go"}),
     "haskell": frozenset({".hs"}),
-    "hcl": frozenset({".hcl", ".tf", ".tfvars"}),
+    "hcl": frozenset({".hcl"}),
     "html": frozenset({".html", ".htm", ".xhtml"}),
     "java": frozenset({".java"}),
-    "javascript": frozenset({".js", ".mjs", ".cjs", ".jsx"}),
+    "javascript": frozenset({".cjs", ".js", ".mjs", ".jsx"}),
     "json": frozenset({".json"}),
     "kotlin": frozenset({".kt", ".ktm", ".kts"}),
     "lua": frozenset({".lua"}),
+    "markdown": frozenset({".markdown", ".md"}),
     "nix": frozenset({".nix"}),
     "php": frozenset({".php"}),
     "python": frozenset({".py", ".py3", ".pyi", ".bzl"}),
@@ -739,30 +744,47 @@ _AST_GREP_LANGUAGE_SUFFIXES: dict[str, frozenset[str]] = {
     "typescript": frozenset({".ts", ".cts", ".mts"}),
     "yaml": frozenset({".yml", ".yaml"}),
 }
+# Official double-suffix entries: `Path.suffix` of `x.sh.in` is `.in`, so match the file name.
+_AST_GREP_LANGUAGE_NAME_ENDINGS: dict[str, tuple[str, ...]] = {"bash": (".sh.in",)}
+
+
+def _ast_grep_language_applies(languages: set[str], path: str) -> bool:
+    """Whether ast-grep would parse ``path`` for a rule in one of ``languages``.
+
+    Only languages in the official table are considered (False when there are none).
+    """
+    known = [language for language in languages if language in _AST_GREP_LANGUAGE_SUFFIXES]
+    name = Path(path).name.lower()
+    suffix = Path(path).suffix.lower()
+    for language in known:
+        if suffix in _AST_GREP_LANGUAGE_SUFFIXES[language]:
+            return True
+        if name.endswith(_AST_GREP_LANGUAGE_NAME_ENDINGS.get(language, ())):
+            return True
+    return False
 
 
 def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> list[str]:
     """Files an AST rule would scan that are not valid UTF-8 (ast-grep skips them silently).
 
-    "Would scan" is "could this rule's language apply to this file": the ast-grep extension table
-    OR the native symbol-graph classification, not just the latter.
+    "Would scan" is "could this rule's language apply to this file": ast-grep's own extension
+    table for the languages it lists, the native symbol-graph classification only for any
+    language outside that table.
     """
     import codecs
 
     from tensor_grep.cli.repo_map import _target_language_for_path
 
-    wanted = set(ast_languages)
-    if "tsx" in wanted:
-        wanted.add("typescript")  # _target_language_for_path maps .tsx -> "typescript"
-    wanted_suffixes: set[str] = set()
-    for language in ast_languages:
-        wanted_suffixes.update(_AST_GREP_LANGUAGE_SUFFIXES.get(language, ()))
+    unlisted = {
+        language for language in ast_languages if language not in _AST_GREP_LANGUAGE_SUFFIXES
+    }
     bad: list[str] = []
     for current_file in files:
-        if (
-            _target_language_for_path(current_file) not in wanted
-            and Path(current_file).suffix.lower() not in wanted_suffixes
-        ):
+        applies = _ast_grep_language_applies(ast_languages, current_file)
+        if not applies and unlisted:
+            # Languages outside ast-grep's table: native classification only.
+            applies = _target_language_for_path(current_file) in unlisted
+        if not applies:
             continue
         decoder = codecs.getincrementaldecoder("utf-8")()
         try:
