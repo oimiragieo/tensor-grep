@@ -8,7 +8,7 @@ from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
+from tensor_grep.core.result import MatchLine, SearchResult
 
 
 def _decode_rg_field(field: dict[str, object] | None) -> str:
@@ -51,18 +51,37 @@ def _field_bytes(field: dict[str, object] | None) -> bytes | None:
     return None
 
 
-def _strict_line_text(data_match: dict[str, object]) -> str | None:
+def strip_record_terminator(raw: bytes, delim: bytes = b"\n") -> bytes:
+    """Strip AT MOST ONE trailing ``delim`` (the CONFIGURED record terminator) from ``raw``.
+
+    The terminator is LF normally and NUL under ``--null-data``; under ``--null-data`` an LF is
+    CONTENT and is never stripped, and a NUL is never content. Everything else (including a CRLF
+    file's own ``\r``) is left byte-for-byte intact. Every place the rg backend turns a
+    record into text goes through here.
+    """
+    return raw[: -len(delim)] if delim and raw.endswith(delim) else raw
+
+
+def _lossy_record_text(field: dict[str, object] | None, delim: bytes) -> str:
+    """The record text for ``MatchLine.text``: terminator stripped, undecodable bytes -> U+FFFD."""
+    raw = _field_bytes(field)
+    if raw is None:
+        return ""
+    return strip_record_terminator(raw, delim).decode("utf-8", errors="replace")
+
+
+def _strict_line_text(data_match: dict[str, object], delim: bytes = b"\n") -> str | None:
     """The record's line decoded STRICTLY from rg's text-or-bytes field (no U+FFFD, ever)."""
     raw = _field_bytes(data_match.get("lines"))  # type: ignore[arg-type]
     if raw is None:
         return None
     try:
-        return strip_line_terminator(raw.decode("utf-8"))
+        return strip_record_terminator(raw, delim).decode("utf-8")
     except UnicodeDecodeError:
         return None
 
 
-def _replaced_line_text(data_match: dict[str, object]) -> str | None:
+def _replaced_line_text(data_match: dict[str, object], delim: bytes = b"\n") -> str | None:
     """rg's replaced line, assembled from the line's ORIGINAL bytes and rg's own replacements.
 
     rg's offsets index the raw line bytes, so substitution happens on bytes; the result is decoded
@@ -84,7 +103,7 @@ def _replaced_line_text(data_match: dict[str, object]) -> str | None:
         cursor = end
     pieces.append(raw[cursor:])
     try:
-        return strip_line_terminator(b"".join(pieces).decode("utf-8"))
+        return strip_record_terminator(b"".join(pieces), delim).decode("utf-8")
     except UnicodeDecodeError:
         return None
 
@@ -267,6 +286,7 @@ class RipgrepBackend(ComputeBackend):
                 self._parse_ndjson_matches(
                     result.stdout,
                     file_path,
+                    delim=b"\0" if config is not None and config.null_data else b"\n",
                     replacing=config is not None and config.replace_str is not None,
                     transforming=config is not None
                     and (config.replace_str is not None or config.only_matching),
@@ -338,6 +358,7 @@ class RipgrepBackend(ComputeBackend):
                 self._parse_ndjson_matches(
                     partial_stdout,
                     file_path,
+                    delim=b"\0" if config is not None and config.null_data else b"\n",
                     replacing=config is not None and config.replace_str is not None,
                     transforming=config is not None
                     and (config.replace_str is not None or config.only_matching),
@@ -377,6 +398,7 @@ class RipgrepBackend(ComputeBackend):
         replacing: bool = False,
         transforming: bool = False,
         inverted: bool = False,
+        delim: bytes = b"\n",
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -405,11 +427,12 @@ class RipgrepBackend(ComputeBackend):
                     line_number = data_match.get("line_number", 0)
                     # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
                     # not lines.text — reading only .text produced a phantom empty match.
-                    # strip_line_terminator (not .rstrip("\n\r")): rg's own "lines" field
+                    # strip_record_terminator (one configured delimiter, never .rstrip("\n\r")):
+                    # rg's own "lines" field
                     # includes the source line's real trailing `\r` for a CRLF file (verified
                     # directly against `rg.exe --json`) -- `.rstrip("\n\r")` ate that `\r` too,
                     # a genuine tg-vs-rg `--json` divergence task #262 uncovered.
-                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
+                    text = _lossy_record_text(data_match.get("lines"), delim)
 
                     _path_obj = data_match.get("path", {})
                     path_str = _decode_rg_field(_path_obj)
@@ -431,10 +454,10 @@ class RipgrepBackend(ComputeBackend):
                             file=path_str,
                             submatches=tuple(_subs) if _subs else None,
                             replaced_text=(
-                                _replaced_line_text(data_match)
+                                _replaced_line_text(data_match, delim)
                                 if replacing
                                 else (
-                                    _strict_line_text(data_match)
+                                    _strict_line_text(data_match, delim)
                                     if inverted and transforming
                                     else None
                                 )
@@ -457,7 +480,7 @@ class RipgrepBackend(ComputeBackend):
                 elif data.get("type") == "context":
                     data_match = data["data"]
                     line_number = data_match.get("line_number", 0)
-                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
+                    text = _lossy_record_text(data_match.get("lines"), delim)
                     _path_obj = data_match.get("path", {})
                     path_str = _decode_rg_field(_path_obj)
                     if "text" not in _path_obj and isinstance(file_path, str):
@@ -469,7 +492,9 @@ class RipgrepBackend(ComputeBackend):
                             file=path_str,
                             # rg prints context lines unchanged under -o/-r; decode STRICTLY
                             # from the original bytes (None when not valid UTF-8 -> refused)
-                            replaced_text=(_strict_line_text(data_match) if transforming else None),
+                            replaced_text=(
+                                _strict_line_text(data_match, delim) if transforming else None
+                            ),
                             rg_kind="context",
                         )
                     )

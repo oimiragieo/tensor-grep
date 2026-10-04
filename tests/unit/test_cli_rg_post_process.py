@@ -581,6 +581,59 @@ def test_json_null_data_uses_nul_as_the_record_delimiter(tmp_path):
     assert spanning == [(1, 1, "foo\nbar")]
 
 
+def _rg_record_texts(path, pattern, flags, term: bytes):
+    out = _rg_run(pattern, path, *flags).stdout
+    chunks = out.split(term)
+    if chunks and chunks[-1] == b"":
+        chunks.pop()
+    return [c.decode() for c in chunks]
+
+
+_NUL = b"\x00"
+_RECORD_CASES = [
+    # (id, content, pattern, flags) -- each run with --null-data (NUL) and as an LF control
+    ("replace-terminated", b"foo\x00", "foo", ["-r", "X"]),
+    ("replace-unterminated-lf", b"foo\n", "foo", ["-r", "X"]),
+    ("inverted-terminated", b"bar\x00baz\x00", "foo", ["-v", "-o"]),
+    ("inverted-unterminated-lf", b"bar\n", "foo", ["-v", "-o"]),
+    ("context-terminated", b"before\x00foo\x00after\x00", "foo", ["-r", "X", "-C", "1"]),
+    ("context-unterminated-lf", b"a\x00foo\n", "foo", ["-r", "X", "-C", "1"]),
+]
+_LF_CONTROLS = [
+    ("replace", b"foo\n", "foo", ["-r", "X"]),
+    ("inverted", b"bar\nbaz\n", "foo", ["-v", "-o"]),
+    ("context", b"before\nfoo\nafter\n", "foo", ["-r", "X", "-C", "1"]),
+]
+
+
+@pytest.mark.parametrize(
+    "name, content, pattern, flags", _RECORD_CASES, ids=[c[0] for c in _RECORD_CASES]
+)
+def test_json_null_data_record_terminator_is_stripped_but_lf_content_is_kept(
+    tmp_path, name, content, pattern, flags
+):
+    # round 10: the configured delimiter (NUL) was ignored for replacement/context/inverted
+    # records: LF content was deleted and the NUL terminator leaked into the text
+    f = tmp_path / "a.txt"
+    f.write_bytes(content)
+    expected = _rg_record_texts(f, pattern, ["--null-data", *flags], _NUL)
+    proc, doc = _json_matches("--null-data", *flags, pattern, str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [m["text"] for m in doc["matches"]] == expected, (name, expected)
+
+
+@pytest.mark.parametrize(
+    "name, content, pattern, flags", _LF_CONTROLS, ids=[c[0] for c in _LF_CONTROLS]
+)
+def test_json_lf_records_control(tmp_path, name, content, pattern, flags):
+    f = tmp_path / "a.txt"
+    f.write_bytes(content)
+    expected = _rg_record_texts(f, pattern, flags, b"\n")
+    proc, doc = _json_matches(*flags, pattern, str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [m["text"] for m in doc["matches"]] == expected
+
+
 def test_json_context_records_are_marked_context_and_carry_no_column(tmp_path):
     # audit 3: context records must not get match prefixes / columns
     f = tmp_path / "a.txt"
