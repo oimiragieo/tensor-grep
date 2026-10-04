@@ -1429,3 +1429,145 @@ def test_mcp_plural_path_confinement_ratchet(
         f"{tool_name}.{param_name} rejected an all-in-root list as if an element were "
         f"out-of-root (response: {accepted[:500]!r}); the confinement anchor is probably wrong."
     )
+
+
+@pytest.mark.parametrize(
+    "target", ["a.py", ".git/config", ".GIT/config", "notes.txt", "other.json"]
+)
+def test_ruleset_scan_write_baseline_refuses_non_artifact_target(tmp_path, monkeypatch, target):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    victim = tmp_path / target
+    victim.parent.mkdir(parents=True, exist_ok=True)
+    victim.write_bytes(b"{}" if target == "other.json" else b"ORIGINAL\n")
+    before = victim.read_bytes()
+    out = json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline=target))
+    assert out["error"]["code"] == "invalid_input"
+    assert "must stay within" not in out["error"]["message"]
+    assert victim.read_bytes() == before
+
+
+def test_ruleset_scan_new_json_baseline_is_still_allowed(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="base.json")
+    )
+    assert "error" not in out
+    written = json.loads((tmp_path / "base.json").read_text(encoding="utf-8"))
+    assert written["kind"] == "ruleset-scan-baseline"
+
+
+def test_ruleset_scan_write_suppressions_and_bundle_refuse_source_overwrite(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    before = (tmp_path / "a.py").read_bytes()
+    sup = json.loads(
+        mcp_server.tg_ruleset_scan(
+            "secrets-basic", path=".", write_suppressions="a.py", justification="x"
+        )
+    )
+    assert sup["error"]["code"] == "invalid_input"
+    bundle = json.loads(
+        mcp_server.tg_review_bundle_create(manifest_path=str(manifest), output_path="a.py")
+    )
+    assert bundle["error"]["code"] == "invalid_input"
+    # Non-vacuous: the refusal must come from the artifact gate, not unrelated manifest validation.
+    assert (
+        "must be a new .json file or an existing tensor-grep artifact"
+        in (bundle["error"]["message"])
+    )
+    assert (tmp_path / "a.py").read_bytes() == before
+
+
+@pytest.mark.parametrize("body", ['{"kind": []}', '{"routing_reason": {"x": 1}}', "[]", '"s"'])
+def test_existing_json_with_non_string_discriminator_is_refused_not_crash(
+    tmp_path, monkeypatch, body
+):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    victim = tmp_path / "weird.json"
+    victim.write_text(body, encoding="utf-8")
+    out = json.loads(
+        mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline="weird.json")
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_text(encoding="utf-8") == body
+
+
+_NINE_MIB = 9 * 1024 * 1024
+
+
+def _scan_with_baseline_target(tmp_path, monkeypatch, name):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    return json.loads(mcp_server.tg_ruleset_scan("secrets-basic", path=".", write_baseline=name))
+
+
+def test_large_baseline_with_kind_as_last_key_is_accepted_for_rerun(tmp_path, monkeypatch):
+    victim = tmp_path / "big.json"
+    padding = '"' + ("p" * 64) + '"'
+    count = _NINE_MIB // (len(padding) + 2)
+    victim.write_text(
+        '{"findings": [' + ", ".join([padding] * count) + '], "kind": "ruleset-scan-baseline"}',
+        encoding="utf-8",
+    )
+    assert victim.stat().st_size >= _NINE_MIB
+    out = _scan_with_baseline_target(tmp_path, monkeypatch, "big.json")
+    assert "error" not in out
+    assert victim.stat().st_size < _NINE_MIB  # overwritten by the fresh (small) baseline
+    assert json.loads(victim.read_text(encoding="utf-8"))["kind"] == "ruleset-scan-baseline"
+
+
+def test_large_json_with_duplicate_kind_keys_uses_the_effective_last_value(tmp_path, monkeypatch):
+    victim = tmp_path / "dup.json"
+    padding = '"' + ("p" * 64) + '"'
+    count = _NINE_MIB // (len(padding) + 2)
+    victim.write_text(
+        '{"kind": "ruleset-scan-baseline", "findings": ['
+        + ", ".join([padding] * count)
+        + '], "kind": "something-else"}',
+        encoding="utf-8",
+    )
+    before = victim.read_bytes()
+    out = _scan_with_baseline_target(tmp_path, monkeypatch, "dup.json")
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == before
+
+
+def test_large_malformed_json_target_is_refused_and_unchanged(tmp_path, monkeypatch):
+    victim = tmp_path / "bad.json"
+    victim.write_text(
+        '{"kind": "ruleset-scan-baseline", "x": "' + ("p" * _NINE_MIB), encoding="utf-8"
+    )
+    before = victim.read_bytes()
+    out = _scan_with_baseline_target(tmp_path, monkeypatch, "bad.json")
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == before
+
+
+def test_existing_artifact_over_the_probe_cap_is_refused(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_artifact_guard
+
+    monkeypatch.setattr(mcp_artifact_guard, "_MCP_ARTIFACT_PROBE_MAX_BYTES", 1024)
+    victim = tmp_path / "over.json"
+    victim.write_text(
+        '{"kind": "ruleset-scan-baseline", "pad": "' + ("p" * 2048) + '"}', encoding="utf-8"
+    )
+    assert victim.stat().st_size > 2048
+    before = victim.read_bytes()
+    out = _scan_with_baseline_target(tmp_path, monkeypatch, "over.json")
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == before

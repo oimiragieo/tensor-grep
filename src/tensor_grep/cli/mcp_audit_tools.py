@@ -36,6 +36,9 @@ if TYPE_CHECKING:
 else:
     _self = sys.modules["tensor_grep.cli.mcp_server"]
 
+from tensor_grep.cli.mcp_artifact_guard import (
+    _confine_artifact_write_path as _confine_artifact_write_path,
+)
 from tensor_grep.cli.mcp_rewrite_tools import (
     _audit_diff_error as _audit_diff_error,
 )
@@ -368,11 +371,21 @@ def tg_ruleset_scan(
         try:
             if write_baseline is not None:
                 write_baseline = str(
-                    _confine_write_path(write_baseline, scan_root, label="write_baseline")
+                    _confine_artifact_write_path(
+                        write_baseline,
+                        scan_root,
+                        label="write_baseline",
+                        allowed_kinds=frozenset({"ruleset-scan-baseline"}),
+                    )
                 )
             if write_suppressions is not None:
                 write_suppressions = str(
-                    _confine_write_path(write_suppressions, scan_root, label="write_suppressions")
+                    _confine_artifact_write_path(
+                        write_suppressions,
+                        scan_root,
+                        label="write_suppressions",
+                        allowed_kinds=frozenset({"ruleset-scan-suppressions"}),
+                    )
                 )
             # round-7 security (audit #81 #2): baseline_path/suppressions_path are READS that were
             # forwarded to the loader unconfined -- a file-existence + JSON-schema read-oracle over
@@ -983,7 +996,12 @@ def tg_review_bundle_create(
         if output_path is not None:
             try:
                 output_path = str(
-                    _confine_write_path(output_path, _mcp_root(), label="output_path")
+                    _confine_artifact_write_path(
+                        output_path,
+                        _mcp_root(),
+                        label="output_path",
+                        allowed_routing_reasons=frozenset({"review-bundle-create"}),
+                    )
                 )
             except PathConfinementError as exc:
                 return _review_bundle_error(
