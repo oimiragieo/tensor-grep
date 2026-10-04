@@ -1146,3 +1146,16 @@ def test_recorded_warning_is_still_reused_within_the_same_language():
     ):
         assert "ERROR node" in backend.pattern_warning("def (", py)  # no probe: reused
         assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="Python")) is not None
+
+
+def test_cap_to_max_count_zero_returns_no_matches():
+    from tensor_grep.core.result import MatchLine, SearchResult
+
+    result = SearchResult(
+        matches=[MatchLine(line_number=1, text="a", file="f.py")],
+        total_files=1,
+        total_matches=1,
+        matched_file_paths=["f.py"],
+    )
+    capped = AstGrepWrapperBackend._cap_to_max_count(result, SearchConfig(max_count=0))
+    assert capped.matches == [] and capped.total_matches == 0 and capped.total_files == 0

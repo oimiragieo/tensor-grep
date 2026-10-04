@@ -310,6 +310,24 @@ class StringZillaBackend(ComputeBackend):
         except OSError:
             return
 
+    @staticmethod
+    def _undecodable_result(file_path: str) -> SearchResult:
+        # Undecodable TEXT is NOT binary: disclose it rather than label it `skipped_binary` and
+        # return a trustworthy-looking zero. `unreadable_path` is the established class for this
+        # event (ripgrep_backend sets exactly that string).
+        return SearchResult(
+            matches=[],
+            total_files=0,
+            total_matches=0,
+            routing_backend="StringZillaBackend",
+            routing_reason="stringzilla_fixed_strings_undecodable_text",
+            routing_distributed=False,
+            routing_worker_count=1,
+            result_incomplete=True,
+            incomplete_reason=f"{file_path} is not valid UTF-8 text and was not searched",
+            incomplete_reason_class="unreadable_path",
+        )
+
     def _search_with_index(
         self, file_path: str, pattern: str, config: SearchConfig | None, ignore_case: bool
     ) -> SearchResult | None:
@@ -337,17 +355,7 @@ class StringZillaBackend(ComputeBackend):
                 # label it `skipped_binary` and return a trustworthy-looking zero.
                 # `unreadable_path` is the established class for this event
                 # (ripgrep_backend.py:150 sets exactly that string).
-                return SearchResult(
-                    matches=[],
-                    total_files=0,
-                    total_matches=0,
-                    routing_backend="StringZillaBackend",
-                    routing_reason="stringzilla_fixed_strings_undecodable_text",
-                    routing_distributed=False,
-                    routing_worker_count=1,
-                    result_incomplete=True,
-                    incomplete_reason_class="unreadable_path",
-                )
+                return self._undecodable_result(file_path)
             if content is None:
                 return SearchResult(
                     matches=[],
@@ -432,6 +440,17 @@ class StringZillaBackend(ComputeBackend):
             # longer used for line-splitting -- see the split_source_lines comment below.
             import stringzilla as sz  # noqa: F401
 
+            if config is not None and config.max_count == 0:
+                # rg/cpu_backend parity: `-m 0` searches nothing.
+                return SearchResult(
+                    matches=[],
+                    total_files=0,
+                    total_matches=0,
+                    routing_backend="StringZillaBackend",
+                    routing_reason="stringzilla_max_count_zero",
+                    routing_distributed=False,
+                    routing_worker_count=1,
+                )
             ignore_case = effective_ignore_case(config, pattern)
             if ignore_case and not ascii_fold_exact(pattern, file_path):
                 # lower() is not rg's Unicode case folding (final sigma, ...): let rg decide
@@ -453,17 +472,7 @@ class StringZillaBackend(ComputeBackend):
                 # would leave every one of those paths still mislabelling undecodable text, and
                 # a single-arm test would not notice. That is the `-e`/`-f` then
                 # `--count-matches` drift in bootstrap.py, repeated.
-                return SearchResult(
-                    matches=[],
-                    total_files=0,
-                    total_matches=0,
-                    routing_backend="StringZillaBackend",
-                    routing_reason="stringzilla_fixed_strings_undecodable_text",
-                    routing_distributed=False,
-                    routing_worker_count=1,
-                    result_incomplete=True,
-                    incomplete_reason_class="unreadable_path",
-                )
+                return self._undecodable_result(file_path)
             if content is None:
                 return SearchResult(
                     matches=[],
