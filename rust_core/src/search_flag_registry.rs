@@ -94,6 +94,30 @@ pub(crate) const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-trim",
     "--no-json",
     "--no-stats",
+    // J-03: flags `tg search` (SearchArgs / the Python passthrough) accepts but the root clap
+    // parser (`PositionalCli`) rejects. Kept in sync by tests/unit/test_root_door_flag_registry_drift.py.
+    "-e",
+    "--regexp",
+    "-a",
+    "--text",
+    "-L",
+    "--follow",
+    "--passthru",
+    "--passthrough",
+    "--null-data",
+    "--no-config",
+    "--files-without-match",
+    "--multiline-dotall",
+    "--no-ignore-dot",
+    "--no-ignore-exclude",
+    "--no-ignore-files",
+    "--no-ignore-global",
+    "--no-ignore-parent",
+    "--index",
+    "--ast",
+    "--allow-broad-generated-scan",
+    "--pcre2-version",
+    "--type-list",
 ];
 
 /// Flags that route a search to the Python passthrough front door rather than being handled by

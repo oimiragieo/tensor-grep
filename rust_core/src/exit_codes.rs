@@ -6,12 +6,23 @@
 
 use std::process::ExitStatus;
 
+/// The exit code to propagate for a finished child. A POSIX signal kill (`code() == None`) or a
+/// Windows crash status (a negative NTSTATUS such as `0xC0000005`) is an INCOMPLETE run: 2.
 pub fn child_exit_code(status: ExitStatus) -> i32 {
-    status.code().unwrap_or(1)
+    match status.code() {
+        Some(code) if code >= 0 => code,
+        _ => 2,
+    }
 }
 
+/// Report a command error and exit 2 (error), keeping exit 1 for "no match". A broken pipe is
+/// handed back untouched so the caller's quiet-exit path still applies.
 pub fn exit_with_run_error(err: anyhow::Error) -> anyhow::Result<()> {
-    Err(err)
+    if crate::broken_pipe::error_chain_has_broken_pipe(&err) {
+        return Err(err);
+    }
+    eprintln!("Error: {err:?}");
+    std::process::exit(2);
 }
 
 #[cfg(test)]

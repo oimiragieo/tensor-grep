@@ -572,7 +572,7 @@ pub fn execute_ripgrep_search(args: &RipgrepSearchArgs) -> anyhow::Result<i32> {
     }
 
     let status = command.status().context("failed to execute ripgrep")?;
-    Ok(status.code().unwrap_or(1))
+    Ok(crate::exit_codes::child_exit_code(status))
 }
 
 /// Build ripgrep's operand args: search patterns (flag-safe via `-e`), an end-of-options `--`
@@ -701,7 +701,7 @@ pub fn execute_ripgrep_pcre2_version() -> anyhow::Result<i32> {
         .stderr(Stdio::inherit())
         .status()
         .context("failed to execute ripgrep")?;
-    Ok(status.code().unwrap_or(1))
+    Ok(crate::exit_codes::child_exit_code(status))
 }
 
 pub fn execute_ripgrep_type_list() -> anyhow::Result<i32> {
@@ -719,7 +719,7 @@ pub fn execute_ripgrep_type_list() -> anyhow::Result<i32> {
         .stderr(Stdio::inherit())
         .status()
         .context("failed to execute ripgrep")?;
-    Ok(status.code().unwrap_or(1))
+    Ok(crate::exit_codes::child_exit_code(status))
 }
 
 pub fn ripgrep_is_available() -> bool {

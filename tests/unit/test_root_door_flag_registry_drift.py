@@ -3,8 +3,12 @@
 ``tg PATTERN -e X FILE`` is rewritten to ``tg search ...`` only when a token matches the flag
 registry in ``rust_core/src/search_flag_registry.rs``; otherwise the root clap parser
 (``PositionalCli``) rejects the flag with exit 2 even though ``tg search`` accepts it. The two
-doors must agree, so this test compares the registry to (a) the Python front door's own
-``_TG_ONLY_SEARCH_FLAGS`` and (b) the flags ``rg --help`` documents.
+doors must agree, so this test compares the registry to the Python front door's own
+``_TG_ONLY_SEARCH_FLAGS``.
+
+The second half of the drift guard (every flag ``rg --help`` documents) needs the real ``rg`` and
+fails closed when CI demands it, so it lives in ``tests/e2e/test_native_exit_and_door_parity.py``,
+the suite ``native-build-smoke`` runs with ``rg`` installed.
 
 The flags ``PositionalCli`` itself declares are derived from its source (never hand-listed), so a
 new clap flag cannot silently widen or narrow the exemption.
@@ -12,23 +16,12 @@ new clap flag cannot silently widen or narrow the exemption.
 
 from __future__ import annotations
 
-import os
 import re
-import shutil
-import subprocess
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_RS = REPO_ROOT / "rust_core" / "src" / "search_flag_registry.rs"
 MAIN_RS = REPO_ROOT / "rust_core" / "src" / "main.rs"
-
-# rg flags `tg search` does not take as a search option. Each entry carries its reason.
-RG_FLAGS_TG_SEARCH_REJECTS = {
-    "--help": "handled by the help passthrough before search parsing, not a search option",
-    "--version": "handled by the version short-circuit before search parsing, not a search option",
-}
 
 
 def _registry_flags() -> set[str]:
@@ -71,31 +64,10 @@ def test_python_only_search_flags_are_recognised_by_the_native_root_door() -> No
     )
 
 
-def test_every_rg_documented_flag_is_recognised_by_the_native_root_door() -> None:
-    rg = shutil.which("rg")
-    if rg is None:
-        if os.environ.get("TG_REQUIRE_RG_PARITY", "").strip().lower() in {"1", "true", "yes"}:
-            pytest.fail("TG_REQUIRE_RG_PARITY=1 but rg is not installed")
-        pytest.skip("rg not installed")
-    help_text = subprocess.run(
-        [rg, "--help"], capture_output=True, text=True, timeout=30, check=True
-    ).stdout
-    rg_flags = set(re.findall(r"^ {4}(?:-\w, )?(--[\w-]+)", help_text, re.M))
-    rg_flags |= set(re.findall(r"^ {8}(--[\w-]+)", help_text, re.M))
-    assert len(rg_flags) > 50, f"rg --help parse looks wrong ({len(rg_flags)} flags)"
-
-    known = _registry_flags() | _root_clap_flags() | set(RG_FLAGS_TG_SEARCH_REJECTS)
-    missing = sorted(flag for flag in rg_flags if flag not in known)
-    assert not missing, (
-        f"rg flags the native root door does not recognise: {missing}. Add them to "
-        "SEARCH_OPTION_FIRST_FLAGS (rust_core/src/search_flag_registry.rs), or to "
-        "RG_FLAGS_TG_SEARCH_REJECTS with a reason if `tg search` also rejects them."
-    )
-
-
 def test_drift_parser_positive_controls() -> None:
-    # The parsers must see flags we know exist today; a silent empty parse would make both
-    # drift tests vacuous.
+    # The parsers must see flags we know exist today; a silent empty parse would make the drift
+    # test vacuous.
     registry = _registry_flags()
     assert {"--glob", "-g", "--hidden", "--count-matches"} <= registry
     assert "--definitely-not-a-flag" not in registry
+    assert {"--json", "--count", "-c"} <= _root_clap_flags()

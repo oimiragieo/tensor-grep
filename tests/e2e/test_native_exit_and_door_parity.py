@@ -203,6 +203,27 @@ def test_indexed_search_read_failure_exits_2_with_match_and_no_match_controls(
 
 
 # --------------------------------------------------------------------------------------
+# I.7 -- did-you-mean ranks before truncating, identically in both doors (A-04)
+# --------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("token", ["ru", "sq", "scn", "qqq"])
+def test_native_did_you_mean_matches_the_python_door_rank_order(tmp_path: Path, token: str) -> None:
+    import re
+
+    from tensor_grep.cli import bootstrap
+
+    tg = _require_native_tg()
+    expected = bootstrap._nearest_commands(token)
+    assert expected, token
+    r = _tg(tg, [token, "--help"], tmp_path)
+    assert r.returncode == 2, (r.returncode, r.stderr)
+    found = re.search(r"\(did you mean (.+?)\?\)", r.stderr)
+    assert found is not None, r.stderr
+    assert found.group(1).split(", ") == expected, (token, found.group(1), expected)
+
+
+# --------------------------------------------------------------------------------------
 # I.5 -- `-c --json` / `--ndjson` emits only structured output (J-06)
 # --------------------------------------------------------------------------------------
 
@@ -247,6 +268,57 @@ def _root_args(flag: str) -> list[str]:
     if flag in {"-e", "--regexp"}:
         return [flag, "needle", "a.txt"]
     return ["needle", flag, "a.txt"]
+
+
+# rg flags `tg search` does not take as a search option. Each entry carries its reason.
+_RG_FLAGS_TG_SEARCH_REJECTS = {
+    "--help": "handled by the help passthrough before search parsing, not a search option",
+    "--version": "handled by the version short-circuit before search parsing, not a search option",
+}
+
+
+def test_every_rg_documented_flag_is_recognised_by_the_native_root_door() -> None:
+    """Static drift arm (J-03): the registry must cover every flag `rg --help` documents.
+
+    The sibling unit test (tests/unit/test_root_door_flag_registry_drift.py) compares against the
+    Python door's flag set; this arm needs the real `rg`, so it fails closed when CI demands it.
+    """
+    import re
+    import shutil
+
+    rg = shutil.which("rg")
+    if rg is None:
+        if os.environ.get("TG_REQUIRE_RG_PARITY", "").strip().lower() in {"1", "true", "yes"}:
+            pytest.fail("TG_REQUIRE_RG_PARITY=1 but rg is not installed")
+        pytest.skip("rg not installed")
+    root = Path(__file__).resolve().parents[2]
+    registry_src = (root / "rust_core" / "src" / "search_flag_registry.rs").read_text("utf-8")
+    body = registry_src.split("pub(crate) fn raw_args_contain_any_flag")[0]
+    known = set(re.findall(r'^\s*"(-{1,2}[\w-]+)",', body, re.M))
+    main_src = (root / "rust_core" / "src" / "main.rs").read_text("utf-8")
+    struct = re.search(r"pub struct PositionalCli \{(.*?)\n\}\n", main_src, re.S)
+    assert struct is not None, "PositionalCli struct not found"
+    for fm in re.finditer(r"#\[arg\(([^\]]*)\)\]\s*\n\s*pub (\w+):", struct.group(1)):
+        attrs, field = fm.groups()
+        known.update("-" + s for s in re.findall(r"short\s*=\s*'(\w)'", attrs))
+        known.update("--" + n for n in re.findall(r'(?:long|alias)\s*=\s*"([\w-]+)"', attrs))
+        if re.search(r"\blong\b(?!\s*=)", attrs):
+            known.add("--" + field.replace("_", "-"))
+    known |= set(_RG_FLAGS_TG_SEARCH_REJECTS)
+    assert "--glob" in known and "--json" in known, "flag-registry parse looks wrong"
+
+    help_text = subprocess.run(
+        [rg, "--help"], capture_output=True, text=True, timeout=30, check=True
+    ).stdout
+    rg_flags = set(re.findall(r"^ {4}(?:-\w, )?(--[\w-]+)", help_text, re.M))
+    rg_flags |= set(re.findall(r"^ {8}(--[\w-]+)", help_text, re.M))
+    assert len(rg_flags) > 50, f"rg --help parse looks wrong ({len(rg_flags)} flags)"
+    missing = sorted(flag for flag in rg_flags if flag not in known)
+    assert not missing, (
+        f"rg flags the native root door does not recognise: {missing}. Add them to "
+        "SEARCH_OPTION_FIRST_FLAGS (rust_core/src/search_flag_registry.rs), or to "
+        "_RG_FLAGS_TG_SEARCH_REJECTS with a reason if `tg search` also rejects them."
+    )
 
 
 @pytest.mark.parametrize("flag", _STRICT_ROOT_FLAGS)
