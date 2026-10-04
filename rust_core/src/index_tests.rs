@@ -1332,3 +1332,23 @@ fn staleness_new_file_scan_honors_root_gitignore_inside_git_repo() {
         "a gitignored new file must not trigger staleness inside a git repo either"
     );
 }
+
+#[test]
+fn test_index_search_survives_non_utf8_file_and_finds_matches_in_both() {
+    let dir = tempdir().unwrap();
+    write_test_file(dir.path(), "good.txt", "needle ok\n");
+    fs::write(dir.path().join("bad.txt"), b"needle\xff bad\nplain\n").unwrap();
+    let index = TrigramIndex::build(dir.path()).unwrap();
+    for (pattern, fixed) in [("needle", true), (r"\w+", false)] {
+        let results = index
+            .search(pattern, false, fixed)
+            .unwrap_or_else(|e| panic!("{pattern}: {e:#}"));
+        let mut names: Vec<String> = results
+            .iter()
+            .map(|r| r.file.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names, vec!["bad.txt", "good.txt"], "{pattern}");
+    }
+}

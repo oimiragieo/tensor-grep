@@ -1056,7 +1056,7 @@ fn resolve_passthrough_timeout() -> Duration {
     Duration::from_millis(timeout_ms)
 }
 
-fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
+pub(crate) fn map_python_spawn_error(python: &OsStr, err: io::Error) -> SidecarError {
     if err.kind() == io::ErrorKind::NotFound {
         return SidecarError {
             exit_code: 2,

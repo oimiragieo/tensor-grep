@@ -416,4 +416,48 @@ mod tests {
             "an explicit trailing PATH must record path_was_implicit = false"
         );
     }
+
+    #[test]
+    fn root_door_recognizes_every_search_only_flag_j03() {
+        for (flag, value) in [
+            ("-e", Some("x")),
+            ("--regexp", Some("x")),
+            ("-a", None),
+            ("--text", None),
+            ("-L", None),
+            ("--follow", None),
+            ("--passthru", None),
+            ("--passthrough", None),
+            ("--null-data", None),
+            ("--no-config", None),
+            ("--files-without-match", None),
+            ("--multiline-dotall", None),
+            ("--no-ignore-dot", None),
+            ("--no-ignore-exclude", None),
+            ("--no-ignore-files", None),
+            ("--no-ignore-global", None),
+            ("--no-ignore-parent", None),
+            ("--index", None),
+            ("--ast", None),
+            ("--allow-broad-generated-scan", None),
+            ("--pcre2-version", None),
+            ("--type-list", None),
+        ] {
+            let mut raw = vec!["tg", "needle", flag];
+            if let Some(v) = value {
+                raw.push(v);
+            }
+            raw.push("src");
+            let n = normalized_root_search(&raw)
+                .unwrap_or_else(|| panic!("root door must recognize {flag}"));
+            assert_eq!(
+                n.get(0..2).map(|s| s.join(" ")),
+                Some("tg search".to_string())
+            );
+            assert_eq!(
+                &n[2..],
+                &raw[1..].iter().map(|s| s.to_string()).collect::<Vec<_>>()[..]
+            );
+        }
+    }
 }
