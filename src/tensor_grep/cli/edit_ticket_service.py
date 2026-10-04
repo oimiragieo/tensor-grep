@@ -42,7 +42,7 @@ import uuid
 from collections.abc import Generator, Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, BinaryIO
+from typing import Any, BinaryIO, NamedTuple
 
 # ---------------------------------------------------------------------------------------------
 # Enumeration is BOUND TO AN OPEN DIRECTORY, never to a pathname lookup.
@@ -222,10 +222,6 @@ class _ByteLedger:
         self.consumed = 0
         self._item_start = aggregate_limit
         self._item_total = 0
-        # Results of a SINGLE read session over a CACHEDIR.TAG (header classification and the
-        # digest/leaf hash come from the same handle and the same per-file allowance).
-        self.tag_digests: dict[str, str] = {}
-        self.leaf_fingerprints: dict[str, tuple[str, tuple[int, int, int, int, int]]] = {}
 
     def begin_item(self) -> None:
         """Start accounting one file/marker/tag (per-file limit and aggregate start point)."""
@@ -373,17 +369,14 @@ def _regular_marker(path: Path) -> bool:
     return _marker_stat(path) is not None
 
 
-def _stat_snapshot(st: os.stat_result) -> tuple[int, int, int, int, int]:
-    """(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns) of a stat result.
+class _TagResult(NamedTuple):
+    """Outcome of the ONE read session over a CACHEDIR.TAG."""
 
-    On Windows `st_ctime` differs between `os.fstat(handle)` and `os.lstat(path)` for the SAME
-    unchanged file (measured: 79 of 300 files), so it is excluded there (0); identity, size and
-    mtime still pin the file. POSIX keeps ctime (inode change time)."""
-    ctime = 0 if sys.platform == "win32" else st.st_ctime_ns
-    return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, ctime)
+    valid: bool
+    sha256: str  # hex digest of the whole file, from the bytes actually read in the session
 
 
-def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
+def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> _TagResult:
     """Classify a CACHEDIR.TAG and hash it in ONE open handle and ONE per-file ledger session.
 
     The FIRST LINE must be exactly the signature, then LF, CRLF or CONFIRMED EOF. CRLF is
@@ -392,19 +385,19 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
     `head == sig` means the file REALLY ended after the signature.
 
     The header bytes are reused in the hash and the rest is read from the same handle, so the
-    file is charged once and can never get two per-file allowances. A valid tag's digest goes to
-    `ledger.tag_digests`; an INVALID tag (it will be walked as an ordinary leaf) has its leaf
-    fingerprint stored in `ledger.leaf_fingerprints` instead of being read a second time. Any
-    OSError (open, read or close) is `unreadable_path`."""
+    file is charged once and can never get two per-file allowances. The caller uses the digest
+    directly: for a valid tag as the pruned-set marker digest, for an INVALID tag (walked as an
+    ordinary leaf) as its final leaf fingerprint, EMITTED into the population at that point.
+    There is no cache and no identity/size/mtime comparison to fool: like every other leaf the
+    file is hashed exactly once, at one point in the walk. Any OSError (open, read or close) is
+    `unreadable_path`."""
     st = _marker_stat(tag)
     if st is None:
         # The caller saw a regular file an instant ago; it was swapped for something else.
         raise _PopulationWalkError("unreadable_path")
     try:
         with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
-            opened = os.fstat(handle.fileno())
-            size_at_open = opened.st_size
-            snapshot = _stat_snapshot(opened)
+            size_at_open = os.fstat(handle.fileno()).st_size
             ledger.begin_item()
             head = _read_exact_or_eof(handle, 128, ledger)
             sig = _CACHEDIR_TAG_SIGNATURE
@@ -416,11 +409,7 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
                 raise _PopulationWalkError("unreadable_path")
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
-    if valid:
-        ledger.tag_digests[str(tag)] = hasher.hexdigest()
-    else:
-        ledger.leaf_fingerprints[str(tag)] = ("file:" + hasher.hexdigest(), snapshot)
-    return valid
+    return _TagResult(valid, hasher.hexdigest())
 
 
 def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
@@ -445,23 +434,36 @@ def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
     return hasher.hexdigest()
 
 
-def _content_prune_marker(path: Path, ledger: _ByteLedger) -> str | None:
-    """Name of the regular-file marker that makes `path` an unambiguous build/cache tree."""
+class _Classified(NamedTuple):
+    """What classifying a directory's markers found (and read)."""
+
+    marker: str | None
+    tag_digest: str | None = None  # whole-file sha256 of a VALID CACHEDIR.TAG (same session)
+    tag_leaf: str | None = None  # final leaf fingerprint of an INVALID CACHEDIR.TAG (same session)
+
+
+def _content_prune_marker(path: Path, ledger: _ByteLedger) -> _Classified:
+    """The regular-file marker that makes `path` an unambiguous build/cache tree, if any."""
     for marker in _BUILD_ROOT_MARKERS:
         if _regular_marker(path / marker):
-            return marker
+            return _Classified(marker)
     if _regular_marker(path / _CMAKE_CACHE) and not _exists(path / _CMAKE_SOURCE):
-        return _CMAKE_CACHE  # out-of-source CMake build tree only
+        return _Classified(_CMAKE_CACHE)  # out-of-source CMake build tree only
     tag = path / "CACHEDIR.TAG"
-    if _regular_marker(tag) and _cachedir_tag_valid(tag, ledger):
-        return "CACHEDIR.TAG"
-    return None
+    if _regular_marker(tag):
+        result = _cachedir_tag_valid(tag, ledger)
+        if result.valid:
+            return _Classified("CACHEDIR.TAG", tag_digest=result.sha256)
+        return _Classified(None, tag_leaf="file:" + result.sha256)
+    return _Classified(None)
 
 
 def _is_pruned_dir(path: Path, ledger: _ByteLedger | None = None) -> bool:
     """Unambiguous dependency/cache/build-root trees only (G-03: build/dist/target may hold source)."""
     ledger = ledger or _ByteLedger.unlimited()
-    return path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path, ledger) is not None
+    return (
+        path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path, ledger).marker is not None
+    )
 
 
 class _DirHandle:
@@ -722,7 +724,7 @@ def _population_paths(
     pruned: list[str],
     content_pruned: dict[str, str] | None = None,
     ledger: _ByteLedger | None = None,
-) -> Generator[str, None, None]:
+) -> Generator[tuple[str, str | None], None, None]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
 
     `content_pruned` (root-relative dir -> "<marker>:<sha256 of marker>", or "name" for a
@@ -744,6 +746,8 @@ def _population_paths(
     # `os.walk` re-checks `islink` itself and SILENTLY skips a directory swapped for a link
     # after our check; so each kept directory must be yielded back, and unchanged.
     expected: dict[str, tuple[int, int]] = {}
+    # leaf path -> fingerprint already computed (once) in a marker-classification session
+    emitted: dict[str, str] = {}
     first = True
     for dirpath, dirnames, filenames, handle in _walk_impl(root, _on_error):
         visited += 1
@@ -808,14 +812,17 @@ def _population_paths(
                 continue
             digest: str | None = None
             with _authenticated_child(child, child_st):
-                marker = _content_prune_marker(child, ledger)
+                classified = _content_prune_marker(child, ledger)
+                marker = classified.marker
+                if classified.tag_leaf is not None:
+                    # an invalid tag was read, charged and hashed in its classification
+                    # session: that IS its leaf fingerprint, emitted when the leaf is reached
+                    emitted[str(child / "CACHEDIR.TAG")] = classified.tag_leaf
                 if marker is not None and content_pruned is not None:
                     if n_content >= _MAX_CONTENT_PRUNED_DIRS:
                         raise _PopulationWalkError("pruned_dir_limit", "content")
                     if marker == "CACHEDIR.TAG":
-                        digest = ledger.tag_digests.pop(str(child / marker), None)
-                        if digest is None:
-                            raise _PopulationWalkError("unreadable_path")
+                        digest = classified.tag_digest
                     else:
                         digest = _marker_digest(child / marker, ledger)
             if marker is not None:
@@ -829,6 +836,10 @@ def _population_paths(
                 expected[str(child)] = (child_st.st_dev, child_st.st_ino)
         dirnames[:] = keep
         for name in sorted(leaves):
+            done_fp = emitted.pop(str(current / name), None)
+            if done_fp is not None:
+                yield (rel_dir / name).as_posix(), done_fp  # already fingerprinted: no re-read
+                continue
             # os.walk swallows a DirEntry.is_dir() failure (no onerror) and lists the directory
             # among `filenames`; fingerprinting it as a leaf would omit its whole subtree. A
             # directory is a leaf only when it is a link/junction.
@@ -838,7 +849,7 @@ def _population_paths(
                 raise _PopulationWalkError("unreadable_path") from exc
             if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
                 raise _PopulationWalkError("unreadable_path")
-            yield (rel_dir / name).as_posix()
+            yield (rel_dir / name).as_posix(), None
     if expected:  # a kept directory was never visited: it vanished or became a link
         raise _PopulationWalkError("unreadable_path")
 
@@ -907,15 +918,6 @@ def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
         raise _PopulationWalkError("unreadable_path")
     if not stat.S_ISREG(st.st_mode):
         return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
-    cached = ledger.leaf_fingerprints.pop(str(path), None)
-    if cached is not None:
-        # Already read, and charged, in the CACHEDIR.TAG classification session. Reuse ONLY if
-        # the file is exactly the one that session read (identity, size, mtime, ctime from the
-        # OPENED handle's fstat); otherwise fail closed. Never re-read: that would double-charge.
-        fingerprint, snapshot = cached
-        if snapshot != _stat_snapshot(st):
-            raise _PopulationWalkError("unreadable_path")
-        return fingerprint
     with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
         size_at_open = os.fstat(handle.fileno()).st_size
         hasher = hashlib.sha256()
@@ -954,12 +956,18 @@ def _walk_tracked_files_bounded(
 
     paths = _population_paths(root, pruned, content_pruned, ledger)
     try:
-        for rel in paths:
+        for rel, emitted_fp in paths:
             item = root / rel
 
             if scanned_files >= max_files:
                 incomplete_reason = "file_count_limit"
                 break
+
+            if emitted_fp is not None:
+                # hashed exactly once, at classification; nothing left to stat, size or read
+                result[rel] = emitted_fp
+                scanned_files += 1
+                continue
 
             try:
                 size_st = _lstat(item)  # ONE lstat sizes the leaf (links: link-text length)
@@ -973,13 +981,12 @@ def _walk_tracked_files_bounded(
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
-            already_read = str(item) in ledger.leaf_fingerprints
-            if not already_read and size > ledger.per_file_limit:
+            if size > ledger.per_file_limit:
                 incomplete_reason = "per_file_byte_limit"
                 scanned_files += 1
                 continue
 
-            if not already_read and size > ledger.remaining:
+            if size > ledger.remaining:
                 incomplete_reason = "aggregate_byte_limit"
                 break
 

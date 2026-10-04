@@ -654,75 +654,81 @@ def _tag_tree(tmp_path: Path) -> tuple[Path, bytes]:
     return tag, bad
 
 
-def _mutate_tag_at_leaf_phase(monkeypatch: pytest.MonkeyPatch, tag: Path, mutate) -> None:  # type: ignore[no-untyped-def]
-    """Run `mutate()` right after the tag's classification session: the 3rd `_lstat` of the tag
-    is the leaf-existence check of `_population_paths` (calls 1-2 are classification)."""
+def _rewrite_tag_in_place_keeping_mtime(tag: Path, new: bytes) -> None:
+    """Codex's repro: same size, SAME inode, original mtime restored (so identity, size and
+    mtime all still match whatever was observed before)."""
+    st = os.stat(tag)
+    with open(tag, "r+b") as handle:
+        handle.write(new)
+    os.utime(tag, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+
+def _after_sibling_lstat(monkeypatch: pytest.MonkeyPatch, sibling: Path, action) -> None:  # type: ignore[no-untyped-def]
+    """Run `action()` at the first `_lstat` of `sibling` (a leaf that sorts BEFORE the tag, so the
+    walker reaches it after the tag's classification session and before its leaf stage)."""
     real = os.lstat
-    calls = {"n": 0}
+    done = {"x": False}
 
     def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
-        if Path(str(path)) == tag:
-            calls["n"] += 1
-            if calls["n"] == 3:
-                mutate()
+        if Path(str(path)) == sibling and not done["x"]:
+            done["x"] = True
+            action()
         return real(path, *a, **k)
 
     monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
 
 
-def test_invalid_tag_cache_is_not_reused_for_a_replaced_file(
+def test_invalid_tag_fingerprint_is_the_bytes_read_at_classification_with_no_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # An invalid tag is hashed ONCE, in its classification session, and its fingerprint is
+    # EMITTED into the population right there. There is no cache and no identity/size/mtime
+    # comparison left to fool: an in-place same-size rewrite with the mtime restored, applied
+    # after classification, changes nothing about what this walk reports (every file is hashed
+    # exactly once, at one point in the walk).
+    counter = _raw_read_counter(monkeypatch)
     tag, bad = _tag_tree(tmp_path)
-
-    def _replace() -> None:
-        other = tag.parent / "CACHEDIR.TAG.new"
-        other.write_bytes(b"Signature: 8a477f597d28d172789f06886806bc55 YY")  # same size
-        os.replace(other, tag)  # new inode
-
-    _mutate_tag_at_leaf_phase(monkeypatch, tag, _replace)
+    sibling = tag.parent / "A.txt"  # sorts before CACHEDIR.TAG
+    sibling.write_bytes(b"s")
+    _after_sibling_lstat(
+        monkeypatch,
+        sibling,
+        lambda: _rewrite_tag_in_place_keeping_mtime(
+            tag, b"Signature: 8a477f597d28d172789f06886806bc55 YY"
+        ),
+    )
     files, population = _walk_tracked_files_bounded(tmp_path)
-    assert population["status"] == "incomplete"
-    assert population["reason"] == "unreadable_path"
-    assert files.get("cache/CACHEDIR.TAG") != "file:" + hashlib.sha256(bad).hexdigest()
+    assert population["status"] == "complete"
+    assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
+    assert counter["raw_bytes"] <= len(bad) + 1 + 1  # tag (one session) + the 1-byte sibling
+    assert counter["opens"] == 2  # the tag exactly once, the sibling once
+    # no cache path exists any more
+    ledger = edit_ticket_service._ByteLedger(1, 1)
+    assert not hasattr(ledger, "leaf_fingerprints")
+    assert not hasattr(ledger, "tag_digests")
+    assert not hasattr(edit_ticket_service, "_stat_snapshot")
 
 
-def test_invalid_tag_cache_is_not_reused_after_a_same_inode_size_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    tag, bad = _tag_tree(tmp_path)
-
-    def _append() -> None:
-        with open(tag, "ab") as handle:
-            handle.write(b"extra")
-
-    _mutate_tag_at_leaf_phase(monkeypatch, tag, _append)
-    files, population = _walk_tracked_files_bounded(tmp_path)
-    assert population["status"] == "incomplete"
-    assert population["reason"] == "unreadable_path"
-    assert files.get("cache/CACHEDIR.TAG") != "file:" + hashlib.sha256(bad).hexdigest()
-
-
-def test_invalid_tag_cache_is_not_reused_after_a_same_inode_mtime_change(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_in_place_same_size_tag_rewrite_before_the_walk_reaches_it_fails_verify(
+    tmp_path: Path,
 ) -> None:
     tag, _bad = _tag_tree(tmp_path)
-
-    def _touch() -> None:
-        st = os.stat(tag)
-        os.utime(tag, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
-
-    _mutate_tag_at_leaf_phase(monkeypatch, tag, _touch)
-    _files, population = _walk_tracked_files_bounded(tmp_path)
-    assert population["status"] == "incomplete"
-    assert population["reason"] == "unreadable_path"
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["status"] == "complete"
+    _rewrite_tag_in_place_keeping_mtime(tag, b"Signature: 8a477f597d28d172789f06886806bc55 YY")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["cache/CACHEDIR.TAG"]
 
 
-def test_untouched_invalid_tag_cache_is_reused_exactly_once(tmp_path: Path) -> None:  # control
+def test_untouched_invalid_tag_leaf_verifies_pass(tmp_path: Path) -> None:  # control
     _tag, bad = _tag_tree(tmp_path)
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "complete"
     assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
+    ticket = _ticket(tmp_path)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
 
 
 # ---- round 15: authenticate a child BEFORE inspecting its markers; no marker reads in name-pruned dirs
