@@ -18,9 +18,11 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import stat as _stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -42,6 +44,32 @@ _win_owner_and_dacl = _winsec.owner_and_dacl_sids
 def _valid_daemon_port(value: object) -> int | None:
     """``value`` iff it is exactly an int in 1..65535 -- never coerced (True, 4242.9, "80", inf)."""
     return value if type(value) is int and 1 <= value <= 65535 else None
+
+
+def _await_endpoint_refused(
+    host: object, port: object, timeout_seconds: float, connect_timeout: float = 3.0
+) -> bool:
+    """True once a connection to the daemon endpoint is REFUSED (bounded by ``timeout_seconds``).
+
+    Only a refusal is evidence that the listener is gone: a successful connect (still serving),
+    a connect timeout or any other error is "cannot tell" and is never treated as stopped. The
+    connect timeout is ~3s because a refusal on Windows can take around 2s. At least one attempt
+    is always made; an invalid host/port cannot be confirmed (False).
+    """
+    valid = _valid_daemon_port(port)
+    if valid is None or not _is_loopback_host(host):
+        return False
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            socket.create_connection((DAEMON_HOST, valid), timeout=connect_timeout).close()
+        except ConnectionRefusedError:
+            return True
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
 
 
 def _is_loopback_host(host: object) -> bool:
