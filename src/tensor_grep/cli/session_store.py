@@ -510,7 +510,7 @@ def _stale_changeset(
     payload: dict[str, Any], *, detect_added_files: bool = True
 ) -> dict[str, list[str]] | None:
     snapshot = cast(list[dict[str, Any]], payload.get("snapshot") or [])
-    if not snapshot:
+    if not snapshot and not detect_added_files:
         return None
 
     root = _resolve_root(Path(str(payload.get("root", payload.get("path", ".")))))

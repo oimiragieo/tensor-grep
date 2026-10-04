@@ -946,8 +946,9 @@ def test_stale_changeset_bounds_the_added_file_probe_to_the_session_scan_limit(
 
     monkeypatch.setattr(session_store, "_iter_repo_files", spy_iter_repo_files)
 
-    # A non-empty snapshot is required -- `_stale_changeset` short-circuits to `None` on an
-    # empty snapshot before ever reaching the added-file probe.
+    # A non-empty snapshot is not required for the added-file probe any more (an empty snapshot
+    # with detect_added_files=True is probed too); this fixture keeps one entry so the scan_limit
+    # plumbing under test is exercised on a realistic payload.
     payload = {
         "root": str(project),
         "snapshot": [{"path": str(project / "sample.py"), "size": 0, "mtime_ns": 0}],
