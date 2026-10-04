@@ -7,6 +7,7 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
@@ -726,7 +727,9 @@ def _map_one_path(
     rel_path: Path,
     line_ranges: list[tuple[int, int]],
     root: Path,
-    handled_elsewhere: set[Path],
+    deleted_paths: set[Path],
+    submodule_paths: set[Path],
+    binary_paths: set[Path] | None = None,
 ) -> tuple[str, str | None, list[dict[str, Any]]]:
     """Map ONE changed path to exactly one outcome: (outcome, reason, symbols).
 
@@ -736,13 +739,19 @@ def _map_one_path(
     extraction_failed: <ExceptionType>, path_changed_during_analysis). There is no branch that
     returns nothing, so a changed path can never leave the mapper unaccounted for.
     """
+    # An explicit deletion is classified FIRST, before any working-tree inspection: what a deleted
+    # path leaves behind (e.g. a symlink surviving a `git rm --cached`) says nothing about it. A
+    # path that is deleted AND re-added (type change) has content ranges, or is a binary add, and
+    # is still analysed, so the exemption never suppresses a surviving source file.
+    if rel_path in deleted_paths and not line_ranges and rel_path not in (binary_paths or set()):
+        return "deleted", None, []
     full_path = root / rel_path
     # Reuse repo_map's containment guard (resolves symlinks/`..` on both sides): a diff path,
     # or a symlink in the repo, must never make us open a file outside `root`.
     if not repo_map._path_is_relative_to(full_path, root):
         return "not_analyzed", "path_escapes_root", []
     if not full_path.is_file():
-        if rel_path in handled_elsewhere:
+        if rel_path in submodule_paths:  # a gitlink is a directory/absent: disclosed separately
             return "deleted", None, []
         return "not_analyzed", "file_missing", []
 
@@ -751,9 +760,17 @@ def _map_one_path(
         spec = lang_registry.spec_for_path(full_path)
         symbols: list[dict[str, Any]]
         if spec is not None and spec.extract_imports_and_symbols is not None:
-            _, symbols = spec.extract_imports_and_symbols(full_path)
+            imports, symbols = spec.extract_imports_and_symbols(full_path)
         else:
-            _, symbols = repo_map._imports_and_symbols_for_path(full_path)
+            imports, symbols = repo_map._imports_and_symbols_for_path(full_path)
+        if not symbols and not imports:
+            # The Python extractor swallows its own read/decode/parse failures and returns
+            # ([], []), indistinguishable from a symbol-free file. Re-check ONLY empty Python
+            # results (so normal files cost nothing), with the extractor's reader rules (strict
+            # UTF-8, then ast.parse). Tree-sitter languages' parse-gap is owned by wave 2a G1
+            # (r25 disposition for diff_impact.py:164/:169), deliberately not rebuilt here.
+            if full_path.suffix == ".py":
+                ast.parse(full_path.read_text(encoding="utf-8"))
     except _extraction_errors() as exc:  # narrow on purpose: anything else is a bug, not a gap
         return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
 
@@ -801,15 +818,20 @@ def map_changed_lines_to_symbols(
     original pathname, so closing the race fully needs extraction through a verified/confined
     handle (tracker R-12).
     """
-    handled_elsewhere: set[Path] = set(getattr(changed_files_with_lines, "deleted_paths", set()))
-    handled_elsewhere |= set(getattr(changed_files_with_lines, "submodule_changed_files", set()))
+    deleted_paths: set[Path] = set(getattr(changed_files_with_lines, "deleted_paths", set()))
+    submodule_paths: set[Path] = set(
+        getattr(changed_files_with_lines, "submodule_changed_files", set())
+    )
+    binary_paths: set[Path] = set(getattr(changed_files_with_lines, "binary_files", set()))
     changed_symbols: list[dict[str, Any]] = []
     analyzed: set[Path] = set()
     deleted: set[Path] = set()
     failed: dict[Path, str] = {}
 
     for rel_path, line_ranges in changed_files_with_lines.items():
-        outcome, reason, symbols = _map_one_path(rel_path, line_ranges, root, handled_elsewhere)
+        outcome, reason, symbols = _map_one_path(
+            rel_path, line_ranges, root, deleted_paths, submodule_paths, binary_paths
+        )
         if outcome == "analyzed":
             analyzed.add(rel_path)
             changed_symbols.extend(symbols)

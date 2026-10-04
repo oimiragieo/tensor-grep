@@ -620,3 +620,139 @@ def test_controls_ordinary_file_is_analyzed_and_deleted_file_keeps_its_handling(
     assert payload["deleted_files"] == ["gone.py"]
     assert payload["not_analyzed_paths"] == []
     assert payload["partial"] is False
+
+
+def _py_repo(tmp_path: Path, before: bytes, after: bytes) -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "app.py").write_bytes(before)
+    _git(repo, "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "app.py").write_bytes(after)
+    return repo
+
+
+def test_real_extractor_swallowed_syntax_error_is_not_analyzed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    # The REAL Python extractor catches SyntaxError itself and returns ([], []); with no raising
+    # fake involved this used to be reported `analyzed`, losing `changed`, exit 0.
+    repo = _py_repo(
+        tmp_path,
+        b"def changed():\n    return 1\n",
+        b"def changed():\n    return 2\ndef broken(:\n",
+    )
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "extraction_failed: SyntaxError"}
+    ]
+    assert data["incomplete_reason"] == "extraction_failed"
+    assert data["exit_reason"] == "incomplete"
+
+
+def test_real_extractor_swallowed_decode_error_is_not_analyzed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _py_repo(
+        tmp_path,
+        b"def changed():\n    return 1\n",
+        b"def changed():\n    return 2\n# bad byte \xff\n",
+    )
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "extraction_failed: UnicodeDecodeError"}
+    ]
+
+
+def test_valid_symbol_free_python_file_stays_analyzed(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = _py_repo(tmp_path, b"x = 1\n", b"x = 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == []
+    assert data["changed_files"] == ["app.py"]
+    assert data["partial"] is False
+
+
+def test_valid_python_file_with_symbols_is_unchanged(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = _py_repo(tmp_path, b"def changed():\n    return 1\n", b"def changed():\n    return 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout
+    assert [s["name"] for s in json.loads(res.stdout)["changed_symbols"]] == ["changed"]
+
+
+def _outside_symlink_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (tmp_path / "outside.py").write_text("def leaked():\n    return 1\n", encoding="utf-8")
+    try:
+        (repo / "link.py").symlink_to(Path("..") / "outside.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    (repo / "keep.py").write_text("x = 1\n", encoding="utf-8")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    return repo
+
+
+def test_staged_deletion_of_an_outside_pointing_symlink_is_a_deletion(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _outside_symlink_repo(tmp_path)
+    _git(repo, "rm", "-q", "--cached", "--", "link.py")  # the symlink survives in the work tree
+    assert (repo / "link.py").is_symlink()
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 0, res.stdout
+    data = json.loads(res.stdout)
+    assert data["deleted_files"] == ["link.py"]
+    assert data["not_analyzed_paths"] == []
+    assert data["partial"] is False
+
+
+def test_staged_deletion_of_an_ordinary_file_is_unchanged(tmp_path: Path, monkeypatch: Any) -> None:
+    repo = _outside_symlink_repo(tmp_path)
+    _git(repo, "rm", "-q", "--", "keep.py")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json", "--staged"])
+    assert res.exit_code == 0, res.stdout
+    assert json.loads(res.stdout)["deleted_files"] == ["keep.py"]
+
+
+def test_changed_not_deleted_outside_symlink_still_escapes(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _outside_symlink_repo(tmp_path)
+    (tmp_path / "outside2.py").write_text("def other():\n    return 1\n", encoding="utf-8")
+    (repo / "link.py").unlink()
+    (repo / "link.py").symlink_to(Path("..") / "outside2.py")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2
+    assert json.loads(res.stdout)["not_analyzed_paths"] == [
+        {"path": "link.py", "reason": "path_escapes_root"}
+    ]
+
+
+def test_deletion_exemption_never_suppresses_analysis_of_a_surviving_source_file(
+    tmp_path: Path,
+) -> None:
+    # A path can be both "deleted" and re-added (type change) and then has content ranges.
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "app.py").write_text("def changed():\n    return 2\n", encoding="utf-8")
+    hunks = di.DiffHunks()
+    hunks[Path("app.py")] = [(1, 2)]
+    hunks.deleted_paths.add(Path("app.py"))
+    out: list[dict[str, str]] = []
+    symbols = map_changed_lines_to_symbols(hunks, root, out)
+    assert [s["name"] for s in symbols] == ["changed"]
+    assert out == []
