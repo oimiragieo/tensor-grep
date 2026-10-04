@@ -7070,7 +7070,7 @@ def _relative_validation_path(path: Path, repo_root: Path) -> str:
 def _shell_safe_arg(value: str) -> str:
     if not value:
         return '""'
-    if any(char.isspace() for char in value) or '"' in value:
+    if any(char.isspace() or char in "\"';&|<>()*?[]" for char in value):
         escaped = value.replace('"', '\\"')
         return f'"{escaped}"'
     return value
@@ -7444,12 +7444,13 @@ def _suggested_validation_command_for_primary_file(
         return None
     relative_test = _relative_validation_path(test_path, root)
     suffix = source_path.suffix.lower()
+    quoted_test = _shell_safe_arg(relative_test)
     if suffix == ".py":
-        command = f"pytest {relative_test}"
+        command = f"pytest {quoted_test}"
     elif suffix in _TS_SUFFIXES:
-        command = f"vitest run {relative_test}"
+        command = f"vitest run {quoted_test}"
     else:
-        command = f"jest {relative_test}"
+        command = f"jest {quoted_test}"
 
     return {
         "command": command,
@@ -7678,6 +7679,7 @@ def _raw_validation_plan_for_tests(
         suffix = path.suffix.lower()
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
+        command_path = _shell_safe_arg(relative_path)
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
         )
@@ -7692,7 +7694,7 @@ def _raw_validation_plan_for_tests(
                 )
                 if test_filter:
                     add_step(
-                        f"uv run pytest {relative_path} -k {test_filter} -q",
+                        f"uv run pytest {command_path} -k {test_filter} -q",
                         scope="symbol",
                         runner="pytest",
                         target=relative_path,
@@ -7700,7 +7702,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
             add_step(
-                f"uv run pytest {relative_path} -q",
+                f"uv run pytest {command_path} -q",
                 scope="file",
                 runner="pytest",
                 target=relative_path,
@@ -7724,7 +7726,7 @@ def _raw_validation_plan_for_tests(
                 remember_runner(runner)
                 if test_filter:
                     add_step(
-                        _javascript_runner_specific_command(runner, relative_path, test_filter),
+                        _javascript_runner_specific_command(runner, command_path, test_filter),
                         scope="symbol",
                         runner=runner,
                         target=relative_path,
@@ -7732,7 +7734,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
                 add_step(
-                    _javascript_runner_file_command(runner, relative_path),
+                    _javascript_runner_file_command(runner, command_path),
                     scope="file",
                     runner=runner,
                     target=relative_path,
@@ -7760,7 +7762,7 @@ def _raw_validation_plan_for_tests(
             )
             if script_uses_node_test or primary_file_uses_node_test:
                 add_step(
-                    _javascript_node_test_file_command(relative_path),
+                    _javascript_node_test_file_command(command_path),
                     scope="file",
                     runner="node:test",
                     target=relative_path,
@@ -7771,7 +7773,7 @@ def _raw_validation_plan_for_tests(
                 remember_runner(runner)
                 if test_filter:
                     add_step(
-                        _javascript_runner_specific_command(runner, relative_path, test_filter),
+                        _javascript_runner_specific_command(runner, command_path, test_filter),
                         scope="symbol",
                         runner=runner,
                         target=relative_path,
@@ -7779,7 +7781,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
                 add_step(
-                    _javascript_runner_file_command(runner, relative_path),
+                    _javascript_runner_file_command(runner, command_path),
                     scope="file",
                     runner=runner,
                     target=relative_path,
