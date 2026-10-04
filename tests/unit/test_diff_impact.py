@@ -1335,3 +1335,123 @@ def test_real_repo_pure_rename_is_no_change_not_incomplete(tmp_path: Path) -> No
     payload = build_diff_blast_radius(root=tmp_path, staged=True)
     assert payload["partial"] is False
     assert payload["changed_files"] == []
+
+
+REC_TEXT = "diff --git a/t.py b/t.py\nindex 1111111..2222222 100644\n--- a/t.py\n+++ b/t.py\n@@ -2,0 +3,1 @@\n+x\n"
+REC_BINARY = (
+    "diff --git a/b.bin b/b.bin\nindex 1111111..2222222 100644\n"
+    "Binary files a/b.bin and b/b.bin differ\n"
+)
+REC_MODE = "diff --git a/run.sh b/run.sh\nold mode 100644\nnew mode 100755\n"
+REC_RENAME = (
+    "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\nrename to new.py\n"
+)
+REC_COPY = "diff --git a/src.py b/dup.py\nsimilarity index 100%\ncopy from src.py\ncopy to dup.py\n"
+REC_ADD_EMPTY = "diff --git a/e.py b/e.py\nnew file mode 100644\nindex 0000000..e69de29\n"
+REC_DELETE_EMPTY = "diff --git a/z.py b/z.py\ndeleted file mode 100644\nindex e69de29..0000000\n"
+REC_QUOTED_RENAME = (
+    'diff --git "a/o\\303\\251.py" "b/n\\303\\251.py"\nsimilarity index 100%\n'
+    'rename from "o\\303\\251.py"\nrename to "n\\303\\251.py"\n'
+)
+ALL_RECORDS = [
+    REC_TEXT,
+    REC_BINARY,
+    REC_MODE,
+    REC_RENAME,
+    REC_COPY,
+    REC_ADD_EMPTY,
+    REC_DELETE_EMPTY,
+    REC_QUOTED_RENAME,
+]
+
+
+@pytest.mark.parametrize("record", ALL_RECORDS)
+def test_record_validator_accepts_each_legitimate_record_alone(record: str) -> None:
+    di._parse_checked(record)  # must not raise
+
+
+def test_record_validator_accepts_all_record_kinds_mixed_in_one_output() -> None:
+    parsed = di._parse_checked("".join(ALL_RECORDS))
+    assert Path("t.py") in parsed
+    assert Path("b.bin") in parsed
+    assert Path("run.sh") in parsed
+    assert Path("e.py") in parsed
+    assert Path("z.py") in parsed
+    assert Path("old.py") not in parsed and Path("new.py") not in parsed  # pure rename/copy
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "diff --git a/lost.py b/lost.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%garbage\nrename from old.py\n"
+        "rename to new.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename to new.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from other.py\n"
+        "rename to new.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 100%\nrename from old.py\n"
+        "rename to elsewhere.py\n",
+        "diff --git a/old.py b/new.py\nsimilarity index 90%\nrename from old.py\n"
+        "rename to new.py\n",
+        "diff --git a/old.py b/new.py\nrename from old.py\nrename to new.py\n",
+        REC_TEXT + "a stray line between records\n" + REC_BINARY,
+        REC_BINARY + "stray\n",
+        "diff --git a/m.py b/m.py\nold mode 100644\n",
+        "diff --git a/t.py b/t.py\n--- a/t.py\n+++ b/t.py\n",
+        "diff --git garbage\n",
+    ],
+)
+def test_record_validator_rejects_incomplete_or_stray_records(bad: str) -> None:
+    with pytest.raises(di.DiffError) as exc_info:
+        di._parse_checked(bad)
+    assert exc_info.value.reason == "unparsed_git_output"
+
+
+def test_record_validator_names_the_offending_header_path() -> None:
+    with pytest.raises(di.DiffError) as exc_info:
+        di._parse_checked(REC_TEXT + "diff --git a/lost.py b/lost.py\n")
+    assert "lost.py" in str(exc_info.value)
+
+
+def test_unmerged_path_line_after_a_normal_patch_is_not_swallowed() -> None:
+    with pytest.raises(di.DiffError) as exc_info:
+        di._parse_checked(REC_TEXT + "* Unmerged path conflict.py\n")
+    assert exc_info.value.reason == "unmerged_paths"
+    assert "conflict.py" in str(exc_info.value)
+    with pytest.raises(di.DiffError) as exc_info2:
+        di._parse_checked("* Unmerged path conflict.py\n")
+    assert exc_info2.value.reason == "unmerged_paths"
+
+
+def test_real_repo_staged_edit_plus_unmerged_conflict_is_incomplete(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("x = 0\n", encoding="utf-8")
+    (tmp_path / "other.py").write_text("y = 0\n", encoding="utf-8")
+    _git(tmp_path, "add", "--all")
+    _git(tmp_path, "commit", "-qm", "base")
+    _git(tmp_path, "checkout", "-q", "-b", "left")
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "commit", "-qam", "left")
+    _git(tmp_path, "checkout", "-q", "-b", "right", "HEAD~1")
+    (tmp_path / "a.py").write_text("x = 2\n", encoding="utf-8")
+    _git(tmp_path, "commit", "-qam", "right")
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "merge", "-q", "left"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+    )
+    (tmp_path / "other.py").write_text("y = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "--", "other.py")
+    raw = subprocess.run(
+        ["git", "diff", "--cached", "-U0", "--no-color"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "* Unmerged path a.py" in raw and "other.py" in raw, raw
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert payload["partial"] is True
+    assert payload["incomplete_reason"] == "unmerged_paths"

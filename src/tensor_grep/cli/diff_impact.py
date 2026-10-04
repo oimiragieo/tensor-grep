@@ -161,30 +161,129 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
         self.submodule_changed_files = set()
 
 
-_NOOP_RECORD_PREFIXES = (
-    "diff --git ",
-    "similarity index 100%",
-    "rename from ",
-    "rename to ",
-    "copy from ",
-    "copy to ",
-)
+_INDEX_LINE_RE = re.compile(r"^index [0-9a-f]+\.\.[0-9a-f]+( [0-7]{6})?$")
+_MODE_LINE_RE = re.compile(r"^(old|new) mode [0-7]{6}$")
+_FILE_MODE_LINE_RE = re.compile(r"^(new|deleted) file mode [0-7]{6}$")
+_SIMILARITY_LINE_RE = re.compile(r"^similarity index [0-9]{1,3}%$")
+_UNMERGED_PREFIX = "* Unmerged path "
 
 
-def _is_pure_rename_or_copy_output(diff_text: str) -> bool:
-    """True when every non-blank line is part of a 100%-similarity rename/copy record."""
-    lines = [ln.rstrip("\r") for ln in diff_text.split("\n") if ln.strip()]
-    return bool(lines) and all(ln.startswith(_NOOP_RECORD_PREFIXES) for ln in lines)
+def _unparsed(path_hint: str, detail: str) -> DiffError:
+    return DiffError(
+        "unparsed_git_output", f"cannot interpret git output for {path_hint}: {detail}"
+    )
+
+
+def _quoted_operand(raw: str, prefix: str) -> str:
+    """Rebuild the diff --git operand for a rename/copy path (git quotes each operand alone)."""
+    return f'"{prefix}{raw[1:]}' if raw.startswith('"') else f"{prefix}{raw}"
+
+
+def _validate_record(record: list[str]) -> None:
+    """Classify ONE `diff --git` record; raise DiffError unless it is a recognised shape."""
+    rest = record[0][len("diff --git ") :]
+    hint = str(_diff_git_line_path(rest) or rest[:120])
+    has_minus = has_plus = binary = body = False
+    hunks = 0
+    old_mode = new_mode = new_file = deleted_file = False
+    sim100 = False
+    pair: dict[str, str] = {}
+    for line in record[1:]:
+        if line.startswith(_UNMERGED_PREFIX):
+            raise DiffError(
+                "unmerged_paths",
+                f"unmerged path {line[len(_UNMERGED_PREFIX) :]!r}: resolve or stage the merge "
+                "conflicts first, then re-run",
+            )
+        if body:
+            if line.startswith("@@ "):
+                hunks += 1
+                continue
+            if line[:1] in (" ", "+", "-", "\\"):
+                continue
+            raise _unparsed(hint, f"stray line {line[:80]!r} inside a hunk")
+        if line.startswith("@@ "):
+            hunks += 1
+            body = True
+        elif line.startswith("--- "):
+            has_minus = True
+        elif line.startswith("+++ "):
+            has_plus = True
+        elif _INDEX_LINE_RE.match(line):
+            pass
+        elif m := _MODE_LINE_RE.match(line):
+            if m.group(1) == "old":
+                old_mode = True
+            else:
+                new_mode = True
+        elif m := _FILE_MODE_LINE_RE.match(line):
+            if m.group(1) == "new":
+                new_file = True
+            else:
+                deleted_file = True
+        elif _SIMILARITY_LINE_RE.match(line):
+            sim100 = line == "similarity index 100%"
+        elif line.startswith(("rename from ", "rename to ", "copy from ", "copy to ")):
+            kind, direction, operand = line.split(" ", 2)
+            if not operand or f"{kind} {direction}" in pair:
+                raise _unparsed(hint, f"malformed line {line[:80]!r}")
+            pair[f"{kind} {direction}"] = operand
+        elif line.startswith("Binary files ") and line.endswith(" differ"):
+            binary = True
+        else:
+            raise _unparsed(hint, f"unexpected line {line[:80]!r}")
+
+    if has_minus and has_plus and hunks >= 1:
+        return  # (a) text change (also covers submodule gitlink hunks)
+    if (hunks == 0 and (has_minus or has_plus)) or (hunks and not (has_minus and has_plus)):
+        raise _unparsed(hint, "incomplete ---/+++/@@ structure")
+    if binary:
+        return  # (b)
+    if (new_file or deleted_file) and not pair and not (old_mode or new_mode):
+        return  # (a) header-only add/delete
+    verified_pair = False
+    if pair:
+        for kind in ("rename", "copy"):
+            src, dst = pair.get(f"{kind} from"), pair.get(f"{kind} to")
+            if src is not None and dst is not None and len(pair) == 2:
+                expected = f"{_quoted_operand(src, 'a/')} {_quoted_operand(dst, 'b/')}"
+                verified_pair = sim100 and rest == expected
+    if pair and not verified_pair:
+        raise _unparsed(hint, "rename/copy record is incomplete, inconsistent or not 100% similar")
+    if old_mode and new_mode and not (new_file or deleted_file):
+        return  # (c) mode-only (optionally with a verified pure rename)
+    if verified_pair and not (old_mode or new_mode or new_file or deleted_file):
+        return  # (e) verified pure rename/copy
+    raise _unparsed(hint, "record matches no supported shape")
+
+
+def _validate_records(diff_text: str) -> None:
+    """Validate EVERY record of git's output, not the output as a whole."""
+    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
+    if lines and lines[-1] == "":
+        lines.pop()
+    records: list[list[str]] = []
+    for line in lines:
+        if line.startswith("diff --git "):
+            records.append([line])
+        elif line.startswith(_UNMERGED_PREFIX):
+            raise DiffError(
+                "unmerged_paths",
+                f"unmerged path {line[len(_UNMERGED_PREFIX) :]!r}: resolve or stage the merge "
+                "conflicts first, then re-run",
+            )
+        elif records:
+            records[-1].append(line)
+        elif line.strip():
+            raise _unparsed("<output>", f"line outside any diff record: {line[:80]!r}")
+    for record in records:
+        _validate_record(record)
 
 
 def _parse_checked(diff_text: str) -> DiffHunks:
-    """Parse, but never let non-empty git output silently become 'no changes'."""
-    parsed = parse_git_diff_hunks(diff_text)
-    if not parsed and diff_text.strip() and not _is_pure_rename_or_copy_output(diff_text):
-        raise DiffError(
-            "unparsed_git_output",
-            "git produced output diff-impact could not interpret: " + repr(diff_text.strip()[:200]),
-        )
+    """Parse, but never let unexplained git output silently become 'no changes'."""
+    parsed = parse_git_diff_hunks(diff_text)  # raises on combined (merge) diffs
+    _validate_records(diff_text)
     return parsed
 
 
