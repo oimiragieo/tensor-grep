@@ -3034,7 +3034,9 @@ def tg_search(
             return f"Search failed: {exc}"
 
         rendered_file_limit = max(0, max_files if max_files is not None else 15)
-        rendered_result_limit = max(0, max_results if max_results is not None else 150)
+        rendered_result_limit = min(
+            max(0, max_results if max_results is not None else 150), _bounds._MCP_MAX_RENDERED_ROWS
+        )
         normalized_max_repo_files = max(1, int(max_repo_files))
         config = SearchConfig(
             case_sensitive=case_sensitive,
@@ -3331,12 +3333,7 @@ def tg_search(
             truncated = omitted_matches > 0 or omitted_files > 0 or scan_capped
 
             if structured_json:
-                payload_matches = [
-                    _bounds._bounded_match_row(filepath, match)
-                    for filepath, matches in rendered_by_file.items()
-                    for match in matches
-                ]
-                payload_matches, byte_cap = _bounds._cap_rows(payload_matches, all_results)
+                payload_matches, byte_cap = _bounds._render_rows(rendered_by_file, all_results)
                 if byte_cap:
                     omitted_matches, omitted_files, rendered_file_count = byte_cap
                     truncated = True
@@ -3362,7 +3359,7 @@ def tg_search(
                     payload["scan_limit"] = scan_limit_payload
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
-                if byte_cap:
+                if byte_cap or _bounds._hit_rendering_ceiling(max_results, all_results):
                     payload["output_truncated"] = True
                 # M14: the results envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
@@ -3374,10 +3371,13 @@ def tg_search(
             ]
 
             if rendered_by_file:
-                for filepath, matches in rendered_by_file.items():
-                    output.append(f"\n{filepath}:")
-                    for m in matches:
-                        output.append(f"  {m.line_number}: {_bounds._plain_match_text(m)}")
+                rendered_match_count, rendered_file_count, plain_capped = _bounds._render_plain(
+                    output, rendered_by_file
+                )
+                if plain_capped:
+                    omitted_matches = max(0, all_results.total_matches - rendered_match_count)
+                    omitted_files = max(0, all_results.total_files - rendered_file_count)
+                    truncated = True
 
                 if truncated:
                     output.append(
@@ -3686,12 +3686,7 @@ def tg_ast_search(
                 rendered_file_count = len(rendered_by_file)
                 omitted_matches = max(0, all_results.total_matches - rendered_match_count)
                 omitted_files = max(0, all_results.total_files - rendered_file_count)
-                payload_matches = [
-                    _bounds._bounded_match_row(filepath, m)
-                    for filepath, matches in rendered_by_file.items()
-                    for m in matches
-                ]
-                payload_matches, byte_cap = _bounds._cap_rows(payload_matches, all_results)
+                payload_matches, byte_cap = _bounds._render_rows(rendered_by_file, all_results)
                 if byte_cap:
                     omitted_matches, omitted_files, rendered_file_count = byte_cap
                 ast_payload: dict[str, Any] = {

@@ -132,20 +132,75 @@ def _cap_match_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], b
     return kept, False
 
 
-def _cap_rows(
-    rows: list[dict[str, Any]], all_results: Any
-) -> tuple[list[dict[str, Any]], tuple[int, int, int] | None]:
-    """Cap ``rows`` by rendered bytes. Returns ``(rows, None)`` when under the cap, else
-    ``(kept_rows, (omitted_matches, omitted_files, rendered_file_count))`` so the caller can
-    keep its omission counters consistent with what is actually rendered."""
-    kept, capped = _cap_match_rows(rows)
-    if not capped:
-        return rows, None
-    rendered_files = len({row["file"] for row in kept})
-    return kept, (
-        max(0, all_results.total_matches - len(kept)),
+# --- Lazy rendering: the byte cap must bound the WORK, not just the output ---------------------
+_MCP_MAX_RENDERED_ROWS = 2000  # fixed rendering ceiling, whatever ``max_results`` the caller passes
+
+
+def _cap_counts(rows: list[dict[str, Any]], all_results: Any) -> tuple[int, int, int]:
+    """``(omitted_matches, omitted_files, rendered_file_count)`` for the rows actually kept,
+    derived arithmetically from the original totals."""
+    rendered_files = len({row["file"] for row in rows})
+    return (
+        max(0, all_results.total_matches - len(rows)),
         max(0, all_results.total_files - rendered_files),
         rendered_files,
+    )
+
+
+def _render_rows(
+    rendered_by_file: dict[str, list[Any]], all_results: Any
+) -> tuple[list[dict[str, Any]], tuple[int, int, int] | None]:
+    """Render the selected matches LAZILY, keeping a running rendered-byte total (the accounting
+    ``_cap_match_rows`` uses) and stopping at the first row that would cross the budget: at most
+    ``retained + 1`` render calls, however many matches the caller selected. Returns
+    ``(rows, None)`` when everything fit, else ``(rows, (omitted_matches, omitted_files,
+    rendered_file_count))``."""
+    rows: list[dict[str, Any]] = []
+    used = 0
+    for filepath, matches in rendered_by_file.items():
+        for match in matches:
+            row = _bounded_match_row(filepath, match)
+            used += _rendered_row_bytes(row)
+            if used > _MCP_MATCHES_MAX_BYTES:
+                return rows, _cap_counts(rows, all_results)
+            rows.append(row)
+    return rows, None
+
+
+def _render_plain(
+    output: list[str], rendered_by_file: dict[str, list[Any]]
+) -> tuple[int, int, bool]:
+    """Append file headers and match lines to ``output`` lazily, stopping (and appending the ASCII
+    notice) at the first line that would cross the cumulative byte budget. Returns
+    ``(rendered_match_count, rendered_file_count, byte_capped)``."""
+    used = sum(len(line.encode("utf-8")) + 1 for line in output)
+    rendered_matches = 0
+    rendered_files = 0
+    for filepath, matches in rendered_by_file.items():
+        header = f"\n{filepath}:"
+        header_open = False
+        for match in matches:
+            line = f"  {match.line_number}: {_plain_match_text(match)}"
+            cost = len(line.encode("utf-8")) + 1 + (0 if header_open else len(header.encode()) + 1)
+            if used + cost > _MCP_MATCHES_MAX_BYTES:
+                output.append(_MCP_OUTPUT_TRUNCATED_NOTICE)
+                return rendered_matches, rendered_files, True
+            if not header_open:
+                output.append(header)
+                header_open = True
+                rendered_files += 1
+            output.append(line)
+            used += cost
+            rendered_matches += 1
+    return rendered_matches, rendered_files, False
+
+
+def _hit_rendering_ceiling(max_results: int | None, all_results: Any) -> bool:
+    """True when the caller asked for more rows than the fixed ceiling AND more exist."""
+    return (
+        max_results is not None
+        and max_results > _MCP_MAX_RENDERED_ROWS
+        and all_results.total_matches > _MCP_MAX_RENDERED_ROWS
     )
 
 
