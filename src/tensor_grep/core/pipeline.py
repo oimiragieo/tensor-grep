@@ -43,6 +43,12 @@ def _unsupported_flags(
     # "-S" is only exact for patterns whose case rg's smart-case scan reads literally.
     if "-S" in flags and smart_case_needs_rg(config) and "-S" not in bad:
         bad.append("-S")
+    # -o / -r output is rg's own: the non-rg engines return no per-match offsets or replacement
+    # text, and rebuilding it in Python was wrong (capture alternatives, ReDoS, lossy bytes).
+    if config.only_matching:
+        bad.append("-o")
+    if config.replace_str is not None:
+        bad.append("-r")
     # Case-insensitive + non-ASCII pattern: lower()/re.IGNORECASE are not rg's Unicode case
     # folding (backends/unicode_fold.py). An ASCII pattern is still checked against the file
     # content at search time, where the content is known.

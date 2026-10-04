@@ -2,9 +2,6 @@
 
 import re
 
-import pytest
-
-from tensor_grep.cli import main as cli_main
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine
@@ -23,33 +20,9 @@ def test_case_regex_flags_table():
     assert case_regex_flags(SearchConfig(ignore_case=True, case_sensitive=True), "foo") == 0
 
 
-@pytest.mark.parametrize(
-    "kw, expect_match",
-    [
-        ({"ignore_case": True}, True),
-        ({"smart_case": True}, True),
-        ({"smart_case": True, "case_sensitive": True}, False),
-        ({"ignore_case": True, "case_sensitive": True}, False),
-    ],
-)
-def test_only_matching_lines_follow_case_precedence(kw, expect_match):
-    cfg = SearchConfig(query_pattern="foo", only_matching=True, **kw)
-    out = cli_main._only_matching_lines([_line()], "foo", cfg)
-    assert bool(out) is expect_match
-
-
-@pytest.mark.parametrize(
-    "kw, replaced",
-    [
-        ({"smart_case": True}, True),
-        ({"smart_case": True, "case_sensitive": True}, False),
-        ({"ignore_case": True, "case_sensitive": True}, False),
-    ],
-)
-def test_replace_lines_follow_case_precedence(kw, replaced):
-    cfg = SearchConfig(query_pattern="foo", replace_str="x", **kw)
-    (out,) = cli_main._replace_lines([_line()], "foo", cfg)
-    assert (out.text == "x") is replaced
+# Removed deliberately (round 6): the `-o` / `--replace` post-processors no longer decide case
+# or evaluate the pattern in Python at all -- rg produces that output (see
+# tests/unit/test_cli_rg_post_process.py, which compares against rg byte for byte).
 
 
 def test_torch_and_cudf_backends_call_the_resolver():

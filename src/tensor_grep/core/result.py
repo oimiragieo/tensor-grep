@@ -89,6 +89,10 @@ class MatchLine:
     # populated. Excluding it from == is correct: these offsets are a pure function of text+line,
     # so two matches equal on those fields are equal here too.
     submatches: tuple[dict[str, object], ...] | None = field(default=None, compare=False)
+    # rg's OWN `--replace` output for this line (matches substituted, built from the line's
+    # ORIGINAL bytes). Populated by RipgrepBackend only when a replacement was requested; None
+    # otherwise, and None when the line is not valid UTF-8 (not representable as str).
+    replaced_text: str | None = field(default=None, compare=False)
     container: dict[str, object] | None = field(default=None, compare=False)
     why_ranked: list[str] | None = field(default=None, compare=False)
 

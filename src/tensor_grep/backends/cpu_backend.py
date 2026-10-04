@@ -55,21 +55,6 @@ def native_walk_deadline_exceeded(deadline: float) -> bool:
     return time.monotonic() >= deadline
 
 
-def _submatches_from_match(
-    found: "re.Match[str] | None", line_text: str
-) -> tuple[dict[str, object], ...] | None:
-    """rg-shaped submatch (0-based UTF-8 BYTE offsets) from a match the caller ALREADY computed.
-
-    Never evaluates a pattern: it only converts the existing ``re.Match`` so formatters get an
-    authoritative column instead of re-deriving one from the user's regex.
-    """
-    if found is None:
-        return None
-    start = len(line_text[: found.start()].encode("utf-8", errors="replace"))
-    end = start + len(found.group(0).encode("utf-8", errors="replace"))
-    return ({"match": {"text": found.group(0)}, "start": start, "end": end},)
-
-
 class InvalidRegexError(ValueError):
     """Raised when regex syntax is invalid and fixed-string fallback was not requested."""
 
@@ -722,7 +707,6 @@ class CPUBackend(ComputeBackend):
                     if config.invert_match:
                         matched = not matched
 
-                    line_match = None
                     if matched or before_lines > 0 or context_after_remaining > 0:
                         # Decode lazily only what we need to return
                         try:
@@ -735,12 +719,10 @@ class CPUBackend(ComputeBackend):
                         line_text = strip_line_terminator(line)
 
                         # Apply python regex search for decoded text to be safe
-                        line_match = regex_str.search(line_text)
-                        matched = bool(line_match)
+                        matched = bool(regex_str.search(line_text))
 
                         if config.invert_match:
                             matched = not matched
-                            line_match = None
 
                     if matched:
                         while before_queue:
@@ -750,12 +732,7 @@ class CPUBackend(ComputeBackend):
                             )
 
                         matches.append(
-                            MatchLine(
-                                line_number=line_idx,
-                                text=line_text,
-                                file=file_path,
-                                submatches=_submatches_from_match(line_match, line_text),
-                            )
+                            MatchLine(line_number=line_idx, text=line_text, file=file_path)
                         )
                         total_matches_count += 1
                         context_after_remaining = after_lines
@@ -805,7 +782,6 @@ class CPUBackend(ComputeBackend):
                         if config.invert_match:
                             matched = not matched
 
-                        line_match = None
                         if matched or before_lines > 0 or context_after_remaining > 0:
                             # Decode lazily only what we need to return
                             try:
@@ -818,12 +794,10 @@ class CPUBackend(ComputeBackend):
                             line_text = strip_line_terminator(line)
 
                             # Apply python regex search for decoded text to be safe
-                            line_match = regex_str.search(line_text)
-                            matched = bool(line_match)
+                            matched = bool(regex_str.search(line_text))
 
                             if config.invert_match:
                                 matched = not matched
-                                line_match = None
 
                         if matched:
                             while before_queue:
@@ -833,12 +807,7 @@ class CPUBackend(ComputeBackend):
                                 )
 
                             matches.append(
-                                MatchLine(
-                                    line_number=line_idx,
-                                    text=line_text,
-                                    file=file_path,
-                                    submatches=_submatches_from_match(line_match, line_text),
-                                )
+                                MatchLine(line_number=line_idx, text=line_text, file=file_path)
                             )
                             total_matches_count += 1
                             context_after_remaining = after_lines

@@ -35,6 +35,49 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
         return ""
 
 
+def _field_bytes(field: dict[str, object] | None) -> bytes | None:
+    """The raw bytes of an rg ``--json`` text-or-bytes field (None when absent/malformed)."""
+    if not field:
+        return None
+    text = field.get("text")
+    if isinstance(text, str):
+        return text.encode("utf-8")
+    b64 = field.get("bytes")
+    if isinstance(b64, str):
+        try:
+            return base64.b64decode(b64)
+        except (binascii.Error, ValueError):
+            return None
+    return None
+
+
+def _replaced_line_text(data_match: dict[str, object]) -> str | None:
+    """rg's replaced line, assembled from the line's ORIGINAL bytes and rg's own replacements.
+
+    rg's offsets index the raw line bytes, so substitution happens on bytes; the result is decoded
+    only at the end. A line (or replacement) that is not valid UTF-8 cannot be a faithful ``str``:
+    return None so the caller fails closed rather than print U+FFFD garbage.
+    """
+    raw = _field_bytes(data_match.get("lines"))  # type: ignore[arg-type]
+    if raw is None:
+        return None
+    pieces: list[bytes] = []
+    cursor = 0
+    submatches = data_match.get("submatches")
+    for sub in submatches if isinstance(submatches, list) else ():
+        replacement = _field_bytes(sub.get("replacement")) if isinstance(sub, dict) else None
+        start, end = (sub.get("start"), sub.get("end")) if isinstance(sub, dict) else (None, None)
+        if replacement is None or not isinstance(start, int) or not isinstance(end, int):
+            return None
+        pieces.extend((raw[cursor:start], replacement))
+        cursor = end
+    pieces.append(raw[cursor:])
+    try:
+        return strip_line_terminator(b"".join(pieces).decode("utf-8"))
+    except UnicodeDecodeError:
+        return None
+
+
 def _pattern_semantics_flags(config: SearchConfig | None) -> list[str]:
     """Every rg flag that decides WHETHER A LINE MATCHES (pattern semantics + input decoding).
 
@@ -209,7 +252,11 @@ class RipgrepBackend(ComputeBackend):
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             matches, matched_file_paths, match_counts_by_file, total_matches = (
-                self._parse_ndjson_matches(result.stdout, file_path)
+                self._parse_ndjson_matches(
+                    result.stdout,
+                    file_path,
+                    replacing=config is not None and config.replace_str is not None,
+                )
             )
 
             # Parse-first, THEN branch on the exit code. rg exit 2 = a SOFT per-file error (e.g.
@@ -272,7 +319,11 @@ class RipgrepBackend(ComputeBackend):
             )
             partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
             matches, matched_file_paths, match_counts_by_file, total_matches = (
-                self._parse_ndjson_matches(partial_stdout, file_path)
+                self._parse_ndjson_matches(
+                    partial_stdout,
+                    file_path,
+                    replacing=config is not None and config.replace_str is not None,
+                )
             )
             reason = (
                 f"rg aggregate search exceeded the {timeout_seconds:g}s timeout and was "
@@ -301,7 +352,7 @@ class RipgrepBackend(ComputeBackend):
 
     @staticmethod
     def _parse_ndjson_matches(
-        stdout: str, file_path: str | list[str]
+        stdout: str, file_path: str | list[str], replacing: bool = False
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -355,6 +406,7 @@ class RipgrepBackend(ComputeBackend):
                             text=text,
                             file=path_str,
                             submatches=tuple(_subs) if _subs else None,
+                            replaced_text=(_replaced_line_text(data_match) if replacing else None),
                         )
                     )
                     total_matches += 1
@@ -374,7 +426,15 @@ class RipgrepBackend(ComputeBackend):
                     path_str = _decode_rg_field(_path_obj)
                     if "text" not in _path_obj and isinstance(file_path, str):
                         path_str = file_path
-                    matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
+                    matches.append(
+                        MatchLine(
+                            line_number=line_number,
+                            text=text,
+                            file=path_str,
+                            # context lines are printed unchanged by rg -r
+                            replaced_text=text if replacing else None,
+                        )
+                    )
             except json.JSONDecodeError:
                 pass
 
@@ -813,7 +873,9 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--files-with-matches")
             if config.files_without_match:
                 cmd.append("--files-without-match")
-            if config.replace_str is not None and not json_mode:
+            if config.replace_str is not None:
+                # also in json mode: rg then adds a per-submatch `replacement` field, which is
+                # the ONLY source of -r/-o -r text (Python never rebuilds it)
                 cmd.extend(["--replace", config.replace_str])
             if config.passthru and not json_mode:
                 cmd.append("--passthru")

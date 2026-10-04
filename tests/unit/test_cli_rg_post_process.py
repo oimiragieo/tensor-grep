@@ -84,14 +84,33 @@ def test_ascii_literal_controls_keep_existing_behaviour(tmp_path):
     assert _search("--replace", "x", "foo", f).output.strip() == "x bar"
 
 
-def test_submatch_free_lines_still_use_the_python_regex_path():
-    # non-rg engines return no submatches: the old regex path must keep working for them
+def test_lines_without_rg_data_are_refused_not_rebuilt_in_python():
+    # design: Python never rebuilds rg's -o/-r output; a line with no rg data is refused
+    from tensor_grep.backends.base import BackendExecutionError
     from tensor_grep.cli.rg_post_process import only_matching_lines, replace_lines
 
-    cfg = SearchConfig(query_pattern="foo", replace_str="x")
     line = MatchLine(line_number=1, text="foo bar", file="f.txt")
-    assert replace_lines([line], "foo", cfg)[0].text == "x bar"
-    assert [m.text for m in only_matching_lines([line], "foo", SearchConfig())] == ["foo"]
+    with pytest.raises(BackendExecutionError):
+        replace_lines([line], "foo", SearchConfig(query_pattern="foo", replace_str="x"))
+    with pytest.raises(BackendExecutionError):
+        only_matching_lines([line], "foo", SearchConfig(only_matching=True))
+
+
+def test_post_process_module_no_longer_evaluates_the_user_pattern():
+    import ast
+    import inspect
+
+    from tensor_grep.cli import rg_post_process
+
+    tree = ast.parse(inspect.getsource(rg_post_process))
+    imported = {n.names[0].name for n in ast.walk(tree) if isinstance(n, ast.Import)} | {
+        n.module for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+    }
+    assert "re" not in imported
+    assert not any(
+        isinstance(n, ast.Attribute) and n.attr in {"compile", "search", "findall", "match"}
+        for n in ast.walk(tree)
+    )
 
 
 @pytest.mark.parametrize("template, expected", [("x", "x"), ("[$1]", "[FOO]")])
@@ -176,3 +195,145 @@ def test_only_matching_with_replace_literal_template_and_end_to_end(tmp_path):
     result = _search("-S", "-o", "-r", "[$0]", r"foo\S", f)
     assert result.exit_code == 0, (result.output, result.stderr)
     assert result.output.splitlines() == _rg_o_replace(f, r"foo\S", "[$0]", "-S") == ["[FOOX]"]
+
+
+# ---------------------------------------------------------------------------
+# Round-6 design: rg itself produces -o / -r output; Python never rebuilds it.
+# Every comparison is against rg's own bytes, or the call must raise BackendExecutionError.
+# ---------------------------------------------------------------------------
+
+
+def _rg_lines(path, pattern, *flags) -> list[bytes]:
+    proc = subprocess.run(
+        [
+            str(resolve_ripgrep_binary()),
+            "--no-config",
+            "--no-line-number",
+            *flags,
+            "-e",
+            pattern,
+            "--",
+            str(path),
+        ],
+        capture_output=True,
+        check=False,
+    )
+    return proc.stdout.splitlines()
+
+
+def _tg_lines(path, pattern, *, template=None, only=False, smart=False, fixed=False):
+    """Search with rg, then run the project's own -o/-r post-processing (or raise)."""
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import main as cli_main
+
+    cfg = SearchConfig(
+        query_pattern=pattern,
+        smart_case=smart,
+        fixed_strings=fixed,
+        replace_str=template,
+        only_matching=only,
+    )
+    try:
+        matches = RipgrepBackend().search(str(path), pattern, cfg).matches
+        if only:
+            matches = cli_main._only_matching_lines(matches, pattern, cfg)
+        elif template is not None:
+            matches = cli_main._replace_lines(matches, pattern, cfg)
+        return [m.text.encode("utf-8") for m in matches]
+    except BackendExecutionError:
+        return "raised"
+
+
+def _same_as_rg_or_raised(path, pattern, rg_flags, **kw):
+    got = _tg_lines(path, pattern, **kw)
+    assert got == "raised" or got == _rg_lines(path, pattern, *rg_flags), (got, rg_flags)
+    return got
+
+
+def test_alternation_captures_are_rgs_not_a_python_recovery(tmp_path):
+    # audit 1: `(foo)|(\w+)` -S `[$1][$2]` on FOO -> rg gives [FOO][]; recovery gave [][FOO]
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"FOO\n")
+    pattern = r"(foo)|(\w+)"
+    got = _same_as_rg_or_raised(
+        f, pattern, ["-S", "-r", "[$1][$2]"], template="[$1][$2]", smart=True
+    )
+    assert got == [b"[FOO][]"]
+    got_o = _same_as_rg_or_raised(
+        f, pattern, ["-S", "-o", "-r", "[$1][$2]"], template="[$1][$2]", smart=True, only=True
+    )
+    assert got_o == [b"[FOO][]"]
+
+
+def test_redos_pattern_is_bounded_because_python_never_evaluates_it(tmp_path):
+    # audit 2: `(a+)+b|a+$` on 32 a's took >3s in Python re while rg is instant
+    import time
+
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"a" * 32 + b"\n")
+    started = time.monotonic()
+    got = _same_as_rg_or_raised(f, r"(a+)+b|a+$", ["-r", "[$0]"], template="[$0]")
+    got_o = _same_as_rg_or_raised(
+        f, r"(a+)+b|a+$", ["-o", "-r", "[$0]"], template="[$0]", only=True
+    )
+    assert time.monotonic() - started < 3.0
+    assert got == got_o == [b"[" + b"a" * 32 + b"]"]
+
+
+def test_cpu_fallback_repeated_matches_never_yield_a_single_occurrence(monkeypatch, tmp_path):
+    # audit 3: the CPU Python loop recorded only the first re.search hit, so `ab ab` -o gave one
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.cli import main as cli_main
+    from tensor_grep.core.pipeline import Pipeline
+
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"ab ab\n")
+    expected = _rg_lines(f, "ab", "-F", "-o")
+    assert expected == [b"ab", b"ab"]
+
+    def native_fault(*args, **kwargs):
+        raise RuntimeError("fault")  # force the Python-re loop
+
+    monkeypatch.setattr(CPUBackend, "_rust_match_set", native_fault)
+    cfg = SearchConfig(query_pattern="ab", fixed_strings=True, only_matching=True)
+    # direct CPU result: either complete (== rg) or refused, never one occurrence
+    try:
+        direct = CPUBackend().search(str(f), "ab", cfg).matches
+        got = [m.text.encode() for m in cli_main._only_matching_lines(direct, "ab", cfg)]
+    except BackendExecutionError:
+        got = "raised"
+    assert got == "raised" or got == expected, got
+    # and through the pipeline the request is routed to rg: exact
+    pipe = Pipeline(force_cpu=True, config=cfg)
+    assert type(pipe.backend).__name__ == "RipgrepBackend"
+    matches = pipe.backend.search(str(f), "ab", cfg).matches
+    assert [m.text.encode() for m in cli_main._only_matching_lines(matches, "ab", cfg)] == expected
+
+
+def test_invalid_utf8_line_offsets_are_applied_to_original_bytes(tmp_path):
+    # audit 4: rg offsets [1,4) were applied to the re-encoded U+FFFD text of b"\xfffoo"
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"\xfffoo\n")
+    got = _same_as_rg_or_raised(f, "foo", ["-o"], only=True)
+    assert got == [b"foo"]
+    # -r on a line that is not valid UTF-8 cannot be rendered byte-exactly through str: it must
+    # equal rg's bytes or be refused, never garbage
+    _same_as_rg_or_raised(f, "foo", ["-r", "X"], template="X")
+
+
+def test_only_matching_and_replace_are_unsupported_on_non_rg_engines():
+    from tensor_grep.backends.cpu_backend import CPUBackend
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend, _pattern_semantics_flags
+    from tensor_grep.backends.rust_backend import RustCoreBackend
+    from tensor_grep.core.pipeline import _enforce_semantics_support
+
+    rg = RipgrepBackend()
+    for kw in ({"only_matching": True}, {"replace_str": "x"}):
+        cfg = SearchConfig(query_pattern="foo", **kw)
+        for engine in (RustCoreBackend(), CPUBackend()):
+            backend, reason = _enforce_semantics_support(
+                engine, "x", cfg, _pattern_semantics_flags(cfg), rg, True
+            )
+            assert backend is rg and reason == "semantics_require_rg", (kw, type(engine))
