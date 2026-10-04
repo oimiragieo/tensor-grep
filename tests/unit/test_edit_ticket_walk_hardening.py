@@ -1312,16 +1312,20 @@ def _make_deep_tree(root: Path, depth: int) -> Path:
 
 
 def _remove_deep_tree(root: Path) -> None:
-    # shutil.rmtree / os.walk are recursive on some supported Pythons; use the OS
-    if sys.platform == "win32":
-        subprocess.run(
-            ["cmd", "/c", "rmdir", "/s", "/q", "\\\\?\\" + str(root)],
-            check=False,
-            timeout=120,
-            capture_output=True,
-        )
-    else:
-        subprocess.run(["rm", "-rf", str(root)], check=False, timeout=120)
+    # shutil.rmtree / os.walk are recursive on some supported Pythons, and the tests must not
+    # shell out to binaries CI may lack: delete the `d/d/d/...` chain bottom-up, iteratively.
+    chain: list[str] = []
+    current = str(root)
+    while os.path.isdir(os.path.join(current, "d")):
+        current = os.path.join(current, "d")
+        chain.append(current)
+    for directory in reversed(chain):
+        for name in os.listdir(directory):
+            os.unlink(os.path.join(directory, name))
+        os.rmdir(directory)
+    for name in os.listdir(root):
+        os.unlink(os.path.join(root, name))
+    os.rmdir(root)
 
 
 def _skip_if_fd_limit_too_low() -> None:

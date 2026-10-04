@@ -462,8 +462,10 @@ def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], li
         for entry in entries:
             try:
                 is_dir = entry.is_dir(follow_symlinks=False)
-            except OSError:
-                is_dir = False  # listed as a file; the leaf check refuses a directory there
+            except OSError as exc:
+                # an entry whose TYPE cannot be determined is not "a file": the population is
+                # incomplete (it used to be listed as a file and left to the leaf check)
+                raise _PopulationWalkError("unreadable_path") from exc
             (dirs if is_dir else files).append(entry.name)
         return dirs, files
 
@@ -659,8 +661,10 @@ def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], 
         for entry in entries:
             try:
                 is_dir = entry.is_dir()
-            except OSError:
-                is_dir = False  # listed as a file; the leaf check refuses a directory there
+            except OSError as exc:
+                # an entry whose TYPE cannot be determined is not "a file": the population is
+                # incomplete (it used to be listed as a file and left to the leaf check)
+                raise _PopulationWalkError("unreadable_path") from exc
             (dirs if is_dir else files).append(entry.name)
         return dirs, files
 
