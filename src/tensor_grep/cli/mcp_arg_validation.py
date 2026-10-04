@@ -183,7 +183,7 @@ def regex_is_invalid(pattern: str, *, fixed_strings: bool) -> bool:
     return False
 
 
-def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> None:
+def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> bool:
     """Raise ``re.error`` when ``pattern`` is a syntax error and NO file reached a backend.
 
     Called only after a walk that scanned zero files: the backend parser (which normally reports
@@ -192,3 +192,4 @@ def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> None:
     """
     if regex_is_invalid(pattern, fixed_strings=fixed_strings):
         raise re.error(REGEX_INVALID_MESSAGE)
+    return False  # truthy-or-raise shape lets mcp_server call it as one expression
