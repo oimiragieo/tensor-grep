@@ -25,6 +25,36 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
     )
 
 
+def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | None = None) -> int:
+    """Offset of the first NUL byte, scanning in bounded chunks (-1 when none)."""
+    offset = 0
+    with open(path, "rb") as handle:
+        while max_bytes is None or offset < max_bytes:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                return -1
+            idx = chunk.find(b"\0")
+            if idx >= 0:
+                return offset + idx
+            offset += len(chunk)
+    return -1
+
+
+def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536) -> bool:
+    """Bounded-memory exact byte search; carries len(needle)-1 bytes across chunk boundaries."""
+    if not needle:
+        return True
+    keep = len(needle) - 1
+    tail = b""
+    with open(path, "rb") as handle:
+        while chunk := handle.read(chunk_size):
+            window = tail + chunk
+            if needle in window:
+                return True
+            tail = window[-keep:] if keep else b""
+    return False
+
+
 class RustCoreBackend(ComputeBackend):
     """Python wrapper implementing the ComputeBackend interface around the PyO3 Rust extension."""
 
@@ -91,7 +121,7 @@ class RustCoreBackend(ComputeBackend):
     @staticmethod
     def _binary_notice_text(file_path: str) -> str:
         try:
-            offset = Path(file_path).read_bytes().find(b"\0")
+            offset = _first_nul_offset(file_path)
         except OSError:
             offset = -1
         if offset < 0:
@@ -105,25 +135,58 @@ class RustCoreBackend(ComputeBackend):
     def _binary_file_matches_pattern(
         file_path: str, pattern: str, config: SearchConfig | None
     ) -> bool:
-        try:
-            haystack = Path(file_path).read_bytes()
-        except OSError:
-            return False
-
-        ignore_case = bool(
-            config and (config.ignore_case or (config.smart_case and pattern.islower()))
+        from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+        from tensor_grep.cli.subprocess_policy import (
+            configured_ripgrep_timeout_seconds,
+            run_subprocess,
         )
-        pattern_bytes = pattern.encode("utf-8", errors="surrogateescape")
-        if config and config.fixed_strings:
-            if ignore_case:
-                return pattern_bytes.lower() in haystack.lower()
-            return pattern_bytes in haystack
 
-        flags = re.IGNORECASE if ignore_case else 0
-        try:
-            return re.search(pattern_bytes, haystack, flags=flags) is not None
-        except re.error as exc:
-            raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+        plain_literal = (
+            config is not None
+            and bool(config.fixed_strings)
+            and not (
+                config.ignore_case or config.smart_case or config.word_regexp or config.line_regexp
+            )
+        )
+        if plain_literal:
+            # An exact case-sensitive literal has no regex semantics and no ReDoS surface:
+            # keep the rg-free bounded path (chunks with overlap).
+            try:
+                return _file_contains_literal(
+                    file_path, pattern.encode("utf-8", errors="surrogateescape")
+                )
+            except OSError:
+                return False
+        rg = resolve_ripgrep_binary()
+        if rg is None:
+            raise BackendExecutionError(
+                "binary-file match check for a regex pattern requires the 'rg' binary; "
+                "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
+            )
+        cmd = [str(rg), "-a", "-q", "--no-config"]
+        if config and config.fixed_strings:
+            cmd.append("-F")
+        if config and config.ignore_case:
+            cmd.append("-i")
+        elif config and config.smart_case and not config.case_sensitive:
+            cmd.append("-S")
+        if config and config.word_regexp:
+            cmd.append("-w")
+        if config and config.line_regexp:
+            cmd.append("-x")
+        cmd += ["-e", pattern, "--", file_path]
+        proc = run_subprocess(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout_seconds=configured_ripgrep_timeout_seconds(),
+        )
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        raise InvalidRegexError(f"invalid regex pattern: {(proc.stderr or '').strip()[:300]}")
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None

@@ -1,6 +1,6 @@
 from collections import defaultdict
-from pathlib import Path
 
+from tensor_grep.backends.rust_backend import _first_nul_offset
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.formatters.json_fmt import _REGEX_META, _literal_column_index
 from tensor_grep.core.config import SearchConfig
@@ -14,7 +14,7 @@ class RipgrepFormatter(OutputFormatter):
     @staticmethod
     def _binary_notice(file_path: str) -> str:
         try:
-            offset = Path(file_path).read_bytes().find(b"\0")
+            offset = _first_nul_offset(file_path)
         except OSError:
             offset = -1
         if offset < 0:

@@ -3,6 +3,13 @@ from pathlib import Path
 import pytest
 
 
+def _rg_or_skip():
+    from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
+
+    if resolve_ripgrep_binary() is None:
+        pytest.skip("rg not installed")
+
+
 def test_rust_core_import():
     """Verify that the pyo3 native extension compiles and can be imported."""
     import importlib.util
@@ -277,6 +284,7 @@ def test_rust_limit_bridge_failure_records_fallback_reason(monkeypatch, tmp_path
 def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
     monkeypatch, tmp_path: Path
 ):
+    _rg_or_skip()  # the regex binary-file check is decided by rg, not Python re
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.core.config import SearchConfig
 
@@ -311,6 +319,7 @@ def test_rust_backend_returns_binary_notice_unless_text_or_binary_flag_is_set(
 def test_rust_backend_invalid_regex_in_binary_notice_does_not_become_literal(
     monkeypatch, tmp_path: Path
 ):
+    _rg_or_skip()
     from tensor_grep.backends import rust_backend as rb
     from tensor_grep.backends.cpu_backend import InvalidRegexError
     from tensor_grep.core.config import SearchConfig
@@ -395,3 +404,144 @@ def test_rust_backend_exception_should_raise_backend_execution_error(monkeypatch
     # never as a silent, empty success-shaped result indistinguishable from no-match.
     with pytest.raises(BackendExecutionError):
         backend.search(str(log_file), "ERROR")
+
+
+def test_binary_notice_check_does_not_use_python_re():
+    # Deviation from the plan's `monkeypatch.setattr(rb.re, "search", boom)`: that stubs the
+    # GLOBAL stdlib `re.search` through a module alias (standing rule). Assert on the AST
+    # instead: no `re.<anything>` call may remain in the binary-file match check.
+    import ast
+    import inspect
+    import textwrap
+
+    from tensor_grep.backends import rust_backend as rb
+
+    src = textwrap.dedent(inspect.getsource(rb.RustCoreBackend._binary_file_matches_pattern))
+    uses_re = [
+        node
+        for node in ast.walk(ast.parse(src))
+        if isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "re"
+    ]
+    assert not uses_re, "user pattern must not be evaluated by Python re"
+
+
+def test_binary_notice_check_redos_pattern_goes_through_rg(tmp_path):
+    _rg_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00" + b"a" * 60 + b"\nxyz\n")
+    assert rb.RustCoreBackend._binary_file_matches_pattern(str(f), "(a+)+$", SearchConfig()) is True
+
+
+def test_binary_notice_check_accepts_unicode_class(tmp_path):
+    _rg_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00abc\n")
+    assert (
+        rb.RustCoreBackend._binary_file_matches_pattern(str(f), r"\p{L}+", SearchConfig()) is True
+    )
+
+
+def test_binary_notice_check_honours_word_and_smart_case(tmp_path):
+    _rg_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00foobar\n")
+    check = rb.RustCoreBackend._binary_file_matches_pattern
+    assert check(str(f), "foo", SearchConfig(word_regexp=True)) is False
+    assert check(str(f), "FOO", SearchConfig(smart_case=True)) is False
+    assert check(str(f), "foo", SearchConfig(smart_case=True)) is True
+    # fixed-string branch must honour -w / -x too (was raw byte containment)
+    assert check(str(f), "foo", SearchConfig(fixed_strings=True, word_regexp=True)) is False
+    assert check(str(f), "foo", SearchConfig(fixed_strings=True, line_regexp=True)) is False
+    assert check(str(f), "foobar", SearchConfig(fixed_strings=True)) is True
+    assert check(str(f), "a.b", SearchConfig(fixed_strings=True)) is False  # literal, not regex
+
+
+def test_plain_fixed_string_binary_check_works_without_rg(monkeypatch, tmp_path):
+    # council round 11: rg-free positive control incl. a match spanning a chunk boundary
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.cli import runtime_paths
+    from tensor_grep.core.config import SearchConfig
+
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    f = tmp_path / "bin.bin"
+    f.write_bytes(b"\x00" + b"x" * 65530 + b"NEEDLE" + b"\n")  # straddles the 65536 boundary
+    check = rb.RustCoreBackend._binary_file_matches_pattern
+    assert check(str(f), "NEEDLE", SearchConfig(fixed_strings=True)) is True
+    assert check(str(f), "ABSENT", SearchConfig(fixed_strings=True)) is False
+    assert rb._file_contains_literal(str(f), b"NEEDLE", chunk_size=4096) is True
+    with pytest.raises(rb.BackendExecutionError):  # fail-closed: an unsupported flag needs rg
+        check(str(f), "needle", SearchConfig(fixed_strings=True, ignore_case=True))
+
+
+def test_first_nul_offset_is_chunked(tmp_path):
+    from tensor_grep.backends import rust_backend as rb
+
+    f = tmp_path / "late.bin"
+    f.write_bytes(b"a" * 70000 + b"\x00")
+    assert rb._first_nul_offset(str(f), chunk_size=4096) == 70000
+    g = tmp_path / "none.txt"
+    g.write_bytes(b"abc")
+    assert rb._first_nul_offset(str(g)) == -1
+
+
+def test_first_nul_offset_never_reads_unbounded(tmp_path, monkeypatch):
+    # council round 13: offset correctness alone would pass with read_bytes().find(); record reads
+    import builtins
+
+    from tensor_grep.backends import rust_backend as rb
+
+    sizes: list[int | None] = []
+    real_open = builtins.open
+
+    class _Rec:
+        def __init__(self, handle):
+            self._h = handle
+
+        def read(self, n=-1):
+            sizes.append(n)
+            return self._h.read(n)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self._h.close()
+
+    monkeypatch.setattr(
+        rb,
+        "open",
+        lambda p, mode="r", *a, **k: _Rec(real_open(p, mode, *a, **k)),
+        raising=False,
+    )
+    f = tmp_path / "late.bin"
+    f.write_bytes(b"a" * 70000 + b"\x00")
+    assert rb._first_nul_offset(str(f), chunk_size=4096) == 70000  # crosses many chunk boundaries
+    # every read is bounded by chunk_size (a module-global `open` shadow intercepts the call)
+    assert sizes
+    assert all(isinstance(n, int) and 0 < n <= 4096 for n in sizes), sizes
+
+
+def test_binary_notice_entry_points_never_read_whole_file(tmp_path, monkeypatch):
+    # council round 14: BEHAVIOURAL, through both existing notice consumers.
+    from pathlib import Path as _P
+
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.cli.formatters.ripgrep_fmt import RipgrepFormatter
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "late.bin"
+    f.write_bytes(b"a" * 200_000 + b"\x00" + b"tail\n")
+    monkeypatch.setattr(_P, "read_bytes", lambda self: pytest.fail(f"whole-file read of {self}"))
+    assert rb.RustCoreBackend._binary_notice_text(str(f)) is not None  # notice still produced
+    assert RipgrepFormatter(SearchConfig())._binary_notice(str(f)) is not None
