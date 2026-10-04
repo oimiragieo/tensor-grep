@@ -1521,3 +1521,33 @@ def test_tg_ast_search_plain_text_truncates_each_line_and_stays_bounded():
     short = _run_tg_ast_search_many(3, "ok", structured_json=False)
     assert "output truncated at" not in short
     assert "  1: ok" in short
+
+
+def _real_ast_search(tmp_path, monkeypatch, pattern):
+    import pytest
+
+    from tensor_grep.backends.ast_wrapper_backend import AstGrepWrapperBackend
+    from tensor_grep.cli import mcp_server
+
+    if not AstGrepWrapperBackend().is_available():
+        pytest.skip("ast-grep binary not installed")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "m.py").write_text("def f():\n    pass\n", encoding="utf-8")
+    return json.loads(mcp_server.tg_ast_search(pattern, "python", ".", structured_json=True))
+
+
+def test_real_backend_multiline_malformed_pattern_with_zero_matches_is_invalid_input(
+    tmp_path, monkeypatch
+):
+    out = _real_ast_search(tmp_path, monkeypatch, "def (\n    pass")
+    assert out["error"]["code"] == "invalid_input"
+    assert "multiline" in out["error"]["message"] or "ERROR node" in out["error"]["message"]
+    assert str(tmp_path) not in out["error"]["message"]
+
+
+def test_real_backend_valid_multiline_pattern_with_matches_is_returned_normally(
+    tmp_path, monkeypatch
+):
+    out = _real_ast_search(tmp_path, monkeypatch, "def $A():\n    pass")
+    assert "error" not in out
+    assert out["total_matches"] == 1

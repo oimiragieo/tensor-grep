@@ -91,6 +91,7 @@ class AstGrepWrapperBackend(ComputeBackend):
 
     def __init__(self) -> None:
         self._resolved_binary_name: str | None = None
+        self._pattern_problems: dict[str, str] = {}
 
     def is_available(self) -> bool:
         return self._get_binary_name() != "ast-grep"
@@ -184,10 +185,38 @@ class AstGrepWrapperBackend(ComputeBackend):
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), "--", *paths]
         return cmd, context
 
+    def _record_pattern_problem(
+        self, pattern: str, result: subprocess.CompletedProcess[str]
+    ) -> None:
+        """Remember a malformed-pattern signal seen on the ACTUAL search invocation (any pattern,
+        multiline included): ast-grep's 'Pattern contains an ERROR node' stderr warning, or --
+        for a multiline pattern, which is compiled from a tg-generated inline rule -- a nonzero
+        'Cannot parse rule' failure. The message is constant for the latter (stderr names a
+        temp-file path). Never raises."""
+        raw_stderr = getattr(result, "stderr", "")
+        if not isinstance(raw_stderr, str):
+            return
+        stderr = raw_stderr.lower()
+        if "pattern contains an error node" in stderr:
+            for line in (result.stderr or "").splitlines():
+                if "pattern contains an error node" in line.lower():
+                    self._pattern_problems[pattern] = line.strip()
+                    return
+        multiline = "\n" in pattern or "\r" in pattern
+        if multiline and getattr(result, "returncode", 0) != 0 and "cannot parse rule" in stderr:
+            self._pattern_problems[pattern] = (
+                "Pattern contains an ERROR node: ast-grep could not parse the multiline pattern"
+            )
+
     def pattern_warning(self, pattern: str, config: SearchConfig | None = None) -> str | None:
-        """Return ast-grep's 'Pattern contains an ERROR node' warning, or None. Empty-stdin run:
-        the warning fires only when the pattern itself is malformed, never for a valid pattern
-        that merely matches nothing. Single-line patterns only; never raises."""
+        """Return a malformed-pattern message for ``pattern``, or None. Prefers the signal already
+        captured from the real search invocation (any pattern, multiline included); otherwise a
+        single-line pattern is probed with an empty-stdin run, where ast-grep's 'Pattern contains
+        an ERROR node' warning fires only when the pattern itself is malformed, never for a valid
+        pattern that merely matches nothing. Never raises."""
+        recorded = self._pattern_problems.get(pattern)
+        if recorded:
+            return recorded
         try:
             lang = normalize_ast_language(config.lang) if config and config.lang else None
         except ValueError:
@@ -460,6 +489,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
+                self._record_pattern_problem(pattern, result)
                 partial = self._raise_for_nonzero(result)
                 return self._cap_to_max_count(
                     self._parse_result(result.stdout, partial=partial), config
@@ -493,6 +523,7 @@ class AstGrepWrapperBackend(ComputeBackend):
                     cmd,
                     input_text=config.ast_stdin_input if config and config.ast_stdin else None,
                 )
+                self._record_pattern_problem(pattern, result)
                 partial = self._raise_for_nonzero(result)
                 return self._cap_to_max_count(
                     self._parse_result(result.stdout, fallback_file=file_path, partial=partial),

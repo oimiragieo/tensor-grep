@@ -996,3 +996,57 @@ def test_pattern_warning_never_raises_on_backend_error_or_unsupported_language()
         assert backend.pattern_warning("def (", config) is None
     assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="not-a-lang")) is None
     assert backend.pattern_warning("a\nb", config) is None
+
+
+def _multiline_backend_run(pattern, *, returncode, stderr, stdout="[]"):
+    backend = AstGrepWrapperBackend()
+    run = subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=run),
+    ):
+        try:
+            backend.search("m.py", pattern, config=config)
+        except BackendExecutionError:
+            pass
+        return backend, backend.pattern_warning(pattern, config)
+
+
+def test_multiline_pattern_warning_is_captured_from_the_real_search_invocation():
+    backend, warning = _multiline_backend_run(
+        "def (\n    pass",
+        returncode=0,
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    assert warning is not None
+    assert "ERROR node" in warning
+    # keyed by pattern: a different pattern on the same backend is not tainted
+    assert backend.pattern_warning("ok($A)\n  x", SearchConfig(ast=True, lang="python")) is None
+
+
+def test_multiline_cannot_parse_rule_failure_is_reported_without_leaking_the_temp_path():
+    _backend, warning = _multiline_backend_run(
+        "def (\n    pass",
+        returncode=8,
+        stdout="",
+        stderr="Error: Cannot parse rule C:\\Users\\x\\Temp\\tg_ast_wrapper_rule_ab\\inline_rule.yml\n",
+    )
+    assert warning is not None
+    assert "multiline" in warning
+    assert "Temp" not in warning
+
+
+def test_valid_multiline_pattern_records_no_problem():
+    _backend, warning = _multiline_backend_run("def $A():\n    pass", returncode=0, stderr="")
+    assert warning is None
+
+
+def test_single_line_pattern_without_a_recorded_problem_is_not_probed_when_multiline():
+    backend = AstGrepWrapperBackend()
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command") as run,
+    ):
+        assert backend.pattern_warning("a\nb", SearchConfig(ast=True, lang="python")) is None
+        run.assert_not_called()
