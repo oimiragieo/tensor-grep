@@ -276,3 +276,160 @@ def test_popen_double_without_handle_or_pid_still_gets_direct_terminate_and_kill
 
     assert fake.terminate_calls == 1
     assert fake.kill_calls == 1
+
+
+# --- round-4 finding 1: the final state lock honours the cleanup deadline ---------------
+
+
+def test_stop_does_not_wait_forever_for_a_held_client_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client(tmp_path, monkeypatch)
+    client.process = _FakeProcess()  # type: ignore[assignment]
+    held = threading.Event()
+    gate = threading.Event()
+
+    def holder() -> None:
+        with client._lock:
+            held.set()
+            gate.wait(timeout=8)
+
+    thread = threading.Thread(target=holder, daemon=True)
+    thread.start()
+    assert held.wait(timeout=5)
+    try:
+        _, elapsed = _bounded(lambda: client.stop(grace_seconds=0.1))
+    finally:
+        gate.set()
+        thread.join(timeout=10)
+    assert elapsed <= 0.1 + _MARGIN, f"stop blocked {elapsed:.2f}s on a held lock"
+    assert "teardown lock unavailable" in str(client.last_error), client.last_error
+    with pytest.raises(lsp_external_provider.LSPTransportError):
+        client.start()  # the client is marked unusable; it must not be reused
+
+
+# --- round-4 finding 2: a failed survivor query is not "zero survivors" -----------------
+
+
+def test_failed_job_query_is_an_error_but_a_successful_zero_is_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _K32:
+        def CloseHandle(self, handle: object) -> int:
+            return 1
+
+    containment = pc.Containment(pc.LEVEL_JOB_OBJECT, degraded=False, pid=1, job="J", k32=_K32())
+
+    monkeypatch.setattr(pc, "_job_active_processes", lambda k32, job: None)
+    failed = containment.survivors(time.monotonic() + 0.2)
+    assert failed and "could not verify the provider tree exited" in failed[0], failed
+
+    monkeypatch.setattr(pc, "_job_active_processes", lambda k32, job: 0)
+    assert containment.survivors(time.monotonic() + 0.2) == []
+
+
+# --- round-4 finding 3: the report is built AFTER teardown ------------------------------
+
+
+def test_successful_probe_with_failed_teardown_is_not_reported_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        lsp_external_provider, "_provider_command", lambda language: [sys.executable, "-c", "pass"]
+    )
+    monkeypatch.setattr(
+        lsp_external_provider, "_document_symbol_result_contains", lambda r, s: True
+    )
+
+    class _Client(lsp_external_provider.ExternalLSPClient):
+        def start(self) -> None:
+            self.initialized = True
+            self.capabilities = {"documentSymbolProvider": True}
+
+        def ensure_document(self, **kwargs: Any) -> None:
+            pass
+
+        def request(self, method: str, params: dict[str, Any]) -> Any:
+            return []
+
+        def stop(self, grace_seconds: float | None = None) -> None:
+            self.teardown_error = "tree kill failed: AccessDenied"
+            self.last_error = self.teardown_error
+
+    client = _Client(language="python", workspace_root=tmp_path)
+    manager = lsp_external_provider.ExternalLSPProviderManager()
+    status = manager._verified_provider_status(
+        client=client,
+        language="python",
+        workspace_root=tmp_path,
+        probe_timeout_seconds=1.0,
+        stop_after_probe=True,
+    )
+    assert status["health_status"] != "ready"
+    assert status["lsp_proof"] is False
+    assert "tree kill failed" in str(status["last_error"])
+
+
+# --- round-4 finding 4: POSIX process_group escape is DETECTED, not hung on -------------
+
+
+class _BlockingStream:
+    def __init__(self, gate: threading.Event) -> None:
+        self._gate = gate
+
+    def close(self) -> None:
+        self._gate.wait(timeout=20)
+
+
+def test_pipes_still_held_after_group_kill_report_the_group_escape() -> None:
+    gate = threading.Event()
+    process = _FakeProcess(wait_times_out_first=False)
+    process.stdout = _BlockingStream(gate)  # type: ignore[assignment]
+    containment = pc.Containment(pc.LEVEL_PROCESS_GROUP, degraded=False, pid=0)
+    try:
+        errors, elapsed = _bounded(
+            lambda: pc.teardown_provider(process, containment, deadline=time.monotonic() + 0.3)
+        )
+    finally:
+        gate.set()
+    assert elapsed <= 0.3 + _MARGIN
+    assert any("outside the provider's process group still holds its pipes" in e for e in errors)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="setsid escape is a POSIX-only scenario")
+def test_setsid_grandchild_holding_the_pipes_is_reported_and_not_ready(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+    import signal
+
+    pid_file = tmp_path / "escaped.pid"
+    script = tmp_path / "escape_lsp.py"
+    script.write_text(
+        "import os, subprocess, sys, time\n"
+        "gc = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+        "                      start_new_session=True)\n"
+        f"open({str(pid_file)!r}, 'w').write(str(gc.pid))\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    command = [sys.executable, str(script)]
+    monkeypatch.setattr(lsp_external_provider, "_provider_command", lambda language: list(command))
+    monkeypatch.setattr(doctor_report, "_doctor_lsp_languages", lambda: ["python"])
+    monkeypatch.setenv("TG_DOCTOR_LSP_PROBE_TIMEOUT_SECONDS", "1")
+    budget = 2.0
+    monkeypatch.setenv("TG_DOCTOR_LSP_TOTAL_TIMEOUT_SECONDS", str(budget))
+    try:
+        statuses, elapsed = _bounded(
+            lambda: doctor_report._doctor_lsp_provider_statuses(str(tmp_path))
+        )
+        assert elapsed <= budget + _MARGIN
+        assert statuses[0]["health_status"] != "ready"
+        assert "outside the provider's process group" in str(statuses[0]["last_error"])
+    finally:
+        if pid_file.exists():
+            try:
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+            except (ProcessLookupError, ValueError):
+                pass

@@ -12,7 +12,10 @@ lock forever (the `tg doctor` LSP-probe hang). Platform primitives, by name:
   are read back with ``QueryInformationJobObject(JobObjectBasicAccountingInformation)``;
   closing the job handle also kills every member.
 * POSIX: ``start_new_session=True`` + ``os.killpg(pgid, SIGTERM)`` then ``SIGKILL``;
-  survivors are probed with ``os.killpg(pgid, 0)``.
+  survivors are probed with ``os.killpg(pgid, 0)``. The level is honestly ``process_group``,
+  NOT whole-tree: a descendant that calls ``setsid`` leaves the group and ``killpg`` misses it.
+  That escape is DETECTED (the provider's pipes stay held after the group is dead) and
+  reported as ``ESCAPE_MESSAGE``; it cannot be prevented without cgroups (needs delegation).
 
 FAIL CLOSED: if reliable containment is unavailable (Job Object cannot be created or
 assigned, or ``os.killpg`` is missing) the provider is NOT launched and
@@ -42,6 +45,9 @@ _CREATE_SUSPENDED = 0x00000004
 _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
 _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION_CLASS = 9
 _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION_CLASS = 1
+
+
+ESCAPE_MESSAGE = "a descendant outside the provider's process group still holds its pipes"
 
 
 class ContainmentUnavailableError(OSError):
@@ -190,6 +196,8 @@ class Containment:
         """Poll (until the absolute monotonic ``deadline``) for members that outlived the kill."""
         while True:
             alive = self._alive_count()
+            if alive is None:  # a failed query is NOT "zero survivors"
+                return ["could not verify the provider tree exited (job query failed)"]
             if not alive:
                 return []
             if time.monotonic() >= deadline:
@@ -205,7 +213,7 @@ class Containment:
                 self._k32.CloseHandle(self._job)
                 self._job = None
 
-    def _alive_count(self) -> int:
+    def _alive_count(self) -> int | None:
         if self.level == LEVEL_PROCESS_GROUP:
             if self.pid <= 0:
                 return 0
@@ -220,7 +228,7 @@ class Containment:
             if self._job is None:
                 return 0
             active = _job_active_processes(self._k32, self._job)
-        return active or 0
+        return active
 
     def _killpg(self, sig: int, what: str) -> list[str]:
         if self.pid <= 0:  # killpg(0) would signal OUR OWN group
@@ -372,5 +380,21 @@ def teardown_provider(
         errors += containment.survivors(deadline)
         containment.release()
     streams = [process.stdin, process.stdout, process.stderr]
-    errors += [f"pipe close abandoned ({n})" for n in close_streams_bounded(streams, left())]
-    return errors
+    group_only = containment is not None and containment.level == LEVEL_PROCESS_GROUP
+    for name in close_streams_bounded(streams, left()):
+        if group_only and name in ("stream[1]", "stream[2]"):
+            # The group is dead yet its output pipe is still held: a descendant left the
+            # process group (setsid). POSIX has no general primitive to stop that; detect it.
+            errors.append(ESCAPE_MESSAGE)
+        else:
+            errors.append(f"pipe close abandoned ({name})")
+    return list(dict.fromkeys(errors))
+
+
+def cleanup_budget_seconds(
+    request_timeout: float, default_stop: float, grace: float | None
+) -> float:
+    """Total teardown budget: the explicit ``grace`` slice, else twice the default stop bound."""
+    if grace is not None:
+        return max(float(grace), 0.05)
+    return 2.0 * max(min(max(float(request_timeout), 0.0), default_stop), 0.05)

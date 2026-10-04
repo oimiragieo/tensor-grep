@@ -24,6 +24,7 @@ from tensor_grep.cli.lsp_provider_setup import (
 from tensor_grep.cli.process_containment import (
     Containment,
     ContainmentUnavailableError,
+    cleanup_budget_seconds,
     spawn_contained,
     teardown_provider,
 )
@@ -421,6 +422,8 @@ class ExternalLSPClient:
         # When set (doctor probe under a deadline), stop() uses this slice instead of the
         # default bound -- including the stop() that start() runs after a failed initialize.
         self.stop_grace_seconds: float | None = None
+        self.unusable = False  # set when teardown could not take the client lock in time
+        self.teardown_error: str | None = None
         self.containment_error: str | None = None  # set when the tree could not be contained
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
@@ -474,6 +477,10 @@ class ExternalLSPClient:
         self._debug_trace.append(entry)
 
     def start(self) -> None:
+        if self.unusable:
+            raise LSPTransportError(
+                self.last_error or "LSP client is unusable after failed teardown"
+            )
         # Fast path (no lock): already running.
         if self.process is not None and self.process.poll() is None:
             return
@@ -575,14 +582,10 @@ class ExternalLSPClient:
             return
         reader_thread = self._reader_thread
         stderr_thread = self._stderr_thread
-        stop_timeout_seconds = min(
-            max(float(self.request_timeout_seconds), 0.0),
-            _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
-        )
         grace = grace_seconds if grace_seconds is not None else self.stop_grace_seconds
         # ONE absolute cleanup deadline governs shutdown, terminate/kill, waits and pipe closes.
-        budget = (
-            max(float(grace), 0.05) if grace is not None else 2.0 * max(stop_timeout_seconds, 0.05)
+        budget = cleanup_budget_seconds(
+            self.request_timeout_seconds, _DEFAULT_LSP_STOP_TIMEOUT_SECONDS, grace
         )
         deadline = time.monotonic() + budget
         errors = teardown_provider(
@@ -591,36 +594,46 @@ class ExternalLSPClient:
             deadline=deadline,
             graceful=self._graceful_shutdown_for_stop,
         )
+        self.teardown_error = None
         if errors:  # the handle is dropped below; keep the pid and the root cause visible
-            self.last_error = (
+            self.teardown_error = (
                 f"LSP child pid {getattr(process, 'pid', '?')} not stopped ({'; '.join(errors)})"
             )
+            self.last_error = self.teardown_error
         stop_timeout_seconds = max(deadline - time.monotonic(), 0.05)
         if reader_thread is not None and reader_thread.is_alive():
             reader_thread.join(timeout=stop_timeout_seconds)
         if stderr_thread is not None and stderr_thread.is_alive():
             stderr_thread.join(timeout=stop_timeout_seconds)
-        with self._lock:
-            if self.process is process:
-                self.process = self._containment = None
-            self._opened_documents.clear()
-            self.capabilities = {}
-            self.initialized = False
-            self.lsp_provider_response = False
-            if self._reader_thread is reader_thread:
-                self._reader_thread = None
-            if self._stderr_thread is stderr_thread:
-                self._stderr_thread = None
-            self._message_queue = queue.Queue()
-            # audit B12: unblock any callers still waiting in request().
-            for slot in self._pending_requests.values():
-                slot.put_nowait(_CLOSED_SENTINEL)
-            self._pending_requests = {}
-            self._orphan_responses = {}
-            self._doc_versions = {}
+        if not self._lock.acquire(timeout=max(deadline - time.monotonic(), 0.0)):
+            self.unusable = True
+            self.teardown_error = self.last_error = "teardown lock unavailable: client unusable"
+            return
+        try:
+            self._reset_after_stop(process, reader_thread, stderr_thread)
+        finally:
+            self._lock.release()
 
-    def _graceful_shutdown_for_stop(self, timeout_seconds: float) -> None:
-        """Courtesy ``shutdown`` + ``exit``; run on a bounded thread by ``teardown_provider``."""
+    def _reset_after_stop(self, process: Any, reader_thread: Any, stderr_thread: Any) -> None:
+        if self.process is process:
+            self.process = self._containment = None
+        self._opened_documents.clear()
+        self.capabilities = {}
+        self.initialized = False
+        self.lsp_provider_response = False
+        if self._reader_thread is reader_thread:
+            self._reader_thread = None
+        if self._stderr_thread is stderr_thread:
+            self._stderr_thread = None
+        self._message_queue = queue.Queue()
+        # audit B12: unblock any callers still waiting in request().
+        for slot in self._pending_requests.values():
+            slot.put_nowait(_CLOSED_SENTINEL)
+        self._pending_requests = {}
+        self._orphan_responses = {}
+        self._doc_versions = {}
+
+    def _graceful_shutdown_for_stop(self, timeout_seconds: float) -> None:  # bounded thread
         self._request_shutdown_for_stop(timeout_seconds)
         with self._lock:
             try:
@@ -1338,9 +1351,9 @@ class ExternalLSPProviderManager:
         original_initialize_timeout = client.initialize_timeout_seconds
         probe_succeeded = False
         probe_error: Exception | None = None
+        stopped = False
         budget = ProbeBudget(deadline_monotonic, timeout, _DEFAULT_LSP_STOP_TIMEOUT_SECONDS)
         client.stop_grace_seconds = budget.cleanup_seconds
-
         try:
             try:
                 budget.arm(client)
@@ -1369,24 +1382,31 @@ class ExternalLSPProviderManager:
             finally:
                 client.request_timeout_seconds = original_request_timeout
                 client.initialize_timeout_seconds = original_initialize_timeout
-            status = client.status()
+            status = client.status()  # snapshot BEFORE teardown clears the client's state
             status["available"] = True
             status["health_check"] = "semantic-document-symbol"
             status["health_phase"] = phase
             status["probe_timeout_seconds"] = timeout
             status["probe_document_uri"] = probe["uri"]
             status["probe_symbol"] = probe["symbol"]
-            if probe_succeeded:
+            if stop_after_probe:  # finish teardown FIRST so its failures reach the report
+                client.stop()
+                stopped = True
+            teardown_error = client.teardown_error if stop_after_probe else None
+            if probe_succeeded and not teardown_error:
                 status["health_status"] = "ready"
             else:
                 unhealthy = "containment_unavailable" if client.containment_error else "unhealthy"
                 status["health_status"] = unhealthy
                 status["lsp_provider_response"] = False
-                if probe_error is not None:
+                if teardown_error:
+                    status["cleanup_error"] = teardown_error
+                    status["last_error"] = teardown_error
+                elif probe_error is not None:
                     status["last_error"] = status.get("last_error") or str(probe_error)
             return _attach_lsp_proof_fields(status)
         finally:
-            if stop_after_probe:
+            if stop_after_probe and not stopped:
                 client.stop()  # honours client.stop_grace_seconds (set above under a deadline)
             client.stop_grace_seconds = None
 
