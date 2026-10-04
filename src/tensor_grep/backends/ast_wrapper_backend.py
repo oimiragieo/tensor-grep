@@ -184,6 +184,28 @@ class AstGrepWrapperBackend(ComputeBackend):
         cmd = [self._get_binary_name(), "scan", "--json", "--rule", str(rule_file), "--", *paths]
         return cmd, context
 
+    def pattern_warning(self, pattern: str, config: SearchConfig | None = None) -> str | None:
+        """Return ast-grep's 'Pattern contains an ERROR node' warning, or None. Empty-stdin run:
+        the warning fires only when the pattern itself is malformed, never for a valid pattern
+        that merely matches nothing. Single-line patterns only; never raises."""
+        try:
+            lang = normalize_ast_language(config.lang) if config and config.lang else None
+        except ValueError:
+            return None
+        if not lang or "\n" in pattern or "\r" in pattern or not self.is_available():
+            return None
+        cmd = [self._get_binary_name(), "run", "--json", "-p", pattern, "--lang", lang, "--stdin"]
+        try:
+            result = self._run_ast_grep_command(cmd, input_text="")
+        except BackendExecutionError:
+            return None
+        if getattr(result, "returncode", 1) != 0:
+            return None
+        for line in (result.stderr or "").splitlines():
+            if "pattern contains an error node" in line.lower():
+                return line.strip()
+        return None
+
     def _raise_for_nonzero(self, result: subprocess.CompletedProcess[str]) -> bool:
         """Return True when the nonzero exit was a NON-FATAL partial scan (ast-grep skipped
         unreadable paths but still emitted findings); False on exit 0 / clean JSON waive. A

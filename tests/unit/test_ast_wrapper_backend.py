@@ -957,3 +957,42 @@ def test_ast_wrapper_backend_should_treat_valid_empty_list_as_no_match_not_error
 
         project_result = backend.search_project("project", "sgconfig.yml")
         assert project_result == {}
+
+
+def test_pattern_warning_detects_error_node_on_exit_zero():
+    backend = AstGrepWrapperBackend()
+    ok = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout="[]",
+        stderr="Warning: Pattern contains an ERROR node and may cause unexpected results.\n",
+    )
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=ok),
+    ):
+        warning = backend.pattern_warning("def (", SearchConfig(ast=True, lang="python"))
+    assert warning is not None
+    assert "ERROR node" in warning
+
+
+def test_pattern_warning_ignores_legit_zero_match_pattern():
+    backend = AstGrepWrapperBackend()
+    zero = subprocess.CompletedProcess(args=[], returncode=1, stdout="[]", stderr="")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", return_value=zero),
+    ):
+        assert backend.pattern_warning("zzz($A)", SearchConfig(ast=True, lang="python")) is None
+
+
+def test_pattern_warning_never_raises_on_backend_error_or_unsupported_language():
+    backend = AstGrepWrapperBackend()
+    config = SearchConfig(ast=True, lang="python")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(backend, "_run_ast_grep_command", side_effect=BackendExecutionError("x")),
+    ):
+        assert backend.pattern_warning("def (", config) is None
+    assert backend.pattern_warning("def (", SearchConfig(ast=True, lang="not-a-lang")) is None
+    assert backend.pattern_warning("a\nb", config) is None

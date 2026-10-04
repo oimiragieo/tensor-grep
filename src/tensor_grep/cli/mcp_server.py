@@ -31,6 +31,7 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
 )
@@ -170,7 +171,9 @@ def _mcp_server_version() -> str:
 #
 # Additive and emitted only on a CAPPED scan, so a complete scan stays byte-identical and no
 # existing caller breaks; bumped so a version-pinning client can discover the field.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.8.0"  # P3: + unified `incomplete` envelope, incompleteness.py
+# 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
+# + `text_chars` on a windowed match row, top-level `output_truncated` when the byte cap fires.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.9.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -3328,10 +3331,14 @@ def tg_search(
 
             if structured_json:
                 payload_matches = [
-                    {"file": filepath, "line_number": match.line_number, "text": match.text.strip()}
+                    _bounds._bounded_match_row(filepath, match)
                     for filepath, matches in rendered_by_file.items()
                     for match in matches
                 ]
+                payload_matches, byte_cap = _bounds._cap_rows(payload_matches, all_results)
+                if byte_cap:
+                    omitted_matches, omitted_files, rendered_file_count = byte_cap
+                    truncated = True
                 payload = {
                     "pattern": search_pattern,
                     "path": path,
@@ -3354,6 +3361,8 @@ def tg_search(
                     payload["scan_limit"] = scan_limit_payload
                 if all_results.rank_fallback_reason:
                     payload["rank_fallback_reason"] = all_results.rank_fallback_reason
+                if byte_cap:
+                    payload["output_truncated"] = True
                 # M14: the results envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
@@ -3367,7 +3376,7 @@ def tg_search(
                 for filepath, matches in rendered_by_file.items():
                     output.append(f"\n{filepath}:")
                     for m in matches:
-                        output.append(f"  {m.line_number}: {m.text.strip()}")
+                        output.append(f"  {m.line_number}: {_bounds._plain_match_text(m)}")
 
                 if truncated:
                     output.append(
@@ -3401,13 +3410,27 @@ def tg_search(
                 if omitted_path_files:
                     output.append(f"\n... and {omitted_path_files} more files.")
 
-            return "\n".join(output)
+            return "\n".join(_bounds._cap_output_lines(output))
 
         except Exception as e:
             return _sanitized_tool_error_text("tg_search", e)
     except Exception as exc:
         _log_tool_exception("tg_search", exc)
         return _sanitized_tool_error_text("tg_search", exc)
+
+
+_AST_UNAVAILABLE = "AstBackend is not available on this system. Requires ast-grep/tree-sitter."
+
+
+def _ast_error_result(code: str, message: str, pattern: str, lang: str, path: str, sj: bool) -> str:
+    """`tg_ast_search` error response: code `unavailable` (ast-grep/tree-sitter absent) or
+    `invalid_input` (malformed AST pattern, E-03)."""
+    if not sj:
+        return f"{'Error' if code == 'unavailable' else 'AST search failed'}: {message}"
+    error = {"code": code, "message": message}
+    payload = {"pattern": pattern, "lang": lang, "path": path, "error": error}
+    # M14: error envelopes crossed the wire un-stamped.
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
 
 
 @_register_legacy_tool  # type: ignore
@@ -3470,46 +3493,14 @@ def tg_ast_search(
             # tree-sitter deps are absent for this pattern (e.g. a Linux runner without ast-grep),
             # which is EARLIER than the backend-type check below -- mirror that branch's response
             # so a valid in-root path returns a clean "unavailable" rather than a raw exception.
-            if structured_json:
-                # M14: unavailable envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(
-                    json.dumps(
-                        {
-                            "pattern": pattern,
-                            "lang": lang,
-                            "path": path,
-                            "error": {
-                                "code": "unavailable",
-                                "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
-                            },
-                        },
-                        indent=2,
-                    )
-                )
-            return (
-                "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
+            return _ast_error_result(
+                "unavailable", _AST_UNAVAILABLE, pattern, lang, path, structured_json
             )
 
         backend_name = type(backend).__name__
         if backend_name not in {"AstBackend", "AstGrepWrapperBackend"}:
-            if structured_json:
-                # M14: unavailable envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(
-                    json.dumps(
-                        {
-                            "pattern": pattern,
-                            "lang": lang,
-                            "path": path,
-                            "error": {
-                                "code": "unavailable",
-                                "message": "AstBackend is not available on this system. Requires ast-grep/tree-sitter.",
-                            },
-                        },
-                        indent=2,
-                    )
-                )
-            return (
-                "Error: AstBackend is not available on this system. Requires ast-grep/tree-sitter."
+            return _ast_error_result(
+                "unavailable", _AST_UNAVAILABLE, pattern, lang, path, structured_json
             )
 
         all_results = SearchResult(matches=[], total_files=0, total_matches=0)
@@ -3622,6 +3613,17 @@ def tg_ast_search(
             )
             _finalize_aggregate_result(all_results)
 
+            if all_results.total_matches == 0:
+                # E-03: ast-grep exits 0 with `[]` for a malformed pattern; ask it ONLY on zero
+                # matches (a warned pattern that still matches is returned normally).
+                warn = getattr(backend, "pattern_warning", None)
+                problem = warn(pattern, config) if callable(warn) else None
+                if problem:
+                    message = f"Invalid AST pattern for language {lang!r}: {problem}"
+                    return _ast_error_result(
+                        "invalid_input", message, pattern, lang, path, structured_json
+                    )
+
             if all_results.is_empty:
                 if structured_json:
                     # M14: no-match envelope crossed the wire un-stamped.
@@ -3683,38 +3685,35 @@ def tg_ast_search(
                 omitted_matches = max(0, all_results.total_matches - rendered_match_count)
                 omitted_files = max(0, all_results.total_files - rendered_file_count)
                 payload_matches = [
-                    {
-                        "file": filepath,
-                        "line_number": m.line_number,
-                        "text": m.text.strip(),
-                    }
+                    _bounds._bounded_match_row(filepath, m)
                     for filepath, matches in rendered_by_file.items()
                     for m in matches
                 ]
+                payload_matches, byte_cap = _bounds._cap_rows(payload_matches, all_results)
+                if byte_cap:
+                    omitted_matches, omitted_files, rendered_file_count = byte_cap
+                ast_payload: dict[str, Any] = {
+                    "pattern": pattern,
+                    "lang": lang,
+                    "path": path,
+                    "total_matches": all_results.total_matches,
+                    "total_files": all_results.total_files,
+                    "rendered_match_count": len(payload_matches),
+                    "rendered_file_count": rendered_file_count,
+                    "matches": payload_matches,
+                    "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
+                    "omitted_matches": omitted_matches,
+                    "omitted_files": omitted_files,
+                    "result_incomplete": all_results.result_incomplete,
+                    "incomplete_reason": all_results.incomplete_reason,
+                    **_incomplete_class_fragment(all_results),
+                    "scan_limit": scan_limit_payload,
+                    "routing": _routing_payload(all_results),
+                }
+                if byte_cap:
+                    ast_payload["output_truncated"] = True
                 # M14: results envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(
-                    json.dumps(
-                        {
-                            "pattern": pattern,
-                            "lang": lang,
-                            "path": path,
-                            "total_matches": all_results.total_matches,
-                            "total_files": all_results.total_files,
-                            "rendered_match_count": len(payload_matches),
-                            "rendered_file_count": rendered_file_count,
-                            "matches": payload_matches,
-                            "truncated": omitted_matches > 0 or omitted_files > 0 or scan_capped,
-                            "omitted_matches": omitted_matches,
-                            "omitted_files": omitted_files,
-                            "result_incomplete": all_results.result_incomplete,
-                            "incomplete_reason": all_results.incomplete_reason,
-                            **_incomplete_class_fragment(all_results),
-                            "scan_limit": scan_limit_payload,
-                            "routing": _routing_payload(all_results),
-                        },
-                        indent=2,
-                    )
-                )
+                return _self._inject_mcp_contract_fields(json.dumps(ast_payload, indent=2))
 
             output = [
                 f"Found {all_results.total_matches} structural AST matches across {all_results.total_files} files:",
@@ -3729,7 +3728,7 @@ def tg_ast_search(
                 for filepath, matches in list(by_file.items())[:15]:
                     output.append(f"\n{filepath}:")
                     for m in matches[:10]:
-                        output.append(f"  {m.line_number}: {m.text.strip()}")
+                        output.append(f"  {m.line_number}: {_bounds._plain_match_text(m)}")
                 if len(by_file) > 15:
                     output.append(f"\n... and {len(by_file) - 15} more files.")
             elif all_results.match_counts_by_file:
@@ -3748,7 +3747,7 @@ def tg_ast_search(
                         f"\n... and {len(all_results.matched_file_paths) - 15} more files."
                     )
 
-            return "\n".join(output)
+            return "\n".join(_bounds._cap_output_lines(output))
 
         except Exception as e:
             if structured_json:

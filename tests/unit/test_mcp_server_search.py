@@ -1,5 +1,6 @@
 """MCP search / AST search / devices / classify / scan-limit contracts."""
 
+import contextlib
 import json
 import sys
 import types
@@ -1298,3 +1299,225 @@ def test_tg_search_scan_limit_omits_cause_fields_on_a_complete_scan():
 
     assert "truncation_cause" not in scan_limit
     assert "budget_remediable" not in scan_limit
+
+
+def _ast_search_with(tmp_path, monkeypatch, *, matches, warning):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text("def f():\n    pass\n", encoding="utf-8")
+    result = SearchResult(
+        matches=matches,
+        matched_file_paths=["a.py"] if matches else [],
+        total_files=1 if matches else 0,
+        total_matches=len(matches),
+        routing_backend="AstGrepWrapperBackend",
+        routing_reason="ast",
+    )
+    fake = type(
+        "AstGrepWrapperBackend",
+        (),
+        {
+            "search": MagicMock(return_value=result),
+            "pattern_warning": MagicMock(return_value=warning),
+        },
+    )()
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mock_pipeline,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
+        mock_pipeline.return_value.get_backend.return_value = fake
+        ms.return_value.walk.return_value = ["a.py"]
+        return json.loads(mcp_server.tg_ast_search("def (", "python", ".", structured_json=True))
+
+
+def test_tg_ast_search_malformed_pattern_with_zero_matches_is_invalid_input(tmp_path, monkeypatch):
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[], warning="Warning: Pattern contains an ERROR node"
+    )
+    assert out["error"]["code"] == "invalid_input"
+    assert "ERROR node" in out["error"]["message"]
+
+
+def test_tg_ast_search_warned_pattern_that_matches_is_returned_normally(tmp_path, monkeypatch):
+    hit = MatchLine(line_number=1, text="def f():", file="a.py")
+    out = _ast_search_with(
+        tmp_path, monkeypatch, matches=[hit], warning="Warning: Pattern contains an ERROR node"
+    )
+    assert "error" not in out
+    assert out["total_matches"] == 1
+
+
+def test_tg_ast_search_zero_matches_without_warning_is_a_normal_empty_result(tmp_path, monkeypatch):
+    out = _ast_search_with(tmp_path, monkeypatch, matches=[], warning=None)
+    assert "error" not in out
+    assert out["total_matches"] == 0
+
+
+@contextlib.contextmanager
+def _stub_rg_search(matches):
+    """Run ``tg_search`` over a stubbed ripgrep backend returning ``matches``."""
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+
+    backend = RipgrepBackend()
+    files = sorted({m.file for m in matches}) or ["min.js"]
+    backend.search = MagicMock(
+        return_value=SearchResult(
+            matches=matches,
+            matched_file_paths=files,
+            total_files=len(files),
+            total_matches=len(matches),
+            routing_backend="RipgrepBackend",
+            routing_reason="rg_json",
+        )
+    )
+    pipeline_patch = patch("tensor_grep.cli.mcp_server.Pipeline")
+    scanner_patch = patch("tensor_grep.cli.mcp_server.DirectoryScanner")
+    with pipeline_patch as mp, scanner_patch as ms:
+        p = mp.return_value
+        p.get_backend.return_value = backend
+        p.selected_backend_name = "RipgrepBackend"
+        p.selected_backend_reason = "rg_json"
+        p.selected_gpu_device_ids = []
+        p.selected_gpu_chunk_plan_mb = []
+        ms.return_value.walk.return_value = files
+        yield p
+
+
+def _run_tg_search_with_line(line, start_byte):
+    from tensor_grep.cli import mcp_server
+
+    hit = MatchLine(
+        line_number=1,
+        text=line,
+        file="min.js",
+        submatches=({"match": {"text": "NEEDLE"}, "start": start_byte, "end": start_byte + 6},),
+    )
+    with _stub_rg_search([hit]):
+        return mcp_server.tg_search("NEEDLE", ".")
+
+
+def _run_tg_search_many(count, text, **kwargs):
+    from tensor_grep.cli import mcp_server
+
+    hits = [MatchLine(line_number=i + 1, text=text, file="big.txt") for i in range(count)]
+    with _stub_rg_search(hits):
+        return mcp_server.tg_search("NEEDLE", ".", max_results=5000, **kwargs)
+
+
+def _run_tg_ast_search_many(count, text, structured_json):
+    from tensor_grep.cli import mcp_server
+
+    hits = [MatchLine(line_number=i + 1, text=text, file="a.py") for i in range(count)]
+    fake = type(
+        "AstGrepWrapperBackend",
+        (),
+        {
+            "search": MagicMock(
+                return_value=SearchResult(
+                    matches=hits,
+                    matched_file_paths=["a.py"],
+                    total_files=1,
+                    total_matches=count,
+                    routing_backend="AstGrepWrapperBackend",
+                    routing_reason="ast",
+                )
+            )
+        },
+    )()
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mp,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
+        mp.return_value.get_backend.return_value = fake
+        ms.return_value.walk.return_value = ["a.py"]
+        return mcp_server.tg_ast_search("$A", "python", ".", structured_json=structured_json)
+
+
+def test_tg_search_bounds_minified_line_width_and_keeps_the_match():
+    line = ("a" * 1_500_000) + "NEEDLE" + ("b" * 1_500_000)
+    out = _run_tg_search_with_line(line, 1_500_000)
+    assert len(out) < 20_000
+    row = json.loads(out)["matches"][0]
+    assert row["text_truncated"] is True
+    assert row["text_chars"] == len(line)
+    assert "NEEDLE" in row["text"]
+    assert len(row["text"]) <= 400
+
+
+def test_tg_search_window_centres_on_match_after_multibyte_prefix():
+    prefix = "é" * 2000  # 4000 bytes, 2000 chars
+    line = prefix + "NEEDLE" + ("b" * 2000)
+    row = json.loads(_run_tg_search_with_line(line, len(prefix.encode("utf-8"))))["matches"][0]
+    assert "NEEDLE" in row["text"]
+
+
+def test_tg_search_total_match_bytes_cap_sets_truncated():
+    from tensor_grep.cli import mcp_search_bounds
+
+    rows = [{"file": "f", "line_number": i, "text": "x" * 400} for i in range(2000)]
+    kept, capped = mcp_search_bounds._cap_match_rows(rows)
+    assert capped is True
+    assert len(kept) < len(rows)
+    short = [{"file": "f", "line_number": 1, "text": "ok"}]
+    assert mcp_search_bounds._cap_match_rows(short) == (short, False)
+
+
+def test_tg_search_json_output_is_byte_capped_and_says_so():
+
+    out = _run_tg_search_many(2000, "x" * 400)
+    assert len(out.encode("utf-8")) <= 262144 + 8192
+    payload = json.loads(out)
+    assert payload["output_truncated"] is True
+    assert payload["truncated"] is True
+    assert len(payload["matches"]) < 2000
+    assert payload["rendered_match_count"] == len(payload["matches"])
+    assert payload["omitted_matches"] == 2000 - len(payload["matches"])
+
+
+def test_tg_search_plain_text_output_is_byte_capped_with_ascii_notice():
+
+    out = _run_tg_search_many(2000, "x" * 400, structured_json=False)
+    assert len(out.encode("utf-8")) <= 262144 + 8192
+    assert "output truncated at 262144 bytes" in out
+    out.encode("ascii")  # the notice must stay ASCII (CLI output law)
+
+
+def test_tg_search_plain_text_cap_counts_bytes_not_chars():
+
+    out = _run_tg_search_many(2000, "é" * 400, structured_json=False)
+    assert len(out.encode("utf-8")) <= 262144 + 8192
+    assert "output truncated at 262144 bytes" in out
+
+
+def test_tg_search_short_matches_are_not_capped_or_truncated():
+    out = _run_tg_search_many(10, "short line")
+    payload = json.loads(out)
+    assert not payload.get("output_truncated")
+    assert len(payload["matches"]) == 10
+    assert all("text_truncated" not in row for row in payload["matches"])
+    plain = _run_tg_search_many(10, "short line", structured_json=False)
+    assert "output truncated at" not in plain
+
+
+def test_tg_ast_search_json_output_is_byte_capped_and_says_so():
+
+    # 150 rows (the tool's hard rendered limit) of 400 two-byte chars: ~2,400 rendered bytes each
+    # under ensure_ascii, ~360 KB in total, so the cap MUST fire.
+    out = _run_tg_ast_search_many(150, "é" * 400, structured_json=True)
+    assert len(out.encode("utf-8")) <= 262144 + 8192
+    payload = json.loads(out)
+    assert payload["output_truncated"] is True
+    assert len(payload["matches"]) < 150
+
+
+def test_tg_ast_search_plain_text_truncates_each_line_and_stays_bounded():
+    """Plain text renders at most 15 files x 10 matches, so the cumulative byte cap is defence in
+    depth the current limits cannot reach; assert the per-line bound and the byte bound only."""
+
+    out = _run_tg_ast_search_many(10, "z" * 5000, structured_json=False)
+    assert len(out.encode("utf-8")) <= 262144 + 8192
+    assert max(len(line) for line in out.splitlines()) < 500
+    short = _run_tg_ast_search_many(3, "ok", structured_json=False)
+    assert "output truncated at" not in short
+    assert "  1: ok" in short
