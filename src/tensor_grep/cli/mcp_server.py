@@ -2938,6 +2938,7 @@ def tg_find(
 
 
 @_register_legacy_tool  # type: ignore
+@_bounds.bounded_response
 def tg_search(
     pattern: str | None = None,
     path: str = ".",
@@ -3434,6 +3435,7 @@ def _ast_error_result(code: str, message: str, pattern: str, lang: str, path: st
 
 
 @_register_legacy_tool  # type: ignore
+@_bounds.bounded_response
 def tg_ast_search(
     pattern: str,
     lang: str,

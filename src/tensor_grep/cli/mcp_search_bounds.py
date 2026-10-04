@@ -8,6 +8,7 @@ can import them at module level without a cycle.
 
 from __future__ import annotations
 
+import functools
 import json
 from typing import Any
 
@@ -96,3 +97,85 @@ def _cap_output_lines(lines: list[str]) -> list[str]:
         if used > _MCP_MATCHES_MAX_BYTES:
             return [*lines[:index], _MCP_OUTPUT_TRUNCATED_NOTICE]
     return lines
+
+
+# --- FINAL response budget (the whole serialized envelope, not just matches[]) -----------------
+_MCP_ECHO_MAX_CHARS = 1024
+_MCP_RESPONSE_MAX_BYTES = _MCP_MATCHES_MAX_BYTES + 8192  # + envelope allowance (counts, notice)
+_MCP_LINE_MAX_CHARS = 2048
+
+
+def _json_size(doc: dict[str, Any]) -> int:
+    return len(json.dumps(doc, indent=2).encode("utf-8"))
+
+
+def _clip_strings(node: dict[str, Any], *, skip: frozenset[str] = frozenset()) -> bool:
+    """Truncate every over-long string value (echoed ``pattern`` / ``path`` / ``query``, long
+    error messages, ...) in ``node`` and its nested dicts, flagging each ``<key>_truncated``."""
+    changed = False
+    for key, value in list(node.items()):
+        if key in skip:
+            continue
+        if isinstance(value, str) and len(value) > _MCP_ECHO_MAX_CHARS:
+            node[key] = value[:_MCP_ECHO_MAX_CHARS]
+            node[f"{key}_truncated"] = True
+            changed = True
+        elif isinstance(value, dict):
+            changed = _clip_strings(value) or changed
+    return changed
+
+
+def _bound_json_envelope(doc: dict[str, Any]) -> dict[str, Any] | None:
+    """Bound ``doc`` in place when it exceeds the response budget; None when it already fits."""
+    if _json_size(doc) <= _MCP_RESPONSE_MAX_BYTES:
+        return None
+    _clip_strings(doc, skip=frozenset({"matches"}))
+    rows = doc.get("matches")
+    if _json_size(doc) > _MCP_RESPONSE_MAX_BYTES and isinstance(rows, list) and rows:
+        all_rows = rows
+        lo, hi = 0, len(all_rows)  # largest k with size(rows[:k]) <= budget (monotonic)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            doc["matches"] = all_rows[:mid]
+            if _json_size(doc) <= _MCP_RESPONSE_MAX_BYTES:
+                lo = mid
+            else:
+                hi = mid - 1
+        doc["matches"] = all_rows[:lo]
+        if isinstance(doc.get("rendered_match_count"), int):
+            doc["rendered_match_count"] = lo
+        if isinstance(doc.get("omitted_matches"), int):
+            doc["omitted_matches"] += len(all_rows) - lo
+        doc["truncated"] = True
+    doc["output_truncated"] = True
+    return doc
+
+
+def bound_response(text: str) -> str:
+    """Final-budget guard for a tool's serialized response (JSON or plain text)."""
+    if len(text) <= 65_000 or len(text.encode("utf-8")) <= _MCP_RESPONSE_MAX_BYTES:
+        return text
+    if text.lstrip().startswith("{"):
+        try:
+            doc = json.loads(text)
+        except ValueError:
+            doc = None
+        if isinstance(doc, dict):
+            bounded = _bound_json_envelope(doc)
+            return text if bounded is None else json.dumps(bounded, indent=2)
+    lines = [
+        line if len(line) <= _MCP_LINE_MAX_CHARS else line[:_MCP_ECHO_MAX_CHARS] + "... [truncated]"
+        for line in text.split("\n")
+    ]
+    return "\n".join(_cap_output_lines(lines))
+
+
+def bounded_response(fn: Any) -> Any:
+    """Decorator: apply :func:`bound_response` to a tool function's string result."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        out = fn(*args, **kwargs)
+        return bound_response(out) if isinstance(out, str) else out
+
+    return wrapper

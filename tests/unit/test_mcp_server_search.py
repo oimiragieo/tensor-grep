@@ -1551,3 +1551,118 @@ def test_real_backend_valid_multiline_pattern_with_matches_is_returned_normally(
     out = _real_ast_search(tmp_path, monkeypatch, "def $A():\n    pass")
     assert "error" not in out
     assert out["total_matches"] == 1
+
+
+# --- Codex round 1, finding 2: the FINAL serialized response is bounded, not just matches[] ---
+
+_BIG_PATTERN = "(?x)#" + "a" * 1_000_000 + "\nNEEDLE"
+_FINAL_BUDGET = 262144 + 8192
+
+
+def _assert_bounded(out):
+    assert len(out.encode("utf-8")) <= _FINAL_BUDGET, len(out.encode("utf-8"))
+
+
+def _run_tg_search_big_pattern(matches, **kwargs):
+    from tensor_grep.cli import mcp_server
+
+    with _stub_rg_search(matches):
+        return mcp_server.tg_search(_BIG_PATTERN, ".", **kwargs)
+
+
+def test_tg_search_json_with_an_oversized_pattern_is_bounded_and_flagged():
+    hit = MatchLine(line_number=1, text="NEEDLE", file="a.txt")
+    for matches in ([hit], []):
+        out = _run_tg_search_big_pattern(matches)
+        _assert_bounded(out)
+        payload = json.loads(out)
+        assert payload["output_truncated"] is True
+        assert payload["pattern_truncated"] is True
+        assert payload["pattern"].startswith("(?x)#aaaa")
+        assert len(payload["pattern"]) <= 1024
+
+
+def test_tg_search_plain_text_with_an_oversized_pattern_is_bounded():
+    for matches in ([MatchLine(line_number=1, text="NEEDLE", file="a.txt")], []):
+        out = _run_tg_search_big_pattern(matches, structured_json=False)
+        _assert_bounded(out)
+        assert "a" * 5000 not in out
+
+
+def test_tg_search_error_response_with_an_oversized_pattern_is_bounded(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    outside = str(tmp_path.parent)
+    out = mcp_server.tg_search(_BIG_PATTERN, outside)
+    _assert_bounded(out)
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["output_truncated"] is True
+    assert payload["pattern_truncated"] is True
+
+
+def _run_tg_ast_search_pattern(pattern, hits, warning, structured_json):
+    from tensor_grep.cli import mcp_server
+
+    fake = type(
+        "AstGrepWrapperBackend",
+        (),
+        {
+            "search": MagicMock(
+                return_value=SearchResult(
+                    matches=hits,
+                    matched_file_paths=["a.py"] if hits else [],
+                    total_files=1 if hits else 0,
+                    total_matches=len(hits),
+                    routing_backend="AstGrepWrapperBackend",
+                    routing_reason="ast",
+                )
+            ),
+            "pattern_warning": MagicMock(return_value=warning),
+        },
+    )()
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as mp,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as ms,
+    ):
+        mp.return_value.get_backend.return_value = fake
+        ms.return_value.walk.return_value = ["a.py"]
+        return mcp_server.tg_ast_search(pattern, "python", ".", structured_json=structured_json)
+
+
+def test_tg_ast_search_json_with_an_oversized_pattern_is_bounded_and_flagged():
+    hit = MatchLine(line_number=1, text="x", file="a.py")
+    for hits in ([hit], []):
+        out = _run_tg_ast_search_pattern(_BIG_PATTERN, hits, None, True)
+        _assert_bounded(out)
+        payload = json.loads(out)
+        assert payload["output_truncated"] is True
+        assert payload["pattern_truncated"] is True
+
+
+def test_tg_ast_search_plain_text_with_an_oversized_pattern_is_bounded():
+    hit = MatchLine(line_number=1, text="x", file="a.py")
+    for hits in ([hit], []):
+        out = _run_tg_ast_search_pattern(_BIG_PATTERN, hits, None, False)
+        _assert_bounded(out)
+
+
+def test_tg_ast_search_invalid_pattern_error_with_oversized_echo_is_bounded():
+    warning = "Warning: Pattern contains an ERROR node " + "w" * 1_000_000
+    out = _run_tg_ast_search_pattern(_BIG_PATTERN, [], warning, True)
+    _assert_bounded(out)
+    payload = json.loads(out)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["output_truncated"] is True
+    assert payload["pattern_truncated"] is True
+    assert payload["error"]["message_truncated"] is True
+    plain = _run_tg_ast_search_pattern(_BIG_PATTERN, [], warning, False)
+    _assert_bounded(plain)
+
+
+def test_small_responses_are_returned_untouched_by_the_final_bound():
+    out = _run_tg_search_many(10, "short line")
+    payload = json.loads(out)
+    assert "pattern_truncated" not in payload
+    assert not payload.get("output_truncated")
