@@ -18,6 +18,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli.lang_registry import read_source_text, split_source_lines
+
 # A declaration can legitimately wrap across lines (long parameter lists, generics, multiple
 # base classes). Bounded so a pathological or minified file cannot turn one signature into a
 # whole-file read -- the thing this command exists to avoid. On hitting the bound we emit what
@@ -30,7 +32,7 @@ _DECLARATION_TERMINATORS = (":", "{", "=>", ";")
 
 def _read_lines(path: Path) -> list[str] | None:
     try:
-        return path.read_text(encoding="utf-8", errors="replace").splitlines()
+        return split_source_lines(read_source_text(path))
     except OSError:
         return None
 
@@ -184,6 +186,10 @@ def file_api_command(path: str, *, json_output: bool) -> int:
         _target_language_for_path,
         build_repo_map,
     )
+    from tensor_grep.cli.repo_map_coverage_gaps import (
+        apply_coverage_gap_incompleteness,
+        target_file_gaps,
+    )
 
     target = Path(path).expanduser().resolve()
     if target.is_dir():
@@ -198,12 +204,20 @@ def file_api_command(path: str, *, json_output: bool) -> int:
     if target.exists():
         symbols = _symbols_for_file(build_repo_map(target.parent), str(target))
 
+    # G1.2 (r24): the same coverage-gap gate as the symbol commands, restricted to this one file.
+    gaps = target_file_gaps(target) if target.exists() else []
+    grammar_missing = any(str(gap["reason"]).startswith("required parser/") for gap in gaps)
     payload = build_file_api(
         target,
         symbols,
         language=_target_language_for_path(target),
-        parser_backed=spec_for_path(target) is not None,
+        parser_backed=spec_for_path(target) is not None and not grammar_missing,
     )
+    if gaps:
+        payload["resolution_gaps"] = gaps
+        apply_coverage_gap_incompleteness(payload, gaps, answer_empty=not payload["symbols"])
+        if payload.get("incomplete_reason_class") == "coverage_gap":
+            payload.setdefault("remediation", payload.get("scan_remediation"))
 
     typer.echo(json.dumps(payload, indent=2) if json_output else render_file_api_text(payload))
     # Three-state exit contract (docs/CONTRACTS.md): 0 complete, 2 incomplete/untrustworthy.

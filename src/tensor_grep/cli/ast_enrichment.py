@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from tensor_grep.cli import repo_map
+from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
 
 AST_ENRICH_FILE_LIMIT = 100
 
@@ -97,6 +98,10 @@ def enrich_search_items_with_containers(
             if container:
                 enriched_item["container"] = container
                 enriched_count += 1
+            elif target_file_gaps(Path(p)):
+                # G1.2 (r25): advisory annotation only (the match itself is exact, so no exit
+                # code change) -- but never a silently absent symbol for an unparseable file.
+                enriched_item["enclosing_symbol_status"] = "unparsed"
             enriched_items.append(enriched_item)
         else:
             enriched_items.append(item)

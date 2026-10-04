@@ -466,3 +466,183 @@ def test_diff_impact_grammar_missing_changed_file_is_unparsed(tmp_path, monkeypa
     data = _json_of(result)
     assert data["unparsed_changed_files"] == ["m.go"]
     assert data["incomplete_reason_class"] == "coverage_gap"
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 tg file-api goes through the same coverage-gap gate
+# --------------------------------------------------------------------------------------------
+
+
+def test_file_api_oversize_python_file_exits_2_with_a_disclosed_gap(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "10")
+    p = tmp_path / "big.py"
+    p.write_text("def api_target():\n    return 1\n", encoding="utf-8")
+    result = _cli(["file-api", "--json", str(p)])
+    assert result.exit_code == 2, result.output
+    payload = _json_of(result)
+    assert "TENSOR_GREP_MAX_PARSE_BYTES" in json.dumps(payload["resolution_gaps"])
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+
+
+def test_file_api_syntax_error_file_exits_2_with_a_disclosed_gap(tmp_path):
+    p = tmp_path / "bad.py"
+    p.write_text("def broken(:\n    pass\n", encoding="utf-8")
+    result = _cli(["file-api", "--json", str(p)])
+    assert result.exit_code == 2, result.output
+    assert any("syntax" in g["reason"] for g in _json_of(result)["resolution_gaps"])
+
+
+@pytest.mark.requires_grammar
+def test_file_api_missing_grammar_target_exits_2_with_a_disclosed_gap(tmp_path, monkeypatch):
+    p = tmp_path / "m.go"
+    p.write_text("package m\nfunc A() {}\n", encoding="utf-8")
+    spec = lang_registry.spec_for_path(p)
+    assert spec is not None and spec.parser_for_path is not None  # premise: the probe is _go_parser
+    monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
+    assert spec.parser_for_path(p) is None  # the patched loader IS the one the gap builder calls
+    result = _cli(["file-api", "--json", str(p)])
+    assert result.exit_code == 2, result.output
+    assert any(g["language"] == "go" for g in _json_of(result)["resolution_gaps"])
+
+
+def test_file_api_empty_parseable_file_stays_exit_0_and_one_def_is_complete(tmp_path):
+    empty = tmp_path / "empty.py"
+    empty.write_text("", encoding="utf-8")
+    result = _cli(["file-api", "--json", str(empty)])
+    assert result.exit_code == 0, result.output
+    assert not _json_of(result).get("resolution_gaps")
+    one = tmp_path / "one.py"
+    one.write_text("def solo():\n    return 1\n", encoding="utf-8")
+    result = _cli(["file-api", "--json", str(one)])
+    assert result.exit_code == 0, result.output
+    assert _json_of(result)["symbol_count"] == 1
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 remaining extractor consumers: capsule primary file, --enrich-ast
+# --------------------------------------------------------------------------------------------
+
+
+def test_enrichment_marks_a_match_in_an_unparseable_file(tmp_path):
+    from tensor_grep.cli import ast_enrichment
+
+    bad = tmp_path / "bad.py"
+    bad.write_text("def broken(:\n    needle = 1\n", encoding="utf-8")
+    good = tmp_path / "good.py"
+    good.write_text("def fine():\n    needle = 1\n", encoding="utf-8")
+    items = [
+        {"path": str(bad), "line_number": 2},
+        {"path": str(good), "line_number": 2},
+    ]
+    enriched, _diag = ast_enrichment.enrich_search_items_with_containers([bad, good], items)
+    assert enriched[0]["enclosing_symbol_status"] == "unparsed"
+    assert "enclosing_symbol_status" not in enriched[1]
+    assert enriched[1]["container"]["name"] == "fine"
+
+
+def test_capsule_on_a_syntax_error_primary_file_discloses_it(tmp_path):
+    from tensor_grep.cli import agent_capsule
+
+    (tmp_path / "bad.py").write_text("def capsule_target(:\n    return 1\n", encoding="utf-8")
+    (tmp_path / "other.py").write_text("def unrelated():\n    return 2\n", encoding="utf-8")
+    payload = agent_capsule.build_agent_capsule("capsule_target", tmp_path)
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert any("syntax" in g["reason"] for g in payload["resolution_gaps"])
+
+
+def test_capsule_on_a_valid_primary_file_is_unchanged(tmp_path):
+    from tensor_grep.cli import agent_capsule
+
+    (tmp_path / "ok.py").write_text("def capsule_target():\n    return 1\n", encoding="utf-8")
+    payload = agent_capsule.build_agent_capsule("capsule_target", tmp_path)
+    assert not payload.get("result_incomplete")
+    assert "resolution_gaps" not in payload
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 (r30): JS/Rust source readers join the shared reader; `tg source` judges its own answer
+# --------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "body", "symbol"),
+    [
+        (
+            "box.js",
+            b"// caf\xe9\nclass Box {\n  method(x) { return x; }\n}\n",
+            "method",
+        ),
+        (
+            "lib.rs",
+            b"// caf\xe9\nstruct S;\nimpl S {\n    fn method(&self) -> i32 { 1 }\n}\n",
+            "method",
+        ),
+    ],
+)
+def test_source_for_a_method_in_a_file_with_an_invalid_byte_returns_its_source(
+    tmp_path, name, body, symbol
+):
+    (tmp_path / name).write_bytes(body)
+    result = _cli(["source", "--json", str(tmp_path), symbol])
+    assert result.exit_code == 0, result.output
+    assert _json_of(result)["sources"]
+
+
+def test_source_valid_utf8_js_control(tmp_path):
+    (tmp_path / "box.js").write_text(
+        "class Box {\n  method(x) { return x; }\n}\n", encoding="utf-8"
+    )
+    result = _cli(["source", "--json", str(tmp_path), "method"])
+    assert result.exit_code == 0, result.output
+    assert _json_of(result)["sources"]
+
+
+def test_source_definition_found_but_extraction_empty_with_blocking_gap_exits_2(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "bad.py").write_bytes(b"def lossy_target():\n    return 1\n# caf\xe9\n")
+    monkeypatch.setattr(repo_map, "_python_symbol_sources", lambda *_a, **_k: [])
+    monkeypatch.setattr(repo_map, "_regex_symbol_sources", lambda *_a, **_k: [])
+    result = _cli(["source", "--json", str(tmp_path), "lossy_target"])
+    assert result.exit_code == 2, result.output
+    payload = _json_of(result)
+    assert payload["definitions"] and not payload["sources"]
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert "bad.py" in json.dumps(payload["resolution_gaps"])
+
+
+# --------------------------------------------------------------------------------------------
+# G1.3 (r22): every site that indexes by AST / tree-sitter line splits on newline only
+# --------------------------------------------------------------------------------------------
+
+_FF = chr(0x0C)
+_LS = chr(0x2028)
+
+
+def test_python_symbol_source_survives_a_form_feed_line(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "x = 1\n" + _FF + "\ndef alpha():\n    return 1\n", encoding="utf-8", newline=""
+    )
+    sources = repo_map._python_symbol_sources(tmp_path / "m.py", "alpha")
+    assert [s["source"].strip() for s in sources] == ["def alpha():\n    return 1"]
+
+
+def test_python_alias_call_keeps_its_line_after_a_form_feed(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "def target():\n    return 1\n"
+        + _FF
+        + "\nalias = target\ndef run():\n    return alias()\n",
+        encoding="utf-8",
+        newline="",
+    )
+    calls = repo_map._python_provider_alias_calls(tmp_path / "m.py", "target")
+    assert [c["text"] for c in calls] == ["    return alias()"]
+
+
+def test_python_symbol_source_and_alias_controls_without_separators(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "x = 1\ndef alpha():\n    return 1\n" + "s = 'a" + _LS + "b'\n", encoding="utf-8"
+    )
+    sources = repo_map._python_symbol_sources(tmp_path / "m.py", "alpha")
+    assert [s["source"].strip() for s in sources] == ["def alpha():\n    return 1"]

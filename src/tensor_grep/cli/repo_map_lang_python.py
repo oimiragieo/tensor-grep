@@ -408,7 +408,7 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
     except (OSError, SyntaxError):
         return []
 
-    lines = source.splitlines()
+    lines = lang_registry.split_source_lines(source)
     alias_names = {symbol}
 
     def _binding_name(value: ast.AST) -> str | None:
@@ -515,7 +515,7 @@ def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     except (OSError, SyntaxError):
         return []
 
-    lines = source.splitlines()
+    lines = lang_registry.split_source_lines(source)
     sources: list[dict[str, Any]] = []
 
     symbol_nodes = [

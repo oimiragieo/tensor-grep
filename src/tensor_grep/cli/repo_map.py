@@ -2920,7 +2920,7 @@ def _source_line_text(path: Path, line_number: int) -> str:
     if line_number <= 0:
         return ""
     try:
-        lines = lang_registry.read_source_text(path).splitlines()
+        lines = lang_registry.split_source_lines(lang_registry.read_source_text(path))
     except OSError:
         return ""
     return lines[line_number - 1].strip() if 0 < line_number <= len(lines) else ""

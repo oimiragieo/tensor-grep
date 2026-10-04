@@ -770,7 +770,7 @@ def _js_ts_references_and_calls(
     # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
     # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
     # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
-    lines = parsed_source.splitlines()
+    lines = lang_registry.split_source_lines(parsed_source)
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
@@ -894,7 +894,7 @@ def _js_ts_provider_alias_calls(
     except (OSError, UnicodeDecodeError):
         return []
 
-    lines = source.splitlines()
+    lines = lang_registry.split_source_lines(source)
     alias_resolution_by_name: dict[str, dict[str, Any]] = {}
     for binding in _js_ts_named_import_bindings(source):
         if str(binding.get("statement_kind", "import")) != "import":
@@ -1124,7 +1124,7 @@ def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _self._max_parse_bytes():
         return []
     try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
+        lines = lang_registry.split_source_lines(_self._read_source_text_cached(str(path)))
     except (OSError, UnicodeDecodeError):
         return []
 

@@ -61,7 +61,7 @@ def _regex_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
         return [], []
 
     try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
+        lines = lang_registry.split_source_lines(_self._read_source_text_cached(str(path)))
     except (OSError, UnicodeDecodeError):
         return [], []
 
@@ -247,7 +247,7 @@ def _regex_references_and_calls(
         return [], []
 
     try:
-        lines = lang_registry.read_source_text(path).splitlines()
+        lines = lang_registry.split_source_lines(lang_registry.read_source_text(path))
     except OSError:
         return [], []
 
@@ -349,7 +349,7 @@ def _regex_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         return []
 
     try:
-        lines = lang_registry.read_source_text(path).splitlines()
+        lines = lang_registry.split_source_lines(lang_registry.read_source_text(path))
     except OSError:
         return []
 

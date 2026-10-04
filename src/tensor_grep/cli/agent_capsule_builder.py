@@ -134,6 +134,7 @@ from tensor_grep.cli.agent_capsule_targets import (
 from tensor_grep.cli.agent_capsule_targets import (
     _tied_alternative_targets as _tied_alternative_targets,
 )
+from tensor_grep.cli.repo_map_coverage_gaps import attach_target_gaps
 
 
 def build_agent_capsule_from_map(
@@ -935,6 +936,9 @@ def build_agent_capsule_from_map(
             result["deadline_limit"]["assembly_stages_skipped"] = _dedupe(skipped_assembly_stages)
     if scan_truncated:
         result["result_incomplete"] = True
+    # G1.2 (r25): an unparseable primary file must not read as "zero primary symbols, complete".
+    if target.get("file"):
+        attach_target_gaps(result, Path(str(target["file"])), answer_empty=not target.get("symbol"))
     # suggested_scope (#133 dogfood): the same centrality-weighted directory narrowing `tg orient`
     # offers, carried onto the agent capsule from the inner render (`build_context_render` computed
     # it from the raw map it already built, gated on scan truncation -- NO second scan). Additive +

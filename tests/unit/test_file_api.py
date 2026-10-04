@@ -232,3 +232,26 @@ def test_a_bodiless_declaration_terminates_on_the_semicolon(tmp_path: Path) -> N
     assert entry["signature"].strip() == "std::string build(int total);"
     assert not entry.get("signature_truncated")
     assert not payload.get("result_incomplete")
+
+
+def test_form_feed_does_not_shift_signature_lines(tmp_path: Path) -> None:
+    t = _write(tmp_path, "m.py", "x = 1\n" + chr(0x0C) + "\ndef alpha():\n    pass\n")
+    sym = {**_SYMBOL, "line": 3, "start_line": 3, "end_line": 4}
+    p = build_file_api(t, [sym], language="python", parser_backed=True)
+    assert p["symbols"][0]["signature"] == "def alpha():"
+
+
+def test_unicode_line_separator_does_not_shift_signature_lines(tmp_path: Path) -> None:
+    t = _write(tmp_path, "u.py", "s = 'a" + chr(0x2028) + "b'\ndef beta():\n    pass\n")
+    sym = {**_SYMBOL, "line": 2, "start_line": 2, "end_line": 3}
+    p = build_file_api(t, [sym], language="python", parser_backed=True)
+    assert p["symbols"][0]["signature"] == "def beta():"
+
+
+def test_rustfmt_where_clause_fn_stays_complete(tmp_path: Path) -> None:
+    # no-regression control on main's unchanged completion logic
+    src = "fn f<F>(x: F) -> u32\nwhere\n    F: Fn() -> u32,\n{\n    x()\n}\n"
+    t = _write(tmp_path, "w.rs", src)
+    sym = {**_SYMBOL, "name": "f", "end_line": 6}
+    e = build_file_api(t, [sym], language="rust", parser_backed=True)["symbols"][0]
+    assert not e.get("signature_truncated") and "x()" not in e["signature"], e["signature"]
