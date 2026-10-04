@@ -1680,3 +1680,73 @@ def test_every_wait_or_loop_rechecks_session_identity_after_waking() -> None:
         assert found == [], f"{module.__name__}: wait/loop without an identity re-check: {found}"
     sample = "class ExternalLSPClient:\n    def f(self):\n        while True:\n            pass\n"
     assert _unchecked_waits(sample, ("ExternalLSPClient",)) == ["f:3"]
+
+
+# --- closure: an old probe's watchdog never kills a replacement session -----------------------
+
+
+def _live_sleeper() -> tuple[Any, Any]:
+    return pc.spawn_contained(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def test_old_probe_watchdog_never_kills_the_replacement_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.lsp_probe_budget import ProbeBudget
+
+    client = _client(tmp_path, monkeypatch)
+    proc_a, cont_a = _live_sleeper()
+    proc_b, cont_b = _live_sleeper()
+    install_session(client, process=proc_a, containment=cont_a)
+    budget = ProbeBudget(time.monotonic() + 1.0, 5.0, 1.0)
+    try:
+        budget.start_watchdog(client)  # bound to A, the session this probe starts with
+        cont_a.kill()  # A dies on its own ...
+        proc_a.wait(timeout=10)
+        install_session(client, process=proc_b, containment=cont_b)  # ... and B replaces it
+        assert budget.fired.wait(timeout=10), "the watchdog never reached its deadline"
+        time.sleep(0.5)  # let it act (it must not)
+        assert proc_b.poll() is None, "the old probe's watchdog killed the replacement session"
+    finally:
+        budget.cancel()
+        cont_b.kill()
+        cont_a.release()
+        cont_b.release()
+
+
+def test_watchdog_still_kills_its_own_live_session_and_binds_a_session_spawned_by_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from tensor_grep.cli.lsp_probe_budget import ProbeBudget
+
+    client = _client(tmp_path, monkeypatch)
+    # (a) A is the probe's live session when it starts: its own tree is killed at the deadline
+    proc_a, cont_a = _live_sleeper()
+    install_session(client, process=proc_a, containment=cont_a)
+    budget = ProbeBudget(time.monotonic() + 1.0, 5.0, 1.0)
+    try:
+        budget.start_watchdog(client)
+        proc_a.wait(timeout=10)  # killed by the watchdog (60s sleeper cannot exit on its own)
+        assert proc_a.poll() is not None
+    finally:
+        budget.cancel()
+        cont_a.release()
+
+    # (b) a session spawned by this probe's own start() is bound at publication
+    install_session(client)  # nothing running yet
+    proc_c, cont_c = _live_sleeper()
+    budget = ProbeBudget(time.monotonic() + 1.0, 5.0, 1.0)
+    try:
+        budget.start_watchdog(client)
+        session_c = install_session(client, process=proc_c, containment=cont_c)
+        budget.bind(session_c)  # what _start_locked does right after publishing
+        proc_c.wait(timeout=10)
+        assert proc_c.poll() is not None
+    finally:
+        budget.cancel()
+        cont_c.release()

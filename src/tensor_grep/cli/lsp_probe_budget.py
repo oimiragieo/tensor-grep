@@ -30,6 +30,7 @@ class ProbeBudget:
         self._decision = threading.Lock()  # serializes 'watchdog fires' vs 'probe succeeds'
         self._settled = False
         self._client: Any = None
+        self._bound: Any = None  # the one session this probe's watchdog may kill
 
     def arm(self, client: Any) -> None:
         """Cap the client's initialize/request timeouts by the time left before cleanup.
@@ -56,6 +57,9 @@ class ProbeBudget:
             return
         self._client = client
         client.deadline_monotonic = self._probe_deadline  # lock/write/wait bound
+        client.probe_budget = self  # _start_locked binds the session this probe spawns
+        live = client._session  # the session this probe starts with, if it already has one
+        self._bound = live if live.process is not None else None
         threading.Thread(target=self._watch, args=(client,), daemon=True).start()
 
     def _watch(self, client: Any) -> None:
@@ -67,7 +71,12 @@ class ProbeBudget:
                 return  # the probe already decided success before the deadline
             self.fired.set()
         while not self._cancelled.is_set():  # retry: the provider may still be spawning
-            session = client._session
+            session = self._bound  # NEVER re-resolved from the client: a replacement is not ours
+            if session is None:
+                self._cancelled.wait(0.05)
+                continue
+            if client._session is not session:
+                return  # replaced or already torn down: nothing of this probe is left to kill
             containment, process = session.containment, session.process
             if containment is not None:
                 containment.kill()
@@ -95,10 +104,16 @@ class ProbeBudget:
             self._settled = True
             return "ok"
 
+    def bind(self, session: Any) -> None:
+        """Bind the watchdog to the session THIS probe's start() just published."""
+        self._bound = session
+
     def cancel(self) -> None:
         self._cancelled.set()
         if self._client is not None:
             self._client.deadline_monotonic = None
+            if self._client.probe_budget is self:
+                self._client.probe_budget = None
 
     def reason(self, last_error: Any, probe_error: Any) -> Any:
         """Report the deadline as the cause when the watchdog fired (the write error is its echo)."""

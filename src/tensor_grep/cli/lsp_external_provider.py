@@ -423,6 +423,7 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         self.stop_grace_seconds: float | None = None
         self._starting = False
         self.deadline_monotonic: float | None = None  # absolute probe deadline (see ProbeBudget)
+        self.probe_budget: ProbeBudget | None = None  # the probe now running on this client
         self.unusable = False  # set when teardown could not take the client lock in time
         self.teardown_error: str | None = None
         self.containment_error: str | None = None  # set when the tree could not be contained
@@ -532,6 +533,8 @@ class ExternalLSPClient(ReadinessMixin, SessionBackedState):
         try:
             with client_lock(self):
                 self._session = session  # NEW state: stale teardowns/readers cannot reach it
+                if self.probe_budget is not None:
+                    self.probe_budget.bind(session)
         except BaseException:
             # `session` owns the spawned provider from the moment of spawn. If it cannot be
             # published (the lock wait hit the probe deadline) it must not leak: kill the tree,
