@@ -10,9 +10,15 @@ string -- the caller omits the runnable string and discloses the raw value inste
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import functools
 import string
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ParamSpec
+
+_P = ParamSpec("_P")
 
 # ASCII letters, digits and `. _ - / + @ = , :` only. Non-ASCII letters are deliberately NOT
 # included: their handling depends on the console code page / shell encoding, which is not
@@ -55,6 +61,64 @@ class Omission:
     tokens: tuple[str, ...]
 
 
+_COLLECTOR: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "validation_omissions", default=None
+)
+
+
+@contextlib.contextmanager
+def collecting() -> Iterator[list[str]]:
+    """Request-scoped omission collector. ``render_command`` records every rejection into the
+    innermost active collector at the moment it rejects; on exit the tokens propagate to the
+    enclosing collector, so a ``None``/skip path downstream can never lose a disclosure."""
+    mine: list[str] = []
+    reset = _COLLECTOR.set(mine)
+    try:
+        yield mine
+    finally:
+        _COLLECTOR.reset(reset)
+        outer = _COLLECTOR.get()
+        if outer is not None:
+            outer.extend(mine)
+
+
+def record_omission(token: str) -> None:
+    """Record a raw token a caller rejected itself (disclosure without a ``render_command``)."""
+    active = _COLLECTOR.get()
+    if active is not None:
+        active.append(token)
+
+
+def lists_omissions(
+    fn: Callable[_P, list[dict[str, Any]]],
+) -> Callable[_P, list[dict[str, Any]]]:
+    """Raw-plan builders: append the command-less ``scope: "omitted"`` entry carrying everything
+    rejected while building (kept apart from runnable steps; the alignment layer splits it off)."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> list[dict[str, Any]]:
+        with collecting() as omitted:
+            plan = fn(*args, **kwargs)
+        return [*plan, omission_step(omitted)] if omitted else plan
+
+    return wrapper
+
+
+def collects_omissions(
+    fn: Callable[_P, tuple[list[dict[str, Any]], dict[str, Any]]],
+) -> Callable[_P, tuple[list[dict[str, Any]], dict[str, Any]]]:
+    """Run a plan builder inside a collector and disclose EVERYTHING it rejected on the returned
+    alignment -- merged after all fallback augmentation, whatever the builder did with it."""
+
+    @functools.wraps(fn)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        with collecting() as omitted:
+            plan, alignment = fn(*args, **kwargs)
+        return plan, merge_omissions(alignment, omitted)
+
+    return wrapper
+
+
 def render_command(*parts: str) -> str | Omission:
     """THE only way a validation command string is built from derived values.
 
@@ -76,7 +140,11 @@ def render_command(*parts: str) -> str | Omission:
             rejected.append(str(part))
         else:
             rendered.append(part)
-    return Omission(tuple(rejected)) if rejected else " ".join(rendered)
+    if not rejected:
+        return " ".join(rendered)
+    for token in rejected:
+        record_omission(token)
+    return Omission(tuple(rejected))
 
 
 def unsafe_neighbour_entry(argv: list[str], relative_test: str) -> dict[str, Any]:
@@ -111,11 +179,11 @@ def split_omissions(
     return [step for step in plan if step.get("scope") != "omitted"], omitted
 
 
-def merge_omissions(alignment: dict[str, Any], omitted: list[dict[str, Any]]) -> dict[str, Any]:
-    """Disclose omissions on the validation alignment (consumers already carry it)."""
-    if not omitted:
+def merge_omissions(alignment: dict[str, Any], omitted_tokens: list[str]) -> dict[str, Any]:
+    """Disclose omitted raw tokens on the validation alignment (consumers already carry it)."""
+    paths = sorted(set(omitted_tokens))
+    if not paths:
         return alignment
-    paths = sorted({str(p) for step in omitted for p in step.get("omitted_unsafe_paths", [])})
     merged = dict(alignment)
     merged["omitted_unsafe_paths"] = paths
     merged["omitted_note"] = MANUAL_QUOTING_NOTE
@@ -133,9 +201,9 @@ def best_test_function_candidate(
     symbol_terms: list[str],
     query_terms: list[str],
 ) -> str | None:
-    """Pick the test name whose terms best match; only shell-inert names may reach a command
-    (moved out of repo_map.py unchanged apart from the inert pre-filter)."""
-    candidates = [name for name in candidates if is_shell_inert_filter(name)]
+    """Pick the test name whose terms best match (moved out of repo_map.py unchanged). There is
+    deliberately NO inert pre-filter: an unsafe best name must reach ``render_command`` so its
+    rejection is recorded and disclosed instead of being silently discarded."""
     if not candidates:
         return None
     if len(candidates) == 1:

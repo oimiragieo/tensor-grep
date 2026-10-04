@@ -7545,6 +7545,7 @@ def _validation_commands_for_tests(
     ]
 
 
+@_inert.lists_omissions
 def _raw_validation_plan_for_tests(
     tests: list[str],
     *,
@@ -7626,7 +7627,6 @@ def _raw_validation_plan_for_tests(
     requested_javascript_runners: list[str] = []
     include_python_fallback = False
     include_rust_fallback = False
-    omitted_tokens: list[str] = []
 
     def remember_runner(runner: str) -> None:
         if runner not in requested_javascript_runners:
@@ -7641,8 +7641,7 @@ def _raw_validation_plan_for_tests(
         confidence: float,
         detection: str,
     ) -> None:
-        if isinstance(command, _inert.Omission):
-            omitted_tokens.extend(command.tokens)
+        if isinstance(command, _inert.Omission):  # already recorded by render_command
             return
         if command in seen:
             return
@@ -7664,7 +7663,7 @@ def _raw_validation_plan_for_tests(
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
         if not _inert.is_shell_inert_path(relative_path):
-            omitted_tokens.append(relative_path)  # disclosure only; commands are gated per token
+            _inert.record_omission(relative_path)  # disclosure only; commands gated per token
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
         )
@@ -7892,8 +7891,6 @@ def _raw_validation_plan_for_tests(
             detection="detected" if (root / "Cargo.toml").is_file() else "heuristic",
         )
 
-    if omitted_tokens:
-        plan.append(_inert.omission_step(omitted_tokens))
     return plan
 
 
@@ -7961,6 +7958,7 @@ def _align_validation_plan_for_primary_language(
     return aligned, alignment
 
 
+@_inert.collects_omissions
 def _validation_plan_and_alignment_for_tests(
     tests: list[str],
     *,
@@ -7996,7 +7994,7 @@ def _validation_plan_and_alignment_for_tests(
         if isinstance(primary_symbol, dict) and primary_symbol.get("file")
         else (str(primary_file) if primary_file is not None and str(primary_file) else None)
     )
-    raw_plan, omitted_steps = _inert.split_omissions(raw_plan)
+    raw_plan, _ = _inert.split_omissions(raw_plan)
     raw_plan = _ensure_primary_language_validation_fallback(
         raw_plan,
         repo_root=repo_root,
@@ -8005,10 +8003,7 @@ def _validation_plan_and_alignment_for_tests(
         deadline_monotonic=deadline_monotonic,
         deadline_hit=deadline_hit,
     )
-    aligned, alignment = _align_validation_plan_for_primary_language(
-        raw_plan, resolved_primary_file
-    )
-    return aligned, _inert.merge_omissions(alignment, omitted_steps)
+    return _align_validation_plan_for_primary_language(raw_plan, resolved_primary_file)
 
 
 def _validation_plan_for_tests(

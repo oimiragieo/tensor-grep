@@ -186,14 +186,82 @@ def test_unsafe_javascript_test_title_falls_back_to_file_level_command(tmp_path:
     test_path.write_text(
         "test('$(Write-Output PWN) widget', () => expect(1).toBe(1));\n", encoding="utf-8"
     )
-    commands = repo_map._validation_commands_for_tests(
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
         [str(test_path.resolve())],
         repo_root=project,
         primary_test=str(test_path.resolve()),
         query="widget",
     )
+    commands = [str(step["command"]) for step in plan]
     assert "npx jest tests/widget.test.js" in commands  # file-level step survives
     assert not any("PWN" in c for c in commands), commands
+    # the dropped title must stay visible, raw, with the reason
+    assert "$(Write-Output PWN) widget" in alignment.get("omitted_unsafe_paths", []), alignment
+    assert alignment.get("omitted_note") == "path requires manual quoting", alignment
+    assert alignment["issues"], alignment
+
+
+def test_unsafe_cargo_manifest_omission_survives_the_primary_language_fallback(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    crate = project / "unsafe dir"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "x"\n', encoding="utf-8")
+    (crate / "src" / "lib.rs").write_text("pub fn f() {}\n", encoding="utf-8")
+    plan, alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [], repo_root=project, primary_file=crate / "src" / "lib.rs"
+    )
+    assert not any("unsafe dir" in str(step.get("command", "")) for step in plan), plan
+    assert "unsafe dir/Cargo.toml" in alignment.get("omitted_unsafe_paths", []), alignment
+    assert alignment.get("omitted_note") == "path requires manual quoting", alignment
+    # positive control: an inert crate dir yields the manifest command and no disclosure
+    ok = tmp_path / "ok"
+    (ok / "crate" / "src").mkdir(parents=True)
+    (ok / "crate" / "Cargo.toml").write_text('[package]\nname = "x"\n', encoding="utf-8")
+    (ok / "crate" / "src" / "lib.rs").write_text("pub fn f() {}\n", encoding="utf-8")
+    ok_plan, ok_alignment = repo_map._validation_plan_and_alignment_for_tests(
+        [], repo_root=ok, primary_file=ok / "crate" / "src" / "lib.rs"
+    )
+    assert any("--manifest-path crate/Cargo.toml" in str(s.get("command")) for s in ok_plan), (
+        ok_plan
+    )
+    assert "omitted_unsafe_paths" not in ok_alignment, ok_alignment
+
+
+def test_only_render_command_constructs_an_omission() -> None:
+    """Structural census: a rejection of a derived token has exactly one source, so the
+    request-scoped collector inside it cannot be bypassed by a None/skip path."""
+    import ast
+
+    cli = Path(repo_map.__file__).parent
+    constructors: list[str] = []
+    for path in sorted(cli.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Call):
+                    func = node.func
+                    name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+                    if name == "Omission":
+                        constructors.append(f"{path.name}:{fn.name}")
+    assert constructors == ["repo_map_shell_inert.py:render_command"], constructors
+
+
+def test_render_command_records_every_rejection_in_the_active_collector() -> None:
+    from tensor_grep.cli import repo_map_shell_inert as inert
+
+    with inert.collecting() as outer:
+        assert isinstance(
+            inert.render_command("cargo", "test", inert.Derived("@x")), inert.Omission
+        )
+        with inert.collecting() as inner:
+            inert.render_command("npx", "jest", inert.DerivedFilter("$(y)"))
+        assert inner == ["$(y)"]  # inner scope sees its own
+        inert.render_command("cargo", "test", inert.Derived("fine"))  # no rejection
+    assert outer == ["@x", "$(y)"]  # and propagates to the enclosing scope
+    # no active collector: rendering still works and records nothing
+    assert isinstance(inert.render_command("a", inert.Derived("@z")), inert.Omission)
 
 
 def _usable_runners(tmp_path: Path):
