@@ -32,6 +32,7 @@ from uuid import uuid4
 
 from tensor_grep.cli import session_daemon_winsec as _winsec
 from tensor_grep.cli._index_lock import replace_with_retry
+from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_store import _write_json_atomic
 
 DAEMON_HOST = "127.0.0.1"
@@ -170,7 +171,16 @@ def _classify_daemon_pid(
     if not any(_DAEMON_MODULE in arg for arg in argv):
         return "gone", None
     if root is not None and _argv_serves_root(argv, root):
-        return "ours", (pid, created, argv)
+        # argv cannot prove which code is running (a shadow package passes every argv check): the
+        # real daemon's HMAC over (pid, create_time, port, root, version) can, and the live
+        # process must still have the signed create time.
+        signed = (metadata or {}).get("create_time")
+        if (
+            _verify_attestation(metadata or {}, root)
+            and isinstance(signed, (int, float))
+            and abs(created - float(signed)) <= _PID_CREATE_TIME_TOLERANCE
+        ):
+            return "ours", (pid, created, argv)
     return "unverifiable", None
 
 
@@ -318,6 +328,72 @@ def _terminate_identified(
         return False
     finally:
         guard.close()
+
+
+def _attestation_hmac(
+    secret: bytes, pid: int, created: float, port: int, root: str, package_version: str
+) -> str:
+    """HMAC over (pid, create_time, port, canonical root, package_version) under the user secret."""
+    msg = "\n".join((
+        "tg-daemon-attest-v1",
+        str(pid),
+        f"{created:.6f}",
+        str(port),
+        os.path.normcase(root),
+        package_version,
+    )).encode("utf-8")
+    return hmac.new(secret, msg, hashlib.sha256).hexdigest()
+
+
+def _attestation_fields(root: Path, port: int) -> dict[str, Any]:
+    """Daemon side: ``create_time`` + ``attestation`` for daemon.json (``{}`` if unavailable).
+
+    Written only by the REAL daemon, which alone holds the per-user secret at startup. A decoy, a
+    shadow package or a planted daemon.json cannot produce it without that secret."""
+    secret = _load_or_create_user_secret()
+    if secret is None:
+        return {}
+    try:
+        _argv, created = _process_info(os.getpid())
+    except (LookupError, OSError):
+        return {}
+    version = _expected_tg_version()
+    return {
+        "create_time": created,
+        "attestation": _attestation_hmac(secret, os.getpid(), created, port, str(root), version),
+    }
+
+
+def _verify_attestation(metadata: dict[str, Any], root: Path) -> bool:
+    """True iff ``metadata`` carries an attestation that verifies under the user secret for THIS
+    root. Any missing/mistyped/changed field -- including metadata written by an older daemon that
+    has no attestation at all -- is unproven (fail closed)."""
+    secret = _read_user_secret(_daemon_secret_path())
+    pid, created = metadata.get("pid"), metadata.get("create_time")
+    port, attestation = _valid_daemon_port(metadata.get("port")), metadata.get("attestation")
+    version = metadata.get("package_version")
+    if secret is None or port is None or not isinstance(version, str):
+        return False
+    if isinstance(pid, bool) or not isinstance(pid, int):
+        return False
+    if isinstance(created, bool) or not isinstance(created, (int, float)):
+        return False
+    if not isinstance(attestation, str) or not attestation.isascii():
+        return False
+    expected = _attestation_hmac(secret, pid, float(created), port, str(root), version)
+    # ASCII bytes: hmac.compare_digest(str, str) raises TypeError on non-ASCII input.
+    return hmac.compare_digest(attestation.encode("ascii"), expected.encode("ascii"))
+
+
+def _unconfirmed_fields(state: str, delivered: bool) -> dict[str, Any]:
+    """The honest stop result when shutdown cannot be confirmed: still running, not stopped."""
+    if delivered:
+        reason = "endpoint_still_accepting_connections"
+    else:
+        reason = {"unverifiable": "pid_unproven", "ours": "termination_failed"}.get(
+            state, "stop_not_confirmed"
+        )
+    return {"running": True, "stopped": False, "stop_method": "none", "unconfirmed_reason": reason}
 
 
 def _await_endpoint_refused(

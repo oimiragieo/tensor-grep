@@ -1010,12 +1010,12 @@
     "hardened_in": null
   },
   {
-    "module": "cli/main.py",
-    "lineno": 8678,
-    "enclosing_symbol": "session_daemon_stop",
+    "module": "cli/session_daemon_stop_cli.py",
+    "lineno": 40,
+    "enclosing_symbol": "run_session_daemon_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "evidence": "except Exception around stop_session_daemon(path) in run_session_daemon_stop (relocated from main.py::session_daemon_stop): the exception text is printed to stderr and the helper returns exit code 1, which the command raises as typer.Exit.",
     "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
     "hardened_in": null
   },
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9012,
+    "lineno": 9084,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9189,
+    "lineno": 9261,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9345,
+    "lineno": 9417,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9473,
+    "lineno": 9545,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 328,
+    "lineno": 330,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3081,7 +3081,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 494,
+    "lineno": 496,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3091,7 +3091,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 138,
+    "lineno": 139,
     "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3101,7 +3101,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 146,
+    "lineno": 147,
     "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3111,7 +3111,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 168,
+    "lineno": 169,
     "enclosing_symbol": "_classify_daemon_pid",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3121,7 +3121,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 584,
+    "lineno": 586,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3131,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 644,
+    "lineno": 646,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3141,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 920,
+    "lineno": 922,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3151,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1619,
+    "lineno": 1629,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1696,
+    "lineno": 1706,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3171,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1827,
+    "lineno": 1837,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3181,7 +3181,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1918,
+    "lineno": 1928,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
@@ -3191,7 +3191,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1956,
+    "lineno": 1966,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3201,7 +3201,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 2003,
+    "lineno": 2013,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3381,7 +3381,7 @@
   },
   {
     "module": "cli/session_daemon_trust.py",
-    "lineno": 317,
+    "lineno": 327,
     "enclosing_symbol": "_terminate_identified",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

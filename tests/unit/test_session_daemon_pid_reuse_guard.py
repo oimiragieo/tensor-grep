@@ -76,20 +76,36 @@ def _fake_info(proc: subprocess.Popen[bytes], root: Path) -> Any:
     )
 
 
+def _signed_meta(root: Path, pid: int) -> dict[str, Any]:
+    """daemon.json as the REAL daemon writes it: with the HMAC attestation (round 3)."""
+    psutil = pytest.importorskip("psutil")
+    created = float(psutil.Process(pid).create_time())
+    secret = trust._load_or_create_user_secret()
+    assert secret is not None
+    port, version = _free_port(), _expected_tg_version()
+    return {
+        "version": 1,
+        "package_version": version,
+        "root": str(root),
+        "host": "127.0.0.1",
+        "port": port,
+        "pid": pid,
+        "started_at": "x",
+        "token": "t",
+        "create_time": created,
+        "attestation": trust._attestation_hmac(secret, pid, created, port, str(root), version),
+    }
+
+
 def _plant(root: Path, pid: int) -> None:
-    sd._write_daemon_metadata(
-        root,
-        {
-            "version": 1,
-            "package_version": _expected_tg_version(),
-            "root": str(root),
-            "host": "127.0.0.1",
-            "port": _free_port(),
-            "pid": pid,
-            "started_at": "x",
-            "token": "t",
-        },
+    meta = _signed_meta(root, pid)
+    meta["port"] = _free_port()  # dead endpoint: the stale-metadata pid path runs
+    secret = trust._load_or_create_user_secret()
+    assert secret is not None
+    meta["attestation"] = trust._attestation_hmac(
+        secret, pid, meta["create_time"], meta["port"], str(root), meta["package_version"]
     )
+    sd._write_daemon_metadata(root, meta)
 
 
 # ---- Windows: one OpenProcess handle, opened BEFORE verification, used for termination ----
@@ -127,7 +143,7 @@ def test_windows_terminates_through_the_handle_opened_before_verification(
             monkeypatch.setattr(ws, "open_process", _open)
             monkeypatch.setattr(ws, "process_create_time", _time)
             monkeypatch.setattr(ws, "terminate_process", _term)
-        assert sd._terminate_daemon_by_pid({"pid": proc.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is True
         names = [name for name, _h in events]
         assert names.count("open") == 1, f"expected exactly one OpenProcess, got {events}"
         assert names.index("open") < names.index("verify") < names.index("terminate"), events
@@ -156,7 +172,7 @@ def test_windows_create_time_mismatch_on_the_opened_handle_terminates_nothing(
         monkeypatch.setattr(ws, "process_create_time", lambda h: (real_time(h) or 0.0) + 10.0)
         monkeypatch.setattr(ws, "terminate_process", lambda h, *a: terminated.append(h) or True)
         monkeypatch.setattr(ws, "close_handle", lambda h: closed.append(h) or real_close(h))
-        assert sd._terminate_daemon_by_pid({"pid": proc.pid}, root=root) is False
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is False
         assert terminated == []
         assert proc.poll() is None
         assert closed, "the opened handle was leaked"
@@ -181,7 +197,7 @@ def test_pidfd_send_signal_is_used_when_available(
         monkeypatch.setattr(
             trust, "_pidfd_send_signal", lambda fd, sig: sent.append(fd) or real_send(fd, sig)
         )
-        assert sd._terminate_daemon_by_pid({"pid": proc.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is True
         assert len(sent) == 1
         proc.wait(timeout=10)
         assert trust._last_pid_guard_level() == "pidfd"
@@ -203,7 +219,7 @@ def test_without_pidfd_it_falls_back_to_the_recheck_and_records_it(
         monkeypatch.setattr(trust, "_process_info", _fake_info(proc, root))
         monkeypatch.setattr(trust, "_pidfd_open", None)
         monkeypatch.setattr(trust, "_pidfd_send_signal", None)
-        assert sd._terminate_daemon_by_pid({"pid": proc.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, proc.pid), root=root) is True
         proc.wait(timeout=10)
         assert trust._last_pid_guard_level() == "recheck"
     finally:

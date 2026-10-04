@@ -8673,19 +8673,9 @@ def session_daemon_stop(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Stop the warm localhost session daemon for the current root."""
-    from tensor_grep.cli.session_daemon import stop_session_daemon
+    from tensor_grep.cli.session_daemon_stop_cli import run_session_daemon_stop
 
-    try:
-        payload = stop_session_daemon(path)
-    except Exception as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
-
-    if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
-        return
-
-    typer.echo("Session daemon stopped" if payload.get("stopped") else "Session daemon not running")
+    raise typer.Exit(run_session_daemon_stop(path, json_output, _with_schema_version))
 
 
 @session_app.command("list")

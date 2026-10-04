@@ -128,6 +128,8 @@ def read_all(handle: Any) -> bytes | None:
 
 
 def _sid_string(sid_ptr: Any) -> str | None:
+    if sys.platform != "win32":
+        return None
     import ctypes
     from ctypes import wintypes
 

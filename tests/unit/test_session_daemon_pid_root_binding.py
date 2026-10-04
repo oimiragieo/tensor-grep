@@ -63,6 +63,27 @@ def _plant(root: Path, pid: int) -> None:
     )
 
 
+def _signed_meta(root: Path, pid: int) -> dict[str, Any]:
+    """daemon.json as the REAL daemon writes it: with the HMAC attestation (round 3)."""
+    psutil = pytest.importorskip("psutil")
+    created = float(psutil.Process(pid).create_time())
+    secret = trust._load_or_create_user_secret()
+    assert secret is not None
+    port, version = _free_port(), _expected_tg_version()
+    return {
+        "version": 1,
+        "package_version": version,
+        "root": str(root),
+        "host": "127.0.0.1",
+        "port": port,
+        "pid": pid,
+        "started_at": "x",
+        "token": "t",
+        "create_time": created,
+        "attestation": trust._attestation_hmac(secret, pid, created, port, str(root), version),
+    }
+
+
 def _sleeper(*argv_tail: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)", *argv_tail])
 
@@ -222,9 +243,8 @@ def test_a_real_daemon_serving_this_root_is_signalled_control(
     assert live is not None, "the real daemon never became reachable"
     daemon_pid = int(live["pid"])
     try:
-        meta = sd._read_daemon_metadata(root)
-        assert meta is not None
-        sd._write_daemon_metadata(root, {**meta, "port": _free_port(), "pid": daemon_pid})
+        # the signed ping is unavailable, but the daemon's own metadata HMAC verifies
+        monkeypatch.setattr(sd, "_probe_daemon", lambda _root: None)
         assert trust._daemon_pid_state(sd._read_daemon_metadata(root), root) == "ours"
         result = sd.stop_session_daemon(str(root))
         assert result["running"] is False
@@ -267,9 +287,9 @@ def test_seam_different_root_refused_and_same_root_signalled(
             mine.pid: ([_PY, "-m", _MODULE, "--root", str(root)], _real_ct(mine)),
         }
         monkeypatch.setattr(trust, "_process_info", lambda pid: infos[pid])
-        assert sd._terminate_daemon_by_pid({"pid": victim.pid}, root=root) is False
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, victim.pid), root=root) is False
         assert victim.poll() is None
-        assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
         mine.wait(timeout=10)
     finally:
         _reap(victim)
@@ -291,7 +311,7 @@ def test_root_spellings_that_resolve_to_the_same_root_are_accepted(
     mine = _sleeper()
     try:
         monkeypatch.setattr(trust, "_process_info", _fake_info(mine, [_PY, "-m", _MODULE, *tail]))
-        assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
         mine.wait(timeout=10)
     finally:
         _reap(mine)
@@ -309,7 +329,7 @@ def test_a_relative_root_is_refused_because_its_cwd_is_unknowable(
     try:
         argv = [_PY, "-m", _MODULE, "--root", os.path.join(".", "rootA")]
         monkeypatch.setattr(trust, "_process_info", _fake_info(victim, argv))
-        assert sd._terminate_daemon_by_pid({"pid": victim.pid}, root=root) is False
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, victim.pid), root=root) is False
         assert victim.poll() is None
     finally:
         _reap(victim)
@@ -327,7 +347,7 @@ def test_pid_reuse_is_refused_when_the_create_time_changes(
         argv = [_PY, "-m", _MODULE, "--root", str(root)]
         times = iter([1000.0, 2000.0, 2000.0])
         monkeypatch.setattr(trust, "_process_info", lambda pid: (list(argv), next(times)))
-        assert sd._terminate_daemon_by_pid({"pid": bystander.pid}, root=root) is False
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, bystander.pid), root=root) is False
         assert bystander.poll() is None
     finally:
         _reap(bystander)
@@ -345,7 +365,7 @@ def test_an_unchanged_create_time_is_signalled_control(
             "_process_info",
             _fake_info(mine, [_PY, "-m", _MODULE, "--root", str(root)]),
         )
-        assert sd._terminate_daemon_by_pid({"pid": mine.pid}, root=root) is True
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
         mine.wait(timeout=10)
     finally:
         _reap(mine)

@@ -25,6 +25,7 @@ from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
     DAEMON_HOST,
+    _attestation_fields,
     _await_endpoint_refused,
     _classify_daemon_pid,
     _daemon_invocation_root,
@@ -40,6 +41,7 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _read_user_secret,
     _refresh_failed_error,
     _terminate_identified,
+    _unconfirmed_fields,
     _valid_daemon_port,
     _verify_ping_reply,
 )
@@ -874,8 +876,11 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # socket is wedged). Fall back to terminating the recorded pid if it validates.
         stale_metadata = _read_daemon_metadata(root)
         killed = _terminate_daemon_by_pid(stale_metadata, root=root)
-        unconfirmed = not killed and _daemon_pid_state(stale_metadata, root) == "unverifiable"
-        if unconfirmed or (
+        # Stale metadata is removed only after PROVEN absence: the process is gone ("gone") or, after
+        # a delivered signal, the connection is refused. A live process we could not stop (ours but
+        # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.
+        state = "gone" if killed else _daemon_pid_state(stale_metadata, root)
+        if state != "gone" or (
             killed
             and not _await_endpoint_refused(
                 (stale_metadata or {}).get("host", _DAEMON_HOST),
@@ -883,13 +888,10 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
                 _DAEMON_START_TIMEOUT_SECONDS,
             )
         ):
-            # A DELIVERED signal is not a stopped daemon: only a refused connection is evidence.
             return {
                 "version": _SESSION_VERSION,
                 "root": str(root),
-                "running": True,
-                "stopped": False,
-                "stop_method": "none",
+                **_unconfirmed_fields(state, killed),
             }
         # Task #143a-a: only remove the metadata that still identifies the STALE daemon we just
         # targeted -- never whatever happens to be on disk by the time we get here. A concurrent
@@ -928,34 +930,42 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
             metadata.get("host", _DAEMON_HOST), metadata.get("port"), _DAEMON_START_TIMEOUT_SECONDS
         )
 
+    delivered = False
+
+    def _kill() -> bool:
+        nonlocal delivered
+        delivered = _terminate_daemon_by_pid(metadata, root=root) or delivered
+        return delivered
+
     still_up = False
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
         if _probe_daemon(root) is None:
             if stop_method == "none":
-                if _terminate_daemon_by_pid(metadata, root=root):
+                if _kill():
                     stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
                 else:
-                    still_up = _daemon_pid_state(metadata, root) == "unverifiable"
+                    still_up = _daemon_pid_state(metadata, root) != "gone"
             break
         time.sleep(0.05)
     else:
         # audit I7: no effect within the deadline; escalate to a validated terminate of the pid
         # PROVEN by the signed ping reply.
-        stop_method = "pid" if _terminate_daemon_by_pid(metadata, root=root) else "none"
+        stop_method = "pid" if _kill() else "none"
         still_up = stop_method == "none"  # still answering and never signalled
     # An ok reply / a delivered signal is not a stopped daemon: "cooperative" and "pid" are
     # reported only once a connection to the verified endpoint is REFUSED. An unproven cooperative
     # stop falls through to the proven-pid path (which needs the same refusal).
     if stop_method == "cooperative" and not _refused():
-        stop_method = "pid" if _terminate_daemon_by_pid(metadata, root=root) else "none"
+        stop_method = "pid" if _kill() else "none"
     if stop_method == "pid" and not _refused():
         stop_method = "none"
     if stop_method == "none" and (still_up or not _refused()):
         still_up = True
     if still_up:
-        # Unconfirmed: keep daemon.json and say so.
-        response.update(running=True, root=str(root), stopped=False, stop_method="none")
+        # Unconfirmed: keep daemon.json and say why.
+        state = "gone" if delivered else _daemon_pid_state(metadata, root)
+        response.update(root=str(root), **_unconfirmed_fields(state, delivered))
         return response
     # Task #143a-a: only remove daemon.json if it still identifies the SAME daemon this call
     # targeted (captured in `metadata` above) -- a replacement may have spawned and published its
@@ -2084,6 +2094,7 @@ def run_session_daemon_server(path: str = ".") -> None:
                 "pid": os.getpid(),
                 "started_at": datetime.now(UTC).isoformat(),
                 _DAEMON_TOKEN_FIELD: token,
+                **_attestation_fields(root, int(port)),  # HMAC proof of "this is the real daemon"
             },
         )
         stop_event = threading.Event()
