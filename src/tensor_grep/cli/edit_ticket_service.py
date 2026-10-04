@@ -31,6 +31,7 @@ Threat model (bug hunt G-03/G-08):
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import os
 import stat
@@ -657,6 +658,65 @@ def _exists(path: str | Path) -> bool:
     return True
 
 
+def _same_identity(a: tuple[int, int], b: tuple[int, int]) -> bool:
+    """(st_dev, st_ino) equality; a zero inode or zero dev means "unknown" and is not compared."""
+    if not (a[1] and b[1]):
+        return True
+    if a[1] != b[1]:
+        return False
+    return not (a[0] and b[0] and a[0] != b[0])
+
+
+@contextlib.contextmanager
+def _authenticated_child(child: Path, child_st: os.stat_result) -> Iterator[None]:
+    """OPEN and AUTHENTICATE `child` BEFORE any of its markers is inspected.
+
+    The marker stat/open/read for `child/<marker>` would otherwise resolve `child` by pathname,
+    and `child` can be swapped for a link to an outside directory right after its classification
+    `lstat`. The directory is opened without following links, compared with `child_st`, and held
+    for the whole classification AND digesting; every marker operation is bound to it:
+      POSIX   - `O_NOFOLLOW | O_DIRECTORY` dirfd, registered so `_lstat` / `_os_open` use `dir_fd=`
+      Windows - the same no-share-delete held handle the walk chain uses (path pinned while held)
+    Any failure is `unreadable_path`. Released on exit; if `child` is kept, the walker re-opens it
+    for the descent and re-checks the recorded identity there."""
+    ident = (child_st.st_dev, child_st.st_ino)
+    if sys.platform == "win32":
+        try:
+            held = _hold_dir(child)
+        except OSError as exc:
+            raise _PopulationWalkError("unreadable_path") from exc
+        try:
+            if not _same_identity(ident, held.ident):
+                raise _PopulationWalkError("unreadable_path")
+            yield
+        finally:
+            held.close()
+        return
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        fd = _os_open(child, flags)
+    except OSError as exc:
+        raise _PopulationWalkError("unreadable_path") from exc
+    fds = _ctx_dirfds()
+    key = str(child)
+    try:
+        fst = os.fstat(fd)
+        if not stat.S_ISDIR(fst.st_mode) or not _same_identity(ident, (fst.st_dev, fst.st_ino)):
+            raise _PopulationWalkError("unreadable_path")
+        fds[key] = fd
+        try:
+            yield
+        finally:
+            fds.pop(key, None)
+    finally:
+        os.close(fd)
+
+
 def _population_paths(
     root: Path,
     pruned: list[str],
@@ -733,28 +793,37 @@ def _population_paths(
                     d
                 )  # a directory symlink/junction is a leaf: never descended, never skipped
                 continue
-            marker = _content_prune_marker(child, ledger)
-            if marker is not None or d in _ALWAYS_PRUNED_DIRS:
-                rel = (rel_dir / d).as_posix()
+            rel = (rel_dir / d).as_posix()
+            if d in _ALWAYS_PRUNED_DIRS:
+                # Name-pruned straight after link classification: record "name" and NEVER open,
+                # hold, read or charge anything inside it (a marker there must not turn the
+                # name-prune into a content-prune, nor consume budget for an unchanged tree).
                 if len(pruned) < _MAX_REPORTED_PRUNED:
                     pruned.append(rel)
                 if content_pruned is not None:
-                    if marker is not None:
-                        if n_content >= _MAX_CONTENT_PRUNED_DIRS:
-                            raise _PopulationWalkError("pruned_dir_limit", "content")
-                        n_content += 1
-                        if marker == "CACHEDIR.TAG":
-                            digest = ledger.tag_digests.pop(str(child / marker), None)
-                            if digest is None:
-                                raise _PopulationWalkError("unreadable_path")
-                        else:
-                            digest = _marker_digest(child / marker, ledger)
-                        content_pruned[rel] = f"{marker}:{digest}"
+                    if n_name >= _MAX_NAME_PRUNED_DIRS:
+                        raise _PopulationWalkError("pruned_dir_limit", "name")
+                    n_name += 1
+                    content_pruned[rel] = _NAME_PRUNED
+                continue
+            digest: str | None = None
+            with _authenticated_child(child, child_st):
+                marker = _content_prune_marker(child, ledger)
+                if marker is not None and content_pruned is not None:
+                    if n_content >= _MAX_CONTENT_PRUNED_DIRS:
+                        raise _PopulationWalkError("pruned_dir_limit", "content")
+                    if marker == "CACHEDIR.TAG":
+                        digest = ledger.tag_digests.pop(str(child / marker), None)
+                        if digest is None:
+                            raise _PopulationWalkError("unreadable_path")
                     else:
-                        if n_name >= _MAX_NAME_PRUNED_DIRS:
-                            raise _PopulationWalkError("pruned_dir_limit", "name")
-                        n_name += 1
-                        content_pruned[rel] = _NAME_PRUNED
+                        digest = _marker_digest(child / marker, ledger)
+            if marker is not None:
+                if len(pruned) < _MAX_REPORTED_PRUNED:
+                    pruned.append(rel)
+                if content_pruned is not None:
+                    n_content += 1
+                    content_pruned[rel] = f"{marker}:{digest}"
             else:
                 keep.append(d)
                 expected[str(child)] = (child_st.st_dev, child_st.st_ino)

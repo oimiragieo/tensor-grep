@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -429,22 +430,24 @@ def test_ledger_never_manufactures_eof_when_the_allowance_is_exhausted(tmp_path:
 def _swap_dir_for_symlink_on_classification(
     monkeypatch: pytest.MonkeyPatch, name: str, target: Path
 ) -> dict[str, bool]:
-    """Deterministic race: right after `_is_link(<name>)` said "not a link" (the walker then
-    calls `_content_prune_marker`), swap the directory for a symlink, then delegate."""
-    real = edit_ticket_service._content_prune_marker
+    """Deterministic race: right after the walker's classification `lstat(<name>)` (before it
+    opens/holds the directory), swap the directory for a symlink."""
+    real = os.lstat
     swapped = {"done": False}
 
-    def _swapping(path: Path, *a: object, **k: object) -> object:
-        if path.name == name and not swapped["done"] and not os.path.islink(path):
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        result = real(path, *a, **k)
+        p = Path(str(path))
+        if p.name == name and not swapped["done"] and not os.path.islink(p):
             swapped["done"] = True
-            os.rmdir(path)
+            os.rmdir(p)
             try:
-                path.symlink_to(target, target_is_directory=True)
+                p.symlink_to(target, target_is_directory=True)
             except (OSError, NotImplementedError) as exc:
                 pytest.skip(f"directory symlink creation not permitted here: {exc}")
-        return real(path, *a, **k)
+        return result
 
-    monkeypatch.setattr(edit_ticket_service, "_content_prune_marker", _swapping)
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
     return swapped
 
 
@@ -720,3 +723,140 @@ def test_untouched_invalid_tag_cache_is_reused_exactly_once(tmp_path: Path) -> N
     files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "complete"
     assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
+
+
+# ---- round 15: authenticate a child BEFORE inspecting its markers; no marker reads in name-pruned dirs
+
+
+def _swap_after_lstat(
+    monkeypatch: pytest.MonkeyPatch, name: str, swap: object
+) -> dict[str, object]:
+    """Run `swap()` right AFTER the walker's classification `_lstat(<name>)` (before it opens,
+    holds or inspects the directory), then return the stat taken before the swap."""
+    real = os.lstat
+    state: dict[str, object] = {"done": False, "blocked": None}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        result = real(path, *a, **k)
+        if Path(str(path)).name == name and not state["done"] and not os.path.islink(path):
+            state["done"] = True
+            try:
+                swap()  # type: ignore[operator]
+            except OSError as exc:
+                state["blocked"] = exc
+        return result
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    return state
+
+
+def _outside_with_marker(tmp_path: Path) -> Path:
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "pyvenv.cfg").write_bytes(b"home = outside\n")
+    return outside
+
+
+def _link_dir(link: Path, target: Path, kind: str) -> None:
+    if kind == "junction":
+        if sys.platform != "win32":
+            pytest.skip("junctions are Windows-only")
+        subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            check=True,
+            timeout=30,
+            capture_output=True,
+        )
+    else:
+        try:
+            link.symlink_to(target, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            pytest.skip(f"directory symlink creation not permitted here: {exc}")
+
+
+@pytest.mark.parametrize("kind", ["symlink", "junction"])
+def test_outside_marker_is_never_read_through_a_directory_swapped_after_lstat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "m.py").write_text("x = 1\n", encoding="utf-8")
+    outside = _outside_with_marker(tmp_path)
+    opened: list[str] = []
+    real_open = edit_ticket_service._os_open
+
+    def _recording_open(path: object, flags: int) -> int:
+        opened.append(str(path))
+        return real_open(path, flags)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(edit_ticket_service, "_os_open", _recording_open, raising=False)
+
+    def _swap() -> None:
+        os.rename(repo / "src", repo / "src.moved")
+        _link_dir(repo / "src", outside, kind)
+
+    state = _swap_after_lstat(monkeypatch, "src", _swap)
+    try:
+        _files, population = _walk_tracked_files_bounded(repo)
+    finally:
+        if os.path.lexists(repo / "src") and (
+            os.path.islink(repo / "src") or (repo / "src.moved").exists()
+        ):
+            if os.path.islink(repo / "src"):
+                os.unlink(repo / "src")
+            else:
+                os.rmdir(repo / "src")  # junction
+            if (repo / "src.moved").exists():
+                os.rename(repo / "src.moved", repo / "src")
+    assert state["done"]
+    if state["blocked"] is None:  # the swap happened (always on POSIX)
+        assert population["status"] == "incomplete"
+        assert "src" not in population["pruned_set"]  # never recorded as content-pruned
+        assert not any(p.endswith("pyvenv.cfg") and "src" in p for p in opened)
+    else:  # a held directory refused the rename: nothing was swapped, nothing can be read
+        assert population["status"] == "complete"
+
+
+def test_unswapped_marker_directory_still_content_prunes(tmp_path: Path) -> None:  # control
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"home = x\n")
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "complete"
+    assert population["pruned_set"]["env"].startswith("pyvenv.cfg:")
+
+
+@pytest.mark.parametrize("name", ["node_modules", ".pytest_cache"])
+def test_oversized_marker_inside_a_name_pruned_dir_is_never_inspected(
+    tmp_path: Path, name: str
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    d = tmp_path / name
+    d.mkdir()
+    (d / "pyvenv.cfg").write_bytes(b"x" * 11)  # over the budget of 10
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path="app.py",
+        query="a",
+        allowed_files=["app.py"],
+        max_file_bytes=10,
+        max_aggregate_bytes=10,
+    )
+    pop = ticket.population_status
+    assert pop["status"] == "complete", pop
+    assert pop["pruned_set"][name] == "name"  # not turned into a content-prune by a marker
+    # only app.py is charged: no open, hold or charge for the marker
+    assert pop["scanned_bytes"] == len((tmp_path / "app.py").read_bytes())
+
+
+def test_a_changed_marker_inside_a_name_pruned_dir_does_not_violate_the_ticket(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    nm = tmp_path / "node_modules"
+    nm.mkdir()
+    (nm / "pyvenv.cfg").write_text("home = a\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    (nm / "pyvenv.cfg").write_text("home = b\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
