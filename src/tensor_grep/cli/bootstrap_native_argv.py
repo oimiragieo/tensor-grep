@@ -26,6 +26,7 @@ from tensor_grep.cli.bootstrap_search_guards import (
 # pattern slot: a token containing it stays a pattern. `h` and `V` print help/version and exit 0.
 _RG_NO_VALUE_SHORT = frozenset("0.FHILNPSUVabchilnopqsuvwx")
 _RG_NUMERIC_VALUE_SHORT = frozenset("ABCMdjm")
+_U64_MAX_DIGITS = "18446744073709551615"
 # CWE-88: long flags that make rg EXECUTE or spawn something are never classified as flags in the
 # pattern slot; they keep the `--` sentinel. EXACT option name before `=` (`--pretty` is a flag).
 _RG_EXEC_LONG_FLAG_NAMES = frozenset({"pre", "pre-glob", "hostname-bin", "search-zip"})
@@ -223,7 +224,14 @@ def _is_rg_unsigned_number(text: str) -> bool:
     ``1e3``, whitespace, non-ASCII digits (``\u0661``, full-width ``+``) and values above u64
     are all ``not a valid number``."""
     digits = text[1:] if text.startswith("+") else text
-    return digits.isascii() and digits.isdigit() and int(digits) < 2**64
+    if not (digits.isascii() and digits.isdigit()):
+        return False
+    # NEVER int(): Python 3.11+ raises ValueError past 4300 digits, and argv is hostile input.
+    # Compare as strings: strip leading zeros (rg accepts 5000 of them), then length, then lexicographic.
+    significant = digits.lstrip("0") or "0"
+    if len(significant) != len(_U64_MAX_DIGITS):
+        return len(significant) < len(_U64_MAX_DIGITS)
+    return significant <= _U64_MAX_DIGITS
 
 
 def _is_plausible_rg_flag_token(token: str) -> bool:

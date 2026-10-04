@@ -255,6 +255,11 @@ def pattern_invalid_in_both_engines(pattern: str) -> bool:
         warnings.simplefilter("ignore")
         try:
             re.compile(pattern)
+        except (RecursionError, OverflowError, MemoryError, ValueError):
+            # Hostile patterns ("(" * 100000, "a{99999999999999999999}") crash Python's parser with
+            # something that is not re.error. We cannot tell whether rg accepts them, so do NOT
+            # pre-reject: the real engine reports its own error (exit 2).
+            return False
         except re.error as exc:
             if exc.msg in _AGREED_RE_ERRORS:
                 return True

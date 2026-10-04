@@ -9,6 +9,7 @@ differential against rg.
 
 from __future__ import annotations
 
+import ast
 import io
 import random
 import re
@@ -1807,11 +1808,35 @@ _NUMERIC_VALUES = [
     ("99999999999999999999", False),  # > u64
     ("+99999999999999999999", False),
     ("18446744073709551615", True),  # u64::MAX
+    # council r42: huge values. int() on > 4300 digits raises ValueError on Python 3.11+; every
+    # verdict below was read off rg 15.1.0 (-m and -A), not assumed.
+    ("1" * 4301, False),
+    ("+" + "1" * 4301, False),
+    ("=" + "1" * 4301, False),
+    ("1" * 5000, False),
+    ("0" * 5000 + "1", True),  # rg accepts any number of leading zeros
+    ("+" + "0" * 5000 + "1", True),
+    ("=+" + "0" * 5000 + "1", True),
+    ("0" * 5000, True),  # all zeros is the number 0 (-m 0: valid, finds nothing)
+    ("+" + "0" * 5000, True),
+    ("0" * 4300 + "1", True),
+    ("0" * 4299 + "18446744073709551615", True),  # zero-padded u64::MAX
+    ("+" + "0" * 5000 + "18446744073709551615", True),
+    ("=+" + "0" * 20 + "18446744073709551615", True),
+    ("18446744073709551616", False),  # u64::MAX + 1
+    ("+18446744073709551616", False),
+    ("0" * 5000 + "18446744073709551616", False),  # zero-padded overflow
 ]
 
 
+def _numeric_id(val):
+    if not isinstance(val, str):
+        return None
+    return val if len(val) <= 24 else f"{len(val)}chars-{val[:4]}..{val[-4:]}"
+
+
 @pytest.mark.parametrize("letter", list(_NUMERIC_SHORT))
-@pytest.mark.parametrize(("value", "accepted"), _NUMERIC_VALUES)
+@pytest.mark.parametrize(("value", "accepted"), _NUMERIC_VALUES, ids=_numeric_id)
 def test_r41_numeric_short_value_plausibility_per_rg_verdict(letter, value, accepted):
     token = f"-{letter}{value}"
     assert nav._is_plausible_rg_flag_token(token) is accepted
@@ -1879,3 +1904,97 @@ def test_r41_every_numeric_short_flag_in_the_table_is_the_set_the_rule_covers():
     for source_file in _MODULE_FILES:
         text = _cli_source(source_file)
         assert text.count(".isdigit()") == (1 if source_file == "bootstrap_native_argv.py" else 0)
+
+
+@pytest.mark.parametrize(("value", "accepted"), _NUMERIC_VALUES[-19:], ids=_numeric_id)
+def test_r42_builder_never_raises_on_huge_numeric_values(value, accepted):
+    """The r41 `int(digits)` crashed past 4300 digits (ValueError). Long valid values are left
+    unchanged, long invalid ones get the sentinel, none raise."""
+    for lead in ("-m", "-A", "-im", "-C"):
+        argv = ["--json", f"{lead}{value}", "foo", "src"]
+        out = nav.bootstrap_native_tg_search_argv(argv)  # must not raise
+        assert (out == argv) is accepted
+        assert (out[1:2] == ["--"]) is (not accepted)
+
+
+def test_r42_reported_reproductions_do_not_raise():
+    for argv in (
+        ["--json", "-m" + "1" * 4301, "foo", "src"],
+        ["--json", "-m" + "0" * 5000 + "1", "foo", "src"],
+        ["--json", "-m" + "1" * 5000, "foo", "src"],
+    ):
+        nav.bootstrap_native_tg_search_argv(argv)
+        nav._first_dash_led_pattern_index_after_tg_flags(argv)
+    assert nav._is_rg_unsigned_number("0" * 5000 + "1") is True
+    assert nav._is_rg_unsigned_number("1" * 5000) is False
+    assert nav._is_rg_unsigned_number("") is False
+
+
+def test_r42_no_int_conversion_of_user_argv_in_the_front_door_modules():
+    """Sweep: `int(` over argv-derived text is forbidden in the three modules (the only `int(` in
+    bootstrap.py convert return codes and a bool)."""
+    for module_file in ("bootstrap_native_argv.py", "bootstrap_search_guards.py"):
+        tree = ast.parse(_cli_source(module_file))
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) == "int"]
+        assert calls == [], module_file
+    tree = ast.parse(_cli_source("bootstrap.py"))
+    allowed = {
+        "int(result.returncode)",
+        "int(rc)",
+        "int(_search_args_request_unrestricted(search_args))",
+    }
+    found = {
+        ast.unparse(n) for n in ast.walk(tree) if isinstance(n, ast.Call) and _call_name(n) == "int"
+    }
+    assert found <= allowed, found
+
+
+def _call_name(node):
+    return getattr(node.func, "id", None)
+
+
+_HOSTILE_PATTERNS = {
+    "nest100k": "(" * 100000,
+    "nest5k-closed": "(" * 5000 + ")" * 5000,
+    "noncapturing-3k": "(?:" * 3000 + "a" + ")" * 3000,
+    "repeat-overflow": "a{99999999999999999999}",
+}
+
+
+@pytest.mark.parametrize("name", sorted(_HOSTILE_PATTERNS))
+def test_r42_hostile_pattern_cannot_crash_the_pre_validator(name):
+    """Python's re raises RecursionError / OverflowError (not re.error) on these; main only caught
+    re.error, so the pre-validator crashed. Now: not pre-rejected, the real engine reports."""
+    pattern = _HOSTILE_PATTERNS[name]
+    assert g.pattern_invalid_in_both_engines(pattern) is False
+    assert bootstrap._search_args_include_obviously_invalid_regex(["-e", pattern, "."]) is False
+    assert bootstrap._regex_patterns_from_search_args(["--", pattern]) == [pattern]
+
+
+@needs_rg
+@pytest.mark.parametrize("name", sorted(_HOSTILE_PATTERNS))
+def test_r42_rg_reports_its_own_error_for_the_hostile_patterns(rgdir, name):
+    # passed via -f: a 100000-char pattern does not fit a Windows command line
+    (rgdir / "hostile.pat").write_text(_HOSTILE_PATTERNS[name], encoding="utf-8")
+    rc, _, err = rg_run(rgdir, ["--no-config", "-f", "hostile.pat", "a.txt"])
+    assert rc == 2, (name, rc, err)  # rg rejects it itself (nest limit / size limit)
+
+
+def test_r42_main_entry_survives_hostile_argv(monkeypatch, tmp_path, capsys):
+    """main_entry has no try/except around the argv helpers, so any raise there is a traceback and
+    exit 1. Drive the hostile cases end to end through it."""
+    for argv in (
+        ["-e", "(" * 100000, "."],
+        ["-e", "a{99999999999999999999}", "."],
+        ["--json", "-m" + "1" * 4301, "foo", "."],
+        ["--json", "-m" + "0" * 5000 + "1", "foo", "."],
+    ):
+        route, _, _ = _drive(monkeypatch, tmp_path, argv, native=True, capsys=capsys)
+        assert route in {"rg", "native", "full"}, argv
+
+
+def test_r42_positive_control_python_really_refuses_int_past_4300_digits():
+    with pytest.raises(ValueError):
+        int("1" * 4301)
+    with pytest.raises(ValueError):
+        int("0" * 5000 + "1")
