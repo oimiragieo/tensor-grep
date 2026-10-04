@@ -1323,3 +1323,29 @@ def test_engine_lines_get_mains_o_and_r_post_processing_when_rg_did_not_render_t
     assert [m.text for m in post_process_matches([line], "(h)ello", cfg, False)] == ["say h! h!"]
     rendered = MatchLine(line_number=1, text="x", file="f", rg_kind="match")
     assert post_process_matches([rendered], "hello", cfg, False) == [rendered]
+
+
+@pytest.mark.parametrize(
+    "template, expected",
+    [
+        ("$" + "9" * 4301, ""),  # int max-str-digits: main expands an invalid reference to ""
+        ("${" + "9" * 4301 + "}", ""),
+        ("[$0]", "[foo]"),
+        ("${0}", "foo"),
+        ("$" + "0" * 5000 + "0", "foo"),  # leading zeros are group 0
+        ("$1", ""),
+    ],
+)
+def test_no_rg_replacement_expansion_survives_huge_group_numbers(template, expected):
+    import re
+
+    from tensor_grep.cli.rg_post_process import post_process_matches
+    from tensor_grep.cli.rg_replacement import expand_ripgrep_replacement
+    from tensor_grep.core.result import MatchLine
+
+    m = re.search("foo", "a foo b")
+    assert m is not None
+    assert expand_ripgrep_replacement(template, m) == expected
+    line = MatchLine(line_number=1, text="foo", file="f")
+    cfg = SearchConfig(query_pattern="foo", fixed_strings=True, replace_str=template)
+    assert [x.text for x in post_process_matches([line], "foo", cfg, False)] == [expected]
