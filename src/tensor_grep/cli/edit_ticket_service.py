@@ -43,6 +43,7 @@ from typing import Any
 
 _os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
 _marker_open = open  # private seam for the marker read
+_lstat = os.lstat  # private seam for link classification
 
 _ALWAYS_PRUNED_DIRS = frozenset({
     "node_modules",
@@ -126,11 +127,18 @@ class _PopulationWalkError(Exception):
 
 
 def _is_link(path: str | Path) -> bool:
-    """A symlink OR (Windows) NTFS junction. Neither is ever followed or descended."""
-    if os.path.islink(path):
+    """A symlink OR (Windows) NTFS junction; neither is ever followed or descended.
+
+    Decided from ONE `lstat`: `S_ISLNK`, or the reparse tag `IO_REPARSE_TAG_MOUNT_POINT`. This
+    works on Python 3.11, which has no `os.path.isjunction` (added in 3.12; relying on it
+    would treat a junction as an ordinary directory there). An lstat failure PROPAGATES
+    (callers turn it into `unreadable_path`): "cannot tell" is never "not a link"."""
+    st = _lstat(path)
+    if stat.S_ISLNK(st.st_mode):
         return True
-    isjunction = getattr(os.path, "isjunction", None)
-    return bool(isjunction is not None and isjunction(path))
+    mount_point = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+    tag = getattr(st, "st_reparse_tag", 0)
+    return bool(tag) and tag == mount_point
 
 
 def _regular_marker(path: Path) -> bool:
@@ -219,7 +227,11 @@ def _population_paths(
         leaves: list[str] = list(filenames)
         for d in sorted(dirnames):
             child = current / d
-            if _is_link(child):
+            try:
+                child_is_link = _is_link(child)
+            except OSError as exc:
+                raise _PopulationWalkError("unreadable_path") from exc
+            if child_is_link:
                 leaves.append(
                     d
                 )  # a directory symlink/junction is a leaf: never descended, never skipped

@@ -817,3 +817,51 @@ def test_repointed_junction_to_identical_marker_fails_verify(tmp_path: Path) -> 
         assert "alias" in result["violations"]
     finally:
         _remove_junction(link)
+
+
+@windows_only
+def test_junction_detection_works_without_os_path_isjunction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Python 3.11 has no os.path.isjunction (added in 3.12). Junction detection must come from
+    # lstat's reparse tag, so remove the 3.12 helper and require the same verdicts.
+    monkeypatch.delattr(os.path, "isjunction", raising=False)
+    assert not hasattr(os.path, "isjunction")
+    root = tmp_path / "repo"
+    root.mkdir()
+    for name in ("dir-a", "dir-b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "pyvenv.cfg").write_text("home = same\n", encoding="utf-8")
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    link = root / "alias"
+    _make_junction(link, tmp_path / "dir-a")
+    try:
+        ticket = _ticket(root)
+        assert "alias" in ticket.pre_edit_fingerprints  # control: a leaf, not descended
+        same = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert same["verdict"] == "PASS"
+        _remove_junction(link)
+        _make_junction(link, tmp_path / "dir-b")
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert "alias" in result["violations"]
+    finally:
+        _remove_junction(link)
+
+
+def test_lstat_failure_while_classifying_a_directory_is_unreadable_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "locked").mkdir()
+    (tmp_path / "a.py").write_text("1\n", encoding="utf-8")
+    real = os.lstat
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        if Path(str(path)).name == "locked":
+            raise PermissionError(13, "denied")
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    _files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
