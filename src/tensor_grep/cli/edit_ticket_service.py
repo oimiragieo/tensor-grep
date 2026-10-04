@@ -1,32 +1,66 @@
+"""Edit-ready tickets: pre-edit fingerprints and a fail-closed verify (AGT-04).
+
+Threat model (bug hunt G-03/G-08):
+
+* Defends against a cooperative-but-fallible agent that edits outside its declared scope or
+  reports edits it did not make (pre-edit fingerprints vs the current tree). It is NOT a
+  sandbox against a hostile agent: `.git/hooks`, `$HOME`, and edits inside a vendored
+  `node_modules` are out of scope (residual risk).
+* The population is a plain bounded filesystem walk with NO git dependency and a small,
+  UNAMBIGUOUS prune set. Pruned at any depth by NAME: `_ALWAYS_PRUNED_DIRS` (never source).
+  Pruned at any depth by CONTENT, where the marker must be a REGULAR, non-symlink file directly
+  inside the directory: `pyvenv.cfg` (a Python venv, whatever its name), a `CACHEDIR.TAG` with
+  the standard Cache Directory Tagging signature, `.rustc_info.json` (cargo target-dir root),
+  and `CMakeCache.txt` only WITHOUT a sibling `CMakeLists.txt` (an in-source CMake build keeps
+  real source beside the cache). EVERYTHING else is covered: `build/`, `dist/`, `target/`
+  without a tag, `venv/` without `pyvenv.cfg`, git-ignored files, nested repos' working files.
+* Availability cost (disclosed): an untagged large build output is walked and may hit the
+  per-file/aggregate byte budget -> `population_incomplete` -> verify FAILs closed (unusable,
+  never wrong).
+* Unreadable subtrees (`os.walk` onerror) -> `unreadable_path`; more than `_MAX_WALK_DIRS`
+  directories -> `dir_count_limit`. Symlink leaves are fingerprinted as `symlink:<target>` and
+  never followed.
+* Residuals: a `pyvenv.cfg` inside a SUBdirectory that also holds hand-edited source prunes
+  that subdirectory (the walk root is never pruned); a marker planted together with NEW files
+  hides them (same class as creating a new `node_modules/`); a marker planted into an EXISTING
+  source dir after minting shows those files as drift (caught); a marker planted BEFORE minting
+  is outside the cooperative threat model.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import time
 import uuid
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-# AGT-04 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 04, first-fix slice):
-# reviewed set of dependency-tree / build-output directory names to prune BEFORE descending,
-# not filter after a full walk. This is deliberately narrow (well-known package-manager and
-# build-tool output dirs only) -- it never matches an ordinary tracked dotfile like .github or
-# .gitignore, so those remain hashed (see test_tracked_dotfile_survives_pruning).
-_IGNORED_DEPENDENCY_DIRS = frozenset({
+_os_walk = os.walk  # private seam: tests patch this, never the stdlib attribute
+
+_ALWAYS_PRUNED_DIRS = frozenset({
     "node_modules",
-    ".venv",
-    "venv",
-    "target",
-    "dist",
-    "build",
     ".git",
     "__pycache__",
     ".mypy_cache",
     ".pytest_cache",
     ".ruff_cache",
+    ".tox",
+    ".nox",
     "site-packages",
 })
+_CACHEDIR_TAG_SIGNATURE = b"Signature: 8a477f597d28d172789f06886806bc55"
+_BUILD_ROOT_MARKERS = ("pyvenv.cfg", ".rustc_info.json")
+# CMakeCache.txt counts ONLY when the directory has no sibling CMakeLists.txt: an IN-SOURCE
+# CMake build writes the cache next to the source tree's own CMakeLists.txt, and pruning that
+# directory would hide real source from the population.
+_CMAKE_CACHE = "CMakeCache.txt"
+_CMAKE_SOURCE = "CMakeLists.txt"
+_MAX_REPORTED_PRUNED = 200
+_MAX_WALK_DIRS = 200_000
 
 _DEFAULT_MAX_FILES = 20_000
 _DEFAULT_MAX_FILE_BYTES = 10_000_000
@@ -73,8 +107,73 @@ class EditReadyTicketV1:
         )
 
 
+class _PopulationWalkError(Exception):
+    """Directory enumeration failed or the dir budget was hit: the population is incomplete."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _regular_marker(path: Path) -> bool:
+    """A marker counts only as a REGULAR, non-symlink file (never follow a marker link)."""
+    try:
+        return stat.S_ISREG(path.lstat().st_mode)
+    except OSError:
+        return False
+
+
+def _is_pruned_dir(path: Path) -> bool:
+    """Unambiguous dependency/cache/build-root trees only (G-03: build/dist/target may hold source)."""
+    if path.name in _ALWAYS_PRUNED_DIRS:
+        return True
+    if any(_regular_marker(path / marker) for marker in _BUILD_ROOT_MARKERS):
+        return True
+    if _regular_marker(path / _CMAKE_CACHE) and not (path / _CMAKE_SOURCE).exists():
+        return True  # out-of-source CMake build tree only
+    tag = path / "CACHEDIR.TAG"
+    if _regular_marker(tag):
+        try:
+            with open(tag, "rb") as handle:
+                return handle.read(len(_CACHEDIR_TAG_SIGNATURE)) == _CACHEDIR_TAG_SIGNATURE
+        except OSError:
+            return False  # cannot classify -> walk it (covered, fail-closed by budget)
+    return False
+
+
+def _population_paths(root: Path, pruned: list[str]) -> Iterator[str]:
+    """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
+
+    Raises _PopulationWalkError on any directory-enumeration error (never silently skip a
+    subtree) or when more than _MAX_WALK_DIRS directories are visited."""
+
+    def _on_error(exc: OSError) -> None:
+        raise _PopulationWalkError("unreadable_path") from exc
+
+    visited = 0
+    for dirpath, dirnames, filenames in _os_walk(root, followlinks=False, onerror=_on_error):
+        visited += 1
+        if visited > _MAX_WALK_DIRS:
+            raise _PopulationWalkError("dir_count_limit")
+        current = Path(dirpath)
+        rel_dir = current.relative_to(root)
+        keep: list[str] = []
+        for d in sorted(dirnames):
+            if _is_pruned_dir(current / d):
+                if len(pruned) < _MAX_REPORTED_PRUNED:
+                    pruned.append((rel_dir / d).as_posix())
+            else:
+                keep.append(d)
+        dirnames[:] = keep
+        for name in sorted(filenames):
+            yield (rel_dir / name).as_posix()
+
+
 def compute_file_fingerprint(path: str | Path) -> str:
     p = Path(path)
+    if p.is_symlink():
+        # Never follow a leaf link: its target may be out-of-root or huge (G-08).
+        return hashlib.sha256(b"symlink:" + os.fsencode(os.readlink(p))).hexdigest()
     if not p.is_file():
         return ""
     hasher = hashlib.sha256()
@@ -95,36 +194,30 @@ def _walk_tracked_files_bounded(
     path, plus an explicit population-result dict (AGT-04: a budget hit must report
     "incomplete", never silently truncate and claim a complete population).
 
-    Uses os.walk with topdown pruning so a dependency tree in _IGNORED_DEPENDENCY_DIRS is never
-    entered at all -- unlike a post-hoc filter over Path.rglob, which still reads every file in
-    node_modules/.venv/target before discarding the results.
+    Lazy generator (`_population_paths`) consumed by the file/byte budgets; see the module
+    docstring for the prune set and threat model.
     """
     root = Path(repo_root)
     result: dict[str, str] = {}
     scanned_files = 0
     scanned_bytes = 0
     incomplete_reason: str | None = None
+    pruned: list[str] = []
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DEPENDENCY_DIRS]
-        for name in sorted(filenames):
-            item = Path(dirpath) / name
-            rel_parts = item.relative_to(root).parts
-            rel = "/".join(rel_parts)
+    try:
+        for rel in _population_paths(root, pruned):
+            item = root / rel
 
             if scanned_files >= max_files:
                 incomplete_reason = "file_count_limit"
                 break
 
             try:
-                size = item.stat().st_size
+                size = len(os.readlink(item)) if item.is_symlink() else item.stat().st_size
             except OSError:
-                # A file that vanishes or becomes unreadable mid-walk (permission change, a
-                # concurrent delete) must not silently disappear from `result` while the
-                # population still reports "complete" -- that is the exact false-PASS this
-                # function exists to prevent (see the module docstring). Skip the file but mark
-                # the population incomplete rather than `continue`ing silently.
+                # A file that vanishes or becomes unreadable mid-walk must not silently
+                # disappear from `result` while the population still reports "complete" --
+                # that is the exact false-PASS this function exists to prevent.
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
@@ -137,18 +230,24 @@ def _walk_tracked_files_bounded(
                 incomplete_reason = "aggregate_byte_limit"
                 break
 
-            result[rel] = compute_file_fingerprint(item)
+            try:
+                result[rel] = compute_file_fingerprint(item)
+            except OSError:
+                incomplete_reason = incomplete_reason or "unreadable_path"
+                continue
             scanned_files += 1
             scanned_bytes += size
-        if incomplete_reason is not None:
-            break
+    except _PopulationWalkError as exc:
+        incomplete_reason = incomplete_reason or exc.reason
 
     if incomplete_reason is not None:
         population = {
             "verified": False,
             "status": "incomplete",
             "reason": incomplete_reason,
-            "population_policy": "agt04-v1",
+            "population_policy": "agt04-v2",
+            "population_source": "filesystem-walk",
+            "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
@@ -157,7 +256,9 @@ def _walk_tracked_files_bounded(
             "verified": True,
             "status": "complete",
             "reason": None,
-            "population_policy": "agt04-v1",
+            "population_policy": "agt04-v2",
+            "population_source": "filesystem-walk",
+            "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
