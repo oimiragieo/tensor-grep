@@ -15,6 +15,7 @@ from tensor_grep.cli.bootstrap import (
 )
 from tensor_grep.cli.bootstrap_search_guards import (
     _consumes_next_arg,
+    _flags,
     _parse,
     flag_present,
     has_end_of_options,
@@ -202,6 +203,19 @@ _KNOWN_SEARCH_LONG_FLAG_NAMES = (
 ) - _RG_EXEC_LONG_FLAG_NAMES
 
 
+def _exec_capable_flag_present(args: list[str]) -> bool:
+    """True when rg would read an exec-capable flag in OPTION position of ``args``: ``-z`` (also
+    INSIDE a cluster, ``-zebra`` is ``-z -e bra``) or ``--pre``/``--pre-glob``/``--hostname-bin``/
+    ``--search-zip`` in any spelling. A pattern source elsewhere must never hide one of these from
+    the sentinel policy."""
+    for spelling, _ in _flags(args):
+        if spelling == "-z" or (
+            spelling.startswith("--") and spelling[2:] in _RG_EXEC_LONG_FLAG_NAMES
+        ):
+            return True
+    return False
+
+
 def _is_plausible_rg_flag_token(token: str) -> bool:
     """True when rg itself would parse ``token`` as flag(s), not a pattern: a run of no-value short
     flags, optionally ending in ONE value-taking flag that takes the rest of the token (numeric
@@ -263,7 +277,13 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
     remainder = search_args[index:]
     # When `-e`/`-f`/`--regexp`/`--file` supplies the pattern there is no dash-led pattern slot:
     # every dash-led token is an option (`-e --` is pattern `--`; `-kq` after it is a cluster).
-    if not remainder or flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS):
+    if not remainder:
+        return None
+    # The early return is for the pattern-source case only, and never over an exec-capable flag:
+    # `-zebra` is `-z -e bra` and `--pre=sh -efoo` carries `-e`, yet both keep the sentinel.
+    if flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS) and not _exec_capable_flag_present(
+        remainder
+    ):
         return None
     if all(token.startswith("-") for token in remainder):
         return index

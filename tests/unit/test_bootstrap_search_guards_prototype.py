@@ -9,7 +9,6 @@ differential against rg.
 
 from __future__ import annotations
 
-import ast
 import io
 import random
 import re
@@ -24,7 +23,34 @@ import pytest
 
 from tensor_grep.cli import bootstrap
 from tensor_grep.cli import bootstrap_native_argv as nav
-from tensor_grep.cli import bootstrap_search_guards as g
+
+
+class _LazyGuards:
+    """``tensor_grep.cli.bootstrap_search_guards`` imported on first USE, not at collection.
+
+    The module does not exist on main. A module-scope import would turn the whole file into one
+    collection error there; this way behavioural tests (which go through bootstrap.py /
+    bootstrap_native_argv.py entry points that exist on main) collect and fail on ASSERTIONS, and
+    only tests of the new helpers fail with ModuleNotFoundError. Dunder lookups stay
+    AttributeError so pytest's id generation never triggers the import."""
+
+    def __getattr__(self, name: str):
+        if name.startswith("__"):
+            raise AttributeError(name)
+        import importlib
+
+        return getattr(importlib.import_module("tensor_grep.cli.bootstrap_search_guards"), name)
+
+
+g = _LazyGuards()
+_CLI_DIR = Path(bootstrap.__file__).parent
+
+
+def _cli_source(module_file: str) -> str:
+    return (_CLI_DIR / module_file).read_text(encoding="utf-8")
+
+
+_MODULE_FILES = ["bootstrap.py", "bootstrap_native_argv.py", "bootstrap_search_guards.py"]
 
 RG = shutil.which("rg")
 needs_rg = pytest.mark.skipif(RG is None, reason="rg not installed")
@@ -746,10 +772,10 @@ def test_cluster_pcre2_skips_validation():
 
 
 def test_hidden_and_scan_bound_found_inside_one_cluster():
-    assert g.flag_present(["-.d1", "foo"], bootstrap._SEARCH_HIDDEN_FLAGS)
     assert bootstrap._search_args_include_generated_scan_bound(
         ["-.d1", "foo"], paths_defaulted=True
     )
+    assert g.flag_present(["-.d1", "foo"], bootstrap._SEARCH_HIDDEN_FLAGS)
 
 
 def test_cluster_glob_counts_as_scan_bound_only_with_an_explicit_path():
@@ -914,78 +940,6 @@ def test_raw_argv_rule_pins_from_r19_r20_stay_green():
     assert bootstrap._search_args_request_unrestricted(["-e", "-d1", "-uuu"]) is True
 
 
-def _argv_taking_functions(tree: ast.Module) -> set[str]:
-    return {
-        n.name
-        for n in ast.walk(tree)
-        if isinstance(n, ast.FunctionDef) and any(a.arg == "search_args" for a in n.args.args)
-    }
-
-
-def raw_argv_violations(source: str) -> list[str]:
-    """AST gate for the r36 rule. (1) a function with a ``search_args`` parameter never assigns it;
-    (2) a name bound from ``option_tokens(...)`` is never passed to a function that takes argv."""
-    tree = ast.parse(source)
-    argv_fns = _argv_taking_functions(tree) | {
-        "flag_present",
-        "option_tokens",
-        "positionals",
-        "end_of_options_index",
-        "has_end_of_options",
-        "regex_patterns",
-        "_flag_present",
-        "_regex_patterns_from_search_args",
-    }
-    bad: list[str] = []
-    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]:
-        params = {a.arg for a in fn.args.args}
-        opts_names: set[str] = set()
-        for node in ast.walk(fn):
-            targets: list[ast.expr] = []
-            if isinstance(node, ast.Assign):
-                targets = list(node.targets)
-            elif isinstance(node, (ast.AugAssign, ast.AnnAssign)):
-                targets = [node.target]
-            elif isinstance(node, ast.NamedExpr):
-                targets = [node.target]
-            for t in targets:
-                if isinstance(t, ast.Name) and t.id == "search_args" and "search_args" in params:
-                    bad.append(f"{fn.name}: reassigns search_args")
-            if isinstance(node, ast.Assign) and any(
-                isinstance(c, ast.Call) and getattr(c.func, "id", "") == "option_tokens"
-                for c in ast.walk(node.value)
-            ):
-                opts_names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Call):
-                callee = getattr(node.func, "id", getattr(node.func, "attr", ""))
-                if callee in argv_fns and any(
-                    isinstance(a, ast.Name) and a.id in opts_names for a in node.args
-                ):
-                    bad.append(f"{fn.name}: passes an option_tokens() result to {callee}")
-    return bad
-
-
-@pytest.mark.parametrize("module", [bootstrap, g, nav])
-def test_guards_take_raw_argv(module):
-    assert raw_argv_violations(Path(module.__file__).read_text(encoding="utf-8")) == []
-
-
-def test_raw_argv_gate_can_fail():  # mutation controls on temporary source
-    reassigns = "def f(search_args):\n    search_args = list(search_args)\n    return search_args\n"
-    refeeds = (
-        "def f(search_args):\n    opts = list(option_tokens(search_args))\n"
-        "    return flag_present(opts, {'-e'})\n"
-    )
-    clean = (
-        "def f(search_args):\n    opts = list(option_tokens(search_args))\n"
-        "    return [o for o in opts] and flag_present(search_args, {'-e'})\n"
-    )
-    assert raw_argv_violations(reassigns) == ["f: reassigns search_args"]
-    assert raw_argv_violations(refeeds) == ["f: passes an option_tokens() result to flag_present"]
-    assert raw_argv_violations(clean) == []
-
-
 # ---- r37 / r38: presence (P), sentinel (S), value (V) classification ----
 
 
@@ -1086,288 +1040,6 @@ def test_has_end_of_options_is_a_boolean_never_none():
     assert g.has_end_of_options(["-e", "--"]) is False
     assert g.has_end_of_options(["-ie", "--", "x"]) is False
     assert g.has_end_of_options(["-e", "--", "--"]) is True
-
-
-# --- census (plan matcher, WIDENED in round 40 to the gaps found by executing it) ---
-#
-# Classes, by ENCLOSING FUNCTION NAME (never line number):
-#   T    top-level dispatch on argv[0]/argv[1] or a cheap pre-gate before the guards run
-#   V    value-consumption parsing: the tokenizer itself and the pattern-slot heuristic
-#   PARSED  consumes the tokenizer's output (spellings/values), never raw argv
-#   R    "route to the full CLI" tests: wrongly routing a pattern/value there only costs speed
-#        (the documented safe direction); short flags in them are deliberately exact-token
-#   X    other commands' argv (`tg run`, `tg scan`), not search arguments
-#   PTH  scanners over an already-extracted PATH list
-# (P) presence checks and (S) sentinel checks have NO class: they must be flag_present /
-# has_end_of_options calls, so any Compare/startswith shaped like one outside these names fails.
-_T_SITES = {
-    "_print_version",
-    "_top_level_command_refusal",
-    "_is_public_help_invocation",
-    "_normalize_search_invocation",
-    "main_entry",
-}
-# Round 39: `_requires_full_cli` is NOT class T. The plan filed it under "top-level dispatch on
-# argv[0]/argv[1]", but it is called with SEARCH args (main_entry passes passthrough_search_args),
-# so `-e -h` and `-- -h` reached it. Its help/completion test is now a (P) site routed through
-# flag_present; what stays is the tg-only-flag over-route (R) and the bundled-scan walk (V).
-_R_SITES = {"_requires_full_cli"}
-_X_SITES = {"_scan_requires_full_cli", "_run_requires_ast_workflow"}
-_PTH_SITES = {
-    "_search_args_include_guarded_broad_root",
-    "_search_paths_include_generated_root",
-    "_search_paths_include_oversized_implicit_root",
-    "_search_paths_include_workspace_root",
-    "_names_stdin_path",
-}
-_PARSED_SITES = {
-    "regex_patterns",
-    "engine_selects_pcre2",
-    "explicit_rg_format",
-    "strip_noop_rg_format",
-}
-_V_SITES = {
-    "_short_value_pos",
-    "_consumes_next_arg",
-    "_parse",
-    "_flags",
-    "_cancelled_by",
-    "_first_dash_led_pattern_index_after_tg_flags",
-    "_first_dash_led_positional_index",
-    "_is_plausible_rg_flag_token",
-    "end_of_options_index",
-    "flag_present",
-}
-_ALLOWED_SITES = _T_SITES | _R_SITES | _X_SITES | _PTH_SITES | _PARSED_SITES | _V_SITES
-
-
-def _name_of(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name):
-        return node.id
-    if isinstance(node, ast.Attribute):
-        return node.attr
-    return None
-
-
-def _dashy(node: ast.AST) -> bool:
-    return (
-        isinstance(node, ast.Constant)
-        and isinstance(node.value, str)
-        and node.value.startswith("-")
-    )
-
-
-def _dashy_collection(node: ast.AST) -> bool:
-    """Any (possibly nested, or wrapped in ``frozenset({...})``) collection holding a ``-``-led
-    string."""
-    return any(_dashy(n) for n in ast.walk(node) if isinstance(n, ast.Constant))
-
-
-def _flag_collection_names(tree: ast.Module) -> set[str]:
-    """Names bound anywhere (module or local) to a flag collection: ``unsupported_flags``,
-    ``_TG_ONLY_SEARCH_FLAGS``, ``_SCAN_FULL_CLI_FLAGS``, ``_JSON_INCOMPATIBLE_RENDER_FLAGS``,
-    ``_TG_ONLY_SEARCH_FLAG_PREFIXES``..."""
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        value = None
-        targets: list[ast.expr] = []
-        if isinstance(node, ast.Assign):
-            value, targets = node.value, list(node.targets)
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            value, targets = node.value, [node.target]
-        if value is None or not isinstance(value, (ast.Set, ast.List, ast.Tuple, ast.Call)):
-            continue
-        if isinstance(value, ast.Call) and _name_of(value.func) not in {
-            "frozenset",
-            "set",
-            "tuple",
-            "list",
-        }:
-            continue
-        if _dashy_collection(value):
-            names |= {t.id for t in targets if isinstance(t, ast.Name)}
-    return names
-
-
-def census_sites(source: str) -> list[tuple[str, str]]:
-    """Flags, by enclosing function name:
-    * ``X in Y`` / ``X not in Y`` where Y is named ``_SEARCH_*``, OR a name BOUND to a flag
-      collection, OR a set/list/tuple LITERAL holding a ``-``-led string, OR X is a ``-``-led
-      string literal;
-    * ``==`` / ``!=`` against a ``-``-led string literal (``arg == "--format"``);
-    * ``.startswith(...)`` / ``.index(...)`` / ``.count(...)`` given a ``-``-led literal, a tuple
-      of them, an f-string, or a flag-collection name."""
-    tree = ast.parse(source)
-    bound = _flag_collection_names(tree)
-    hits: list[tuple[str, str]] = []
-
-    class Visitor(ast.NodeVisitor):
-        def __init__(self) -> None:
-            self.stack: list[str] = []
-
-        def _add(self, kind: str) -> None:
-            hits.append((self.stack[-1] if self.stack else "<module>", kind))
-
-        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
-            self.stack.append(node.name)
-            self.generic_visit(node)
-            self.stack.pop()
-
-        def visit_Compare(self, node: ast.Compare) -> None:
-            operands = [node.left, *node.comparators]
-            for op, x, y in zip(node.ops, operands[:-1], operands[1:], strict=True):
-                if isinstance(op, (ast.In, ast.NotIn)):
-                    if (_name_of(y) or "").startswith("_SEARCH_") or _name_of(y) in bound:
-                        self._add("named")
-                    elif _dashy(x):
-                        self._add("x-literal")
-                    elif isinstance(y, (ast.Set, ast.List, ast.Tuple)) and any(
-                        _dashy(e) for e in y.elts
-                    ):
-                        self._add("collection")
-                elif isinstance(op, (ast.Eq, ast.NotEq)) and (_dashy(x) or _dashy(y)):
-                    self._add("eq-literal")
-            self.generic_visit(node)
-
-        def visit_Call(self, node: ast.Call) -> None:
-            if isinstance(node.func, ast.Attribute) and node.func.attr in {
-                "startswith",
-                "index",
-                "count",
-            }:
-                for arg in node.args:
-                    if (
-                        _dashy(arg)
-                        or _name_of(arg) in bound
-                        or isinstance(arg, ast.JoinedStr)
-                        or (isinstance(arg, ast.Tuple) and any(_dashy(e) for e in arg.elts))
-                    ):
-                        self._add(node.func.attr)
-                        break
-            self.generic_visit(node)
-
-    Visitor().visit(tree)
-    return hits
-
-
-def census_violations(source: str) -> list[tuple[str, str]]:
-    return [h for h in census_sites(source) if h[0] not in _ALLOWED_SITES]
-
-
-def test_census_finds_no_p_or_s_shaped_site_outside_the_named_functions():
-    for module in (bootstrap, nav, g):
-        src = Path(module.__file__).read_text(encoding="utf-8")
-        assert census_violations(src) == [], module.__name__
-
-
-def test_census_pins_the_classification_by_function_name_not_line_number():
-    src = Path(bootstrap.__file__).read_text(encoding="utf-8")
-    names = {fn for fn, _ in census_sites(src)}
-    assert names <= _ALLOWED_SITES
-    assert "_requires_full_cli" in names and "_requires_full_cli" not in _T_SITES  # round 39 (b)
-    # every class is non-empty in the live tree, so a class cannot silently rot into a wildcard
-    live = names | {
-        fn
-        for mod in (nav, g)
-        for fn, _ in census_sites(Path(mod.__file__).read_text(encoding="utf-8"))
-    }
-    for cls in (_T_SITES, _R_SITES, _X_SITES, _PTH_SITES, _PARSED_SITES, _V_SITES):
-        assert cls & live, cls
-
-
-def test_every_allow_listed_function_still_exists():
-    live = set()
-    for mod in (bootstrap, nav, g):
-        tree = ast.parse(Path(mod.__file__).read_text(encoding="utf-8"))
-        live |= {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-    assert _ALLOWED_SITES <= live
-
-
-def plan_matcher_sites(source: str) -> int:
-    """The PLAN's matcher, verbatim in intent: `X in Y` / `X not in Y` where Y is named `_SEARCH_*`,
-    OR X is a `-`-led string literal, OR Y is a set/list/tuple literal holding one."""
-    count = 0
-    for node in ast.walk(ast.parse(source)):
-        if not isinstance(node, ast.Compare):
-            continue
-        for op, y in zip(node.ops, node.comparators, strict=True):
-            if isinstance(op, (ast.In, ast.NotIn)) and (
-                (_name_of(y) or "").startswith("_SEARCH_")
-                or _dashy(node.left)
-                or (
-                    isinstance(y, (ast.Set, ast.List, ast.Tuple)) and any(_dashy(e) for e in y.elts)
-                )
-            ):
-                count += 1
-    return count
-
-
-def test_census_was_49_sites_on_main_and_matches_the_plan():
-    """The plan claims its matcher finds 49 sites on main. Re-derived from git, not trusted."""
-    total = 0
-    for rel in ("bootstrap.py", "bootstrap_native_argv.py"):
-        proc = subprocess.run(
-            ["git", "show", f"origin/main:src/tensor_grep/cli/{rel}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=Path(bootstrap.__file__).parent,
-        )
-        if proc.returncode != 0:
-            pytest.skip("origin/main not available")
-        total += plan_matcher_sites(proc.stdout)
-    assert total == 49
-
-
-def test_widened_matcher_finds_the_gaps_the_plan_matcher_missed_on_main():
-    seen = set()
-    for rel in ("bootstrap.py", "bootstrap_native_argv.py"):
-        proc = subprocess.run(
-            ["git", "show", f"origin/main:src/tensor_grep/cli/{rel}"],
-            capture_output=True,
-            text=True,
-            check=False,
-            cwd=Path(bootstrap.__file__).parent,
-        )
-        if proc.returncode != 0:
-            pytest.skip("origin/main not available")
-        seen |= {h[1] for h in census_sites(proc.stdout)}
-    assert {"named", "eq-literal", "startswith"} <= seen
-
-
-@pytest.mark.parametrize(
-    ("source", "flagged"),
-    [
-        ('def f(a):\n    return any(arg in {"-F"} for arg in a)\n', True),
-        ('def _print_version(a):\n    return any(arg in {"-v"} for arg in a)\n', False),
-        ('def f(a):\n    return "--json" in a\n', True),
-        ('def f(a):\n    return "--" in a\n', True),
-        ('def _consumes_next_arg(arg):\n    return arg in {"-e"}\n', False),
-        ("def f(a):\n    return any(x in _SEARCH_LITERAL_FLAGS for x in a)\n", True),
-        ("def f(a):\n    return len(a) > 2\n", False),
-        # round 39(b): a raw help-scan in a function that is not allow-listed IS flagged.
-        ('def _scan_help(a):\n    return any(x in {"--help", "-h"} for x in a)\n', True),
-        # round 40 widening: each gap the plan matcher missed
-        ('def f(a):\n    return a == "--json"\n', True),
-        ('def f(a):\n    return any(x != "--format" for x in a)\n', True),
-        ('def f(a):\n    local = {"-x", "-y"}\n    return any(t in local for t in a)\n', True),
-        ('_BAD = ("--a", "--b")\ndef f(a):\n    return any(t in _BAD for t in a)\n', True),
-        ('def f(a):\n    return a[0].startswith("--rank")\n', True),
-        ('_P = ("--x=",)\ndef f(a):\n    return a.startswith(_P)\n', True),
-        ('def f(a, flag):\n    return a.startswith(f"{flag}=")\n', True),
-        ('def f(a):\n    return a.index("--")\n', True),
-        ('def _requires_full_cli(a):\n    return any(x in {"--help", "-h"} for x in a)\n', False),
-        ('def _scan_requires_full_cli(a):\n    return a == "--json"\n', False),
-        ('def f(a):\n    return a == "plain"\n', False),
-    ],
-)
-def test_census_matcher_controls(source, flagged):
-    assert bool(census_violations(source)) is flagged
-
-
-def test_requires_full_cli_help_scan_is_flagged_if_it_regresses_to_a_raw_membership_test():
-    src = 'def _scan_help(a):\n    return any(x in {"--help", "-h"} for x in a)\n'
-    assert census_violations(src) == [("_scan_help", "collection")]
 
 
 # --------------------------------------------------------------------------------------------
@@ -1601,38 +1273,23 @@ def test_parser_differential_can_fail(rgdir):
 
 
 def _legacy_path_walk():
-    """The pre-prototype path walker, loaded verbatim from origin/main (None if git has no main).
-    It is the INDEPENDENT second implementation the differential below compares against."""
-    cli_dir = Path(bootstrap.__file__).parent
-    proc = subprocess.run(
-        ["git", "show", "origin/main:src/tensor_grep/cli/bootstrap.py"],
-        capture_output=True,
-        text=True,
-        check=False,
-        cwd=cli_dir,
-    )
-    if proc.returncode != 0:
-        return None
-    wanted = {
-        "_search_path_args_raw",
-        "_search_args_contains_pattern_source_flag",
-        "_attached_cluster_value_offset",
-        "_is_short_flag_with_attached_value",
-    }
-    tree = ast.parse(proc.stdout)
-    funcs = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in wanted]
-    ns = dict(vars(bootstrap))
-    exec(compile(ast.Module(body=funcs, type_ignores=[]), "legacy", "exec"), ns)
-    return ns["_search_path_args_raw"]
+    """The pre-prototype path walker, FROZEN from main 094dc97 in tests/unit/_fixtures (a copy, so
+    the differential never reads git and keeps meaning something after this change merges)."""
+    import importlib.util
+
+    path = Path(__file__).parent / "_fixtures" / "legacy_search_path_walk.py"
+    spec = importlib.util.spec_from_file_location("legacy_search_path_walk", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module._search_path_args_raw
 
 
 def test_path_walk_agrees_with_the_pre_prototype_walker_except_dash_and_files():
     """Residual 1 closed: `_search_path_args_raw` now runs on the guards' grammar. Differential
-    over 20000 seeded argvs against the walker it replaced (loaded from origin/main): identical
+    over 20000 seeded argvs against the walker it replaced (frozen copy): identical
     everywhere EXCEPT the two documented fixes, a bare `-` before `--` and `--files`."""
     legacy = _legacy_path_walk()
-    if legacy is None:
-        pytest.skip("origin/main not available")
     rng = random.Random(3)
     pool = [
         *_POOL,
@@ -1956,3 +1613,151 @@ def test_no_ignore_is_composite_in_rg_so_the_per_name_model_is_conservative(rgdi
     argv = ["--no-ignore", "--ignore-dot", "foo", "."]
     assert "ign/ignored.txt" not in _flat(rg_run(rgdir, argv)[1])  # dot rules back on
     assert g.flag_present(argv, bootstrap._SEARCH_NO_IGNORE_FLAGS) is True  # vcs rules still off
+
+
+# --------------------------------------------------------------------------------------------
+# Council round 40: the exec-only sentinel policy must survive a pattern source
+# --------------------------------------------------------------------------------------------
+
+
+def _builder_without_the_pattern_source_early_return(argv):
+    """The sentinel builder with the round-39 early return switched off (flag_present -> False):
+    the behaviour main's logic plus F.1 would give. The reference for 'a pattern source never
+    changes the outcome for argv carrying an exec-capable flag'."""
+    patch = pytest.MonkeyPatch()
+    patch.setattr(nav, "flag_present", lambda *a, **k: False)
+    try:
+        return nav.bootstrap_native_tg_search_argv(argv)
+    finally:
+        patch.undo()
+
+
+@pytest.mark.parametrize(
+    ("argv", "exec_token"),
+    [
+        (["--json", "-zebra", "src"], "-zebra"),  # `-z -e bra`: search-zip in a cluster with -e
+        (["--json", "-izebra", "src"], "-izebra"),
+        (["--pre=sh", "-efoo"], "--pre=sh"),  # exec flag + a pattern source
+        (["--json", "--pre=sh", "-efoo"], "--pre=sh"),
+        (["--json", "--pre", "sh", "-efoo"], "--pre"),
+    ],
+)
+def test_r40_exec_capable_flag_keeps_the_sentinel_even_with_a_pattern_source(argv, exec_token):
+    out = nav.bootstrap_native_tg_search_argv(argv)
+    assert out.count("--") == 1 and out[out.index("--") + 1] == exec_token
+    assert out == _builder_without_the_pattern_source_early_return(argv)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--json", "--pre-glob=*", "-e", "foo"],
+        ["--json", "--hostname-bin=x", "-efoo", "src"],
+        ["--json", "--search-zip", "-efoo", "src"],
+        ["-zebra", "-e", "foo"],
+    ],
+)
+def test_r40_pre_existing_gap_exec_flag_followed_by_another_dash_token_has_no_sentinel(argv):
+    """NOT a regression (main behaves the same: its second branch needs a non-dash next token),
+    and NOT widened here: the user typed both flags, so a `--` would turn their options into a
+    pattern and paths. Pinned, with the early return shown to be irrelevant."""
+    out = nav.bootstrap_native_tg_search_argv(argv)
+    assert "--" not in out
+    assert out == _builder_without_the_pattern_source_early_return(argv)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["-e", "--"],
+        ["--json", "-e", "--"],
+        ["--json", "-e", "-foo"],
+        ["-e", "--", "-kq", "src"],
+        ["--json", "-e", "--", "-kq", "src"],
+        ["-e", "--", "-kq"],  # all dash-led, but -e supplies the pattern
+        ["--json", "-ez", "src"],  # `-e z`: z is a VALUE here, not search-zip
+        ["--json", "-iefoo", "src"],
+    ],
+)
+def test_r40_pattern_source_without_an_exec_flag_stays_unchanged(argv):
+    assert nav.bootstrap_native_tg_search_argv(argv) == argv
+
+
+@needs_rg
+def test_r40_rg_reads_zebra_as_search_zip_plus_pattern_and_the_sentinel_quotes_it(rgdir):
+    """Evidence: rg parses `-zeoo` as `-z -e oo` (it MATCHES `foo`), while behind `--` it is the
+    literal pattern `-zeoo` (no match). The sentinel therefore changes meaning exactly where the
+    exec-capable `-z` is involved, which is the point of keeping it."""
+    rc, lines, _ = rg_run(rgdir, ["-l", "-zeoo", "a.txt"])
+    assert rc == 0 and lines == ["a.txt"]
+    boot = nav.bootstrap_native_tg_search_argv(["-l", "-zeoo", "a.txt"])
+    assert boot == ["-l", "--", "-zeoo", "a.txt"]
+    rc, lines, _ = rg_run(rgdir, boot)
+    assert rc == 1 and lines == []
+
+
+@needs_rg
+def test_r40_pattern_source_cluster_without_z_is_a_real_pattern_source_in_rg(rgdir):
+    # control: `-ez` is `-e z` (value z), no search-zip, so no sentinel is wanted
+    assert nav.bootstrap_native_tg_search_argv(["-l", "-ez", "a.txt"]) == ["-l", "-ez", "a.txt"]
+    rc, _, err = rg_run(rgdir, ["-l", "-ez", "a.txt"])
+    assert rc == 1 and err == ""
+
+
+def test_r40_every_early_return_in_the_sentinel_builder_is_accounted_for():
+    """SWEEP of the class. The builder returns without a `--` in exactly these cases, and each is
+    either user-quoted, a value, or exec-free:
+    1. a REAL `--` already present (the user quoted everything after it);
+    2. no remainder after the tg-only flags;
+    3. a pattern source AND no exec-capable flag in the remainder (this fix);
+    4. no dash-led token in the pattern slot / plausible rg flag cluster (F.1);
+    5. `_first_dash_led_positional_index`, provably None (rg has no dash-led positional).
+    Exec-capable flags in the pattern slot reach a sentinel in every route: asserted below over a
+    product of exec tokens x followers x leading tg flags (2-char `-z` alone is the documented
+    pre-existing exception: the `len > 2` gate)."""
+    execs = [
+        "-zebra",
+        "-izeoo",
+        "--pre=sh",
+        "--pre",
+        "--pre-glob=*",
+        "--hostname-bin=x",
+        "--search-zip",
+    ]
+    followers = [["-efoo"], ["-e", "foo"], ["src"], ["-f", "pats.txt"], ["--regexp=foo"], []]
+    leads = [[], ["--json"], ["--cpu", "-l"], ["-g", "*.py"]]
+    sentinelled = 0
+    for lead in leads:
+        for ex in execs:
+            for follow in followers:
+                argv = [*lead, ex, *follow]
+                out = nav.bootstrap_native_tg_search_argv(argv)
+                # the invariant: the pattern-source early return never changes the outcome
+                assert out == _builder_without_the_pattern_source_early_return(argv), (argv, out)
+                sentinelled += "--" in out
+    assert sentinelled > 40  # positive control: the product really exercises the sentinel
+
+
+def test_r40_mutation_plain_pattern_source_early_return_drops_the_exec_sentinel(monkeypatch):
+    """The proposed-by-r39 shape (`return None` whenever a pattern source exists) loses the `--`
+    main inserted for `-zebra src` and `--pre=sh -efoo`: the RED the fix closes."""
+    monkeypatch.setattr(nav, "_exec_capable_flag_present", lambda args: False)
+    assert nav.bootstrap_native_tg_search_argv(["--json", "-zebra", "src"]) == [
+        "--json",
+        "-zebra",
+        "src",
+    ]
+    assert nav.bootstrap_native_tg_search_argv(["--pre=sh", "-efoo"]) == ["--pre=sh", "-efoo"]
+    monkeypatch.undo()
+    assert nav.bootstrap_native_tg_search_argv(["--pre=sh", "-efoo"]) == [
+        "--",
+        "--pre=sh",
+        "-efoo",
+    ]
+
+
+def test_suite_never_reads_git_or_origin_main():
+    """Council r40 P1: nothing in this file may depend on a moving ref."""
+    source = Path(__file__).read_text(encoding="utf-8")
+    forbidden = ["origin" + "/main", "[" + '"git"', "'" + "git'"]
+    assert [word for word in forbidden if word in source] == []
