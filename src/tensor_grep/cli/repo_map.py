@@ -401,6 +401,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
+from tensor_grep.cli.repo_map_test_paths import is_test_file as _is_test_file
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 # Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
@@ -1162,20 +1163,6 @@ class _UnreadablePathFlag:
         if len(self.sample) < _MAX_REPO_WALK_UNREADABLE_PATH_SAMPLE:
             offending_path = getattr(exc, "filename", None) or str(exc)
             self.sample.append(str(offending_path))
-
-
-def _is_test_file(path: Path) -> bool:
-    name = path.name
-    return (
-        name.startswith("test_")
-        or name.endswith("_test.py")
-        or name.endswith(".test.ts")
-        or name.endswith(".test.js")
-        or name.endswith(".spec.ts")
-        or name.endswith(".spec.js")
-        or "tests" in path.parts
-        or "__tests__" in path.parts
-    )
 
 
 def _gitignore_pattern_to_regex(pattern: str) -> str:
