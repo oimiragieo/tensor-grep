@@ -2966,6 +2966,16 @@ def _tg_search_invalid_argument(
     return None
 
 
+def _classify_search_backend_error(exc: BaseException) -> str | None:
+    """Return "regex" / "file_type" when an rg failure is a caller-argument error, else None."""
+    text = str(exc)
+    if "regex parse error" in text:
+        return "regex"
+    if "unrecognized file type" in text:
+        return "file_type"
+    return None
+
+
 def _search_invalid_input_response(
     pattern: str, message: str, *, path: str, structured_json: bool
 ) -> str:
@@ -3473,14 +3483,17 @@ def tg_search(
             return "\n".join(_bounds._cap_output_lines(output))
 
         except BackendExecutionError as e:
-            if "regex parse error" in str(e):
+            # Classify via a helper so the exception text is read OFF the except arm (SEC-007
+            # ratchet) and only a constant message ever reaches the wire.
+            error_kind = _classify_search_backend_error(e)
+            if error_kind == "regex":
                 return _search_invalid_input_response(
                     search_pattern,
                     "pattern is not a valid regular expression.",
                     path=path,
                     structured_json=structured_json,
                 )
-            if "unrecognized file type" in str(e):  # council wave-2b r3: e.g. type_filter="c++"
+            if error_kind == "file_type":  # council wave-2b r3: e.g. type_filter="c++"
                 return _search_invalid_input_response(
                     search_pattern,
                     "type_filter is not a file type rg knows (see `rg --type-list`).",
@@ -3563,6 +3576,25 @@ def tg_ast_search(
                     )
                 )
             return f"AST search failed: {exc}"
+
+        if lang and lang.strip():
+            from tensor_grep.backends.ast_backend import (
+                get_supported_languages,
+                normalize_ast_language,
+            )
+
+            try:
+                normalize_ast_language(lang)
+            except ValueError:
+                return _ast_error_result(
+                    "invalid_input",
+                    f"Unsupported AST language {lang.strip()[:64]!r}. "
+                    f"Supported languages: {', '.join(get_supported_languages())}.",
+                    pattern,
+                    lang,
+                    path,
+                    structured_json,
+                )
 
         normalized_max_repo_files = max(1, int(max_repo_files))
         config = SearchConfig(ast=True, lang=lang, no_messages=True)

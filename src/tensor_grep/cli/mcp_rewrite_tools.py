@@ -501,6 +501,15 @@ def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
         return "Pattern must not be empty."
     if not lang.strip():
         return "Language must not be empty."
+    from tensor_grep.backends.ast_backend import get_supported_languages, normalize_ast_language
+
+    try:
+        normalize_ast_language(lang)
+    except ValueError:
+        return (
+            f"Unsupported AST language {lang.strip()[:64]!r}. "
+            f"Supported languages: {', '.join(get_supported_languages())}."
+        )
     if not path.strip():
         return "Path must not be empty."
     if not Path(path).expanduser().exists():

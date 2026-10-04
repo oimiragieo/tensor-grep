@@ -1453,3 +1453,44 @@ def test_tg_search_maps_rg_regex_parse_error_to_invalid_input(tmp_path, monkeypa
         payload = json.loads(mcp_server.tg_search("(", str(tmp_path)))
     assert payload["error"]["code"] == "invalid_input"
     assert "regex parse error" not in json.dumps(payload)  # no raw rg text on the wire
+
+
+def test_tg_ast_search_unsupported_language_is_invalid_input(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_ast_search("x", "klingon", str(tmp_path)))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "python" in payload["error"]["message"]
+    assert not payload.get("result_incomplete")
+
+
+def test_tg_ast_search_language_alias_is_not_rejected(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    fake = type("AstGrepWrapperBackend", (), {"search": MagicMock()})()
+    fake.search.return_value = SearchResult(matches=[], total_files=0, total_matches=0)
+    with (
+        patch("tensor_grep.cli.mcp_server.Pipeline") as pipeline_cls,
+        patch("tensor_grep.cli.mcp_server.DirectoryScanner") as scanner_cls,
+    ):
+        pipeline = pipeline_cls.return_value
+        pipeline.get_backend.return_value = fake
+        pipeline.selected_backend_name = "AstGrepWrapperBackend"
+        pipeline.selected_backend_reason = "ast_grep_json"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        scanner_cls.return_value.walk.return_value = []
+        payload = json.loads(mcp_server.tg_ast_search("x", "TS", str(tmp_path)))
+    assert "error" not in payload
+
+
+def test_rewrite_plan_unsupported_language_is_invalid_input(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_audit_tools
+
+    monkeypatch.chdir(tmp_path)
+    payload = json.loads(mcp_audit_tools.tg_rewrite_plan("x", "y", "klingon", str(tmp_path)))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Supported languages" in payload["error"]["message"]
