@@ -1851,7 +1851,9 @@ def test_neighbour_heuristic_command_quotes_its_path(tmp_path: Path) -> None:
     (tmp_path / "src").mkdir()
     (tmp_path / "tests").mkdir()
     (tmp_path / "src" / "my mod.py").write_text("def f():\n    return 1\n", encoding="utf-8")
-    (tmp_path / "tests" / "test_my mod.py").write_text("def test_f():\n    pass\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_my mod.py").write_text(
+        "def test_f():\n    pass\n", encoding="utf-8"
+    )
     entry = repo_map._suggested_validation_command_for_primary_file(
         str(tmp_path / "src" / "my mod.py"), tmp_path
     )

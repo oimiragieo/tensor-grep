@@ -1205,7 +1205,9 @@ def test_truncate_large_file_does_not_call_budget_check_proportionally_to_line_c
 def test_ensure_primary_source_moves_present_primary_to_front() -> None:
     neighbour = {"file": "/r/a.py", "name": "neighbour", "line_map": []}
     primary = {"file": "/r/b.py", "name": "target_fn", "line_map": []}
-    payload = {"edit_plan_seed": {"primary_file": "/r/b.py", "primary_symbol": {"name": "target_fn"}}}
+    payload = {
+        "edit_plan_seed": {"primary_file": "/r/b.py", "primary_symbol": {"name": "target_fn"}}
+    }
     ordered = repo_map._ensure_primary_source_in_sources(
         {},
         payload,
