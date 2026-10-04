@@ -272,9 +272,9 @@ def test_symlink_escape_fails_closed_through_the_builder(tmp_path: Path, monkeyp
     payload = build_diff_blast_radius(root=repo)
     assert payload["partial"] is True
     assert payload["result_incomplete"] is True
-    assert payload["incomplete_reason"] == "path_escapes_root"
-    assert "path_escapes_root" in payload["downgrade_reasons"]
-    assert payload["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+    assert payload["incomplete_reason"] == "symlink_not_analyzed"
+    assert "symlink_not_analyzed" in payload["downgrade_reasons"]
+    assert payload["not_analyzed_paths"] == [{"path": "link.py", "reason": "symlink_not_analyzed"}]
     assert payload["changed_files"] == ["link.py"]
     assert payload["changed_symbols"] == []
     # the repo-map scan legitimately opens in-repo files; the escaping target must never be opened
@@ -289,7 +289,7 @@ def test_symlink_escape_exits_2_through_the_cli(tmp_path: Path, monkeypatch: Any
     assert res.exit_code == 2
     data = json.loads(res.stdout)
     assert data["exit_reason"] == "incomplete"
-    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "symlink_not_analyzed"}]
 
 
 def test_symlink_escape_exits_2_in_a_real_subprocess(tmp_path: Path) -> None:
@@ -307,47 +307,8 @@ def test_symlink_escape_exits_2_in_a_real_subprocess(tmp_path: Path) -> None:
     )
     assert proc.returncode == 2, proc.stderr[-600:]
     data = json.loads(proc.stdout)
-    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "path_escapes_root"}]
+    assert data["not_analyzed_paths"] == [{"path": "link.py", "reason": "symlink_not_analyzed"}]
     assert data["changed_symbols"] == []
-
-
-def test_in_repo_symlink_pointing_inside_the_root_is_still_analyzed(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
-    (repo / "two.py").write_text("def two():\n    return 2\n", encoding="utf-8")
-    try:
-        (repo / "link.py").symlink_to(repo / "one.py")
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"cannot create symlinks here: {exc}")
-    _git(repo, "-c", "core.symlinks=true", "add", "--all")
-    _git(repo, "commit", "-qm", "i")
-    (repo / "link.py").unlink()
-    (repo / "link.py").symlink_to(repo / "two.py")
-    payload = build_diff_blast_radius(root=repo)
-    assert payload["changed_files"] == ["link.py"]
-    assert payload["not_analyzed_paths"] == []
-    assert payload["partial"] is False
-    assert "path_escapes_root" not in payload["downgrade_reasons"]
-
-
-def test_in_repo_symlink_pointing_inside_the_root_exits_0(tmp_path: Path, monkeypatch: Any) -> None:
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
-    (repo / "two.py").write_text("def two():\n    return 2\n", encoding="utf-8")
-    try:
-        (repo / "link.py").symlink_to(repo / "one.py")
-    except (OSError, NotImplementedError) as exc:
-        pytest.skip(f"cannot create symlinks here: {exc}")
-    _git(repo, "-c", "core.symlinks=true", "add", "--all")
-    _git(repo, "commit", "-qm", "i")
-    (repo / "link.py").unlink()
-    (repo / "link.py").symlink_to(repo / "two.py")
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json"])
-    assert res.exit_code == 0, res.stdout
-    assert json.loads(res.stdout)["exit_reason"] == "ok"
 
 
 def _swap_race_repo(tmp_path: Path) -> tuple[Path, Path]:
@@ -385,17 +346,6 @@ def _install_swap_on_first_extraction(monkeypatch: Any, repo: Path, outside: Pat
     return events
 
 
-def test_no_swap_control_reports_the_symbol_and_exits_0(tmp_path: Path, monkeypatch: Any) -> None:
-    repo, _ = _swap_race_repo(tmp_path)
-    payload = build_diff_blast_radius(root=repo)
-    assert {s["name"] for s in payload["changed_symbols"]} == {"two"}
-    assert payload["not_analyzed_paths"] == []
-    assert payload["partial"] is False
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json"])
-    assert res.exit_code == 0, res.stdout
-
-
 def _simple_repo_with_changed_file(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     _init_repo(repo)
@@ -419,28 +369,6 @@ def test_mapper_records_a_containment_failure_instead_of_dropping_it(tmp_path: P
     out: list[dict[str, str]] = []
     assert map_changed_lines_to_symbols({Path("link.py"): [(1, 2)]}, root, out) == []
     assert out == [{"path": "link.py", "reason": "path_escapes_root"}]
-
-
-def test_containment_swap_before_the_check_fails_closed_through_the_builder(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo, outside = _swap_race_repo(tmp_path)
-    real = di.repo_map._path_is_relative_to
-    calls: list[str] = []
-
-    def swapping(path: Path, parent: Path) -> bool:
-        if Path(str(path)).name == "link.py" and not calls:
-            calls.append("swapped")
-            (repo / "link.py").unlink()
-            (repo / "link.py").symlink_to(outside)
-        return real(path, parent)
-
-    monkeypatch.setattr(di.repo_map, "_path_is_relative_to", swapping)
-    payload = build_diff_blast_radius(root=repo)
-    assert calls == ["swapped"]
-    assert payload["partial"] is True
-    assert {"path": "link.py", "reason": "path_escapes_root"} in payload["not_analyzed_paths"]
-    assert "leaked" not in {s["name"] for s in payload["changed_symbols"]}
 
 
 class _Spec:
@@ -695,7 +623,7 @@ def test_changed_not_deleted_outside_symlink_still_escapes(
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 2
     assert json.loads(res.stdout)["not_analyzed_paths"] == [
-        {"path": "link.py", "reason": "path_escapes_root"}
+        {"path": "link.py", "reason": "symlink_not_analyzed"}
     ]
 
 
@@ -849,21 +777,6 @@ def test_unstaged_crlf_working_tree_with_autocrlf_is_not_a_hash_mismatch(
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 0, res.stdout
     assert [s["name"] for s in json.loads(res.stdout)["changed_symbols"]] == ["a"]
-
-
-def test_working_tree_that_changed_after_the_diff_was_taken_fails_closed(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo = tmp_path / "repo"
-    _init_repo(repo)
-    _commit_app(repo, b"def a():\n    return 1\n")
-    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
-    monkeypatch.setattr(di, "_worktree_hash", lambda root, rel: "0" * 40)
-    payload = build_diff_blast_radius(root=repo)
-    assert payload["partial"] is True
-    assert payload["not_analyzed_paths"] == [
-        {"path": "app.py", "reason": "path_changed_during_analysis"}
-    ]
 
 
 def test_blob_read_failure_is_blob_unavailable_and_exits_2(
@@ -1042,7 +955,7 @@ def test_staged_fifty_file_diff_uses_one_batch_process_not_per_file_spawns(
     assert any("--batch" in a for a in spawned)
 
 
-def test_unstaged_fifty_file_diff_uses_one_hash_process_not_per_file_spawns(
+def test_unstaged_fifty_file_diff_spawns_no_content_process(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
     repo = _many_files_repo(tmp_path)
@@ -1050,8 +963,8 @@ def test_unstaged_fifty_file_diff_uses_one_hash_process_not_per_file_spawns(
     payload = build_diff_blast_radius(root=repo)
     assert len(payload["changed_symbols"]) == 50
     assert payload["not_analyzed_paths"] == []
-    assert len(spawned) <= 2, spawned[:3]  # PINNED: one `hash-object --stdin-paths`, never ~50
-    assert any("--stdin-paths" in a for a in spawned)
+    # PINNED: working-tree files are bound to the diff's id in-process, with NO git process
+    assert spawned == [], spawned[:3]
 
 
 def test_batch_session_is_closed_after_the_run(tmp_path: Path, monkeypatch: Any) -> None:
@@ -1114,44 +1027,6 @@ def _expected_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def test_in_place_overwrite_after_hashing_is_detected_not_analysed(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo = _expected_repo(tmp_path)
-    real_hash = di._worktree_hash
-
-    def hash_then_overwrite(root: Path, rel: Path) -> str | None:
-        digest = real_hash(root, rel)  # git sees the diffed content...
-        (root / rel).write_bytes(b"def unrelated():\n    return 3\n")  # ...then it changes in place
-        return digest
-
-    monkeypatch.setattr(di, "_worktree_hash", hash_then_overwrite)
-    payload = build_diff_blast_radius(root=repo)
-    assert payload["not_analyzed_paths"] == [
-        {"path": "app.py", "reason": "path_changed_during_analysis"}
-    ]
-    assert "unrelated" not in {s["name"] for s in payload["changed_symbols"]}
-    assert payload["partial"] is True
-
-
-def test_in_place_overwrite_after_hashing_exits_2_through_the_cli(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo = _expected_repo(tmp_path)
-    real_hash = di._worktree_hash
-
-    def hash_then_overwrite(root: Path, rel: Path) -> str | None:
-        digest = real_hash(root, rel)
-        (root / rel).write_bytes(b"def unrelated():\n    return 3\n")
-        return digest
-
-    monkeypatch.setattr(di, "_worktree_hash", hash_then_overwrite)
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json"])
-    assert res.exit_code == 2, res.stdout
-    assert json.loads(res.stdout)["incomplete_reason"] == "path_changed_during_analysis"
-
-
 def test_worktree_extraction_reads_a_snapshot_never_a_second_open_of_the_repo_file(
     tmp_path: Path, monkeypatch: Any
 ) -> None:
@@ -1187,91 +1062,6 @@ def test_overwrite_during_extraction_analyses_the_diffs_true_content(
     assert fired == ["x"]
     # extraction ran on the bytes that were hashed (the snapshot), never on the new file content
     assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]
-
-
-def test_swap_and_restore_during_hashing_never_yields_foreign_content(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo = _expected_repo(tmp_path)
-    real_hash = di._worktree_hash
-    original = (repo / "app.py").read_bytes()
-
-    def swap_restore(root: Path, rel: Path) -> str | None:
-        (root / rel).write_bytes(b"def foreign():\n    return 9\n")  # swapped while git reads it
-        try:
-            return real_hash(root, rel)
-        finally:
-            (root / rel).write_bytes(original)  # and restored before anyone looks
-
-    monkeypatch.setattr(di, "_worktree_hash", swap_restore)
-    payload = build_diff_blast_radius(root=repo)
-    names = {s["name"] for s in payload["changed_symbols"]}
-    assert "foreign" not in names
-    assert payload["not_analyzed_paths"] == [
-        {"path": "app.py", "reason": "path_changed_during_analysis"}
-    ] or names == {"expected"}
-
-
-def test_swap_restored_before_git_reads_still_analyses_the_original(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo = _expected_repo(tmp_path)
-    original = (repo / "app.py").read_bytes()
-    real_hash = di._worktree_hash
-
-    def swap_then_restore_before(root: Path, rel: Path) -> str | None:
-        (root / rel).write_bytes(b"def foreign():\n    return 9\n")
-        (root / rel).write_bytes(original)  # restored before git reads
-        return real_hash(root, rel)
-
-    monkeypatch.setattr(di, "_worktree_hash", swap_then_restore_before)
-    payload = build_diff_blast_radius(root=repo)
-    assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]
-    assert payload["not_analyzed_paths"] == []
-
-
-def test_symlink_swapped_outside_during_extraction_never_reads_the_outside_file(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo, outside = _swap_race_repo(tmp_path)
-    real = di.lang_registry.spec_for_path
-    fired: list[str] = []
-
-    def swap_once(path: Any) -> Any:
-        if not fired:
-            fired.append("swapped")
-            (repo / "link.py").unlink()
-            (repo / "link.py").symlink_to(outside)
-        return real(path)
-
-    monkeypatch.setattr(di.lang_registry, "spec_for_path", swap_once)
-    payload = build_diff_blast_radius(root=repo)
-    assert fired == ["swapped"]
-    names = {s["name"] for s in payload["changed_symbols"]}
-    assert "leaked" not in names
-    # the bytes came from the link's original in-root target, snapshotted before the swap
-    assert names == {"two"} or payload["partial"] is True
-
-
-def test_symlink_swap_during_extraction_exits_0_with_the_true_target_through_the_cli(
-    tmp_path: Path, monkeypatch: Any
-) -> None:
-    repo, outside = _swap_race_repo(tmp_path)
-    real = di.lang_registry.spec_for_path
-    fired: list[str] = []
-
-    def swap_once(path: Any) -> Any:
-        if not fired:
-            fired.append("swapped")
-            (repo / "link.py").unlink()
-            (repo / "link.py").symlink_to(outside)
-        return real(path)
-
-    monkeypatch.setattr(di.lang_registry, "spec_for_path", swap_once)
-    monkeypatch.chdir(repo)
-    res = runner.invoke(app, ["diff-impact", "--json"])
-    data = json.loads(res.stdout)
-    assert "leaked" not in {s["name"] for s in data["changed_symbols"]}
 
 
 def test_diff_argv_asks_for_full_object_ids(monkeypatch: Any) -> None:
@@ -1310,7 +1100,7 @@ class _HangingProc:
         )
 
 
-@pytest.mark.parametrize("mode", ["staged", "worktree"])
+@pytest.mark.parametrize("mode", ["staged"])
 def test_batch_exchanges_honour_the_overall_deadline(
     tmp_path: Path, monkeypatch: Any, mode: str
 ) -> None:
@@ -1336,3 +1126,344 @@ def test_batch_exchanges_honour_the_overall_deadline(
     assert reasons == {"deadline_exceeded"}
     assert len(payload["not_analyzed_paths"]) == 5
     assert len(spawns) <= 1  # no respawn once the deadline has passed
+
+
+# ---------------------------------------------------------------- changed symlinks are REPORTED
+SYMLINK_ENTRY = {"path": "link.py", "reason": "symlink_not_analyzed"}
+
+
+def _never_extract(monkeypatch: Any) -> list[str]:
+    """Fail the test if anything is extracted/read for a symlink (target or link text)."""
+    touched: list[str] = []
+
+    def spy(name: str, real: Any) -> Any:
+        def inner(*a: Any, **k: Any) -> Any:
+            touched.append(name)
+            return real(*a, **k)
+
+        return inner
+
+    monkeypatch.setattr(di, "_symbols_from_bytes", spy("bytes", di._symbols_from_bytes))
+    monkeypatch.setattr(di, "_read_snapshot", spy("snapshot", di._read_snapshot))
+    monkeypatch.setattr(di, "_read_blob", spy("blob", di._read_blob))
+    return touched
+
+
+def test_changed_in_root_symlink_is_reported_not_followed(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, _ = _swap_race_repo(tmp_path)  # link.py -> two.py (def two) after the change
+    touched = _never_extract(monkeypatch)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [SYMLINK_ENTRY]
+    assert payload["changed_symbols"] == []  # never `two`, the target's symbol
+    assert payload["partial"] is True
+    assert payload["incomplete_reason"] == "symlink_not_analyzed"
+    assert touched == []
+
+
+def test_changed_outside_symlink_is_reported_and_never_opened(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo, _ = _escaping_symlink_repo(tmp_path)
+    touched = _never_extract(monkeypatch)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [SYMLINK_ENTRY]
+    assert payload["changed_symbols"] == []
+    assert touched == []
+
+
+def test_staged_changed_symlink_is_reported_and_its_blob_is_not_read(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo, _ = _swap_race_repo(tmp_path)
+    _git(repo, "add", "--all")
+    touched = _never_extract(monkeypatch)
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert payload["not_analyzed_paths"] == [SYMLINK_ENTRY]
+    assert payload["changed_symbols"] == []
+    assert touched == []
+
+
+def test_symlink_flip_flop_swap_cannot_produce_symbols(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, outside = _swap_race_repo(tmp_path)
+    real = di.lang_registry.spec_for_path
+    swaps: list[str] = []
+
+    def flip_flop(path: Any) -> Any:
+        if len(swaps) < 2:
+            (repo / "link.py").unlink()
+            (repo / "link.py").symlink_to(outside if len(swaps) == 0 else repo / "two.py")
+            swaps.append("x")
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", flip_flop)
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [SYMLINK_ENTRY]
+    assert not ({"two", "leaked"} & {s["name"] for s in payload["changed_symbols"]})
+
+
+def test_changed_symlink_exits_2_with_symlink_not_analyzed_through_the_cli(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo, _ = _swap_race_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [SYMLINK_ENTRY]
+    assert data["incomplete_reason"] == "symlink_not_analyzed"
+
+
+def test_parser_flags_only_a_symlink_NEW_side(tmp_path: Path) -> None:
+    diff = (
+        "diff --git a/a.lnk b/a.lnk\nindex 1111111..2222222 120000\n--- a/a.lnk\n+++ b/a.lnk\n"
+        "@@ -1 +1 @@\n-x.py\n\\ No newline at end of file\n+y.py\n\\ No newline at end of file\n"
+        "diff --git a/b.lnk b/b.lnk\nnew file mode 120000\nindex 0000000..2222222\n"
+        "--- /dev/null\n+++ b/b.lnk\n@@ -0,0 +1 @@\n+y.py\n\\ No newline at end of file\n"
+        "diff --git a/c.lnk b/c.lnk\ndeleted file mode 120000\nindex 1111111..0000000\n"
+        "--- a/c.lnk\n+++ /dev/null\n@@ -1 +0,0 @@\n-y.py\n\\ No newline at end of file\n"
+        "diff --git a/c.lnk b/c.lnk\nnew file mode 100644\nindex 0000000..3333333\n"
+        "--- /dev/null\n+++ b/c.lnk\n@@ -0,0 +1 @@\n+real = 1\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed.symlink_paths == {Path("a.lnk"), Path("b.lnk")}  # type: ignore[attr-defined]
+
+
+def test_symlink_replaced_by_a_regular_file_is_analysed_normally(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    try:
+        (repo / "mod.py").symlink_to(repo / "one.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "mod.py").unlink()
+    (repo / "mod.py").write_text("def real():\n    return 2\n", encoding="utf-8")
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["real"]
+    assert payload["not_analyzed_paths"] == []
+
+
+# ---------------------------------------------------------------- git-transformed content
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (b"def a():\n    return 1\n", "exact"),
+        (b"def a():\r\n    return 1\r\n", "eol"),
+        (b"def A():\n    return 1\n", "transformed"),
+        (b"def a():\n    return 1\n# extra\n", "transformed"),
+    ],
+)
+def test_classify_worktree_content_against_the_diffs_post_image_id(
+    raw: bytes, expected: str
+) -> None:
+    import hashlib
+
+    post_image = b"def a():\n    return 1\n"
+    oid = hashlib.sha1(b"blob %d\0" % len(post_image) + post_image).hexdigest()
+    assert dig.classify_worktree_content(raw, oid[:12]) == expected
+
+
+def _filter_repo(tmp_path: Path, clean_cmd: str, attributes: str = "*.py filter=f\n") -> Path:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "filter.f.clean", clean_cmd)
+    (repo / ".gitattributes").write_bytes(attributes.encode())
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
+    return repo
+
+
+def test_line_changing_clean_filter_is_incomplete_not_symbols_at_shifted_ranges(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _filter_repo(tmp_path, "sed '1i # injected header'")  # shifts every line number
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "content_transformed_by_git_filter"}
+    ]
+    assert data["incomplete_reason"] == "content_transformed_by_git_filter"
+    assert data["changed_symbols"] == []
+
+
+def test_content_changing_clean_filter_is_also_incomplete(tmp_path: Path) -> None:
+    repo = _filter_repo(tmp_path, "sed s/return/RETURN/")
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "content_transformed_by_git_filter"}
+    ]
+
+
+def test_identity_clean_filter_is_still_analysed(tmp_path: Path) -> None:
+    repo = _filter_repo(tmp_path, "cat")
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["a"]
+    assert payload["not_analyzed_paths"] == []
+
+
+def test_eol_attribute_crlf_working_tree_is_still_analysed(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / ".gitattributes").write_bytes(b"*.py text eol=crlf\n")
+    _commit_app(repo, b"def a():\r\n    return 1\r\n")
+    (repo / "app.py").write_bytes(b"def a():\r\n    return 2\r\n")
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["a"]
+    assert payload["not_analyzed_paths"] == []
+
+
+# ---------------------------------------------------------------- snapshot bound to the diff id
+ORIGINAL = b"def expected():\n    return 2\n"
+FOREIGN = b"def foreign():\n    return 9\n"
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        [FOREIGN, FOREIGN],  # foreign for S1 and again for the follow-up read
+        [FOREIGN, ORIGINAL],  # foreign for S1, restored before the follow-up read
+        [FOREIGN, FOREIGN, ORIGINAL, FOREIGN],  # alternating, restored before the identity check
+    ],
+)
+def test_foreign_bytes_around_the_read_are_never_analysed(
+    tmp_path: Path, monkeypatch: Any, schedule: list[bytes]
+) -> None:
+    repo = _expected_repo(tmp_path)
+    calls: list[int] = []
+    real = di._read_snapshot
+
+    def scripted(path: Path, cap: int) -> bytes:
+        index = len(calls)
+        calls.append(index)
+        if path.name == "app.py" and index < len(schedule):
+            return schedule[index]
+        return real(path, cap)
+
+    monkeypatch.setattr(di, "_read_snapshot", scripted)
+    payload = build_diff_blast_radius(root=repo)
+    assert "foreign" not in {s["name"] for s in payload["changed_symbols"]}
+    assert payload["partial"] is True
+    assert payload["not_analyzed_paths"][0]["reason"] in (
+        "content_transformed_by_git_filter",
+        "content_not_verified",
+    )
+
+
+def test_unstable_content_is_content_not_verified_and_stable_is_filter_transformed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real = di._read_snapshot
+    seq = iter([FOREIGN, ORIGINAL])
+    monkeypatch.setattr(
+        di,
+        "_read_snapshot",
+        lambda path, cap: next(seq) if path.name == "app.py" else real(path, cap),
+    )
+    payload = build_diff_blast_radius(root=repo)
+    assert payload["not_analyzed_paths"] == [{"path": "app.py", "reason": "content_not_verified"}]
+
+
+def test_overwrite_after_the_snapshot_cannot_change_what_is_analysed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real = di._symbols_from_bytes
+
+    def overwrite_then_extract(data: bytes, suffix: str) -> Any:
+        (repo / "app.py").write_bytes(FOREIGN)  # the file changes after S was read and verified
+        return real(data, suffix)
+
+    monkeypatch.setattr(di, "_symbols_from_bytes", overwrite_then_extract)
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["expected"]  # S, never the new bytes
+
+
+def test_file_edited_after_the_diff_was_taken_is_not_analysed(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _expected_repo(tmp_path)
+    real = di.extract_diff_hunks_from_git
+
+    def diff_then_edit(*a: Any, **k: Any) -> Any:
+        hunks = real(*a, **k)
+        (repo / "app.py").write_bytes(FOREIGN)
+        return hunks
+
+    monkeypatch.setattr(di, "extract_diff_hunks_from_git", diff_then_edit)
+    payload = build_diff_blast_radius(root=repo)
+    assert "foreign" not in {s["name"] for s in payload["changed_symbols"]}
+    assert payload["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "content_transformed_by_git_filter"}
+    ]
+
+
+def test_drop_filter_that_removes_the_changed_function_is_incomplete_exit_2(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "filter.f.clean", "sed '/^# DROP$/d'")
+    (repo / ".gitattributes").write_bytes(b"*.py filter=f\n")
+    _commit_app(repo, b"# DROP\ndef a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"# DROP\ndef a():\n    return 2\n")
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2, res.stdout
+    data = json.loads(res.stdout)
+    assert data["not_analyzed_paths"] == [
+        {"path": "app.py", "reason": "content_transformed_by_git_filter"}
+    ]
+    assert data["changed_symbols"] == []
+
+
+def test_autocrlf_crlf_working_tree_is_analysed_with_no_git_process(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    _git(repo, "config", "core.autocrlf", "true")
+    _commit_app(repo, b"def a():\r\n    return 1\r\n")
+    (repo / "app.py").write_bytes(b"def a():\r\n    return 2\r\n")
+    spawned = _count_content_spawns(monkeypatch)
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["a"]
+    assert spawned == []
+
+
+def _sha256_repo_or_skip(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    proc = subprocess.run(
+        ["git", "init", "-q", "--object-format=sha256"], cwd=repo, capture_output=True, check=False
+    )
+    if proc.returncode != 0:
+        pytest.skip("this git does not support --object-format=sha256")
+    _git(repo, "config", "core.autocrlf", "false")
+    return repo
+
+
+def test_sha256_repository_working_tree_is_bound_with_the_right_algorithm(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    repo = _sha256_repo_or_skip(tmp_path)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
+    payload = build_diff_blast_radius(root=repo)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["a"]
+    assert all(len(o) == 64 for o in di.extract_diff_hunks_from_git(root=repo).new_oids.values())
+
+
+def test_sha256_repository_staged_blob_is_read_and_verified(tmp_path: Path) -> None:
+    repo = _sha256_repo_or_skip(tmp_path)
+    _commit_app(repo, b"def a():\n    return 1\n")
+    (repo / "app.py").write_bytes(b"def a():\n    return 2\n")
+    _git(repo, "add", "--", "app.py")
+    payload = build_diff_blast_radius(root=repo, staged=True)
+    assert [s["name"] for s in payload["changed_symbols"]] == ["a"]

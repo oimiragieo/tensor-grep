@@ -1,14 +1,15 @@
 """Hardened git plumbing for diff-impact: sanitised env, batch blob reads, batch file hashing.
 
-Split out of diff_impact.py (file-size ratchet). One long-lived `git cat-file --batch` and one
-`git hash-object --stdin-paths` process serve a whole mapping run, instead of two spawns per
-analysed file.
+Split out of diff_impact.py (file-size ratchet). One long-lived `git cat-file --batch` process
+serves a whole staged/range mapping run, instead of two spawns per analysed file. Working-tree
+files need no git process at all: their bytes are bound to the diff's post-image id in-process.
 """
 
 from __future__ import annotations
 
 import contextlib
 import contextvars
+import hashlib
 import os
 import re
 import subprocess
@@ -124,27 +125,44 @@ def parse_cat_file_reply(stream: IO[bytes], max_bytes: int) -> bytes:
     return data
 
 
-def parse_hash_reply(stream: IO[bytes]) -> str | None:
-    raw = stream.readline()
-    if not raw:  # EOF: the process died or the watchdog killed it, which is not "no hash"
-        raise BlobUnavailable("git hash-object closed its output")
-    line = raw.decode("ascii", errors="replace").strip()
-    return line if OID_RE.match(line) else None
+def _blob_ids(data: bytes, oid_prefix: str) -> bool:
+    """True if the git blob id of `data` starts with `oid_prefix`.
 
-
-def c_quote_path(path: str) -> str:
-    """Quote a path for `--stdin-paths` when a bare line would be misread (quote/newline/etc.)."""
-    if path[:1] != '"' and not any(c in path for c in '\\\n\r\t"'):
-        return path
-    escaped = (
-        path
-        .replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
+    The object format follows the id's length (git reports full ids in the repo's own format, and
+    the diff argv passes --full-index): 64 hex is a SHA-256 repository, 40 is SHA-1. An
+    abbreviation cannot say, so both are tried.
+    """
+    header = f"blob {len(data)}\0".encode()
+    names: tuple[str, ...]
+    if len(oid_prefix) == 64:
+        names = ("sha256",)
+    elif len(oid_prefix) == 40:
+        names = ("sha1",)
+    else:
+        names = ("sha1", "sha256")
+    return any(
+        hashlib.new(name, header + data, usedforsecurity=False).hexdigest().startswith(oid_prefix)
+        for name in names
     )
-    return f'"{escaped}"'
+
+
+def blob_hash_matches(data: bytes, oid_prefix: str) -> bool:
+    return _blob_ids(data, oid_prefix)
+
+
+def classify_worktree_content(raw: bytes, oid_prefix: str) -> str:
+    """Bind working-tree bytes to the diff's post-image id, in-process (no git, no race).
+
+    "exact": the bytes ARE the described content. "eol": the only difference is CRLF -> LF
+    normalisation, so line structure is preserved and the extractor (which handles CRLF) may run
+    on the raw bytes. "transformed": a git filter or an edit changed the content in a way that
+    cannot be mapped back to the diff's line ranges; the bytes must NOT be analysed.
+    """
+    if _blob_ids(raw, oid_prefix):
+        return "exact"
+    if b"\r\n" in raw and _blob_ids(raw.replace(b"\r\n", b"\n"), oid_prefix):
+        return "eol"
+    return "transformed"
 
 
 class _GitBatch:
@@ -219,31 +237,22 @@ class _GitBatch:
 
 
 class _ContentSessions:
-    """The per-run batch processes: `cat-file --batch` (blobs) and `hash-object --stdin-paths`."""
+    """The per-run batch process: `git cat-file --batch` (blobs for staged/range diffs)."""
 
     def __init__(self, root: Path, deadline_monotonic: float | None = None) -> None:
         self.root = root
         self.deadline_monotonic = deadline_monotonic
         self._cat: _GitBatch | None = None
-        self._hash: _GitBatch | None = None
 
     def cat(self) -> _GitBatch:
         if self._cat is None:
             self._cat = _GitBatch(self.root, ["cat-file", "--batch"], self.deadline_monotonic)
         return self._cat
 
-    def hasher(self) -> _GitBatch:
-        if self._hash is None:
-            self._hash = _GitBatch(
-                self.root, ["hash-object", "--stdin-paths"], self.deadline_monotonic
-            )
-        return self._hash
-
     def close(self) -> None:
-        for batch in (self._cat, self._hash):
-            if batch is not None:
-                batch.close()
-        self._cat = self._hash = None
+        if self._cat is not None:
+            self._cat.close()
+        self._cat = None
 
 
 _ACTIVE_SESSIONS: contextvars.ContextVar[_ContentSessions | None] = contextvars.ContextVar(

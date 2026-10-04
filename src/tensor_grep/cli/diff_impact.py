@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import ast
 import contextlib
-import hashlib
 import json
 import os
 import re
@@ -39,11 +38,10 @@ _OID_RE = _dig.OID_RE
 _BlobOverCap = _dig.BlobOverCap
 _BlobDeadline = _dig.BlobDeadline
 _BlobUnavailable = _dig.BlobUnavailable
-_c_quote_path = _dig.c_quote_path
+_blob_hash_matches = _dig.blob_hash_matches
 _content_sessions = _dig.content_sessions
 _git_env = _dig.git_env
 _parse_cat_file_reply = _dig.parse_cat_file_reply
-_parse_hash_reply = _dig.parse_hash_reply
 
 # Digit groups are bounded: an unbounded \d+ let a 5000-digit hunk number reach int() and raise
 # a bare ValueError that bypassed every DiffError handler (and the CLI exit-2 path).
@@ -183,6 +181,7 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
     mode_changed_files: set[Path]
     submodule_changed_files: set[Path]
     new_oids: dict[Path, str]
+    symlink_paths: set[Path]
 
     def __init__(self) -> None:
         super().__init__()
@@ -191,6 +190,7 @@ class DiffHunks(dict[Path, list[tuple[int, int]]]):
         self.mode_changed_files = set()
         self.submodule_changed_files = set()
         self.new_oids = {}
+        self.symlink_paths = set()
 
 
 _INDEX_LINE_RE = re.compile(r"^index ([0-9a-f]+)\.\.([0-9a-f]+)( [0-7]{6})?$")
@@ -449,6 +449,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     mode_changed = False
     is_submodule = False
     new_oid: str | None = None
+    is_symlink = False
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
@@ -472,6 +473,9 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
         oid_dest = current_file or dest
         if new_oid and oid_dest is not None and not set(new_oid) <= {"0"}:
             result.new_oids[oid_dest] = new_oid
+        # the NEW side is a symlink (mode 120000): the described content is its link TEXT
+        if is_symlink and oid_dest is not None:
+            result.symlink_paths.add(oid_dest)
 
     # Split on literal LF only: str.splitlines() also breaks on U+2028/U+0085/U+000B/U+000C and
     # friends, which are legal in file names and would truncate the parsed path.
@@ -497,6 +501,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             mode_changed = False
             is_submodule = False
             new_oid = None
+            is_symlink = False
             continue
 
         if in_header and _GITLINK_INDEX_RE.match(line):
@@ -505,16 +510,19 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
 
         if in_header and (index_match := _INDEX_LINE_RE.match(line)):
             new_oid = index_match.group(2)
+            is_symlink = is_symlink or (index_match.group(3) or "").strip() == "120000"
             continue
 
         if in_header and line.startswith("new file mode "):
             is_added = True
             is_submodule = is_submodule or line.endswith(" 160000")
+            is_symlink = is_symlink or line.endswith(" 120000")
             continue
 
         if in_header and line.startswith(("old mode ", "new mode ")):
             mode_changed = True
             is_submodule = is_submodule or line.endswith(" 160000")
+            is_symlink = is_symlink or (line.startswith("new mode ") and line.endswith(" 120000"))
             continue
 
         if in_header and line.startswith(("rename to ", "copy to ")):
@@ -734,31 +742,6 @@ def _read_blob(root: Path, oid: str, max_bytes: int) -> bytes:
         return data
 
 
-def _worktree_hash(root: Path, rel_path: Path) -> str | None:
-    """The object id git would give the working-tree file (filters/EOL conversion applied)."""
-    request = _c_quote_path(str(rel_path))
-    try:
-        active = _ACTIVE_SESSIONS.get()
-        if active is not None:
-            result: str | None = active.hasher().exchange(request, _parse_hash_reply)
-            return result
-        with _content_sessions(root) as one_shot:
-            result = one_shot.hasher().exchange(request, _parse_hash_reply)
-            return result
-    except _BlobDeadline:
-        raise
-    except _BlobUnavailable:
-        return None
-
-
-def _blob_hash_matches(data: bytes, oid_prefix: str) -> bool:
-    header = f"blob {len(data)}\0".encode()
-    return any(
-        algo(header + data, usedforsecurity=False).hexdigest().startswith(oid_prefix)
-        for algo in (hashlib.sha1, hashlib.sha256)
-    )
-
-
 def _extract_symbols(extract_path: Path) -> list[dict[str, Any]]:
     """Run the registry's extractor for `extract_path`; raises the narrow extraction errors."""
     spec = lang_registry.spec_for_path(extract_path)
@@ -867,38 +850,37 @@ def _map_file_snapshot(
     new_oid: str | None,
     content_mode: str,
 ) -> tuple[str, str | None, list[dict[str, Any]]]:
-    """Analyse a regular working-tree file from a byte SNAPSHOT, never from a second open.
+    """Analyse a regular working-tree file from ONE byte snapshot bound to the diff's id.
 
-    Sandwich: read S1, have git hash the file (in "worktree" mode), read S2, require S1 == S2 and
-    git's hash to EQUAL the post-image id the diff itself reported, then extract from S1. Every
-    ordering is covered: a change reverted before git reads the file hashes as the original (and
-    S1 is the original); a change still in place when git reads it hashes differently from the
-    diff's id; a change during S1/S2 makes S1 != S2. Extraction uses S1's bytes, so nothing done to
-    the file afterwards can alter what is analysed. Swap-and-restore (tracker R-12) cannot yield
-    the content of anything other than what the diff describes.
+    The snapshot S is read once (bounded by the per-file cap) and its git blob id is computed
+    in-process. S is accepted only if that id equals the post-image id the diff reports (the argv
+    passes --full-index), or if the only difference is CRLF -> LF normalisation (line structure
+    preserved). Extraction then runs on S itself, the exact verified bytes, so no swap, overwrite
+    or swap-and-restore can make other content look like the described one (tracker R-12). A
+    mismatch is never analysed: `content_transformed_by_git_filter` when the file is stable but a
+    git filter (or a later edit) made it differ from the diff, `content_not_verified` when it is
+    still changing between two reads.
     """
     cap = repo_map._max_parse_bytes()
     before = _file_identity(full_path)
     try:
-        first = _read_snapshot(full_path, cap)
+        snapshot = _read_snapshot(full_path, cap)
     except _BlobOverCap:
         return "not_analyzed", "over_cap", []  # the extractors return ([], []) over the cap
     except OSError as exc:
         return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
     if content_mode == "worktree" and new_oid:
-        actual = _worktree_hash(root, rel_path)
-        if actual is None:
-            return "not_analyzed", "blob_unavailable", []
-        if not actual.startswith(new_oid):
-            return "not_analyzed", "path_changed_during_analysis", []
-        try:
-            second = _read_snapshot(full_path, cap)
-        except (_BlobOverCap, OSError):
-            return "not_analyzed", "path_changed_during_analysis", []
-        if second != first:
-            return "not_analyzed", "path_changed_during_analysis", []
+        if _dig.classify_worktree_content(snapshot, new_oid) == "transformed":
+            try:
+                again: bytes | None = _read_snapshot(full_path, cap)
+            except (_BlobOverCap, OSError):
+                again = None
+            reason = (
+                "content_transformed_by_git_filter" if again == snapshot else "content_not_verified"
+            )
+            return "not_analyzed", reason, []
     try:
-        symbols = _symbols_from_bytes(first, rel_path.suffix)
+        symbols = _symbols_from_bytes(snapshot, rel_path.suffix)
     except _extraction_errors() as exc:  # narrow on purpose
         return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
     after = _file_identity(full_path)
@@ -912,52 +894,6 @@ def _map_file_snapshot(
     return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
 
 
-def _strip_extended_prefix(link_text: str) -> str:
-    """Windows `readlink` returns absolute targets as `\\?\\C:\\...`; drop that extended prefix."""
-    if link_text.startswith("\\\\?\\UNC\\"):
-        return "\\\\" + link_text[8:]
-    if link_text.startswith("\\\\?\\"):
-        return link_text[4:]
-    return link_text
-
-
-def _map_symlink_snapshot(
-    rel_path: Path,
-    line_ranges: list[tuple[int, int]],
-    root: Path,
-    full_path: Path,
-) -> tuple[str, str | None, list[dict[str, Any]]]:
-    """Analyse what a working-tree symlink points at, resolved ONCE from its link text.
-
-    The target is derived from a single `readlink` snapshot (never from the live link), checked
-    against the root, and read from the RESOLVED real file in one bounded read; the link text is
-    re-read afterwards and must be unchanged. A link swapped outside the root therefore either
-    fails containment or is never consulted, and extraction runs on the snapshot bytes.
-    """
-    cap = repo_map._max_parse_bytes()
-    try:
-        link_text = os.readlink(full_path)
-        joined = os.path.join(full_path.parent, _strip_extended_prefix(link_text))
-        target = Path(joined).resolve(strict=True)
-    except OSError:
-        return "not_analyzed", "file_missing", []
-    if not repo_map._path_is_relative_to(target, root):
-        return "not_analyzed", "path_escapes_root", []
-    try:
-        data = _read_snapshot(target, cap)
-    except _BlobOverCap:
-        return "not_analyzed", "over_cap", []
-    except OSError as exc:
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
-    try:
-        if os.readlink(full_path) != link_text:
-            return "not_analyzed", "path_changed_during_analysis", []
-        symbols = _symbols_from_bytes(data, rel_path.suffix)
-    except _extraction_errors() as exc:  # narrow on purpose
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
-    return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
-
-
 def _map_one_path(
     rel_path: Path,
     line_ranges: list[tuple[int, int]],
@@ -967,6 +903,7 @@ def _map_one_path(
     binary_paths: set[Path] | None = None,
     new_oid: str | None = None,
     content_mode: str = "unverified",
+    symlink_paths: set[Path] | None = None,
 ) -> tuple[str, str | None, list[dict[str, Any]]]:
     """Map ONE changed path to exactly one outcome: (outcome, reason, symbols).
 
@@ -979,7 +916,7 @@ def _map_one_path(
 
     `content_mode` says where the new-side bytes come from: "blob" (staged / revision-range
     diffs: the git object named by the record's `index` line), "worktree" (the working-tree file,
-    snapshotted and hash-verified against that line), or "unverified" (no git context, e.g.
+    one snapshot bound in-process to that line's id), or "unverified" (no git context, e.g.
     caller-supplied diff text: a single snapshot of the working-tree file).
     """
     # An explicit deletion is classified FIRST, before any working-tree inspection: what a deleted
@@ -988,6 +925,10 @@ def _map_one_path(
     # is still analysed, so the exemption never suppresses a surviving source file.
     if rel_path in deleted_paths and not line_ranges and rel_path not in (binary_paths or set()):
         return "deleted", None, []
+    if rel_path in (symlink_paths or set()):
+        # The content a diff describes for a symlink is its LINK TEXT, never its target, so
+        # nothing is extracted: the symlink is reported, not followed (main followed it).
+        return "not_analyzed", "symlink_not_analyzed", []
     if content_mode == "blob":
         return _map_blob_path(
             rel_path, line_ranges, root, submodule_paths, binary_paths or set(), new_oid
@@ -1002,8 +943,8 @@ def _map_one_path(
             return "deleted", None, []
         return "not_analyzed", "file_missing", []
     try:
-        if full_path.is_symlink():
-            return _map_symlink_snapshot(rel_path, line_ranges, root, full_path)
+        if full_path.is_symlink():  # the diff described a regular file: it changed since
+            return "not_analyzed", "path_changed_during_analysis", []
         return _map_file_snapshot(rel_path, line_ranges, root, full_path, new_oid, content_mode)
     except _BlobDeadline:
         return "not_analyzed", "deadline_exceeded", []
@@ -1040,6 +981,7 @@ def map_changed_lines_to_symbols(
     )
     binary_paths: set[Path] = set(getattr(changed_files_with_lines, "binary_files", set()))
     new_oids: dict[Path, str] = dict(getattr(changed_files_with_lines, "new_oids", {}))
+    symlink_paths: set[Path] = set(getattr(changed_files_with_lines, "symlink_paths", set()))
     changed_symbols: list[dict[str, Any]] = []
     analyzed: set[Path] = set()
     deleted: set[Path] = set()
@@ -1047,7 +989,7 @@ def map_changed_lines_to_symbols(
 
     sessions = (
         _content_sessions(root, deadline_monotonic)
-        if content_mode != "unverified"
+        if content_mode == "blob"
         else contextlib.nullcontext()
     )
     with sessions:
@@ -1065,6 +1007,7 @@ def map_changed_lines_to_symbols(
                 binary_paths,
                 new_oids.get(rel_path),
                 content_mode,
+                symlink_paths,
             )
             if outcome == "analyzed":
                 analyzed.add(rel_path)
