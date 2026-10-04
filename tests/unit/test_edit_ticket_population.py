@@ -1640,3 +1640,145 @@ def test_oserror_during_read_is_unreadable_path_not_a_crash(
     _files, population = _walk_tracked_files_bounded(tmp_path)
     assert population["status"] == "incomplete"
     assert population["reason"] == "unreadable_path"
+
+
+# ---- the ledger must never manufacture EOF (round 12) ----
+
+
+def _limited_walker(monkeypatch: pytest.MonkeyPatch, limit: int) -> None:
+    real = edit_ticket_service._walk_tracked_files_bounded
+
+    def limited(root: object, **kw: object) -> object:
+        return real(root, **{**kw, "max_file_bytes": limit, "max_aggregate_bytes": limit})  # type: ignore[arg-type]
+
+    monkeypatch.setattr(edit_ticket_service, "_walk_tracked_files_bounded", limited)
+
+
+_BIG = b"".join(bytes([65 + (i % 26)]) for i in range(100_000))
+
+
+def test_file_exactly_at_both_limits_is_hashed_in_full(tmp_path: Path) -> None:
+    # The first 64 KiB read lowered `remaining`; the cap then subtracted the item total AGAIN,
+    # so the next read was "allowed 0 bytes", returned b"" and was taken for EOF: a 64 KiB prefix
+    # hash reported as a complete population.
+    (tmp_path / "big.bin").write_bytes(_BIG)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=100_000, max_aggregate_bytes=100_000
+    )
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 100_000
+    assert files["big.bin"] == "file:" + hashlib.sha256(_BIG).hexdigest()
+
+
+def test_file_exactly_at_both_limits_is_hashed_in_full_with_short_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "big.bin").write_bytes(_BIG)
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=1), raising=False)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=100_000, max_aggregate_bytes=100_000
+    )
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 100_000
+    assert files["big.bin"] == "file:" + hashlib.sha256(_BIG).hexdigest()
+
+
+def test_suffix_only_edit_of_a_file_at_the_limit_fails_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # end to end through mint, walk and verify: change only the bytes past the first 64 KiB
+    _limited_walker(monkeypatch, 100_000)  # big.bin alone fills the aggregate exactly
+    big = tmp_path / "big.bin"
+    big.write_bytes(_BIG)
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["status"] == "complete"
+    big.write_bytes(_BIG[:-1] + b"#")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["big.bin"]
+
+
+def test_tight_aggregate_never_yields_a_complete_population_with_a_partial_hash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    contents = {f"f{i}.bin": bytes([66 + i]) * 40_000 for i in range(3)}
+    for name, data in contents.items():
+        (tmp_path / name).write_bytes(data)
+    monkeypatch.setattr(
+        edit_ticket_service, "_fdopen", _fdopen_with(max_per_read=5000), raising=False
+    )
+    files, population = _walk_tracked_files_bounded(tmp_path, max_aggregate_bytes=100_000)
+    for name, fp in files.items():
+        assert fp == "file:" + hashlib.sha256(contents[name]).hexdigest()  # never partial
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "aggregate_byte_limit"
+
+
+def test_ten_equal_files_filling_the_aggregate_exactly_are_all_hashed_in_full(
+    tmp_path: Path,
+) -> None:
+    contents = {f"f{i}.bin": bytes([70 + i]) * 70_000 for i in range(4)}
+    for name, data in contents.items():
+        (tmp_path / name).write_bytes(data)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=70_000, max_aggregate_bytes=280_000
+    )
+    assert population["status"] == "complete"
+    assert population["scanned_bytes"] == 280_000
+    for name, data in contents.items():
+        assert files[name] == "file:" + hashlib.sha256(data).hexdigest()
+
+
+def test_bytes_hashed_must_equal_the_fstat_size_taken_at_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A second, independent check: a handle that claims EOF early (whatever the cause) must not
+    # produce a "complete" population with a prefix hash.
+    import io
+
+    (tmp_path / "f.bin").write_bytes(b"x" * 100)
+    real_fdopen = os.fdopen
+
+    def _fdopen(fd: int, mode: str = "r", buffering: int = -1, *a: object, **k: object) -> object:
+        inner = real_fdopen(fd, "rb", buffering=0)
+
+        class _EarlyEof(io.RawIOBase):
+            served = 0
+
+            def readable(self) -> bool:
+                return True
+
+            def readinto(self, buf: bytearray) -> int:
+                if self.served >= 50:
+                    return 0  # false EOF: only 50 of 100 bytes
+                view = memoryview(buf)[: 50 - self.served]
+                n = inner.readinto(view) or 0  # type: ignore[attr-defined]
+                self.served += n
+                return n
+
+            def fileno(self) -> int:
+                return inner.fileno()  # type: ignore[attr-defined]
+
+            def close(self) -> None:
+                inner.close()  # type: ignore[attr-defined]
+                super().close()
+
+        return _EarlyEof()
+
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+    assert "f.bin" not in files
+
+
+def test_ledger_never_manufactures_eof_when_the_allowance_is_exhausted(tmp_path: Path) -> None:
+    # an item that starts with no aggregate allowance left is a BUDGET failure, never EOF
+    import io
+
+    ledger = edit_ticket_service._ByteLedger(100, 10)
+    ledger.remaining = -1  # a previous item overflowed the aggregate
+    ledger.begin_item()
+    with pytest.raises(edit_ticket_service._BudgetExceeded) as excinfo:
+        ledger.read_budgeted(io.BytesIO(b"abc"), 3)
+    assert excinfo.value.reason == "aggregate_byte_limit"

@@ -177,9 +177,6 @@ class _ByteLedger:
     def unlimited(cls) -> _ByteLedger:
         return cls(sys.maxsize, sys.maxsize)
 
-    def _cap(self) -> int:
-        return max(0, min(self.per_file_limit, self.remaining))
-
     def _charge(self, n: int) -> None:
         self.consumed += n
         self.remaining -= n
@@ -194,19 +191,27 @@ class _ByteLedger:
     def read_budgeted(self, handle: BinaryIO, n: int) -> bytes:
         """ONE raw read of at most `n` bytes, bounded by the budget and CHARGED.
 
-        Returns b"" only at real EOF. A raw (unbuffered) read may legally return fewer than
-        requested bytes before EOF, so callers needing a full block use `_read_exact_or_eof`.
-        Reads at most `min(per_file_limit, remaining) + 1` bytes of the item in total."""
-        want = min(n, self._cap() + 1 - self._item_total)
-        if want <= 0:
-            return b""
-        data = handle.read(want)
+        Returns b"" ONLY when the real `read()` returned b"" (true EOF): the ledger never
+        manufactures EOF. The allowance counts each budget exactly once: bytes left under the
+        per-file limit (`per_file_limit - item_total`) and under the aggregate (`remaining`,
+        already net of every earlier read), plus one probe byte. An allowance <= 0 means a
+        budget is already exceeded while the item is unfinished: that is `_BudgetExceeded`,
+        never EOF."""
+        allowance = min(self.per_file_limit - self._item_total, self.remaining) + 1
+        if allowance <= 0:
+            raise self._exceeded_reason()
+        data = handle.read(min(n, allowance))
         self._item_total += len(data)
         self._charge(len(data))
         exceeded = self._overflow(self._item_total, self._item_start)
         if exceeded is not None:
             raise exceeded
         return data
+
+    def _exceeded_reason(self) -> _BudgetExceeded:
+        if self._item_total > self.per_file_limit:
+            return _BudgetExceeded("per_file_byte_limit")
+        return _BudgetExceeded("aggregate_byte_limit")
 
     def iter_chunks(self, handle: BinaryIO, hard_cap: int | None = None) -> Iterator[bytes]:
         """Yield the chunks of one item until REAL EOF, charging each. `hard_cap` (markers)
@@ -338,8 +343,11 @@ def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
         raise _PopulationWalkError("unreadable_path")  # swapped for a non-regular object
     try:
         with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
+            size_at_open = os.fstat(handle.fileno()).st_size
             for chunk in ledger.iter_chunks(handle, hard_cap=_MARKER_HASH_CAP):
                 hasher.update(chunk)
+            if ledger._item_total != size_at_open:  # independent invariant: no prefix digest
+                raise _PopulationWalkError("unreadable_path")
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
     return hasher.hexdigest()
@@ -503,9 +511,15 @@ def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
     if not stat.S_ISREG(st.st_mode):
         return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
     with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
+        size_at_open = os.fstat(handle.fileno()).st_size
         hasher = hashlib.sha256()
         for chunk in ledger.iter_chunks(handle):
             hasher.update(chunk)
+        # Independent invariant (a second check that does not share the ledger's arithmetic): the
+        # bytes the fingerprint covers must be the file's size at open. A prefix hash can never be
+        # recorded as a complete fingerprint, whatever the cause of a premature EOF.
+        if ledger._item_total != size_at_open:
+            raise _PopulationWalkError("unreadable_path")
     return "file:" + hasher.hexdigest()
 
 
