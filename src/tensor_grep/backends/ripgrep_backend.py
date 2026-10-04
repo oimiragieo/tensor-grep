@@ -2,6 +2,7 @@ import base64
 import binascii
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
@@ -13,7 +14,10 @@ from tensor_grep.backends.rg_json_render import (
     strip_record_terminator,
 )
 from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
-from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
+from tensor_grep.cli.subprocess_policy import (
+    configured_ripgrep_timeout_seconds as configured_ripgrep_timeout_seconds,
+)
+from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -208,25 +212,22 @@ class RipgrepBackend(ComputeBackend):
             )
         if config and (config.count or config.count_matches):
             return self._search_counts(file_path=file_path, pattern=pattern, config=config)
-        render_cfg: SearchConfig | None = None
-        if config and (config.only_matching or config.replace_str is not None):
-            if not (config.files_with_matches or config.files_without_match or config.list_files):
-                render_cfg = config
-                from tensor_grep.backends.rg_plain_output import (
-                    PlainFramingError,
-                    plain_route_eligible,
-                )
-
-                if plain_route_eligible(config):
-                    try:
-                        return self._search_rendered_by_rg(file_path, pattern, config)
-                    except PlainFramingError:
-                        pass  # ambiguous plain text -> the JSON-data route below
         if config and config.files_with_matches:
             return self._search_files_with_matches(
                 file_path=file_path, pattern=pattern, config=config
             )
+        # -o / -r: entries are laid out by the rg-compatible printer in rg_json_render.py from
+        # rg's own --json data (unforgeable framing); there is no plain-text route
+        render_cfg: SearchConfig | None = None
+        if config and (config.only_matching or config.replace_str is not None):
+            if not (config.files_with_matches or config.files_without_match or config.list_files):
+                render_cfg = config
 
+        probe = (
+            self._multiline_strategy_probe(pattern, render_cfg)
+            if render_cfg is not None and render_cfg.multiline
+            else None
+        )
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
             # We use check=False because rg exits with 1 if no matches are found
@@ -244,6 +245,7 @@ class RipgrepBackend(ComputeBackend):
                     file_path,
                     delim=b"\0" if config is not None and config.null_data else b"\n",
                     render=render_cfg,
+                    probe=probe,
                 )
             )
 
@@ -268,6 +270,9 @@ class RipgrepBackend(ComputeBackend):
                 routing_reason="rg_json",
                 routing_distributed=False,
                 routing_worker_count=1,
+                # rg exited 0 = it matched; a rendered (-o/-r) request may still print nothing
+                # (e.g. `-U -o '\\n'`), which is success with zero entries
+                rg_exit_zero=render_cfg is not None and result.returncode == 0,
             )
             if partial:
                 reason = result.stderr.strip() or "rg exit 2 (partial results)"
@@ -312,6 +317,7 @@ class RipgrepBackend(ComputeBackend):
                     file_path,
                     delim=b"\0" if config is not None and config.null_data else b"\n",
                     render=render_cfg,
+                    probe=probe,
                 )
             )
             reason = (
@@ -339,80 +345,76 @@ class RipgrepBackend(ComputeBackend):
         except Exception as e:
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
-    def _search_rendered_by_rg(
-        self, file_path: str | list[str], pattern: str, config: SearchConfig
-    ) -> SearchResult:
-        """Structured `-o` / `-r`: rg renders it (plain text) and Python only parses the lines.
+    def _multiline_strategy_probe(
+        self, pattern: str, config: SearchConfig
+    ) -> Callable[[bytes], bool | None]:
+        """Does rg's searcher use its MULTI-LINE strategy for this pattern under `-U`?
 
-        Line numbers, columns, multi-line splits and replacement coordinates are rg's own (format
-        in backends/rg_plain_output.py); nothing is derived from offsets here. rg's exit status is
-        kept: 0 with no output is a successful search with zero entries.
+        rg does not report it, but it decides how the printer lays out `-o`/`-r` ("lines mode").
+        The observable: a haystack of two ADJACENT copies of a block that matches yields ONE
+        merged record under the multi-line strategy and two records under the line strategy
+        (verified with rg 15.1: `ab` -> 2, `(a)\\n?`, `$`, `^`, `ab$` -> 1). Memoised per request;
+        returns None when the probe cannot tell (no match / rg failure).
         """
-        from tensor_grep.backends.rg_plain_output import (
-            PINNED_FORMAT_FLAGS,
-            neutralize_text_flags,
-            parse_rg_plain_output,
+        import dataclasses
+        import json
+        import os
+        import tempfile
+
+        cache: list[bool | None] = []
+        probe_cfg = dataclasses.replace(
+            config,
+            only_matching=False,
+            replace_str=None,
+            context=None,
+            before_context=None,
+            after_context=None,
+            invert_match=False,
+            no_invert_match=False,
+            max_count=None,
+            count=False,
+            count_matches=False,
+            files_with_matches=False,
+            files_without_match=False,
         )
 
-        config = neutralize_text_flags(config)
-        cmd = self._build_cmd(
-            file_path=file_path,
-            pattern=pattern,
-            config=config,
-            json_mode=False,
-            extra_flags=PINNED_FORMAT_FLAGS,
-        )
-        inverted = bool(config.invert_match and not config.no_invert_match)
-        timed_out = False
-        try:
-            proc = run_subprocess(
-                cmd,
-                capture_output=True,
-                check=False,
-                timeout_seconds=configured_ripgrep_timeout_seconds(),
-            )
-            stdout, returncode, stderr = proc.stdout, proc.returncode, proc.stderr
-        except subprocess.TimeoutExpired as exc:
-            timed_out = True
-            stdout = exc.stdout if isinstance(exc.stdout, bytes) else b""
-            returncode, stderr = 2, b""
-        matches = parse_rg_plain_output(stdout, null_data=bool(config.null_data), inverted=inverted)
-        real = [m for m in matches if m.rg_kind != "context"]
-        partial = returncode == 2 and bool(real)
-        if returncode > 1 and not partial and not timed_out:
-            detail = stderr.decode("utf-8", errors="replace").strip()
-            raise BackendExecutionError(
-                f"rg failed with exit code {returncode}: {detail or 'no stderr output'}"
-            )
-        paths: list[str] = []
-        counts: dict[str, int] = {}
-        for match in real:
-            counts[match.file] = counts.get(match.file, 0) + 1
-            if counts[match.file] == 1:
-                paths.append(match.file)
-        result = SearchResult(
-            matches=matches,
-            matched_file_paths=paths,
-            match_counts_by_file=counts,
-            total_files=len(paths),
-            total_matches=len(real),
-            routing_backend="RipgrepBackend",
-            routing_reason="rg_plain_rendered",
-            routing_distributed=False,
-            routing_worker_count=1,
-            rg_exit_zero=returncode == 0,
-        )
-        if partial or timed_out:
-            reason = (
-                "rg timed out; returning partial results"
-                if timed_out
-                else stderr.decode("utf-8", errors="replace").strip() or "rg exit 2 (partial)"
-            )
-            sys.stderr.write(f"tg: rg stopped early, keeping partial results: {reason}\n")
-            result.result_incomplete = True
-            result.incomplete_reason = reason
-            result.incomplete_reason_class = "timeout" if timed_out else "unreadable_path"
-        return result
+        def probe(block: bytes) -> bool | None:
+            if cache:
+                return cache[0]
+            delim = b"\0" if config.null_data else b"\n"
+            unit = block if block.endswith(delim) else block + delim
+            handle, tmp_path = tempfile.mkstemp(prefix="tg-strategy-probe-")
+            result: bool | None = None
+            try:
+                with os.fdopen(handle, "wb") as out:
+                    out.write(unit + unit)
+                cmd = self._build_cmd(
+                    file_path=tmp_path, pattern=pattern, config=probe_cfg, json_mode=True
+                )
+                proc = run_subprocess(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    encoding="utf-8",
+                    timeout_seconds=configured_ripgrep_timeout_seconds(),
+                )
+                records = 0
+                for line in proc.stdout.split("\n"):
+                    if line.strip() and json.loads(line).get("type") == "match":
+                        records += 1
+                result = records == 1 if records else None
+            except (OSError, ValueError, subprocess.SubprocessError):
+                result = None
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            cache.append(result)
+            return result
+
+        return probe
 
     @staticmethod
     def _parse_ndjson_matches(
@@ -420,6 +422,7 @@ class RipgrepBackend(ComputeBackend):
         file_path: str | list[str],
         delim: bytes = b"\n",
         render: SearchConfig | None = None,
+        probe: Callable[[bytes], bool | None] | None = None,
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -469,7 +472,9 @@ class RipgrepBackend(ComputeBackend):
                     # total_matches / parity with the other backends is unchanged.
                     _subs = data_match.get("submatches") or None
                     if render is not None:  # -o/-r: entries come from rg's own data fields
-                        entries = render_json_record(data_match, "match", render, path_str, delim)
+                        entries = render_json_record(
+                            data_match, "match", render, path_str, delim, probe
+                        )
                     else:
                         entries = [
                             MatchLine(
@@ -500,7 +505,9 @@ class RipgrepBackend(ComputeBackend):
                         path_str = file_path
                     if render is not None:
                         matches.extend(
-                            render_json_record(data_match, "context", render, path_str, delim)
+                            render_json_record(
+                                data_match, "context", render, path_str, delim, probe
+                            )
                         )
                         continue
                     matches.append(
@@ -773,7 +780,6 @@ class RipgrepBackend(ComputeBackend):
         config: SearchConfig | None,
         *,
         json_mode: bool,
-        extra_flags: tuple[str, ...] = (),
     ) -> list[str]:
         binary_name = self._get_binary_name()
         if binary_name is None:
@@ -1055,7 +1061,6 @@ class RipgrepBackend(ComputeBackend):
                 self._append_search_paths(cmd, file_path)
                 return cmd
 
-        cmd.extend(extra_flags)
         pattern_files = list(config.file_patterns or []) if config else []
         for pattern_file in pattern_files:
             cmd.extend(["--file", pattern_file])

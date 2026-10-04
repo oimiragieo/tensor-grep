@@ -1,8 +1,8 @@
 """Guard for `-o` / `--replace` output, which is rg's own.
 
-`RipgrepBackend` answers a structured `-o` / `-r` request by running rg in plain-text mode and
-parsing the lines rg printed (`backends/rg_plain_output.py`): line numbers, columns, multi-line
-splits and replacement coordinates are rg's, and Python derives nothing. What is left here is the
+`RipgrepBackend` answers a structured `-o` / `-r` request from rg's `--json` data through the
+rg-compatible printer in `backends/rg_json_render.py` (rules proven against rg's own plain output
+by a differential fuzz). What is left here is the
 fail-closed check: a result line that did not come from that route (a non-rg engine, which the
 pipeline never routes `-o`/`-r` to) is refused with `BackendExecutionError` instead of being
 rendered by guesswork. The CLI turns the error into a structured exit 2.

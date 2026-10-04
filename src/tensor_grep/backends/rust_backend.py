@@ -136,9 +136,11 @@ class RustCoreBackend(ComputeBackend):
     def _binary_file_matches_pattern(
         file_path: str, pattern: str, config: SearchConfig | None
     ) -> bool:
-        from tensor_grep.backends.ripgrep_backend import _pattern_semantics_flags
-        from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
-        from tensor_grep.cli.subprocess_policy import (
+        # backends must not import from `cli` (declared layering): reuse ripgrep_backend's
+        # already-baselined seams for the rg binary and the bounded subprocess runner
+        from tensor_grep.backends.ripgrep_backend import (
+            RipgrepBackend,
+            _pattern_semantics_flags,
             configured_ripgrep_timeout_seconds,
             run_subprocess,
         )
@@ -163,7 +165,7 @@ class RustCoreBackend(ComputeBackend):
                 raise BackendExecutionError(
                     f"cannot read {file_path!r} for the binary-file match check: {exc}"
                 ) from exc
-        rg = resolve_ripgrep_binary()
+        rg = RipgrepBackend()._get_binary_name()
         if rg is None:
             raise BackendExecutionError(
                 "binary-file match check for a regex pattern requires the 'rg' binary; "

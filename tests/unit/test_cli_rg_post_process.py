@@ -6,6 +6,7 @@ strict resolver and crash with BackendExecutionError for that very pattern).
 """
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from tensor_grep.core.result import MatchLine
 
 pytestmark = pytest.mark.skipif(resolve_ripgrep_binary() is None, reason="rg not installed")
 
-_SRC = str(Path(__file__).resolve().parents[2] / "src")
+_SRC = os.environ.get("TG_SRC_UNDER_TEST") or str(Path(__file__).resolve().parents[2] / "src")
 
 
 class _Result:
@@ -549,6 +550,64 @@ def _tg_entries(path, pattern, *flags):
     return [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]], doc
 
 
+_FORGE = 'fake: binary file matches (found "\\0" byte around offset 7)'
+
+
+@pytest.mark.skipif(
+    sys.platform.startswith("win"), reason="LF/':'/'\"' are not legal in Windows names"
+)
+def test_a_filename_containing_lf_cannot_forge_records_posix(tmp_path):
+    # round 14: a name with LF + a notice lookalike used to forge a match for `fake` plus one for
+    # `real`. Paths are JSON data now, so the name is just a name.
+    name = _FORGE + "\nreal"
+    f = tmp_path / name
+    f.write_bytes(b"foo\n")
+    proc, doc = _json_matches("-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["file"], m["line_number"], m["text"]) for m in doc["matches"]] == [
+        (str(f), 1, "foo")
+    ]
+    assert doc["total_files"] == 1
+
+
+def test_a_hostile_looking_filename_is_just_a_name_windows_legal(tmp_path):
+    # the Windows-legal equivalent: digits, dashes and lookalike words in a name
+    f = tmp_path / "1-fake 2-binary file matches (found 0 byte around offset 7) real.txt"
+    f.write_bytes(b"foo\n")
+    proc, doc = _json_matches("-o", "foo", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["file"], m["line_number"], m["text"]) for m in doc["matches"]] == [
+        (str(f), 1, "foo")
+    ]
+
+
+def test_replacement_that_removes_newlines_shifts_columns_like_rg(tmp_path):
+    # round 14: `ab\nab ab` -a -U -o -r X -> rg: (1,1,X),(1,3,X); the old rule gave (2,4,X)
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"ab\nab ab\n")
+    pattern = r"ab\nab|ab"
+    proc, doc = _json_matches("-a", "-U", "-o", "-r", "X", pattern, str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    got = [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]]
+    assert got == [(1, 1, "X"), (1, 3, "X")]
+    assert got == _rg_entries(f, pattern, "-a", "-U", "-r", "X")
+
+
+def test_multiline_o_is_split_per_line_like_rg_even_with_text_mode(tmp_path):
+    # round 14: `-a -U -o 'foo\nbar'` is two numbered entries; `-a -U -o '\n'` prints nothing, exit 0
+    f = tmp_path / "a.txt"
+    f.write_bytes(b"foo\nbar\n")
+    proc, doc = _json_matches("-a", "-U", "-o", r"foo\nbar", str(f))
+    assert proc.returncode == 0, proc.stderr[-300:]
+    assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == [
+        (1, 1, "foo"),
+        (2, 1, "bar"),
+    ]
+    proc2, doc2 = _json_matches("-a", "-U", "-o", r"\n", str(f))
+    assert proc2.returncode == 0 and doc2["matches"] == [] and doc2["total_matches"] == 0
+    assert _rg_run(r"\n", f, "-a", "-U", "-o").returncode == 0
+
+
 def test_json_trailing_newline_in_a_match_is_not_a_phantom_entry(tmp_path):
     # audit (round 9): `-U -o 'foo\n'` on foo/bar -> rg reports ONE match, 1:1:foo
     f = tmp_path / "a.txt"
@@ -739,45 +798,201 @@ def test_text_mode_route_follows_rgs_structured_data(tmp_path, flags, expected):
     assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == expected
 
 
-def _fuzz_rows(path, pattern, only, replace_str, text_mode, extra):
+_ENTRY_RE = re.compile(rb"(\d+):(\d+):(.*)\Z", re.DOTALL)
+_INVERTED_RE = re.compile(rb"(\d+):(.*)\Z", re.DOTALL)
+_CONTEXT_RE = re.compile(rb"(\d+)-(?:(\d+)-)?(.*)\Z", re.DOTALL)
+
+
+def _reference_entries(stdout: bytes, *, null_data: bool, inverted: bool):
+    """Parse rg's own plain `-n --column` output into (kind, line, column, text) tuples.
+
+    Why this reference parse is UNAMBIGUOUS here: the fuzz uses benign file names (the path is not
+    printed at all: a single FILE operand with `-I`), file content from the alphabet `ab c` plus
+    line terminators, and replacements that never start with a digit. So a printed line that starts
+    with `<digits>:<digits>:` / `<digits>:` / `<digits>-` is a record header, and every other line
+    is a continuation of the previous record's text (a replacement or `-U` text containing LF).
+    Under `--null-data` records end in NUL and may contain LF freely.
+    """
+    entries: list[list] = []
+    chunks = stdout.split(b"\0" if null_data else b"\n")
+    if chunks and chunks[-1] == b"":
+        chunks.pop()
+    for chunk in chunks:
+        if (m := _CONTEXT_RE.match(chunk)) is not None and not _ENTRY_RE.match(chunk):
+            col = int(m.group(2)) if m.group(2) else None  # -v: a matching line as context
+            entries.append(["context", int(m.group(1)), col, m.group(3)])
+        elif (m := _ENTRY_RE.match(chunk)) is not None:  # benign text never starts with a digit
+            entries.append(["match", int(m.group(1)), int(m.group(2)), m.group(3)])
+        elif (m := _INVERTED_RE.match(chunk)) is not None:
+            # `N:text`: an inverted (-v) line, or a match rg prints without offsets (EOF quirk)
+            entries.append(["inverted" if inverted else "match", int(m.group(1)), None, m.group(2)])
+        elif entries and not null_data:
+            entries[-1][3] += b"\n" + chunk  # continuation line of the previous record
+        else:
+            raise AssertionError(f"unparseable reference line {chunk!r}")
+    return [(k, ln, col, text.decode()) for k, ln, col, text in entries]
+
+
+_FUZZ_PATTERNS = [
+    "a", "ab", "b+", "a|b", "(a)(b)?", "^", "$", r"\bc", "c ?", "(a)|(b)", "(?P<x>a)b?", "zz",
+    r"\n", r"a\n", r"\nb", r"a\nb", r"b\n", r"\n\n", r"(a)\n?", r"a\n?b", r"^a", r"a$", r"\nb\n",
+    r"(a|b)\n(a|b)", r"b?\n",
+]  # fmt: skip
+_FUZZ_TEMPLATES = [
+    "X", "", "\n", "X\nY", "é", "$1", "${x}", "$$", "$0$0", "LONGLONGLONG", "[$0]", "$1$2",
+    "\n\n", "Y\n", "\nY",
+]  # fmt: skip
+
+
+def _fuzz_file(rng, null_data: bool) -> bytes:
+    sep = b"\0" if null_data else b"\n"
+    lines = []
+    for _ in range(rng.randint(1, 6)):
+        text = "".join(rng.choice("ab c") for _ in range(rng.randint(0, 7))).encode()
+        if rng.random() < 0.15:
+            text += b"\r"
+        if null_data and rng.random() < 0.3:
+            text += b"\n" + "".join(rng.choice("ab c") for _ in range(rng.randint(0, 4))).encode()
+        lines.append(text)
+    body = sep.join(lines)
+    return body + (sep if rng.random() < 0.85 else b"")
+
+
+def _printer_entries(path, pattern, cfg):
     from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 
-    cfg = SearchConfig(
-        query_pattern=pattern,
-        only_matching=only,
-        replace_str=replace_str,
-        text=text_mode,
-        **extra,
-    )
     rows = RipgrepBackend().search(str(path), pattern, cfg).matches
     return [
-        (m.line_number, m.rg_kind, m.text, (m.submatches[0]["start"] if m.submatches else None))
+        (
+            m.rg_kind,
+            m.line_number,
+            (m.submatches[0]["start"] + 1) if m.submatches else None,
+            m.text,
+        )
         for m in rows
     ]
 
 
-def test_json_data_route_agrees_with_rgs_plain_rendering_on_a_seeded_differential_fuzz(tmp_path):
-    # `-a` forces the JSON-data route on a text file WITHOUT changing what matches, so the two
-    # routes (rg's plain text vs rg's JSON data) must give the same entries for single-line input
+# 6 chunks x 400 seeded cases = 2400 differential cases (chunked so each test stays ~1-2 minutes)
+FUZZ_CHUNKS = 6
+FUZZ_CASES = int(os.environ.get("TG_PRINTER_FUZZ_CASES", "400"))
+
+
+@pytest.mark.parametrize("chunk", range(FUZZ_CHUNKS))
+def test_json_printer_matches_rgs_plain_printer_on_a_seeded_differential_fuzz(tmp_path, chunk):
+    """The rg-compatible printer (from `--json` data) must equal rg's own plain `-o`/`-r` output.
+
+    Axes: patterns incl. `\\n`, `^`, `$`, empty matches and multi-line classes; replacements that are
+    empty, contain/remove LF, are non-ASCII, or use `$1`/`${x}`/`$$`; `-o`, `-r`, `-o -r`; `-U`, `-a`,
+    `-C1`, `-v`, `--crlf`, `--null-data`; files with CRLF lines, no final terminator, empty lines.
+    A request rg itself rejects (e.g. `\\n` without `-U`) is skipped.
+    """
     import random
 
-    rng = random.Random(20261013)
-    patterns = ["a", "ab", "b+", "a|b", "(a)(b)?", "^", "$", r"\bc", "c ?", "(a)|(b)", "zz"]
-    templates = ["X", "[$0]", "$1$1", "", "YY", "$1-$2", "é"]
+    rng = random.Random(20261014 + chunk)
     f = tmp_path / "fuzz.txt"
-    for case in range(60):
-        lines = ["".join(rng.choice("ab c") for _ in range(rng.randint(0, 9))) for _ in range(5)]
-        f.write_bytes(("\n".join(lines) + "\n").encode())
-        pattern = rng.choice(patterns)
-        only, replace_str = rng.choice([
-            (True, None),
-            (False, rng.choice(templates)),
-            (True, rng.choice(templates)),
-        ])
-        extra = rng.choice([{}, {"context": 1}, {"invert_match": True}])
-        plain = _fuzz_rows(f, pattern, only, replace_str, False, extra)
-        data = _fuzz_rows(f, pattern, only, replace_str, True, extra)
-        assert plain == data, (case, pattern, only, replace_str, extra, lines)
+    mismatches: list[str] = []
+    seen = {
+        "lines_mode": 0,
+        "lf_replacement": 0,
+        "null_data": 0,
+        "crlf_file": 0,
+        "context": 0,
+        "inverted": 0,
+        "empty_output_exit0": 0,
+        "no_final_terminator": 0,
+        "text_flag": 0,
+        "crlf_flag": 0,
+        "skipped": 0,
+        "compared": 0,
+    }
+    for case in range(FUZZ_CASES):
+        null_data = rng.random() < 0.12
+        content = _fuzz_file(rng, null_data)
+        f.write_bytes(content)
+        pattern = rng.choice(_FUZZ_PATTERNS)
+        replace_str = rng.choice([None, *_FUZZ_TEMPLATES]) if rng.random() < 0.75 else None
+        only = True if replace_str is None else rng.random() < 0.6
+        flags = {
+            "multiline": rng.random() < 0.5 or "\\n" in pattern,
+            "text": rng.random() < 0.15,
+            "context": 1 if rng.random() < 0.15 else None,
+            "invert_match": rng.random() < 0.08,
+            "crlf": rng.random() < 0.1,
+            "null_data": null_data,
+        }
+        if flags["crlf"] and null_data:
+            # UNREPRODUCIBLE from rg's JSON data (reported, not guessed): with --crlf AND --null-data
+            # rg's plain printer works on per-record blocks (line/column relative to the record)
+            # while its JSON merges several records into one block, so the plain layout cannot be
+            # derived from the JSON fields. The two flags are fuzzed separately, never together.
+            flags["crlf"] = False
+        rg_flags = ["--no-config", "-n", "--column", "-I", "--no-context-separator"]
+        if only:
+            rg_flags.append("-o")
+        if replace_str is not None:
+            rg_flags += ["-r", replace_str]
+        if flags["multiline"]:
+            rg_flags.append("-U")
+        if flags["text"]:
+            rg_flags.append("-a")
+        if flags["context"]:
+            rg_flags += ["-C", "1"]
+        if flags["invert_match"]:
+            rg_flags.append("-v")
+        if flags["crlf"]:
+            rg_flags.append("--crlf")
+        if null_data:
+            rg_flags.append("--null-data")
+        ref = subprocess.run(
+            [str(resolve_ripgrep_binary()), *rg_flags, "-e", pattern, str(f)],
+            capture_output=True,
+            check=False,
+        )
+        if ref.returncode > 1:
+            seen["skipped"] += 1
+            continue
+        cfg = SearchConfig(
+            query_pattern=pattern,
+            only_matching=only,
+            replace_str=replace_str,
+            **{k: v for k, v in flags.items() if v is not None},
+        )
+        try:
+            expected = _reference_entries(
+                ref.stdout, null_data=null_data, inverted=flags["invert_match"]
+            )
+        except AssertionError:
+            seen["skipped"] += 1  # a reference line this benign grammar cannot classify
+            continue
+        got = _printer_entries(f, pattern, cfg)
+        seen["compared"] += 1
+        seen["lines_mode"] += int(flags["multiline"] and "\\n" in pattern)
+        seen["lf_replacement"] += int(replace_str is not None and "\n" in replace_str)
+        seen["null_data"] += int(null_data)
+        seen["crlf_file"] += int(b"\r" in content)
+        seen["context"] += int(bool(flags["context"]))
+        seen["inverted"] += int(flags["invert_match"])
+        seen["empty_output_exit0"] += int(ref.returncode == 0 and not ref.stdout)
+        seen["no_final_terminator"] += int(not content.endswith((b"\n", b"\0")))
+        seen["text_flag"] += int(flags["text"])
+        seen["crlf_flag"] += int(flags["crlf"])
+        if got != expected:
+            mismatches.append(
+                f"case {case}: pattern={pattern!r} replace={replace_str!r} only={only} "
+                f"flags={flags} content={content!r}\n  rg:      {expected}\n  printer: {got}"
+            )
+    print(f"FUZZ chunk {chunk} seed {20261014 + chunk}: {seen}")  # visible with -s
+    assert seen["compared"] >= 0.7 * FUZZ_CASES, seen
+    for axis in ("lines_mode", "lf_replacement", "null_data", "crlf_file", "context", "inverted",
+                 "empty_output_exit0", "no_final_terminator", "text_flag", "crlf_flag"):  # fmt: skip
+        assert seen[axis] >= min(20, FUZZ_CASES // 40), (
+            axis,
+            seen,
+        )  # positive control: every axis was exercised
+    assert not mismatches, f"{len(mismatches)} mismatches of {seen['compared']}:\n" + "\n".join(
+        mismatches[:6]
+    )
 
 
 @pytest.mark.parametrize(
@@ -856,13 +1071,18 @@ def test_null_data_replacement_keeps_lf_content_and_nul_terminated_records(tmp_p
     assert [(m.line_number, m.text) for m in matches] == [(1, "a\nX"), (3, "X\n")]
 
 
-def test_binary_file_notice_is_a_binary_notice_entry_not_a_parse_error(tmp_path):
+def test_binary_file_is_reported_from_rgs_json_data(tmp_path):
+    # rg's --json reports a file with an embedded NUL as ordinary match records (the `end` message
+    # carries `binary_offset`), so there is no notice line to parse -- or to forge
     f = tmp_path / "bin.txt"
     f.write_bytes(b"foo\nbar\x00baz foo\nfoo\n")
     proc, doc = _json_matches("-o", "foo", str(f))
     assert proc.returncode == 0, proc.stderr[-300:]
-    (entry,) = doc["matches"]
-    assert entry["text"].startswith("binary file matches (found")
+    assert [(m["line_number"], m["column"], m["text"]) for m in doc["matches"]] == [
+        (1, 1, "foo"),
+        (2, 9, "foo"),
+        (3, 1, "foo"),
+    ]
 
 
 @pytest.mark.parametrize(
@@ -930,36 +1150,6 @@ def test_a_file_named_double_dash_parses_as_a_path_never_as_a_separator(
         None,
         0,
     ]
-
-
-def test_plain_output_parser_handles_hostile_paths_separators_and_inverted_lines():
-    from tensor_grep.backends.rg_plain_output import parse_rg_plain_output
-
-    raw = (
-        b"dir/a:1:2:b.txt\x001-ctx 5:6:7\n"  # context text that LOOKS like line:col
-        b"dir/a:1:2:b.txt\x002:4:ab:7:8\n"  # match text containing more ':' digits
-        b"dir/a:1:2:b.txt\x009:1:\n"  # empty text (a zero-width match)
-    )
-    got = parse_rg_plain_output(raw)
-    assert [(m.file, m.line_number, m.rg_kind, m.text) for m in got] == [
-        ("dir/a:1:2:b.txt", 1, "context", "ctx 5:6:7"),
-        ("dir/a:1:2:b.txt", 2, "match", "ab:7:8"),
-        ("dir/a:1:2:b.txt", 9, "match", ""),
-    ]
-    # a match record with no `<column>:` field is malformed for a non-inverted parse
-    from tensor_grep.backends.base import BackendExecutionError
-
-    with pytest.raises(BackendExecutionError):
-        parse_rg_plain_output(b"p\x009:\n")
-    inv = parse_rg_plain_output(b"p\x001:bar\np\x002-ctx\n", inverted=True)
-    assert [(m.line_number, m.rg_kind, m.text, m.submatches) for m in inv] == [
-        (1, "inverted", "bar", None),
-        (2, "context", "ctx", None),
-    ]
-    nul = parse_rg_plain_output(b"p\x001:5:foo\nbar\x00", null_data=True)
-    assert [(m.text, m.submatches[0]["start"]) for m in nul] == [("foo\nbar", 4)]
-    with pytest.raises(BackendExecutionError):
-        parse_rg_plain_output(b"p\x001:1:\xff\n")  # not valid UTF-8 -> refused
 
 
 def test_json_null_data_uses_nul_as_the_record_delimiter(tmp_path):
