@@ -885,18 +885,6 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "`atomic_write_bytes_anchored`, so the detector correctly does not credit it as helper-"
         "backed. Same rationale as the os.open entry above; sanctioned together."
     ),
-    (
-        "session_daemon_trust.py",
-        "_write_secret_windows",
-        "tensor_grep.cli._index_lock.replace_with_retry",
-    ): (
-        "Publish step of the per-user daemon HMAC secret writer. The secret file is created with "
-        "CreateFileW(CREATE_NEW, share mode 0) and a protected user-only SECURITY_ATTRIBUTES "
-        "descriptor (so it is never broader than the current user, not even for an instant -- "
-        "`atomic_write_bytes_anchored` cannot pass a descriptor at creation), the descriptor is "
-        "re-read from the open handle before any byte is written, and only then is the closed "
-        "temp file renamed into place with the shared `replace_with_retry`."
-    ),
 }
 
 
@@ -1500,6 +1488,11 @@ _EXPECTED_HELPER_BACKED = {
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     ("main.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
+    (
+        "session_daemon_trust.py",
+        "_write_secret_posix",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
     # The bidirectional control's "current" arm (also asserted directly above).
     ("codemap.py", "_atomic_write_text", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---
@@ -1598,11 +1591,6 @@ _EXPECTED_SANCTIONED = {
     (
         "session_daemon.py",
         "_write_daemon_metadata_windows",
-        "tensor_grep.cli._index_lock.replace_with_retry",
-    ),
-    (
-        "session_daemon_trust.py",
-        "_write_secret_windows",
         "tensor_grep.cli._index_lock.replace_with_retry",
     ),
 }

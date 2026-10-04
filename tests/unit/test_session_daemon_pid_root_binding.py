@@ -338,16 +338,40 @@ def test_a_relative_root_is_refused_because_its_cwd_is_unknowable(
 def test_pid_reuse_is_refused_when_the_create_time_changes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Classified as the daemon at T1; by the time the signal is sent the pid belongs to a process
-    # created at T2 (the original exited and the OS recycled the pid): never signal it.
+    # Classified as the daemon at its REAL signed create time; by the time the signal is sent the pid
+    # belongs to a process created later (the original exited and the OS recycled the pid). The first
+    # read must pass classification (signed real create time), so the guard opens and the
+    # termination-time identity re-read is what refuses -- not an early classification mismatch.
     root = (tmp_path / "rootA").resolve()
     root.mkdir()
     bystander = _sleeper()
     try:
+        real = _real_ct(bystander)
         argv = [_PY, "-m", _MODULE, "--root", str(root)]
-        times = iter([1000.0, 2000.0, 2000.0])
-        monkeypatch.setattr(trust, "_process_info", lambda pid: (list(argv), next(times)))
-        assert sd._terminate_daemon_by_pid(_signed_meta(root, bystander.pid), root=root) is False
+        reads: list[float] = []
+
+        def _info(pid: int) -> tuple[list[str], float]:
+            reads.append(real)
+            return list(argv), real if len(reads) == 1 else real + 500.0
+
+        opened: list[Any] = []
+        real_open = trust._open_pid_guard
+
+        def _spy_open(pid: int) -> Any:
+            guard = real_open(pid)
+            opened.append(guard)
+            return guard
+
+        meta = _signed_meta(root, bystander.pid)
+        monkeypatch.setattr(trust, "_process_info", _info)
+        monkeypatch.setattr(trust, "_open_pid_guard", _spy_open)
+        assert trust._daemon_pid_state(meta, root) == "ours"  # classification itself passes
+        reads.clear()
+        # now drive the real escalation: first read (classification) is genuine, the second differs
+        assert sd._terminate_daemon_by_pid(meta, root=root) is False
+        assert len(reads) >= 2, "the termination-time identity re-read never happened"
+        assert opened and opened[0] is not None, "the guard never opened"
+        assert trust._last_pid_guard_level() is None  # no signal was delivered
         assert bystander.poll() is None
     finally:
         _reap(bystander)

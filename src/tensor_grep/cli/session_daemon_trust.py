@@ -31,9 +31,13 @@ from typing import Any, NoReturn
 from uuid import uuid4
 
 from tensor_grep.cli import session_daemon_winsec as _winsec
-from tensor_grep.cli._index_lock import replace_with_retry
+from tensor_grep.cli._index_lock import (
+    IndexLockTimeoutError,
+    _publish_bytes_no_clobber,
+    atomic_write_bytes_anchored,
+    index_lock,
+)
 from tensor_grep.cli.runtime_paths import _expected_tg_version
-from tensor_grep.cli.session_store import _write_json_atomic
 
 DAEMON_HOST = "127.0.0.1"
 _DAEMON_SECRET_DIR_ENV = "TG_DAEMON_SECRET_DIR"
@@ -152,24 +156,25 @@ def _classify_daemon_pid(
     metadata: dict[str, Any] | None, root: Path | None
 ) -> tuple[str, tuple[int, float, list[str]] | None]:
     """``(state, identity)``. ``"ours"``: provably the tensor-grep daemon serving ``root`` (identity
-    = pid, create_time, argv); ``"gone"``: no such process, or nothing that mentions the daemon
-    module; ``"unverifiable"``: alive and mentions the module but is not provably ours (another
-    root, ``python -c ...`` / a script carrying the module name, unreadable argv, no psutil, no
-    root given). Only ``"ours"`` may ever be signalled."""
-    try:
-        pid = int((metadata or {})["pid"])
-    except (KeyError, TypeError, ValueError, OverflowError):
+    = pid, create_time, argv). ``"gone"``: ONLY independently established absence -- nothing is
+    recorded, or the OS reports that no process with the recorded pid exists (psutil
+    ``NoSuchProcess``). ``"unverifiable"``: everything else, notably a LIVE process that is
+    unrelated, is the caller's own pid, or whose recorded identity is malformed or unreadable (no
+    psutil, AccessDenied): it proves nothing about the daemon the metadata names, so the caller
+    keeps the metadata and reports the stop as unconfirmed. Only ``"ours"`` may ever be signalled."""
+    if not metadata:
         return "gone", None
-    if pid <= 0 or pid == os.getpid():
-        return "gone", None
+    pid = metadata.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or pid == os.getpid():
+        return "unverifiable", None
     try:
         argv, created = _process_info(pid)
     except LookupError:
-        return "gone", None
+        return "gone", None  # the OS says no such process: independently established absence
     except Exception:
         return "unverifiable", None
     if not any(_DAEMON_MODULE in arg for arg in argv):
-        return "gone", None
+        return "unverifiable", None  # a live, unrelated process says nothing about our daemon
     if root is not None and _argv_serves_root(argv, root):
         # argv cannot prove which code is running (a shadow package passes every argv check): the
         # real daemon's HMAC over (pid, create_time, port, root, version) can, and the live
@@ -636,15 +641,32 @@ def _write_secret_windows(path: Path, payload: dict[str, Any]) -> None:
         _winsec.close_handle(handle)
         tmp.unlink(missing_ok=True)
         raise
-    _winsec.close_handle(handle)  # exclusive until now; the rename below needs it closed
-    replace_with_retry(tmp, path)
+    _winsec.close_handle(handle)  # exclusive until now; the publish below needs it closed
+    try:
+        _publish_bytes_no_clobber(tmp, path)  # hard link: fails if the secret already exists
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _after_parent_pinned(parent: Path) -> None:
     """Test seam: runs while the parent directory handle is held, before the secret is created."""
 
 
+def _write_secret_posix(path: Path, payload: dict[str, Any]) -> None:
+    """Publish the secret 0600 WITHOUT replacing an existing one (hard-link no-clobber)."""
+    atomic_write_bytes_anchored(
+        path, json.dumps(payload).encode("utf-8"), mode=_SECRET_FILE_MODE, replace=False
+    )
+
+
 def _load_or_create_user_secret() -> bytes | None:
+    """The per-user secret; created at most ONCE across every root/daemon of this user.
+
+    Creation is serialized with the repo's lock primitive (``index_lock``) in the same trusted
+    directory, absence is re-checked UNDER the lock, and the secret is published without replacing
+    an existing one; a secret that appeared meanwhile is read (normal trust checks) and used, so two
+    concurrent first uses can never invalidate attestations the other already signed.
+    """
     path = _daemon_secret_path()
     existing = _read_user_secret(path)
     if existing is not None:
@@ -664,12 +686,21 @@ def _load_or_create_user_secret() -> bytes | None:
         if not _parent_trusted(path.parent) or not _ancestors_trusted(path.parent):
             return None
         _after_parent_pinned(path.parent)
-        payload = {"secret": secrets.token_hex(32)}
-        if sys.platform == "win32":
-            _write_secret_windows(path, payload)
-        else:
-            _write_json_atomic(path, payload, mode=_SECRET_FILE_MODE)
-    except OSError:
+        with index_lock(path):
+            existing = _read_user_secret(path)  # re-check UNDER the lock, full trust checks
+            if existing is not None:
+                return existing
+            if os.path.lexists(path):
+                return None
+            payload = {"secret": secrets.token_hex(32)}
+            try:
+                if sys.platform == "win32":
+                    _write_secret_windows(path, payload)
+                else:
+                    _write_secret_posix(path, payload)
+            except FileExistsError:
+                pass  # lost a race the lock did not cover (e.g. a reclaimed stale lock): use theirs
+    except (OSError, IndexLockTimeoutError):
         return None
     finally:
         if pinned is not None:

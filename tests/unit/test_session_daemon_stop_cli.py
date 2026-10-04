@@ -168,3 +168,32 @@ def test_no_daemon_at_all_is_still_exit_0_not_running(tmp_path: Path, as_json: b
         assert payload["stopped"] is False
     else:
         assert "Session daemon not running" in done.stdout
+
+
+# ---- errors raised by the stop helper itself (round 4) ----
+
+
+@pytest.mark.parametrize("as_json", [True, False], ids=["json", "text"])
+def test_an_exception_exits_2_with_ascii_only_output_and_a_structured_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, as_json: bool
+) -> None:
+    from typer.testing import CliRunner
+
+    from tensor_grep.cli.main import app
+
+    def _boom(path: str) -> dict[str, Any]:
+        raise ValueError("bad root: caf\u00e9")
+
+    monkeypatch.setattr(sd, "stop_session_daemon", _boom)
+    args = ["session", "daemon", "stop", str(tmp_path), *(["--json"] if as_json else [])]
+    result = CliRunner().invoke(app, args)
+    assert result.exit_code == 2, (result.exit_code, result.output)
+    assert result.output.isascii(), repr(result.output)  # tg's own message: ASCII only
+    if as_json:
+        payload = json.loads(result.output)
+        assert payload["error"]["code"] == "stop_failed"
+        assert "caf\\xe9" in payload["error"]["message"]
+        assert payload["error"]["message"].isascii()
+    else:
+        assert "Session daemon stop failed" in result.output
+        assert "caf\\xe9" in result.output  # escaped, not printed

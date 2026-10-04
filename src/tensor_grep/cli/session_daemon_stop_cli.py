@@ -32,14 +32,23 @@ def run_session_daemon_stop(
     json_output: bool,
     with_schema_version: Callable[..., dict[str, Any]],
 ) -> int:
-    """Run the stop and print its result; returns the process exit code (0, 1 or 2)."""
+    """Run the stop and print its result; returns the process exit code (0 or 2)."""
     from tensor_grep.cli.session_daemon import stop_session_daemon
 
     try:
         payload = stop_session_daemon(path)
     except Exception as exc:
-        typer.echo(str(exc), err=True)
-        return 1
+        # tg's OWN message: ASCII only (non-ASCII in the exception text is escaped), exit 2, and a
+        # structured error in --json mode.
+        text = f"Session daemon stop failed: {exc}".encode("ascii", "backslashreplace").decode(
+            "ascii"
+        )
+        if json_output:
+            error = {"error": {"code": "stop_failed", "message": text}}
+            typer.echo(json.dumps(with_schema_version(error, version=1), indent=2))
+        else:
+            typer.echo(text, err=True)
+        return 2
 
     unconfirmed = payload.get("running") is True and not payload.get("stopped")
     if unconfirmed:
