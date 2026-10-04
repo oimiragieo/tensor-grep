@@ -176,6 +176,31 @@ def unified_incomplete_envelope(payload: dict[str, Any]) -> dict[str, Any]:
         scan_limit.get("budget_remediable") if isinstance(scan_limit, dict) else None
     )
 
+    # tg_search/tg_ast_search emit scan_limit {max_repo_files, scanned_files, possibly_truncated}
+    # WITHOUT a cause when only the per-call file-count cap tripped -- exactly what a larger
+    # max_repo_files fixes. Require the max_repo_files key so any other cause-less shape stays
+    # fail-closed.
+    # council wave-2b r28: infer ONLY for cap-only incompleteness. An explicit reason that is not
+    # a budget class (e.g. an AST backend failure) or a nested incompleteness means a bigger
+    # budget cannot make the answer complete, so the inference must not fire.
+    _explicit_reason = payload.get("incomplete_reason")
+    _explicit_is_budget = payload.get("incomplete_reason_class") in {
+        "scan_limit",
+        "deadline",
+        "timeout",
+    }
+    if (
+        scan_limit_truncated
+        and scan_limit_cause is None
+        and scan_limit_remediable is None
+        and isinstance(scan_limit, dict)
+        and "max_repo_files" in scan_limit
+        and (_explicit_reason is None or _explicit_is_budget)
+        and not nested_incomplete
+    ):
+        scan_limit_cause = "scan_limit"
+        scan_limit_remediable = True
+
     # unreadable_paths is `build_repo_map`'s own top-level signal, deliberately kept separate
     # from scan_limit (a permission-denied path is never fixed by raising a budget), with no
     # result_incomplete/truncated/partial sibling of its own -- another shape status must check.
