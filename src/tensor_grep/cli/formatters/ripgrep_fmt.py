@@ -1,3 +1,4 @@
+import sys
 from collections import defaultdict
 
 from tensor_grep.backends.rust_backend import _first_nul_offset
@@ -10,6 +11,7 @@ from tensor_grep.core.result import MatchLine, SearchResult
 class RipgrepFormatter(OutputFormatter):
     def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
+        self._column_notice_emitted = False
 
     @staticmethod
     def _binary_notice(file_path: str) -> str:
@@ -52,14 +54,16 @@ class RipgrepFormatter(OutputFormatter):
         if not pattern and self.config.regexp:
             pattern = self.config.regexp[0]
         is_literal = bool(self.config.fixed_strings) or not (_REGEX_META & set(pattern))
-        if not pattern or not is_literal:
-            # KNOWN APPROXIMATION: --column/--vimgrep mandate a column field (rg never omits it),
-            # so a regex line with no authoritative offset (rg submatches / CPUBackend's Python
-            # loop populate them; the native-engine result tuples do not) prints 1 rather than a
-            # guess from re-running the user's regex. JSON omits the field instead.
-            return 1
+        if not pattern:
+            return 1  # an empty pattern matches at the start of the line: column 1 is exact
+        if not is_literal:
+            # KNOWN APPROXIMATION: --column/--vimgrep mandate a column field (rg never omits it).
+            # A regex line with no authoritative offset prints 1 (never a guess from re-running
+            # the user's regex) and says so on stderr. The pipeline routes column requests to rg
+            # whenever rg exists, so this is only reached with rg absent.
+            return self._approximate_column()
         if self.config.word_regexp or self.config.line_regexp:
-            return 1  # find() ignores -w/-x boundaries -- never guess a column
+            return self._approximate_column()  # find() ignores -w/-x boundaries -- never guess
         # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
         ignore_case = bool(
             self.config.ignore_case
@@ -67,10 +71,16 @@ class RipgrepFormatter(OutputFormatter):
         )
         index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
         if index < 0:
-            return 1
+            return self._approximate_column()
         # ripgrep/--vimgrep columns are BYTE offsets, not character indices: advance
         # by the UTF-8 width of the text before the match (audit MED parity).
         return len(match.text[:index].encode("utf-8")) + 1
+
+    def _approximate_column(self) -> int:
+        if not self._column_notice_emitted:
+            self._column_notice_emitted = True
+            sys.stderr.write("tg: column approximated (1): rg not available for exact offsets\n")
+        return 1
 
     def _submatch_columns(self, match: MatchLine) -> list[int] | None:
         """rg's authoritative 1-based byte columns for every occurrence on this line.

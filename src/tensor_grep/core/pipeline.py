@@ -99,6 +99,16 @@ class Pipeline:
         )
 
     @staticmethod
+    def _needs_columns(config: SearchConfig | None) -> bool:
+        """True when the output renders a column (rg text --column / --vimgrep).
+
+        JSON does not count: it omits the field when no authoritative offset exists.
+        """
+        if config is None:
+            return False
+        return bool(config.vimgrep or (config.column and not config.no_column))
+
+    @staticmethod
     def _needs_python_cpu(config: SearchConfig | None) -> bool:
         if config is None:
             return False
@@ -302,6 +312,21 @@ class Pipeline:
                 else:
                     self.backend = CPUBackend()
                     selected_backend_reason = "count_python_cpu_semantics"
+            elif (
+                config
+                and self._needs_columns(config)
+                and rg_available
+                and not config.ast
+                and not config.count
+                and not config.ltl
+                and not config.gpu_device_ids
+                and query_type is not QueryType.NLP
+            ):
+                # Only rg returns per-match submatch byte offsets; the native/CPU engines return
+                # (line, text) only, so a column rendered from them would be a guess. Sits before
+                # the force_cpu arm for the same reason the -c semantics guard does.
+                self.backend = rg_backend
+                selected_backend_reason = "column_rg_offsets"
             elif force_cpu:
                 if rust_available and not needs_python_cpu:
                     self.backend = rust_backend
