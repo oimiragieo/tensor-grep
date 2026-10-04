@@ -1299,3 +1299,139 @@ def test_lowercase_cachedir_tag_on_a_case_sensitive_filesystem_is_an_ordinary_le
     assert "cache" not in population["pruned_set"]  # not treated as a CACHEDIR tag
     assert files["cache/cachedir.tag"] == "file:" + hashlib.sha256(valid).hexdigest()
     assert "cache/x.py" in files
+
+
+# ---- round 22: deep ordinary trees (the walk must be iterative, not recursive) ----
+
+_DEEP = 1100  # past Python's default recursion limit (1000) with room to spare
+
+
+def _make_deep_tree(root: Path, depth: int) -> Path:
+    current = str(root)
+    try:
+        for _ in range(depth):
+            current = os.path.join(current, "d")
+            os.mkdir(current)
+    except OSError as exc:
+        pytest.skip(f"cannot create a {depth}-level tree here (long paths / limits): {exc}")
+    return Path(current)
+
+
+def _remove_deep_tree(root: Path) -> None:
+    # shutil.rmtree / os.walk are recursive on some supported Pythons; use the OS
+    if sys.platform == "win32":
+        subprocess.run(
+            ["cmd", "/c", "rmdir", "/s", "/q", "\\\\?\\" + str(root)],
+            check=False,
+            timeout=120,
+            capture_output=True,
+        )
+    else:
+        subprocess.run(["rm", "-rf", str(root)], check=False, timeout=120)
+
+
+def _skip_if_fd_limit_too_low() -> None:
+    if sys.platform != "win32":
+        import resource
+
+        soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft != resource.RLIM_INFINITY and soft < _DEEP + 200:
+            pytest.skip(f"RLIMIT_NOFILE {soft} too low to hold a {_DEEP}-deep fd chain")
+
+
+def test_deep_ordinary_tree_mints_and_verifies_pass_unchanged(tmp_path: Path) -> None:
+    _skip_if_fd_limit_too_low()
+    root = tmp_path / "deep"
+    root.mkdir()
+    bottom = _make_deep_tree(root, _DEEP)
+    try:
+        (bottom / "f.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+        ticket = _ticket(root)  # used to raise RecursionError after ~997 directory tuples
+        assert ticket.population_status["status"] == "complete", ticket.population_status
+        assert len(ticket.pre_edit_fingerprints) == 2
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "PASS"
+    finally:
+        _remove_deep_tree(root)
+
+
+def test_undeclared_edit_at_the_bottom_of_a_deep_tree_fails_verify(tmp_path: Path) -> None:
+    _skip_if_fd_limit_too_low()
+    root = tmp_path / "deep"
+    root.mkdir()
+    bottom = _make_deep_tree(root, _DEEP)
+    try:
+        (bottom / "f.py").write_text("x = 1\n", encoding="utf-8")
+        (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+        ticket = _ticket(root)
+        (bottom / "f.py").write_text("x = 2\n", encoding="utf-8")
+        result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+        assert result["verdict"] == "FAIL"
+        assert len(result["violations"]) == 1
+        assert result["violations"][0].endswith("d/f.py")
+    finally:
+        _remove_deep_tree(root)
+
+
+def _process_handle_count() -> int | None:
+    if sys.platform != "win32":
+        return len(os.listdir("/proc/self/fd")) if os.path.isdir("/proc/self/fd") else None
+    import ctypes
+    from ctypes import wintypes
+
+    count = wintypes.DWORD(0)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessHandleCount.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+    if not kernel32.GetProcessHandleCount(kernel32.GetCurrentProcess(), ctypes.byref(count)):
+        return None
+    return int(count.value)
+
+
+def test_early_termination_mid_walk_leaves_every_handle_closed(tmp_path: Path) -> None:
+    # a 60-level tree with a file at every level; max_files=3 stops the walk deep inside it
+    root = tmp_path / "tree"
+    root.mkdir()
+    current = root
+    for i in range(60):
+        (current / f"f{i}.py").write_text("x\n", encoding="utf-8")
+        current = current / "d"
+        current.mkdir()
+
+    def _once() -> dict[str, object]:
+        _files, population = _walk_tracked_files_bounded(root, max_files=3)
+        return population
+
+    population = _once()  # warm-up
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "file_count_limit"
+    before = _process_handle_count()
+    if before is None:
+        pytest.skip("no handle/fd counter on this platform")
+    for _ in range(20):
+        _once()
+    after = _process_handle_count()
+    assert after is not None
+    assert after - before <= 3, f"handles grew {before} -> {after} across 20 early-terminated walks"
+
+
+def test_closing_the_walk_generator_mid_iteration_closes_every_held_handle(tmp_path: Path) -> None:
+    root = tmp_path / "tree"
+    root.mkdir()
+    current = root
+    for _ in range(40):
+        current = current / "d"
+        current.mkdir()
+    before = _process_handle_count()
+    if before is None:
+        pytest.skip("no handle/fd counter on this platform")
+    gen = edit_ticket_service._default_walk(root, lambda exc: (_ for _ in ()).throw(exc))
+    for _ in range(25):  # 25 directories deep: 25 handles / fds held
+        next(gen)
+    held = _process_handle_count()
+    assert held is not None and held - before >= 20  # the chain really is held open
+    gen.close()
+    after = _process_handle_count()
+    assert after is not None
+    assert after - before <= 3, f"handles {before} -> {held} -> {after} after close()"

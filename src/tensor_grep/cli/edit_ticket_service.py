@@ -484,25 +484,101 @@ class _DirHandle:
             closer()
 
 
-def _fwalk_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
-    """POSIX: list through an open dirfd; register it so leaf ops are `dir_fd`-relative."""
-    fwalk = getattr(os, "fwalk")  # noqa: B009 - absent on Windows (and from its typeshed)
+# The walks below are ITERATIVE (an explicit stack of frames that own their open directory), never
+# recursive: a recursive generator chain raises RecursionError after ~1000 directory tuples, which
+# is far below every count and byte limit, so an unchanged deep tree could never verify.
+# `os.fwalk` is NOT used: CPython 3.12+ implements it with an explicit stack, but CPython <= 3.11
+# (this project supports >= 3.11) implements `_fwalk` as a recursive `yield from _fwalk(...)`
+# (checked in the installed 3.11 and 3.12 `Lib/os.py`). The depth of an fd chain is bounded by
+# RLIMIT_NOFILE (POSIX) / available handles (Windows): running out is `unreadable_path`
+# (incomplete) through the same OSError mapping as any other failure to open a directory.
+
+
+class _FdFrame:
+    """One open directory on the iterative walk's stack."""
+
+    __slots__ = ("fd", "path", "pending")
+
+    def __init__(self, path: str, fd: int) -> None:
+        self.path = path
+        self.fd = fd
+        self.pending: list[str] = []  # children still to descend into (reversed: pop() = next)
+
+
+def _fd_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
+    """POSIX: list through an open dirfd; every directory is opened `O_NOFOLLOW | O_DIRECTORY`
+    RELATIVE to its parent's dirfd; registered so leaf ops are `dir_fd`-relative."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     fds = _ctx_dirfds()
-    for dirpath, dirnames, filenames, dirfd in fwalk(
-        os.fspath(top), topdown=True, onerror=onerror, follow_symlinks=False
-    ):
-        st = os.fstat(dirfd)
-        key = str(Path(dirpath))
-        fds[key] = dirfd
+    stack: list[_FdFrame] = []
+
+    def _listing(fd: int) -> tuple[list[str], list[str]] | None:
         try:
-            yield (
-                dirpath,
-                dirnames,
-                filenames,
-                _DirHandle((st.st_dev, st.st_ino), stat.S_ISDIR(st.st_mode)),
-            )
+            with os.scandir(fd) as it:
+                entries = list(it)
+        except OSError as exc:
+            onerror(exc)
+            return None
+        dirs: list[str] = []
+        files: list[str] = []
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                is_dir = False  # listed as a file; the leaf check refuses a directory there
+            (dirs if is_dir else files).append(entry.name)
+        return dirs, files
+
+    def _enter(path: str, fd: int) -> Iterator[tuple[str, list[str], list[str], Any]]:
+        listing = _listing(fd)
+        if listing is None:
+            os.close(fd)
+            return
+        dirs, files = listing
+        frame = _FdFrame(path, fd)
+        stack.append(frame)  # owned by the stack BEFORE the consumer can interrupt us
+        st = os.fstat(fd)
+        key = str(Path(path))
+        fds[key] = fd
+        try:
+            yield path, dirs, files, _DirHandle((st.st_dev, st.st_ino), stat.S_ISDIR(st.st_mode))
         finally:
             fds.pop(key, None)
+        frame.pending = list(reversed(dirs))  # the consumer prunes `dirs` in place
+
+    top_s = os.fspath(top)
+    try:
+        try:
+            root_fd = _os_open_dir(top_s, flags)
+        except OSError as exc:
+            onerror(exc)
+            return
+        yield from _enter(top_s, root_fd)
+        while stack:
+            frame = stack[-1]
+            if not frame.pending:
+                stack.pop()
+                os.close(frame.fd)
+                continue
+            name = frame.pending.pop()
+            child = os.path.join(frame.path, name)
+            try:
+                child_fd = os.open(name, flags, dir_fd=frame.fd)
+            except OSError as exc:
+                raise _PopulationWalkError("unreadable_path") from exc
+            yield from _enter(child, child_fd)
+    finally:
+        while stack:
+            os.close(stack.pop().fd)
+
+
+def _os_open_dir(path: str, flags: int) -> int:
+    return os.open(path, flags)
 
 
 if sys.platform == "win32":
@@ -599,55 +675,87 @@ else:
         raise OSError("held directory handles are Windows-only")
 
 
+class _HeldFrame:
+    """One held directory on the iterative Windows walk's stack."""
+
+    __slots__ = ("held", "path", "pending")
+
+    def __init__(self, path: str, held: _DirHandle) -> None:
+        self.path = path
+        self.held = held
+        self.pending: list[str] = []
+
+
 def _held_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
-    """Windows: a top-down walk holding every directory of the current chain open."""
+    """Windows: a top-down, ITERATIVE walk holding every directory of the current chain open.
+
+    Each stack frame owns its held handle and its pending children; a child is held (and checked
+    not to be a reparse point) before it is listed, pushed, and popped + closed when its subtree
+    is done. Everything still on the stack is closed in `finally` (early break, exception,
+    `close()`)."""
+    stack: list[_HeldFrame] = []
+
+    def _listing(path: str) -> tuple[list[str], list[str]] | None:
+        try:
+            with os.scandir(path) as it:
+                entries = list(it)
+        except OSError as exc:
+            onerror(exc)
+            return None
+        dirs: list[str] = []
+        files: list[str] = []
+        for entry in entries:
+            try:
+                is_dir = entry.is_dir()
+            except OSError:
+                is_dir = False  # listed as a file; the leaf check refuses a directory there
+            (dirs if is_dir else files).append(entry.name)
+        return dirs, files
+
+    def _enter(path: str, held: _DirHandle) -> Iterator[tuple[str, list[str], list[str], Any]]:
+        try:
+            listing = _listing(path)
+        except BaseException:
+            held.close()
+            raise
+        if listing is None:
+            held.close()
+            return
+        dirs, files = listing
+        frame = _HeldFrame(path, held)
+        stack.append(frame)  # owned by the stack BEFORE the consumer can interrupt us
+        yield path, dirs, files, held
+        frame.pending = list(reversed(dirs))  # the consumer prunes `dirs` in place
+
     top_s = os.fspath(top)
     try:
-        held = _hold_dir(top_s)
-    except OSError as exc:
-        onerror(exc)
-        return
-    try:
-        yield from _held_walk_rec(top_s, held, onerror)
-    finally:
-        held.close()
-
-
-def _held_walk_rec(
-    path: str, held: _DirHandle, onerror: Any
-) -> Iterator[tuple[str, list[str], list[str], Any]]:
-    try:
-        with os.scandir(path) as it:
-            entries = list(it)
-    except OSError as exc:
-        onerror(exc)
-        return
-    dirs: list[str] = []
-    files: list[str] = []
-    for entry in entries:
         try:
-            is_dir = entry.is_dir()
-        except OSError:
-            is_dir = False  # listed as a file; the leaf check refuses a directory there
-        (dirs if is_dir else files).append(entry.name)
-    yield path, dirs, files, held
-    for name in list(dirs):  # the consumer prunes `dirs` in place
-        child = os.path.join(path, name)
-        try:
-            child_held = _hold_dir(child)
+            root_held = _hold_dir(top_s)
         except OSError as exc:
-            raise _PopulationWalkError("unreadable_path") from exc
-        try:
-            yield from _held_walk_rec(child, child_held, onerror)
-        finally:
-            child_held.close()
+            onerror(exc)
+            return
+        yield from _enter(top_s, root_held)
+        while stack:
+            frame = stack[-1]
+            if not frame.pending:
+                stack.pop().held.close()
+                continue
+            child = os.path.join(frame.path, frame.pending.pop())
+            try:
+                child_held = _hold_dir(child)
+            except OSError as exc:
+                raise _PopulationWalkError("unreadable_path") from exc
+            yield from _enter(child, child_held)
+    finally:
+        while stack:
+            stack.pop().held.close()
 
 
 def _default_walk(top: str | Path, onerror: Any) -> Iterator[tuple[str, list[str], list[str], Any]]:
-    if hasattr(os, "fwalk"):
-        yield from _fwalk_walk(top, onerror)
-    else:
+    if sys.platform == "win32":
         yield from _held_walk(top, onerror)
+    else:
+        yield from _fd_walk(top, onerror)
 
 
 _walk_impl = _default_walk  # private seam: tests drive/wrap the walk through this
