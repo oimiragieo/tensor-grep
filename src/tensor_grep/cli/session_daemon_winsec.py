@@ -89,6 +89,58 @@ def open_no_follow(
     return handle
 
 
+def link_count(handle: Any) -> int | None:
+    """``nNumberOfLinks`` of the file behind the OPEN ``handle`` (``None`` on failure)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _Info(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetFileInformationByHandle.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Info)]
+    k32.GetFileInformationByHandle.restype = wintypes.BOOL
+    info = _Info()
+    if not k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        return None
+    return int(info.nNumberOfLinks)
+
+
+def final_path(handle: Any) -> str | None:
+    """``GetFinalPathNameByHandleW`` of the OPEN ``handle`` (normalized DOS name), or ``None``."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetFinalPathNameByHandleW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    k32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    buf = ctypes.create_unicode_buffer(32768)
+    length = k32.GetFinalPathNameByHandleW(handle, buf, 32768, 0)
+    if length == 0 or length >= 32768:
+        return None
+    return str(buf.value)
+
+
 def close_handle(handle: Any) -> None:
     if sys.platform != "win32":
         return

@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import hmac
 import json
+import ntpath
 import os
 import re
 import secrets
@@ -391,9 +392,24 @@ def _verify_attestation(metadata: dict[str, Any], root: Path) -> bool:
     return hmac.compare_digest(attestation.encode("ascii"), expected.encode("ascii"))
 
 
-def _unconfirmed_fields(state: str, delivered: bool) -> dict[str, Any]:
+# The closed sets the stop / status exit table (``session_daemon_stop_cli``) recognises. Every reason
+# and proof a producer below can emit must be a member (a test derives the producers' literals).
+_UNCONFIRMED_REASONS = (
+    "pid_unproven",
+    "termination_failed",
+    "no_bound_process_handle",
+    "endpoint_still_accepting_connections",
+    "endpoint_unverifiable",
+    "stop_not_confirmed",
+)
+_STOP_PROOFS = ("no_metadata", "endpoint_refused", "cooperative_refused", "pid_refused")
+
+
+def _unconfirmed_fields(state: str, delivered: bool, endpoint_ok: bool = True) -> dict[str, Any]:
     """The honest stop result when shutdown cannot be confirmed: still running, not stopped."""
-    if delivered:
+    if not endpoint_ok:
+        reason = "endpoint_unverifiable"
+    elif delivered:
         reason = "endpoint_still_accepting_connections"
     elif state == "ours" and _last_refusal == "no_bound_process_handle":
         reason = "no_bound_process_handle"
@@ -402,6 +418,58 @@ def _unconfirmed_fields(state: str, delivered: bool) -> dict[str, Any]:
             state, "stop_not_confirmed"
         )
     return {"running": True, "stopped": False, "stop_method": "none", "unconfirmed_reason": reason}
+
+
+def _stale_unconfirmed(
+    metadata: dict[str, Any] | None, state: str, timeout_seconds: float
+) -> dict[str, Any] | None:
+    """``None`` iff removing the stale metadata is justified by PROVEN absence; else the unconfirmed
+    fields. Existing metadata needs a REFUSED connection on its recorded endpoint: a dead pid alone
+    does not prove the listener is gone, and a missing / null / invalid endpoint cannot be checked
+    at all (so it is never silently treated as stopped)."""
+    if state != "gone":
+        return _unconfirmed_fields(state, False)
+    if not metadata:
+        return None  # nothing recorded: nothing alive to be unsure about
+    host, port = metadata.get("host", DAEMON_HOST), metadata.get("port")
+    if _valid_daemon_port(port) is None or not _is_loopback_host(host):
+        return _unconfirmed_fields("gone", False, endpoint_ok=False)
+    if not _await_endpoint_refused(host, port, timeout_seconds):
+        return _unconfirmed_fields("gone", True)
+    return None
+
+
+def _stale_success_fields(killed: bool, had_metadata: bool) -> dict[str, Any]:
+    """Stale-branch success: ``proof`` names why exiting 0 is justified."""
+    proof = "pid_refused" if killed else ("endpoint_refused" if had_metadata else "no_metadata")
+    return {
+        "running": False,
+        "stopped": killed,
+        "stop_method": "pid" if killed else "none",
+        "proof": proof,
+        **_pid_guard_field(killed),
+    }
+
+
+def _stop_success(response: dict[str, Any], root: Path, stop_method: str) -> dict[str, Any]:
+    """Probed-branch success. A failed / unauthorized stop REPLY that a proven shutdown superseded is
+    moved to ``stop_reply_error`` so the result is an explicit success with no retained ``error``."""
+    out = dict(response)
+    reply_error = out.pop("error", None)
+    if reply_error is not None:
+        out["stop_reply_error"] = reply_error
+    proof = {"cooperative": "cooperative_refused", "pid": "pid_refused"}.get(
+        stop_method, "endpoint_refused"
+    )
+    out.update(
+        root=str(root),
+        running=False,
+        stopped=stop_method != "none",
+        stop_method=stop_method,
+        proof=proof,
+    )
+    out.update(_pid_guard_field(stop_method == "pid"))
+    return out
 
 
 def _await_endpoint_refused(
@@ -501,6 +569,15 @@ def _between_validate_and_read(path: Path) -> None:
     """Test seam: runs after the opened object was validated and before it is read."""
 
 
+def _parent_handle_ok(handle: Any) -> bool:
+    """Windows: the secret's directory, judged through its OPEN handle: owned by the current user and
+    its OWN DACL grants no foreign principal a dangerous right."""
+    if not _windows_handle_trusted(handle, check_dacl=False):
+        return False
+    queried = _win_dacl_entries(handle)
+    return queried is not None and _windows_parent_dacl_ok(queried[1])
+
+
 def _parent_trusted(parent: Path) -> bool:
     """The secret's directory is a real directory (no symlink/junction) owned by this user."""
     if sys.platform == "win32":
@@ -508,10 +585,7 @@ def _parent_trusted(parent: Path) -> bool:
         if handle is None:
             return False
         try:
-            if not _windows_handle_trusted(handle, check_dacl=False):
-                return False
-            queried = _win_dacl_entries(handle)  # the directory's OWN DACL too, not just owner
-            return queried is not None and _windows_parent_dacl_ok(queried[1])
+            return _parent_handle_ok(handle)
         finally:
             _winsec.close_handle(handle)
     try:
@@ -540,6 +614,32 @@ _WIN_TRUSTED_PRINCIPALS = frozenset({"S-1-5-18", "S-1-5-32-544", "S-1-3-0", "S-1
 # Rights that let a principal REPLACE or RENAME a path component: FILE_DELETE_CHILD, WRITE_DAC,
 # WRITE_OWNER, GENERIC_ALL (generic bits only appear in unmapped ACEs).
 _WIN_REPLACE_MASK = 0x40 | 0x40000 | 0x80000 | 0x10000000
+
+
+# Ancestor OWNERS we accept: an owner implicitly holds WRITE_DAC and can grant itself any right.
+_WIN_TRUSTED_OWNERS = frozenset({
+    "S-1-5-18",  # SYSTEM
+    "S-1-5-32-544",  # Administrators
+    "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464",  # TrustedInstaller
+})
+
+
+def _windows_owner_ok(owner: object, user_sid: str | None) -> bool:
+    return isinstance(owner, str) and (owner == user_sid or owner in _WIN_TRUSTED_OWNERS)
+
+
+def _strip_nt_prefix(path: str) -> str:
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    return path[4:] if path.startswith("\\\\?\\") else path
+
+
+def _file_bound_to_parent(file_final: str | None, parent_final: str | None) -> bool:
+    """The opened file's FINAL path lives directly in the pinned directory's FINAL path."""
+    if not file_final or not parent_final:
+        return False
+    file_dir = ntpath.normcase(ntpath.dirname(_strip_nt_prefix(file_final)))
+    return file_dir == ntpath.normcase(_strip_nt_prefix(parent_final)).rstrip("\\")
 
 
 def _windows_ancestor_dacl_ok(entries: list[tuple[str, int]], user_sid: str | None = None) -> bool:
@@ -614,7 +714,9 @@ def _ancestors_trusted(parent: Path) -> bool:
                 queried = _win_dacl_entries(handle)
             finally:
                 _winsec.close_handle(handle)
-            if queried is None or not _windows_ancestor_dacl_ok(queried[1], user):
+            if queried is None or not _windows_owner_ok(queried[0], user):
+                return False  # a foreign owner can WRITE_DAC: its DACL proves nothing
+            if not _windows_ancestor_dacl_ok(queried[1], user):
                 return False
         return True
     try:
@@ -634,37 +736,79 @@ def _ancestors_trusted(parent: Path) -> bool:
         return False
 
 
-def _read_secret_bytes(path: Path) -> bytes | None:
-    """Open ONCE without following links, validate that opened object, read through the SAME fd."""
-    if not _parent_trusted(path.parent) or not _ancestors_trusted(path.parent):
+def _read_secret_windows(path: Path) -> bytes | None:
+    """Open and PIN the directory (no FILE_SHARE_DELETE: it cannot be renamed away), vet it through
+    its handle, check the ancestors (defence in depth), then open the secret FILE once without
+    following links and validate THAT handle -- owner = current user, DACL = user / SYSTEM /
+    Administrators, ``nlink == 1``, final path directly inside the pinned directory -- and read the
+    bytes through the same handle. A swapped ancestor is DoS at worst, never a trusted foreign file."""
+    parent = _winsec.open_no_follow(str(path.parent), directory=True, share=0x3)
+    if parent is None:
         return None
-    if sys.platform == "win32":
+    try:
+        if not _parent_handle_ok(parent) or not _ancestors_trusted(path.parent):
+            return None
         handle = _winsec.open_no_follow(str(path))
         if handle is None:
             return None
         try:
             if not _windows_handle_trusted(handle, check_dacl=True):
                 return None
+            if _winsec.link_count(handle) != 1:
+                return None  # another name reaches the content
+            if not _file_bound_to_parent(_winsec.final_path(handle), _winsec.final_path(parent)):
+                return None
             _between_validate_and_read(path)
             return _winsec.read_all(handle)
         finally:
             _winsec.close_handle(handle)
-    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
-    try:
-        fd = os.open(path, flags)
-    except OSError:
-        return None
-    try:
-        st = os.fstat(fd)
-        if not _stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
-            return None
-        _between_validate_and_read(path)
-        data = os.read(fd, _MAX_SECRET_FILE_BYTES + 1)
-    except OSError:
-        return None
     finally:
-        os.close(fd)
+        _winsec.close_handle(parent)
+
+
+def _read_secret_posix(path: Path) -> bytes | None:
+    """``O_NOFOLLOW`` open of the directory, ``fstat`` owner/mode, then the file is opened RELATIVE to
+    that dirfd with ``O_NOFOLLOW`` and ``fstat``-checked (owner, 0600-ish mode, ``nlink == 1``); the
+    bytes are read through the same fd. Fails closed where ``dir_fd`` is unsupported."""
+    if sys.platform == "win32" or os.open not in os.supports_dir_fd:
+        return None
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    try:
+        dfd = os.open(
+            path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW | cloexec
+        )
+    except OSError:
+        return None
+    try:
+        dst = os.fstat(dfd)
+        if not _stat.S_ISDIR(dst.st_mode) or dst.st_uid != os.geteuid() or dst.st_mode & 0o022:
+            return None
+        if not _ancestors_trusted(path.parent):
+            return None
+        try:
+            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | cloexec, dir_fd=dfd)
+        except OSError:
+            return None
+        try:
+            st = os.fstat(fd)
+            if not _stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o077:
+                return None
+            if st.st_nlink != 1:
+                return None  # another name reaches the content
+            _between_validate_and_read(path)
+            data = os.read(fd, _MAX_SECRET_FILE_BYTES + 1)
+        except OSError:
+            return None
+        finally:
+            os.close(fd)
+    finally:
+        os.close(dfd)
     return data if len(data) <= _MAX_SECRET_FILE_BYTES else None
+
+
+def _read_secret_bytes(path: Path) -> bytes | None:
+    """Verify the secret THROUGH the handle that reads it, not by pathname."""
+    return _read_secret_windows(path) if sys.platform == "win32" else _read_secret_posix(path)
 
 
 def _read_user_secret(path: Path) -> bytes | None:
@@ -789,10 +933,42 @@ def _extra_links(path: Path) -> bool:
 
 
 def _write_secret_posix(path: Path, payload: dict[str, Any]) -> None:
-    """Publish the secret 0600 WITHOUT replacing an existing one (hard-link no-clobber)."""
-    atomic_write_bytes_anchored(
-        path, json.dumps(payload).encode("utf-8"), mode=_SECRET_FILE_MODE, replace=False
+    """Publish the secret 0600 WITHOUT replacing an existing one (hard-link no-clobber).
+
+    Where ``dir_fd`` is supported the temp file is created, linked and unlinked RELATIVE to a verified
+    directory fd (so a swapped path component cannot redirect the write); otherwise it falls back to the
+    path-based shared helper (creation only -- every READ is by fd regardless)."""
+    data = json.dumps(payload).encode("utf-8")
+    if sys.platform == "win32":
+        raise OSError("POSIX secret writer on win32")
+    if os.open not in os.supports_dir_fd or os.link not in os.supports_dir_fd:
+        atomic_write_bytes_anchored(path, data, mode=_SECRET_FILE_MODE, replace=False)
+        return
+    cloexec = getattr(os, "O_CLOEXEC", 0)
+    dfd = os.open(
+        path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW | cloexec
     )
+    try:
+        st = os.fstat(dfd)
+        if not _stat.S_ISDIR(st.st_mode) or st.st_uid != os.geteuid() or st.st_mode & 0o022:
+            raise OSError("secret directory is not a private directory owned by this user")
+        tmp_name = f".{path.name}.{uuid4().hex}.tmp"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | cloexec
+        fd = os.open(tmp_name, flags, _SECRET_FILE_MODE, dir_fd=dfd)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                os.fchmod(handle.fileno(), _SECRET_FILE_MODE)
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.link(tmp_name, path.name, src_dir_fd=dfd, dst_dir_fd=dfd)  # fails if it exists
+        finally:
+            try:
+                os.unlink(tmp_name, dir_fd=dfd)
+            except FileNotFoundError:
+                pass
+    finally:
+        os.close(dfd)
 
 
 def _load_or_create_user_secret() -> bytes | None:
@@ -804,11 +980,12 @@ def _load_or_create_user_secret() -> bytes | None:
     concurrent first uses can never invalidate attestations the other already signed.
     """
     path = _daemon_secret_path()
-    existing = _read_user_secret(path)
+    existing = _read_user_secret(path)  # the reader requires nlink == 1, so a value is link-clean
     if existing is not None:
-        if _extra_links(path):  # a writer was killed between link and unlink: recover (rare path)
-            _recover_under_lock(path)
         return existing
+    if _extra_links(path):  # a writer killed between link and unlink left a second name: recover
+        _recover_under_lock(path)
+        return _read_user_secret(path)  # still untrusted -> None (never overwritten)
     if os.path.lexists(path):
         return None  # present but untrusted (or unreadable): never use it, never overwrite it
     pinned: Any = None

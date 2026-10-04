@@ -8645,26 +8645,9 @@ def session_daemon_status(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON output."),
 ) -> None:
     """Show daemon status for the current root."""
-    from tensor_grep.cli.session_daemon import get_session_daemon_status
+    from tensor_grep.cli.session_daemon_stop_cli import run_session_daemon_status
 
-    try:
-        payload = get_session_daemon_status(path)
-    except Exception as exc:
-        typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
-
-    if json_output:
-        typer.echo(json.dumps(_with_schema_version(payload, version=1), indent=2))
-        return
-
-    if payload.get("running"):
-        typer.echo(
-            f"Session daemon running on {payload['host']}:{payload['port']} pid={payload['pid']}"
-        )
-        if payload.get("response_cache_scope"):
-            typer.echo(f"response_cache_scope={payload['response_cache_scope']}")
-    else:
-        typer.echo("Session daemon not running")
+    raise typer.Exit(run_session_daemon_status(path, json_output, _with_schema_version))
 
 
 @session_daemon_app.command("stop")

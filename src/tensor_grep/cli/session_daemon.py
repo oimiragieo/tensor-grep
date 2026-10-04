@@ -36,11 +36,13 @@ from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported f
     _endpoint_flag,
     _is_loopback_host,
     _load_or_create_user_secret,
-    _pid_guard_field,
     _ping_proof_fields,
     _process_info,
     _read_user_secret,
     _refresh_failed_error,
+    _stale_success_fields,
+    _stale_unconfirmed,
+    _stop_success,
     _terminate_identified,
     _unconfirmed_fields,
     _valid_daemon_port,
@@ -882,22 +884,12 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # a delivered signal, the connection is refused. A live process we could not stop (ours but
         # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.
         state = "gone" if killed else _daemon_pid_state(stale_metadata, root)
-        # A recorded endpoint must REFUSE connections before ANY removal (a dead pid alone does not
-        # prove the listener is gone); if it accepts or cannot be checked, keep daemon.json.
-        endpoint_recorded = (stale_metadata or {}).get("port") is not None
-        if state != "gone" or (
-            (killed or endpoint_recorded)
-            and not _await_endpoint_refused(
-                (stale_metadata or {}).get("host", _DAEMON_HOST),
-                (stale_metadata or {}).get("port"),
-                _DAEMON_START_TIMEOUT_SECONDS,
-            )
-        ):
-            return {
-                "version": _SESSION_VERSION,
-                "root": str(root),
-                **_unconfirmed_fields(state, state == "gone"),
-            }
+        # EXISTING metadata must be proven stale by a REFUSED connection before ANY removal (a dead
+        # pid alone does not prove the listener is gone); a missing / null / invalid endpoint cannot
+        # be checked, so it is unconfirmed too: keep daemon.json (see _stale_unconfirmed).
+        blocked = _stale_unconfirmed(stale_metadata, state, _DAEMON_START_TIMEOUT_SECONDS)
+        if blocked is not None:
+            return {"version": _SESSION_VERSION, "root": str(root), **blocked}
         # Task #143a-a: only remove the metadata that still identifies the STALE daemon we just
         # targeted -- never whatever happens to be on disk by the time we get here. A concurrent
         # autostart elsewhere may have already spawned and published a healthy replacement's
@@ -911,10 +903,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
-            "running": False,
-            "stopped": killed,
-            "stop_method": "pid" if killed else "none",
-            **_pid_guard_field(killed),
+            **_stale_success_fields(killed, bool(stale_metadata)),
         }
     response: dict[str, Any]
     try:
@@ -978,12 +967,7 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     target_pid, target_port = _daemon_identity(metadata)
     if target_pid is not None:
         _remove_daemon_metadata(root, expected_pid=target_pid, expected_port=target_port)
-    response["running"] = False
-    response["root"] = str(root)
-    response["stopped"] = stop_method != "none"  # "none": no evidence it ended
-    response["stop_method"] = stop_method
-    response.update(_pid_guard_field(stop_method == "pid"))
-    return response
+    return _stop_success(response, root, stop_method)
 
 
 def _daemon_response_timeout() -> float:

@@ -30,9 +30,28 @@ import pytest
 from tensor_grep.cli import session_daemon as sd
 from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli.session_daemon_stop_cli import stop_exit_code
 
 _MODULE = "tensor_grep.cli.session_daemon"
 _PY = "python"
+
+
+def _bound_primitive_available() -> bool:
+    """A kernel handle that can pin a process exists: always on Windows, pidfd on Linux 5.3+."""
+    import signal
+
+    if sys.platform == "win32":
+        return True
+    if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")):
+        return False
+    try:
+        os.close(os.pidfd_open(os.getpid()))
+    except OSError:
+        return False
+    return True
+
+
+_BOUND = _bound_primitive_available()
 
 
 @pytest.fixture(autouse=True)
@@ -247,10 +266,20 @@ def test_a_real_daemon_serving_this_root_is_signalled_control(
         monkeypatch.setattr(sd, "_probe_daemon", lambda _root: None)
         assert trust._daemon_pid_state(sd._read_daemon_metadata(root), root) == "ours"
         result = sd.stop_session_daemon(str(root))
+        if not _BOUND:
+            import psutil as _ps
+
+            assert result["running"] is True and result["stopped"] is False
+            assert result["unconfirmed_reason"] == "no_bound_process_handle"
+            assert stop_exit_code(result) == 2
+            assert _ps.pid_exists(daemon_pid)
+            assert sd._read_daemon_metadata(root) is not None
+            return
         assert result["running"] is False
         assert result["stopped"] is True
         assert result["stop_method"] == "pid"
-        assert result["pid_reuse_guard"] in {"handle", "pidfd", "recheck"}
+        assert stop_exit_code(result) == 0
+        assert result["pid_reuse_guard"] in {"handle", "pidfd"}
         if sys.platform == "win32":
             assert result["pid_reuse_guard"] == "handle"
         import psutil
@@ -289,8 +318,11 @@ def test_seam_different_root_refused_and_same_root_signalled(
         monkeypatch.setattr(trust, "_process_info", lambda pid: infos[pid])
         assert sd._terminate_daemon_by_pid(_signed_meta(root, victim.pid), root=root) is False
         assert victim.poll() is None
-        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
-        mine.wait(timeout=10)
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is _BOUND
+        if _BOUND:
+            mine.wait(timeout=10)
+        else:
+            assert mine.poll() is None
     finally:
         _reap(victim)
         _reap(mine)
@@ -311,8 +343,11 @@ def test_root_spellings_that_resolve_to_the_same_root_are_accepted(
     mine = _sleeper()
     try:
         monkeypatch.setattr(trust, "_process_info", _fake_info(mine, [_PY, "-m", _MODULE, *tail]))
-        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
-        mine.wait(timeout=10)
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is _BOUND
+        if _BOUND:
+            mine.wait(timeout=10)
+        else:
+            assert mine.poll() is None
     finally:
         _reap(mine)
 
@@ -389,8 +424,11 @@ def test_an_unchanged_create_time_is_signalled_control(
             "_process_info",
             _fake_info(mine, [_PY, "-m", _MODULE, "--root", str(root)]),
         )
-        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is True
-        mine.wait(timeout=10)
+        assert sd._terminate_daemon_by_pid(_signed_meta(root, mine.pid), root=root) is _BOUND
+        if _BOUND:
+            mine.wait(timeout=10)
+        else:
+            assert mine.poll() is None
     finally:
         _reap(mine)
 

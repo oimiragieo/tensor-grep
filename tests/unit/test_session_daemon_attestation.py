@@ -29,9 +29,28 @@ import pytest
 from tensor_grep.cli import session_daemon as sd
 from tensor_grep.cli import session_daemon_trust as trust
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli.session_daemon_stop_cli import stop_exit_code
 
 _MODULE = "tensor_grep.cli.session_daemon"
 _PY = "python"
+
+
+def _bound_primitive_available() -> bool:
+    """A kernel handle that can pin a process exists: always on Windows, pidfd on Linux 5.3+."""
+    import signal
+
+    if sys.platform == "win32":
+        return True
+    if not (hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal")):
+        return False
+    try:
+        os.close(os.pidfd_open(os.getpid()))
+    except OSError:
+        return False
+    return True
+
+
+_BOUND = _bound_primitive_available()
 
 
 @pytest.fixture(autouse=True)
@@ -111,8 +130,12 @@ def test_a_correctly_attested_live_daemon_is_ours_and_is_signalled_control(
         meta = _signed(root, proc.pid, _real_ct(proc), _free_port())
         monkeypatch.setattr(trust, "_process_info", _info_for(proc, root))
         assert trust._daemon_pid_state(meta, root) == "ours"
-        assert sd._terminate_daemon_by_pid(meta, root=root) is True
-        proc.wait(timeout=10)
+        signalled = sd._terminate_daemon_by_pid(meta, root=root)
+        assert signalled is _BOUND  # escalation needs a bound kernel handle; none -> no signal
+        if _BOUND:
+            proc.wait(timeout=10)
+        else:
+            assert proc.poll() is None
     finally:
         _reap(proc)
 
@@ -300,10 +323,21 @@ def test_a_real_daemon_whose_ping_is_blocked_but_whose_hmac_is_valid_is_escalate
             sd, "_probe_daemon", lambda _root: None
         )  # the signed ping is unavailable
         result = sd.stop_session_daemon(str(root))
+        if not _BOUND:
+            # no bound kernel handle on this platform: the daemon must SURVIVE and the stop is unconfirmed
+            import psutil
+
+            assert result["running"] is True and result["stopped"] is False
+            assert result["unconfirmed_reason"] == "no_bound_process_handle"
+            assert stop_exit_code(result) == 2
+            assert psutil.pid_exists(pid)
+            assert sd._read_daemon_metadata(root) is not None
+            return
         assert result["stop_method"] == "pid"
         assert result["stopped"] is True
         assert result["running"] is False
-        assert result["pid_reuse_guard"] in {"handle", "pidfd", "recheck"}
+        assert stop_exit_code(result) == 0
+        assert result["pid_reuse_guard"] in {"handle", "pidfd"}
         assert "unconfirmed_reason" not in result
         assert sd._read_daemon_metadata(root) is None
         import psutil
@@ -399,10 +433,18 @@ def test_successful_termination_then_refusal_removes_the_stale_metadata_control(
         _plant(root, _signed(root, proc.pid, created, _free_port()))
         monkeypatch.setattr(trust, "_process_info", _info_for(proc, root, created))
         result = sd.stop_session_daemon(str(root))
+        if not _BOUND:
+            assert proc.poll() is None
+            assert result["running"] is True and result["stopped"] is False
+            assert result["unconfirmed_reason"] == "no_bound_process_handle"
+            assert stop_exit_code(result) == 2
+            assert sd._read_daemon_metadata(root) is not None
+            return
         proc.wait(timeout=10)
         assert result["running"] is False
         assert result["stopped"] is True
         assert result["stop_method"] == "pid"
+        assert stop_exit_code(result) == 0
         assert sd._read_daemon_metadata(root) is None
     finally:
         _reap(proc)
