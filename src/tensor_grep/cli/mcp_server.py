@@ -3017,9 +3017,7 @@ def tg_search(
                 search_pattern, str(exc), path="[refused]", structured_json=structured_json
             )
 
-        invalid_arg = _av.tg_search_invalid_argument(
-            search_pattern, context, max_count, type_filter
-        )
+        invalid_arg = _av.search_arg_error(search_pattern, context, max_count, type_filter)
         if invalid_arg is not None:
             return _search_invalid_input_response(
                 search_pattern, invalid_arg, path=path, structured_json=structured_json

@@ -21,7 +21,7 @@ from tensor_grep.cli.incompleteness import incomplete_class_fragment
 RG_TYPE_NAME_RE = re.compile(r"^[^\W_][\w+.-]*$")
 
 
-def tg_search_invalid_argument(
+def search_arg_error(
     pattern: str,
     context: int | None,
     max_count: int | None,
