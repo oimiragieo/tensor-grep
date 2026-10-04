@@ -456,7 +456,10 @@ def test_stringzilla_max_count_zero_returns_nothing(tmp_path, monkeypatch, index
     r = StringZillaBackend().search(str(f), "ERROR", SearchConfig(fixed_strings=True, max_count=0))
     assert r.total_matches == 0 and r.matches == []
     # control: without -m 0 the same search finds both lines
-    assert StringZillaBackend().search(str(f), "ERROR", SearchConfig(fixed_strings=True)).total_matches == 2
+    assert (
+        StringZillaBackend().search(str(f), "ERROR", SearchConfig(fixed_strings=True)).total_matches
+        == 2
+    )
 
 
 @pytest.mark.parametrize("index", ["1", "0"])

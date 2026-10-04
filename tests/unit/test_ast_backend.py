@@ -1322,13 +1322,21 @@ class TestAstBackend:
 
     def test_form_feed_does_not_shift_line_text(self, tmp_path, monkeypatch):
         r = self._run(
-            tmp_path, monkeypatch, "ff.py", b"x = 1\n\x0c\ndef foo():\n    pass\n", "function_definition"
+            tmp_path,
+            monkeypatch,
+            "ff.py",
+            b"x = 1\n\x0c\ndef foo():\n    pass\n",
+            "function_definition",
         )
         assert [(m.line_number, m.text) for m in r.matches] == [(3, "def foo():")]
 
     def test_non_utf8_source_is_searched_not_crashed(self, tmp_path, monkeypatch):
         r = self._run(
-            tmp_path, monkeypatch, "lat.py", b"# caf\xe9\ndef foo():\n    pass\n", "function_definition"
+            tmp_path,
+            monkeypatch,
+            "lat.py",
+            b"# caf\xe9\ndef foo():\n    pass\n",
+            "function_definition",
         )
         assert [(m.line_number, m.text) for m in r.matches] == [(2, "def foo():")]
 

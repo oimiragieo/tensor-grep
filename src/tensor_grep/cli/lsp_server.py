@@ -1096,9 +1096,7 @@ def _position_to_offset(ls: TensorGrepLSPServer, text: str, position: Any) -> in
     return starts[line] + col
 
 
-def _apply_content_changes(
-    ls: TensorGrepLSPServer, text: str | None, changes: Any
-) -> str | None:
+def _apply_content_changes(ls: TensorGrepLSPServer, text: str | None, changes: Any) -> str | None:
     """Apply LSP content changes in order; None when a ranged edit has no base document."""
     for change in changes:
         change_range = getattr(change, "range", None)
