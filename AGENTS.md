@@ -1772,6 +1772,8 @@ and is always skipped on main pushes, so its state there proves nothing. On main
 PRs join a burst when no release-bearing run exists and wait like everything else while one does;
 `gh run view <id> --json jobs` shows whether the `Semantic Release` job is running.
 
+**Verdict for one SHA, never a windowed list:** `python scripts/ci_verdict.py [--sha <sha>] [--workflow ci.yml]` queries `actions/runs?head_sha=<full sha>` and prints a labelled state with a distinct exit code (0 SUCCESS, 1 FAILURE with failing jobs + pytest `FAILED tests/...` lines, 2 CANNOT_MEASURE, 3 IN_PROGRESS, 4 NO_RUN e.g. a `[skip ci]` commit, 5 CANCELLED); run it on the pushed SHA before writing "done" (A139/A140/A142).
+
 ### Release publish is not instant — the push-race (hard-won, re-confirmed 2026-07-02)
 
 The real publish is the **`Semantic Release` job inside `.github/workflows/ci.yml`** (gated `github.ref == 'refs/heads/main' && github.event_name == 'push'`), NOT `release.yml` (which is `workflow_dispatch`-only, so a manually-pushed `v*` tag can no longer bypass semantic-release). That job **compiles the native assets before it publishes, so it runs for ~6 minutes** — and that whole window is a race window.
