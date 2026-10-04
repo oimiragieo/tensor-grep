@@ -138,7 +138,7 @@ def _python_dynamic_import_entry_for_call(node: ast.AST) -> dict[str, Any] | Non
 
 
 def _python_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]:
-    if path.suffix != ".py":
+    if path.suffix.lower() != ".py":
         return [], []
 
     try:
@@ -397,7 +397,7 @@ def _python_classify_ref_kind(node: ast.AST, parent: ast.AST | None, *, in_annot
 
 
 def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
+    if path.suffix.lower() != ".py":
         return []
 
     try:
@@ -504,7 +504,7 @@ def _python_provider_alias_calls(path: Path, symbol: str) -> list[dict[str, Any]
 
 
 def _python_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
+    if path.suffix.lower() != ".py":
         return []
 
     try:
@@ -580,7 +580,7 @@ def _python_import_update_target_for_registry(
 # `tg imports` needs and keeps one row per import STATEMENT (not one row per imported symbol),
 # which is the right unit for a file-dependency primitive.
 def _python_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".py":
+    if path.suffix.lower() != ".py":
         return []
     try:
         file_size = path.stat().st_size

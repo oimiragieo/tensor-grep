@@ -535,7 +535,7 @@ def csharp_references_and_calls(
     earns the cross-file confirmed band. *repo_root* is signature parity only.
     """
     del repo_root  # signature parity with the uniform registry adapter; unused by this resolver
-    if path.suffix != ".cs":
+    if path.suffix.lower() != ".cs":
         return [], []
 
     parser = _csharp_parser()
@@ -803,7 +803,7 @@ def csharp_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
     Imports come from every ``using_directive``'s target namespace (alias/static/global
     qualifiers do not change what gets recorded -- see ``_csharp_using_directive_target``).
     """
-    if path.suffix != ".cs":
+    if path.suffix.lower() != ".cs":
         return [], []
 
     parser = _csharp_parser()
@@ -887,7 +887,7 @@ def csharp_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, An
 # `import_update_target` and `prime_repo_context` as `None` -- see repo_map.py), so a real path
 # is not guessable without fabricating one.
 def csharp_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".cs":
+    if path.suffix.lower() != ".cs":
         return []
 
     parser = _csharp_parser()
@@ -925,7 +925,7 @@ def csharp_imports_with_lines(path: Path) -> list[dict[str, Any]]:
 def csharp_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every declaration matching *symbol* (mirrors the Rust/JS-TS/Go
     ``*_parser_symbol_sources`` shape for the ``tg source`` command)."""
-    if path.suffix != ".cs":
+    if path.suffix.lower() != ".cs":
         return []
 
     parser = _csharp_parser()

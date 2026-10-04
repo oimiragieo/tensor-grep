@@ -285,7 +285,7 @@ def php_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]
     See the module docstring's "KNOWN EXTRACTION GAPS" note for the two import forms this
     deliberately does not cover.
     """
-    if path.suffix != ".php":
+    if path.suffix.lower() != ".php":
         return [], []
 
     parser = _php_parser()
@@ -370,7 +370,7 @@ def php_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]
 # registers both `import_update_target` and `prime_repo_context` as `None` -- see repo_map.py),
 # so a real path is not guessable without fabricating one.
 def php_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".php":
+    if path.suffix.lower() != ".php":
         return []
 
     parser = _php_parser()
@@ -415,7 +415,7 @@ def php_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every class/interface/trait/enum/function/method matching *symbol*
     (mirrors the Go/Rust/JS-TS ``*_parser_symbol_sources`` shape for the ``tg source``
     command)."""
-    if path.suffix != ".php":
+    if path.suffix.lower() != ".php":
         return []
 
     parser = _php_parser()
@@ -868,7 +868,7 @@ def php_references_and_calls(
     ``definition_dirs``-local.
     """
     del repo_root  # signature parity with the uniform registry adapter; unused by this resolver
-    if path.suffix != ".php":
+    if path.suffix.lower() != ".php":
         return [], []
 
     parser = _php_parser()

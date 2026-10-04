@@ -164,7 +164,7 @@ def _js_ts_candidate_files(base: Path) -> list[Path]:
     # through the cached helper.
     normalized_base = Path(_resolved_path_str(str(base)))
     candidates: list[Path] = []
-    if normalized_base.suffix in _self._JS_TS_SUFFIXES:
+    if normalized_base.suffix.lower() in _self._JS_TS_SUFFIXES:
         candidates.append(normalized_base)
     else:
         candidates.extend(
@@ -299,7 +299,7 @@ def _js_ts_resolve_exported_symbol(
     # Fix B: this resolve() runs BEFORE the re_export_cache lookup below, so an uncached
     # resolve() here defeats that cache's purpose on repeat calls for the same module path.
     normalized_module = Path(_resolved_path_str(str(module_path.expanduser())))
-    if normalized_module.suffix not in _self._JS_TS_SUFFIXES:
+    if normalized_module.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return None
 
     context = _js_ts_repo_context(normalized_root)
@@ -661,7 +661,7 @@ def _js_ts_symbol_name_node(node: Any) -> Any | None:
 
 
 def _js_ts_parser_symbols(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
 
     parsed = _self._parsed_source_and_tree(str(path))
@@ -707,7 +707,7 @@ def _js_ts_references_and_calls(
     symbol: str,
     repo_root: Path | str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return [], []
 
     try:
@@ -884,7 +884,7 @@ def _js_ts_provider_alias_calls(
     *,
     include_assignment_wrappers: bool = False,
 ) -> list[dict[str, Any]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
 
     try:
@@ -1049,11 +1049,11 @@ def _js_ts_provider_alias_calls(
 
 
 def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
 
-    if path.suffix in {".ts", ".tsx"}:
-        parser = _self._typescript_parser(tsx=path.suffix == ".tsx")
+    if path.suffix.lower() in {".ts", ".tsx"}:
+        parser = _self._typescript_parser(tsx=path.suffix.lower() == ".tsx")
     else:
         parser = _self._javascript_parser()
     if parser is None:
@@ -1113,7 +1113,7 @@ def _js_ts_references_and_calls_for_registry(
 
 
 def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix not in _self._JS_TS_SUFFIXES:
+    if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
     try:
         file_size = path.stat().st_size

@@ -201,7 +201,7 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
     whether it carries an alias/dot/blank qualifier (the qualifier only matters for reference
     resolution, not for the flat import-path list this function returns).
     """
-    if path.suffix != ".go":
+    if path.suffix.lower() != ".go":
         return [], []
 
     parser = _go_parser()
@@ -325,7 +325,7 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
 # arbitrary pick? all of them?), not just wiring this existing directory-granular machinery, so
 # it stays deferred rather than guessed.
 def go_imports_with_lines(path: Path) -> list[dict[str, Any]]:
-    if path.suffix != ".go":
+    if path.suffix.lower() != ".go":
         return []
 
     parser = _go_parser()
@@ -364,7 +364,7 @@ def go_imports_with_lines(path: Path) -> list[dict[str, Any]]:
 def go_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
     """Full source text of every top-level def matching *symbol* (mirrors the Rust/JS-TS
     ``_parser_symbol_sources`` shape for the ``tg source`` command)."""
-    if path.suffix != ".go":
+    if path.suffix.lower() != ".go":
         return []
 
     parser = _go_parser()
@@ -749,7 +749,7 @@ def go_references_and_calls(
       equifinal in both cases (ANY type with a same-named method could match textually), per the
       Stage 1 no-fabricated-precision trap.
     """
-    if path.suffix != ".go":
+    if path.suffix.lower() != ".go":
         return [], []
 
     parser = _go_parser()
