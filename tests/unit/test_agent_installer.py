@@ -1,5 +1,6 @@
 import json
 import tempfile
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -193,3 +194,49 @@ def test_uninstall_guidance_unlinks_empty_file(fake_home):
     res = uninstall_agent_integration("claude", home_dir=fake_home)
     assert res["status"] == "uninstalled"
     assert not claude_md.exists()
+
+
+def test_codex_reinstall_keeps_toml_valid_with_windows_path(fake_home, monkeypatch):
+    from tensor_grep.cli import agent_installer
+
+    win = "C:\\Users\\me\\.venv\\Scripts\\tg.exe"
+    monkeypatch.setattr(agent_installer, "_resolve_tg_command", lambda: win)
+    install_agent_integration("codex", home_dir=fake_home)
+    install_agent_integration("codex", home_dir=fake_home)
+    data = tomllib.loads((fake_home / ".codex" / "config.toml").read_text(encoding="utf-8"))
+    assert data["mcp_servers"]["tensor_grep"]["command"] == win
+
+
+def test_json_config_non_object_is_refused_cleanly(fake_home):
+    cfg = fake_home / ".claude.json"
+    cfg.write_text("[]", encoding="utf-8")
+    with pytest.raises(ValueError, match="JSON object"):
+        install_agent_integration("claude", home_dir=fake_home)
+    assert cfg.read_text(encoding="utf-8") == "[]"
+    cfg.write_text('{"mcpServers": []}', encoding="utf-8")
+    with pytest.raises(ValueError, match="mcpServers"):
+        install_agent_integration("claude", home_dir=fake_home)
+
+
+@pytest.mark.parametrize("body", ['{"n": 1/*c*/2}', '{"n": 1} /* never closed'])
+def test_malformed_jsonc_is_refused_not_rewritten(fake_home, body):
+    # a block comment must not glue tokens, and an unterminated one must not vanish
+    cfg = fake_home / ".claude.json"
+    cfg.write_text(body, encoding="utf-8")
+    with pytest.raises(ValueError):
+        install_agent_integration("claude", home_dir=fake_home)
+    assert cfg.read_text(encoding="utf-8") == body
+
+
+def test_jsonc_urls_and_escaped_quotes_in_strings_survive(fake_home):
+    cfg = fake_home / ".claude.json"
+    cfg.write_text(
+        '{\n  // keep\n  "$schema": "https://example.com/s.json",\n'
+        '  "note": "a,]b /* x */ \\" // y",\n  "mcpServers": {},\n}\n',
+        encoding="utf-8",
+    )
+    install_agent_integration("claude", home_dir=fake_home)
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    assert data["$schema"] == "https://example.com/s.json"
+    assert data["note"] == 'a,]b /* x */ " // y'
+    assert "tensor_grep" in data["mcpServers"]

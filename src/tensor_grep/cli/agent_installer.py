@@ -51,12 +51,59 @@ def _resolve_tg_command() -> str:
 
 
 def _strip_json_comments_and_trailing_commas(text: str) -> str:
-    """Strip UTF-8 BOM, C-style comments and trailing commas from JSONC for safe parsing."""
-    cleaned = text.lstrip("\ufeff")
-    cleaned = re.sub(r"/\*[\s\S]*?\*/", "", cleaned)
-    cleaned = re.sub(r"//[^\n\r]*", "", cleaned)
-    cleaned = re.sub(r",\s*([\]}])", r"\1", cleaned)
-    return cleaned
+    """Strip UTF-8 BOM, C-style comments and trailing commas from JSONC (string-aware)."""
+    s = text.lstrip("\ufeff")
+    out: list[str] = []
+    i, n = 0, len(s)
+    in_str = escaped = False
+    while i < n:  # pass 1: drop // and /* */ comments outside strings
+        c = s[i]
+        if in_str:
+            out.append(c)
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_str = False
+            i += 1
+            continue
+        if c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif s.startswith("//", i):
+            while i < n and s[i] not in "\r\n":
+                i += 1
+        elif s.startswith("/*", i):
+            end = s.find("*/", i + 2)
+            if end == -1:
+                # council round 6: never silently drop an unterminated comment (and what follows)
+                raise ValueError("Cannot safely parse configuration: unterminated /* comment")
+            out.append(" ")  # a comment separates tokens: `1/*c*/2` must NOT become `12`
+            i = end + 2
+        else:
+            out.append(c)
+            i += 1
+    s = "".join(out)
+    res: list[str] = []
+    in_str = escaped = False
+    for k, c in enumerate(s):  # pass 2: drop trailing commas outside strings
+        if in_str:
+            res.append(c)
+            if escaped:
+                escaped = False
+            elif c == "\\":
+                escaped = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "," and s[k + 1 :].lstrip()[:1] in ("]", "}"):
+            continue
+        res.append(c)
+    return "".join(res)
 
 
 def _atomic_write_text(path: Path, content: str) -> None:
@@ -80,6 +127,13 @@ def _update_json_mcp(path: Path, add_entry: bool = True) -> bool:
                         f"Cannot safely parse existing configuration file '{path}': {exc}. "
                         "Refusing to modify to prevent configuration loss."
                     ) from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Configuration file '{path}' must contain a JSON object; refusing to modify it."
+        )
+    if "mcpServers" in data and not isinstance(data["mcpServers"], dict):
+        raise ValueError(f"'mcpServers' in '{path}' must be a JSON object; refusing to modify it.")
 
     mcp_servers = data.setdefault("mcpServers", {})
     changed = False
@@ -113,7 +167,7 @@ def _update_toml_codex(path: Path, add_entry: bool = True) -> bool:
     if add_entry:
         block = f'[mcp_servers.tensor_grep]\ncommand = "{tg_cmd}"\nargs = ["mcp"]\n'
         if pattern.search(content):
-            new_content = pattern.sub(block.strip(), content)
+            new_content = pattern.sub(lambda _m: block.strip(), content)
         else:
             new_content = (content.rstrip() + "\n\n" + block).lstrip()
     else:
@@ -136,7 +190,7 @@ def _update_markdown_guidance(path: Path, add_entry: bool = True) -> bool:
 
     if add_entry:
         if pattern.search(content):
-            new_content = pattern.sub(GUIDANCE_BLOCK, content)
+            new_content = pattern.sub(lambda _m: GUIDANCE_BLOCK, content)
         else:
             new_content = (content.rstrip() + "\n\n" + GUIDANCE_BLOCK + "\n").lstrip()
         if new_content != content:
