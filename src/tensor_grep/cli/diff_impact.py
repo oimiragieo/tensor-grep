@@ -708,6 +708,78 @@ def _file_identity(path: Path) -> tuple[int, int, Path] | None:
         return None
 
 
+def _extraction_errors() -> tuple[type[BaseException], ...]:
+    """Exceptions an extractor may raise that mean "could not analyse this file"."""
+    from tensor_grep.backends.base import BackendExecutionError
+
+    return (
+        OSError,
+        ValueError,
+        SyntaxError,
+        UnicodeDecodeError,
+        RecursionError,
+        BackendExecutionError,
+    )
+
+
+def _map_one_path(
+    rel_path: Path,
+    line_ranges: list[tuple[int, int]],
+    root: Path,
+    handled_elsewhere: set[Path],
+) -> tuple[str, str | None, list[dict[str, Any]]]:
+    """Map ONE changed path to exactly one outcome: (outcome, reason, symbols).
+
+    Outcomes: "analyzed" (extractor succeeded, identity unchanged); "deleted" (a deliberate,
+    separately disclosed handling: a deleted file or a submodule gitlink that is no longer a
+    regular file); "not_analyzed" with a reason (path_escapes_root, file_missing,
+    extraction_failed: <ExceptionType>, path_changed_during_analysis). There is no branch that
+    returns nothing, so a changed path can never leave the mapper unaccounted for.
+    """
+    full_path = root / rel_path
+    # Reuse repo_map's containment guard (resolves symlinks/`..` on both sides): a diff path,
+    # or a symlink in the repo, must never make us open a file outside `root`.
+    if not repo_map._path_is_relative_to(full_path, root):
+        return "not_analyzed", "path_escapes_root", []
+    if not full_path.is_file():
+        if rel_path in handled_elsewhere:
+            return "deleted", None, []
+        return "not_analyzed", "file_missing", []
+
+    before = _file_identity(full_path)
+    try:
+        spec = lang_registry.spec_for_path(full_path)
+        symbols: list[dict[str, Any]]
+        if spec is not None and spec.extract_imports_and_symbols is not None:
+            _, symbols = spec.extract_imports_and_symbols(full_path)
+        else:
+            _, symbols = repo_map._imports_and_symbols_for_path(full_path)
+    except _extraction_errors() as exc:  # narrow on purpose: anything else is a bug, not a gap
+        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+
+    after = _file_identity(full_path)
+    if (
+        before is None
+        or after != before
+        or not repo_map._path_is_relative_to(before[2], root)
+        or not repo_map._path_is_relative_to(after[2], root)
+    ):
+        return "not_analyzed", "path_changed_during_analysis", []
+
+    found: list[dict[str, Any]] = []
+    for sym in symbols:
+        s_start = int(sym.get("start_line", sym.get("line", 1)))
+        s_end = int(sym.get("end_line", s_start))
+
+        # Check overlap between [s_start, s_end] and any [r_start, r_end]
+        overlaps = any(max(s_start, r_start) <= min(s_end, r_end) for r_start, r_end in line_ranges)
+        if overlaps:
+            sym_copy = dict(sym)
+            sym_copy["file"] = str(rel_path).replace("\\", "/")
+            found.append(sym_copy)
+    return "analyzed", None, found
+
+
 def map_changed_lines_to_symbols(
     changed_files_with_lines: dict[Path, list[tuple[int, int]]],
     root: Path,
@@ -717,64 +789,48 @@ def map_changed_lines_to_symbols(
 
     checking which symbols span the modified lines.
 
+    Accounting invariant: every changed path ends in EXACTLY ONE outcome (analyzed, deleted, or
+    not_analyzed with a reason, appended to `not_analyzed`). After the loop the three sets must
+    equal the input paths and be disjoint, otherwise DiffError("internal_accounting_error") is
+    raised: the result then fails closed instead of silently shrinking.
+
     Swap detection (best effort): the file's identity (st_dev, st_ino, resolved path) is captured
     before and after extraction; if it changed, or the resolved path left `root`, that file's
-    symbols are discarded and it is appended to `not_analyzed` with reason
-    `path_changed_during_analysis`. Limits: a swap-and-restore (ABA) that is back in place when
-    extraction finishes is not caught, and the extractor still opens the original pathname, so
-    closing the race fully needs extraction through a verified/confined handle (tracker R-12).
+    symbols are discarded (`path_changed_during_analysis`). Limits: a swap-and-restore (ABA) that
+    is back in place when extraction finishes is not caught, and the extractor still opens the
+    original pathname, so closing the race fully needs extraction through a verified/confined
+    handle (tracker R-12).
     """
+    handled_elsewhere: set[Path] = set(getattr(changed_files_with_lines, "deleted_paths", set()))
+    handled_elsewhere |= set(getattr(changed_files_with_lines, "submodule_changed_files", set()))
     changed_symbols: list[dict[str, Any]] = []
+    analyzed: set[Path] = set()
+    deleted: set[Path] = set()
+    failed: dict[Path, str] = {}
 
     for rel_path, line_ranges in changed_files_with_lines.items():
-        full_path = root / rel_path
-        # Reuse repo_map's containment guard (resolves symlinks/`..` on both sides): a diff path,
-        # or a symlink in the repo, must never make us open a file outside `root`.
-        if not repo_map._path_is_relative_to(full_path, root):
-            continue
-        if not full_path.is_file():
-            continue
+        outcome, reason, symbols = _map_one_path(rel_path, line_ranges, root, handled_elsewhere)
+        if outcome == "analyzed":
+            analyzed.add(rel_path)
+            changed_symbols.extend(symbols)
+        elif outcome == "deleted":
+            deleted.add(rel_path)
+        elif outcome == "not_analyzed" and reason:
+            failed[rel_path] = reason
+        # any other outcome leaves the path unaccounted for, which the invariant below rejects
 
-        before = _file_identity(full_path)
-        spec = lang_registry.spec_for_path(full_path)
-        symbols: list[dict[str, Any]] = []
-        if spec is not None and spec.extract_imports_and_symbols is not None:
-            try:
-                _, symbols = spec.extract_imports_and_symbols(full_path)
-            except (OSError, ValueError, SyntaxError, UnicodeDecodeError):
-                symbols = []
-        else:
-            try:
-                _, symbols = repo_map._imports_and_symbols_for_path(full_path)
-            except (OSError, ValueError, SyntaxError, UnicodeDecodeError):
-                symbols = []
-
-        after = _file_identity(full_path)
-        if (
-            before is None
-            or after != before
-            or not repo_map._path_is_relative_to(before[2], root)
-            or not repo_map._path_is_relative_to(after[2], root)
-        ):
-            if not_analyzed is not None:
-                not_analyzed.append({
-                    "path": str(rel_path).replace("\\", "/"),
-                    "reason": "path_changed_during_analysis",
-                })
-            continue
-
-        for sym in symbols:
-            s_start = int(sym.get("start_line", sym.get("line", 1)))
-            s_end = int(sym.get("end_line", s_start))
-
-            # Check overlap between [s_start, s_end] and any [r_start, r_end]
-            overlaps = any(
-                max(s_start, r_start) <= min(s_end, r_end) for r_start, r_end in line_ranges
-            )
-            if overlaps:
-                sym_copy = dict(sym)
-                sym_copy["file"] = str(rel_path).replace("\\", "/")
-                changed_symbols.append(sym_copy)
+    accounted = len(analyzed) + len(deleted) + len(failed)
+    expected = set(changed_files_with_lines)
+    if (analyzed | deleted | set(failed)) != expected or accounted != len(expected):
+        missing = sorted(str(p) for p in expected - (analyzed | deleted | set(failed)))
+        raise DiffError(
+            "internal_accounting_error",
+            f"changed paths not accounted for exactly once: {missing or 'overlapping outcomes'}",
+        )
+    if not_analyzed is not None:
+        not_analyzed.extend(
+            {"path": str(p).replace("\\", "/"), "reason": r} for p, r in sorted(failed.items())
+        )
 
     # Sort deterministically
     changed_symbols.sort(
@@ -908,24 +964,21 @@ def build_diff_blast_radius(
             )
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
-    # A changed path (e.g. an in-repo symlink) whose real location is outside the root is never
-    # opened, and it is NOT silently dropped either: fail closed (partial -> exit 2) and list it.
-    not_analyzed_paths = [
-        {"path": str(p).replace("\\", "/"), "reason": "path_escapes_root"}
-        for p in sorted(changed_files_with_lines)
-        if not repo_map._path_is_relative_to(root / p, root)
-    ]
-    if not_analyzed_paths:
+    # Every changed path ends in exactly one mapper outcome. A path that could not be analysed
+    # (escapes the root, vanished, extractor failed, swapped mid-run) is listed and fails closed.
+    not_analyzed_paths: list[dict[str, str]] = []
+    try:
+        changed_symbols = map_changed_lines_to_symbols(
+            changed_files_with_lines, root, not_analyzed_paths
+        )
+    except DiffError as exc:
+        return _empty_payload(root, ref, staged, partial=True, reason=exc.reason, error=str(exc))
+    for entry in not_analyzed_paths:
+        reason_key = entry["reason"].split(":", 1)[0]
         partial = True
-        downgrade_reasons.append("path_escapes_root")
-        partial_reasons.append("path_escapes_root")
-    swapped_paths: list[dict[str, str]] = []
-    changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root, swapped_paths)
-    if swapped_paths:
-        not_analyzed_paths.extend(swapped_paths)
-        partial = True
-        downgrade_reasons.append("path_changed_during_analysis")
-        partial_reasons.append("path_changed_during_analysis")
+        if reason_key not in downgrade_reasons:
+            downgrade_reasons.append(reason_key)
+            partial_reasons.append(reason_key)
     binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
     binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
     deleted_paths: set[Path] = getattr(changed_files_with_lines, "deleted_paths", set())
