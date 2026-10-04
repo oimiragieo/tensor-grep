@@ -198,7 +198,10 @@ _EXCLUDED_MODULES = frozenset({
 #   back to the raw-bytes digest); what changed is that a previous record whose body no longer
 #   matches its own stored digest now FAILS the chain instead of verifying.
 #     343 - 2 (narrowed, no longer broad)                                              341
-TOTAL_BROAD_HANDLERS_CEILING = 341
+# - 2026-10-04 (PR #1195): 341 -> 340 (-1). cli/rg_replacement.py was deleted: `-o`/`--replace`
+#   output now comes from rg itself, leaving its only broad handler (_resolve_token) unreachable.
+#     341 - 1 (deleted module)                                                         340
+TOTAL_BROAD_HANDLERS_CEILING = 340
 
 
 def _body_records_reason(handler: ast.ExceptHandler) -> bool:
