@@ -4,7 +4,7 @@ import warnings
 from contextlib import nullcontext
 from typing import Any
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
@@ -83,6 +83,20 @@ class Pipeline:
             if chunk_mb > existing_chunk_mb:
                 normalized[slot] = (existing_device_id, chunk_mb)
         return normalized
+
+    @staticmethod
+    def _count_needs_rg_semantics(config: SearchConfig | None) -> bool:
+        """Flags RustCoreBackend.count_matches(pattern, path, ignore_case, fixed) cannot honour."""
+        if config is None:
+            return False
+        return bool(
+            config.word_regexp
+            or config.line_regexp
+            or config.smart_case
+            or config.max_count is not None
+            or config.null_data
+            or config.stop_on_nonmatch
+        )
 
     @staticmethod
     def _needs_python_cpu(config: SearchConfig | None) -> bool:
@@ -339,10 +353,31 @@ class Pipeline:
                 self._raise_explicit_gpu_configuration_error(
                     config, "count (-c) search has no GPU backend"
                 )
-            elif config and config.count and rust_available:
+            elif (
+                config
+                and config.count
+                and rust_available
+                and not self._count_needs_rg_semantics(config)
+            ):
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
                 selected_backend_reason = "count_rust_fast_path"
+            elif config and config.count and self._count_needs_rg_semantics(config):
+                # The native count signature has no word/line/smart-case/max-count/null-data/
+                # stop-on-nonmatch inputs; route to rg (or fail closed) instead of returning a
+                # count that silently ignores the flag.
+                if rg_available:
+                    self.backend = rg_backend
+                    selected_backend_reason = "count_rg_semantics"
+                elif config.null_data or config.stop_on_nonmatch:
+                    raise BackendExecutionError(
+                        "count (-c) with --null-data/--stop-on-nonmatch requires the 'rg' "
+                        "backend, which is unavailable; refusing to return a count that "
+                        "ignores the flag."
+                    )
+                else:
+                    self.backend = CPUBackend()
+                    selected_backend_reason = "count_python_cpu_semantics"
             elif config and config.fixed_strings and config.gpu_device_ids:
                 # Audit MED: `--gpu-device-ids` with fixed-string (-F) search is a user-explicit
                 # GPU request, but _should_honor_explicit_gpu_ids excludes fixed_strings (no GPU
