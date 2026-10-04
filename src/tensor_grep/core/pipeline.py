@@ -87,7 +87,8 @@ class Pipeline:
     @staticmethod
     def _count_needs_rg_semantics(config: SearchConfig | None) -> bool:
         """Flags RustCoreBackend.count_matches(pattern, path, ignore_case, fixed) cannot honour."""
-        if config is None:
+        if config is None or config.ltl:
+            # LTL expressions are not regexes: rg cannot run them, so never reroute them there.
             return False
         return bool(
             config.word_regexp
@@ -409,6 +410,7 @@ class Pipeline:
                 config
                 and config.count
                 and rust_available
+                and not config.ltl  # native count ignores LTL: the CPU LTL arm owns it
                 and not self._count_needs_rg_semantics(config)
             ):
                 # For pure counting, our Rust backend beats rg and everything else

@@ -138,3 +138,14 @@ def test_force_cpu_count_max_count_is_honoured_end_to_end(tmp_path):
     p = Pipeline(force_cpu=True, config=cfg)
     result = p.backend.search(str(f), "foo", cfg)
     assert result.total_matches == 1
+
+
+@pytest.mark.parametrize("force_cpu", [False, True])
+def test_ltl_count_keeps_cpu_ltl_semantics(tmp_path, force_cpu):
+    f = tmp_path / "a.txt"
+    f.write_text("foo\nbar\n", encoding="utf-8")
+    query = "foo -> eventually bar"
+    cfg = SearchConfig(query_pattern=query, ltl=True, count=True, max_count=1)
+    p = Pipeline(force_cpu=force_cpu, config=cfg)
+    assert p.selected_backend_reason not in {"count_rg_semantics", "column_rg_offsets"}
+    assert p.backend.search(str(f), query, cfg).total_matches == 1

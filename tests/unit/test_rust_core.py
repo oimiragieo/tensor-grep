@@ -639,3 +639,84 @@ def test_newline_literal_is_delegated_to_rg_not_shortcut(monkeypatch, tmp_path, 
             check(str(f), pattern, cfg)  # rg exits 2 on a literal newline
     else:
         assert check(str(f), pattern, cfg) is False  # rg's own verdict: no such bytes in file
+
+
+_PARITY_MATRIX = [
+    ("FOO", {"ignore_case": True, "case_sensitive": True}),
+    ("foo", {"ignore_case": True, "case_sensitive": True}),
+    ("FOO", {"smart_case": True, "case_sensitive": True}),
+    ("FOO", {"smart_case": True}),
+    ("foo", {"smart_case": True}),
+    ("f.o", {"fixed_strings": True, "no_fixed_strings": True}),
+    ("f.o", {"fixed_strings": True}),
+    ("f.o", {}),
+    ("foo", {"fixed_strings": True, "word_regexp": True}),
+    ("fo", {"word_regexp": True}),
+    ("foo", {"line_regexp": True}),
+    ("(?=foo)foo", {"engine": "pcre2"}),
+    ("(?=foo)foo", {"pcre2": True}),
+    ("(?=foo)foo", {"pcre2": True, "no_pcre2": True}),
+    ("foo", {"engine": "auto"}),
+    ("foo", {"engine": "default"}),
+]
+
+
+@pytest.mark.parametrize("pattern, kw", _PARITY_MATRIX)
+def test_binary_check_verdict_matches_ripgrep_backend(tmp_path, pattern, kw):
+    # One source of truth: the binary check and RipgrepBackend must agree on the same bytes.
+    _rg_pcre2_or_skip()
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.core.config import SearchConfig
+
+    text_file = tmp_path / "t.txt"
+    text_file.write_bytes(b"foo\n")
+    binary_file = tmp_path / "b.bin"
+    binary_file.write_bytes(b"\x00\nfoo\n")  # NUL on its own line
+    cfg = SearchConfig(**kw)
+
+    def verdict(call):
+        try:
+            return call()
+        except (rb.InvalidRegexError, rb.BackendExecutionError, RuntimeError):
+            return "error"
+
+    reference = verdict(
+        lambda: RipgrepBackend().search(str(text_file), pattern, cfg).total_matches > 0
+    )
+    actual = verdict(
+        lambda: rb.RustCoreBackend._binary_file_matches_pattern(str(binary_file), pattern, cfg)
+    )
+    assert actual == reference, (pattern, kw)
+
+
+@pytest.mark.parametrize("kw", [{}, {"fixed_strings": True}])
+def test_binary_check_validates_engine_before_any_path(tmp_path, kw):
+    from tensor_grep.backends import rust_backend as rb
+    from tensor_grep.core.config import SearchConfig
+
+    f = tmp_path / "b.bin"
+    f.write_bytes(b"\x00foo\n")
+    with pytest.raises(rb.BackendExecutionError):
+        rb.RustCoreBackend._binary_file_matches_pattern(
+            str(f), "foo", SearchConfig(engine="bogus", **kw)
+        )
+
+
+def test_literal_shortcut_eligibility_is_derived_from_the_shared_flags():
+    from tensor_grep.backends.ripgrep_backend import _pattern_semantics_flags
+    from tensor_grep.core.config import SearchConfig
+
+    assert _pattern_semantics_flags(SearchConfig(fixed_strings=True)) == ["-F"]
+    for extra in (
+        {"ignore_case": True},
+        {"case_sensitive": True},
+        {"smart_case": True},
+        {"no_fixed_strings": True},
+        {"engine": "auto"},
+        {"pcre2": True},
+        {"no_pcre2": True},
+        {"word_regexp": True},
+        {"line_regexp": True},
+    ):
+        assert _pattern_semantics_flags(SearchConfig(fixed_strings=True, **extra)) != ["-F"], extra

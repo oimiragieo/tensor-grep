@@ -94,3 +94,14 @@ def test_known_column_emits_no_notice(tmp_path, capsys):
     out = RipgrepFormatter(cfg).format(p.backend.search(str(f), "bar", cfg))
     assert out.endswith("1:4:xx bar") or out.endswith("4:xx bar")
     assert "column approximated" not in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("force_cpu", [False, True])
+def test_ltl_column_request_keeps_cpu_ltl_routing(tmp_path, force_cpu):
+    f = tmp_path / "a.txt"
+    f.write_text("foo\nbar\n", encoding="utf-8")
+    query = "foo -> eventually bar"
+    cfg = SearchConfig(query_pattern=query, ltl=True, column=True)
+    p = Pipeline(force_cpu=force_cpu, config=cfg)
+    assert p.selected_backend_reason != "column_rg_offsets"
+    assert p.backend.__class__.__name__ != "RipgrepBackend"

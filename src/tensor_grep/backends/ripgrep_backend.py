@@ -35,6 +35,43 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
         return ""
 
 
+def _pattern_semantics_flags(config: SearchConfig | None) -> list[str]:
+    """The rg flags that decide WHAT a pattern matches: case, fixed-vs-regex, engine, -w/-x.
+
+    Single source of truth shared by ``RipgrepBackend._build_cmd`` and the binary-file match
+    check in ``rust_backend`` so the two can never drift. Relative order inside each group is
+    what rg's last-flag-wins semantics depend on (``-i`` then ``-s`` means case-sensitive).
+    Raises ``BackendExecutionError`` for an unsupported ``--engine`` value.
+    """
+    flags: list[str] = []
+    if not config:
+        return flags
+    if config.ignore_case:
+        flags.append("-i")
+    if config.case_sensitive:
+        flags.append("-s")
+    if config.smart_case and not (config.ignore_case or config.case_sensitive):
+        flags.append("-S")  # explicit -i/-s win; rg is last-flag-wins
+    engine = str(config.engine or "default").lower()
+    if engine in {"pcre2", "auto"}:
+        flags.extend(["--engine", engine])
+    elif engine != "default":
+        raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
+    if config.word_regexp:
+        flags.append("-w")
+    if config.line_regexp:
+        flags.append("-x")
+    if config.fixed_strings:
+        flags.append("-F")
+    if config.no_fixed_strings:
+        flags.append("--no-fixed-strings")
+    if config.pcre2:
+        flags.append("-P")
+    if config.no_pcre2:
+        flags.append("--no-pcre2")
+    return flags
+
+
 class RipgrepBackend(ComputeBackend):
     """
     A backend that seamlessly delegates to the native `rg` (ripgrep) binary
@@ -554,37 +591,18 @@ class RipgrepBackend(ComputeBackend):
         # `config`), but worth flagging so `config=None` is never mistaken for "injection
         # covered" -- it means "no SearchConfig-derived flags at all were forwarded".
         if config:
-            if config.ignore_case:
-                cmd.append("-i")
-            if config.case_sensitive:
-                cmd.append("-s")
             if config.invert_match:
                 cmd.append("-v")
             if config.no_invert_match:
                 cmd.append("--no-invert-match")
-            if config.smart_case and not (config.ignore_case or config.case_sensitive):
-                cmd.append("-S")  # explicit -i/-s win; rg is last-flag-wins
             if config.stop_on_nonmatch:
                 cmd.append("--stop-on-nonmatch")
             if config.null_data:
                 cmd.append("--null-data")
-            engine = str(config.engine or "default").lower()
-            if engine in {"pcre2", "auto"}:
-                cmd.extend(["--engine", engine])
-            elif engine != "default":
-                raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
             if config.dfa_size_limit:
                 cmd.extend(["--dfa-size-limit", str(config.dfa_size_limit)])
             if config.regex_size_limit:
                 cmd.extend(["--regex-size-limit", str(config.regex_size_limit)])
-            if config.word_regexp:
-                cmd.append("-w")
-            if config.line_regexp:
-                cmd.append("-x")
-            if config.fixed_strings:
-                cmd.append("-F")
-            if config.no_fixed_strings:
-                cmd.append("--no-fixed-strings")
             if config.crlf:
                 cmd.append("--crlf")
             if config.no_crlf:
@@ -850,10 +868,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-messages")
             if config.messages:
                 cmd.append("--messages")
-            if config.pcre2:
-                cmd.append("-P")
-            if config.no_pcre2:
-                cmd.append("--no-pcre2")
+            # After --auto-hybrid-regex/--pcre2-unicode above: engine flags are last-wins in rg.
+            cmd.extend(_pattern_semantics_flags(config))
             if config.pre:
                 cmd.extend(["--pre", config.pre])
             if config.no_pre:

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from tensor_grep.backends.base import BackendExecutionError
-from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.backends.ripgrep_backend import RipgrepBackend, _pattern_semantics_flags
 from tensor_grep.core.config import SearchConfig
 
 _RG_BACKEND_KNOWN_GAP_FIELDS = frozenset({
@@ -50,12 +50,19 @@ _RG_BACKEND_KNOWN_GAP_FIELDS = frozenset({
 
 
 def _forwarded() -> set[str]:
-    tree = ast.parse(textwrap.dedent(inspect.getsource(RipgrepBackend._build_cmd)))
-    return {
-        n.attr
-        for n in ast.walk(tree)
-        if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "config"
-    }
+    # `_pattern_semantics_flags` holds the case/fixed/engine/-w/-x reads shared with the
+    # binary-file match check; it is part of what `_build_cmd` forwards.
+    attrs: set[str] = set()
+    for fn in (RipgrepBackend._build_cmd, _pattern_semantics_flags):
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+        attrs |= {
+            n.attr
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Attribute)
+            and isinstance(n.value, ast.Name)
+            and n.value.id == "config"
+        }
+    return attrs
 
 
 def _cmd(**kw) -> list[str]:

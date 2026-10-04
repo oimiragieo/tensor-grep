@@ -135,22 +135,22 @@ class RustCoreBackend(ComputeBackend):
     def _binary_file_matches_pattern(
         file_path: str, pattern: str, config: SearchConfig | None
     ) -> bool:
+        from tensor_grep.backends.ripgrep_backend import _pattern_semantics_flags
         from tensor_grep.cli.runtime_paths import resolve_ripgrep_binary
         from tensor_grep.cli.subprocess_policy import (
             configured_ripgrep_timeout_seconds,
             run_subprocess,
         )
 
-        plain_literal = (
-            config is not None
-            and bool(config.fixed_strings)
+        # ONE source of truth for pattern semantics (case / fixed / engine / -w / -x): the very
+        # code RipgrepBackend._build_cmd uses. Validates --engine first (raises on a bogus
+        # value) before ANY path, including the rg-free literal shortcut.
+        flags = _pattern_semantics_flags(config)
+        if (
+            flags == ["-F"]  # exactly: no case/-w/-x/engine/--no-fixed-strings flag in play
             and "\n" not in pattern  # rg rejects a literal newline without multiline: delegate
             and "\r" not in pattern
-            and not (
-                config.ignore_case or config.smart_case or config.word_regexp or config.line_regexp
-            )
-        )
-        if plain_literal:
+        ):
             # An exact case-sensitive literal has no regex semantics and no ReDoS surface:
             # keep the rg-free bounded path (chunks with overlap).
             try:
@@ -168,28 +168,7 @@ class RustCoreBackend(ComputeBackend):
                 "binary-file match check for a regex pattern requires the 'rg' binary; "
                 "refusing to evaluate the pattern with Python re (semantics and ReDoS differ)."
             )
-        cmd = [str(rg), "-a", "-q", "--no-config"]
-        if config:
-            # same precedence as RipgrepBackend._build_cmd: --engine, then -P, then --no-pcre2
-            engine = str(config.engine or "default").lower()
-            if engine in {"pcre2", "auto"}:
-                cmd.extend(["--engine", engine])
-            elif engine != "default":
-                raise BackendExecutionError(f"unsupported --engine value: {config.engine!r}")
-            if config.pcre2:
-                cmd.append("-P")
-            if config.no_pcre2:
-                cmd.append("--no-pcre2")
-        if config and config.fixed_strings:
-            cmd.append("-F")
-        if config and config.ignore_case:
-            cmd.append("-i")
-        elif config and config.smart_case and not config.case_sensitive:
-            cmd.append("-S")
-        if config and config.word_regexp:
-            cmd.append("-w")
-        if config and config.line_regexp:
-            cmd.append("-x")
+        cmd = [str(rg), "-a", "-q", "--no-config", *flags]
         cmd += ["-e", pattern, "--", file_path]
         proc = run_subprocess(
             cmd,
