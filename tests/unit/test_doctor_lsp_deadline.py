@@ -260,6 +260,9 @@ def test_grandchild_spawned_at_startup_is_contained_and_killed(
         client.stop()
         assert time.monotonic() - started <= _MARGIN_SECONDS, "stop() blocked on held pipes"
         assert _pid_gone(grandchild_pid), "grandchild survived client.stop()"
+        assert client.last_error is None, (
+            f"clean teardown must report no error: {client.last_error}"
+        )
 
     try:
         _run_bounded(sequence)
@@ -288,46 +291,3 @@ def test_containment_level_is_job_object_or_process_group_not_degraded(
         containment.kill()
         containment.release()
         process.wait(timeout=10)
-
-
-def test_degraded_containment_still_kills_descendants_and_says_so(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Job Object creation fails: fall back to a psutil tree kill, flagged degraded."""
-    from tensor_grep.cli import process_containment as pc
-
-    if sys.platform != "win32":
-        pytest.skip("Job Object fallback only exists on Windows")
-
-    def _boom() -> None:
-        raise OSError("simulated Job Object failure")
-
-    monkeypatch.setattr(pc, "_create_kill_on_close_job", _boom)
-    pid_file = tmp_path / "gc.pid"
-    code = (
-        "import os,subprocess,sys,time;"
-        "p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']);"
-        "open(os.environ['GC_PID_FILE'],'w').write(str(p.pid));time.sleep(30)"
-    )
-    monkeypatch.setenv("GC_PID_FILE", str(pid_file))
-    process, containment = pc.spawn_contained(
-        [sys.executable, "-c", code],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    try:
-        assert containment.degraded is True
-        assert containment.level == pc.LEVEL_PSUTIL
-        end = time.monotonic() + 10
-        while not pid_file.exists() and time.monotonic() < end:
-            time.sleep(0.05)
-        time.sleep(0.2)
-        grandchild = int(pid_file.read_text())
-        containment.kill()
-        assert _pid_gone(grandchild), "psutil fallback left the grandchild alive"
-        process.wait(timeout=10)
-    finally:
-        _kill_leftover(pid_file)
-        if process.poll() is None:
-            process.kill()

@@ -23,8 +23,9 @@ from tensor_grep.cli.lsp_provider_setup import (
 )
 from tensor_grep.cli.process_containment import (
     Containment,
-    close_streams_bounded,
+    ContainmentUnavailableError,
     spawn_contained,
+    teardown_provider,
 )
 
 
@@ -420,6 +421,7 @@ class ExternalLSPClient:
         # When set (doctor probe under a deadline), stop() uses this slice instead of the
         # default bound -- including the stop() that start() runs after a failed initialize.
         self.stop_grace_seconds: float | None = None
+        self.containment_error: str | None = None  # set when the tree could not be contained
         self.capabilities: dict[str, Any] = {}
         self.last_error: str | None = None
         self.disabled_until_monotonic = 0.0
@@ -505,14 +507,19 @@ class ExternalLSPClient:
             spawn_argv = wrap_windows_batch_command(list(self.command))
         # cwd stays workspace_root: the resolved argv has zero CWD-searchable names, so this
         # launch is safe. Spawned in a Job Object / process group so cleanup kills descendants.
-        self.process, self._containment = spawn_contained(
-            spawn_argv,
-            cwd=str(self.workspace_root),
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=managed_provider_env(self.command, managed_root=managed_root),
-        )
+        try:
+            self.process, self._containment = spawn_contained(
+                spawn_argv,
+                cwd=str(self.workspace_root),
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=managed_provider_env(self.command, managed_root=managed_root),
+            )
+        except ContainmentUnavailableError as exc:  # fail closed: the provider was NOT launched
+            self.containment_error = str(exc)
+            self.last_error = f"containment_unavailable: {exc}"
+            raise LSPTransportError(self.last_error) from exc
         self._record_debug_trace(
             event="process_start",
             detail={"command": spawn_argv, "cwd": str(self.workspace_root)},
@@ -573,53 +580,22 @@ class ExternalLSPClient:
             _DEFAULT_LSP_STOP_TIMEOUT_SECONDS,
         )
         grace = grace_seconds if grace_seconds is not None else self.stop_grace_seconds
-        if grace is not None:
-            # Deadline-bounded stop (doctor probe): graceful shutdown gets half the slice,
-            # then terminate/kill waits share the rest; never longer than the default bound.
-            stop_timeout_seconds = min(stop_timeout_seconds, max(float(grace) / 2.0, 0.05))
-        containment = self._containment
-        self._request_shutdown_for_stop(stop_timeout_seconds)
-        with self._lock:
-            try:
-                self._write_notification("exit", None)
-            except Exception:
-                pass
-            try:
-                if process.stdin is not None:
-                    process.stdin.close()
-            except Exception:
-                pass
-            try:
-                # Kill the WHOLE tree before closing pipes: a surviving grandchild holds the
-                # inherited handles and would block close() (see process_containment).
-                containment.terminate() if containment is not None else process.terminate()
-            except Exception:
-                pass
-        stop_errors: list[str] = []
-        try:
-            process.wait(timeout=stop_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            try:
-                containment.kill() if containment is not None else process.kill()
-            except Exception as exc:
-                stop_errors.append(f"kill failed: {exc}")
-            try:
-                process.wait(timeout=stop_timeout_seconds)
-            except Exception as exc:
-                stop_errors.append(f"did not exit after kill: {exc!r}")
-        finally:
-            if containment is not None:
-                containment.kill()  # stragglers that outlived the leader
-                containment.release()
-            try:  # bounded: abandons a close() still blocked on a pipe someone else holds
-                for name in close_streams_bounded(
-                    [process.stdout, process.stderr], stop_timeout_seconds
-                ):
-                    stop_errors.append(f"pipe close abandoned ({name})")
-            except Exception:
-                pass
-        if stop_errors:  # the handle is dropped below; keep the pid and the root cause visible
-            self.last_error = f"LSP child pid {process.pid} not stopped ({'; '.join(stop_errors)})"
+        # ONE absolute cleanup deadline governs shutdown, terminate/kill, waits and pipe closes.
+        budget = (
+            max(float(grace), 0.05) if grace is not None else 2.0 * max(stop_timeout_seconds, 0.05)
+        )
+        deadline = time.monotonic() + budget
+        errors = teardown_provider(
+            process,
+            self._containment,
+            deadline=deadline,
+            graceful=self._graceful_shutdown_for_stop,
+        )
+        if errors:  # the handle is dropped below; keep the pid and the root cause visible
+            self.last_error = (
+                f"LSP child pid {getattr(process, 'pid', '?')} not stopped ({'; '.join(errors)})"
+            )
+        stop_timeout_seconds = max(deadline - time.monotonic(), 0.05)
         if reader_thread is not None and reader_thread.is_alive():
             reader_thread.join(timeout=stop_timeout_seconds)
         if stderr_thread is not None and stderr_thread.is_alive():
@@ -642,6 +618,15 @@ class ExternalLSPClient:
             self._pending_requests = {}
             self._orphan_responses = {}
             self._doc_versions = {}
+
+    def _graceful_shutdown_for_stop(self, timeout_seconds: float) -> None:
+        """Courtesy ``shutdown`` + ``exit``; run on a bounded thread by ``teardown_provider``."""
+        self._request_shutdown_for_stop(timeout_seconds)
+        with self._lock:
+            try:
+                self._write_notification("exit", None)
+            except Exception:
+                pass
 
     def _request_shutdown_for_stop(self, timeout_seconds: float) -> None:
         # audit B12: use a per-id slot so the shutdown request cannot race with
@@ -1394,7 +1379,8 @@ class ExternalLSPProviderManager:
             if probe_succeeded:
                 status["health_status"] = "ready"
             else:
-                status["health_status"] = "unhealthy"
+                unhealthy = "containment_unavailable" if client.containment_error else "unhealthy"
+                status["health_status"] = unhealthy
                 status["lsp_provider_response"] = False
                 if probe_error is not None:
                     status["last_error"] = status.get("last_error") or str(probe_error)
