@@ -216,10 +216,20 @@ def _exec_capable_flag_present(args: list[str]) -> bool:
     return False
 
 
+def _is_rg_unsigned_number(text: str) -> bool:
+    """rg's numeric short-flag values (-A -B -C -M -d -j -m; the long forms agree): ONE optional
+    leading ``+`` then one or more ASCII digits, within u64. Verified against rg 15.1.0: ``+1``,
+    ``01`` and ``+0`` parse; ``-1``, ``-0``, ``++1``, ``+``, ``=``, ``+x``, ``1x``, ``1_0``,
+    ``1e3``, whitespace, non-ASCII digits (``\u0661``, full-width ``+``) and values above u64
+    are all ``not a valid number``."""
+    digits = text[1:] if text.startswith("+") else text
+    return digits.isascii() and digits.isdigit() and int(digits) < 2**64
+
+
 def _is_plausible_rg_flag_token(token: str) -> bool:
     """True when rg itself would parse ``token`` as flag(s), not a pattern: a run of no-value short
     flags, optionally ending in ONE value-taking flag that takes the rest of the token (numeric
-    flags only a numeric rest; one leading ``=`` is dropped, ``-m=1``). Exec-capable and unknown
+    flags only a numeric rest, see ``_is_rg_unsigned_number``; one leading ``=`` is dropped, ``-m=1``). Exec-capable and unknown
     long flags never count (an unknown ``--x`` stays a pattern behind ``--``)."""
     if token.startswith("--"):
         return token[2:].split("=", 1)[0] in _KNOWN_SEARCH_LONG_FLAG_NAMES
@@ -227,10 +237,12 @@ def _is_plausible_rg_flag_token(token: str) -> bool:
         if ch in _RG_NO_VALUE_SHORT:
             continue
         if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
-            rest = token[pos + 1 :]
-            rest = rest[1:] if rest.startswith("=") else rest
-            if ch in _RG_NUMERIC_VALUE_SHORT and rest:
-                return rest.isascii() and rest.isdigit()
+            attached = token[pos + 1 :]
+            if ch in _RG_NUMERIC_VALUE_SHORT and attached:
+                # rg drops ONE leading `=`; `-m=` (empty after that) is a parse error, not a flag
+                return _is_rg_unsigned_number(
+                    attached[1:] if attached.startswith("=") else attached
+                )
             return True
         return False
     return True

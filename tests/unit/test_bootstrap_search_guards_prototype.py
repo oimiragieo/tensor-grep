@@ -1219,6 +1219,12 @@ _POOL = [
     "a.txt",
     "--no-ignore",
     "--ignore",
+    "-m+1",
+    "-C=+2",
+    "-d+1",
+    "-m-1",
+    "-j+1",
+    "-A++1",
     "--files",
     "--format",
     "--hidden",
@@ -1761,3 +1767,115 @@ def test_suite_never_reads_git_or_origin_main():
     source = Path(__file__).read_text(encoding="utf-8")
     forbidden = ["origin" + "/main", "[" + '"git"', "'" + "git'"]
     assert [word for word in forbidden if word in source] == []
+
+
+# --------------------------------------------------------------------------------------------
+# Council round 41: rg accepts ONE leading `+` on numeric short-option values
+# --------------------------------------------------------------------------------------------
+
+_NUMERIC_SHORT = "ABCMdjm"
+# (value, rg accepts). Verified one by one against rg 15.1.0 for EVERY numeric short flag.
+_NUMERIC_VALUES = [
+    ("1", True),
+    ("+1", True),
+    ("=1", True),
+    ("=+1", True),
+    ("01", True),
+    ("+01", True),
+    ("0", True),
+    ("+0", True),
+    ("-1", False),
+    ("=-1", False),
+    ("-0", False),
+    ("++1", False),
+    ("+", False),
+    ("=+", False),
+    ("=", False),
+    ("+x", False),
+    ("1x", False),
+    ("x", False),
+    (" 1", False),
+    ("1 ", False),
+    ("+ 1", False),
+    ("1_0", False),
+    ("1e3", False),
+    (chr(0x661), False),  # Arabic-Indic digit one: str.isdigit() is True, rg rejects
+    ("+" + chr(0x661), False),
+    (chr(0xFF0B) + "1", False),  # full-width plus
+    (chr(0x2212) + "1", False),  # minus sign U+2212
+    ("+1+", False),
+    ("99999999999999999999", False),  # > u64
+    ("+99999999999999999999", False),
+    ("18446744073709551615", True),  # u64::MAX
+]
+
+
+@pytest.mark.parametrize("letter", list(_NUMERIC_SHORT))
+@pytest.mark.parametrize(("value", "accepted"), _NUMERIC_VALUES)
+def test_r41_numeric_short_value_plausibility_per_rg_verdict(letter, value, accepted):
+    token = f"-{letter}{value}"
+    assert nav._is_plausible_rg_flag_token(token) is accepted
+    out = nav.bootstrap_native_tg_search_argv(["--json", token, "foo", "src"])
+    assert ("--" in out) is (not accepted)  # accepted -> flag, no sentinel; rejected -> pattern
+
+
+@needs_rg
+@pytest.mark.parametrize("letter", list(_NUMERIC_SHORT))
+def test_r41_rg_oracle_agrees_with_every_numeric_verdict(rgdir, letter):
+    """rg itself is the oracle for each (flag, value): a rejected value is rg's own 'not a valid
+    number' parse error, an accepted one is not."""
+    for value, accepted in _NUMERIC_VALUES:
+        _, _, err = rg_run(rgdir, ["--no-config", f"-{letter}{value}", "foo", "a.txt"])
+        rejected_by_rg = "not a valid number" in err or "error parsing flag" in err
+        assert rejected_by_rg is (not accepted), (letter, value, err)
+
+
+@needs_rg
+def test_r41_the_reported_case_returns_a_line_in_real_rg_and_is_not_sentinelled(rgdir):
+    for token in ("-m+1", "-m=+1", "-im+1"):
+        argv = ["-n", token, "foo", "src/a.txt"]
+        rc, lines, err = rg_run(rgdir, ["--no-config", *argv])
+        assert rc == 0 and err == "" and len(lines) == 1, (token, lines, err)
+        assert nav.bootstrap_native_tg_search_argv(["--json", *argv[1:]]) == ["--json", *argv[1:]]
+
+
+@needs_rg
+@pytest.mark.parametrize(
+    ("flag", "value", "accepted"),
+    [
+        (flag, value, accepted)
+        for flag in (
+            "--max-count",
+            "--max-depth",
+            "--after-context",
+            "--before-context",
+            "--context",
+            "--threads",
+            "--max-columns",
+        )
+        for value, accepted in (
+            ("1", True),
+            ("+1", True),
+            ("-1", False),
+            ("++1", False),
+            ("+", False),
+        )
+    ],
+)
+def test_r41_long_numeric_forms_agree_with_the_short_grammar(rgdir, flag, value, accepted):
+    """Long forms use the same number grammar (`--max-count=+1` is accepted, `=-1` is not). The
+    builder treats any KNOWN long name as a flag token whatever its value (rg then reports the bad
+    number itself), so only the short-cluster path needs the number rule; pin both facts."""
+    for argv in ([f"{flag}={value}"], [flag, value]):
+        _, _, err = rg_run(rgdir, ["--no-config", *argv, "foo", "a.txt"])
+        assert ("not a valid number" in err) is (not accepted), (argv, err)
+    assert nav._is_plausible_rg_flag_token(f"{flag}={value}") is True
+
+
+def test_r41_every_numeric_short_flag_in_the_table_is_the_set_the_rule_covers():
+    # sweep of the class: the only numeric parse in the tokenizer/builder is
+    # `_is_plausible_rg_flag_token` -> `_is_rg_unsigned_number`; no other `isdigit`/`int(` exists.
+    assert set(_NUMERIC_SHORT) == set(nav._RG_NUMERIC_VALUE_SHORT)
+    for source_file in _MODULE_FILES:
+        text = _cli_source(source_file)
+        assert text.count(".isdigit()") == (1 if source_file == "bootstrap_native_argv.py" else 0)
