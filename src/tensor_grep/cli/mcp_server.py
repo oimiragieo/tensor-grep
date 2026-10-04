@@ -2931,6 +2931,45 @@ def tg_find(
         return _sanitized_tool_error_text("tg_find", exc)
 
 
+# council wave-2b r21: rg permits Unicode letters/numbers in type names (ignore/src/types.rs TypesBuilder::add);
+# reject only option-shaped or separator-bearing input. `[^\W_]` = any Unicode letter or digit.
+_RG_TYPE_NAME_RE = re.compile(r"^[^\W_][\w+.-]*$")
+
+
+def _tg_search_invalid_argument(
+    *, context: int | None, max_count: int | None, type_filter: str | None
+) -> str | None:
+    if context is not None and context < 0:
+        return "context must be >= 0."
+    if max_count is not None and max_count < 0:
+        return "max_count must be >= 0."
+    if type_filter and not _RG_TYPE_NAME_RE.fullmatch(type_filter):
+        return "type_filter must be a file type name such as 'py' or 'js'."
+    return None
+
+
+def _search_invalid_input_response(
+    pattern: str, message: str, *, path: str, structured_json: bool
+) -> str:
+    if not structured_json:
+        return f"Search failed: {message}"
+    payload = {
+        "pattern": pattern,
+        "path": path,
+        "total_matches": 0,
+        "total_files": 0,
+        "rendered_match_count": 0,
+        "rendered_file_count": 0,
+        "matches": [],
+        "truncated": False,
+        "result_incomplete": True,
+        "incomplete_reason": message,
+        **_incomplete_class_fragment(None),
+        "error": {"code": "invalid_input", "message": message},
+    }
+    return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
+
+
 @_register_legacy_tool  # type: ignore
 @_bounds.bounded_response
 def tg_search(
@@ -3026,6 +3065,14 @@ def tg_search(
                 # M14: this no-scan error envelope crossed the wire un-stamped.
                 return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
             return f"Search failed: {exc}"
+
+        invalid_arg = _tg_search_invalid_argument(
+            context=context, max_count=max_count, type_filter=type_filter
+        )
+        if invalid_arg is not None:
+            return _search_invalid_input_response(
+                search_pattern, invalid_arg, path=path, structured_json=structured_json
+            )
 
         rendered_file_limit = max(0, max_files if max_files is not None else 15)
         rendered_result_limit = min(
@@ -3407,6 +3454,29 @@ def tg_search(
 
             return "\n".join(_bounds._cap_output_lines(output))
 
+        except BackendExecutionError as e:
+            if "regex parse error" in str(e):
+                return _search_invalid_input_response(
+                    search_pattern,
+                    "pattern is not a valid regular expression.",
+                    path=path,
+                    structured_json=structured_json,
+                )
+            if "unrecognized file type" in str(e):  # council wave-2b r3: e.g. type_filter="c++"
+                return _search_invalid_input_response(
+                    search_pattern,
+                    "type_filter is not a file type rg knows (see `rg --type-list`).",
+                    path=path,
+                    structured_json=structured_json,
+                )
+            return _sanitized_tool_error_text("tg_search", e)
+        except re.error:  # council wave-2b r1: CPU/Python backends (incl. the per-file fallback)
+            return _search_invalid_input_response(
+                search_pattern,
+                "pattern is not a valid regular expression.",
+                path=path,
+                structured_json=structured_json,
+            )
         except Exception as e:
             return _sanitized_tool_error_text("tg_search", e)
     except Exception as exc:

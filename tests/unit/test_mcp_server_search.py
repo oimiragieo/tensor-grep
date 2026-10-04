@@ -1,10 +1,13 @@
 """MCP search / AST search / devices / classify / scan-limit contracts."""
 
 import json
+import shutil
 import sys
 import types
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from tensor_grep.core.hardware.device_detect import DeviceInfo
 from tensor_grep.core.hardware.device_inventory import DeviceInventory
@@ -1351,3 +1354,102 @@ def test_tg_ast_search_zero_matches_without_warning_is_a_normal_empty_result(tmp
     out = _ast_search_with(tmp_path, monkeypatch, matches=[], warning=None)
     assert "error" not in out
     assert out["total_matches"] == 0
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "needle"),
+    [
+        ({"context": -1}, "context"),
+        ({"max_count": -1}, "max_count"),
+        ({"type_filter": "--pre=calc"}, "type_filter"),
+    ],
+)
+def test_tg_search_rejects_bad_args_as_invalid_input(tmp_path, monkeypatch, kwargs, needle):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search("hello", str(tmp_path), **kwargs))
+    assert payload["error"]["code"] == "invalid_input"
+    assert needle in payload["error"]["message"]
+    assert payload["total_matches"] == 0
+    text = mcp_server.tg_search("hello", str(tmp_path), structured_json=False, **kwargs)
+    assert text.startswith("Search failed:") and needle in text
+
+
+def test_tg_search_valid_zero_context_and_cap_are_not_rejected(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    # council wave-2b r21: Unicode type name accepted
+    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("écriture") is not None
+    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("--pre") is None
+    assert mcp_server._RG_TYPE_NAME_RE.fullmatch("a,b") is None
+    for kwargs in (
+        {"context": 0, "max_count": 0},
+        {"max_count": 1},
+        {"type_filter": "py"},
+        {"type_filter": "cpp"},
+    ):
+        # council wave-2b r1: real boundary controls
+        payload = json.loads(mcp_server.tg_search("hello", str(tmp_path), **kwargs))
+        assert "error" not in payload, kwargs
+
+
+def test_tg_search_unknown_type_filter_is_invalid_input(tmp_path, monkeypatch):
+    # council wave-2b r3: well-formed but unknown type name -> rg exit 2 "unrecognized file type"
+    from tensor_grep.cli import mcp_server
+
+    if shutil.which("rg") is None:
+        pytest.skip("needs rg")
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search("hello", str(tmp_path), type_filter="c++"))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "type_filter" in payload["error"]["message"]
+
+
+def test_tg_search_maps_python_re_error_to_invalid_input(tmp_path, monkeypatch):
+    # council wave-2b r1: non-rg backends raise re.error for "(" -- must also be invalid_input
+    import re as _re
+
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")  # r16: a searchable file
+    backend = MagicMock()
+    backend.search.side_effect = _re.error("missing ), unterminated subpattern")
+    with patch("tensor_grep.cli.mcp_server.Pipeline") as pipeline_cls:
+        pipeline = pipeline_cls.return_value
+        pipeline.get_backend.return_value = backend
+        pipeline.selected_backend_name = "CPUBackend"
+        pipeline.selected_backend_reason = "t"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        payload = json.loads(mcp_server.tg_search("(", str(tmp_path)))
+    assert backend.search.called, "the re.error path was never exercised"  # council wave-2b r16
+    assert payload["error"]["code"] == "invalid_input"
+
+
+def test_tg_search_maps_rg_regex_parse_error_to_invalid_input(tmp_path, monkeypatch):
+    from tensor_grep.backends.base import BackendExecutionError
+    from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    backend = MagicMock(spec=RipgrepBackend)
+    backend.search.side_effect = BackendExecutionError(
+        "Ripgrep backend failed: rg failed with exit code 2: rg: regex parse error:\n"
+        "    (?:()\n    ^\nerror: unclosed group"
+    )
+    with patch("tensor_grep.cli.mcp_server.Pipeline") as pipeline_cls:
+        pipeline = pipeline_cls.return_value
+        pipeline.get_backend.return_value = backend
+        pipeline.selected_backend_name = "RipgrepBackend"
+        pipeline.selected_backend_reason = "t"
+        pipeline.selected_gpu_device_ids = []
+        pipeline.selected_gpu_chunk_plan_mb = []
+        payload = json.loads(mcp_server.tg_search("(", str(tmp_path)))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "regex parse error" not in json.dumps(payload)  # no raw rg text on the wire
