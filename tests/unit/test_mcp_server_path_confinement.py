@@ -1872,3 +1872,114 @@ def test_unauthorized_scope_writer_leaves_no_temp_names_on_success(tmp_path):
     assert os.stat(target).st_nlink == 1
     _index_lock.atomic_write_bytes_anchored(target, b"{}", replace=True)
     assert sorted(p.name for p in tmp_path.iterdir()) == ["plain.json"]
+
+
+# --- Codex round 4: paired outputs share missing directories; multi-output partial writes ---
+
+
+def _paired_scan(mcp_server, baseline, suppressions):
+    return json.loads(
+        mcp_server.tg_ruleset_scan(
+            "secrets-basic",
+            path=".",
+            write_baseline=baseline,
+            write_suppressions=suppressions,
+            justification="reviewed",
+        )
+    )
+
+
+def test_paired_outputs_sharing_an_identical_missing_parent_both_publish(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = _paired_scan(mcp_server, "reports/base.json", "reports/suppressions.json")
+    assert "error" not in out, out
+    assert sorted(p.name for p in (tmp_path / "reports").iterdir()) == [
+        "base.json",
+        "suppressions.json",
+    ]
+
+
+def test_paired_outputs_under_a_shared_missing_ancestor_both_publish(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    out = _paired_scan(mcp_server, "reports/base/base.json", "reports/sup/suppressions.json")
+    assert "error" not in out, out
+    assert (tmp_path / "reports" / "base" / "base.json").is_file()
+    assert (tmp_path / "reports" / "sup" / "suppressions.json").is_file()
+    assert sorted(p.name for p in (tmp_path / "reports").iterdir()) == ["base", "sup"]
+
+
+def _after_first_publish(monkeypatch, action):
+    """Run ``action()`` once, right AFTER the first no-clobber publish of the scope."""
+    from tensor_grep.cli import _index_lock
+
+    real = _index_lock._publish_bytes_no_clobber
+    fired = []
+
+    def wrapped(src, dst):
+        real(src, dst)
+        if not fired:
+            fired.append(True)
+            action()
+
+    monkeypatch.setattr(_index_lock, "_publish_bytes_no_clobber", wrapped)
+
+
+def test_shared_directory_swapped_between_the_two_writes_is_refused(tmp_path, monkeypatch):
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    other = tmp_path.parent / (tmp_path.name + "_swap_target")
+    other.mkdir()
+
+    def swap_shared_dir():
+        (tmp_path / "reports").rename(tmp_path / "reports_real")
+        _link_dir(tmp_path / "reports", other)
+
+    _after_first_publish(monkeypatch, swap_shared_dir)
+    out = _paired_scan(mcp_server, "reports/base.json", "reports/suppressions.json")
+    assert out["error"]["code"] == "invalid_input"
+    assert list(other.iterdir()) == []
+    assert (tmp_path / "reports_real" / "base.json").is_file()
+
+
+def _mixed_paired_request(tmp_path, mcp_server):
+    return _paired_scan(mcp_server, "new/base.json", "existing/suppressions.json")
+
+
+def test_multi_output_request_is_refused_before_any_output_is_published(tmp_path, monkeypatch):
+    """Chosen behaviour (a): every output is re-validated BEFORE the first one publishes."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "existing").mkdir()
+    victim = tmp_path / "existing" / "suppressions.json"
+    _swap_before_scan_write(monkeypatch, lambda: victim.write_bytes(b'{"mine": 1}\n'))
+    out = _mixed_paired_request(tmp_path, mcp_server)
+    assert out["error"]["code"] == "invalid_input"
+    assert victim.read_bytes() == b'{"mine": 1}\n'
+    assert not (tmp_path / "new").exists()  # nothing was published or created
+
+
+def test_late_race_after_the_first_publish_names_the_outputs_already_written(tmp_path, monkeypatch):
+    """Fallback (b): a refusal that can only be seen mid-way reports what was written."""
+    from tensor_grep.cli import mcp_server
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "existing").mkdir()
+    victim = tmp_path / "existing" / "suppressions.json"
+    _after_first_publish(monkeypatch, lambda: victim.write_bytes(b'{"mine": 1}\n'))
+    out = _mixed_paired_request(tmp_path, mcp_server)
+    assert out["error"]["code"] == "invalid_input"
+    assert "already written" in out["error"]["message"]
+    assert "write_baseline" in out["error"]["message"]
+    assert victim.read_bytes() == b'{"mine": 1}\n'
+    assert (tmp_path / "new" / "base.json").is_file()

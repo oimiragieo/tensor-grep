@@ -413,8 +413,9 @@ def tg_ruleset_scan(
             return _ruleset_scan_error(
                 "Invalid scan path configuration", code="invalid_input", ruleset=ruleset, path=path
             )
+        write_scope = write_authorizations(write_auths)
         try:
-            with write_authorizations(write_auths):
+            with write_scope:
                 payload = _self._run_ast_scan_payload(
                     project_cfg,
                     rules,
@@ -434,7 +435,9 @@ def tg_ruleset_scan(
                     max_evidence_snippet_chars=max_evidence_snippet_chars,
                 )
         except WriteAuthorizationError as exc:
-            return _ruleset_scan_error(str(exc), code="invalid_input", ruleset=ruleset, path=path)
+            return _ruleset_scan_error(
+                write_scope.refusal_message(exc), code="invalid_input", ruleset=ruleset, path=path
+            )
         except BroadScanRefusedError as exc:
             _log_tool_exception("tg_ruleset_scan", exc)
             return _ruleset_scan_error(
@@ -1027,11 +1030,12 @@ def tg_review_bundle_create(
                     routing_reason="review-bundle-create",
                 )
 
+        output_scope = write_authorizations(output_auths)
         try:
             # M14: create_review_bundle_json serializes a flat CLI payload with no MCP envelope --
             # stamp at the tool seam (the error arms above already embed the const via
             # _review_bundle_error).
-            with write_authorizations(output_auths):
+            with output_scope:
                 bundle_json = create_review_bundle_json(
                     manifest_path,
                     scan_path=scan_path,
@@ -1042,7 +1046,9 @@ def tg_review_bundle_create(
             return _self._inject_mcp_contract_fields(bundle_json)
         except WriteAuthorizationError as exc:
             return _review_bundle_error(
-                str(exc), code="invalid_input", routing_reason="review-bundle-create"
+                output_scope.refusal_message(exc),
+                code="invalid_input",
+                routing_reason="review-bundle-create",
             )
         except FileNotFoundError as exc:
             _log_tool_exception("tg_review_bundle_create", exc)

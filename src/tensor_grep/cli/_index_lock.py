@@ -103,9 +103,37 @@ class WriteAuthorization:
     ancestor: tuple[str, tuple[int, int]] | None = None
 
 
-_WRITE_AUTHORIZATIONS: ContextVar[dict[str, WriteAuthorization] | None] = ContextVar(
-    "tg_write_authorizations", default=None
-)
+class WriteScope:
+    """One authorization scope (a context manager; see :func:`write_authorizations`).
+
+    Beyond the authorizations it tracks, for a multi-output request: ``created_dirs`` (every
+    directory this scope created, with its captured identity, so a LATER writer may reuse it but
+    nobody else's), ``written`` (labels of outputs already published) and whether the pre-publish
+    sweep over ALL outputs has run."""
+
+    def __init__(self, auths: Iterable[WriteAuthorization]) -> None:
+        self.auths = {_authorization_key(a.path): a for a in auths}
+        self.created_dirs: dict[str, tuple[int, int]] = {}
+        self.written: list[str] = []
+        self.preflighted = False
+        self._tokens: list[Any] = []
+
+    def __enter__(self) -> WriteScope:
+        self._tokens.append(_WRITE_SCOPE.set(self if self.auths else None))
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        _WRITE_SCOPE.reset(self._tokens.pop())
+
+    def refusal_message(self, exc: BaseException) -> str:
+        """The refusal text, honest about outputs that were already published."""
+        message = str(exc)
+        if self.written:
+            message += f"; outputs already written: {', '.join(self.written)}"
+        return message
+
+
+_WRITE_SCOPE: ContextVar[WriteScope | None] = ContextVar("tg_write_scope", default=None)
 
 
 def _authorization_key(path: str | Path) -> str:
@@ -124,17 +152,11 @@ def dir_identity(path: Path) -> tuple[int, int]:
     return (st.st_dev, st.st_ino)
 
 
-@contextmanager
-def write_authorizations(auths: Iterable[WriteAuthorization]) -> Iterator[None]:
-    """Make ``auths`` binding within this context. While a NON-EMPTY set is active, every
-    ``atomic_write_bytes_anchored`` must target an authorized path (anything else is refused:
-    fail closed). An empty set leaves writers unchanged (default-off)."""
-    mapping = {_authorization_key(a.path): a for a in auths}
-    token = _WRITE_AUTHORIZATIONS.set(mapping or None)
-    try:
-        yield
-    finally:
-        _WRITE_AUTHORIZATIONS.reset(token)
+def write_authorizations(auths: Iterable[WriteAuthorization]) -> WriteScope:
+    """Return a scope (use as ``with``) that makes ``auths`` binding. While a NON-EMPTY scope is
+    active, every ``atomic_write_bytes_anchored`` must target an authorized path (anything else
+    is refused: fail closed). An empty scope leaves writers unchanged (default-off)."""
+    return WriteScope(auths)
 
 
 def _enforce_parent(path: Path, auth: WriteAuthorization) -> None:
@@ -164,7 +186,9 @@ def _is_link_or_junction(path: str | Path) -> bool:
     return stat.S_ISLNK(st.st_mode) or bool(getattr(st, "st_file_attributes", 0) & reparse)
 
 
-def _create_missing_parents(path: Path, auth: WriteAuthorization) -> WriteAuthorization:
+def _create_missing_parents(
+    path: Path, auth: WriteAuthorization, scope: WriteScope
+) -> WriteAuthorization:
     """The authorized parent was ABSENT: create each missing component ourselves (``os.mkdir``
     fails if someone else got there first -> refuse), reject a symlink/junction, keep every new
     directory under the authorized existing ancestor, and return the authorization with the NEW
@@ -187,12 +211,26 @@ def _create_missing_parents(path: Path, auth: WriteAuthorization) -> WriteAuthor
             probe = probe.parent
         real_ancestor = os.path.normcase(os.path.realpath(ancestor_path))
         for component in reversed(missing):
+            key = os.path.normcase(str(component))
+            if os.path.lexists(component):
+                # Reusable ONLY if this scope created it and it is still that very real directory.
+                recorded = scope.created_dirs.get(key)
+                if (
+                    recorded is None
+                    or _is_link_or_junction(component)
+                    or dir_identity(component) != recorded
+                ):
+                    raise WriteAuthorizationError(
+                        f"{label} parent was created by someone else (refused)"
+                    )
+                continue
             os.mkdir(component)  # FileExistsError: created by someone else -> refuse
             if _is_link_or_junction(component):
                 raise WriteAuthorizationError(f"{label} parent is a link (refused)")
             real = os.path.normcase(os.path.realpath(component))
             if os.path.commonpath([real, real_ancestor]) != real_ancestor:
                 raise WriteAuthorizationError(f"{label} parent escaped its ancestor (refused)")
+            scope.created_dirs[key] = dir_identity(component)
         return _dc_replace(auth, parent_identity=dir_identity(path.parent))
     except WriteAuthorizationError:
         raise
@@ -215,6 +253,39 @@ def _enforce_authorization(path: Path, auth: WriteAuthorization) -> None:
         raise WriteAuthorizationError(f"{auth.label} changed after it was authorized (refused)")
 
 
+def _preflight_all(scope: WriteScope) -> None:
+    """Refuse BEFORE the first publish if ANY output of the scope can no longer be written
+    (parent/ancestor/identity re-verified for every authorization), so a multi-output request is
+    not left half-published by a refusal that was already visible."""
+    for key, auth in scope.auths.items():
+        target = Path(key)
+        if auth.parent_identity is None:
+            if os.path.lexists(target.parent):
+                raise WriteAuthorizationError(
+                    f"{auth.label} parent appeared after it was authorized (refused)"
+                )
+            if auth.ancestor is not None:
+                ancestor_path, ancestor_id = auth.ancestor
+                try:
+                    intact = (
+                        not _is_link_or_junction(ancestor_path)
+                        and dir_identity(Path(ancestor_path)) == ancestor_id
+                    )
+                except OSError:
+                    intact = False
+                if not intact:
+                    raise WriteAuthorizationError(
+                        f"{auth.label} parent changed after it was authorized (refused)"
+                    )
+        else:
+            _enforce_authorization(target, auth)
+            if auth.identity is None and os.path.lexists(target):
+                raise WriteAuthorizationError(
+                    f"{auth.label} appeared after it was authorized (refused)"
+                )
+    scope.preflighted = True
+
+
 def atomic_write_bytes_anchored(
     path: Path, data: bytes, *, mode: int | None = None, replace: bool = True
 ) -> None:
@@ -226,16 +297,18 @@ def atomic_write_bytes_anchored(
     - ``replace=False`` performs a fail-closed, no-clobber publish that refuses to
       create over an existing destination.
     """
-    registry = _WRITE_AUTHORIZATIONS.get()
+    scope = _WRITE_SCOPE.get()
     auth = None
-    if registry:
-        auth = registry.get(_authorization_key(path))
+    if scope is not None:
+        auth = scope.auths.get(_authorization_key(path))
         if auth is None:  # an authorization scope is active and this target is not in it
             raise WriteAuthorizationError(
                 f"write target is not an authorized artifact path (refused): {path.name}"
             )
+        if not scope.preflighted:
+            _preflight_all(scope)
         if auth.parent_identity is None:
-            auth = _create_missing_parents(path, auth)
+            auth = _create_missing_parents(path, auth, scope)
         else:
             _enforce_parent(path, auth)  # BEFORE temp creation can touch a swapped parent
         if auth.identity is None:
@@ -285,6 +358,8 @@ def atomic_write_bytes_anchored(
             # The hard link left a SECOND name for the published bytes: drop the temp name now
             # (before the directory fsync), so only the authorized artifact remains.
             tmp_path.unlink(missing_ok=True)
+        if scope is not None and auth is not None:
+            scope.written.append(auth.label)
     except BaseException:
         # If publish fails, make sure the sibling temp is removed before control exits.
         tmp_path.unlink(missing_ok=True)
