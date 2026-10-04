@@ -1043,3 +1043,77 @@ def test_root_identity_is_recorded_from_the_walked_handle(tmp_path: Path) -> Non
     assert ident[1] == st.st_ino  # same directory, now sourced from the handle
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "PASS"
+
+
+# ---- round 19: a directory swapped for a FILE (and back) between the listing and the lstat ----
+
+
+def _swap_before_lstat(
+    monkeypatch: pytest.MonkeyPatch, target: Path, swap: object
+) -> dict[str, bool]:
+    """Run `swap()` right BEFORE the walker's first `_lstat(<target>)`, i.e. after the entry was
+    listed (in dirnames / filenames) and before its classification."""
+    real = os.lstat
+    state = {"done": False}
+
+    def _lstat(path: object, *a: object, **k: object) -> os.stat_result:
+        if Path(str(path)) == target and not state["done"]:
+            state["done"] = True
+            swap()  # type: ignore[operator]
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(edit_ticket_service, "_lstat", _lstat, raising=False)
+    return state
+
+
+@pytest.mark.parametrize("name", ["node_modules", "pkg"])
+def test_directory_swapped_for_a_regular_file_before_classification_never_passes_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    # A regular file where a directory was listed used to be recorded as pruned_set[name]="name"
+    # (name pruning ran before any S_ISDIR check) and never fingerprinted: PASS.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / name).mkdir()
+    ticket = _ticket(tmp_path)
+    target = tmp_path / name
+
+    def _dir_to_file() -> None:
+        os.rmdir(target)
+        target.write_bytes(b"boom\n")
+
+    state = _swap_before_lstat(monkeypatch, target, _dir_to_file)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert state["done"]
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "verify_population_incomplete"
+
+
+def test_file_swapped_for_a_directory_before_its_leaf_lstat_is_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The reverse: enumerated as a FILE, a directory by the time it is classified. It must not be
+    # skipped (its subtree would vanish): the leaf stage refuses a non-link directory.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "thing").write_bytes(b"x")
+    ticket = _ticket(tmp_path)
+    target = tmp_path / "thing"
+
+    def _file_to_dir() -> None:
+        os.unlink(target)
+        target.mkdir()
+        (target / "evil.py").write_bytes(b"boom\n")
+
+    state = _swap_before_lstat(monkeypatch, target, _file_to_dir)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert state["done"]
+    assert result["verdict"] == "FAIL"
+    assert result["reason"] == "verify_population_incomplete"
+
+
+def test_unchanged_node_modules_still_name_prunes_and_verifies_pass(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["pruned_set"]["node_modules"] == "name"
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"

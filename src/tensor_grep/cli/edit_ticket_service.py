@@ -810,6 +810,12 @@ def _population_paths(
                     d
                 )  # a directory symlink/junction is a leaf: never descended, never skipped
                 continue
+            if not stat.S_ISDIR(child_st.st_mode):
+                # Listed as a directory but not one now (swapped for a file): refuse BEFORE any
+                # directory classification (name pruning would record it as "name" and it
+                # would never be fingerprinted). The reverse (listed as a file, a directory by
+                # the leaf lstat) is refused by the leaf stage below: both are incomplete.
+                raise _PopulationWalkError("unreadable_path")
             rel = (rel_dir / d).as_posix()
             if d in _ALWAYS_PRUNED_DIRS:
                 # Name-pruned straight after link classification: record "name" and NEVER open,
