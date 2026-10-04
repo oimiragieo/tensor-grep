@@ -401,7 +401,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
-from tensor_grep.cli.repo_map_test_paths import is_test_file as _is_test_file
+from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 # Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late

@@ -41,7 +41,7 @@ def _classification_parts(path: Path) -> tuple[tuple[str, ...], frozenset[str]]:
         return path.parts, _LEGACY_TEST_DIR_NAMES
 
 
-def is_test_file(path: Path) -> bool:
+def _is_test_file(path: Path) -> bool:
     stem, suffix = path.stem, path.suffix.lower()
     if path.name.startswith("test_") or stem.endswith("_test"):
         return True
