@@ -8,19 +8,223 @@ sentinel helpers. Import-time: ``bootstrap`` must already be loaded (lazy import
 from __future__ import annotations
 
 from tensor_grep.cli.bootstrap import (
-    _SEARCH_FLAGS_WITH_VALUES,
+    _SEARCH_ATTACHED_VALUE_SHORT_FLAGS,
     _SEARCH_PATTERN_SOURCE_FLAGS,
     _TG_ONLY_SEARCH_FLAG_PREFIXES,
     _TG_ONLY_SEARCH_FLAGS,
-    _attached_cluster_value_offset,
-    _is_short_flag_with_attached_value,
-    _search_args_contains_pattern_source_flag,
 )
+from tensor_grep.cli.bootstrap_search_guards import (
+    _consumes_next_arg,
+    _parse,
+    flag_present,
+    has_end_of_options,
+)
+
+# rg's own short-flag clustering, verified against ripgrep 15.1.0 by probing every letter.
+# `z` (--search-zip, launches decompressor processes) is deliberately NOT a no-value flag in the
+# pattern slot: a token containing it stays a pattern. `h` and `V` print help/version and exit 0.
+_RG_NO_VALUE_SHORT = frozenset("0.FHILNPSUVabchilnopqsuvwx")
+_RG_NUMERIC_VALUE_SHORT = frozenset("ABCMdjm")
+# CWE-88: long flags that make rg EXECUTE or spawn something are never classified as flags in the
+# pattern slot; they keep the `--` sentinel. EXACT option name before `=` (`--pretty` is a flag).
+_RG_EXEC_LONG_FLAG_NAMES = frozenset({"pre", "pre-glob", "hostname-bin", "search-zip"})
+# Long names that are FLAGS in the pattern slot: what `tg search` declares plus rg-only long flags
+# (the Typer command does not declare e.g. --no-heading). Static (bootstrap must not import
+# main/typer); tests/unit/test_bootstrap_search_guards_prototype.py pins both against the sources.
+_TG_DECLARED_LONG_FLAG_NAMES: frozenset[str] = frozenset({
+    "after-context",
+    "allow-broad-generated-scan",
+    "ast",
+    "auto-hybrid-regex",
+    "before-context",
+    "binary",
+    "block-buffered",
+    "bm25",
+    "byte-offset",
+    "case-sensitive",
+    "color",
+    "colors",
+    "column",
+    "context",
+    "context-separator",
+    "count",
+    "count-matches",
+    "cpu",
+    "crlf",
+    "debug",
+    "dfa-size-limit",
+    "encoding",
+    "engine",
+    "enrich-ast",
+    "field-context-separator",
+    "field-match-separator",
+    "file",
+    "files",
+    "files-with-matches",
+    "files-without-match",
+    "fixed-strings",
+    "follow",
+    "force-cpu",
+    "format",
+    "generate",
+    "glob",
+    "glob-case-insensitive",
+    "gpu-device-ids",
+    "heading",
+    "hidden",
+    "hostname-bin",
+    "hyperlink-format",
+    "iglob",
+    "ignore",
+    "ignore-case",
+    "ignore-dot",
+    "ignore-exclude",
+    "ignore-file",
+    "ignore-file-case-insensitive",
+    "ignore-files",
+    "ignore-global",
+    "ignore-messages",
+    "ignore-parent",
+    "ignore-vcs",
+    "include-zero",
+    "invert-match",
+    "json",
+    "lang",
+    "line-buffered",
+    "line-number",
+    "line-regexp",
+    "ltl",
+    "max-columns",
+    "max-columns-preview",
+    "max-count",
+    "max-depth",
+    "max-filesize",
+    "maxdepth",
+    "messages",
+    "mmap",
+    "multiline",
+    "multiline-dotall",
+    "ndjson",
+    "no-auto-hybrid-regex",
+    "no-binary",
+    "no-block-buffered",
+    "no-byte-offset",
+    "no-column",
+    "no-config",
+    "no-context-separator",
+    "no-crlf",
+    "no-encoding",
+    "no-filename",
+    "no-fixed-strings",
+    "no-follow",
+    "no-glob-case-insensitive",
+    "no-hidden",
+    "no-ignore",
+    "no-ignore-dot",
+    "no-ignore-exclude",
+    "no-ignore-file-case-insensitive",
+    "no-ignore-files",
+    "no-ignore-global",
+    "no-ignore-messages",
+    "no-ignore-parent",
+    "no-ignore-vcs",
+    "no-include-zero",
+    "no-invert-match",
+    "no-json",
+    "no-line-buffered",
+    "no-line-number",
+    "no-max-columns-preview",
+    "no-messages",
+    "no-mmap",
+    "no-multiline",
+    "no-multiline-dotall",
+    "no-one-file-system",
+    "no-pcre2",
+    "no-pcre2-unicode",
+    "no-pre",
+    "no-require-git",
+    "no-search-zip",
+    "no-stats",
+    "no-text",
+    "no-trim",
+    "no-unicode",
+    "null",
+    "null-data",
+    "one-file-system",
+    "only-matching",
+    "passthrough",
+    "passthru",
+    "path-separator",
+    "pcre2",
+    "pcre2-unicode",
+    "pcre2-version",
+    "pre",
+    "pre-glob",
+    "pretty",
+    "quiet",
+    "rank",
+    "regex-size-limit",
+    "regexp",
+    "replace",
+    "require-git",
+    "search-zip",
+    "semantic",
+    "smart-case",
+    "sort",
+    "sort-files",
+    "sortr",
+    "stats",
+    "stop-on-nonmatch",
+    "text",
+    "threads",
+    "trace",
+    "trim",
+    "type",
+    "type-add",
+    "type-clear",
+    "type-list",
+    "type-not",
+    "unicode",
+    "unrestricted",
+    "version",
+    "vimgrep",
+    "with-filename",
+    "word-regexp",
+})
+_RG_ONLY_LONG_FLAG_NAMES: frozenset[str] = frozenset({
+    "help",
+    "no-heading",
+    "no-sort-files",
+    "print0",
+})
+_KNOWN_SEARCH_LONG_FLAG_NAMES = (
+    _TG_DECLARED_LONG_FLAG_NAMES | _RG_ONLY_LONG_FLAG_NAMES
+) - _RG_EXEC_LONG_FLAG_NAMES
+
+
+def _is_plausible_rg_flag_token(token: str) -> bool:
+    """True when rg itself would parse ``token`` as flag(s), not a pattern: a run of no-value short
+    flags, optionally ending in ONE value-taking flag that takes the rest of the token (numeric
+    flags only a numeric rest; one leading ``=`` is dropped, ``-m=1``). Exec-capable and unknown
+    long flags never count (an unknown ``--x`` stays a pattern behind ``--``)."""
+    if token.startswith("--"):
+        return token[2:].split("=", 1)[0] in _KNOWN_SEARCH_LONG_FLAG_NAMES
+    for pos, ch in enumerate(token[1:], start=1):
+        if ch in _RG_NO_VALUE_SHORT:
+            continue
+        if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
+            rest = token[pos + 1 :]
+            rest = rest[1:] if rest.startswith("=") else rest
+            if ch in _RG_NUMERIC_VALUE_SHORT and rest:
+                return rest.isascii() and rest.isdigit()
+            return True
+        return False
+    return True
 
 
 def _sentinel_insertion_index(search_args: list[str]) -> int | None:
     """Index to insert ``--`` before caller-influenced dash-led positionals only."""
-    if "--" in search_args:
+    if has_end_of_options(search_args):  # (S) value-aware: in `-e --` the `--` is a pattern
         return None
 
     dash_led = _first_dash_led_pattern_index_after_tg_flags(search_args)
@@ -31,47 +235,16 @@ def _sentinel_insertion_index(search_args: list[str]) -> int | None:
 
 
 def _first_dash_led_positional_index(search_args: list[str]) -> int | None:
-    """First bare-pattern or path positional that starts with ``-``."""
-    bare_pattern_seen = False
-    regexp_pattern_seen = _search_args_contains_pattern_source_flag(search_args)
-    skip_next = False
-    parse_options = True
-    for index, arg in enumerate(search_args):
-        if skip_next:
-            skip_next = False
-            continue
-        if parse_options and arg == "--":
+    """Index of the first positional (pattern or path) that starts with ``-``, read with the guards'
+    rg grammar. In rg's grammar no positional before the real ``--`` can start with ``-`` (such a
+    token is an option; only a bare ``-`` is a positional), so this is None for every argv the
+    sentinel builder reaches: the older hand-rolled walk's final ``return index`` was unreachable
+    for the same reason. Kept as a defence-in-depth probe over the one shared tokenizer."""
+    for index, (kind, token) in enumerate(_parse(search_args)):
+        if kind == "sentinel":
             return None
-        if parse_options:
-            if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
-                regexp_pattern_seen = True
-                skip_next = index + 1 < len(search_args)
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
-                regexp_pattern_seen = True
-                continue
-            offset = _attached_cluster_value_offset(arg)
-            if offset is not None:
-                ch = arg[offset]
-                if ch in ("e", "f"):
-                    regexp_pattern_seen = True
-                if offset == len(arg) - 1:
-                    skip_next = index + 1 < len(search_args)
-                continue
-            if arg in _SEARCH_FLAGS_WITH_VALUES:
-                skip_next = index + 1 < len(search_args)
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
-                continue
-            if _is_short_flag_with_attached_value(arg):
-                continue
-            if arg.startswith("-"):
-                continue
-        if not arg.startswith("-"):
-            if not regexp_pattern_seen and not bare_pattern_seen:
-                bare_pattern_seen = True
-            continue
-        return index
+        if kind == "positional" and token.startswith("-") and token != "-":
+            return index
     return None
 
 
@@ -83,11 +256,14 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
         if arg in _TG_ONLY_SEARCH_FLAGS or any(
             arg.startswith(prefix) for prefix in _TG_ONLY_SEARCH_FLAG_PREFIXES
         ):
-            index += 1
+            # A value-taking tg-only flag (`-g`, `--glob`, `--lang`) owns the NEXT token.
+            index += 2 if _consumes_next_arg(arg) else 1
             continue
         break
     remainder = search_args[index:]
-    if not remainder:
+    # When `-e`/`-f`/`--regexp`/`--file` supplies the pattern there is no dash-led pattern slot:
+    # every dash-led token is an option (`-e --` is pattern `--`; `-kq` after it is a cluster).
+    if not remainder or flag_present(remainder, _SEARCH_PATTERN_SOURCE_FLAGS):
         return None
     if all(token.startswith("-") for token in remainder):
         return index
@@ -96,6 +272,7 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
         and remainder[0].startswith("-")
         and len(remainder[0]) > 2
         and not remainder[1].startswith("-")
+        and not _is_plausible_rg_flag_token(remainder[0])
     ):
         return index
     return None
@@ -103,7 +280,7 @@ def _first_dash_led_pattern_index_after_tg_flags(search_args: list[str]) -> int 
 
 def bootstrap_native_tg_search_argv(search_args: list[str]) -> list[str]:
     """Insert ``--`` before dash-led caller positionals for native delegation."""
-    if "--" in search_args:
+    if has_end_of_options(search_args):
         return list(search_args)
     insert_at = _sentinel_insertion_index(search_args)
     if insert_at is None:

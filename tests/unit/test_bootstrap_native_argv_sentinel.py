@@ -10,8 +10,8 @@ def test_bootstrap_native_tg_search_argv_inserts_sentinel_for_dash_led_injection
 
 
 def test_bootstrap_native_tg_search_argv_inserts_before_dash_led_pattern() -> None:
-    argv = bootstrap_native_tg_search_argv(["--cpu", "-pattern", "src"])
-    assert argv == ["--cpu", "--", "-pattern", "src"]
+    argv = bootstrap_native_tg_search_argv(["--cpu", "-kq", "src"])
+    assert argv == ["--cpu", "--", "-kq", "src"]
 
 
 def test_bootstrap_native_tg_search_argv_skips_plain_pattern_with_flags() -> None:
