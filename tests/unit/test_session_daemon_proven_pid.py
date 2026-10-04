@@ -76,7 +76,7 @@ def test_stop_never_signals_a_planted_pid_and_reports_an_unconfirmed_stop_honest
             monkeypatch.setattr(server, "shutdown", lambda: None)
             calls: list[Any] = []
 
-            def _record(metadata: Any) -> bool:
+            def _record(metadata: Any, **_k: Any) -> bool:
                 calls.append(dict(metadata) if metadata else metadata)
                 return True  # "a terminate signal was delivered" -- but it never took effect
 
@@ -109,7 +109,7 @@ def test_stale_branch_terminate_true_while_the_listener_still_serves_is_not_a_st
     with _daemon(root, metadata_pid=os.getpid(), package_version="0.0.0-stale"):
         assert sd._probe_daemon(root) is None
         calls: list[Any] = []
-        monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda m: calls.append(m) or True)
+        monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda m, **_k: calls.append(m) or True)
         result = sd.stop_session_daemon(str(root))
         assert calls, "no pid escalation happened: the test is vacuous"
         assert result["running"] is True
@@ -124,7 +124,7 @@ def test_stale_branch_control_terminate_true_then_listener_closed_is_a_pid_stop(
     root = tmp_path.resolve()
     with _daemon(root, metadata_pid=os.getpid(), package_version="0.0.0-stale") as server:
 
-        def _terminate_and_die(_m: Any) -> bool:
+        def _terminate_and_die(_m: Any, **_k: Any) -> bool:
             _close_listener(server)
             return True
 
@@ -143,7 +143,7 @@ def test_probe_branch_control_terminate_true_then_listener_closed_is_a_pid_stop(
     with _daemon(root, metadata_pid=os.getpid()) as server:
         monkeypatch.setattr(server, "shutdown", lambda: None)  # ack "stop", keep serving
 
-        def _terminate_and_die(_m: Any) -> bool:
+        def _terminate_and_die(_m: Any, **_k: Any) -> bool:
             _close_listener(server)
             return True
 
@@ -161,7 +161,7 @@ def test_cooperative_stop_control_still_succeeds(
     # POSITIVE CONTROL: a normal stop (daemon really shuts down) is confirmed, not escalated.
     root = tmp_path.resolve()
     calls: list[Any] = []
-    monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda m: calls.append(m) or False)
+    monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda m, **_k: calls.append(m) or False)
     with _daemon(root, metadata_pid=os.getpid()):
         result = sd.stop_session_daemon(str(root))
         assert result["running"] is False

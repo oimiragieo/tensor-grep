@@ -56,7 +56,7 @@ def _stop_with(
             raise OSError("connection reset while delivering stop")
         return {"version": 1, "ok": True, "stopping": True}
 
-    def _fake_terminate(meta: dict[str, Any] | None) -> bool:
+    def _fake_terminate(meta: dict[str, Any] | None, **_kwargs: Any) -> bool:
         terminate_calls.append(int((meta or {}).get("pid", -1)))
         return terminate_returns
 

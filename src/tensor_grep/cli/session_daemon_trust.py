@@ -39,11 +39,73 @@ _SECRET_FILE_MODE = 0o600
 # OS seams (monkeypatched in tests): current token user SID, and (owner SID, granted SIDs).
 _win_current_user_sid = _winsec.current_user_sid
 _win_owner_and_dacl = _winsec.owner_and_dacl_sids
+_win_dacl_entries = _winsec.owner_and_dacl_entries  # (owner SID, [(SID, access mask)])
+_lstat = os.lstat  # private seam: tests patch this, never the global os.lstat
 
 
 def _valid_daemon_port(value: object) -> int | None:
     """``value`` iff it is exactly an int in 1..65535 -- never coerced (True, 4242.9, "80", inf)."""
     return value if type(value) is int and 1 <= value <= 65535 else None
+
+
+_DAEMON_MODULE = "tensor_grep.cli.session_daemon"
+
+
+def _argv_serves_root(cmdline: list[str], root: Path) -> bool:
+    """True iff the (last, argparse-style) ``--root`` in ``cmdline`` resolves to ``root``.
+
+    Both sides go through ``normcase(realpath(...))`` so spelling, relative paths and (on Windows)
+    case cannot make two different roots look equal or one root look different.
+    """
+    value: str | None = None
+    for index, arg in enumerate(cmdline):
+        if arg == "--root":
+            value = cmdline[index + 1] if index + 1 < len(cmdline) else None
+        elif arg.startswith("--root="):
+            value = arg[len("--root=") :]
+    if not value:
+        return False
+    try:
+        return os.path.normcase(os.path.realpath(value)) == os.path.normcase(os.path.realpath(root))
+    except (OSError, ValueError):
+        return False
+
+
+def _process_cmdline(pid: int) -> list[str]:
+    """argv of ``pid`` via psutil (test seam). ``LookupError``: the process is gone. ``OSError``:
+    it cannot be read (psutil missing, AccessDenied, ...) -- the caller must then NOT signal."""
+    try:
+        import psutil  # type: ignore[import-not-found]
+    except Exception as exc:
+        raise OSError("psutil unavailable") from exc
+    try:
+        return [str(arg) for arg in psutil.Process(pid).cmdline()]
+    except psutil.NoSuchProcess as exc:
+        raise LookupError(pid) from exc
+    except Exception as exc:
+        raise OSError(str(exc)) from exc
+
+
+def _daemon_pid_state(metadata: dict[str, Any] | None, root: Path | None) -> str:
+    """``"ours"`` (provably the tensor-grep daemon serving ``root``), ``"gone"`` (no such process
+    or not a tensor-grep daemon at all) or ``"unverifiable"`` (alive but not provably ours:
+    another root's daemon, an unreadable argv, no psutil, or no root given). Only ``"ours"`` may
+    ever be signalled."""
+    try:
+        pid = int((metadata or {})["pid"])
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return "gone"
+    if pid <= 0 or pid == os.getpid():
+        return "gone"
+    try:
+        cmdline = _process_cmdline(pid)
+    except LookupError:
+        return "gone"
+    except Exception:
+        return "unverifiable"
+    if _DAEMON_MODULE not in cmdline:
+        return "gone"
+    return "ours" if root is not None and _argv_serves_root(cmdline, root) else "unverifiable"
 
 
 def _await_endpoint_refused(
@@ -137,9 +199,83 @@ def _parent_trusted(parent: Path) -> bool:
     )  # not group/world-writable
 
 
+_MAX_ANCESTOR_DEPTH = 64
+# Everyone, BUILTIN\Users, Authenticated Users: granting these write access to an ancestor lets any
+# local account rename/replace the subtree beneath it.
+_WIN_BROAD_SIDS = frozenset({"S-1-1-0", "S-1-5-32-545", "S-1-5-11"})
+# WRITE_DATA|APPEND_DATA|WRITE_EA|DELETE_CHILD|WRITE_ATTRIBUTES|DELETE|WRITE_DAC|WRITE_OWNER
+# |GENERIC_WRITE|GENERIC_ALL
+_WIN_WRITE_MASK = 0x2 | 0x4 | 0x10 | 0x40 | 0x100 | 0x10000 | 0x40000 | 0x80000
+_WIN_WRITE_MASK |= 0x40000000 | 0x10000000
+
+
+def _windows_ancestor_dacl_ok(entries: list[tuple[str, int]]) -> bool:
+    """No allow-ACE gives write/modify access to Everyone, Users or Authenticated Users.
+
+    A NULL DACL or an allow-ACE type this code does not parse is refused (fail closed).
+    """
+    for sid, mask in entries:
+        if sid.startswith(("NULL-DACL", "UNPARSED-ACE-TYPE-")):
+            return False
+        if sid in _WIN_BROAD_SIDS and mask & _WIN_WRITE_MASK:
+            return False
+    return True
+
+
+def _posix_dir_ok(st: os.stat_result) -> bool:
+    if sys.platform == "win32":
+        return False
+    euid = os.geteuid()
+    if not _stat.S_ISDIR(st.st_mode) or st.st_uid not in (euid, 0):
+        return False
+    return not st.st_mode & 0o022 or bool(st.st_mode & _stat.S_ISVTX)  # writable => sticky (/tmp)
+
+
+def _ancestors_trusted(parent: Path) -> bool:
+    """StrictModes-style: every ancestor of the secret's directory up to the root is trustworthy.
+
+    POSIX: a real directory owned by the user or root (a symlink is allowed only if root-owned,
+    e.g. /var -> /private/var, and the RESOLVED chain is then checked too); group/world-writable
+    is refused unless sticky. Windows: not a reparse point and no write/modify grant to Everyone,
+    Users or Authenticated Users; the drive root is exempt. Bounded; any error fails closed.
+    """
+    path = Path(os.path.abspath(parent))
+    if len(path.parts) > _MAX_ANCESTOR_DEPTH:
+        return False
+    if sys.platform == "win32":
+        for anc in path.parents:
+            if anc.parent == anc:
+                continue  # drive root: a system root, not attacker-modifiable
+            handle = _winsec.open_no_follow(str(anc), directory=True)
+            if handle is None:  # error, or the ancestor is a reparse point (symlink/junction)
+                return False
+            try:
+                queried = _win_dacl_entries(handle)
+            finally:
+                _winsec.close_handle(handle)
+            if queried is None or not _windows_ancestor_dacl_ok(queried[1]):
+                return False
+        return True
+    try:
+        for anc in path.parents:
+            st = _lstat(anc)
+            if _stat.S_ISLNK(st.st_mode):
+                if st.st_uid != 0:
+                    return False
+                continue
+            if not _posix_dir_ok(st):
+                return False
+        real = Path(os.path.realpath(path))
+        if len(real.parts) > _MAX_ANCESTOR_DEPTH:
+            return False
+        return all(_posix_dir_ok(_lstat(anc)) for anc in (real, *real.parents))
+    except OSError:
+        return False
+
+
 def _read_secret_bytes(path: Path) -> bytes | None:
     """Open ONCE without following links, validate that opened object, read through the SAME fd."""
-    if not _parent_trusted(path.parent):
+    if not _parent_trusted(path.parent) or not _ancestors_trusted(path.parent):
         return None
     if sys.platform == "win32":
         handle = _winsec.open_no_follow(str(path))
@@ -225,7 +361,7 @@ def _load_or_create_user_secret() -> bytes | None:
         return None  # present but untrusted (or unreadable): never use it, never overwrite it
     try:
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if not _parent_trusted(path.parent):
+        if not _parent_trusted(path.parent) or not _ancestors_trusted(path.parent):
             return None
         payload = {"secret": secrets.token_hex(32)}
         if sys.platform == "win32":

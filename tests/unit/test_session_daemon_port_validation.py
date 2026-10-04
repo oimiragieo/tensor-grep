@@ -85,7 +85,7 @@ def test_stop_does_not_dial_a_malformed_planted_port(
         raise OSError("blocked by test")
 
     monkeypatch.setattr(socket, "create_connection", _record)
-    monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda _m: False)
+    monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda _m, **_k: False)
     sd.stop_session_daemon(str(root))  # must not raise and must not connect
     assert connects == []
 

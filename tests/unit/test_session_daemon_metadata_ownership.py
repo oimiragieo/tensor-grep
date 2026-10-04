@@ -183,7 +183,7 @@ def test_stop_session_daemon_stale_fallback_preserves_concurrent_replacement(
     root.mkdir()
     session_daemon._write_daemon_metadata(root, _payload(pid=424242, port=11111, token="stale"))
 
-    def _fake_terminate(metadata: dict[str, Any] | None) -> bool:
+    def _fake_terminate(metadata: dict[str, Any] | None, **_kwargs: Any) -> bool:
         # Simulate daemon B publishing its own metadata WHILE A is being torn down -- the exact
         # narrow window the guard must protect.
         session_daemon._write_daemon_metadata(

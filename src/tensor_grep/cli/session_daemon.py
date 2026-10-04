@@ -24,14 +24,17 @@ from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, repla
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
+    _DAEMON_MODULE,
     DAEMON_HOST,
     _await_endpoint_refused,
+    _daemon_pid_state,
     _daemon_ping_proof,
     _daemon_secret_path,
     _DaemonRefreshFailed,
     _is_loopback_host,
     _load_or_create_user_secret,
     _ping_proof_fields,
+    _process_cmdline,
     _read_user_secret,
     _refresh_failed_error,
     _valid_daemon_port,
@@ -490,30 +493,20 @@ def _pid_looks_like_tg_daemon(pid: int) -> bool:
     if pid <= 0:
         return False
     try:
-        import psutil  # type: ignore[import-not-found]
+        return _DAEMON_MODULE in _process_cmdline(pid)
     except Exception:
         return False
-    try:
-        cmdline = " ".join(psutil.Process(pid).cmdline())
-    except Exception:
-        return False
-    return "tensor_grep.cli.session_daemon" in cmdline
 
 
-def _terminate_daemon_by_pid(metadata: dict[str, Any] | None) -> bool:
+def _terminate_daemon_by_pid(metadata: dict[str, Any] | None, *, root: Path | None = None) -> bool:
     """Terminate the daemon process recorded in ``metadata`` (audit I7).
 
-    Only fires when the pid can be validated as a tensor-grep daemon. Returns True if a
-    terminate signal was delivered.
+    Only fires when the pid is provably the tensor-grep daemon serving ``root`` (its argv carries
+    ``--root <root>``). Returns True if a terminate signal was delivered.
     """
-    if not metadata:
+    if not metadata or _daemon_pid_state(metadata, root) != "ours":
         return False
-    try:
-        pid = int(metadata["pid"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    if pid <= 0 or pid == os.getpid() or not _pid_looks_like_tg_daemon(pid):
-        return False
+    pid = int(metadata["pid"])
     try:
         if os.name == "nt":
             import signal
@@ -893,11 +886,15 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         # audit I7: cooperative probe failed, but a stale daemon may still be running (e.g. its
         # socket is wedged). Fall back to terminating the recorded pid if it validates.
         stale_metadata = _read_daemon_metadata(root)
-        killed = _terminate_daemon_by_pid(stale_metadata)
-        if killed and not _await_endpoint_refused(
-            (stale_metadata or {}).get("host", _DAEMON_HOST),
-            (stale_metadata or {}).get("port"),
-            _DAEMON_START_TIMEOUT_SECONDS,
+        killed = _terminate_daemon_by_pid(stale_metadata, root=root)
+        unconfirmed = not killed and _daemon_pid_state(stale_metadata, root) == "unverifiable"
+        if unconfirmed or (
+            killed
+            and not _await_endpoint_refused(
+                (stale_metadata or {}).get("host", _DAEMON_HOST),
+                (stale_metadata or {}).get("port"),
+                _DAEMON_START_TIMEOUT_SECONDS,
+            )
         ):
             # A DELIVERED signal is not a stopped daemon: only a refused connection is evidence.
             return {
@@ -940,14 +937,17 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
         if _probe_daemon(root) is None:
-            if stop_method == "none" and _terminate_daemon_by_pid(metadata):
-                stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
+            if stop_method == "none":
+                if _terminate_daemon_by_pid(metadata, root=root):
+                    stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
+                else:
+                    still_up = _daemon_pid_state(metadata, root) == "unverifiable"
             break
         time.sleep(0.05)
     else:
         # audit I7: no effect within the deadline; escalate to a validated terminate of the pid
         # PROVEN by the signed ping reply.
-        stop_method = "pid" if _terminate_daemon_by_pid(metadata) else "none"
+        stop_method = "pid" if _terminate_daemon_by_pid(metadata, root=root) else "none"
         still_up = stop_method == "none"  # still answering and never signalled
     # A DELIVERED signal is not a stopped daemon: after ANY pid escalation only a REFUSED
     # connection to the verified endpoint is evidence that it ended.

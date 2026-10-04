@@ -185,8 +185,8 @@ def current_user_sid() -> str | None:
         k32.CloseHandle(token)
 
 
-def owner_and_dacl_sids(handle: Any) -> tuple[str, list[str]] | None:
-    """``(owner SID, SIDs granted access by the DACL)`` read from the OPENED handle.
+def owner_and_dacl_entries(handle: Any) -> tuple[str, list[tuple[str, int]]] | None:
+    """``(owner SID, [(SID, access mask)] granted by the DACL)`` read from the OPENED handle.
 
     ``None`` when anything cannot be established. A NULL DACL (everyone full access) or any
     allow-type ACE this code does not parse is reported as a sentinel entry so the caller's
@@ -250,26 +250,35 @@ def owner_and_dacl_sids(handle: Any) -> tuple[str, list[str]] | None:
         if owner_sid is None:
             return None
         if not dacl.value:
-            return owner_sid, ["NULL-DACL"]
+            return owner_sid, [("NULL-DACL", 0xFFFFFFFF)]
         info = _AclSizeInfo()
         if not adv.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
             return None
-        granted: list[str] = []
+        granted: list[tuple[str, int]] = []
         for index in range(info.AceCount):
             ace = ctypes.c_void_p()
             if not adv.GetAce(dacl, index, ctypes.byref(ace)) or not ace.value:
                 return None
             header = ctypes.string_at(ace.value, 8)
             ace_type, ace_flags = header[0], header[1]
+            mask = int.from_bytes(header[4:8], "little")
             if ace_type in _DENY_ACE_TYPES or ace_flags & _INHERIT_ONLY_ACE:
                 continue
             if ace_type != _ACCESS_ALLOWED_ACE_TYPE:
-                granted.append(f"UNPARSED-ACE-TYPE-{ace_type}")
+                granted.append((f"UNPARSED-ACE-TYPE-{ace_type}", 0xFFFFFFFF))
                 continue
             sid = _sid_string(ace.value + 8)
             if sid is None:
                 return None
-            granted.append(sid)
+            granted.append((sid, mask))
         return owner_sid, granted
     finally:
         k32.LocalFree(sd)
+
+
+def owner_and_dacl_sids(handle: Any) -> tuple[str, list[str]] | None:
+    """``(owner SID, SIDs granted any access)``: the SID-only view of the entries above."""
+    queried = owner_and_dacl_entries(handle)
+    if queried is None:
+        return None
+    return queried[0], [sid for sid, _mask in queried[1]]
