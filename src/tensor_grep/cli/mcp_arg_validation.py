@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import re
+import warnings
 from typing import Any
 
 from tensor_grep.cli.incompleteness import incomplete_class_fragment
@@ -117,14 +118,48 @@ def unsupported_ast_language_message(lang: str | None) -> str | None:
     return None
 
 
-# Python `re` messages for syntax errors that the Rust regex grammar (rg / tg native) ALSO rejects:
-# an unclosed group, an unmatched ")", an unterminated class. Anything else Python rejects
-# (`\p{Greek}`, possessive quantifiers, ...) can be valid Rust, so it is never pre-rejected.
+# Python `re` messages for syntax errors that the Rust regex grammar (rg / tg native) ALSO rejects
+# (same rule set as the front door's bootstrap_search_guards, each confirmed against rg 15.x):
+# an unclosed group, an unmatched ")", a reversed repetition range, a trailing backslash, an
+# unterminated class. Everything else Python rejects (`\p{Greek}`, `(?<n>x)`, possessive
+# quantifiers, ...) can be valid Rust, so it is never pre-rejected.
 _AGREED_RE_ERRORS = (
     "missing ), unterminated subpattern",
-    "unbalanced parenthesis",
-    "unterminated character set",
+    "min repeat greater than max repeat",
+    "bad escape (end of pattern)",
 )
+
+
+def _python_agrees_invalid(pattern: str) -> bool:
+    """True when Python ``re`` rejects ``pattern`` for a reason Rust regex also rejects it.
+
+    "Cannot tell" (a hostile pattern crashing the parser with something that is not ``re.error``)
+    is NOT proof of invalidity and returns False. "nothing to repeat" counts only for a leading
+    quantifier (start, or after ``(`` / ``|``; rg accepts ``^*``). Python and Rust parse classes
+    differently (``[[:alpha:](]`` is a valid Rust class), so with a ``[`` present only the
+    unterminated-class error counts.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        try:
+            re.compile(pattern)
+        except (RecursionError, OverflowError, MemoryError, ValueError):
+            return False
+        except re.error as exc:
+            if "[" in pattern:
+                return exc.msg == "unterminated character set"
+            if ")" in pattern and (len(pattern) - len(pattern.rstrip(chr(92)))) % 2:
+                # rg 15.1 accepts `)\`, `a)\` ... (measured): a ")" plus a dangling backslash
+                # is not an agreed error even though Python reports the ")" first.
+                return False
+            if exc.msg in _AGREED_RE_ERRORS:
+                return True
+            if exc.msg == "unbalanced parenthesis":
+                # rg 15.1 accepts `)(` (measured), so an unmatched ")" only counts with no "(" at all.
+                return "(" not in pattern
+            pos = exc.pos or 0
+            return exc.msg == "nothing to repeat" and (pos == 0 or pattern[pos - 1] in "(|")
+    return False
 
 
 _REGEX_META = frozenset(chr(92) + "^$.|?*+()[]{}")
@@ -174,13 +209,7 @@ def regex_is_invalid(pattern: str, *, fixed_strings: bool) -> bool:
     verdict = _rg_rejects_regex(pattern)
     if verdict is not None:
         return verdict
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        return any(exc.msg.startswith(m) for m in _AGREED_RE_ERRORS)
-    except (RecursionError, OverflowError):
-        return False
-    return False
+    return _python_agrees_invalid(pattern)
 
 
 def raise_if_regex_invalid(pattern: str, fixed_strings: bool) -> bool:

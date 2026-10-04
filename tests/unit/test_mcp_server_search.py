@@ -1607,3 +1607,44 @@ def test_tg_search_regex_probe_is_not_spawned_when_files_are_selected(
     if not rg_present:
         json.loads(mcp_server.tg_search("hel+o.(world)", str(tmp_path), glob="*.no-such-ext"))
         assert len(seam_calls) == 1
+
+
+@pytest.mark.parametrize("pattern", ["(", ")", "*", "+x", "a{2,1}", "\\", "[a"])
+def test_tg_search_rg_absent_zero_file_agreed_invalid_patterns_are_invalid_input(
+    tmp_path, monkeypatch, pattern
+):
+    # Each pattern was confirmed invalid in BOTH Python re and rg 15.1 (differential fuzz).
+    from tensor_grep.cli import mcp_server, runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search(pattern, str(tmp_path), glob="*.no-such-ext"))
+    assert payload["error"]["code"] == "invalid_input", (pattern, payload)
+
+
+@pytest.mark.parametrize(
+    "pattern", [r"\p{Greek}", "(?i)x", "(?<n>x)", "^*", ")(", ")\\", "[[:alpha:](]"]
+)
+def test_tg_search_rg_absent_zero_file_rg_valid_patterns_are_not_rejected(
+    tmp_path, monkeypatch, pattern
+):
+    # Controls: rg 15.1 accepts every one of these (`a{,3}` is NOT here: rg rejects it).
+    from tensor_grep.cli import mcp_server, runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.txt").write_text("hello\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_search(pattern, str(tmp_path), glob="*.no-such-ext"))
+    assert "error" not in payload, (pattern, payload)
+
+
+def test_regex_is_invalid_survives_hostile_patterns(monkeypatch):
+    from tensor_grep.cli import mcp_arg_validation, runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_ripgrep_binary", lambda: None)
+    # "cannot tell" (parser crash that is not re.error) must not be treated as proof of invalid
+    assert mcp_arg_validation.regex_is_invalid("(" * 100000, fixed_strings=False) in (True, False)
+    assert (
+        mcp_arg_validation.regex_is_invalid("a{99999999999999999999}", fixed_strings=False) is False
+    )
