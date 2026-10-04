@@ -142,3 +142,116 @@ def test_the_unreadable_sample_names_distinct_places_not_repeated_attempts(
     # And the prose must not render an EVENT count as a FILE count.
     assert "file(s) in scope could not be read" not in payload["remediation"]
     assert "read attempt(s) in scope failed" in payload["remediation"]
+
+
+# ---------------------------------------------------------------------------
+# K1.3 (H-05): ast-grep (behind AstGrepWrapperBackend) skips non-UTF-8 files silently; the scan
+# must disclose them instead of reading as a clean pass.
+# ---------------------------------------------------------------------------
+
+
+class AstGrepWrapperBackend:  # matched by type name in _run_ast_scan_payload
+    def search(self, file_path, pattern, config=None):
+        from tensor_grep.core.result import SearchResult
+
+        return SearchResult(matches=[], total_files=0, total_matches=0)
+
+
+class _NativeBackend:
+    def search(self, file_path, pattern, config=None):
+        from tensor_grep.core.result import SearchResult
+
+        return SearchResult(matches=[], total_files=0, total_matches=0)
+
+
+def _ast_scan(root, monkeypatch, language="python", rule_backends=None):
+    """Run an AST-only scan. `rule_backends` is a list of (language, backend) per rule."""
+    import tensor_grep.cli.ast_workflows as aw
+    from tensor_grep.cli.main import _run_ast_scan_payload
+
+    specs = rule_backends or [(language, AstGrepWrapperBackend())]
+    rules = [
+        {
+            "id": f"r{i}",
+            "language": lang,
+            "pattern": "print($A)",
+            "severity": "high",
+            "message": "m",
+        }
+        for i, (lang, _backend) in enumerate(specs)
+    ]
+    by_rule_id = {f"r{i}": backend for i, (_lang, backend) in enumerate(specs)}
+    monkeypatch.setattr(
+        aw, "_select_ast_backend_for_rule", lambda cfg, rule, cache: by_rule_id[rule["id"]]
+    )
+    return _run_ast_scan_payload(
+        {
+            "config_path": "builtin:x",
+            "root_dir": root,
+            "rule_dirs": [],
+            "test_dirs": [],
+            "language": language,
+        },
+        rules,
+        routing_reason="t",
+        ruleset_name="t",
+    )
+
+
+def test_scan_discloses_non_utf8_file_the_ast_leg_cannot_read(tmp_path, monkeypatch):
+    (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch)  # control
+    (tmp_path / "lat.py").write_bytes(b"# caf\xe9\nx = 2\n")
+    payload = _ast_scan(tmp_path, monkeypatch)
+    assert payload["partial"] is True and payload["partial_reason"] == "unreadable_path"
+    assert any("lat.py" in s for s in payload["unreadable_paths"]["sample"])
+    assert not any("ok.py" in s for s in payload["unreadable_paths"]["sample"])
+    assert "does NOT prove they are clean" in payload["remediation"]
+    assert "AST rules skip files that are not valid UTF-8" in payload["remediation"]
+
+
+def test_non_utf8_outside_the_rule_language_is_not_flagged(tmp_path, monkeypatch):
+    (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "lat.js").write_bytes(b"// caf\xe9\n")
+    (tmp_path / "data.txt").write_bytes(b"caf\xe9\n")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch)
+
+
+def test_native_only_rules_never_count_non_utf8_as_skipped(tmp_path, monkeypatch):
+    # K1.5 makes the native backend decode lossily, so a native-only language is not skipped.
+    (tmp_path / "lat.py").write_bytes(b"# caf\xe9\nx = 2\n")
+    payload = _ast_scan(tmp_path, monkeypatch, rule_backends=[("python", _NativeBackend())])
+    assert "unreadable_paths" not in payload
+
+
+def test_mixed_backend_scan_flags_only_the_wrapper_language(tmp_path, monkeypatch):
+    (tmp_path / "lat.py").write_bytes(b"# caf\xe9\nx = 2\n")
+    (tmp_path / "lat.js").write_bytes(b"// caf\xe9\n")
+    payload = _ast_scan(
+        tmp_path,
+        monkeypatch,
+        rule_backends=[("python", _NativeBackend()), ("javascript", AstGrepWrapperBackend())],
+    )
+    sample = payload["unreadable_paths"]["sample"]
+    assert any("lat.js" in s for s in sample)
+    assert not any("lat.py" in s for s in sample)
+
+
+def test_same_language_wrapper_then_native_still_discloses(tmp_path, monkeypatch):
+    (tmp_path / "lat.py").write_bytes(b"# caf\xe9\nx = 2\n")
+    payload = _ast_scan(
+        tmp_path,
+        monkeypatch,
+        rule_backends=[("python", AstGrepWrapperBackend()), ("python", _NativeBackend())],
+    )
+    assert any("lat.py" in s for s in payload["unreadable_paths"]["sample"])
+
+
+def test_same_language_native_then_wrapper_still_discloses(tmp_path, monkeypatch):
+    (tmp_path / "lat.py").write_bytes(b"# caf\xe9\nx = 2\n")
+    payload = _ast_scan(
+        tmp_path,
+        monkeypatch,
+        rule_backends=[("python", _NativeBackend()), ("python", AstGrepWrapperBackend())],
+    )
+    assert any("lat.py" in s for s in payload["unreadable_paths"]["sample"])

@@ -696,6 +696,32 @@ def _regex_rule_targets_file(rule_language: str, file_path: str) -> bool:
     return file_language == normalize_ast_language(rule_language, default=file_language)
 
 
+def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> list[str]:
+    """Files an AST rule would scan that are not valid UTF-8 (ast-grep skips them silently)."""
+    import codecs
+
+    from tensor_grep.cli.repo_map import _target_language_for_path
+
+    wanted = set(ast_languages)
+    if "tsx" in wanted:
+        wanted.add("typescript")  # _target_language_for_path maps .tsx -> "typescript"
+    bad: list[str] = []
+    for current_file in files:
+        if _target_language_for_path(current_file) not in wanted:
+            continue
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        try:
+            with open(current_file, "rb") as handle:
+                while chunk := handle.read(1 << 20):
+                    decoder.decode(chunk)
+            decoder.decode(b"", final=True)
+        except UnicodeDecodeError:
+            bad.append(current_file)
+        except OSError:
+            continue  # unreadable files are disclosed by the walk/regex leg
+    return bad
+
+
 def _run_ast_scan_payload(
     project_cfg: dict[str, object],
     rules: list[dict[str, str]],
@@ -841,6 +867,7 @@ def _run_ast_scan_payload(
     regex_rules: list[dict[str, str]] = []
     other_resolved: list[tuple[dict[str, str], SearchConfig, ComputeBackend]] = []
     wrapper_backend: object | None = None
+    wrapper_languages: set[str] = set()
     for rule in rules:
         if rule.get("engine") == "regex":
             regex_rules.append(rule)
@@ -850,6 +877,10 @@ def _run_ast_scan_payload(
         # must reach a backend that serves ALL members (or fail closed), never
         # a backend selected from only the first member's shape.
         backend = _select_ast_backend_for_rule(rule_cfg, rule, backend_cache)
+        if type(backend).__name__ == "AstGrepWrapperBackend":
+            # A SET of languages for which ANY executed rule ran on the wrapper: a later native
+            # rule for the same language must not erase an earlier wrapper rule's disclosure.
+            wrapper_languages.add(rule["language"])
         if (
             project_scan_fast_path
             and not scan_has_discovery_filter
@@ -1042,6 +1073,15 @@ def _run_ast_scan_payload(
     from tensor_grep.cli.repo_map import _UnreadablePathFlag as _ScanUnreadableFlag
 
     scan_unreadable = _ScanUnreadableFlag()
+    undecodable_seen = False
+    if wrapper_languages:
+        # ast-grep (AstGrepWrapperBackend) skips non-UTF-8 files without a word; the native
+        # AstBackend decodes them lossily. Disclose only for languages a wrapper rule ran on.
+        for bad_file in _undecodable_ast_scope_files(
+            _candidate_files_for_filtered_scan(), wrapper_languages
+        ):
+            scan_unreadable.record(OSError(0, "file is not valid UTF-8", bad_file))
+            undecodable_seen = True
     for rule in regex_rules:
         backend_names_used.add("RegexRulesetBackend")
         if scanner is None:
@@ -1161,6 +1201,11 @@ def _run_ast_scan_payload(
             "against those files and this result does NOT prove they are clean. Make them "
             "readable, or scope the scan away from them."
         )
+        if undecodable_seen:
+            payload["remediation"] = cast(str, payload["remediation"]) + (
+                " AST rules skip files that are not valid UTF-8; re-encode them or cover them "
+                "with a regex rule."
+            )
     _apply_ruleset_baseline(
         payload,
         baseline_path=baseline_path,
