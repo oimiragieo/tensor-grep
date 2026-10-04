@@ -256,9 +256,31 @@ def _is_plausible_rg_flag_token(token: str) -> bool:
     return True
 
 
+# rg modes that take NO pattern: a dash-led token beside them is an option, and a `--` would turn it
+# into a PATH (`--files -g X -i` exits 0 in rg, 2 with a sentinel). Checked against rg 15.1.0.
+_NO_PATTERN_MODE_FLAGS = frozenset({
+    "--files",
+    "--type-list",
+    "--help",
+    "-h",
+    "--version",
+    "-V",
+    "--pcre2-version",
+    "--generate",
+})
+
+
+def _files_mode_active(search_args: list[str]) -> bool:
+    return flag_present(search_args, _NO_PATTERN_MODE_FLAGS)
+
+
 def _sentinel_insertion_index(search_args: list[str]) -> int | None:
     """Index to insert ``--`` before caller-influenced dash-led positionals only."""
     if has_end_of_options(search_args):  # (S) value-aware: in `-e --` the `--` is a pattern
+        return None
+    if _files_mode_active(search_args):
+        # `--files` and the other no-pattern modes take no pattern (tokenizer rule B3): there is no pattern slot, and a dash-led
+        # token is an OPTION in rg. Inserting `--` would turn `-i` into a PATH (rg exit 2).
         return None
 
     dash_led = _first_dash_led_pattern_index_after_tg_flags(search_args)

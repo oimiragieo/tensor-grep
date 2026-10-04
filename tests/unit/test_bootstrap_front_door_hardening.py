@@ -91,3 +91,99 @@ def test_version_fast_path_does_not_import_the_guards_module():
         check=False,
     )
     assert "ABSENT" in out.stdout, (out.stdout, out.stderr)
+
+
+# --- codex audit of #1201: no-pattern modes (`--files`, ...) must not get a sentinel --------------
+
+import random  # noqa: E402
+import shutil  # noqa: E402
+
+from tensor_grep.cli import bootstrap_native_argv as _nav  # noqa: E402
+
+_RG = shutil.which("rg")
+_needs_rg = pytest.mark.skipif(_RG is None, reason="rg not installed")
+
+
+def _rg_rc(cwd, argv):
+    out = subprocess.run(
+        [_RG, "--no-config", *argv],
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    return out.returncode
+
+
+@pytest.fixture
+def _files_dir(tmp_path):
+    (tmp_path / "bootstrap.py").write_text("foo\n", encoding="utf-8")
+    (tmp_path / "a.txt").write_text("foo\n", encoding="utf-8")
+    return tmp_path
+
+
+_NO_PATTERN_REPROS = [
+    ["--files", "-g", "bootstrap.py", "-i"],
+    ["--files", "-i"],
+    ["--files", "-g", "bootstrap.py", "--hidden", "-i"],
+    ["--files", "--pre=cat", "-i"],  # exec-only flag: rg ignores it in --files mode
+    ["--files", "-z", "-i"],
+    ["--json", "--files", "-i"],
+    ["--type-list", "-i"],
+    ["--help", "-i"],
+    ["-h", "-i"],
+    ["--version", "-i"],
+    ["-V", "-i"],
+    ["--pcre2-version", "-i"],
+    ["--generate", "man", "-i"],
+]
+
+
+@pytest.mark.parametrize("argv", _NO_PATTERN_REPROS, ids=lambda a: " ".join(a))
+def test_no_pattern_mode_argv_is_left_unchanged(argv):
+    assert _nav.bootstrap_native_tg_search_argv(argv) == argv
+
+
+@_needs_rg
+@pytest.mark.parametrize("argv", _NO_PATTERN_REPROS, ids=lambda a: " ".join(a))
+def test_no_pattern_mode_builder_agrees_with_rg(_files_dir, argv):
+    raw = _rg_rc(_files_dir, argv)
+    assert raw == 0, argv  # the oracle: rg accepts the raw argv
+    assert _rg_rc(_files_dir, _nav.bootstrap_native_tg_search_argv(argv)) == raw
+
+
+def test_pattern_mode_still_gets_the_sentinel():  # control: the guard is not a blanket disable
+    assert _nav.bootstrap_native_tg_search_argv(["--json", "-kq", "src"]) == [
+        "--json",
+        "--",
+        "-kq",
+        "src",
+    ]
+
+
+@_needs_rg
+def test_files_mode_differential_against_rg(_files_dir):
+    pool = [
+        "-i",
+        "-n",
+        "-g",
+        "bootstrap.py",
+        "--hidden",
+        "-z",
+        "--pre=cat",
+        "-S",
+        "-u",
+        "-kq",
+        "--json",
+    ]
+    rng = random.Random(20261004)
+    checked = 0
+    for _ in range(150):
+        argv = ["--files", *[rng.choice(pool) for _ in range(rng.randint(0, 4))]]
+        if rng.random() < 0.5:
+            rng.shuffle(argv)
+        built = _nav.bootstrap_native_tg_search_argv(argv)
+        assert _rg_rc(_files_dir, built) == _rg_rc(_files_dir, argv), (argv, built)
+        checked += 1
+    assert checked == 150
