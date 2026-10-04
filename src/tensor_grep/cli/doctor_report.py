@@ -523,7 +523,9 @@ def _doctor_rust_binary_version_status(
     rust_binary_version_matches: bool | None,
 ) -> str:
     if rust_binary_version is None:
-        return "missing"
+        # A binary that exists but whose `--version` probe failed or timed out is unverified,
+        # not absent.
+        return "missing" if native_tg_binary_kind == "missing" else "unknown"
     if rust_binary_version_matches is True:
         return "matches"
     if native_tg_binary_kind.startswith("in-tree-"):
@@ -768,6 +770,11 @@ def _doctor_rust_binary_warning(
         return (
             "native tg binary version mismatch: "
             f"expected {expected_version}, found {rust_binary_version or 'unknown'}"
+        )
+    if rust_binary_version_status == "unknown":
+        return (
+            "native tg binary exists but its version could not be verified "
+            "(`--version` timed out or failed)"
         )
     return None
 
