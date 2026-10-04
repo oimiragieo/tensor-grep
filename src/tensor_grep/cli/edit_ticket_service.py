@@ -167,6 +167,10 @@ class _ByteLedger:
         self.consumed = 0
         self._item_start = aggregate_limit
         self._item_total = 0
+        # Results of a SINGLE read session over a CACHEDIR.TAG (header classification and the
+        # digest/leaf hash come from the same handle and the same per-file allowance).
+        self.tag_digests: dict[str, str] = {}
+        self.leaf_fingerprints: dict[str, str] = {}
 
     def begin_item(self) -> None:
         """Start accounting one file/marker/tag (per-file limit and aggregate start point)."""
@@ -217,6 +221,11 @@ class _ByteLedger:
         """Yield the chunks of one item until REAL EOF, charging each. `hard_cap` (markers)
         raises `marker_too_large` rather than recording a truncated digest."""
         self.begin_item()
+        yield from self.iter_rest(handle, hard_cap)
+
+    def iter_rest(self, handle: BinaryIO, hard_cap: int | None = None) -> Iterator[bytes]:
+        """Continue the CURRENT item (no `begin_item`): the rest of a file whose header was
+        already read in the same session."""
         while True:
             if hard_cap is not None and self._item_total > hard_cap:
                 raise _PopulationWalkError("marker_too_large")
@@ -310,12 +319,17 @@ def _regular_marker(path: Path) -> bool:
 
 
 def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
-    """The FIRST LINE must be exactly the signature, then LF, CRLF or CONFIRMED EOF.
+    """Classify a CACHEDIR.TAG and hash it in ONE open handle and ONE per-file ledger session.
 
-    CRLF is accepted (the spec's signature line ends at the newline and a tag edited on Windows
-    ends in CRLF; the existing exact-match tests pin it); a bare CR or any other tail is not a
-    signature line. The head is gathered with `_read_exact_or_eof`, so `head == sig` means the
-    file REALLY ended after the signature, never "the read happened to stop there". Any
+    The FIRST LINE must be exactly the signature, then LF, CRLF or CONFIRMED EOF. CRLF is
+    accepted (a tag edited on Windows ends in CRLF; the exact-match tests pin it); a bare CR or
+    any other tail is not a signature line. The head is gathered with `_read_exact_or_eof`, so
+    `head == sig` means the file REALLY ended after the signature.
+
+    The header bytes are reused in the hash and the rest is read from the same handle, so the
+    file is charged once and can never get two per-file allowances. A valid tag's digest goes to
+    `ledger.tag_digests`; an INVALID tag (it will be walked as an ordinary leaf) has its leaf
+    fingerprint stored in `ledger.leaf_fingerprints` instead of being read a second time. Any
     OSError (open, read or close) is `unreadable_path`."""
     st = _marker_stat(tag)
     if st is None:
@@ -323,12 +337,23 @@ def _cachedir_tag_valid(tag: Path, ledger: _ByteLedger) -> bool:
         raise _PopulationWalkError("unreadable_path")
     try:
         with _open_regular_no_follow(tag, (st.st_dev, st.st_ino)) as handle:
+            size_at_open = os.fstat(handle.fileno()).st_size
             ledger.begin_item()
             head = _read_exact_or_eof(handle, 128, ledger)
+            sig = _CACHEDIR_TAG_SIGNATURE
+            valid = head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
+            hasher = hashlib.sha256(head)
+            for chunk in ledger.iter_rest(handle, hard_cap=_MARKER_HASH_CAP if valid else None):
+                hasher.update(chunk)
+            if ledger._item_total != size_at_open:  # independent invariant: no prefix hash
+                raise _PopulationWalkError("unreadable_path")
     except OSError as exc:
         raise _PopulationWalkError("unreadable_path") from exc
-    sig = _CACHEDIR_TAG_SIGNATURE
-    return head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
+    if valid:
+        ledger.tag_digests[str(tag)] = hasher.hexdigest()
+    else:
+        ledger.leaf_fingerprints[str(tag)] = "file:" + hasher.hexdigest()
+    return valid
 
 
 def _marker_digest(path: Path, ledger: _ByteLedger) -> str:
@@ -395,21 +420,42 @@ def _population_paths(
     ledger = ledger or _ByteLedger.unlimited()
     visited = 0
     n_name = n_content = 0
+    # Every directory we KEEP (descend into) with its (st_dev, st_ino) at classification.
+    # `os.walk` re-checks `islink` itself and SILENTLY skips a directory swapped for a link
+    # after our check; so each kept directory must be yielded back, and unchanged.
+    expected: dict[str, tuple[int, int]] = {}
+    first = True
     for dirpath, dirnames, filenames in _os_walk(root, followlinks=False, onerror=_on_error):
         visited += 1
         if visited > _MAX_WALK_DIRS:
             raise _PopulationWalkError("dir_count_limit")
         current = Path(dirpath)
+        if first:
+            first = False
+        else:
+            ident = expected.pop(str(current), None)
+            if ident is None:
+                raise _PopulationWalkError("unreadable_path")  # a directory we never kept
+            try:
+                now = _lstat(current)
+            except OSError as exc:
+                raise _PopulationWalkError("unreadable_path") from exc
+            if (
+                _link_from_stat(now)
+                or not stat.S_ISDIR(now.st_mode)
+                or (ident[1] and now.st_ino and ident != (now.st_dev, now.st_ino))
+            ):
+                raise _PopulationWalkError("unreadable_path")  # swapped after classification
         rel_dir = current.relative_to(root)
         keep: list[str] = []
         leaves: list[str] = list(filenames)
         for d in sorted(dirnames):
             child = current / d
             try:
-                child_is_link = _is_link(child)
+                child_st = _lstat(child)
             except OSError as exc:
                 raise _PopulationWalkError("unreadable_path") from exc
-            if child_is_link:
+            if _link_from_stat(child_st):
                 leaves.append(
                     d
                 )  # a directory symlink/junction is a leaf: never descended, never skipped
@@ -424,7 +470,13 @@ def _population_paths(
                         if n_content >= _MAX_CONTENT_PRUNED_DIRS:
                             raise _PopulationWalkError("pruned_dir_limit", "content")
                         n_content += 1
-                        content_pruned[rel] = f"{marker}:{_marker_digest(child / marker, ledger)}"
+                        if marker == "CACHEDIR.TAG":
+                            digest = ledger.tag_digests.pop(str(child / marker), None)
+                            if digest is None:
+                                raise _PopulationWalkError("unreadable_path")
+                        else:
+                            digest = _marker_digest(child / marker, ledger)
+                        content_pruned[rel] = f"{marker}:{digest}"
                     else:
                         if n_name >= _MAX_NAME_PRUNED_DIRS:
                             raise _PopulationWalkError("pruned_dir_limit", "name")
@@ -432,6 +484,7 @@ def _population_paths(
                         content_pruned[rel] = _NAME_PRUNED
             else:
                 keep.append(d)
+                expected[str(child)] = (child_st.st_dev, child_st.st_ino)
         dirnames[:] = keep
         for name in sorted(leaves):
             # os.walk swallows a DirEntry.is_dir() failure (no onerror) and lists the directory
@@ -444,6 +497,8 @@ def _population_paths(
             if stat.S_ISDIR(leaf_st.st_mode) and not _link_from_stat(leaf_st):
                 raise _PopulationWalkError("unreadable_path")
             yield (rel_dir / name).as_posix()
+    if expected:  # a kept directory was never visited: it vanished or became a link
+        raise _PopulationWalkError("unreadable_path")
 
 
 _FINGERPRINT_TAGS = ("file:", "symlink:", "other:")
@@ -510,6 +565,9 @@ def _fingerprint_enumerated(path: Path, ledger: _ByteLedger) -> str:
         raise _PopulationWalkError("unreadable_path")
     if not stat.S_ISREG(st.st_mode):
         return f"other:{stat.S_IFMT(st.st_mode):o}"  # never opened: a fifo would block
+    cached = ledger.leaf_fingerprints.pop(str(path), None)
+    if cached is not None:
+        return cached  # already read, and charged, in the CACHEDIR.TAG classification session
     with _open_regular_no_follow(path, (st.st_dev, st.st_ino)) as handle:
         size_at_open = os.fstat(handle.fileno()).st_size
         hasher = hashlib.sha256()
@@ -566,12 +624,13 @@ def _walk_tracked_files_bounded(
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
-            if size > ledger.per_file_limit:
+            already_read = str(item) in ledger.leaf_fingerprints
+            if not already_read and size > ledger.per_file_limit:
                 incomplete_reason = "per_file_byte_limit"
                 scanned_files += 1
                 continue
 
-            if size > ledger.remaining:
+            if not already_read and size > ledger.remaining:
                 incomplete_reason = "aggregate_byte_limit"
                 break
 

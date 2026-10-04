@@ -1782,3 +1782,131 @@ def test_ledger_never_manufactures_eof_when_the_allowance_is_exhausted(tmp_path:
     with pytest.raises(edit_ticket_service._BudgetExceeded) as excinfo:
         ledger.read_budgeted(io.BytesIO(b"abc"), 3)
     assert excinfo.value.reason == "aggregate_byte_limit"
+
+
+# ---- round 13: dir->symlink swap during the walk; one session per marker file ----
+
+
+def _swap_dir_for_symlink_on_classification(
+    monkeypatch: pytest.MonkeyPatch, name: str, target: Path
+) -> dict[str, bool]:
+    """Deterministic race: right after `_is_link(<name>)` said "not a link" (the walker then
+    calls `_content_prune_marker`), swap the directory for a symlink, then delegate."""
+    real = edit_ticket_service._content_prune_marker
+    swapped = {"done": False}
+
+    def _swapping(path: Path, *a: object, **k: object) -> object:
+        if path.name == name and not swapped["done"] and not os.path.islink(path):
+            swapped["done"] = True
+            os.rmdir(path)
+            try:
+                path.symlink_to(target, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                pytest.skip(f"directory symlink creation not permitted here: {exc}")
+        return real(path, *a, **k)
+
+    monkeypatch.setattr(edit_ticket_service, "_content_prune_marker", _swapping)
+    return swapped
+
+
+def test_directory_swapped_for_a_symlink_after_classification_never_passes_verify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (tmp_path / "elsewhere").mkdir()
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (root / "alias").mkdir()
+    ticket = _ticket(root)
+    assert ticket.population_status["status"] == "complete"
+    swapped = _swap_dir_for_symlink_on_classification(monkeypatch, "alias", tmp_path / "elsewhere")
+    result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+    assert swapped["done"]
+    assert result["verdict"] == "FAIL"  # os.walk silently skipped the link: it must never vanish
+
+
+def test_directory_swapped_for_a_symlink_makes_the_walk_incomplete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "repo"
+    (root / "alias").mkdir(parents=True)
+    (tmp_path / "elsewhere").mkdir()
+    swapped = _swap_dir_for_symlink_on_classification(monkeypatch, "alias", tmp_path / "elsewhere")
+    _files, population = _walk_tracked_files_bounded(root)
+    assert swapped["done"]
+    assert population["status"] == "incomplete"
+    assert population["reason"] == "unreadable_path"
+
+
+def test_unswapped_empty_directory_still_verifies_pass(tmp_path: Path) -> None:  # control
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    (tmp_path / "alias").mkdir()
+    ticket = _ticket(tmp_path)
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+def _raw_read_counter(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Count the bytes ACTUALLY pulled from the OS across every handle (cumulative)."""
+    counter: dict[str, int] = {}
+    real_fdopen = os.fdopen
+
+    def _fdopen(fd: int, mode: str = "r", buffering: int = -1, *a: object, **k: object) -> object:
+        inner = real_fdopen(fd, "rb", buffering=0)
+        counter["opens"] = counter.get("opens", 0) + 1
+        return _CountingRaw(inner, counter).make(buffering)
+
+    monkeypatch.setattr(edit_ticket_service, "_fdopen", _fdopen, raising=False)
+    return counter
+
+
+def test_valid_cachedir_tag_is_read_in_one_session_under_the_per_file_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counter = _raw_read_counter(monkeypatch)
+    d = tmp_path / "cache"
+    d.mkdir()
+    (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG)  # 44 bytes
+    limit = len(_CACHEDIR_SIG)
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=limit, max_aggregate_bytes=10 * limit
+    )
+    assert population["status"] == "complete"
+    assert counter["raw_bytes"] <= limit + 1  # was 88: classification + digest each got a session
+    assert counter["opens"] == 1
+    assert population["scanned_bytes"] == limit
+
+
+def test_invalid_cachedir_tag_is_read_in_one_session_and_reused_as_a_leaf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    counter = _raw_read_counter(monkeypatch)
+    d = tmp_path / "cache"
+    d.mkdir()
+    bad = b"Signature: 8a477f597d28d172789f06886806bc55 XX"  # not a signature line
+    (d / "CACHEDIR.TAG").write_bytes(bad)
+    limit = len(bad)
+    files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=limit, max_aggregate_bytes=10 * limit
+    )
+    assert population["status"] == "complete"
+    assert counter["raw_bytes"] <= limit + 1
+    assert counter["opens"] == 1
+    assert files["cache/CACHEDIR.TAG"] == "file:" + hashlib.sha256(bad).hexdigest()
+    assert population["scanned_bytes"] == limit
+
+
+def test_normal_marker_is_read_once_under_the_per_file_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:  # control
+    counter = _raw_read_counter(monkeypatch)
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_bytes(b"home = /usr/bin\n")
+    limit = 16
+    _files, population = _walk_tracked_files_bounded(
+        tmp_path, max_file_bytes=limit, max_aggregate_bytes=10 * limit
+    )
+    assert population["status"] == "complete"
+    assert counter["raw_bytes"] <= limit + 1
+    assert counter["opens"] == 1
