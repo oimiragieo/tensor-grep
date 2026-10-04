@@ -479,3 +479,133 @@ def test_planted_cachedir_tag_in_existing_source_dir_is_caught(tmp_path: Path) -
     result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
     assert result["verdict"] == "FAIL"
     assert "src/m.py" in result["violations"]
+
+
+# ---- Codex audit FIX-FIRST: three verify_edit_ticket bypasses ----
+
+
+@pytest.mark.parametrize("marker", ["pyvenv.cfg", ".rustc_info.json", "CACHEDIR.TAG"])
+def test_planted_marker_cannot_hide_undeclared_edit_in_existing_dir(
+    tmp_path: Path, marker: str
+) -> None:
+    # Bypass 1: planting a marker prunes src/, so the declared src/allowed.py looks DELETED
+    # (satisfying the declared change) and the undeclared src/evil.py never enters either
+    # population. The set of content-pruned dirs is recorded at mint and compared at verify.
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "allowed.py").write_text("x = 1\n", encoding="utf-8")
+    ticket = build_edit_ready_ticket(
+        repo_root=str(tmp_path),
+        target_path="src/allowed.py",
+        query="x",
+        allowed_files=["src/allowed.py"],
+    )
+    (src / "allowed.py").write_text("x = 2\n", encoding="utf-8")
+    (src / "evil.py").write_text("boom\n", encoding="utf-8")
+    (src / marker).write_bytes(_CACHEDIR_SIG if marker == "CACHEDIR.TAG" else b"{}\n")
+    result = verify_edit_ticket(
+        repo_root=str(tmp_path), ticket=ticket, modified_files=["src/allowed.py"]
+    )
+    assert result["verdict"] == "FAIL"
+    assert "newly_pruned:src" in result["violations"]
+
+
+def test_pruned_dir_marker_change_and_unprune_are_violations(tmp_path: Path) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    env = tmp_path / "env"
+    env.mkdir()
+    (env / "pyvenv.cfg").write_text("home = a\n", encoding="utf-8")
+    (env / "lib.py").write_text("1\n", encoding="utf-8")
+    ticket = _ticket(tmp_path)
+    assert ticket.population_status["content_pruned"]  # recorded at mint
+    # unchanged: PASS (positive control)
+    assert (
+        verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])["verdict"]
+        == "PASS"
+    )
+    (env / "pyvenv.cfg").write_text("home = b\n", encoding="utf-8")
+    changed = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert changed["verdict"] == "FAIL"
+    assert "marker_changed:env" in changed["violations"]
+    (env / "pyvenv.cfg").unlink()
+    gone = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert gone["verdict"] == "FAIL"
+    assert any(v.endswith(":env") for v in gone["violations"])
+
+
+def _make_dir_symlink(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"directory symlink creation not permitted here: {exc}")
+
+
+def test_repointed_directory_symlink_fails_verify(tmp_path: Path) -> None:
+    # Bypass 2: os.walk(followlinks=False) lists a directory symlink in dirnames and never
+    # yields it, so re-pointing it was invisible.
+    root = tmp_path / "repo"
+    root.mkdir()
+    (tmp_path / "dir-a").mkdir()
+    (tmp_path / "dir-b").mkdir()
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    link = root / "alias"
+    _make_dir_symlink(link, Path("..") / "dir-a")
+    ticket = _ticket(root)
+    link.unlink()
+    _make_dir_symlink(link, Path("..") / "dir-b")
+    result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["alias"]
+
+
+def test_unchanged_directory_symlink_passes_verify(tmp_path: Path) -> None:  # positive control
+    root = tmp_path / "repo"
+    root.mkdir()
+    (tmp_path / "dir-a").mkdir()
+    (root / "app.py").write_text("a = 1\n", encoding="utf-8")
+    _make_dir_symlink(root / "alias", Path("..") / "dir-a")
+    ticket = _ticket(root)
+    assert "alias" in ticket.pre_edit_fingerprints
+    result = verify_edit_ticket(repo_root=str(root), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "PASS"
+
+
+@pytest.mark.parametrize("ending", [b"\n", b"\r\n", b""])
+def test_valid_cachedir_tag_line_endings_are_pruned(tmp_path: Path, ending: bytes) -> None:
+    d = tmp_path / "cache"
+    d.mkdir()
+    tail = b"# a comment line\n" if ending else b""
+    (d / "CACHEDIR.TAG").write_bytes(_CACHEDIR_SIG.rstrip(b"\n") + ending + tail)
+    (d / "x.py").write_text("1\n", encoding="utf-8")
+    files, population = _walk_tracked_files_bounded(tmp_path)
+    assert "cache/x.py" not in files
+    assert "cache" in population["pruned_dirs"]
+
+
+@pytest.mark.parametrize(
+    "tag",
+    [
+        b"Signature: 8a477f597d28d172789f06886806bc55NOT-A-SIGNATURE-LINE",
+        b"Signature: 8a477f597d28d172789f06886806bc55 trailing\n",
+        b"signature: 8a477f597d28d172789f06886806bc55\n",
+        b"Signature: 8A477F597D28D172789F06886806BC55\n",
+        b"Signature: 8a477f597d28d172789f06886806bc55\r",
+    ],
+)
+def test_malformed_cachedir_tag_does_not_prune_and_edit_fails_verify(
+    tmp_path: Path, tag: bytes
+) -> None:
+    (tmp_path / "app.py").write_text("a = 1\n", encoding="utf-8")
+    d = tmp_path / "pkg"
+    d.mkdir()
+    (d / "CACHEDIR.TAG").write_bytes(tag)
+    src = d / "m.py"
+    src.write_text("x = 1\n", encoding="utf-8")
+    files, _population = _walk_tracked_files_bounded(tmp_path)
+    assert "pkg/m.py" in files
+    ticket = _ticket(tmp_path)
+    src.write_text("x = 2\n", encoding="utf-8")
+    result = verify_edit_ticket(repo_root=str(tmp_path), ticket=ticket, modified_files=[])
+    assert result["verdict"] == "FAIL"
+    assert result["violations"] == ["pkg/m.py"]

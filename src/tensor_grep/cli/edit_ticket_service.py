@@ -61,6 +61,8 @@ _CMAKE_CACHE = "CMakeCache.txt"
 _CMAKE_SOURCE = "CMakeLists.txt"
 _MAX_REPORTED_PRUNED = 200
 _MAX_WALK_DIRS = 200_000
+_MAX_CONTENT_PRUNED = 2_000
+_MARKER_HASH_CAP = 16 * 1024 * 1024
 
 _DEFAULT_MAX_FILES = 20_000
 _DEFAULT_MAX_FILE_BYTES = 10_000_000
@@ -123,26 +125,58 @@ def _regular_marker(path: Path) -> bool:
         return False
 
 
+def _cachedir_tag_valid(tag: Path) -> bool:
+    """The FIRST LINE must be exactly the signature, then LF, CRLF or EOF (bounded read)."""
+    try:
+        with open(tag, "rb") as handle:
+            head = handle.read(128)
+    except OSError:
+        return False  # cannot classify -> walk it (covered, fail-closed by budget)
+    sig = _CACHEDIR_TAG_SIGNATURE
+    return head == sig or head.startswith((sig + b"\n", sig + b"\r\n"))
+
+
+def _marker_digest(path: Path) -> str:
+    """sha256 of the marker's bytes (bounded) so a changed marker is detectable at verify."""
+    hasher = hashlib.sha256()
+    remaining = _MARKER_HASH_CAP
+    try:
+        with open(path, "rb") as handle:
+            while remaining > 0 and (chunk := handle.read(min(65536, remaining))):
+                hasher.update(chunk)
+                remaining -= len(chunk)
+    except OSError:
+        return "unreadable"
+    return hasher.hexdigest()
+
+
+def _content_prune_marker(path: Path) -> str | None:
+    """Name of the regular-file marker that makes `path` an unambiguous build/cache tree."""
+    for marker in _BUILD_ROOT_MARKERS:
+        if _regular_marker(path / marker):
+            return marker
+    if _regular_marker(path / _CMAKE_CACHE) and not (path / _CMAKE_SOURCE).exists():
+        return _CMAKE_CACHE  # out-of-source CMake build tree only
+    tag = path / "CACHEDIR.TAG"
+    if _regular_marker(tag) and _cachedir_tag_valid(tag):
+        return "CACHEDIR.TAG"
+    return None
+
+
 def _is_pruned_dir(path: Path) -> bool:
     """Unambiguous dependency/cache/build-root trees only (G-03: build/dist/target may hold source)."""
-    if path.name in _ALWAYS_PRUNED_DIRS:
-        return True
-    if any(_regular_marker(path / marker) for marker in _BUILD_ROOT_MARKERS):
-        return True
-    if _regular_marker(path / _CMAKE_CACHE) and not (path / _CMAKE_SOURCE).exists():
-        return True  # out-of-source CMake build tree only
-    tag = path / "CACHEDIR.TAG"
-    if _regular_marker(tag):
-        try:
-            with open(tag, "rb") as handle:
-                return handle.read(len(_CACHEDIR_TAG_SIGNATURE)) == _CACHEDIR_TAG_SIGNATURE
-        except OSError:
-            return False  # cannot classify -> walk it (covered, fail-closed by budget)
-    return False
+    return path.name in _ALWAYS_PRUNED_DIRS or _content_prune_marker(path) is not None
 
 
-def _population_paths(root: Path, pruned: list[str]) -> Iterator[str]:
+def _population_paths(
+    root: Path, pruned: list[str], content_pruned: dict[str, str] | None = None
+) -> Iterator[str]:
     """Lazy, sorted-per-directory walk; `pruned` is filled (root-relative, capped) as it proceeds.
+
+    `content_pruned` (root-relative dir -> "<marker>:<sha256 of marker>") records every directory
+    pruned by CONTENT so verify can detect a marker planted/changed/removed after minting.
+    Directory symlinks are yielded as LEAVES (fingerprinted as `symlink:<target>`), checked
+    BEFORE any marker classification, and never descended.
 
     Raises _PopulationWalkError on any directory-enumeration error (never silently skip a
     subtree) or when more than _MAX_WALK_DIRS directories are visited."""
@@ -158,14 +192,25 @@ def _population_paths(root: Path, pruned: list[str]) -> Iterator[str]:
         current = Path(dirpath)
         rel_dir = current.relative_to(root)
         keep: list[str] = []
+        leaves: list[str] = list(filenames)
         for d in sorted(dirnames):
-            if _is_pruned_dir(current / d):
+            child = current / d
+            if os.path.islink(child):
+                leaves.append(d)  # a directory symlink is a leaf: never descended, never skipped
+                continue
+            marker = _content_prune_marker(child)
+            if marker is not None or d in _ALWAYS_PRUNED_DIRS:
+                rel = (rel_dir / d).as_posix()
                 if len(pruned) < _MAX_REPORTED_PRUNED:
-                    pruned.append((rel_dir / d).as_posix())
+                    pruned.append(rel)
+                if marker is not None and content_pruned is not None:
+                    if len(content_pruned) >= _MAX_CONTENT_PRUNED:
+                        raise _PopulationWalkError("pruned_dir_limit")
+                    content_pruned[rel] = f"{marker}:{_marker_digest(child / marker)}"
             else:
                 keep.append(d)
         dirnames[:] = keep
-        for name in sorted(filenames):
+        for name in sorted(leaves):
             yield (rel_dir / name).as_posix()
 
 
@@ -203,9 +248,10 @@ def _walk_tracked_files_bounded(
     scanned_bytes = 0
     incomplete_reason: str | None = None
     pruned: list[str] = []
+    content_pruned: dict[str, str] = {}
 
     try:
-        for rel in _population_paths(root, pruned):
+        for rel in _population_paths(root, pruned, content_pruned):
             item = root / rel
 
             if scanned_files >= max_files:
@@ -248,6 +294,7 @@ def _walk_tracked_files_bounded(
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
+            "content_pruned": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
@@ -259,6 +306,7 @@ def _walk_tracked_files_bounded(
             "population_policy": "agt04-v2",
             "population_source": "filesystem-walk",
             "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
+            "content_pruned": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
             "scanned_bytes": scanned_bytes,
         }
@@ -336,6 +384,28 @@ def _normalized_root(root: str | Path) -> str:
         return _fold(str(root))
 
 
+def _content_pruned_violations(minted: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Directories whose content-pruning differs between mint and verify.
+
+    A marker planted into an existing directory hides every file in it from the verify-time
+    walk (the declared file then reads as deleted and undeclared siblings are never seen), so
+    any difference in the pruned set or in a marker's bytes is a violation. Tickets minted
+    before this field existed carry no record and are skipped (documented legacy path)."""
+    before = minted.get("content_pruned")
+    if not isinstance(before, dict):
+        return []
+    after = current.get("content_pruned") or {}
+    out: list[str] = []
+    for rel in sorted(set(before) | set(after)):
+        if rel not in before:
+            out.append(f"newly_pruned:{rel}")
+        elif rel not in after:
+            out.append(f"no_longer_pruned:{rel}")
+        elif before[rel] != after[rel]:
+            out.append(f"marker_changed:{rel}")
+    return out
+
+
 def verify_edit_ticket(
     *,
     repo_root: str,
@@ -400,6 +470,7 @@ def verify_edit_ticket(
             "ticket_id": ticket.ticket_id,
         }
     all_paths = set(ticket.pre_edit_fingerprints) | set(current_fps)
+    pruned_violations = _content_pruned_violations(ticket.population_status, current_population)
 
     undeclared_drift: list[str] = []
     for path in sorted(all_paths):
@@ -408,11 +479,11 @@ def verify_edit_ticket(
         if pre_fp != cur_fp and path not in norm_declared:
             undeclared_drift.append(path)
 
-    if undeclared_drift:
+    if undeclared_drift or pruned_violations:
         return {
             "verdict": "FAIL",
             "reason": "edit_contract_violated",
-            "violations": undeclared_drift,
+            "violations": pruned_violations + undeclared_drift,
             "ticket_id": ticket.ticket_id,
         }
 
