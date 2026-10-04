@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,20 @@ _DIFF_HUNK_RE = re.compile(
 )
 _DIFF_GIT_FILE_RE = re.compile(r"^diff --git a/(?P<old_path>.+) b/(?P<new_path>.+)$")
 _DIFF_PLUS_FILE_RE = re.compile(r"^\+\+\+ b/(?P<new_path>.+)$")
+
+
+class DiffError(RuntimeError):
+    """git diff could not be computed; the result must be reported incomplete, never empty."""
+
+    def __init__(self, reason: str, message: str = "") -> None:
+        super().__init__(message or reason)
+        self.reason = reason
+
+
+def _validate_ref(ref: str) -> str:
+    if not ref or ref.startswith("-") or any(c in ref for c in "\x00\n\r"):
+        raise DiffError("invalid_ref", f"invalid git ref: {ref!r}")
+    return ref
 
 
 def parse_git_diff_hunks(diff_text: str) -> dict[Path, list[tuple[int, int]]]:
@@ -111,18 +126,35 @@ def extract_diff_hunks_from_git(
     """Call git diff via run_subprocess with deadline capping and parse hunk ranges.
 
     Returns dict mapping file Path to 1-indexed (start_line, end_line) ranges.
+    Raises DiffError (never returns an empty dict) when git cannot produce the diff.
     """
-    cmd = ["git", "diff", "-U0"]
+    cmd = [
+        # core.fsmonitor=false: a repo-local .git/config (e.g. from an extracted archive) must not
+        # get to run an fsmonitor hook during our read (council round 3, defence in depth).
+        # No --no-renames (council round 5): it would turn a pure rename into delete-all + add-all,
+        # reporting the old path as deleted and the whole new file as changed, where main reports
+        # nothing; the header-state parser reads `---/+++` and handles rename diffs as main does.
+        "git",
+        "-c",
+        "core.quotepath=false",
+        "-c",
+        "core.fsmonitor=false",
+        "diff",
+        "-U0",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+    ]
     if staged:
         cmd.append("--cached")
     if ref:
-        cmd.append(ref)
+        cmd += ["--end-of-options", _validate_ref(ref), "--"]
 
     base_timeout = configured_git_timeout_seconds()
     timeout = deadline_capped_timeout_seconds(base_timeout, deadline_monotonic=deadline_monotonic)
     if timeout is None:
-        # Deadline already expired
-        return {}
+        raise DiffError("deadline_exceeded")
 
     try:
         proc = run_subprocess(
@@ -131,13 +163,17 @@ def extract_diff_hunks_from_git(
             stdout=-1,
             stderr=-1,
             text=True,
+            encoding="utf-8",
+            errors="surrogateescape",
             timeout_seconds=timeout,
         )
-    except (OSError, ValueError, TimeoutError):
-        return {}
+    except subprocess.TimeoutExpired as exc:
+        raise DiffError("git_diff_timeout") from exc
+    except (OSError, ValueError, TimeoutError) as exc:
+        raise DiffError("git_diff_failed", str(exc)) from exc
 
     if proc.returncode != 0:
-        return {}
+        raise DiffError("git_diff_failed", (proc.stderr or "").strip()[:500])
 
     return parse_git_diff_hunks(proc.stdout or "")
 
@@ -230,6 +266,41 @@ def _calculate_risk_tier(
     return "low"
 
 
+def _empty_payload(
+    root: Path,
+    ref: str | None,
+    staged: bool,
+    *,
+    partial: bool,
+    reason: str | None = None,
+    error: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "root": str(root).replace("\\", "/"),
+        "ref": ref,
+        "staged": staged,
+        "changed_files": [],
+        "changed_symbols": [],
+        "callers": [],
+        "affected_files": [],
+        "affected_tests": [],
+        "blast_radius_score": 0.0,
+        "risk_tier": "low",
+        "partial": partial,
+        "downgrade_reasons": [reason] if partial and reason else [],
+        "symbol_count": 0,
+        "caller_count": 0,
+        "file_count": 0,
+        "test_count": 0,
+        "deleted_files": [],
+        "result_incomplete": partial,
+        "incomplete_reason": reason if partial else None,
+    }
+    if partial:
+        payload["error"] = error
+    return payload
+
+
 def build_diff_blast_radius(
     ref: str | None = None,
     staged: bool = False,
@@ -254,36 +325,24 @@ def build_diff_blast_radius(
     if diff_text is not None:
         changed_files_with_lines = parse_git_diff_hunks(diff_text)
     else:
-        changed_files_with_lines = extract_diff_hunks_from_git(
-            ref=ref,
-            staged=staged,
-            root=root,
-            deadline_monotonic=deadline_monotonic,
-        )
+        try:
+            changed_files_with_lines = extract_diff_hunks_from_git(
+                ref=ref,
+                staged=staged,
+                root=root,
+                deadline_monotonic=deadline_monotonic,
+            )
+        except DiffError as exc:
+            return _empty_payload(
+                root, ref, staged, partial=True, reason=exc.reason, error=str(exc)
+            )
 
     changed_files = sorted([str(p).replace("\\", "/") for p in changed_files_with_lines.keys()])
     changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
 
     # If no files or symbols changed
     if not changed_files:
-        return {
-            "root": str(root).replace("\\", "/"),
-            "ref": ref,
-            "staged": staged,
-            "changed_files": [],
-            "changed_symbols": [],
-            "callers": [],
-            "affected_files": [],
-            "affected_tests": [],
-            "blast_radius_score": 0.0,
-            "risk_tier": "low",
-            "partial": False,
-            "downgrade_reasons": [],
-            "symbol_count": 0,
-            "caller_count": 0,
-            "file_count": 0,
-            "test_count": 0,
-        }
+        return _empty_payload(root, ref, staged, partial=False)
 
     # Build repo map
     repo_m = build_repo_map(
@@ -444,6 +503,7 @@ def diff_impact_command(
 
 
 __all__ = [
+    "DiffError",
     "build_diff_blast_radius",
     "diff_impact_command",
     "extract_diff_hunks_from_git",

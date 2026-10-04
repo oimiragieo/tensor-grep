@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
+
+import tensor_grep.cli.diff_impact as di
 
 from tensor_grep.cli.diff_impact import (
     _calculate_risk_tier,
@@ -337,3 +341,83 @@ def test_cli_diff_impact_partial_deadline_exit_code(monkeypatch: Any) -> None:
     data = json.loads(result.stdout)
     assert data["partial"] is True
     assert "deadline_exceeded" in data["downgrade_reasons"]
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def _init_repo(repo: Path) -> None:
+    repo.mkdir(exist_ok=True)
+    _git(repo, "init", "-q")
+    _git(repo, "config", "core.autocrlf", "false")
+
+
+@pytest.mark.parametrize("ref", ["--output=pwned.txt", "-p", "--ext-diff", "a\nb", "a\x00b"])
+def test_extract_diff_hunks_rejects_option_like_ref_without_running_git(
+    monkeypatch: Any, ref: str
+) -> None:
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess", lambda *a, **k: calls.append(a)
+    )
+    # Council round 5: capture with an EXISTING type first so main fails BEHAVIOURALLY (git was
+    # invoked), not on a missing-attribute lookup; only then check the new exception's identity.
+    try:
+        di.extract_diff_hunks_from_git(ref=ref)
+        raised: BaseException | None = None
+    except Exception as exc:  # noqa: BLE001 - deliberate: classify after the behavioural check
+        raised = exc
+    assert calls == [], "an option-like ref must be refused BEFORE git is invoked"
+    assert type(raised).__name__ == "DiffError" and getattr(raised, "reason", None) == "invalid_ref"
+
+
+@pytest.mark.parametrize("ref", ["HEAD~1", "main..HEAD", "main...HEAD"])
+def test_extract_diff_hunks_git_argv_is_hardened(monkeypatch: Any, ref: str) -> None:
+    seen: list[list[str]] = []
+
+    class P:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    monkeypatch.setattr(
+        "tensor_grep.cli.diff_impact.run_subprocess",
+        lambda cmd, **k: seen.append(list(cmd)) or P(),
+    )
+    extract_diff_hunks_from_git(ref=ref, staged=True)
+    cmd = seen[0]
+    assert cmd[:5] == ["git", "-c", "core.quotepath=false", "-c", "core.fsmonitor=false"]
+    for flag in ("--no-ext-diff", "--no-textconv", "--cached"):
+        assert flag in cmd
+    assert "--no-renames" not in cmd  # council round 5: keep main's rename semantics
+    assert cmd[-3:] == ["--end-of-options", ref, "--"]
+
+
+def test_option_like_ref_never_writes_file_in_real_repo(tmp_path: Path) -> None:
+    # Behavioural RED on main: no new symbol needed; main creates pwned.txt.
+    _init_repo(tmp_path)
+    try:
+        extract_diff_hunks_from_git(ref="--output=pwned.txt", root=tmp_path)
+    except Exception:  # post-fix: di.DiffError
+        pass
+    assert not (tmp_path / "pwned.txt").exists()
+
+
+def test_git_failure_is_incomplete_not_no_changes(tmp_path: Path, monkeypatch: Any) -> None:
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path.parent))
+    payload = build_diff_blast_radius(root=tmp_path)  # not a git repo
+    assert payload["partial"] is True
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason"] == "git_diff_failed"
+    assert "git_diff_failed" in payload["downgrade_reasons"]
+    monkeypatch.chdir(tmp_path)  # council round 2: never run git in the real repo cwd
+    res = runner.invoke(app, ["diff-impact", "--json", "--", "--output=x"])
+    assert not (tmp_path / "x").exists()
+    assert res.exit_code == 2
+    assert json.loads(res.stdout)["incomplete_reason"] == "invalid_ref"
