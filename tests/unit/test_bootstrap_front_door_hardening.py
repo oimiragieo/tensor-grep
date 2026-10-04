@@ -454,27 +454,133 @@ def test_bare_dash_headline_really_differs_when_the_sentinel_is_wrongly_inserted
 _RG_VALID_POOL = [
     "-", "-w", "-c", "-i", "-n", "-l", "-t", "txt", "-g", "*.txt", "-e", "foo", "-efoo", "-r", "X",
     "--glob=*.txt", "-e=foo", "-T", "py", "-m", "1", "-A", "1", "--json", "foo", "-F", "-v", "-o",
-    "b.txt", "--iglob", "*", "--no-heading", "-S", "--hidden", "--",
+    "b.txt", "--iglob", "*", "--no-heading", "-S", "--hidden", "--", "1", "x", "-o",
 ]  # fmt: skip
 
 
-@_needs_rg
-def test_argv_main_left_alone_and_the_pr_rewrote_reads_the_same_in_rg(_files_dir):
-    """Contract (b): for a VALID raw argv (rg exit 0/1) that main did not rewrite, the PR's rewrite
-    must make rg do the same thing (same exit code and output). Exec flags are not in the pool."""
-    (_files_dir / "b.txt").write_text("foo - b\n", encoding="utf-8")
+# Seeds whose rewrite (if any) would matter: tg-only/value flags followed by an option-only
+# remainder ending in the literal pattern `-` (a valid rg argv that main leaves alone).
+_CONTRACT_B_SEEDS = [
+    ["-r", "1", "-o", "-"],
+    ["-T", "x", "-i", "-"],
+    ["-t", "txt", "-w", "-"],
+    ["-g", "*.txt", "-i", "-"],
+    ["--glob", "*.txt", "-c", "-"],
+    ["--iglob", "*", "-n", "-"],
+    ["-m", "1", "-F", "-"],
+    ["-A", "1", "-v", "-"],
+]
+
+
+def _contract_b_scan(cwd):
+    """Returns (examined, rewritten, mismatches). EXAMINED = valid raw argvs (rg exit 0/1) that
+    main left alone; REWRITTEN = of those, the ones this PR changes; a mismatch is a rewrite that
+    makes rg read the argv differently (exit code or output)."""
     legacy = _legacy_builder()
     rng = random.Random(7)
-    compared = 0
-    for _ in range(6000):
-        argv = [rng.choice(_RG_VALID_POOL) for _ in range(rng.randint(1, 6))]
-        built = _nav.bootstrap_native_tg_search_argv(list(argv))
-        if built == argv or legacy(list(argv)) != argv:
-            continue  # not a case where the PR rewrote what main left alone
-        raw = _rg_out(_files_dir, argv)
+    candidates = [list(seed) for seed in _CONTRACT_B_SEEDS]
+    candidates += [
+        [rng.choice(_RG_VALID_POOL) for _ in range(rng.randint(1, 6))] for _ in range(4000)
+    ]
+    examined = rewritten = 0
+    mismatches = []
+    for argv in candidates:
+        if legacy(list(argv)) != argv:
+            continue  # main rewrote it too: not a case this contract is about
+        raw = _rg_out(cwd, argv)
         if raw[0] not in (0, 1):
             continue  # invalid raw argv: nothing to preserve
-        compared += 1
-        assert raw == _rg_out(_files_dir, built), (argv, built)
-        if compared >= 120:
+        examined += 1
+        built = _nav.bootstrap_native_tg_search_argv(list(argv))
+        if built != argv:
+            rewritten += 1
+            if raw != _rg_out(cwd, built):
+                mismatches.append((argv, built))
+        if examined >= 150:
             break
+    return examined, rewritten, mismatches
+
+
+@_needs_rg
+def test_argv_main_left_alone_reads_the_same_in_rg_after_the_pr(_files_dir):
+    """Contract (b): for a VALID raw argv that main left alone, whatever the PR does to it must make
+    rg do the same thing. The floor stops this from passing vacuously (it once compared nothing)."""
+    (_files_dir / "b.txt").write_text("foo - b\n", encoding="utf-8")
+    examined, rewritten, mismatches = _contract_b_scan(_files_dir)
+    print(f"contract (b): examined={examined} rewritten={rewritten}")
+    assert examined >= 20, examined
+    assert mismatches == []
+
+
+@_needs_rg
+def test_contract_b_scan_bites_when_the_bare_dash_fix_is_reverted(_files_dir, monkeypatch):
+    (_files_dir / "b.txt").write_text("foo - b\n", encoding="utf-8")
+    monkeypatch.setattr(_nav, "positionals", lambda _args: [])  # the fix, undone in memory
+    _, rewritten, mismatches = _contract_b_scan(_files_dir)
+    assert rewritten >= 2 and len(mismatches) >= 2, (rewritten, mismatches)
+
+
+@_needs_rg
+def test_model_execy_value_tables_match_rg_help():
+    text = subprocess.run(
+        [_RG, "--help"], capture_output=True, text=True, timeout=30, check=False
+    ).stdout
+    long_val: set[str] = set()
+    short_val: set[str] = set()
+    head = r"(?m)^    (?:-(\w)(?: [A-Za-z_-]+)?, )?--([a-z0-9-]+)(=[A-Za-z_-]+)?"
+    for m in re.finditer(head, text):
+        if m.group(3):
+            long_val.add(m.group(2))
+            if m.group(1):
+                short_val.add(m.group(1))
+    tg_only = {"format", "lang", "gpu-device-ids"}  # not rg flags; the model adds them on purpose
+    assert long_val == _MODEL_LONG_VAL - tg_only
+    assert short_val == _MODEL_SHORT_VAL
+
+
+# --- K2/F.3 regex pre-rejection must stay a strict subset of rg's rejections ------------------------
+
+_RG_ACCEPTS = [")(", ")\\", "[[:alpha:](]", "a)b(", "(a)|)("]
+
+
+@pytest.mark.parametrize("pattern", _RG_ACCEPTS)
+def test_front_door_does_not_pre_reject_what_rg_accepts(pattern, tmp_path):
+    from tensor_grep.cli import bootstrap_search_guards as guards
+
+    assert guards.obviously_invalid_regex([pattern, "f.txt"]) is False
+    assert guards.obviously_invalid_regex(["-e", pattern, "f.txt"]) is False
+    assert bootstrap._search_args_include_obviously_invalid_regex([pattern, "f.txt"]) is False
+    if _RG is not None:
+        (tmp_path / "f.txt").write_text("a)(b\n)\\x\n[(]\n", encoding="utf-8")
+        assert _rg_rc(tmp_path, ["-e", pattern, "f.txt"]) in (0, 1)  # rg accepts it
+
+
+@pytest.mark.parametrize("pattern", [")", "(", "a)", "(a))", "a{2,1}"])
+def test_front_door_still_pre_rejects_agreed_errors(pattern, tmp_path):  # positive control
+    from tensor_grep.cli import bootstrap_search_guards as guards
+
+    assert guards.obviously_invalid_regex(["-e", pattern, "f.txt"]) is (pattern != "(a))")
+    if _RG is not None:
+        (tmp_path / "f.txt").write_text("x\n", encoding="utf-8")
+        assert _rg_rc(tmp_path, ["-e", pattern, "f.txt"]) == 2
+
+
+@_needs_rg
+def test_pre_rejection_is_a_strict_subset_of_rg_rejections(tmp_path):
+    from tensor_grep.cli import bootstrap_search_guards as guards
+
+    (tmp_path / "f.txt").write_text("a)(b\nab\n", encoding="utf-8")
+    alphabet = [*"()[]\\*+?{}|^$ab", "{2}", "{1,2}", "[:alpha:]"]
+    rng = random.Random(20261004)
+    seen: set[str] = set()
+    rejected = checked = 0
+    while checked < 2500:
+        pattern = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 6)))
+        if pattern in seen:
+            continue
+        seen.add(pattern)
+        checked += 1
+        if guards.pattern_invalid_in_both_engines(pattern):
+            rejected += 1
+            assert _rg_rc(tmp_path, ["-e", pattern, "f.txt"]) == 2, pattern
+    assert rejected >= 100, rejected  # positive control: the generator reaches the rejecting rules

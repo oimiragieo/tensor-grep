@@ -251,6 +251,9 @@ def pattern_invalid_in_both_engines(pattern: str) -> bool:
     real engine, which reports its own error (exit 2)."""
     if "[" in pattern:
         return False
+    if (len(pattern) - len(pattern.rstrip("\\"))) % 2 == 1:
+        # A dangling backslash: rg accepts `)\\` (measured, rg 15.1.0), so never pre-reject it.
+        return False
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
@@ -261,6 +264,10 @@ def pattern_invalid_in_both_engines(pattern: str) -> bool:
             # pre-reject: the real engine reports its own error (exit 2).
             return False
         except re.error as exc:
+            if exc.msg == "unbalanced parenthesis":
+                # rg accepts `)(` and `)\\` (and `a)b(`), so an unmatched `)` only counts when the
+                # pattern has no `(` at all; with a `(` it goes to the real engine (measured, rg 15.1.0).
+                return "(" not in pattern
             if exc.msg in _AGREED_RE_ERRORS:
                 return True
             pos = exc.pos or 0
