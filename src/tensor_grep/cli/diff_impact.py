@@ -126,6 +126,7 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
     """
     result = DiffHunks()
     rename_path: Path | None = None
+    is_deleted = False
     current_file: Path | None = None
     old_path: Path | None = None
     in_header = False
@@ -141,10 +142,11 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             current_file = None
             header_path = _diff_git_line_path(line[len("diff --git ") :])
             rename_path = None
+            is_deleted = False
             continue
 
-        if in_header and line.startswith("rename to "):
-            operand = line[len("rename to ") :]
+        if in_header and line.startswith(("rename to ", "copy to ")):
+            operand = line.split(" to ", 1)[1]
             # _git_header_path strips an a/ or b/ prefix, so give it one to strip
             rename_path = _git_header_path(
                 f'"b/{operand[1:]}' if operand.startswith('"') else f"b/{operand}"
@@ -155,18 +157,20 @@ def parse_git_diff_hunks(diff_text: str) -> DiffHunks:
             in_header
             and line.startswith("Binary files ")
             and line.endswith(" differ")
-            and not line.endswith(" and /dev/null differ")
-        ):
-            binary_path = header_path or rename_path
+            and not is_deleted  # header state, never the text of this line: a legal file name
+        ):  # can itself end in " and /dev/null"
+            binary_path = rename_path or header_path
             if binary_path is not None:
                 result.setdefault(binary_path, [])
                 result.binary_files.add(binary_path)
             continue
 
-        if in_header and line.startswith("deleted file mode ") and header_path is not None:
+        if in_header and line.startswith("deleted file mode "):
+            is_deleted = True
             # Empty and binary deletions emit no ---/+++ lines; the diff --git header is the only
             # place the path appears.
-            result.setdefault(header_path, [])
+            if header_path is not None:
+                result.setdefault(header_path, [])
             continue
 
         if in_header and line.startswith("--- "):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -796,3 +797,92 @@ def test_cli_modified_binary_file_is_not_no_changes(tmp_path: Path, monkeypatch:
 
 def test_payloads_always_carry_binary_files_key() -> None:
     assert build_diff_blast_radius(diff_text="")["binary_files"] == []
+
+
+def test_parse_edited_binary_copy_uses_the_destination_path() -> None:
+    diff = (
+        "diff --git a/old.bin b/new.bin\nsimilarity index 90%\ncopy from old.bin\n"
+        "copy to new.bin\nindex 1111111..2222222 100644\n"
+        "Binary files a/old.bin and b/new.bin differ\n"
+        'diff --git "a/o\\303\\251.bin" "b/n\\303\\251.bin"\nsimilarity index 90%\n'
+        'copy from "o\\303\\251.bin"\ncopy to "n\\303\\251.bin"\nindex 1111111..2222222 100644\n'
+        'Binary files "a/o\\303\\251.bin" and "b/n\\303\\251.bin" differ\n'
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path("new.bin"): [], Path("né.bin"): []}
+    assert parsed.binary_files == {Path("new.bin"), Path("né.bin")}
+
+
+def test_parse_edited_text_copy_uses_the_destination_path() -> None:
+    diff = (
+        "diff --git a/old.py b/new.py\nsimilarity index 90%\ncopy from old.py\ncopy to new.py\n"
+        "--- a/old.py\n+++ b/new.py\n@@ -2,0 +3,1 @@\n+x\n"
+    )
+    assert parse_git_diff_hunks(diff) == {Path("new.py"): [(3, 3)]}
+
+
+def test_parse_pure_copy_without_content_change_is_not_a_change() -> None:
+    diff = (
+        "diff --git a/old.bin b/new.bin\nsimilarity index 100%\ncopy from old.bin\n"
+        "copy to new.bin\n"
+    )
+    assert parse_git_diff_hunks(diff) == {}
+
+
+def test_parse_binary_filename_ending_in_dev_null_is_modified_not_deleted() -> None:
+    name = "foo and /dev/null"
+    diff = (
+        f"diff --git a/{name} b/{name}\nindex 1111111..2222222 100644\n"
+        f"Binary files a/{name} and b/{name} differ\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path(name): []}
+    assert parsed.binary_files == {Path(name)}
+
+
+def test_parse_deleted_binary_is_decided_by_header_state_not_line_text() -> None:
+    name = "foo and /dev/null"
+    diff = (
+        f"diff --git a/{name} b/{name}\ndeleted file mode 100644\nindex 1111111..0000000\n"
+        f"Binary files a/{name} and /dev/null differ\n"
+    )
+    parsed = parse_git_diff_hunks(diff)
+    assert parsed == {Path(name): []}
+    assert parsed.binary_files == set()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a directory named 'foo and ' is not legal")
+def test_real_repo_binary_named_like_the_deletion_suffix(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    target = tmp_path / "foo and " / "dev" / "null"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"\x00\x01\x02")
+    _git(tmp_path, "add", "--all")
+    _git(tmp_path, "commit", "-qm", "i")
+    target.write_bytes(b"\x00\x07\x08\x09")
+    payload = build_diff_blast_radius(root=tmp_path)
+    assert payload["binary_files"] == ["foo and /dev/null"]
+    assert payload["deleted_files"] == []
+
+
+def test_real_repo_edited_binary_copy_is_reported(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _git(tmp_path, "config", "diff.renames", "copies")
+    base = bytes((i * 37 + 11) % 251 for i in range(6000)) + b"\x00"
+    (tmp_path / "old.bin").write_bytes(base)
+    _git(tmp_path, "add", "--", "old.bin")
+    _git(tmp_path, "commit", "-qm", "i")
+    (tmp_path / "old.bin").write_bytes(base + b"\x00edited-source")
+    (tmp_path / "new.bin").write_bytes(base + b"\x00edited-copy")
+    _git(tmp_path, "add", "--", "old.bin", "new.bin")
+    raw = subprocess.run(
+        ["git", "-c", "diff.renames=copies", "diff", "--cached", "-U0", "--no-color"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    assert "copy to new.bin" in raw, f"fixture did not make git emit a copy:\n{raw}"
+    payload = build_diff_blast_radius(root=tmp_path, staged=True)
+    assert "new.bin" in payload["binary_files"], raw
+    assert "new.bin" in payload["changed_files"]
