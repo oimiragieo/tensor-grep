@@ -7,7 +7,6 @@ test files, calculates risk tiers, and supports CI gate failure thresholds.
 
 from __future__ import annotations
 
-import ast
 import contextlib
 import json
 import os
@@ -26,11 +25,13 @@ from tensor_grep.cli.repo_map import (
     build_repo_map,
     build_symbol_blast_radius_from_map,
 )
+from tensor_grep.cli.repo_map_coverage_gaps import target_file_gaps
 from tensor_grep.cli.subprocess_policy import (
     configured_git_timeout_seconds,
     deadline_capped_timeout_seconds,
     run_subprocess,
 )
+from tensor_grep.core.python_parse import parse_python
 
 # Re-exported under the historical private names (tests and callers patch them here).
 _ACTIVE_SESSIONS = _dig._ACTIVE_SESSIONS
@@ -715,6 +716,10 @@ def _file_identity(path: Path) -> tuple[int, int, Path] | None:
         return None
 
 
+class _CoverageGap(Exception):
+    """The extractor "succeeded" but a symbol-graph coverage gap means symbols may be missing."""
+
+
 def _extraction_errors() -> tuple[type[BaseException], ...]:
     """Exceptions an extractor may raise that mean "could not analyse this file"."""
     from tensor_grep.backends.base import BackendExecutionError
@@ -726,7 +731,15 @@ def _extraction_errors() -> tuple[type[BaseException], ...]:
         UnicodeDecodeError,
         RecursionError,
         BackendExecutionError,
+        _CoverageGap,
     )
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """The `not_analyzed` reason for an extraction failure (coverage gaps name their cause)."""
+    if isinstance(exc, _CoverageGap):
+        return f"coverage_gap: {exc}"
+    return f"extraction_failed: {type(exc).__name__}"
 
 
 def _read_blob(root: Path, oid: str, max_bytes: int) -> bytes:
@@ -761,7 +774,13 @@ def _extract_symbols(extract_path: Path) -> list[dict[str, Any]]:
         if extract_path.suffix.lower() == ".py" or (
             spec is not None and spec is lang_registry.spec_for_path("x.py")
         ):
-            ast.parse(extract_path.read_text(encoding="utf-8"))
+            parse_python(lang_registry.read_source_text(extract_path))
+    # G1.2 (r25): "could not extract" is decided by the coverage-gap builders (grammar missing,
+    # lossy decode, unreadable, syntax), never inferred from an empty extractor result -- a
+    # changed file with such a gap must not silently contribute no symbols.
+    gaps = target_file_gaps(extract_path)
+    if gaps:
+        raise _CoverageGap("; ".join(str(gap["reason"]) for gap in gaps))
     return symbols
 
 
@@ -831,7 +850,7 @@ def _map_blob_path(
     try:
         symbols = _symbols_from_bytes(data, rel_path.suffix)
     except _extraction_errors() as exc:  # narrow on purpose
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+        return "not_analyzed", _failure_reason(exc), []
     return "analyzed", None, _overlapping_symbols(symbols, rel_path, line_ranges)
 
 
@@ -884,7 +903,7 @@ def _map_file_snapshot(
     try:
         symbols = _symbols_from_bytes(snapshot, rel_path.suffix)
     except _extraction_errors() as exc:  # narrow on purpose
-        return "not_analyzed", f"extraction_failed: {type(exc).__name__}", []
+        return "not_analyzed", _failure_reason(exc), []
     after = _file_identity(full_path)
     if (
         before is None
@@ -1119,6 +1138,7 @@ def _empty_payload(
         "test_count": 0,
         "deleted_files": [],
         "not_analyzed_paths": [],
+        "unparsed_changed_files": [],
         "binary_files": [],
         "mode_changed_files": [],
         "submodule_changed_files": [],
@@ -1322,11 +1342,23 @@ def build_diff_blast_radius(
         "test_count": len(sorted_tests),
         "deleted_files": deleted_files,
         "not_analyzed_paths": not_analyzed_paths,
+        # additive: changed files whose symbols could not be extracted (parse failure, missing
+        # grammar, undecodable bytes); they are never silently counted as symbol-free
+        "unparsed_changed_files": sorted(
+            entry["path"]
+            for entry in not_analyzed_paths
+            if entry["reason"].startswith(("coverage_gap", "extraction_failed"))
+        ),
         "binary_files": binary_files,
         "mode_changed_files": mode_changed_files,
         "submodule_changed_files": submodule_changed_files,
         "result_incomplete": partial,
         "incomplete_reason": (partial_reasons[0] if partial and partial_reasons else None),
+        **(
+            {"incomplete_reason_class": "coverage_gap"}
+            if partial and partial_reasons[:1] == ["coverage_gap"]
+            else {}
+        ),
     }
 
 

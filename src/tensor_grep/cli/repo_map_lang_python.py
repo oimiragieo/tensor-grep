@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
+from tensor_grep.core.python_parse import parse_python
 
 # Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
@@ -1174,7 +1175,7 @@ def _python_ast_omitted_relative_lines(
     block: str, profile: str = "compact", strip_docstrings: bool = True
 ) -> tuple[set[int], set[int]]:
     try:
-        tree = ast.parse(block)
+        tree = parse_python(block)
     except SyntaxError:
         return set(), set()
 

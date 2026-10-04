@@ -41,6 +41,7 @@ Covered here:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -915,9 +916,10 @@ def test_grammar_absent_yields_no_fabricated_defs_and_resolution_gap(
     assert "fall back to plain literal-text/regex matching" not in cpp_refs_gap["remediation"]
 
 
-def test_grammar_absent_cli_exit_code_is_honest_not_found(tmp_path: Path, monkeypatch) -> None:
-    """A C++-only target with the grammar missing must exit 1 (honest not-found) -- never a
-    silent 0 and never a crash."""
+def test_grammar_absent_empty_answer_is_incomplete_exit_2(tmp_path: Path, monkeypatch) -> None:
+    """A C++-only target with the grammar missing must exit 2 (INCOMPLETE, coverage_gap): an empty answer under a missing
+    grammar is unverified, not absent (F13 predates the fail-closed coverage-gap contract);
+    never a silent 0 and never a crash."""
     from typer.testing import CliRunner
 
     from tensor_grep.cli.main import app
@@ -925,9 +927,12 @@ def test_grammar_absent_cli_exit_code_is_honest_not_found(tmp_path: Path, monkey
     _write_cpp_fixture(tmp_path)
     monkeypatch.setattr(lang_cpp, "_cpp_parser", lambda: None)
 
-    result = CliRunner().invoke(app, ["defs", str(tmp_path), "getValue"])
+    result = CliRunner().invoke(app, ["defs", "--json", str(tmp_path), "getValue"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output[result.output.index("{") :])
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason_class"] == "coverage_gap"
 
 
 # ---------------------------------------------------------------------------

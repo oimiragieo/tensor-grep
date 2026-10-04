@@ -45,6 +45,18 @@ from tensor_grep.cli.repo_map_cache import (
 from tensor_grep.cli.repo_map_cache import (
     _resolved_path_str as _resolved_path_str,
 )
+from tensor_grep.cli.repo_map_coverage_gaps import (
+    apply_coverage_gap_incompleteness,
+    attach_found_answer_gaps,
+    attach_importer_coverage,
+    attach_target_gaps,
+    copy_coverage_gap_state,
+    inherit_coverage_gap,
+    source_coverage_gaps,
+)
+from tensor_grep.cli.repo_map_coverage_gaps import (
+    language_coverage_gap_remediation as _language_coverage_gap_remediation,
+)
 from tensor_grep.cli.repo_map_lang_java import (
     _java_import_declaration_text as _java_import_declaration_text,
 )
@@ -401,6 +413,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
 from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
+from tensor_grep.core.python_parse import parse_python
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 # Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
@@ -2291,7 +2304,7 @@ def _cached_ast_parse(source: str) -> ast.Module:
             return cached[0]
 
     # Miss: parse OUTSIDE the lock (see docstring -- never serialize concurrent parsing).
-    tree = ast.parse(source)
+    tree = parse_python(source)
     size = len(source.encode("utf-8"))
     budget = _ast_cache_byte_budget()
 
@@ -5187,48 +5200,6 @@ def _graph_trust_summary(
     }
 
 
-def _language_coverage_gap_remediation(
-    language: str, *, fail_closed: bool = False, import_resolution_only: bool = False
-) -> str:
-    """F12 fix: the remediation text must match what ACTUALLY happens for this gap.
-
-    An unregistered-language file (``fail_closed=False``, no ``LanguageSpec`` at all) really does
-    fall back to plain literal-text/regex matching -- see the generic ``else`` branch in the
-    refs/callers scan loops. A registered-but-grammar-missing language with no regex fallback
-    (``fail_closed=True``, e.g. Go when ``tree_sitter_go`` is not installed) produces ZERO rows
-    for its files instead -- claiming a regex fallback there was simply false.
-
-    ``import_resolution_only`` (audit #81 #4): a registered language whose grammar IS installed
-    but whose ``LanguageSpec.import_update_target`` is ``None`` (Go today) -- defs/refs/callers
-    all work normally, but the reverse-import-graph edge (``import_graph_consumers``) can never
-    be computed for this language, so a zero count there must read as UNKNOWN, not proven-zero.
-    """
-    if fail_closed:
-        return (
-            f"tg has a '{language}' extractor registered but its required parser/grammar is not "
-            f"installed -- refs/callers on a symbol whose definition or usage lives in a "
-            f"{language} file currently produce NO rows for those files ('{language}' has no "
-            "plain-text/regex fallback, unlike python/javascript/typescript/rust). Install the "
-            f"missing '{language}' tree-sitter grammar package to restore coverage."
-        )
-    if import_resolution_only:
-        return (
-            f"tg has a '{language}' extractor registered and its parser/grammar is installed, "
-            f"but no reverse-import resolver is wired for '{language}' yet -- `tg callers`/`tg "
-            f"blast-radius` cannot discover a {language} file that consumes a symbol purely via "
-            "an import statement (`import_graph_consumers` is always empty for this language). "
-            "Direct-reference/call matches inside scanned files are unaffected. Treat a zero "
-            f"import-graph-consumer count for a {language} definition as UNKNOWN, not "
-            "proven-zero, until native reverse-import resolution ships."
-        )
-    return (
-        f"tg has no parser-backed extractor registered for '{language}' files yet -- refs/"
-        f"callers on a symbol whose definition or usage lives in a {language} file fall back to "
-        "plain literal-text/regex matching (no import-graph resolution, no AST-verified call "
-        "sites). Treat matches in these files as lower-confidence until native support ships."
-    )
-
-
 from tensor_grep.cli.js_ts_scope_gap import js_ts_scope_gap  # noqa: E402
 
 
@@ -5300,6 +5271,7 @@ def _language_coverage_gaps_for_universe(
                     fail_closed=fail_closed,
                     import_resolution_only=import_resolution_only,
                 ),
+                "affects_completeness": "when_empty" if fail_closed else "never",
             },
         )
         entry["files_affected"] += 1
@@ -5307,9 +5279,11 @@ def _language_coverage_gaps_for_universe(
     # import_graph_consumers under-reports with no stated cause. Disclose it as a real gap.
     scope_gap = js_ts_scope_gap(bounded_files, scan_root)
     if scope_gap is not None:
-        gaps_by_language.setdefault(str(scope_gap["language"]), scope_gap)
+        gaps_by_language.setdefault(
+            str(scope_gap["language"]), {**scope_gap, "affects_completeness": "never"}
+        )
     return sorted(
-        gaps_by_language.values(),
+        [*gaps_by_language.values(), *source_coverage_gaps(bounded_files, scan_root)],
         key=lambda item: (-int(item["files_affected"]), str(item["language"])),
     )
 
@@ -12236,6 +12210,7 @@ def build_symbol_defs_from_map(
             [*gap_files, *gap_tests], _repo_map_root_dir(repo_map)
         )
         payload["resolution_gaps"] = resolution_gaps
+        apply_coverage_gap_incompleteness(payload, resolution_gaps, answer_empty=True)
         if resolution_gaps:
             gap_hint = "; ".join(
                 f"{int(gap['files_affected'])} {gap['language']} file(s): {gap['remediation']}"
@@ -12252,6 +12227,8 @@ def build_symbol_defs_from_map(
         payload["tests"] = []
         payload["related_paths"] = []
         payload["graph_completeness"] = "empty"
+    else:
+        attach_found_answer_gaps(payload, repo_map)
     return payload
 
 
@@ -12389,6 +12366,10 @@ def build_symbol_source_from_map(
     _copy_lsp_evidence_status(payload, defs_payload)
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
+    copy_coverage_gap_state(payload, defs_payload)
+    apply_coverage_gap_incompleteness(
+        payload, payload.get("resolution_gaps", []), answer_empty=not sources
+    )
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -12685,6 +12666,7 @@ def build_symbol_impact_from_map(
             payload["deadline_limit"]["test_candidates_total"] = context_pack_test_scan_counts.total
     _copy_scan_limit(payload, defs_payload)
     _copy_partial_signal(payload, defs_payload)
+    copy_coverage_gap_state(payload, defs_payload)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -12861,7 +12843,7 @@ def build_symbol_refs_from_map(
         payload["string_refs"] = []
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
-        payload["resolution_gaps"] = []
+        payload.setdefault("resolution_gaps", [])
         return payload
     # #205: bound context-pack's own symbol-scoring + pagerank loop with the SAME warm-daemon
     # deadline. Previously called BARE here while the sibling handlers callers/impact threaded it
@@ -13129,6 +13111,9 @@ def build_symbol_refs_from_map(
                 "files_total": len(refs_universe_files) + len(refs_universe_tests),
             },
         )
+    apply_coverage_gap_incompleteness(
+        payload, payload["resolution_gaps"], answer_empty=not references
+    )
     return payload
 
 
@@ -13392,6 +13377,7 @@ def build_file_imports(file_path: str | Path) -> dict[str, Any]:
     payload["result_incomplete"] = result_incomplete
     if incomplete_reason is not None:
         payload["incomplete_reason"] = incomplete_reason
+    attach_target_gaps(payload, resolved_file, answer_empty=not imports)
     return payload
 
 
@@ -13735,7 +13721,9 @@ def build_file_importers_from_map(
             "only covers ROOT, so 0 importers here does NOT mean the file is unused. Pass the "
             "repo containing FILE as ROOT (tg importers FILE <its-repo>) or run from inside it."
         )
-    payload["resolution_gaps"] = list(repo_map.get("resolution_gaps", []))
+    attach_importer_coverage(
+        payload, repo_map, all_files, repo_root, resolved_file, answer_empty=not edges
+    )
     return payload
 
 
@@ -13838,7 +13826,7 @@ def build_symbol_callers_from_map(
         payload["import_graph_consumer_count"] = 0
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
-        payload["resolution_gaps"] = []
+        payload.setdefault("resolution_gaps", [])
         return _attach_profiling(payload, _profiling_collector)
     repo_root = _repo_map_root_dir(repo_map)
     callers_universe_files, callers_universe_tests = _repo_map_file_and_test_universe(repo_map)
@@ -14302,6 +14290,7 @@ def build_symbol_callers_from_map(
                 "files_total": len(callers_universe_files) + len(callers_universe_tests),
             },
         )
+    apply_coverage_gap_incompleteness(payload, payload["resolution_gaps"], answer_empty=not calls)
     return _attach_profiling(payload, _profiling_collector)
 
 
@@ -14469,7 +14458,8 @@ def build_symbol_blast_radius_from_map(
             "edge_confidence": "none",
             "evidence_counts": {"parser_backed": 0, "heuristic": 0},
         }
-        payload["resolution_gaps"] = []
+        payload.setdefault("resolution_gaps", [])
+        inherit_coverage_gap(payload, defs_payload)
         payload["ranking_quality"] = "empty"
         payload["coverage_summary"] = _coverage_summary(payload)
         payload["provider_agreement"] = dict(default_agreement)
@@ -14867,7 +14857,9 @@ def build_symbol_blast_radius_from_map(
             payload["deadline_limit"] = dict(defs_payload["deadline_limit"])
         elif reverse_import_graph_deadline_hit_blast.hit:
             payload["deadline_limit"] = {"deadline_exceeded": True}
-    if callers_payload.get("result_incomplete"):
+    if callers_payload.get("result_incomplete") and not inherit_coverage_gap(
+        payload, callers_payload
+    ):
         # backlog #1 chokepoint: the direct-caller scan's internal ceiling (CALLER_SCAN_FILE_CEILING)
         # dropped files the map covers -> the blast radius built on top of it is not exhaustive
         # either (session_blast_radius calls this function directly on a full, unbounded session

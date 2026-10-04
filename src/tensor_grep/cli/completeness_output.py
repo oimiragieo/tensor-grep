@@ -5,6 +5,25 @@ from __future__ import annotations
 from typing import Any
 
 
+def coverage_gap_banner(payload: dict[str, Any]) -> str | None:
+    """Banner for a scan that was blocked by a coverage gap, naming that gap's OWN remedy.
+
+    Built from the structured `coverage_gap_limit` stamp (never the generic "the scan did not
+    finish" text, whose remedy names --max-repo-files -- the wrong knob for a parse-cap or syntax
+    error). ASCII-only: it prints to Windows consoles."""
+    limit = payload.get("coverage_gap_limit")
+    if not (isinstance(limit, dict) and limit.get("possibly_truncated")):
+        return None
+    reason = str(limit.get("reason") or "files were skipped by the symbol graph")
+    remedy = str(limit.get("remediation") or "narrow PATH")
+    sample = ", ".join(str(name) for name in limit.get("files_sample", []))
+    where = f" (e.g. {sample})" if sample else ""
+    return (
+        f"INCOMPLETE RESULT: {reason}{where}, so definitions/callers may be missing. "
+        f"Remedy: {remedy}."
+    )
+
+
 def _output_limit_note(payload: dict[str, Any]) -> str | None:
     """Describe exact display omissions without classifying the analysis as incomplete."""
     limit = payload.get("output_limit")

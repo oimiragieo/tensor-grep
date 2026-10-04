@@ -16,6 +16,8 @@ import importlib.util
 from collections.abc import Iterator
 from pathlib import Path
 
+from tensor_grep.core.python_parse import parse_python
+
 TOP_LEVEL_PACKAGES = ("cli", "core", "backends", "io")
 
 #: The package-pair edges the frozen baseline itself labels as PRE-EXISTING LAYERING
@@ -241,7 +243,7 @@ def _iter_parsed_modules(src_root: Path) -> Iterator[tuple[str, str, bool, ast.M
         if from_pkg is None:
             continue
         try:
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            tree = parse_python(path.read_text(encoding="utf-8"), filename=str(path))
         except (SyntaxError, UnicodeDecodeError) as exc:
             # A file this walker cannot parse is a silent false negative for the whole freeze
             # check, which defeats its purpose -- fail loud instead of skipping it.

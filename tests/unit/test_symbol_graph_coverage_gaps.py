@@ -50,8 +50,419 @@ def test_python_call_text_survives_form_feed_lines(tmp_path: Path) -> None:
 def test_read_source_text_strips_bom_and_replaces_bad_bytes(tmp_path: Path) -> None:
     p = tmp_path / "x.txt"
     p.write_bytes(b"\xef\xbb\xbfa\xe9b")
-    assert lang_registry.read_source_text(p) == "a�b"
+    assert lang_registry.read_source_text(p) == "a\ufffdb"
 
 
 def test_split_source_lines_only_splits_on_newline() -> None:
-    assert lang_registry.split_source_lines("a\n\x0cb c\n") == ["a", "\x0cb c"]
+    assert lang_registry.split_source_lines("a\n\x0cb\u2028c\n") == ["a", "\x0cb\u2028c"]
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 coverage-gap incompleteness (over-cap, syntax error, grammar missing, lossy decode)
+# --------------------------------------------------------------------------------------------
+
+from tensor_grep.cli import lang_go  # noqa: E402
+from tensor_grep.cli import main as cli_main  # noqa: E402
+
+
+def _big(tmp_path: Path, name: str = "big.py", symbol: str = "big_target") -> Path:
+    p = tmp_path / name
+    p.write_text(f"def {symbol}():\n    return 1\n# " + "x" * 4000 + "\n", encoding="utf-8")
+    return p
+
+
+def test_oversize_file_with_empty_answer_is_incomplete(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    payload = repo_map.build_symbol_defs("big_target", tmp_path)
+    assert payload["no_match"] is True
+    assert payload["result_incomplete"] is True
+    assert "TENSOR_GREP_MAX_PARSE_BYTES" in payload["incomplete_reason"]
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    gap = next(g for g in payload["resolution_gaps"] if g["reason"].startswith("file(s) over"))
+    assert gap["files_affected"] == 1 and gap["affects_completeness"] == "when_empty"
+    assert cli_main._annotate_result_completeness(payload)[1] is True  # the exit-2 gate input
+
+
+def test_oversize_gap_is_disclosed_but_not_blocking_when_answer_found(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    (tmp_path / "ok.py").write_text("def ok_target():\n    return 1\n", encoding="utf-8")
+    payload = repo_map.build_symbol_defs("ok_target", tmp_path)
+    assert _names(payload) == ["ok_target"]
+    assert not payload.get("result_incomplete")
+    assert any(g["files_affected"] == 1 for g in payload.get("resolution_gaps", []))
+
+
+def test_python_syntax_error_file_empty_answer_is_incomplete(tmp_path):
+    (tmp_path / "bad.py").write_text("def broken_target(:\n    pass\n", encoding="utf-8")
+    payload = repo_map.build_symbol_defs("broken_target", tmp_path)
+    assert payload["result_incomplete"] is True
+    assert any("syntax" in g["reason"] for g in payload["resolution_gaps"])
+
+
+def test_syntax_error_file_is_disclosed_on_a_found_answer(tmp_path):
+    (tmp_path / "ok.py").write_text("def found_target():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "bad.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+    payload = repo_map.build_symbol_defs("found_target", tmp_path)
+    assert _names(payload) == ["found_target"]
+    assert not payload.get("result_incomplete")
+    assert any("syntax" in g["reason"] for g in payload["resolution_gaps"])
+
+
+@pytest.mark.requires_grammar
+def test_grammar_missing_go_with_empty_answer_is_incomplete(tmp_path, monkeypatch):
+    monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
+    (tmp_path / "m.go").write_text("package m\nfunc GoOnly() {}\n", encoding="utf-8")
+    payload = repo_map.build_symbol_defs("GoOnly", tmp_path)
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert any(
+        g["language"] == "go" and g["affects_completeness"] == "when_empty"
+        for g in payload["resolution_gaps"]
+    )
+
+
+def test_php_lossy_decode_empty_answer_is_incomplete_and_found_answer_discloses(tmp_path):
+    (tmp_path / "bad.php").write_bytes(b"<?php\nfunction bad\xffname() { return 1; }\n")
+    payload = repo_map.build_symbol_defs("badname", tmp_path)
+    assert payload["result_incomplete"] is True
+    assert any("not valid UTF-8" in g["reason"] for g in payload["resolution_gaps"])
+    (tmp_path / "ok.php").write_text("<?php\nfunction okname() { return 1; }\n", encoding="utf-8")
+    found = repo_map.build_symbol_defs("okname", tmp_path)
+    assert not found.get("result_incomplete")
+    assert any("not valid UTF-8" in g["reason"] for g in found["resolution_gaps"])
+
+
+def test_valid_utf8_files_have_no_lossy_gap_even_with_literal_replacement_char(tmp_path):
+    (tmp_path / "ok.py").write_text("X = '\ufffd'\ndef fine():\n    return 1\n", encoding="utf-8")
+    payload = repo_map.build_symbol_defs("nothing_here", tmp_path)
+    assert not any("not valid UTF-8" in g["reason"] for g in payload.get("resolution_gaps", []))
+    assert not payload.get("result_incomplete")
+
+
+def test_scan_limit_cause_keeps_precedence_over_coverage_gap(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    for index in range(4):
+        (tmp_path / f"f{index}.py").write_text(f"def f{index}():\n    pass\n", encoding="utf-8")
+    capped = repo_map.build_symbol_defs("absent_symbol", tmp_path, max_repo_files=2)
+    assert capped["result_incomplete"] is True
+    assert capped.get("incomplete_reason_class") != "coverage_gap"
+    fresh = repo_map.build_symbol_defs("absent_symbol", tmp_path)
+    assert fresh["incomplete_reason_class"] == "coverage_gap"
+
+
+def test_mixed_repo_unreadable_gap_helper_is_not_raised_for_missing_file(tmp_path):
+    from tensor_grep.cli import repo_map_coverage_gaps
+
+    gaps = repo_map_coverage_gaps.source_coverage_gaps([tmp_path / "gone.py"], tmp_path)
+    assert gaps and gaps[0]["reason"].startswith("file(s) could not be read")
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 propagation: refs/callers/blast-radius/source/impact keep the coverage cause
+# --------------------------------------------------------------------------------------------
+
+import json  # noqa: E402
+
+from typer.testing import CliRunner  # noqa: E402
+
+
+def _cli(args: list[str]):
+    return CliRunner().invoke(cli_main.app, args)
+
+
+def _json_of(result) -> dict[str, Any]:
+    text = result.output
+    return json.loads(text[text.index("{") :])
+
+
+def _capped_repo(tmp_path: Path, monkeypatch, *, with_caller: bool = False) -> None:
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    (tmp_path / "defs.py").write_text("def real_target():\n    return 1\n", encoding="utf-8")
+    if with_caller:
+        (tmp_path / "use.py").write_text(
+            "from defs import real_target\n\n\ndef run():\n    return real_target()\n",
+            encoding="utf-8",
+        )
+    _big(tmp_path)
+
+
+@pytest.mark.parametrize("command", ["refs", "callers", "blast-radius"])
+def test_only_definition_in_oversize_file_keeps_gap_and_exits_2(tmp_path, monkeypatch, command):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    builder = {
+        "refs": repo_map.build_symbol_refs,
+        "callers": repo_map.build_symbol_callers,
+        "blast-radius": repo_map.build_symbol_blast_radius,
+    }[command]
+    payload = builder("big_target", tmp_path)
+    assert payload["result_incomplete"] is True
+    gaps = payload["resolution_gaps"]
+    assert gaps and gaps[0]["files_sample"] == ["big.py"]
+    result = _cli([command, str(tmp_path), "big_target"])
+    assert result.exit_code == 2, result.output
+
+
+def test_blast_radius_found_definition_zero_callers_and_oversize_file_exits_2(
+    tmp_path, monkeypatch
+):
+    _capped_repo(tmp_path, monkeypatch)
+    payload = repo_map.build_symbol_blast_radius("real_target", tmp_path)
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]
+    assert not payload.get("caller_scan_truncated")
+    assert _cli(["blast-radius", str(tmp_path), "real_target"]).exit_code == 2
+
+
+@pytest.mark.parametrize("command", ["blast-radius-render", "blast-radius-plan"])
+def test_render_and_plan_exit_2_with_the_parse_cap_remedy(tmp_path, monkeypatch, command):
+    _capped_repo(tmp_path, monkeypatch)
+    result = _cli([command, str(tmp_path), "real_target"])
+    assert result.exit_code == 2, result.output
+    assert "TENSOR_GREP_MAX_PARSE_BYTES" in result.output
+    assert "caller_scan_truncated" not in result.output or '"caller_scan_truncated": false' in (
+        result.output
+    )
+
+
+def test_render_syntax_error_variant_names_the_syntax_remedy(tmp_path):
+    (tmp_path / "defs.py").write_text("def real_target():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "bad.py").write_text("def broken(:\n    pass\n", encoding="utf-8")
+    result = _cli(["blast-radius-render", str(tmp_path), "real_target"])
+    assert result.exit_code == 2, result.output
+    assert "syntax" in result.output.lower()
+
+
+@pytest.mark.parametrize("command", ["blast-radius", "blast-radius-render", "blast-radius-plan"])
+def test_found_answer_with_callers_and_oversize_file_stays_exit_0(tmp_path, monkeypatch, command):
+    _capped_repo(tmp_path, monkeypatch, with_caller=True)
+    result = _cli([command, str(tmp_path), "real_target"])
+    assert result.exit_code == 0, result.output
+    assert "coverage_gap_limit" not in result.output
+
+
+def test_source_mixed_repo_keeps_exit_0_and_discloses_the_gap(tmp_path, monkeypatch):
+    _capped_repo(tmp_path, monkeypatch)
+    result = _cli(["source", str(tmp_path), "real_target", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_of(result)
+    assert payload["sources"]
+    assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]
+    assert not payload.get("result_incomplete")
+
+
+def test_source_empty_answer_in_oversize_file_exits_2_with_class(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    result = _cli(["source", str(tmp_path), "big_target", "--json"])
+    assert result.exit_code == 2, result.output
+    payload = _json_of(result)
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]
+
+
+def test_source_complete_repo_control_has_no_gap_fields(tmp_path):
+    (tmp_path / "defs.py").write_text("def real_target():\n    return 1\n", encoding="utf-8")
+    result = _cli(["source", str(tmp_path), "real_target", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_of(result)
+    assert not payload.get("resolution_gaps")
+    assert not payload.get("result_incomplete")
+
+
+def test_impact_mixed_repo_keeps_exit_0_and_discloses_the_gap(tmp_path, monkeypatch):
+    _capped_repo(tmp_path, monkeypatch)
+    result = _cli(["impact", str(tmp_path), "real_target", "--json"])
+    assert result.exit_code == 0, result.output
+    payload = _json_of(result)
+    assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]
+
+
+def test_impact_empty_answer_in_oversize_file_exits_2_with_class(tmp_path, monkeypatch):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _big(tmp_path)
+    result = _cli(["impact", str(tmp_path), "big_target", "--json"])
+    assert result.exit_code == 2, result.output
+    assert _json_of(result)["incomplete_reason_class"] == "coverage_gap"
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 (r26): every Python parse failure is a SyntaxError at one choke point
+# --------------------------------------------------------------------------------------------
+
+_DEEP_EXPR = "x = " + "1+" * 10000 + "1\n"  # ~20 KB: under the parse cap, overflows the parser
+
+
+def test_cached_ast_parse_converts_recursion_error_and_does_not_cache_it() -> None:
+    for _ in range(2):  # second call proves the failure was not cached as a success
+        with pytest.raises(SyntaxError) as excinfo:
+            repo_map._cached_ast_parse(_DEEP_EXPR)
+        assert isinstance(excinfo.value.__cause__, RecursionError)
+
+
+def test_nul_byte_source_is_a_syntax_error_at_the_choke_point() -> None:
+    with pytest.raises(SyntaxError):
+        repo_map._cached_ast_parse("x = 1\n\x00\n")
+
+
+def test_defs_on_unparseable_deep_file_only_candidate_exits_2_naming_the_cause(tmp_path):
+    (tmp_path / "deep.py").write_text(_DEEP_EXPR + "def deep_target():\n    return 1\n")
+    result = _cli(["defs", "--json", str(tmp_path), "deep_target"])
+    assert result.exit_code == 2, result.output
+    payload = _json_of(result)
+    assert payload["incomplete_reason_class"] == "coverage_gap"
+    assert "RecursionError" in json.dumps(payload["resolution_gaps"])
+
+
+def test_defs_on_unparseable_deep_file_mixed_repo_exits_0_with_disclosure(tmp_path):
+    (tmp_path / "deep.py").write_text(_DEEP_EXPR)
+    (tmp_path / "ok.py").write_text("def ok_target():\n    return 1\n")
+    result = _cli(["defs", "--json", str(tmp_path), "ok_target"])
+    assert result.exit_code == 0, result.output
+    assert "RecursionError" in json.dumps(_json_of(result)["resolution_gaps"])
+
+
+def test_imports_on_unparseable_deep_file_discloses_instead_of_crashing(tmp_path):
+    p = tmp_path / "deep.py"
+    p.write_text("import os\n" + _DEEP_EXPR)
+    result = _cli(["imports", "--json", str(p)])
+    assert result.exit_code == 2, result.output
+    assert _json_of(result)["incomplete_reason_class"] == "coverage_gap"
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 direct extractor consumers: tg imports / tg importers
+# --------------------------------------------------------------------------------------------
+
+
+def test_imports_syntax_error_file_is_exit_2_with_a_syntax_gap(tmp_path):
+    p = tmp_path / "bad.py"
+    p.write_text("import os\ndef broken(:\n", encoding="utf-8")
+    payload = repo_map.build_file_imports(p)
+    assert payload["result_incomplete"] is True
+    assert any("syntax" in g["reason"] for g in payload["resolution_gaps"])
+    result = _cli(["imports", "--json", str(p)])
+    assert result.exit_code == 2, result.output
+    assert _json_of(result)["incomplete_reason_class"] == "coverage_gap"
+
+
+def test_imports_valid_file_with_no_imports_stays_complete_and_exits_1(tmp_path):
+    p = tmp_path / "plain.py"
+    p.write_text("x = 1\n", encoding="utf-8")
+    result = _cli(["imports", "--json", str(p)])
+    assert result.exit_code == 1  # genuine "none" on a complete scan, result.output
+    assert not _json_of(result).get("result_incomplete")
+
+
+def test_imports_valid_file_keeps_its_import(tmp_path):
+    p = tmp_path / "ok.py"
+    p.write_text("import os\n", encoding="utf-8")
+    result = _cli(["imports", "--json", str(p)])
+    assert result.exit_code == 0, result.output
+    assert _json_of(result)["imports"]
+
+
+def test_importers_only_importer_with_syntax_error_is_exit_2_with_the_path(tmp_path):
+    (tmp_path / "b.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("import b\ndef broken(:\n", encoding="utf-8")
+    payload = repo_map.build_file_importers(tmp_path / "b.py", tmp_path)
+    assert payload["importer_count"] == 0
+    assert payload["result_incomplete"] is True
+    assert "a.py" in json.dumps(payload["resolution_gaps"])
+
+
+def test_importers_parseable_importer_control_stays_exit_0(tmp_path):
+    (tmp_path / "b.py").write_text("def thing():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "a.py").write_text("import b\n", encoding="utf-8")
+    payload = repo_map.build_file_importers(tmp_path / "b.py", tmp_path)
+    assert payload["importer_count"] == 1
+    assert not payload.get("result_incomplete")
+
+
+# --------------------------------------------------------------------------------------------
+# G1.2 diff-impact: a changed file whose symbols could not be extracted is never silent
+# --------------------------------------------------------------------------------------------
+
+import subprocess  # noqa: E402
+
+
+def _diff_repo(tmp_path: Path, name: str, before: bytes, after: bytes) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+    git("init", "-q")
+    git("config", "core.autocrlf", "false")
+    (repo / name).write_bytes(before)
+    git("add", "--all")
+    git("commit", "-qm", "i")
+    (repo / name).write_bytes(after)
+    return repo
+
+
+def test_diff_impact_syntax_error_file_is_listed_as_unparsed(tmp_path, monkeypatch):
+    repo = _diff_repo(
+        tmp_path,
+        "app.py",
+        b"def changed():\n    return 1\n",
+        b"def changed():\n    return 2\ndef broken(:\n",
+    )
+    monkeypatch.chdir(repo)
+    result = _cli(["diff-impact", "--json"])
+    assert result.exit_code == 2, result.output
+    data = _json_of(result)
+    assert data["unparsed_changed_files"] == ["app.py"]
+
+
+def test_diff_impact_valid_file_has_no_unparsed_files(tmp_path, monkeypatch):
+    repo = _diff_repo(
+        tmp_path, "app.py", b"def changed():\n    return 1\n", b"def changed():\n    return 2\n"
+    )
+    monkeypatch.chdir(repo)
+    result = _cli(["diff-impact", "--json"])
+    assert result.exit_code == 0, result.output
+    assert _json_of(result)["unparsed_changed_files"] == []
+
+
+def test_diff_impact_non_utf8_python_file_is_a_coverage_gap(tmp_path, monkeypatch):
+    repo = _diff_repo(
+        tmp_path,
+        "app.py",
+        b"def changed():\n    return 1\n",
+        b"def changed():\n    return 2\n# bad byte \xff\n",
+    )
+    monkeypatch.chdir(repo)
+    result = _cli(["diff-impact", "--json"])
+    assert result.exit_code == 2, result.output
+    data = _json_of(result)
+    assert data["unparsed_changed_files"] == ["app.py"]
+    assert data["incomplete_reason"] == "coverage_gap"
+    assert data["incomplete_reason_class"] == "coverage_gap"
+
+
+@pytest.mark.requires_grammar
+def test_diff_impact_grammar_missing_changed_file_is_unparsed(tmp_path, monkeypatch):
+    repo = _diff_repo(
+        tmp_path,
+        "m.go",
+        b"package m\n\nfunc Changed() int { return 1 }\n",
+        b"package m\n\nfunc Changed() int { return 2 }\n",
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
+    result = _cli(["diff-impact", "--json"])
+    assert result.exit_code == 2, result.output
+    data = _json_of(result)
+    assert data["unparsed_changed_files"] == ["m.go"]
+    assert data["incomplete_reason_class"] == "coverage_gap"
