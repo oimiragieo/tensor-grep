@@ -1886,3 +1886,73 @@ def test_in_repo_symlink_pointing_inside_the_root_exits_0(tmp_path: Path, monkey
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 0, res.stdout
     assert json.loads(res.stdout)["exit_reason"] == "ok"
+
+
+def _swap_race_repo(tmp_path: Path) -> tuple[Path, Path]:
+    """link.py -> two.py is the changed, in-root file; the test swaps it outside mid-analysis."""
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / "one.py").write_text("def one():\n    return 1\n", encoding="utf-8")
+    (repo / "two.py").write_text("def two():\n    return 2\n", encoding="utf-8")
+    outside = tmp_path / "outside.py"
+    outside.write_text("def leaked():\n    return 1\n", encoding="utf-8")
+    try:
+        (repo / "link.py").symlink_to(repo / "one.py")
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    _git(repo, "-c", "core.symlinks=true", "add", "--all")
+    _git(repo, "commit", "-qm", "i")
+    (repo / "link.py").unlink()
+    (repo / "link.py").symlink_to(repo / "two.py")
+    return repo, outside
+
+
+def _install_swap_on_first_extraction(monkeypatch: Any, repo: Path, outside: Path) -> list[str]:
+    """After the containment check passed, swap link.py to point OUTSIDE, then delegate."""
+    events: list[str] = []
+    real = di.lang_registry.spec_for_path
+
+    def swapping(path: Any) -> Any:
+        if Path(str(path)).name == "link.py" and not events:
+            (repo / "link.py").unlink()
+            (repo / "link.py").symlink_to(outside)
+            events.append("swapped")
+        return real(path)
+
+    monkeypatch.setattr(di.lang_registry, "spec_for_path", swapping)
+    return events
+
+
+def test_swap_during_extraction_is_detected_and_discarded(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, outside = _swap_race_repo(tmp_path)
+    events = _install_swap_on_first_extraction(monkeypatch, repo, outside)
+    payload = build_diff_blast_radius(root=repo)
+    assert events == ["swapped"]
+    assert "leaked" not in {s["name"] for s in payload["changed_symbols"]}
+    assert {"path": "link.py", "reason": "path_changed_during_analysis"} in payload[
+        "not_analyzed_paths"
+    ]
+    assert payload["partial"] is True
+    assert payload["incomplete_reason"] == "path_changed_during_analysis"
+
+
+def test_swap_during_extraction_exits_2_through_the_cli(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, outside = _swap_race_repo(tmp_path)
+    _install_swap_on_first_extraction(monkeypatch, repo, outside)
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 2
+    data = json.loads(res.stdout)
+    assert "leaked" not in {s["name"] for s in data["changed_symbols"]}
+    assert data["exit_reason"] == "incomplete"
+
+
+def test_no_swap_control_reports_the_symbol_and_exits_0(tmp_path: Path, monkeypatch: Any) -> None:
+    repo, _ = _swap_race_repo(tmp_path)
+    payload = build_diff_blast_radius(root=repo)
+    assert {s["name"] for s in payload["changed_symbols"]} == {"two"}
+    assert payload["not_analyzed_paths"] == []
+    assert payload["partial"] is False
+    monkeypatch.chdir(repo)
+    res = runner.invoke(app, ["diff-impact", "--json"])
+    assert res.exit_code == 0, res.stdout

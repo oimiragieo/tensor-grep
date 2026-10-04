@@ -699,13 +699,30 @@ def extract_diff_hunks_from_git(
     return _parse_checked(proc.stdout or "")
 
 
+def _file_identity(path: Path) -> tuple[int, int, Path] | None:
+    """(st_dev, st_ino, resolved path) of what `path` currently points at; None if unreadable."""
+    try:
+        st = os.stat(path, follow_symlinks=True)
+        return st.st_dev, st.st_ino, path.resolve()
+    except OSError:
+        return None
+
+
 def map_changed_lines_to_symbols(
     changed_files_with_lines: dict[Path, list[tuple[int, int]]],
     root: Path,
+    not_analyzed: list[dict[str, str]] | None = None,
 ) -> list[dict[str, Any]]:
     """Use LANGUAGE_REGISTRY (or _imports_and_symbols_for_path fallback) to extract symbols for each file,
 
     checking which symbols span the modified lines.
+
+    Swap detection (best effort): the file's identity (st_dev, st_ino, resolved path) is captured
+    before and after extraction; if it changed, or the resolved path left `root`, that file's
+    symbols are discarded and it is appended to `not_analyzed` with reason
+    `path_changed_during_analysis`. Limits: a swap-and-restore (ABA) that is back in place when
+    extraction finishes is not caught, and the extractor still opens the original pathname, so
+    closing the race fully needs extraction through a verified/confined handle (tracker R-12).
     """
     changed_symbols: list[dict[str, Any]] = []
 
@@ -718,6 +735,7 @@ def map_changed_lines_to_symbols(
         if not full_path.is_file():
             continue
 
+        before = _file_identity(full_path)
         spec = lang_registry.spec_for_path(full_path)
         symbols: list[dict[str, Any]] = []
         if spec is not None and spec.extract_imports_and_symbols is not None:
@@ -730,6 +748,20 @@ def map_changed_lines_to_symbols(
                 _, symbols = repo_map._imports_and_symbols_for_path(full_path)
             except (OSError, ValueError, SyntaxError, UnicodeDecodeError):
                 symbols = []
+
+        after = _file_identity(full_path)
+        if (
+            before is None
+            or after != before
+            or not repo_map._path_is_relative_to(before[2], root)
+            or not repo_map._path_is_relative_to(after[2], root)
+        ):
+            if not_analyzed is not None:
+                not_analyzed.append({
+                    "path": str(rel_path).replace("\\", "/"),
+                    "reason": "path_changed_during_analysis",
+                })
+            continue
 
         for sym in symbols:
             s_start = int(sym.get("start_line", sym.get("line", 1)))
@@ -887,7 +919,13 @@ def build_diff_blast_radius(
         partial = True
         downgrade_reasons.append("path_escapes_root")
         partial_reasons.append("path_escapes_root")
-    changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root)
+    swapped_paths: list[dict[str, str]] = []
+    changed_symbols = map_changed_lines_to_symbols(changed_files_with_lines, root, swapped_paths)
+    if swapped_paths:
+        not_analyzed_paths.extend(swapped_paths)
+        partial = True
+        downgrade_reasons.append("path_changed_during_analysis")
+        partial_reasons.append("path_changed_during_analysis")
     binary_paths: set[Path] = getattr(changed_files_with_lines, "binary_files", set())
     binary_files = sorted(str(p).replace("\\", "/") for p in binary_paths)
     deleted_paths: set[Path] = getattr(changed_files_with_lines, "deleted_paths", set())
