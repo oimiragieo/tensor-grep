@@ -21,36 +21,50 @@ _MCP_OUTPUT_TRUNCATED_NOTICE = (
 )
 
 
-def _first_submatch_char(raw: str, match: Any) -> int | None:
-    """Char index (in ``raw``) of the first reported submatch, or None when the backend gave no
-    usable offsets. ripgrep reports BYTE offsets into the raw line."""
-    subs = getattr(match, "submatches", None)
-    if not subs:
-        return None
-    try:
-        byte_start = int(subs[0].get("start", 0))
-        return len(raw.encode("utf-8")[:byte_start].decode("utf-8", "ignore"))
-    except (TypeError, ValueError, AttributeError, IndexError, KeyError):
-        return None
+def _byte_to_char(raw: str, byte_offset: int) -> int:
+    return len(raw.encode("utf-8")[:byte_offset].decode("utf-8", "ignore"))
+
+
+def _anchor_char(raw: str, match: Any) -> int | None:
+    """Char index (in ``raw``) to centre the window on, or None to use the stripped head.
+
+    Preference, falling through until one is usable: (1) the first submatch whose span holds a
+    non-whitespace character (ripgrep reports BYTE offsets into the raw line; a regex such as
+    ` +|NEEDLE` can report a whitespace-only first submatch that would blank the window); (2) the
+    first non-whitespace character of the line; (3) None -> the stripped head."""
+    for sub in getattr(match, "submatches", None) or ():
+        try:
+            start = _byte_to_char(raw, int(sub.get("start", 0)))
+            end = _byte_to_char(raw, int(sub.get("end", sub.get("start", 0))))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if raw[start:end].strip():
+            return start
+    first_visible = len(raw) - len(raw.lstrip())
+    return first_visible if first_visible < len(raw) else None
 
 
 def _clip_match_text(match: Any) -> tuple[str, int]:
     """Return ``(text, removed_chars)`` for one match, bounded to the per-match cap.
 
     ``removed_chars == 0`` means the text is the full stripped line. Otherwise the text is a
-    window: centred on the first submatch when offsets exist (offsets are in RAW-line
-    coordinates, so the window is cut from the raw text and stripped only afterwards), else the
-    head of the STRIPPED text (never an unstripped slice that could be all whitespace)."""
+    window cut from the RAW line (anchor coordinates are raw) and stripped afterwards; it never
+    strips to empty while the line has visible content. A wider-than-cap line with NO visible
+    content renders empty, honestly, and is flagged (``removed_chars`` = the line length)."""
     raw = str(match.text)
     stripped = raw.strip()
+    if not stripped:
+        return "", (len(raw) if len(raw) > _MCP_MATCH_TEXT_MAX_CHARS else 0)
     if len(stripped) <= _MCP_MATCH_TEXT_MAX_CHARS:
         return stripped, 0
-    start_char = _first_submatch_char(raw, match)
-    if start_char is None:
+    anchor = _anchor_char(raw, match)
+    if anchor is None:
         window = stripped[:_MCP_MATCH_TEXT_MAX_CHARS]
     else:
-        lo = max(0, start_char - _MCP_MATCH_WINDOW_LEAD_CHARS)
-        window = raw[lo : lo + _MCP_MATCH_TEXT_MAX_CHARS].strip()
+        lo = max(0, anchor - _MCP_MATCH_WINDOW_LEAD_CHARS)
+        window = (
+            raw[lo : lo + _MCP_MATCH_TEXT_MAX_CHARS].strip() or stripped[:_MCP_MATCH_TEXT_MAX_CHARS]
+        )
     return window, max(0, len(stripped) - len(window))
 
 

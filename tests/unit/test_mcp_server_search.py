@@ -1744,3 +1744,64 @@ def test_json_window_with_offsets_and_leading_whitespace_keeps_the_match():
     assert "NEEDLE" in row["text"]
     assert row["text_truncated"] is True
     assert row["text_chars"] == len(line)
+
+
+# --- Codex round 8: a whitespace-only first submatch must not blank the window ---
+
+
+def _rg_hit(line, spans):
+    return MatchLine(
+        line_number=1,
+        text=line,
+        file="a.txt",
+        submatches=tuple({"match": {"text": "x"}, "start": a, "end": b} for a, b in spans),
+    )
+
+
+_WS_LINE = " " * 1000 + "NEEDLE" + "b" * 500
+
+
+def test_whitespace_first_submatch_still_shows_the_later_real_match_in_json_and_plain():
+    from tensor_grep.cli import mcp_server
+
+    hit = _rg_hit(_WS_LINE, [(0, 1000), (1000, 1006)])  # regex ` +|NEEDLE`
+    with _stub_rg_search([hit]):
+        row = json.loads(mcp_server.tg_search(" +|NEEDLE", "."))["matches"][0]
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    with _stub_rg_search([hit]):
+        plain = mcp_server.tg_search(" +|NEEDLE", ".", structured_json=False)
+    assert "NEEDLE" in plain
+    assert "[truncated" in plain
+
+
+def test_only_whitespace_submatches_fall_back_to_the_first_visible_character():
+    from tensor_grep.cli import mcp_server
+
+    hit = _rg_hit(_WS_LINE, [(0, 1000)])
+    with _stub_rg_search([hit]):
+        row = json.loads(mcp_server.tg_search(" +", "."))["matches"][0]
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+
+
+def test_all_whitespace_wide_line_is_empty_honestly_and_flagged():
+    from tensor_grep.cli import mcp_server
+
+    hit = _rg_hit(" " * 2000, [(0, 2000)])
+    with _stub_rg_search([hit]):
+        row = json.loads(mcp_server.tg_search(" +", "."))["matches"][0]
+    assert row["text"] == ""
+    assert row["text_truncated"] is True
+    assert row["text_chars"] == 2000
+    with _stub_rg_search([hit]):
+        plain = mcp_server.tg_search(" +", ".", structured_json=False)
+    assert "[truncated 2000 chars]" in plain
+
+
+def test_normal_single_submatch_window_is_unchanged():
+    line = "a" * 1500 + "NEEDLE" + "b" * 300
+    row = json.loads(_run_tg_search_with_line(line, 1500))["matches"][0]
+    assert "NEEDLE" in row["text"]
+    assert row["text_truncated"] is True
+    assert row["text"].startswith("a" * 100 + "NEEDLE")
