@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 from tensor_grep.cli.repo_map_cache import _SOURCE_READ_CACHE_MAXSIZE as _SOURCE_READ_CACHE_MAXSIZE
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
+from tensor_grep.cli.repo_map_shell_inert import Derived, DerivedFilter, Omission, render_command
 
 # Route A late binding (docs/design/2026-08-19-split-floor-escape.md). `_self` is
 # `tensor_grep.cli.repo_map`, NOT this module: the test suite patches names there, and a
@@ -1185,21 +1186,21 @@ def _javascript_repo_fallback_command(package_manager: str) -> str:
     return "npm test"
 
 
-def _javascript_runner_file_command(runner: str, relative_path: str) -> str:
-    if runner == "vitest":
-        return f"npx vitest run {relative_path}"
-    if runner == "mocha":
-        return f"npx mocha {relative_path}"
-    return f"npx jest {relative_path}"
+def _javascript_runner_file_command(runner: str, relative_path: str) -> str | Omission:
+    program = {"vitest": ("npx", "vitest", "run"), "mocha": ("npx", "mocha")}.get(
+        runner, ("npx", "jest")
+    )
+    return render_command(*program, Derived(relative_path))
 
 
-def _javascript_runner_specific_command(runner: str, relative_path: str, test_filter: str) -> str:
-    quoted_filter = _self._shell_safe_arg(test_filter)
-    if runner == "vitest":
-        return f"npx vitest run {relative_path} -t {quoted_filter}"
-    if runner == "mocha":
-        return f"npx mocha {relative_path} --grep {quoted_filter}"
-    return f"npx jest {relative_path} --testNamePattern {quoted_filter}"
+def _javascript_runner_specific_command(
+    runner: str, relative_path: str, test_filter: str
+) -> str | Omission:
+    program, flag = {
+        "vitest": (("npx", "vitest", "run"), "-t"),
+        "mocha": (("npx", "mocha"), "--grep"),
+    }.get(runner, (("npx", "jest"), "--testNamePattern"))
+    return render_command(*program, Derived(relative_path), flag, DerivedFilter(test_filter))
 
 
 def _javascript_runner_fallback_command(runner: str) -> str:
@@ -1210,8 +1211,8 @@ def _javascript_runner_fallback_command(runner: str) -> str:
     return "npx jest"
 
 
-def _javascript_node_test_file_command(relative_path: str) -> str:
-    return f"node --test {relative_path}"
+def _javascript_node_test_file_command(relative_path: str) -> str | Omission:
+    return render_command("node", "--test", Derived(relative_path))
 
 
 def _javascript_test_script_uses_node_test(test_script: str | None) -> bool:

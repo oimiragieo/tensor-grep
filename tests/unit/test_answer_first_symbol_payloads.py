@@ -456,3 +456,26 @@ def test_tests_field_stays_a_flat_list_of_strings_not_restructured(tmp_path: Pat
 
 def test_json_output_version_not_bumped() -> None:
     assert repo_map.JSON_OUTPUT_VERSION == 1
+
+
+def test_max_tokens_clears_bulk_imports_before_cutting_callers(tmp_path: Path) -> None:
+    project = _write_fanout_project(tmp_path, callers=10, tests=0)
+    argv = ["callers", str(project), "create_invoice", "--json"]
+    baseline = json.loads(runner.invoke(app, [*argv, "--max-tokens", "0"]).stdout)
+    assert len(baseline["callers"]) == 10
+    assert baseline["imports"]
+    floor = dict(baseline)
+    for field in ("tests", "related_paths", "imports"):
+        floor[field] = []
+    floor.pop("omissions", None)
+    floor_size = repo_map._estimate_payload_tokens(floor)
+    assert repo_map._estimate_payload_tokens(baseline) > floor_size + 50  # imports is real bulk
+
+    result = runner.invoke(app, [*argv, "--max-tokens", str(floor_size + 5)])
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    budget = payload["token_budget"]
+    assert budget["primary_truncated"] is False
+    assert len(payload["callers"]) == 10
+    assert "imports" in budget["secondary_fields_trimmed"]
+    assert payload["imports"] == []
