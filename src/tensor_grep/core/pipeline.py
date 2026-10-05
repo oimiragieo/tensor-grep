@@ -4,12 +4,13 @@ import warnings
 from contextlib import nullcontext
 from typing import Any
 
-from tensor_grep.backends.base import ComputeBackend
+from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import CPUBackend
 from tensor_grep.backends.cudf_backend import CuDFBackend
-from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.backends.ripgrep_backend import RipgrepBackend, _pattern_semantics_flags
 from tensor_grep.backends.rust_backend import RustCoreBackend
 from tensor_grep.backends.stringzilla_backend import StringZillaBackend
+from tensor_grep.core.case_semantics import effective_ignore_case, smart_case_needs_rg
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.hardware.memory_manager import MemoryManager
 from tensor_grep.core.query_analyzer import QueryAnalyzer, QueryType
@@ -19,6 +20,82 @@ logger = logging.getLogger(__name__)
 
 class ConfigurationError(RuntimeError):
     """Raised when explicit user routing intent cannot be satisfied."""
+
+
+# Flags (as emitted by ripgrep_backend._pattern_semantics_flags) each NON-rg engine VERIFIABLY
+# implements. Eligibility is derived from that one helper, never from a hand-listed field check:
+# anything outside the set is routed to rg, or refused when rg is unavailable.
+#  * Rust search: rust_core/src/lib.rs `search(pattern, path, ignore_case, fixed_strings,
+#    invert_match)`; case comes from core/case_semantics (-i/-s/-S resolved Python-side).
+#  * Rust count: `count_matches(pattern, path, ignore_case, fixed_strings)` -- no invert input.
+#  * CPU (Python re / linear engine): additionally -w/-x (its own word/line wrapping).
+#  * StringZilla: literal (-F) search with exact-case lowering only.
+_RUST_SEARCH_FLAGS = frozenset({"-F", "-i", "-s", "-S", "-v"})
+_RUST_COUNT_FLAGS = frozenset({"-F", "-i", "-s", "-S"})
+_CPU_FLAGS = frozenset({"-F", "-i", "-s", "-S", "-v", "-w", "-x"})
+_STRINGZILLA_FLAGS = frozenset({"-F", "-i", "-s", "-S"})
+
+
+def _unsupported_flags(
+    flags: list[str],
+    supported: frozenset[str],
+    config: SearchConfig,
+    rg_available: bool = True,
+) -> list[str]:
+    bad = [flag for flag in flags if flag not in supported]
+    # "-S" is only exact for patterns whose case rg's smart-case scan reads literally.
+    if "-S" in flags and smart_case_needs_rg(config) and "-S" not in bad:
+        bad.append("-S")
+    # -o / -r output is rg's own: the non-rg engines return no per-match offsets or replacement
+    # text, and rebuilding it in Python was wrong (capture alternatives, ReDoS, lossy bytes).
+    # With rg available these route to rg. WITHOUT rg, main served -o/-r from the selected engine
+    # (golden contract `only_matching_*` / `replace_*` on the no-rg lanes), so they are not refused
+    # here: the rg JSON printer must never turn a request main served into an error.
+    if rg_available and config.only_matching:
+        bad.append("-o")
+    if rg_available and config.replace_str is not None:
+        bad.append("-r")
+    # Case-insensitive + non-ASCII pattern: lower()/re.IGNORECASE are not rg's Unicode case
+    # folding (backends/unicode_fold.py). An ASCII pattern is still checked against the file
+    # content at search time, where the content is known.
+    patterns = [config.query_pattern or "", *(config.regexp or [])]
+    if any(not p.isascii() for p in patterns) and any(
+        effective_ignore_case(config, p, strict=False) for p in patterns
+    ):
+        bad.append("non-ascii case-insensitive pattern")
+    return bad
+
+
+def _enforce_semantics_support(
+    backend: ComputeBackend,
+    reason: str,
+    config: SearchConfig | None,
+    flags: list[str],
+    rg_backend: ComputeBackend,
+    rg_available: bool,
+) -> tuple[ComputeBackend, str]:
+    """Never let a non-rg engine run a search whose flags it cannot honour."""
+    name = type(backend).__name__
+    if config is None or config.ltl or config.ast:
+        return backend, reason
+    supported = {
+        "RustCoreBackend": _RUST_COUNT_FLAGS if config.count else _RUST_SEARCH_FLAGS,
+        "CPUBackend": _CPU_FLAGS,
+        "StringZillaBackend": _STRINGZILLA_FLAGS,
+    }.get(name)
+    if supported is None:
+        return backend, reason  # rg itself, AST, NLP, GPU engines own their semantics
+    bad = _unsupported_flags(flags, supported, config, rg_available)
+    if not bad:
+        return backend, reason
+    if rg_available:
+        return rg_backend, "semantics_require_rg"
+    if name != "CPUBackend" and not _unsupported_flags(flags, _CPU_FLAGS, config, rg_available):
+        return CPUBackend(), "semantics_python_cpu"
+    raise BackendExecutionError(
+        f"{name} cannot honour {bad} and the 'rg' backend is unavailable; refusing to run a "
+        "search that would silently ignore the flag."
+    )
 
 
 class Pipeline:
@@ -83,6 +160,31 @@ class Pipeline:
             if chunk_mb > existing_chunk_mb:
                 normalized[slot] = (existing_device_id, chunk_mb)
         return normalized
+
+    @staticmethod
+    def _count_needs_rg_semantics(config: SearchConfig | None) -> bool:
+        """Flags RustCoreBackend.count_matches(pattern, path, ignore_case, fixed) cannot honour."""
+        if config is None or config.ltl:
+            # LTL expressions are not regexes: rg cannot run them, so never reroute them there.
+            return False
+        return bool(
+            config.word_regexp
+            or config.line_regexp
+            or config.smart_case
+            or config.max_count is not None
+            or config.null_data
+            or config.stop_on_nonmatch
+        )
+
+    @staticmethod
+    def _needs_columns(config: SearchConfig | None) -> bool:
+        """True when the output renders a column (rg text --column / --vimgrep).
+
+        JSON does not count: it omits the field when no authoritative offset exists.
+        """
+        if config is None:
+            return False
+        return bool(config.vimgrep or (config.column and not config.no_column))
 
     @staticmethod
     def _needs_python_cpu(config: SearchConfig | None) -> bool:
@@ -161,6 +263,10 @@ class Pipeline:
                 span.set_attribute("config.ast", bool(config and config.ast))
                 span.set_attribute("config.count", bool(config and config.count))
                 span.set_attribute("config.fixed_strings", bool(config and config.fixed_strings))
+
+            # Validates --engine up front (raises BackendExecutionError for a bogus value)
+            # before ANY backend is chosen or run, including with force_cpu=True.
+            semantics_flags = _pattern_semantics_flags(config)
 
             # The rust backend is our fallback now because it's 30x faster than pure python for counts/simple strings
             rust_backend = RustCoreBackend()
@@ -261,6 +367,48 @@ class Pipeline:
                         "line-by-line; refusing rather than returning a line-oriented result "
                         "that would look like a complete no-match answer."
                     )
+            elif (
+                config
+                and config.count
+                and not config.ast
+                and query_type is not QueryType.NLP
+                and self._count_needs_rg_semantics(config)
+            ):
+                # The native count signature has no word/line/smart-case/max-count/null-data/
+                # stop-on-nonmatch inputs; route to rg (or fail closed) instead of returning a
+                # count that silently ignores the flag. Sits BEFORE the force_cpu arm: that arm
+                # would otherwise send these configs to the same native count.
+                if config.gpu_device_ids:
+                    self._raise_explicit_gpu_configuration_error(
+                        config, "count (-c) search has no GPU backend"
+                    )
+                if rg_available:
+                    self.backend = rg_backend
+                    selected_backend_reason = "count_rg_semantics"
+                elif config.null_data or config.stop_on_nonmatch:
+                    raise BackendExecutionError(
+                        "count (-c) with --null-data/--stop-on-nonmatch requires the 'rg' "
+                        "backend, which is unavailable; refusing to return a count that "
+                        "ignores the flag."
+                    )
+                else:
+                    self.backend = CPUBackend()
+                    selected_backend_reason = "count_python_cpu_semantics"
+            elif (
+                config
+                and self._needs_columns(config)
+                and rg_available
+                and not config.ast
+                and not config.count
+                and not config.ltl
+                and not config.gpu_device_ids
+                and query_type is not QueryType.NLP
+            ):
+                # Only rg returns per-match submatch byte offsets; the native/CPU engines return
+                # (line, text) only, so a column rendered from them would be a guess. Sits before
+                # the force_cpu arm for the same reason the -c semantics guard does.
+                self.backend = rg_backend
+                selected_backend_reason = "column_rg_offsets"
             elif force_cpu:
                 if rust_available and not needs_python_cpu:
                     self.backend = rust_backend
@@ -339,7 +487,13 @@ class Pipeline:
                 self._raise_explicit_gpu_configuration_error(
                     config, "count (-c) search has no GPU backend"
                 )
-            elif config and config.count and rust_available:
+            elif (
+                config
+                and config.count
+                and rust_available
+                and not config.ltl  # native count ignores LTL: the CPU LTL arm owns it
+                and not self._count_needs_rg_semantics(config)
+            ):
                 # For pure counting, our Rust backend beats rg and everything else
                 self.backend = rust_backend
                 selected_backend_reason = "count_rust_fast_path"
@@ -500,6 +654,15 @@ class Pipeline:
             else:
                 self.backend = fallback_backend
                 selected_backend_reason = "fallback_backend"
+
+            self.backend, selected_backend_reason = _enforce_semantics_support(
+                self.backend,
+                selected_backend_reason,
+                config,
+                semantics_flags,
+                rg_backend,
+                rg_available,
+            )
 
             selected_backend_name = type(self.backend).__name__
             if span is not None:

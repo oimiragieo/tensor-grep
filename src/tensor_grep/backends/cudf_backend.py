@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -59,7 +60,6 @@ def _process_chunk_on_device(
     pattern: str,
     config: SearchConfig | None = None,
 ) -> tuple[list[MatchLine], int]:
-    import re
 
     local_device_id = _configure_cuda_worker_environment(device_id)
 
@@ -86,9 +86,7 @@ def _process_chunk_on_device(
         strip_delimiters=True,
     )
 
-    flags = 0
-    if config and (config.ignore_case or (config.smart_case and pattern.islower())):
-        flags |= re.IGNORECASE
+    flags = case_regex_flags(config, pattern)
 
     mask = series.str.contains(pattern, regex=True, flags=flags)
 
@@ -358,7 +356,6 @@ class CuDFBackend(ComputeBackend):
         self, file_path: str, pattern: str, config: SearchConfig | None = None
     ) -> SearchResult:
         import os
-        import re
 
         # Routing setup does not allocate GPU memory — keep outside any device context
         # so that _search_distributed (which forks via ProcessPoolExecutor) can be called
@@ -374,9 +371,7 @@ class CuDFBackend(ComputeBackend):
 
         total_capacity_bytes = sum(self.chunk_sizes_mb) * 1024 * 1024
 
-        flags = 0
-        if config and (config.ignore_case or (config.smart_case and pattern.islower())):
-            flags |= re.IGNORECASE
+        flags = case_regex_flags(config, pattern)
 
         if file_size <= total_capacity_bytes and len(self.chunk_sizes_mb) == 1:
             # PHASE 3: Zero-Copy ingestion via PyCapsule if tensor-grep rust core is available.

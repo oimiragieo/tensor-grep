@@ -93,7 +93,7 @@ C++-only wrinkles, none guessable from a grammar README):
    ``operator`` keyword and the operator token itself are both anonymous) -- C's generic
    fallback returns ``None`` here (0 != 1 named children), so operator overloads are HONESTLY
    EXCLUDED from extraction, not crashed on and not mis-named. Even if a name node were somehow
-   produced, ``_is_clean_symbol_name``'s shared ``^[A-Za-z_$][A-Za-z0-9_$]*$`` regex (kept
+   produced, ``_is_clean_symbol_name``'s shared word-character identifier regex (kept
    byte-identical to every sibling module's own copy, per that regex's own cross-module contract)
    would reject ``"operator+="`` anyway (it is not an identifier shape) -- this exclusion is
    doubly honest, not a special-cased gap.
@@ -172,7 +172,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli import lang_c_cpp_include
+from tensor_grep.cli import lang_c_cpp_include, lang_registry
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -182,11 +182,11 @@ from tensor_grep.cli import lang_c_cpp_include
 # if any of them ever change there.
 # ---------------------------------------------------------------------------
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 
 
 def _is_clean_symbol_name(name: str) -> bool:
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
+    return lang_registry.is_clean_symbol_name(name)
 
 
 # Live-verified dogfood finding (see the module docstring's macro-recall-ceiling section): a

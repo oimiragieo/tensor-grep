@@ -3,6 +3,7 @@ from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.backends.cpu_backend import InvalidRegexError
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
 
@@ -23,6 +24,36 @@ def _is_invalid_regex_error(exc: Exception) -> bool:
         or "error parsing regex" in message
         or "invalid regex" in message
     )
+
+
+def _first_nul_offset(path: str, *, chunk_size: int = 65536, max_bytes: int | None = None) -> int:
+    """Offset of the first NUL byte, scanning in bounded chunks (-1 when none)."""
+    offset = 0
+    with open(path, "rb") as handle:
+        while max_bytes is None or offset < max_bytes:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                return -1
+            idx = chunk.find(b"\0")
+            if idx >= 0:
+                return offset + idx
+            offset += len(chunk)
+    return -1
+
+
+def _file_contains_literal(path: str, needle: bytes, *, chunk_size: int = 65536) -> bool:
+    """Bounded-memory exact byte search; carries len(needle)-1 bytes across chunk boundaries."""
+    keep = max(len(needle) - 1, 0)
+    tail = b""
+    with open(path, "rb") as handle:  # open FIRST: an empty needle must not hide an OSError
+        if not needle:
+            return True
+        while chunk := handle.read(chunk_size):
+            window = tail + chunk
+            if needle in window:
+                return True
+            tail = window[-keep:] if keep else b""
+    return False
 
 
 class RustCoreBackend(ComputeBackend):
@@ -91,7 +122,7 @@ class RustCoreBackend(ComputeBackend):
     @staticmethod
     def _binary_notice_text(file_path: str) -> str:
         try:
-            offset = Path(file_path).read_bytes().find(b"\0")
+            offset = _first_nul_offset(file_path)
         except OSError:
             offset = -1
         if offset < 0:
@@ -105,25 +136,71 @@ class RustCoreBackend(ComputeBackend):
     def _binary_file_matches_pattern(
         file_path: str, pattern: str, config: SearchConfig | None
     ) -> bool:
-        try:
-            haystack = Path(file_path).read_bytes()
-        except OSError:
-            return False
-
-        ignore_case = bool(
-            config and (config.ignore_case or (config.smart_case and pattern.islower()))
+        # backends must not import from `cli` (declared layering): reuse ripgrep_backend's
+        # already-baselined seams for the rg binary and the bounded subprocess runner
+        from tensor_grep.backends.ripgrep_backend import (
+            RipgrepBackend,
+            _pattern_semantics_flags,
+            configured_ripgrep_timeout_seconds,
+            run_subprocess,
         )
-        pattern_bytes = pattern.encode("utf-8", errors="surrogateescape")
-        if config and config.fixed_strings:
-            if ignore_case:
-                return pattern_bytes.lower() in haystack.lower()
-            return pattern_bytes in haystack
 
-        flags = re.IGNORECASE if ignore_case else 0
-        try:
-            return re.search(pattern_bytes, haystack, flags=flags) is not None
-        except re.error as exc:
-            raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+        # ONE source of truth for pattern semantics (case / fixed / engine / -w / -x): the very
+        # code RipgrepBackend._build_cmd uses. Validates --engine first (raises on a bogus
+        # value) before ANY path, including the rg-free literal shortcut.
+        flags = _pattern_semantics_flags(config)
+        if (
+            flags == ["-F"]  # exactly: no case/-w/-x/engine/--no-fixed-strings flag in play
+            and "\n" not in pattern  # rg rejects a literal newline without multiline: delegate
+            and "\r" not in pattern
+        ):
+            # An exact case-sensitive literal has no regex semantics and no ReDoS surface:
+            # keep the rg-free bounded path (chunks with overlap).
+            try:
+                return _file_contains_literal(
+                    file_path, pattern.encode("utf-8", errors="surrogateescape")
+                )
+            except OSError as exc:
+                # fail closed: an unreadable file is not a "no match"
+                raise BackendExecutionError(
+                    f"cannot read {file_path!r} for the binary-file match check: {exc}"
+                ) from exc
+        rg = RipgrepBackend()._get_binary_name()
+        if rg is None:
+            # No rg: keep main's route (Python re over the bytes) rather than turning a request
+            # main served into an error; the semantics differ only for exotic regex syntax.
+            try:
+                haystack = Path(file_path).read_bytes()
+            except OSError:
+                return False
+            ignore_case = effective_ignore_case(config, pattern)
+            try:
+                return (
+                    re.search(
+                        (re.escape(pattern) if "-F" in flags else pattern).encode(
+                            "utf-8", errors="surrogateescape"
+                        ),
+                        haystack,
+                        flags=re.IGNORECASE if ignore_case else 0,
+                    )
+                    is not None
+                )
+            except re.error as exc:
+                raise InvalidRegexError(f"invalid regex pattern: {exc}") from exc
+        cmd = [str(rg), "-a", "-q", "--no-config", *flags]
+        cmd += ["-e", pattern, "--", file_path]
+        proc = run_subprocess(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout_seconds=configured_ripgrep_timeout_seconds(),
+        )
+        if proc.returncode == 0:
+            return True
+        if proc.returncode == 1:
+            return False
+        raise InvalidRegexError(f"invalid regex pattern: {(proc.stderr or '').strip()[:300]}")
 
     def search(
         self, file_path: str, pattern: str, config: SearchConfig | None = None
@@ -149,8 +226,7 @@ class RustCoreBackend(ComputeBackend):
         no_ignore_vcs = False
 
         if config:
-            if config.ignore_case:
-                ignore_case = True
+            ignore_case = effective_ignore_case(config, pattern)
             if config.fixed_strings:
                 fixed_strings = True
             if config.invert_match:

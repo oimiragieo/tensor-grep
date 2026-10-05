@@ -2,13 +2,25 @@ import base64
 import binascii
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.rg_json_render import (
+    effective_multiline,
+    render_json_record,
+    strip_record_terminator,
+)
+from tensor_grep.backends.rg_json_render import (
+    field_bytes as _field_bytes,
+)
 from tensor_grep.cli.rg_root_ignore import root_ignore_file_args
-from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds, run_subprocess
+from tensor_grep.cli.subprocess_policy import (
+    configured_ripgrep_timeout_seconds as configured_ripgrep_timeout_seconds,
+)
+from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
 from tensor_grep.core.config import SearchConfig
-from tensor_grep.core.result import MatchLine, SearchResult, strip_line_terminator
+from tensor_grep.core.result import MatchLine, SearchResult
 
 
 def _decode_rg_field(field: dict[str, object] | None) -> str:
@@ -33,6 +45,111 @@ def _decode_rg_field(field: dict[str, object] | None) -> str:
         return base64.b64decode(b64).decode("utf-8", errors="replace")
     except (binascii.Error, ValueError):
         return ""
+
+
+def _lossy_record_text(field: dict[str, object] | None, delim: bytes) -> str:
+    """The record text for ``MatchLine.text``: terminator stripped, undecodable bytes -> U+FFFD."""
+    raw = _field_bytes(field)
+    if raw is None:
+        return ""
+    return strip_record_terminator(raw, delim).decode("utf-8", errors="replace")
+
+
+def _pattern_semantics_flags(config: SearchConfig | None) -> list[str]:
+    """Every rg flag that decides WHETHER A LINE MATCHES (pattern semantics + input decoding).
+
+    Single source of truth shared by ``RipgrepBackend._build_cmd`` and the binary-file match
+    check in ``rust_backend`` so the two can never drift. Order encodes rg's last-flag-wins
+    precedence (``-i`` then ``-s`` means case-sensitive; ``--auto-hybrid-regex`` precedes
+    ``-P``/``--no-pcre2``). Raises ``BackendExecutionError`` for an unsupported ``--engine``.
+
+    CENSUS of the ``SearchConfig`` fields ``_build_cmd`` reads (asserted by
+    tests/unit/test_ripgrep_backend_field_coverage.py):
+
+    * MATCHING SEMANTICS -- forwarded here: invert_match, no_invert_match, stop_on_nonmatch,
+      null_data, dfa_size_limit, regex_size_limit, crlf, no_crlf, encoding, no_encoding,
+      multiline, no_multiline, multiline_dotall, no_multiline_dotall, auto_hybrid_regex,
+      no_auto_hybrid_regex, unicode, no_unicode, pcre2_unicode, no_pcre2_unicode, ignore_case,
+      case_sensitive, smart_case, engine, word_regexp, line_regexp, fixed_strings,
+      no_fixed_strings, pcre2, no_pcre2.
+    * OUTPUT-ONLY / TRAVERSAL -- stay in ``_build_cmd``: every ignore*/hidden/follow/glob/type/
+      sort/threads/max_depth/max_filesize/one_file_system flag (which FILES are searched),
+      count/count_matches/files_*/only_matching/replace/passthru/context/max_count/max_columns/
+      color/heading/line_number/column/vimgrep/byte_offset/with_filename/trim/stats/debug/...
+      (how results are PRINTED or how many), text/binary/no_text/no_binary (the binary check
+      always passes ``-a``), json/no_json, mmap, list_files.
+    * KNOWN GAPS of the binary check (input is not the pattern string): ``pre``/``pre_glob``/
+      ``search_zip`` (preprocessors would execute on a file we only probe) and the extra
+      pattern sources ``regexp``/``file_patterns`` (the check receives ``pattern`` directly).
+    """
+    flags: list[str] = []
+    if not config:
+        return flags
+    if config.invert_match:
+        flags.append("-v")
+    if config.no_invert_match:
+        flags.append("--no-invert-match")
+    if config.stop_on_nonmatch:
+        flags.append("--stop-on-nonmatch")
+    if config.null_data:
+        flags.append("--null-data")
+    if config.dfa_size_limit:
+        flags.extend(["--dfa-size-limit", str(config.dfa_size_limit)])
+    if config.regex_size_limit:
+        flags.extend(["--regex-size-limit", str(config.regex_size_limit)])
+    if config.crlf:
+        flags.append("--crlf")
+    if config.no_crlf:
+        flags.append("--no-crlf")
+    if config.encoding != "auto":
+        flags.extend(["--encoding", config.encoding])
+    if config.no_encoding:
+        flags.append("--no-encoding")
+    if config.multiline:
+        flags.append("--multiline")
+    if config.no_multiline:
+        flags.append("--no-multiline")
+    if config.multiline_dotall:
+        flags.append("--multiline-dotall")
+    if config.no_multiline_dotall:
+        flags.append("--no-multiline-dotall")
+    if config.auto_hybrid_regex:
+        flags.append("--auto-hybrid-regex")
+    if config.no_auto_hybrid_regex:
+        flags.append("--no-auto-hybrid-regex")
+    if config.unicode:
+        flags.append("--unicode")
+    if config.pcre2_unicode:
+        flags.append("--pcre2-unicode")
+    if config.no_pcre2_unicode:
+        flags.append("--no-pcre2-unicode")
+    if config.no_unicode:
+        flags.append("--no-unicode")
+    if config.ignore_case:
+        flags.append("-i")
+    if config.case_sensitive:
+        flags.append("-s")
+    if config.smart_case and not (config.ignore_case or config.case_sensitive):
+        flags.append("-S")  # explicit -i/-s win; rg is last-flag-wins
+    engine = str(config.engine or "default").lower()
+    if engine in {"pcre2", "auto"}:
+        flags.extend(["--engine", engine])
+    elif engine != "default":
+        # ascii(): CLI diagnostics stay ASCII even when the user's value is not
+        raise BackendExecutionError(f"unsupported --engine value: {config.engine!a}")
+    if config.word_regexp:
+        flags.append("-w")
+    if config.line_regexp:
+        flags.append("-x")
+    if config.fixed_strings:
+        flags.append("-F")
+    if config.no_fixed_strings:
+        flags.append("--no-fixed-strings")
+    if config.pcre2:
+        flags.append("-P")
+    if config.no_pcre2:
+        flags.append("--no-pcre2")
+    return flags
 
 
 class RipgrepBackend(ComputeBackend):
@@ -100,7 +217,18 @@ class RipgrepBackend(ComputeBackend):
             return self._search_files_with_matches(
                 file_path=file_path, pattern=pattern, config=config
             )
+        # -o / -r: entries are laid out by the rg-compatible printer in rg_json_render.py from
+        # rg's own --json data (unforgeable framing); there is no plain-text route
+        render_cfg: SearchConfig | None = None
+        if config and (config.only_matching or config.replace_str is not None):
+            if not (config.files_with_matches or config.files_without_match or config.list_files):
+                render_cfg = config
 
+        probe = (
+            self._multiline_strategy_probe(pattern, render_cfg)
+            if render_cfg is not None and effective_multiline(render_cfg)
+            else None
+        )
         cmd = self._build_cmd(file_path=file_path, pattern=pattern, config=config, json_mode=True)
         try:
             # We use check=False because rg exits with 1 if no matches are found
@@ -113,7 +241,13 @@ class RipgrepBackend(ComputeBackend):
                 timeout_seconds=configured_ripgrep_timeout_seconds(),
             )
             matches, matched_file_paths, match_counts_by_file, total_matches = (
-                self._parse_ndjson_matches(result.stdout, file_path)
+                self._parse_ndjson_matches(
+                    result.stdout,
+                    file_path,
+                    delim=b"\0" if config is not None and config.null_data else b"\n",
+                    render=render_cfg,
+                    probe=probe,
+                )
             )
 
             # Parse-first, THEN branch on the exit code. rg exit 2 = a SOFT per-file error (e.g.
@@ -137,6 +271,9 @@ class RipgrepBackend(ComputeBackend):
                 routing_reason="rg_json",
                 routing_distributed=False,
                 routing_worker_count=1,
+                # rg exited 0 = it matched; a rendered (-o/-r) request may still print nothing
+                # (e.g. `-U -o '\\n'`), which is success with zero entries
+                rg_exit_zero=render_cfg is not None and result.returncode == 0,
             )
             if partial:
                 reason = result.stderr.strip() or "rg exit 2 (partial results)"
@@ -176,7 +313,13 @@ class RipgrepBackend(ComputeBackend):
             )
             partial_stdout = e.stdout if isinstance(e.stdout, str) else ""
             matches, matched_file_paths, match_counts_by_file, total_matches = (
-                self._parse_ndjson_matches(partial_stdout, file_path)
+                self._parse_ndjson_matches(
+                    partial_stdout,
+                    file_path,
+                    delim=b"\0" if config is not None and config.null_data else b"\n",
+                    render=render_cfg,
+                    probe=probe,
+                )
             )
             reason = (
                 f"rg aggregate search exceeded the {timeout_seconds:g}s timeout and was "
@@ -203,9 +346,84 @@ class RipgrepBackend(ComputeBackend):
         except Exception as e:
             raise BackendExecutionError(f"Ripgrep backend failed: {e}") from e
 
+    def _multiline_strategy_probe(
+        self, pattern: str, config: SearchConfig
+    ) -> Callable[[bytes], bool | None]:
+        """Does rg's searcher use its MULTI-LINE strategy for this pattern under `-U`?
+
+        rg does not report it, but it decides how the printer lays out `-o`/`-r` ("lines mode").
+        The observable: a haystack of two ADJACENT copies of a block that matches yields ONE
+        merged record under the multi-line strategy and two records under the line strategy
+        (verified with rg 15.1: `ab` -> 2, `(a)\\n?`, `$`, `^`, `ab$` -> 1). Memoised per request;
+        returns None when the probe cannot tell (no match / rg failure).
+        """
+        import dataclasses
+        import json
+        import os
+        import tempfile
+
+        cache: list[bool | None] = []
+        probe_cfg = dataclasses.replace(
+            config,
+            only_matching=False,
+            replace_str=None,
+            context=None,
+            before_context=None,
+            after_context=None,
+            invert_match=False,
+            no_invert_match=False,
+            max_count=None,
+            count=False,
+            count_matches=False,
+            files_with_matches=False,
+            files_without_match=False,
+        )
+
+        def probe(block: bytes) -> bool | None:
+            if cache:
+                return cache[0]
+            delim = b"\0" if config.null_data else b"\n"
+            unit = block if block.endswith(delim) else block + delim
+            handle, tmp_path = tempfile.mkstemp(prefix="tg-strategy-probe-")
+            result: bool | None = None
+            try:
+                with os.fdopen(handle, "wb") as out:
+                    out.write(unit + unit)
+                cmd = self._build_cmd(
+                    file_path=tmp_path, pattern=pattern, config=probe_cfg, json_mode=True
+                )
+                proc = run_subprocess(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    encoding="utf-8",
+                    timeout_seconds=configured_ripgrep_timeout_seconds(),
+                )
+                records = 0
+                for line in proc.stdout.split("\n"):
+                    if line.strip() and json.loads(line).get("type") == "match":
+                        records += 1
+                result = records == 1 if records else None
+            except (OSError, ValueError, subprocess.SubprocessError):
+                result = None
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+            cache.append(result)
+            return result
+
+        return probe
+
     @staticmethod
     def _parse_ndjson_matches(
-        stdout: str, file_path: str | list[str]
+        stdout: str,
+        file_path: str | list[str],
+        delim: bytes = b"\n",
+        render: SearchConfig | None = None,
+        probe: Callable[[bytes], bool | None] | None = None,
     ) -> tuple[list[MatchLine], list[str], dict[str, int], int]:
         """Parse rg ``--json`` NDJSON output into match/context records.
 
@@ -234,11 +452,12 @@ class RipgrepBackend(ComputeBackend):
                     line_number = data_match.get("line_number", 0)
                     # Decode text-or-bytes: non-UTF-8 files arrive as lines.bytes (base64),
                     # not lines.text — reading only .text produced a phantom empty match.
-                    # strip_line_terminator (not .rstrip("\n\r")): rg's own "lines" field
+                    # strip_record_terminator (one configured delimiter, never .rstrip("\n\r")):
+                    # rg's own "lines" field
                     # includes the source line's real trailing `\r` for a CRLF file (verified
                     # directly against `rg.exe --json`) -- `.rstrip("\n\r")` ate that `\r` too,
                     # a genuine tg-vs-rg `--json` divergence task #262 uncovered.
-                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
+                    text = _lossy_record_text(data_match.get("lines"), delim)
 
                     _path_obj = data_match.get("path", {})
                     path_str = _decode_rg_field(_path_obj)
@@ -253,32 +472,53 @@ class RipgrepBackend(ComputeBackend):
                     # --column output shaping. Counting stays one-per-matching-line (below) so
                     # total_matches / parity with the other backends is unchanged.
                     _subs = data_match.get("submatches") or None
+                    if render is not None:  # -o/-r: entries come from rg's own data fields
+                        entries = render_json_record(
+                            data_match, "match", render, path_str, delim, probe
+                        )
+                    else:
+                        entries = [
+                            MatchLine(
+                                line_number=line_number,
+                                text=text,
+                                file=path_str,
+                                submatches=tuple(_subs) if _subs else None,
+                                rg_kind="match",
+                            )
+                        ]
+                    matches.extend(entries)
+                    total_matches += len(entries)
+                    if path_str and entries:
+                        # O(1) first-seen detection via the counts dict — the previous
+                        # `path_str not in matched_file_paths` was an O(n) scan per match,
+                        # degrading a common-token search on a large repo to O(matches x files).
+                        new_count = match_counts_by_file.get(path_str, 0) + len(entries)
+                        match_counts_by_file[path_str] = new_count
+                        if new_count == len(entries):
+                            matched_file_paths.append(path_str)
+                elif data.get("type") == "context":
+                    data_match = data["data"]
+                    line_number = data_match.get("line_number", 0)
+                    text = _lossy_record_text(data_match.get("lines"), delim)
+                    _path_obj = data_match.get("path", {})
+                    path_str = _decode_rg_field(_path_obj)
+                    if "text" not in _path_obj and isinstance(file_path, str):
+                        path_str = file_path
+                    if render is not None:
+                        matches.extend(
+                            render_json_record(
+                                data_match, "context", render, path_str, delim, probe
+                            )
+                        )
+                        continue
                     matches.append(
                         MatchLine(
                             line_number=line_number,
                             text=text,
                             file=path_str,
-                            submatches=tuple(_subs) if _subs else None,
+                            rg_kind="context",
                         )
                     )
-                    total_matches += 1
-                    if path_str:
-                        # O(1) first-seen detection via the counts dict — the previous
-                        # `path_str not in matched_file_paths` was an O(n) scan per match,
-                        # degrading a common-token search on a large repo to O(matches x files).
-                        new_count = match_counts_by_file.get(path_str, 0) + 1
-                        match_counts_by_file[path_str] = new_count
-                        if new_count == 1:
-                            matched_file_paths.append(path_str)
-                elif data.get("type") == "context":
-                    data_match = data["data"]
-                    line_number = data_match.get("line_number", 0)
-                    text = strip_line_terminator(_decode_rg_field(data_match.get("lines")))
-                    _path_obj = data_match.get("path", {})
-                    path_str = _decode_rg_field(_path_obj)
-                    if "text" not in _path_obj and isinstance(file_path, str):
-                        path_str = file_path
-                    matches.append(MatchLine(line_number=line_number, text=text, file=path_str))
             except json.JSONDecodeError:
                 pass
 
@@ -482,12 +722,18 @@ class RipgrepBackend(ComputeBackend):
         Execute ripgrep directly and stream output to stdout/stderr without JSON re-parsing.
         Returns rg's native exit code.
         """
-        cmd = self._build_cmd(
-            file_path=file_path,
-            pattern=pattern,
-            config=config,
-            json_mode=bool(config and config.json_mode),
-        )
+        try:
+            cmd = self._build_cmd(
+                file_path=file_path,
+                pattern=pattern,
+                config=config,
+                json_mode=bool(config and config.json_mode),
+            )
+        except BackendExecutionError as exc:
+            # e.g. an unsupported --engine value: exit 2 (error), never a traceback and never 1
+            # ("no match") -- the streaming route has no JSON envelope, so it is a stderr line
+            sys.stderr.write(f"Error: {exc}\n")
+            return 2
         if config and config.quiet:
             # `-q` LIVES HERE AND NOWHERE ELSE, and the reason is a regression I shipped.
             #
@@ -554,54 +800,10 @@ class RipgrepBackend(ComputeBackend):
         # `config`), but worth flagging so `config=None` is never mistaken for "injection
         # covered" -- it means "no SearchConfig-derived flags at all were forwarded".
         if config:
-            if config.ignore_case:
-                cmd.append("-i")
-            if config.case_sensitive:
-                cmd.append("-s")
-            if config.invert_match:
-                cmd.append("-v")
-            if config.no_invert_match:
-                cmd.append("--no-invert-match")
-            if config.word_regexp:
-                cmd.append("-w")
-            if config.line_regexp:
-                cmd.append("-x")
-            if config.fixed_strings:
-                cmd.append("-F")
-            if config.no_fixed_strings:
-                cmd.append("--no-fixed-strings")
-            if config.crlf:
-                cmd.append("--crlf")
-            if config.no_crlf:
-                cmd.append("--no-crlf")
-            if config.encoding != "auto":
-                cmd.extend(["--encoding", config.encoding])
-            if config.no_encoding:
-                cmd.append("--no-encoding")
             if not config.mmap:
                 cmd.append("--no-mmap")
             if config.no_mmap:
                 cmd.append("--no-mmap")
-            if config.multiline:
-                cmd.append("--multiline")
-            if config.no_multiline:
-                cmd.append("--no-multiline")
-            if config.multiline_dotall:
-                cmd.append("--multiline-dotall")
-            if config.no_multiline_dotall:
-                cmd.append("--no-multiline-dotall")
-            if config.auto_hybrid_regex:
-                cmd.append("--auto-hybrid-regex")
-            if config.no_auto_hybrid_regex:
-                cmd.append("--no-auto-hybrid-regex")
-            if config.unicode:
-                cmd.append("--unicode")
-            if config.pcre2_unicode:
-                cmd.append("--pcre2-unicode")
-            if config.no_pcre2_unicode:
-                cmd.append("--no-pcre2-unicode")
-            if config.no_unicode:
-                cmd.append("--no-unicode")
             if config.ignore:
                 cmd.append("--ignore")
             if config.no_ignore:
@@ -761,7 +963,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--files-with-matches")
             if config.files_without_match:
                 cmd.append("--files-without-match")
-            if config.replace_str is not None and not json_mode:
+            if config.replace_str is not None:
+                # also in json mode: rg then adds a per-submatch `replacement` field
                 cmd.extend(["--replace", config.replace_str])
             if config.passthru and not json_mode:
                 cmd.append("--passthru")
@@ -835,10 +1038,8 @@ class RipgrepBackend(ComputeBackend):
                 cmd.append("--no-messages")
             if config.messages:
                 cmd.append("--messages")
-            if config.pcre2:
-                cmd.append("-P")
-            if config.no_pcre2:
-                cmd.append("--no-pcre2")
+            # After --auto-hybrid-regex/--pcre2-unicode above: engine flags are last-wins in rg.
+            cmd.extend(_pattern_semantics_flags(config))
             if config.pre:
                 cmd.extend(["--pre", config.pre])
             if config.no_pre:

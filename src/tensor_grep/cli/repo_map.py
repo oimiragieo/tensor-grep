@@ -29,6 +29,7 @@ from tensor_grep.cli import (
     lang_php,
     lang_registry,
 )
+from tensor_grep.cli import repo_map_shell_inert as _inert
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.lsp_external_provider import ExternalLSPProviderManager, LSPTransportError
 from tensor_grep.cli.lsp_session import proof_request as _proof_request
@@ -267,9 +268,6 @@ from tensor_grep.cli.repo_map_lang_rust import (
     _rust_file_imports_symbol_from_definition as _rust_file_imports_symbol_from_definition,
 )
 from tensor_grep.cli.repo_map_lang_rust import (
-    _rust_file_level_command as _rust_file_level_command,
-)
-from tensor_grep.cli.repo_map_lang_rust import (
     _rust_file_references_symbol_from_definition as _rust_file_references_symbol_from_definition,
 )
 from tensor_grep.cli.repo_map_lang_rust import (
@@ -344,6 +342,7 @@ from tensor_grep.cli.repo_map_lang_rust import (
 from tensor_grep.cli.repo_map_lang_rust import (
     _rust_test_function_candidates_from_source as _rust_test_function_candidates_from_source,
 )
+from tensor_grep.cli.repo_map_lang_rust import _rust_test_target as _rust_test_target
 from tensor_grep.cli.repo_map_lang_rust import (
     _rust_tokio_test_function_candidates as _rust_tokio_test_function_candidates,
 )
@@ -401,6 +400,7 @@ from tensor_grep.cli.repo_map_regex_fallback import (
 from tensor_grep.cli.repo_map_regex_fallback import (
     _regex_symbol_sources as _regex_symbol_sources,
 )
+from tensor_grep.cli.repo_map_test_paths import _is_test_file as _is_test_file
 from tensor_grep.core.retrieval_lexical import score_term_overlap, split_terms
 
 # Route A (docs/design/2026-08-19-split-floor-escape.md): this module object, for late
@@ -1162,20 +1162,6 @@ class _UnreadablePathFlag:
         if len(self.sample) < _MAX_REPO_WALK_UNREADABLE_PATH_SAMPLE:
             offending_path = getattr(exc, "filename", None) or str(exc)
             self.sample.append(str(offending_path))
-
-
-def _is_test_file(path: Path) -> bool:
-    name = path.name
-    return (
-        name.startswith("test_")
-        or name.endswith("_test.py")
-        or name.endswith(".test.ts")
-        or name.endswith(".test.js")
-        or name.endswith(".spec.ts")
-        or name.endswith(".spec.js")
-        or "tests" in path.parts
-        or "__tests__" in path.parts
-    )
 
 
 def _gitignore_pattern_to_regex(pattern: str) -> str:
@@ -2427,7 +2413,7 @@ def _symbol_navigation_provenance_for_path(path: str) -> str:
     )
 
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 _FALLBACK_SOURCE_SUFFIXES = {
     ".adoc",
     ".cfg",
@@ -2460,7 +2446,7 @@ def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:
 
 
 def _is_clean_symbol_name(name: str) -> bool:
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
+    return lang_registry.is_clean_symbol_name(name)
 
 
 def _symbol_record(
@@ -6302,7 +6288,7 @@ def _estimate_payload_tokens(payload: dict[str, Any]) -> int:
 
 # Secondary (supporting-context) fields trimmed BEFORE the primary answer array when a
 # defs/refs/callers/impact payload exceeds --max-tokens (design #96, answer-first shrink order).
-_SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths")
+_SYMBOL_TOKEN_BUDGET_SECONDARY_FIELDS: tuple[str, ...] = ("tests", "related_paths", "imports")
 
 
 def build_context_pack(
@@ -7102,37 +7088,11 @@ def _best_test_function_candidate(
     primary_symbol_name: str | None,
     query: str | None,
 ) -> str | None:
-    if not candidates:
-        return None
-    if len(candidates) == 1:
-        return candidates[0]
-
-    symbol_terms = _candidate_terms(primary_symbol_name)
-    query_terms = _candidate_terms(query)
-    best_name: str | None = None
-    best_score = 0
-    for candidate in candidates:
-        haystack = candidate.lower()
-        score = 0
-        if symbol_terms:
-            if all(term in haystack for term in symbol_terms):
-                score += 6
-            score += sum(2 for term in symbol_terms if term in haystack)
-        if query_terms:
-            score += sum(1 for term in query_terms if term in haystack)
-        if score > 0 and candidate.startswith("test_"):
-            score += 1
-        if score > best_score or (
-            score == best_score
-            and score > 0
-            and best_name is not None
-            and len(candidate) < len(best_name)
-        ):
-            best_name = candidate
-            best_score = score
-    if best_score <= 0:
-        return None
-    return best_name
+    return _inert.best_test_function_candidate(
+        candidates,
+        symbol_terms=_candidate_terms(primary_symbol_name),
+        query_terms=_candidate_terms(query),
+    )
 
 
 @_mtime_aware_cache(maxsize=256)  # B7: mtime+size in key; replaces plain @lru_cache
@@ -7283,8 +7243,13 @@ def _cargo_test_command_for_primary_file(
             return "cargo test"
     except (OSError, RuntimeError):
         pass
-    relative_manifest = _relative_validation_path(manifest, repo_root)
-    return f"cargo test --manifest-path {relative_manifest}"
+    command = _inert.render_command(
+        "cargo",
+        "test",
+        "--manifest-path",
+        _inert.Derived(_relative_validation_path(manifest, repo_root)),
+    )
+    return command if isinstance(command, str) else None
 
 
 def _primary_language_fallback_validation_steps(
@@ -7458,11 +7423,14 @@ def _suggested_validation_command_for_primary_file(
     relative_test = _relative_validation_path(test_path, root)
     suffix = source_path.suffix.lower()
     if suffix == ".py":
-        command = f"pytest {relative_test}"
+        argv = ["pytest", relative_test]
     elif suffix in _TS_SUFFIXES:
-        command = f"vitest run {relative_test}"
+        argv = ["vitest", "run", relative_test]
     else:
-        command = f"jest {relative_test}"
+        argv = ["jest", relative_test]
+    command = _inert.render_command(*argv[:-1], _inert.Derived(relative_test))
+    if not isinstance(command, str):  # unknown paste shell: fail closed
+        return _inert.unsafe_neighbour_entry(argv, relative_test)
 
     return {
         "command": command,
@@ -7577,6 +7545,7 @@ def _validation_commands_for_tests(
     ]
 
 
+@_inert.lists_omissions
 def _raw_validation_plan_for_tests(
     tests: list[str],
     *,
@@ -7664,7 +7633,7 @@ def _raw_validation_plan_for_tests(
             requested_javascript_runners.append(runner)
 
     def add_step(
-        command: str,
+        command: str | _inert.Omission,
         *,
         scope: str,
         runner: str,
@@ -7672,6 +7641,8 @@ def _raw_validation_plan_for_tests(
         confidence: float,
         detection: str,
     ) -> None:
+        if isinstance(command, _inert.Omission):  # already recorded by render_command
+            return
         if command in seen:
             return
         seen.add(command)
@@ -7691,6 +7662,8 @@ def _raw_validation_plan_for_tests(
         suffix = path.suffix.lower()
         absolute_path = str(path.resolve())
         relative_path = _relative_validation_path(path, root)
+        if not _inert.is_shell_inert_path(relative_path):
+            _inert.record_omission(relative_path)  # disclosure only; commands gated per token
         is_primary_test = primary_test is not None and absolute_path == str(
             Path(primary_test).resolve()
         )
@@ -7705,7 +7678,15 @@ def _raw_validation_plan_for_tests(
                 )
                 if test_filter:
                     add_step(
-                        f"uv run pytest {relative_path} -k {test_filter} -q",
+                        _inert.render_command(
+                            "uv",
+                            "run",
+                            "pytest",
+                            _inert.Derived(relative_path),
+                            "-k",
+                            _inert.Derived(test_filter),
+                            "-q",
+                        ),
                         scope="symbol",
                         runner="pytest",
                         target=relative_path,
@@ -7713,7 +7694,7 @@ def _raw_validation_plan_for_tests(
                         detection="detected",
                     )
             add_step(
-                f"uv run pytest {relative_path} -q",
+                _inert.render_command("uv", "run", "pytest", _inert.Derived(relative_path), "-q"),
                 scope="file",
                 runner="pytest",
                 target=relative_path,
@@ -7803,7 +7784,12 @@ def _raw_validation_plan_for_tests(
 
         if suffix in _RUST_SUFFIXES:
             include_rust_fallback = True
-            file_level_command = _rust_file_level_command(path, root)
+            rust_target = _rust_test_target(path, root)
+            file_level_command = (
+                _inert.render_command("cargo", "test", "--test", _inert.Derived(rust_target))
+                if rust_target
+                else None
+            )
             if is_primary_test:
                 test_filter = _best_test_function_candidate(
                     list(_rust_test_function_candidates(absolute_path)),
@@ -7811,10 +7797,13 @@ def _raw_validation_plan_for_tests(
                     query=query,
                 )
                 if test_filter:
+                    named = _inert.Derived(test_filter)
                     targeted_command = (
-                        f"{file_level_command} {test_filter}"
-                        if file_level_command and _rust_uses_nested_test_target(path, root)
-                        else f"cargo test {test_filter}"
+                        _inert.render_command(
+                            "cargo", "test", "--test", _inert.Derived(rust_target), named
+                        )
+                        if rust_target and _rust_uses_nested_test_target(path, root)
+                        else _inert.render_command("cargo", "test", named)
                     )
                     add_step(
                         targeted_command,
@@ -7969,6 +7958,7 @@ def _align_validation_plan_for_primary_language(
     return aligned, alignment
 
 
+@_inert.collects_omissions
 def _validation_plan_and_alignment_for_tests(
     tests: list[str],
     *,
@@ -8004,6 +7994,7 @@ def _validation_plan_and_alignment_for_tests(
         if isinstance(primary_symbol, dict) and primary_symbol.get("file")
         else (str(primary_file) if primary_file is not None and str(primary_file) else None)
     )
+    raw_plan, _ = _inert.split_omissions(raw_plan)
     raw_plan = _ensure_primary_language_validation_fallback(
         raw_plan,
         repo_root=repo_root,
@@ -10692,16 +10683,18 @@ def _ensure_primary_source_in_sources(
     if not primary_file or not primary_symbol_name:
         return sources
     primary_span = edit_plan_seed.get("primary_span") or primary_symbol
-    if any(
-        _source_includes_primary_symbol(
+    hits = [
+        i
+        for i, source in enumerate(sources)
+        if _source_includes_primary_symbol(
             source,
             primary_file=primary_file,
             primary_symbol_name=primary_symbol_name,
             primary_span=primary_span,
         )
-        for source in sources
-    ):
-        return sources
+    ]
+    if hits:  # present: move it to the front so a greedy source budget cannot starve it
+        return [sources[hits[0]], *sources[: hits[0]], *sources[hits[0] + 1 :]]
 
     primary_source: dict[str, Any] | None = None
     primary_source_payload = _self.build_symbol_source_from_map(

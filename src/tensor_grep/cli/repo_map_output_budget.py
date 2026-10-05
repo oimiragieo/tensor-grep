@@ -174,8 +174,9 @@ def _apply_symbol_token_budget(
     """Bound a defs/refs/callers/impact payload to ~``max_tokens`` (design #96 item 4).
 
     Modeled on ``_apply_context_token_budget``'s serialize-then-measure approach, but with an
-    ANSWER-FIRST shrink order: SECONDARY fields (``tests``, ``related_paths`` -- whichever are
-    present; each field's ``{field}_matches`` companion, e.g. impact's ``test_matches``, is
+    ANSWER-FIRST shrink order: SECONDARY fields (``tests``, ``related_paths``, ``imports`` --
+    ``imports`` is bulk supporting context, a disclosed trim reported in
+    ``secondary_fields_trimmed``; whichever are present; each field's ``{field}_matches`` companion, e.g. impact's ``test_matches``, is
     cleared alongside it so the real bloat source is not left untouched) are cleared FIRST since
     they are supporting context, not the answer itself. Only if the payload is STILL over budget
     after zeroing every secondary field is the PRIMARY answer array (``primary_field`` --

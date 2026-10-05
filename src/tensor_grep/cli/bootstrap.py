@@ -387,12 +387,12 @@ def _normalize_search_invocation(argv: list[str]) -> list[str] | None:
 
 def _nearest_commands(token: str) -> list[str]:
     """A90 nearest[]: normalized (lowercase), max Levenshtein edit distance 3, no internal
-    `__`-prefixed names, capped at 5, deterministic tie-break (alphabetical), empty when
-    nothing is close. Mirrors `nearest_commands` in rust_core/src/main.rs (parity-pinned)."""
+    `__`-prefixed names, RANKED closest-first (alphabetical tie-break) BEFORE the cap of 5,
+    empty when nothing is close. Mirrors `nearest_commands` in rust_core/src/main.rs (A90 parity)."""
     norm = token.lower()
-    candidates = sorted(name for name in _KNOWN_COMMANDS if not name.startswith("__"))
-    matches = [name for name in candidates if _levenshtein(norm, name) <= 3]
-    return sorted(matches[:5])
+    candidates = (name for name in _KNOWN_COMMANDS if not name.startswith("__"))
+    ranked = sorted((_levenshtein(norm, name), name) for name in candidates)
+    return [name for dist, name in ranked if dist <= 3][:5]
 
 
 def _levenshtein(a: str, b: str) -> int:

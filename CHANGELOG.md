@@ -1,6 +1,65 @@
 # CHANGELOG
 
 
+## v1.123.14 (2026-10-05)
+
+### Bug Fixes
+
+- **diff-impact**: Close git argv injection, parse quoted/space/deleted paths, fail closed on git
+  failure ([#1194](https://github.com/oimiragieo/tensor-grep/pull/1194),
+  [`92a39de`](https://github.com/oimiragieo/tensor-grep/commit/92a39def024c28b1267d73321e9e526e9e96a298))
+
+Close git argv injection in diff-impact, parse quoted/space/deleted paths, bind extracted content to
+  the diff's post-image object id, refuse symlinks, confine and bound every read, and honour
+  --deadline (wave-1 Part A of the 2026-10-03 bug hunt). Codex adversarial audit SHIP at the
+  round-19 closure audit; CI green on fc49432.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **doctor**: Bound external LSP provider shutdown so tg doctor cannot hang
+  ([#1199](https://github.com/oimiragieo/tensor-grep/pull/1199),
+  [`2c4c112`](https://github.com/oimiragieo/tensor-grep/commit/2c4c1123f7f05be5b930452032dfe4b5ec016e3c))
+
+Bound the doctor LSP probe so tg doctor cannot hang: contained provider process tree, one absolute
+  deadline with a session-bound watchdog, deadline-bounded locks, per-session provider state, and
+  proof recorded only from the current session's responses (2026-10-03 bug hunt). Codex adversarial
+  audit SHIP at the round-12 closure confirmation; CI green on 1cb4365.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **native-core**: Exit-code honesty, root-door flag parity, --index lossy decode, -c --json shape,
+  tg run partial-apply report ([#1200](https://github.com/oimiragieo/tensor-grep/pull/1200),
+  [`9d52bd3`](https://github.com/oimiragieo/tensor-grep/commit/9d52bd3e88d52fd57daf3a82888e6b8ea416a043))
+
+Native core: crashed/killed children and tg run errors exit 2 not 1, partial applies name every
+  written file, --index decodes lossily, -c --json emits one structured payload, 22 root-door flags
+  reach native search, did-you-mean ranks by (distance, name) in both doors (wave-2b Part I). Codex
+  audit SHIP; CI green on bf0cdc9.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **repo-map**: Answer-first token budget, test-file classification, quoted validation paths,
+  Unicode identifiers ([#1202](https://github.com/oimiragieo/tensor-grep/pull/1202),
+  [`1e969c0`](https://github.com/oimiragieo/tensor-grep/commit/1e969c0c0a8e0718b4d920a836444aaa2e617c15))
+
+Repo map: imports trim before the primary answer, primary source first, language-aware test
+  classification, shell-inert validation commands with disclosed omissions, whole-name Unicode
+  identifier validation (wave-2a Part G2). Codex audit SHIP; CI green on a9dff2d.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **search**: Stop Python-side re-derivation of rg/Rust match semantics
+  ([#1195](https://github.com/oimiragieo/tensor-grep/pull/1195),
+  [`def9a94`](https://github.com/oimiragieo/tensor-grep/commit/def9a941da072c89e894d335ed33cc888d3d5a80))
+
+Stop the Python door re-deriving rg/Rust match semantics: tg search -o/-r output is rendered from
+  rg's --json data (multi-line split, delimiter suppression, replaced-stream columns,
+  CRLF/--null-data, last-wins negations) and keeps main's route when rg is absent (wave-1 Part D of
+  the 2026-10-03 bug hunt). Codex audit cleared at closure; CI green on 6660fdf.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.13 (2026-10-04)
 
 ### Bug Fixes

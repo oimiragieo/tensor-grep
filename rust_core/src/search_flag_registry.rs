@@ -94,6 +94,30 @@ pub(crate) const SEARCH_OPTION_FIRST_FLAGS: &[&str] = &[
     "--no-trim",
     "--no-json",
     "--no-stats",
+    // J-03: flags `tg search` (SearchArgs / the Python passthrough) accepts but the root clap
+    // parser (`PositionalCli`) rejects. Kept in sync by tests/unit/test_root_door_flag_registry_drift.py.
+    "-e",
+    "--regexp",
+    "-a",
+    "--text",
+    "-L",
+    "--follow",
+    "--passthru",
+    "--passthrough",
+    "--null-data",
+    "--no-config",
+    "--files-without-match",
+    "--multiline-dotall",
+    "--no-ignore-dot",
+    "--no-ignore-exclude",
+    "--no-ignore-files",
+    "--no-ignore-global",
+    "--no-ignore-parent",
+    "--index",
+    "--ast",
+    "--allow-broad-generated-scan",
+    "--pcre2-version",
+    "--type-list",
 ];
 
 /// Flags that route a search to the Python passthrough front door rather than being handled by
@@ -415,5 +439,49 @@ mod tests {
             !parsed.path_was_implicit,
             "an explicit trailing PATH must record path_was_implicit = false"
         );
+    }
+
+    #[test]
+    fn root_door_recognizes_every_search_only_flag_j03() {
+        for (flag, value) in [
+            ("-e", Some("x")),
+            ("--regexp", Some("x")),
+            ("-a", None),
+            ("--text", None),
+            ("-L", None),
+            ("--follow", None),
+            ("--passthru", None),
+            ("--passthrough", None),
+            ("--null-data", None),
+            ("--no-config", None),
+            ("--files-without-match", None),
+            ("--multiline-dotall", None),
+            ("--no-ignore-dot", None),
+            ("--no-ignore-exclude", None),
+            ("--no-ignore-files", None),
+            ("--no-ignore-global", None),
+            ("--no-ignore-parent", None),
+            ("--index", None),
+            ("--ast", None),
+            ("--allow-broad-generated-scan", None),
+            ("--pcre2-version", None),
+            ("--type-list", None),
+        ] {
+            let mut raw = vec!["tg", "needle", flag];
+            if let Some(v) = value {
+                raw.push(v);
+            }
+            raw.push("src");
+            let n = normalized_root_search(&raw)
+                .unwrap_or_else(|| panic!("root door must recognize {flag}"));
+            assert_eq!(
+                n.get(0..2).map(|s| s.join(" ")),
+                Some("tg search".to_string())
+            );
+            assert_eq!(
+                &n[2..],
+                &raw[1..].iter().map(|s| s.to_string()).collect::<Vec<_>>()[..]
+            );
+        }
     }
 }

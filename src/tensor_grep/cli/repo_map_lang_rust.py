@@ -1125,25 +1125,20 @@ def _rust_tokio_test_function_candidates(test_path: str) -> tuple[str, ...]:
     return _rust_test_function_candidates_from_source(source, tokio_only=True)
 
 
-def _rust_file_level_command(test_path: Path, repo_root: Path) -> str | None:
+def _rust_test_target(test_path: Path, repo_root: Path) -> str | None:
+    """The ``cargo test --test <target>`` integration-test target for a ``tests/`` file. The
+    caller renders it through ``render_command`` as a ``Derived`` token -- never formats it."""
     try:
         relative = test_path.resolve().relative_to(repo_root)
     except ValueError:
         return None
-    if relative.suffix.lower() != ".rs" or "tests" not in relative.parts:
+    if relative.suffix != ".rs" or "tests" not in relative.parts:
         return None
     parts = list(relative.parts)
-    tests_index = parts.index("tests")
-    target_parts = parts[tests_index + 1 :]
+    target_parts = parts[parts.index("tests") + 1 :]
     if not target_parts:
         return None
-    if len(target_parts) == 1:
-        target = Path(target_parts[0]).stem
-    else:
-        target = Path(target_parts[0]).stem
-    if not target:
-        return None
-    return f"cargo test --test {target}"
+    return Path(target_parts[0]).stem or None
 
 
 def _rust_uses_nested_test_target(test_path: Path, repo_root: Path) -> bool:

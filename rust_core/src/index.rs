@@ -11,7 +11,7 @@ use regex_syntax::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -1713,8 +1713,8 @@ fn collect_matches(
     candidate_lines: Option<&[usize]>,
     matcher: &SearchMatcher,
 ) -> Result<Vec<IndexQueryResult>> {
-    let content = std::fs::read_to_string(file)
-        .with_context(|| format!("failed to read {}", file.display()))?;
+    let bytes = fs::read(file).with_context(|| format!("failed to read {}", file.display()))?;
+    let content = String::from_utf8_lossy(&bytes);
 
     let lines: Vec<&str> = content.lines().collect();
     let mut results = Vec::new();
