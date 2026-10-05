@@ -176,7 +176,31 @@ def test_real_home_existing_ancestors_of_the_default_location_are_accepted() -> 
     deepest = Path.home() / ".local" / "state" / "tensor-grep"
     while not deepest.exists() and deepest != deepest.parent:
         deepest = deepest.parent
-    assert trust._ancestors_refusal(deepest / "child") is None
+    # CONTRACT: ``_ancestors_refusal(p)`` vets ``p`` ITSELF (via its resolved chain) and every ancestor
+    # of ``p``, so ``p`` must exist -- passing a not-yet-created child is (correctly) refused.
+    assert trust._ancestors_refusal(deepest) is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX layout")
+def test_a_stock_runner_layout_with_no_local_state_is_accepted_up_to_the_deepest_existing_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Controlled copy of the measured GitHub ubuntu layout: home 0750 (user), ~/.local 0755 (user),
+    # NO ~/.local/state. The deepest existing directory is ~/.local.
+    home = tmp_path / "home" / "runner"
+    (home / ".local").mkdir(parents=True)
+    home.chmod(0o750)
+    (home / ".local").chmod(0o755)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    deepest = Path.home() / ".local" / "state" / "tensor-grep"
+    while not deepest.exists() and deepest != deepest.parent:
+        deepest = deepest.parent
+    assert deepest == home / ".local"
+    assert trust._ancestors_refusal(deepest) is None
+    # CONTROL: the not-yet-created child itself IS refused (and the reason says why), so a None above
+    # cannot be an always-pass.
+    reason = trust._ancestors_refusal(deepest / "state")
+    assert reason is not None and "FileNotFoundError" in reason
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX layout")
