@@ -1412,7 +1412,7 @@ def test_symbol_commands_reject_positional_and_flag_symbol(tmp_path):
         ["defs", str(project), "create_invoice", "--symbol", "other", "--json"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2  # an input error is exit 2, never 1 ("no match")
     assert "Use either positional SYMBOL or --symbol" in result.output
 
 
