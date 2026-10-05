@@ -113,6 +113,7 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import atomic_write_json, index_lock
 from tensor_grep.cli.evidence_receipt import _repo_revision_identity
 from tensor_grep.cli.evidence_signing import receipt_digest, verify_receipt
+from tensor_grep.cli.session_root import require_existing_path
 from tensor_grep.cli.session_store import _resolve_literal_dir
 
 LEDGER_SCHEMA_VERSION = 1
@@ -445,6 +446,10 @@ def _ledger_physical_root(path: str) -> Path:
     enumerated list here: a name list goes stale the moment a new entry point is added, which is
     exactly why Slice 2 was migrated onto this helper in the first place -- see the module
     docstring's "PATH scoping" paragraph for that history."""
+    try:
+        require_existing_path(path)
+    except FileNotFoundError as exc:
+        raise LedgerUsageError(str(exc)) from exc
     return _discover_repo_root(_resolve_literal_dir(Path(path)))
 
 

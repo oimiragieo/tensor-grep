@@ -71,6 +71,9 @@ from tensor_grep.cli.session_root import (
     _resolve_literal_dir as _resolve_literal_dir,
 )
 from tensor_grep.cli.session_root import (
+    require_existing_path as require_existing_path,
+)
+from tensor_grep.cli.session_root import (
     _resolve_root as _resolve_root,
 )
 from tensor_grep.cli.session_root import (
@@ -705,6 +708,7 @@ def open_session(
     own 60s timeout, and the cold path then anchored a FRESH budget -- so the caller's single
     stated deadline could be exceeded roughly twofold with no disclosure anywhere.
     """
+    require_existing_path(path)
     root = _resolve_root(Path(path))
     # SCAN THE CALLER'S PATH, STORE AT THE ANCHORED ROOT. These are two different questions and
     # conflating them is a real regression: once `_resolve_root` anchors a subtree to the project

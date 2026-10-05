@@ -167,6 +167,15 @@ def _resolve_root(path: Path) -> Path:
     return _find_project_root(start) or start
 
 
+def require_existing_path(path: str | Path) -> Path:
+    """Resolve ``path`` or raise FileNotFoundError (B-03): a typo'd PATH must fail loudly, never
+    silently re-anchor to the cwd / an ancestor and write state there."""
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {path}")
+    return resolved
+
+
 def _sessions_dir(root: Path) -> Path:
     return root / _TG_DIRNAME / _SESSIONS_SUBDIR
 

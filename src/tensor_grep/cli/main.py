@@ -5214,9 +5214,7 @@ def _daemon_directory_path(path: str) -> str | None:
         resolved = Path(path).expanduser().resolve(strict=False)
     except OSError:
         return None
-    if resolved.is_file():
-        return None
-    return str(resolved)
+    return str(resolved) if resolved.is_dir() else None
 
 
 def _session_daemon_autostart_enabled() -> bool:
@@ -8597,7 +8595,7 @@ def session_open(
         payload = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
@@ -9469,7 +9467,7 @@ def checkpoint_create(
         payload = create_checkpoint(path, paths=paths)
     except Exception as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))

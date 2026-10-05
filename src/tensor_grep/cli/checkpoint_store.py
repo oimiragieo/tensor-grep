@@ -768,6 +768,11 @@ def _write_checkpoint_metadata(
 
 
 def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> CheckpointCreateResult:
+    target = Path(path).expanduser().resolve()
+    # A missing SUFFIXED path under an existing directory is deliberately file-scoped (undo of a
+    # to-be-created file, see _detect_checkpoint_scope); anything else is a typo, not a scope.
+    if not target.exists() and not (target.suffix and target.parent.is_dir()):
+        raise FileNotFoundError(f"Path not found: {path}")
     scope = _detect_checkpoint_scope(Path(path))
     root = scope.root
     mode = scope.mode
