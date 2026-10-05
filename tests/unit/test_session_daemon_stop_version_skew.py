@@ -34,7 +34,9 @@ def test_stop_cooperatively_stops_a_version_skewed_daemon(tmp_path: Path) -> Non
     root = tmp_path.resolve()
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
 
-    def _serve() -> None:  # production-faithful: the listener CLOSES when serving ends (:2084 `with`)
+    def _serve() -> (
+        None
+    ):  # production-faithful: the listener CLOSES when serving ends (:2084 `with`)
         try:
             server.serve_forever(poll_interval=0.05)
         finally:
@@ -63,14 +65,28 @@ def test_stop_cooperatively_stops_a_version_skewed_daemon(tmp_path: Path) -> Non
             server.shutdown()
 
 
-def test_ineligible_remote_host_metadata_is_never_pid_killed_or_deleted(tmp_path: Path, monkeypatch: Any) -> None:
+def test_ineligible_remote_host_metadata_is_never_pid_killed_or_deleted(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     # council wave-2b r1/r2: a planted non-loopback daemon.json must not reach the pid fallback
     root = tmp_path.resolve()
     calls: list[Any] = []
-    monkeypatch.setattr(session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: calls.append(md) or True)
-    session_daemon._write_daemon_metadata(root, {
-        "version": 1, "root": str(root), "host": "10.0.0.1", "port": 9, "pid": os.getpid(),
-        "started_at": "test", "token": "t", "package_version": "0.0.0-stale"})
+    monkeypatch.setattr(
+        session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: calls.append(md) or True
+    )
+    session_daemon._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "root": str(root),
+            "host": "10.0.0.1",
+            "port": 9,
+            "pid": os.getpid(),
+            "started_at": "test",
+            "token": "t",
+            "package_version": "0.0.0-stale",
+        },
+    )
     result = session_daemon.stop_session_daemon(str(root))
     assert result["stop_method"] == "none", result
     assert calls == [], "pid fallback reached for planted remote-host metadata"
@@ -78,36 +94,62 @@ def test_ineligible_remote_host_metadata_is_never_pid_killed_or_deleted(tmp_path
 
 
 @pytest.mark.parametrize("bad_port", [True, 1.5, 70000, 0, "8080"])
-def test_malformed_port_is_ineligible_no_request_no_kill(tmp_path: Path, monkeypatch: Any, bad_port: Any) -> None:
+def test_malformed_port_is_ineligible_no_request_no_kill(
+    tmp_path: Path, monkeypatch: Any, bad_port: Any
+) -> None:
     # council wave-2b r3: strict type/range check BEFORE any network request or pid fallback
     root = tmp_path.resolve()
     kills: list[Any] = []
     requests: list[Any] = []
-    monkeypatch.setattr(session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: kills.append(md) or True)
-    monkeypatch.setattr(session_daemon, "_daemon_request", lambda *a, **k: requests.append(a) or {"ok": True})
-    session_daemon._write_daemon_metadata(root, {
-        "version": 1, "root": str(root), "host": "127.0.0.1", "port": bad_port, "pid": os.getpid(),
-        "started_at": "t", "token": "t", "package_version": "0.0.0-stale"})
+    monkeypatch.setattr(
+        session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: kills.append(md) or True
+    )
+    monkeypatch.setattr(
+        session_daemon, "_daemon_request", lambda *a, **k: requests.append(a) or {"ok": True}
+    )
+    session_daemon._write_daemon_metadata(
+        root,
+        {
+            "version": 1,
+            "root": str(root),
+            "host": "127.0.0.1",
+            "port": bad_port,
+            "pid": os.getpid(),
+            "started_at": "t",
+            "token": "t",
+            "package_version": "0.0.0-stale",
+        },
+    )
     result = session_daemon.stop_session_daemon(str(root))
     assert (result["stopped"], result["stop_method"]) == (False, "none"), result
     assert kills == [] and requests == []
     assert session_daemon._read_daemon_metadata(root) is not None
 
 
-def test_other_roots_daemon_credentials_planted_here_are_not_stopped(tmp_path: Path, monkeypatch: Any) -> None:
+def test_other_roots_daemon_credentials_planted_here_are_not_stopped(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
     # council wave-2b r3: identity is PROVEN (wave-1 HMAC ping binds root), not inferred from creds
     root_a, root_b = (tmp_path / "a").resolve(), (tmp_path / "b").resolve()
     root_a.mkdir()
     root_b.mkdir()
     kills: list[Any] = []
-    monkeypatch.setattr(session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: kills.append(md) or True)
+    monkeypatch.setattr(
+        session_daemon, "_terminate_daemon_by_pid", lambda md, **_k: kills.append(md) or True
+    )
     server = session_daemon._ThreadedSessionDaemon(root_b, ("127.0.0.1", 0), token="tok-b")
-    thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
+    )
     thread.start()
     try:
         host, port = server.server_address
-        _publish(root_a, str(host), int(port), package_version="0.0.0-stale")  # A's file, B's endpoint
-        session_daemon._write_daemon_metadata(root_a, {**session_daemon._read_daemon_metadata(root_a), "token": "tok-b"})
+        _publish(
+            root_a, str(host), int(port), package_version="0.0.0-stale"
+        )  # A's file, B's endpoint
+        session_daemon._write_daemon_metadata(
+            root_a, {**session_daemon._read_daemon_metadata(root_a), "token": "tok-b"}
+        )
         result = session_daemon.stop_session_daemon(str(root_a))
         assert (result["stopped"], result["stop_method"]) == (False, "none"), result
         assert kills == []

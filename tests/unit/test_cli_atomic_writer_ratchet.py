@@ -831,14 +831,14 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "existing file is never overwritten -- same fixed-content-marker shape as `main.py::_"
         "write_windows_exe_bridge_marker` above."
     ),
-    ("session_daemon.py", "_legacy_try_acquire_daemon_start_lock", "os.open"): (
+    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.open"): (
         "Lock-file acquisition at a fixed, internally-derived path (`_daemon_start_lock_path(root)`"
         " = `_sessions_dir(root) / _DAEMON_START_LOCK_FILE`, never a caller-selected artifact "
         "destination) with `O_CREAT|O_EXCL` -- the exact same shape as the already-sanctioned "
         "`_index_lock.py::_legacy_index_lock` entry above. (H.5: the original acquire body moved "
         "verbatim under the OS sidecar lock.)"
     ),
-    ("session_daemon.py", "_legacy_try_acquire_daemon_start_lock", "os.write"): (
+    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.write"): (
         "Writes only the acquiring pid into the just-opened, already-confined lock fd from the "
         "same acquisition -- same pattern as `_index_lock.py::_legacy_index_lock`'s os.write "
         "entry above."
@@ -1599,8 +1599,8 @@ _EXPECTED_SANCTIONED = {
     ("lsp_provider_setup.py", "_safe_extract_tar", "archive.extractall"),
     ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"),
     ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"),
-    ("session_daemon.py", "_legacy_try_acquire_daemon_start_lock", "os.open"),
-    ("session_daemon.py", "_legacy_try_acquire_daemon_start_lock", "os.write"),
+    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.open"),
+    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.write"),
     # --- H2 (backlog closeout) ---
     ("ast_workflows.py", "test_command", "Path.write_text"),
     ("lsp_provider_setup.py", "_download", "os.open"),

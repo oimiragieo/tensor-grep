@@ -7,6 +7,7 @@ deterministically by parking waiter A immediately before its unlink of the lock 
 
 from __future__ import annotations
 
+import itertools
 import os
 import pathlib
 import threading
@@ -23,7 +24,7 @@ _PARK_TIMEOUT_S = 10.0  # council wave-2b r7: a SAFETY cap only; tests release t
 
 def _overlaps(intervals: list[tuple[str, float, float]]) -> bool:
     ordered = sorted(intervals, key=lambda item: item[1])
-    return any(prev[2] > nxt[1] for prev, nxt in zip(ordered, ordered[1:], strict=False))
+    return any(prev[2] > nxt[1] for prev, nxt in itertools.pairwise(ordered))
 
 
 def test_overlap_detector_flags_nested_intervals_and_passes_disjoint_ones() -> None:
@@ -51,7 +52,9 @@ class _ParkWaiterA:
             ):
                 first["done"] = True
                 self.parked.set()
-                if not self.release.wait(_PARK_TIMEOUT_S):  # council wave-2b r8: expiry is a FAILURE
+                if not self.release.wait(
+                    _PARK_TIMEOUT_S
+                ):  # council wave-2b r8: expiry is a FAILURE
                     self.expired = True
                     raise RuntimeError("park safety timeout expired before the test released it")
             return real_unlink(path_self, *args, **kwargs)
@@ -94,7 +97,9 @@ def test_index_lock_stale_reclaim_never_yields_two_holders(
     def _hold(name: str) -> None:
         # council wave-2b r7: EVENT-controlled holds, never timed sleeps -> deterministic interleaving
         try:
-            with _index_lock.index_lock(index_path, poll_interval_s=0.01, timeout_s=8.0, stale_after_s=5.0):
+            with _index_lock.index_lock(
+                index_path, poll_interval_s=0.01, timeout_s=8.0, stale_after_s=5.0
+            ):
                 with guard:
                     holding.add(name)
                     if len(holding) > 1:
@@ -118,7 +123,9 @@ def test_index_lock_stale_reclaim_never_yields_two_holders(
         deadline = time.monotonic() + 5.0
         while not (b_entered.is_set() or b_contended.is_set()) and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert b_entered.is_set() or b_contended.is_set(), "B never reached the lock while A was parked"
+        assert b_entered.is_set() or b_contended.is_set(), (
+            "B never reached the lock while A was parked"
+        )
         park.release.set()  # main: A now unlinks B's FRESH lock while B still holds -> overlap
         assert a_entered.wait(5.0), "A never entered"  # A always gets in (alone, post-fix)
     finally:
@@ -159,7 +166,9 @@ def test_daemon_start_lock_stale_reclaim_never_yields_two_holders(
         assert park.parked.wait(5.0), "premise: waiter A reached its stale-lock unlink"
         b.start()
         b.join(5.0)  # B is non-blocking: it returns True (bug) or False (fixed)
-        assert not b.is_alive() and park.parked.is_set() and not park.release.is_set(), "B must finish while A is still parked"
+        assert not b.is_alive() and park.parked.is_set() and not park.release.is_set(), (
+            "B must finish while A is still parked"
+        )
         park.release.set()
         a.join(10.0)
         assert not a.is_alive(), "waiter A hung"

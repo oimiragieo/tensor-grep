@@ -109,7 +109,9 @@ def test_sidecar_lock_is_released_when_the_holder_process_dies(tmp_path: Path) -
             proc.wait(timeout=10)
 
 
-def test_identity_mismatch_rejects_and_closes_the_fd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_identity_mismatch_rejects_and_closes_the_fd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     sidecar = il._os_lock_path_for(tmp_path / "index.json")
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     closed: list[int] = []

@@ -36,6 +36,7 @@ from tensor_grep.cli.checkpoint_scope import (
     matches_scoped_paths,
     resolved_rel_within,
     scope_violation,
+    undo_prune_candidates,
 )
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
@@ -588,19 +589,6 @@ def _load_index(root: Path) -> list[CheckpointRecord]:
         return []
     payload = json.loads(index_path.read_text(encoding="utf-8"))
     return [record_from_entry(CheckpointRecord, entry) for entry in payload]
-
-
-def _undo_prune_candidates(root: Path, removed: list[Path]) -> list[Path]:
-    """Directories undo itself may have emptied: the ancestors (below ``root``) of files it
-    removed, deepest first. A pre-existing empty directory undo never touched is not a candidate
-    (F-04)."""
-    found: set[Path] = set()
-    for removed_path in removed:
-        for parent in removed_path.parents:
-            if parent == root or root not in parent.parents:
-                break
-            found.add(parent)
-    return sorted(found, key=lambda d: len(d.parts), reverse=True)
 
 
 def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
@@ -1465,7 +1453,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
-        for directory in _undo_prune_candidates(root, [p for p, _ in committed_removes]):
+        for directory in undo_prune_candidates(root, [p for p, _ in committed_removes]):
             # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
             # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
             # directory symlink (or, on some platforms, act through it) -- the symlink-follow

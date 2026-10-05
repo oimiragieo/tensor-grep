@@ -20,16 +20,16 @@ from time import monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import (
-    IndexLockTimeoutError,
-    index_lock,
-    register_after_fork_child_hook,
-    release_os_file_lock,
-    replace_with_retry,
-    try_os_file_lock,
-)
+from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_start_lock import (  # noqa: F401  (re-exported for tests)
+    _DAEMON_START_LOCK_FILE,
+    _daemon_start_lock_path,
+    _release_daemon_start_lock,
+    _try_acquire_daemon_start_lock,
+)
+from tensor_grep.cli.session_daemon_stop import _stop_rejected_daemon
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
     _METADATA_REASONS,
     DAEMON_HOST,
@@ -83,7 +83,6 @@ from tensor_grep.cli.session_store import (
 )
 
 _DAEMON_METADATA_FILE = "daemon.json"
-_DAEMON_START_LOCK_FILE = ".daemon-start.lock"
 _DAEMON_HOST = DAEMON_HOST
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
@@ -384,88 +383,6 @@ def _confine_path_to_root(root: Path, candidate: Path) -> Path:
     return candidate
 
 
-def _daemon_start_lock_path(root: Path) -> Path:
-    return _sessions_dir(root) / _DAEMON_START_LOCK_FILE
-
-
-# F-05 / F-10: an OS advisory sidecar lock (`<start-lock>.os`) WRAPS the unchanged legacy protocol
-# below, exactly as `_index_lock.index_lock` does. Only one new-version process at a time can be
-# inside the legacy section, so the check-then-unlink stale reclaim cannot interleave and a
-# release can never unlink another holder's lock. New-vs-old is the legacy protocol, unchanged.
-_DAEMON_START_LOCK_FDS: dict[str, int] = {}
-_DAEMON_START_LOCK_GUARD = threading.Lock()
-
-
-def _reset_start_lock_state_after_fork() -> None:
-    """A fork child never owns the parent's start lock (its inherited fds were closed by
-    `_index_lock`); forget the bookkeeping so a child release is a no-op."""
-    global _DAEMON_START_LOCK_GUARD
-    _DAEMON_START_LOCK_GUARD = threading.Lock()
-    _DAEMON_START_LOCK_FDS.clear()
-
-
-register_after_fork_child_hook(_reset_start_lock_state_after_fork)
-
-
-def _daemon_start_sidecar_path(root: Path) -> Path:
-    lock_path = _daemon_start_lock_path(root)
-    return lock_path.with_name(lock_path.name + ".os")
-
-
-def _try_acquire_daemon_start_lock(root: Path) -> bool:
-    _daemon_start_lock_path(root).parent.mkdir(parents=True, exist_ok=True)
-    fd = try_os_file_lock(_daemon_start_sidecar_path(root))
-    if fd is None:
-        return False
-    if not _legacy_try_acquire_daemon_start_lock(root):
-        release_os_file_lock(fd)
-        return False
-    with _DAEMON_START_LOCK_GUARD:
-        _DAEMON_START_LOCK_FDS[str(root)] = fd
-    return True
-
-
-def _release_daemon_start_lock(root: Path) -> None:
-    with _DAEMON_START_LOCK_GUARD:
-        fd = _DAEMON_START_LOCK_FDS.pop(str(root), None)
-    if fd is None:
-        return  # this process holds no start lock for `root`: touch nothing (F-10)
-    try:
-        _legacy_release_daemon_start_lock(root)
-    finally:
-        release_os_file_lock(fd)
-
-
-def _legacy_try_acquire_daemon_start_lock(root: Path) -> bool:
-    lock_path = _daemon_start_lock_path(root)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    for _attempt in range(2):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                lock_age = time.time() - lock_path.stat().st_mtime
-                if lock_age > _DAEMON_START_LOCK_STALE_SECONDS:
-                    lock_path.unlink()
-                    continue
-            except OSError:
-                pass
-            return False
-        try:
-            os.write(fd, f"{os.getpid()}\n".encode())
-        finally:
-            os.close(fd)
-        return True
-    return False
-
-
-def _legacy_release_daemon_start_lock(root: Path) -> None:
-    try:
-        _daemon_start_lock_path(root).unlink()
-    except OSError:
-        pass
-
-
 def _remove_daemon_metadata(
     root: Path, *, expected_pid: int | None = None, expected_port: int | None = None
 ) -> None:
@@ -563,103 +480,6 @@ def _terminate_daemon_by_pid(metadata: dict[str, Any] | None, *, root: Path | No
     """
     state, identity = _classify_daemon_pid(metadata, root)
     return state == "ours" and identity is not None and _terminate_identified(identity)
-
-
-# A refused loopback connect can take ~2 s on Windows; the stop probes need to see the refusal.
-_DAEMON_STOP_PROBE_CONNECT_TIMEOUT_SECONDS = 3.0
-
-
-def _stop_unprobed_daemon(root: Path, metadata: dict[str, Any] | None) -> tuple[str, int | None]:
-    """Stop a daemon that ``_probe_daemon`` rejected (e.g. a package-version skew) -- but only one
-    that PROVES it serves ``root``. Returns ``(outcome, proven_pid)``; outcome is one of:
-
-    * ``absent``: no metadata recorded.
-    * ``ineligible``: non-loopback host or malformed port: no request, no pid fallback.
-    * ``not_listening``: the verified-eligible endpoint REFUSED the first ping (nothing to stop).
-    * ``unverified``: could not PROVE the listener serves ``root`` (no/forged HMAC proof, timeout,
-      auth failure): nothing is stopped by THIS function; the caller's existing attested-pid path
-      (``_classify_daemon_pid`` == "ours") remains the only thing that may still signal.
-    * ``current_version``: proof verified but the daemon runs THIS package version, so it is not the
-      version-skew case this function exists for (the probe failed for another reason): left to the
-      caller's existing path.
-    * ``cooperative``: proof verified, ``stop`` acked, and the endpoint then REFUSED connections.
-    * ``unresponsive``: proof verified but no refusal observed (the pid escalation, if any, uses the
-      PROVEN pid from the signed reply, never the metadata's).
-
-    A refused connection is the only accepted evidence that a daemon is gone: a timeout, an auth
-    failure, an ack or a delivered signal is not (council wave-2b r3/r25).
-    """
-    if not metadata:
-        return "absent", None
-    host, port = metadata.get("host", _DAEMON_HOST), _valid_daemon_port(metadata.get("port"))
-    if port is None or not _is_loopback_host(host):
-        return "ineligible", None
-    timeouts: dict[str, Any] = {
-        "response_timeout": _DAEMON_CONNECT_TIMEOUT_SECONDS,
-        "connect_timeout": _DAEMON_STOP_PROBE_CONNECT_TIMEOUT_SECONDS,
-        "token": _daemon_token(metadata),
-    }
-    nonce = secrets.token_hex(16)
-    try:
-        reply = _daemon_request(str(host), port, {"command": "ping", "nonce": nonce}, **timeouts)
-    except ConnectionRefusedError:
-        return "not_listening", None
-    except Exception:
-        return "unverified", None
-    if not reply.get("ok") or not _verify_ping_reply(reply, nonce, root, port):
-        return "unverified", None
-    proven_pid = int(reply["pid"])
-    if metadata.get("package_version") == _expected_tg_version():
-        return "current_version", proven_pid
-    try:
-        ack = _daemon_request(str(host), port, {"command": "stop"}, **timeouts)
-    except Exception:
-        return "unresponsive", proven_pid
-    if not ack.get("ok"):
-        return "unresponsive", proven_pid
-    if _await_endpoint_refused(host, port, _DAEMON_START_TIMEOUT_SECONDS):
-        return "cooperative", proven_pid
-    return "unresponsive", proven_pid
-
-
-def _records_no_process(metadata: dict[str, Any]) -> bool:
-    pid = metadata.get("pid")
-    return isinstance(pid, int) and not isinstance(pid, bool) and pid <= 0
-
-
-def _stop_rejected_daemon(
-    root: Path, stale_metadata: dict[str, Any] | None
-) -> tuple[dict[str, Any] | None, str]:
-    """``(result, outcome)`` for a daemon ``_probe_daemon`` rejected. ``result`` is None when the
-    caller's established path must decide (no metadata, unverified, current version, or a refused
-    endpoint whose pid may be a live process). See ``_stop_unprobed_daemon``."""
-    outcome, proven_pid = _stop_unprobed_daemon(root, stale_metadata)
-    if stale_metadata is None or outcome in {"absent", "unverified", "current_version"}:
-        return None, outcome
-    if outcome == "not_listening" and not _records_no_process(stale_metadata):
-        # A refused endpoint plus a pid that may be a LIVE process keeps the established attested-pid /
-        # unconfirmed handling (the caller's path); only metadata that records no process at all
-        # (pid <= 0) is settled by the refusal alone.
-        return None, outcome
-    base: dict[str, Any] = {"version": _SESSION_VERSION, "root": str(root)}
-    if outcome == "ineligible":
-        return {**base, **_unconfirmed_fields("gone", False, endpoint_ok=False)}, outcome
-    host, port = str(stale_metadata.get("host", _DAEMON_HOST)), stale_metadata.get("port")
-    stale_pid, stale_port = _daemon_identity(stale_metadata)
-    if outcome == "unresponsive" and proven_pid is not None:
-        target = {**stale_metadata, "pid": proven_pid}
-        signalled = _terminate_daemon_by_pid(target, root=root)
-        # A delivered signal is not a stopped daemon: only a refused connection is (r25).
-        if signalled and _await_endpoint_refused(host, port, _DAEMON_START_TIMEOUT_SECONDS):
-            outcome = "pid"
-        else:
-            state = _daemon_pid_state(target, root)
-            return {**base, **_unconfirmed_fields(state, signalled)}, outcome  # metadata KEPT
-    if stale_pid is not None:
-        _remove_daemon_metadata(root, expected_pid=stale_pid, expected_port=stale_port)
-    if outcome == "not_listening":
-        return {**base, **_stale_success_fields(False, True)}, outcome
-    return _stop_success(dict(base), root, "pid" if outcome == "pid" else "cooperative"), outcome
 
 
 def _daemon_request(
