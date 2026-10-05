@@ -82,8 +82,14 @@ def test_real_freshly_created_secret_passes_the_windows_check() -> None:
         queried = trust._win_owner_and_dacl(handle)
         assert queried is not None
         owner, granted = queried
-        assert owner == trust._win_current_user_sid()
-        assert set(granted) <= {owner, "S-1-5-18", "S-1-5-32-544"}
+        user = trust._win_current_user_sid()
+        assert user is not None
+        assert owner in trust._our_owners(user)  # elevated token: default owner is Administrators
+        assert set(granted) <= {
+            user,
+            "S-1-5-18",
+            "S-1-5-32-544",
+        }  # DACL names the user, not the owner
         assert trust._windows_handle_trusted(handle, check_dacl=True) is True
     finally:
         trust._winsec.close_handle(handle)

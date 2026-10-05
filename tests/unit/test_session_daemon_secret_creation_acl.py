@@ -57,7 +57,7 @@ def test_created_file_dacl_is_exactly_the_current_user_before_any_byte_is_writte
         queried = trust._win_dacl_entries(handle)
         assert queried is not None
         owner, entries = queried
-        assert owner == sid
+        assert owner in trust._our_owners(sid)  # elevated token: default owner is Administrators
         assert entries == [(sid, _FILE_ALL)], (
             entries
         )  # exactly the user: no Everyone, no inheritance
