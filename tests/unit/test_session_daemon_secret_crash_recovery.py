@@ -87,7 +87,8 @@ def test_a_writer_killed_right_after_the_link_is_recovered_by_the_next_load(
     assert [n for n in _names(secret_dir) if n.endswith(".tmp")] == []
     assert path.stat().st_nlink == 1
     assert trust._read_user_secret(path) == secret  # the secret itself is unchanged and trusted
-    assert [n for n in _names(secret_dir) if not n.endswith(".lock")] == [path.name]
+    # H.5: the never-deleted OS sidecar lock handle (`.lock.os`) sits beside the secret.
+    assert [n for n in _names(secret_dir) if not n.endswith((".lock", ".lock.os"))] == [path.name]
 
 
 def test_an_orphan_unpublished_temp_is_removed_on_creation(tmp_path: Path) -> None:

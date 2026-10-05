@@ -13,7 +13,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import atomic_write_bytes, atomic_write_json, index_lock
+from tensor_grep.cli._index_lock import (
+    atomic_write_bytes,
+    atomic_write_json,
+    index_lock,
+    record_from_entry,
+)
 
 # NOTE: only the two names this file actually calls are imported here.
 # `_configured_checkpoint_max`, `_prune_checkpoint_records`,
@@ -31,6 +36,7 @@ from tensor_grep.cli.checkpoint_scope import (
     matches_scoped_paths,
     resolved_rel_within,
     scope_violation,
+    undo_prune_candidates,
 )
 from tensor_grep.cli.subprocess_policy import configured_git_timeout_seconds, run_subprocess
 
@@ -582,7 +588,7 @@ def _load_index(root: Path) -> list[CheckpointRecord]:
     if not index_path.exists():
         return []
     payload = json.loads(index_path.read_text(encoding="utf-8"))
-    return [CheckpointRecord(**entry) for entry in payload]
+    return [record_from_entry(CheckpointRecord, entry) for entry in payload]
 
 
 def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
@@ -768,6 +774,11 @@ def _write_checkpoint_metadata(
 
 
 def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> CheckpointCreateResult:
+    target = Path(path).expanduser().resolve()
+    # A missing SUFFIXED path under an existing directory is deliberately file-scoped (undo of a
+    # to-be-created file, see _detect_checkpoint_scope); anything else is a typo, not a scope.
+    if not target.exists() and not (target.suffix and target.parent.is_dir()):
+        raise FileNotFoundError(f"Path not found: {path}")
     scope = _detect_checkpoint_scope(Path(path))
     root = scope.root
     mode = scope.mode
@@ -1442,7 +1453,7 @@ def undo_checkpoint(checkpoint_id: str, path: str = ".") -> CheckpointUndoResult
         staging_dir_obj.cleanup()
 
     if scope_kind != "file" and mode != "git-worktree-snapshot":
-        for directory in sorted(root.rglob("*"), reverse=True):
+        for directory in undo_prune_candidates(root, [p for p, _ in committed_removes]):
             # Never follow or remove a symlink during the empty-dir cleanup sweep: is_dir() follows
             # the link (True for a symlink -> dir), so an rmdir here could delete a user-placed
             # directory symlink (or, on some platforms, act through it) -- the symlink-follow

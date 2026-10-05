@@ -26,7 +26,11 @@ def _storage_dir_entries(root: Path) -> list[Path]:
     storage_dir = checkpoint_store._checkpoint_storage_dir(root)
     if not storage_dir.exists():
         return []
-    return list(storage_dir.iterdir())
+    # H.5: `index_lock` leaves its never-deleted OS sidecar handle (`.index.json.lock.os`) in the
+    # storage dir. It is a lock handle, not a checkpoint or a stray artifact (every production
+    # enumerator here globs `*/metadata.json` / matches `index.json` exactly / takes directories
+    # only), so the leftover-checkpoint assertions ignore it.
+    return [p for p in storage_dir.iterdir() if not p.name.endswith(".lock.os")]
 
 
 def test_create_checkpoint_succeeds_under_default_budget(tmp_path: Path) -> None:

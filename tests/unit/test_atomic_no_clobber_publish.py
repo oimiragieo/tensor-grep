@@ -72,7 +72,8 @@ def test_a_first_secret_creation_leaves_no_temp_copy_and_one_link(
     path = trust._daemon_secret_path()
     assert path.stat().st_nlink == 1, "the secret content has a second hard link"
     assert _leftovers(secret_dir) == []
-    # nothing but the secret (the creation lock is released)
-    assert sorted(p.name for p in secret_dir.iterdir() if not p.name.endswith(".lock")) == [
-        path.name
-    ]
+    # nothing but the secret (the creation lock is released; H.5: the never-deleted OS sidecar
+    # lock handle `.<name>.lock.os` is expected beside it)
+    assert sorted(
+        p.name for p in secret_dir.iterdir() if not p.name.endswith((".lock", ".lock.os"))
+    ) == [path.name]

@@ -176,6 +176,8 @@ def test_posix_creation_and_read_use_the_verified_directory_fd(tmp_path: Path) -
     path = trust._daemon_secret_path()
     st = path.stat()
     assert st.st_nlink == 1 and (st.st_mode & 0o777) == 0o600
-    assert sorted(p.name for p in path.parent.iterdir() if not p.name.endswith(".lock")) == [
-        path.name
-    ]
+    # H.5: `index_lock` leaves its never-deleted, empty, 0600 sidecar handle (`.lock.os`) beside the
+    # secret (see test_secret_dir_lock_sidecar.py for its permissions).
+    assert sorted(
+        p.name for p in path.parent.iterdir() if not p.name.endswith((".lock", ".lock.os"))
+    ) == [path.name]

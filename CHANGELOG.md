@@ -1,6 +1,38 @@
 # CHANGELOG
 
 
+## v1.123.19 (2026-10-05)
+
+### Bug Fixes
+
+- **symbols,state**: Print tg source bodies, honest not-found/exit codes, no silent path
+  re-anchoring, race-free stale locks, version-skew stop, tolerant index loaders
+  ([#1207](https://github.com/oimiragieo/tensor-grep/pull/1207),
+  [`e52e7ad`](https://github.com/oimiragieo/tensor-grep/commit/e52e7ad6dc2287350abd6d194617a11b6f874d7e))
+
+Symbols and CLI state (wave-2b Part H): tg source prints symbol bodies (user content verbatim,
+  crash-safe on legacy consoles); symbol commands exit 0 found / 1 none / 2 error or incomplete; no
+  silent path re-anchoring; stale index/session locks reclaimed without two holders winning,
+  published atomically by temp file + os.link so no failure path leaves or deletes a public lock;
+  version-skew stop trusts only the daemon's HMAC-signed version; tolerant loaders disclose
+  corruption. Five Codex rounds; the round-5 finding (a pre-existing release-path token-read edge,
+  bounded by stale-lock reclaim) is a tracked wave-3 follow-up. CI green on b7aca85.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **board**: Reconcile TASK_BOARD, the bug-hunt tracker and the BACKLOG pointer to v1.123.18
+  ([#1210](https://github.com/oimiragieo/tensor-grep/pull/1210),
+  [`9d615ba`](https://github.com/oimiragieo/tensor-grep/commit/9d615ba95d3c123226490f8a9466ccf680420d23))
+
+Reconciles docs/TASK_BOARD.md (stamp post-v1.123.18; six bug-hunt releases, no canonical-row change,
+  open set #1207/#1208/#1209), the bug-hunt tracker's Wave status and the docs/BACKLOG.md pointer.
+  Unblocks test_task_board_freshness on every open PR. Docs only, no release.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.18 (2026-10-05)
 
 ### Bug Fixes

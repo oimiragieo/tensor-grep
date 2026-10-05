@@ -1301,13 +1301,10 @@ def test_symbol_commands_accept_path_symbol_positional_alias(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
-    # refs, callers, and blast-radius exit 1 when the symbol has no call sites (L1: exit 1 on
-    # zero results; blast-radius joined this contract via audit #12). The symbol
-    # `create_invoice` is only defined in the test file — it is never called, so
-    # references/callers/blast-radius's callers are empty and the command exits 1.
-    # All other commands find non-empty results (defs, source, impact) or do not use the
-    # no-match exit convention at all (blast-radius-render/-plan) and still exit 0.
-    commands_that_exit_1_on_empty = {"refs", "callers", "blast-radius"}
+    # B-09: a DEFINED symbol with zero references/callers is a complete result, not an absent
+    # symbol, so refs/callers/blast-radius exit 0 here (they used to exit 1). A genuinely
+    # undefined symbol still exits 1 -- pinned in test_symbol_text_and_exit_contract.py.
+    commands_that_exit_1_on_empty: set[str] = set()
 
     for command, routing_reason in commands.items():
         result = runner.invoke(app, [command, str(project), "create_invoice", "--json"])
@@ -1356,11 +1353,10 @@ def test_symbol_commands_warn_for_legacy_symbol_option(tmp_path):
         "blast-radius-render": "symbol-blast-radius-render",
         "blast-radius-plan": "symbol-blast-radius-plan",
     }
-    # refs, callers, and blast-radius exit 1 when the symbol has no call sites (L1: exit 1 on
-    # zero results; blast-radius joined this contract via audit #12). The symbol
-    # `create_invoice` is only defined in the test file — it is never called, so
-    # references/callers/blast-radius's callers are empty and the command exits 1.
-    commands_that_exit_1_on_empty = {"refs", "callers", "blast-radius"}
+    # B-09: a DEFINED symbol with zero references/callers is a complete result, not an absent
+    # symbol, so refs/callers/blast-radius exit 0 here (they used to exit 1). A genuinely
+    # undefined symbol still exits 1 -- pinned in test_symbol_text_and_exit_contract.py.
+    commands_that_exit_1_on_empty: set[str] = set()
 
     for command, routing_reason in commands.items():
         result = runner.invoke(
@@ -1416,7 +1412,7 @@ def test_symbol_commands_reject_positional_and_flag_symbol(tmp_path):
         ["defs", str(project), "create_invoice", "--symbol", "other", "--json"],
     )
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2  # an input error is exit 2, never 1 ("no match")
     assert "Use either positional SYMBOL or --symbol" in result.output
 
 
