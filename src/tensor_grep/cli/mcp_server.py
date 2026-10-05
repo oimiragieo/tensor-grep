@@ -176,7 +176,13 @@ def _mcp_server_version() -> str:
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
 # 1.10.0 (Part K2): invalid_input for bad tg_search/tg_find/AST-language/rewrite args; file cap remediable.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.10.0"  # 1.8.0 was P3: unified `incomplete` envelope
+# 1.10.0 -> 1.11.0 (bug-hunt wave-2a G1): additive `affects_completeness` on every
+# `resolution_gaps` entry, new gap kinds (parse cap, syntax error, unreadable, lossy
+# decode), `incomplete_reason_class: "coverage_gap"` and `coverage_gap_limit` on the
+# symbol tools (defs/refs/callers/source/impact/blast-radius family). Pass-through
+# handlers return those builders' payloads verbatim, so the wire gained them in the
+# same commit. Additive: a complete repo with no skipped file stays byte-identical.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.11.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

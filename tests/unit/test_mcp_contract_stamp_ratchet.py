@@ -75,6 +75,7 @@ import contextlib
 import importlib.util
 import json
 import os
+import re
 import sys
 import types
 from collections.abc import Iterator
@@ -1060,8 +1061,14 @@ def test_current_contract_version_literal_lives_only_in_allowlisted_tests() -> N
         path.name
         for path in [*(root / "unit").glob("test_*.py"), *(root / "integration").glob("test_*.py")]
         if path.name != Path(__file__).name
-        and quoted in path.read_text(encoding="utf-8")
         and path.name not in _LITERAL_VERSION_PIN_ALLOWLIST
+        # Only lines about the MCP server/contract: other tests legitimately use the same
+        # string as an unrelated package-version fixture.
+        and any(
+            quoted in line
+            and re.search(r"server_?version|serverinfo|server_info|contract", line, re.I)
+            for line in path.read_text(encoding="utf-8").splitlines()
+        )
     )
     assert offenders == [], (
         f"these tests hard-code the live MCP contract version {live}: derive it from "

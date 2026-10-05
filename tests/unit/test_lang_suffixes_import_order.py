@@ -39,3 +39,24 @@ def test_lang_suffixes_imports_nothing_from_tensor_grep() -> None:
         if isinstance(node, (ast.Import, ast.ImportFrom)) and "tensor_grep" in ast.unparse(node)
     ]
     assert imported == []
+
+
+def test_test_paths_js_like_suffixes_are_the_shared_set() -> None:
+    from tensor_grep.cli import lang_suffixes, repo_map_test_paths
+
+    assert repo_map_test_paths._JS_LIKE_SUFFIXES == lang_suffixes.JS_TS_SUFFIXES
+
+
+def test_test_paths_first_import_order_exits_zero() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"import sys; sys.path.insert(0, {SRC!r}); "
+            "import tensor_grep.cli.repo_map_test_paths; import tensor_grep.cli.repo_map",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr[-800:]
