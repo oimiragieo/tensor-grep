@@ -9,6 +9,7 @@ from typing import Any, ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
 from tensor_grep.core.config import SearchConfig
+from tensor_grep.core.lang_suffixes import JS_TS_SUFFIXES, TS_SUFFIXES
 from tensor_grep.core.result import MatchLine, SearchResult, split_source_lines
 
 logger = logging.getLogger(__name__)
@@ -32,12 +33,11 @@ _RESULT_CACHE_FORMAT = 3
 _NODE_TYPE_INDEX_FORMAT = 2
 NodeSpan = tuple[int, int, int]  # (line, start_byte, end_byte)
 
+# Derived from the single-source suffix sets (core/lang_suffixes.py, which imports nothing from
+# tensor_grep); `.tsx` is its own tree-sitter grammar, so it is split out of the TS set.
 _AST_EXTENSION_LANGUAGES = {
-    ".js": "javascript",
-    ".jsx": "javascript",
-    ".mjs": "javascript",
-    ".cjs": "javascript",
-    ".ts": "typescript",
+    **dict.fromkeys(JS_TS_SUFFIXES - TS_SUFFIXES, "javascript"),  # .js .jsx .mjs .cjs
+    **dict.fromkeys(TS_SUFFIXES - {".tsx"}, "typescript"),  # .ts .mts .cts
     ".tsx": "tsx",
 }
 
