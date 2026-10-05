@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.123.15 (2026-10-05)
+
+### Bug Fixes
+
+- **edit-ticket,installer,sarif,scan**: Close the edit-ticket build/ blind spot; harden installer,
+  SARIF and scan inputs ([#1196](https://github.com/oimiragieo/tensor-grep/pull/1196),
+  [`a3fee34`](https://github.com/oimiragieo/tensor-grep/commit/a3fee340df249f6db1362e7e6c0005ba8e3673d0))
+
+Edit tickets fail closed: fd/handle-anchored iterative walks with exactly-once handle ownership,
+  identity-keyed tag fingerprints, every filesystem error mapped to an incomplete population,
+  checked handle release, and correct Windows 3.11 volume identity (wave-1 Part E of the 2026-10-03
+  bug hunt). Codex audit SHIP; CI green on db0db18.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **front-door**: Stop the Python door rewriting valid rg argv, rejecting valid rg regexes, and
+  overwriting the User PATH ([#1201](https://github.com/oimiragieo/tensor-grep/pull/1201),
+  [`1d3a3e2`](https://github.com/oimiragieo/tensor-grep/commit/1d3a3e216a9e342452d8e13e9a7e0b3bddc3b9b7))
+
+Front door: one argv tokenizer drives every scan, the CWE-88 sentinel is decided under a single
+  exec-capable-flag gate, valid rg argv (clusters, bare -, --files and other no-pattern modes,
+  leading-+ and huge numeric values) is passed through unchanged, regex pre-rejection is a strict
+  subset of rg's, a bad TG_NATIVE_TG_BINARY exits 2 cleanly, and an unreadable User PATH is never
+  overwritten (wave-2a Part F). Opus/Codex gates SHIP; CI green on a3831b3.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+- **mcp**: Validate tg_search / tg_find / AST-language arguments up front, fix the scan-cap
+  envelope, harden follow-up refs ([#1203](https://github.com/oimiragieo/tensor-grep/pull/1203),
+  [`a58e7d0`](https://github.com/oimiragieo/tensor-grep/commit/a58e7d0b52ac83a31d0b89f66de998a499ba330d))
+
+MCP validation: tg_search/tg_find/AST-language arguments are validated up front with structured
+  invalid_input, a zero-file search returns the same verdict as the backend would on one file, the
+  scan-cap envelope is budget-remediable, and follow-up refs are root- and Unicode-safe; MCP
+  contract 1.10.0 (wave-2b Part K2). Codex audit cleared; CI green on 3cd2357.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.14 (2026-10-05)
 
 ### Bug Fixes
