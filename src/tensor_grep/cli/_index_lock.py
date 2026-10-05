@@ -696,7 +696,11 @@ def try_os_file_lock(lock_path: Path) -> int | None:
         if not _lock_identity_matches(fd, lock_path):
             _unlock_and_close(fd)  # never re-enter the (non-reentrant) registry lock here
             return None
-        _register_held_fd(fd)
+        try:
+            _register_held_fd(fd)
+        except BaseException:
+            _unlock_and_close(fd)  # a failed registration must not leak the held lock
+            raise
         return fd
 
 

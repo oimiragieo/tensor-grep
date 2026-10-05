@@ -54,12 +54,26 @@ def _try_acquire_daemon_start_lock(root: Path) -> bool:
     fd = try_os_file_lock(_daemon_start_sidecar_path(root))
     if fd is None:
         return False
-    if not _legacy_try_acquire_daemon_start_lock(root):
-        release_os_file_lock(fd)
-        return False
-    with _DAEMON_START_LOCK_GUARD:
-        _DAEMON_START_LOCK_FDS[str(root)] = fd
-    return True
+    # Exception-safe two-stage acquisition: on ANY unsuccessful outcome (a False return, an OSError
+    # such as ENOSPC at the legacy file, or a BaseException like KeyboardInterrupt) the sidecar is
+    # released -- otherwise a long-lived process would block every later daemon start -- and the
+    # primary error propagates unchanged.
+    legacy_held = False
+    registered = False
+    try:
+        legacy_held = _legacy_try_acquire_daemon_start_lock(root)
+        if legacy_held:
+            with _DAEMON_START_LOCK_GUARD:
+                _DAEMON_START_LOCK_FDS[str(root)] = fd
+            registered = True
+        return registered
+    finally:
+        if not registered:
+            try:
+                if legacy_held:
+                    _legacy_release_daemon_start_lock(root)
+            finally:
+                release_os_file_lock(fd)
 
 
 def _release_daemon_start_lock(root: Path) -> None:
