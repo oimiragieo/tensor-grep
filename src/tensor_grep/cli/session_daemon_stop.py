@@ -17,6 +17,7 @@ from tensor_grep.cli.session_daemon_trust import (
     _await_endpoint_refused,
     _daemon_pid_state,
     _is_loopback_host,
+    _signed_ping_version,
     _stale_success_fields,
     _stop_success,
     _unconfirmed_fields,
@@ -39,8 +40,8 @@ def _stop_unprobed_daemon(root: Path, metadata: dict[str, Any] | None) -> tuple[
     * ``unverified``: could not PROVE the listener serves ``root`` (no/forged HMAC proof, timeout,
       auth failure): nothing is stopped by THIS function; the caller's existing attested-pid path
       (``_classify_daemon_pid`` == "ours") remains the only thing that may still signal.
-    * ``current_version``: proof verified but the daemon runs THIS package version, so it is not the
-      version-skew case this function exists for (the probe failed for another reason): left to the
+    * ``current_version``: proof verified and the SIGNED version equals this package's, so it is not
+      the version-skew case this function exists for (whatever daemon.json claims): left to the
       caller's existing path.
     * ``cooperative``: proof verified, ``stop`` acked, and the endpoint then REFUSED connections.
     * ``unresponsive``: proof verified but no refusal observed (the pid escalation, if any, uses the
@@ -71,7 +72,13 @@ def _stop_unprobed_daemon(root: Path, metadata: dict[str, Any] | None) -> tuple[
     if not reply.get("ok") or not _verify_ping_reply(reply, nonce, root, port):
         return "unverified", None
     proven_pid = int(reply["pid"])
-    if metadata.get("package_version") == _expected_tg_version():
+    # The skew decision rests ONLY on the version the daemon SIGNED in its reply -- never on
+    # daemon.json's package_version, which is repo-controlled and unauthenticated. A verified reply
+    # with no signed version is a daemon older than this field (skewed).
+    version_ok, signed_version = _signed_ping_version(reply, nonce, root, port)
+    if not version_ok:
+        return "unverified", None
+    if signed_version == _expected_tg_version():
         return "current_version", proven_pid
     try:
         ack = sd._daemon_request(str(host), port, {"command": "stop"}, **timeouts)

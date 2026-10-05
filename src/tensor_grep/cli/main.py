@@ -7420,7 +7420,7 @@ def defs(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if class_filter is not None:
         _apply_defs_class_filter(payload, class_filter)
@@ -7496,11 +7496,11 @@ def source(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     def _emit_text(current: dict[str, Any]) -> None:
         for line in source_text_lines(current):
-            typer.echo(line)
+            _safe_stdout_line(line)  # user source is verbatim; never crash a legacy console
 
     _emit_symbol_command_result(
         payload,
@@ -7678,7 +7678,7 @@ def impact(
                 payload.setdefault("callers", [])
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(
         payload, max_tokens, primary_field="files", companion_fields=("file_matches",)
@@ -7784,7 +7784,7 @@ def refs(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="references")
     _attach_symbol_omissions(
@@ -7885,7 +7885,7 @@ def callers(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="callers")
     _attach_symbol_omissions(
@@ -8307,7 +8307,7 @@ def blast_radius(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     # Honor rg's no-match exit convention (audit #12): a typo'd/nonexistent symbol previously exited
     # 0 with an empty callers list -- on a refactor-safety command that reads as "resolved, zero
@@ -8476,7 +8476,7 @@ def blast_radius_render(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     # Shared 0/1/2 emitter (B-05): unknown symbol -> 1, scan truncation -> 2 with result_incomplete.
     # candidate_symbols stays in the JSON (additive-only contract for this payload).
@@ -8554,7 +8554,7 @@ def blast_radius_plan(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     # Shared 0/1/2 emitter (B-05, supersedes the F14 local gate): unknown symbol -> 1, scan
     # truncation -> 2 with result_incomplete. candidate_symbols stays in the JSON (additive-only).

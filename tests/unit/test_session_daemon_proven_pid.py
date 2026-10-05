@@ -118,12 +118,8 @@ def test_stale_branch_terminate_true_while_the_listener_still_serves_is_not_a_st
     # A package_version mismatch makes the probe return None (stale branch) although the
     # endpoint is alive. A DELIVERED signal is not a stopped daemon: only a refused connection is.
     root = tmp_path.resolve()
-    with _daemon(root, metadata_pid=os.getpid(), package_version="0.0.0-stale") as server:
+    with _daemon(root, metadata_pid=os.getpid(), package_version="0.0.0-stale"):
         assert sd._probe_daemon(root) is None
-        # H.6: a verified version-skewed daemon now receives a cooperative stop first; this one
-        # acks it but keeps serving (the wedged shutdown this test is about), so the escalation
-        # is still reached and a delivered signal still proves nothing.
-        monkeypatch.setattr(server, "shutdown", lambda: None)
         calls: list[Any] = []
         monkeypatch.setattr(sd, "_terminate_daemon_by_pid", lambda m, **_k: calls.append(m) or True)
         result = sd.stop_session_daemon(str(root))
@@ -139,9 +135,6 @@ def test_stale_branch_control_terminate_true_then_listener_closed_is_a_pid_stop(
 ) -> None:
     root = tmp_path.resolve()
     with _daemon(root, metadata_pid=os.getpid(), package_version="0.0.0-stale") as server:
-        # H.6: ack the cooperative stop but keep serving, so the pid escalation (which then closes
-        # the listener) is what ends the daemon, exactly as before.
-        monkeypatch.setattr(server, "shutdown", lambda: None)
 
         def _terminate_and_die(_m: Any, **_k: Any) -> bool:
             _close_listener(server)

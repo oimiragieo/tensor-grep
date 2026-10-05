@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from tensor_grep.cli import session_daemon
+from tensor_grep.cli import session_daemon_trust as trust
 
 
 def _publish(root: Path, host: str, port: int, *, package_version: str) -> None:
@@ -30,7 +31,10 @@ def _publish(root: Path, host: str, port: int, *, package_version: str) -> None:
     )
 
 
-def test_stop_cooperatively_stops_a_version_skewed_daemon(tmp_path: Path) -> None:
+def test_stop_cooperatively_stops_a_version_skewed_daemon(tmp_path: Path, monkeypatch: Any) -> None:
+    # The daemon SIGNS the version it runs; the skew is a genuinely different signed version
+    # (daemon.json's package_version alone is repo-controlled and proves nothing).
+    monkeypatch.setattr(trust, "_daemon_running_version", lambda: "0.0.0-stale-fixture")
     root = tmp_path.resolve()
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
 
@@ -201,6 +205,7 @@ def test_stop_cleans_metadata_of_a_dead_daemon(tmp_path: Path) -> None:
 def _skewed_serving_daemon(root: Path, monkeypatch: Any, *, metadata_pid: int) -> Any:
     """A real in-process daemon for `root` whose metadata is version-skewed and whose `stop` is ACKED
     but never takes effect (wedged shutdown). Returns (server, real_shutdown)."""
+    monkeypatch.setattr(trust, "_daemon_running_version", lambda: "0.0.0-stale-fixture")
     server = session_daemon._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="test-token")
     thread = threading.Thread(
         target=server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True

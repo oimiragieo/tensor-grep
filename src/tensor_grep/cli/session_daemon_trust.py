@@ -1178,6 +1178,47 @@ def _daemon_ping_proof(secret: bytes, nonce: str, pid: int, root: str, port: int
     return hmac.new(secret, msg, hashlib.sha256).hexdigest()
 
 
+def _daemon_version_proof(
+    secret: bytes, nonce: str, pid: int, root: str, port: int, version: str
+) -> str:
+    """HMAC binding the daemon's RUNNING package version to the same nonce/pid/root/port as the
+    base proof. A separate (v2) MAC, so a daemon that predates this field still verifies under the
+    unchanged v1 proof and an older client still accepts a newer daemon's reply."""
+    parts = ("tg-daemon-ping-v2", nonce, str(pid), root, str(port), version)
+    return hmac.new(secret, "\n".join(parts).encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _daemon_running_version() -> str:  # seam: the version THIS daemon process is running
+    return _expected_tg_version()
+
+
+def _signed_ping_version(
+    response: dict[str, Any], nonce: str, root: Path, connected_port: int
+) -> tuple[bool, str | None]:
+    """``(ok, version)`` for a reply whose v1 proof ``_verify_ping_reply`` already accepted.
+
+    ``(True, None)``: no version fields at all -> a daemon older than this field. ``(True, v)``: a
+    version whose MAC verifies. ``(False, None)``: a version or MAC is present but malformed,
+    unsigned or forged -> the caller must refuse, never read it as "old" or "current"."""
+    version, proof = response.get("package_version"), response.get("version_proof")
+    if version is None and proof is None:
+        return True, None
+    secret = _read_user_secret(_daemon_secret_path())
+    pid = response.get("pid")
+    if secret is None or isinstance(pid, bool) or not isinstance(pid, int):
+        return False, None
+    if not (isinstance(version, str) and isinstance(proof, str)):
+        return False, None
+    if not (version.isascii() and proof.isascii()):
+        return False, None
+    expected = _daemon_version_proof(
+        secret, nonce, pid, str(response.get("root")), connected_port, version
+    )
+    if not hmac.compare_digest(proof.encode("ascii"), expected.encode("ascii")):
+        return False, None
+    return True, version
+
+
 def _verify_ping_reply(
     response: dict[str, Any], nonce: str, root: Path, connected_port: int
 ) -> bool:
@@ -1209,11 +1250,14 @@ def _ping_proof_fields(nonce: object, root: Path, own_port: int) -> dict[str, An
     if secret is None:
         return {}
     pid = os.getpid()
+    version = _daemon_running_version()
     return {
         "pid": pid,
         "root": str(root),
         "port": own_port,
         "proof": _daemon_ping_proof(secret, nonce, pid, str(root), own_port),
+        "package_version": version,
+        "version_proof": _daemon_version_proof(secret, nonce, pid, str(root), own_port, version),
     }
 
 
