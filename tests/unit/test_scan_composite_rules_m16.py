@@ -384,7 +384,7 @@ def test_legacy_result_cache_without_format_is_treated_as_miss(
 def test_result_cache_round_trips_spans(tmp_path: Path) -> None:
     """F2 (a): freshly-written result caches carry the node spans AND the
     format discriminator, so a disk cache hit preserves node identity."""
-    from tensor_grep.backends.ast_backend import AstBackend
+    from tensor_grep.backends.ast_backend import _RESULT_CACHE_FORMAT, AstBackend
 
     if not AstBackend().is_available():
         pytest.skip("tree-sitter grammars not available in this environment")
@@ -401,11 +401,11 @@ def test_result_cache_round_trips_spans(tmp_path: Path) -> None:
     payload = json.loads(
         backend._get_result_cache_path(str(file_path), "python", "call").read_text(encoding="utf-8")
     )
-    assert payload.get("format") == 2
+    assert payload.get("format") == _RESULT_CACHE_FORMAT
     assert payload["matches"][0]["start_byte"] == 0
     assert payload["matches"][0]["end_byte"] == 8
 
-    # Fresh instance, in-memory caches cleared: the disk cache (format-2) is
+    # Fresh instance, in-memory caches cleared: the current-format disk cache is
     # served and keeps the spans.
     AstBackend._clear_shared_caches()
     second = AstBackend().search(str(file_path), "call")

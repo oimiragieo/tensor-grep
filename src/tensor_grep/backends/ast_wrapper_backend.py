@@ -399,7 +399,7 @@ class AstGrepWrapperBackend(ComputeBackend):
         per-file (per-call) cap semantics instead of returning every structural
         match ast-grep found."""
         max_count = config.max_count if config else None
-        if not max_count or len(result.matches) <= max_count:
+        if max_count is None or len(result.matches) <= max_count:
             return result
         result.matches = result.matches[:max_count]
         result.total_matches = len(result.matches)
