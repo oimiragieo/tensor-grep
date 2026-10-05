@@ -9,6 +9,7 @@ pub mod cli;
 pub mod crossover;
 pub mod editor_plane;
 pub mod exit_codes;
+pub mod frontdoor_hops;
 #[cfg(feature = "cuda")]
 pub mod gpu_native;
 pub mod index;

@@ -967,7 +967,9 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
+        lambda cmd, check=False, env=None: (
+            seen.update({"cmd": list(cmd), "check": check}) or _Completed()
+        ),
     )
 
     runner = CliRunner()
@@ -991,7 +993,9 @@ def test_calibrate_command_json_flag_forwards_to_native_tg(monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
+        lambda cmd, check=False, env=None: (
+            seen.update({"cmd": list(cmd), "check": check}) or _Completed()
+        ),
     )
 
     runner = CliRunner()

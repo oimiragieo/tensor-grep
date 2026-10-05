@@ -1116,7 +1116,17 @@ def _streaming_passthrough_returncode(
     else:
         timeout_seconds = configured_subprocess_timeout_seconds()
 
-    proc = _popen_child(argv)
+    try:
+        proc = _popen_child(argv)
+    except OSError as exc:
+        # A failed spawn must read as an ERROR (exit 2, the full CLI's contract in
+        # `_delegate_to_native_tg_search`), never an uncaught traceback + exit 1, which a caller
+        # reads as "no match" (ripgrep convention).
+        sys.stderr.write(
+            f"tensor-grep: could not start {os.path.basename(argv[0])} ({exc}); "
+            "output cannot be trusted.\n"
+        )
+        return 2
 
     # C3 fix: Register an atexit handler that terminates the child if the parent exits
     # unexpectedly (e.g. SIGTERM / TerminateProcess received while waiting).  The
@@ -1165,6 +1175,11 @@ def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
+    from tensor_grep.cli.frontdoor_hops import stamp_bootstrap_hop_or_refuse
+
+    refused = stamp_bootstrap_hop_or_refuse()
+    if refused is not None:
+        return refused
     return _streaming_passthrough_returncode([binary_name, *argv])
 
 

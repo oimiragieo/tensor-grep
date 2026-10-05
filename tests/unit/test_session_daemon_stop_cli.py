@@ -33,7 +33,12 @@ def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _run_cli(root: Path, *flags: str, timeout: float = 120.0) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "PYTHONPATH": _SRC, "TG_SESSION_DAEMON_AUTOSTART": "0"}
+    env = {
+        **os.environ,
+        "PYTHONPATH": _SRC,
+        "TG_SESSION_DAEMON_AUTOSTART": "0",
+        "TG_DISABLE_NATIVE_TG": "1",
+    }
     return subprocess.run(
         [sys.executable, "-m", "tensor_grep", "session", "daemon", "stop", str(root), *flags],
         capture_output=True,

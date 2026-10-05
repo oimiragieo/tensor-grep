@@ -1290,9 +1290,17 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             probe_target,
         ]
         base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
+        from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+        probe_env, _refusal = child_env_or_refusal()
+        if probe_env is None:
+            base["status"] = "failed"
+            base["error"] = "front-door hop limit reached (TG_FRONTDOOR_HOPS); probe not run"
+            return base
         try:
             result = _self.subprocess.run(
                 command,
+                env=probe_env,
                 check=False,
                 capture_output=True,
                 text=True,

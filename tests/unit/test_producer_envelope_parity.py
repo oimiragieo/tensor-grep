@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -111,8 +110,11 @@ def _native_binary() -> Path | None:
             return Path(resolved).resolve()
     except Exception:
         pass
-    found = shutil.which("tg")
-    return Path(found).resolve() if found else None
+    # No `shutil.which("tg")` fallback: PATH `tg` is the INSTALLED front door (possibly a stale
+    # or foreign build, or the Python shim that re-delegates to native), not this checkout's. An
+    # unresolvable repo binary skips with a reason (see `_require_binary`) instead of diffing the
+    # wrong engine, and instead of risking a native<->python front-door loop.
+    return None
 
 
 def _require_binary() -> Path:
@@ -148,10 +150,11 @@ def corpus(tmp_path: Path) -> Path:
     return root
 
 
-def _run(argv: list[str], cwd: Path) -> tuple[int, str]:
+def _run(argv: list[str], cwd: Path, env: dict[str, str] | None = None) -> tuple[int, str]:
     proc = subprocess.run(
         argv,
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         timeout=180,
@@ -167,7 +170,16 @@ def _native_envelope(binary: Path, corpus_dir: Path) -> dict:
 
 def _python_envelope(corpus_dir: Path) -> dict:
     env_python = [sys.executable, "-m", "tensor_grep", "search", "alpha", ".", "--json"]
-    code, out = _run(env_python, corpus_dir)
+    # The PYTHON producer must be the Python producer: TG_DISABLE_NATIVE_TG=1 stops the Python
+    # door delegating `--json` search to a native tg (which would make this diff native-vs-native
+    # and, with -s/-N, was half of the native<->python front-door loop). PYTHONPATH pins this
+    # checkout's own front door rather than whatever is installed.
+    py_env = {
+        **os.environ,
+        "PYTHONPATH": str(REPO_ROOT / "src"),
+        "TG_DISABLE_NATIVE_TG": "1",
+    }
+    code, out = _run(env_python, corpus_dir, py_env)
     assert code in (0, 1), f"python exited {code}: {out[:400]}"
     return json.loads(out)
 
