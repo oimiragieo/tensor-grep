@@ -37,7 +37,7 @@ def _file(tmp_path, content: bytes = b"FOOX\n"):
 
 def _search(*args: str):
     # real subprocess through the Python door: rg-passthrough output bypasses CliRunner capture
-    env = {**os.environ, "PYTHONPATH": _SRC, "TG_FORCE_PYTHON": "1"}
+    env = {**os.environ, "PYTHONPATH": _SRC, "TG_DISABLE_NATIVE_TG": "1"}
     proc = subprocess.run(
         [sys.executable, "-m", "tensor_grep", "search", *args],
         capture_output=True,
@@ -376,6 +376,7 @@ def _py_door(*args: str):
         text=True,
         timeout=120,
         check=False,
+        env={**os.environ, "TG_DISABLE_NATIVE_TG": "1"},
     )
 
 
@@ -424,6 +425,7 @@ def _py_door_bytes(*args: str):
         capture_output=True,
         timeout=120,
         check=False,
+        env={**os.environ, "TG_DISABLE_NATIVE_TG": "1"},
     )
 
 

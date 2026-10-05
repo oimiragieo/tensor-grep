@@ -391,9 +391,21 @@ def _run_agent_gpu_json_command(
 ) -> dict[str, Any]:
     ref = _command_ref(argv)
     args = [str(arg) for arg in argv]
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, _refusal = child_env_or_refusal()
+    if child_env is None:
+        return {
+            "status": "failed",
+            "reason": "front-door hop limit reached (TG_FRONTDOOR_HOPS); GPU evidence not run.",
+            "command": ref["command"],
+            "argv": ref["argv"],
+            "exit_code": None,
+        }
     try:
         completed = subprocess.run(
             args,
+            env=child_env,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,

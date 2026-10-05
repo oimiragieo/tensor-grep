@@ -72,6 +72,7 @@ from tensor_grep.cli.runtime_paths import (
     translate_path_for_windows_binary as translate_path_for_windows_binary,
 )
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
+from tensor_grep.cli.symbol_output import defined_without_results, source_text_lines
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
@@ -471,6 +472,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
 - `TG_NATIVE_TG_BINARY`: Path to the native front door used by Python-backed commands.
+- `TG_FRONTDOOR_HOPS`: Native/Python front-door hand-off depth (internal; absent means 0). A door refuses with exit 2 at 4 hops to stop a routing loop.
 - `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR`: Set to `nvidia` to prefer NVIDIA release-native front-door assets, with CPU fallback.
 - `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.
 - `TG_FORCE_CPU`: Force CPU routing for search commands.
@@ -924,11 +926,15 @@ def _delegate_to_native_tg_search(
     # (bootstrap.py `_streaming_passthrough_returncode`): a hung native search must not hang the
     # CLI forever, and `TimeoutExpired` must become a clean exit 124 (coreutils `timeout`
     # convention), not an uncaught traceback (H5 audit).
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
     from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        return refusal
     try:
         completed = subprocess.run(
-            command, check=False, timeout=configured_ripgrep_timeout_seconds()
+            command, check=False, timeout=configured_ripgrep_timeout_seconds(), env=child_env
         )
     except subprocess.TimeoutExpired:
         sys.stderr.write(
@@ -2618,12 +2624,21 @@ def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") 
 
 
 def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
-    candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    # TG_REEXEC_GUARD: the native door spawned this process; never hand back to it (contract A).
+    native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+    candidates = [native, _self.resolve_ripgrep_binary()]
     last_completed: subprocess.CompletedProcess[str] | None = None
     for candidate in candidates:
         if not candidate or not candidate.exists():
             continue
-        completed = subprocess.run([str(candidate), flag], capture_output=True, text=True)
+        completed = subprocess.run(
+            [str(candidate), flag], capture_output=True, text=True, env=child_env
+        )
         last_completed = completed
         if completed.returncode == 0:
             if completed.stdout:
@@ -3719,6 +3734,12 @@ def search_command(
                 exit_code=2,
             )
     native_tg_binary = _self.resolve_native_tg_binary()
+    if os.environ.get("TG_REEXEC_GUARD"):
+        # The native door spawned this process for a flag it routes to Python (python_sidecar.rs
+        # `configure_python_child_environment`). Delegating back is the native<->python loop
+        # (2026-10-05 P0). The bootstrap honours this guard and falls through to THIS site for
+        # `--json`, so this site must honour it too: search runs in-process.
+        native_tg_binary = None
     if (
         native_tg_binary is not None
         and not guarded_broad_root
@@ -4556,10 +4577,15 @@ def calibrate(
         )
         raise typer.Exit(1)
 
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
     argv = [str(native_tg_binary), "calibrate"]
     if json_output:
         argv.append("--json")
-    completed = subprocess.run(argv, check=False)
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    completed = subprocess.run(argv, check=False, env=child_env)
     raise typer.Exit(int(completed.returncode))
 
 
@@ -5213,9 +5239,7 @@ def _daemon_directory_path(path: str) -> str | None:
         resolved = Path(path).expanduser().resolve(strict=False)
     except OSError:
         return None
-    if resolved.is_file():
-        return None
-    return str(resolved)
+    return str(resolved) if resolved.is_dir() else None
 
 
 def _session_daemon_autostart_enabled() -> bool:
@@ -6778,14 +6802,16 @@ def _symbol_not_found_claim(payload: dict[str, Any], result_key: str) -> bool:
     an output cap is a complete analysis capped for display, so it must NOT suppress
     ``not_found``.
 
-    Exit codes are unaffected: ``_scan_incomplete``-true payloads already exit 2 on a branch
-    evaluated before ``not_found`` is consulted, so this only changes what the FIELD says to a
-    caller reading the JSON.
+    Exit codes: ``_scan_incomplete``-true payloads still exit 2 on a branch evaluated before
+    ``not_found`` is consulted. A DEFINED symbol with zero references/callers on a complete scan is
+    a complete result, not an absent symbol (B-09): ``not_found`` is False and the command exits 0,
+    where it used to exit 1 -- a behaviour change for scripts that read exit 1 as "no callers".
     """
     return (
         _symbol_payload_has_no_results(payload, result_key)
         and not _scan_incomplete(payload)
         and not bool(payload.get("result_incomplete"))
+        and not defined_without_results(payload, result_key)
     )
 
 
@@ -7119,6 +7145,7 @@ def _emit_symbol_command_result(
     result_key: str,
     json_output: bool,
     emit_text: Callable[[dict[str, Any]], None],
+    keep_candidate_symbols: bool = False,
 ) -> None:
     """Emit a symbol-command payload and honor the no-match exit convention (L1).
 
@@ -7143,7 +7170,8 @@ def _emit_symbol_command_result(
 
     suggestions = suggestions_for_payload(payload) if not_found else []
     payload["suggestions"] = suggestions
-    payload.pop("candidate_symbols", None)
+    if not keep_candidate_symbols:
+        payload.pop("candidate_symbols", None)
     caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
     # FAIL-CLOSED COUPLING between the message and the exit code below.
     #
@@ -7417,7 +7445,7 @@ def defs(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if class_filter is not None:
         _apply_defs_class_filter(payload, class_filter)
@@ -7493,11 +7521,11 @@ def source(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     def _emit_text(current: dict[str, Any]) -> None:
-        typer.echo(f"Source for {current['symbol']} in {current['path']}")
-        typer.echo(f"sources={len(current['sources'])} files={len(current['files'])}")
+        for line in source_text_lines(current):
+            _safe_stdout_line(line)  # user source is verbatim; never crash a legacy console
 
     _emit_symbol_command_result(
         payload,
@@ -7675,7 +7703,7 @@ def impact(
                 payload.setdefault("callers", [])
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(
         payload, max_tokens, primary_field="files", companion_fields=("file_matches",)
@@ -7781,7 +7809,7 @@ def refs(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="references")
     _attach_symbol_omissions(
@@ -7882,7 +7910,7 @@ def callers(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     payload = _apply_symbol_token_budget(payload, max_tokens, primary_field="callers")
     _attach_symbol_omissions(
@@ -8304,7 +8332,7 @@ def blast_radius(
             )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     # Honor rg's no-match exit convention (audit #12): a typo'd/nonexistent symbol previously exited
     # 0 with an empty callers list -- on a refactor-safety command that reads as "resolved, zero
@@ -8473,20 +8501,17 @@ def blast_radius_render(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
-    # Cold path (Cluster B, 2026-07-06): build the payload once and dump it here (byte-identical to
-    # the old build_symbol_blast_radius_render_json helper: json.dumps(payload, indent=2)) so both
-    # json and text branches share the same scan-truncation gate below -- output the full payload
-    # FIRST, then exit 2 if the scan itself (not just the output) was capped.
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        _emit_scan_incompleteness_banner(payload)
-        typer.echo(payload["rendered_context"])
-
-    if _scan_incomplete(payload):
-        raise typer.Exit(2)
+    # Shared 0/1/2 emitter (B-05): unknown symbol -> 1, scan truncation -> 2 with result_incomplete.
+    # candidate_symbols stays in the JSON (additive-only contract for this payload).
+    _emit_symbol_command_result(
+        payload,
+        result_key="definitions",
+        json_output=json_output,
+        emit_text=lambda current: typer.echo(current["rendered_context"]),
+        keep_candidate_symbols=True,
+    )
 
 
 @app.command(name="blast-radius-plan")
@@ -8554,24 +8579,24 @@ def blast_radius_plan(
         )
     except (FileNotFoundError, ValueError) as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
-    # F14 (Fable audit MED): output the payload FIRST, then gate on the shared _scan_incomplete
-    # contract -- mirrors blast-radius/map/context-render/edit-plan/blast-radius-render (Cluster B,
-    # 2026-07-06). This payload is built from build_symbol_blast_radius_from_map and carries the
-    # exact scan_limit/caller_scan_truncated markers the gate checks; without this, a scan-truncated
-    # plan exited 0 while the sibling `blast-radius` command exits 2 on identical truncation.
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        _emit_scan_incompleteness_banner(payload)
-        typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
+    # Shared 0/1/2 emitter (B-05, supersedes the F14 local gate): unknown symbol -> 1, scan
+    # truncation -> 2 with result_incomplete. candidate_symbols stays in the JSON (additive-only).
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Blast radius plan for {current['symbol']} in {current['path']}")
         typer.echo(
-            f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+            f"files={len(current['files'])} tests={len(current['tests'])} "
+            f"symbols={len(current['symbols'])}"
         )
 
-    if _scan_incomplete(payload):
-        raise typer.Exit(2)
+    _emit_symbol_command_result(
+        payload,
+        result_key="definitions",
+        json_output=json_output,
+        emit_text=_emit_text,
+        keep_candidate_symbols=True,
+    )
 
 
 @session_app.command("open")
@@ -8595,7 +8620,7 @@ def session_open(
         payload = open_session(path, max_repo_files=max_repo_files)
     except Exception as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
@@ -9467,7 +9492,7 @@ def checkpoint_create(
         payload = create_checkpoint(path, paths=paths)
     except Exception as exc:
         typer.echo(str(exc), err=True)
-        raise typer.Exit(1) from exc
+        raise typer.Exit(2) from exc
 
     if json_output:
         typer.echo(json.dumps(_with_schema_version(payload.__dict__, version=1), indent=2))
@@ -13307,7 +13332,12 @@ def worker(
     if stop:
         cmd.append("--stop")
 
-    completed = subprocess.run(cmd, check=False)
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    completed = subprocess.run(cmd, check=False, env=child_env)
     raise typer.Exit(int(completed.returncode))
 
 
@@ -13324,13 +13354,23 @@ def main_entry() -> None:
         first_arg = sys.argv[1]
 
         if first_arg == "--pcre2-version":
-            candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+            from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+            pcre2_env, pcre2_refusal = child_env_or_refusal()
+            if pcre2_env is None:
+                sys.exit(pcre2_refusal)
+            # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
+            native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+            candidates = [native, _self.resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():
                     continue
                 completed = subprocess.run(
-                    [str(candidate), "--pcre2-version"], capture_output=True, text=True
+                    [str(candidate), "--pcre2-version"],
+                    capture_output=True,
+                    text=True,
+                    env=pcre2_env,
                 )
                 last_completed = completed
                 if completed.returncode == 0:

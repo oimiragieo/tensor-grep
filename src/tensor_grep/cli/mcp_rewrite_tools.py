@@ -597,9 +597,15 @@ def _build_index_search_command(*, pattern: str, path: str, native_binary: str |
 def _run_rewrite_subprocess(command: list[str]) -> subprocess.CompletedProcess[str]:
     import sys
 
+    from tensor_grep.cli.frontdoor_hops import FrontdoorHopLimitError, next_hop_env
     from tensor_grep.cli.subprocess_policy import run_subprocess
 
-    env = os.environ.copy()
+    try:
+        env = next_hop_env()
+    except FrontdoorHopLimitError as exc:
+        # Constant text: the MCP wire never echoes exception formatting (SEC-007); callers map
+        # OSError to a sanitized `execution_failed` envelope.
+        raise OSError("TG_FRONTDOOR_HOPS limit reached; native tg not spawned") from exc
     env["TG_SIDECAR_PYTHON"] = sys.executable
     return run_subprocess(
         command,

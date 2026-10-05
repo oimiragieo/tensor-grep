@@ -188,6 +188,9 @@ def _run(argv: list[str], hash_seed: str) -> _Outcome:
     """
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = hash_seed
+    # The determinism subject is THIS checkout's Python door: never let it hand a request to an
+    # installed native tg (and never risk the native<->python front-door loop).
+    env["TG_DISABLE_NATIVE_TG"] = "1"
     # `src` first so the worktree under test wins over any installed distribution: a stale
     # site-packages copy shadowing `src` has produced false results in this repo before.
     env["PYTHONPATH"] = str(_REPO_ROOT / "src") + os.pathsep + env.get("PYTHONPATH", "")

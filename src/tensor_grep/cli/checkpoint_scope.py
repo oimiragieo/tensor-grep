@@ -42,3 +42,16 @@ def scope_violation(
             f"{what} {rel!r} resolves to {resolved_rel!r}, which escapes the scoped paths: {scoped}"
         )
     return None
+
+
+def undo_prune_candidates(root: Path, removed: list[Path]) -> list[Path]:
+    """Directories undo itself may have emptied: the ancestors (below ``root``) of files it
+    removed, deepest first. A pre-existing empty directory undo never touched is not a candidate
+    (F-04)."""
+    found: set[Path] = set()
+    for removed_path in removed:
+        for parent in removed_path.parents:
+            if parent == root or root not in parent.parents:
+                break
+            found.add(parent)
+    return sorted(found, key=lambda d: len(d.parts), reverse=True)

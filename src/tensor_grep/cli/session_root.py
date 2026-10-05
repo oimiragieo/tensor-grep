@@ -149,7 +149,7 @@ def _resolve_literal_dir(path: Path) -> Path:
     return resolved if resolved.is_dir() else resolved.parent
 
 
-def _resolve_root(path: Path) -> Path:
+def _resolve_root(path: Path, *, must_exist: bool = False) -> Path:
     # G4.1/G4.2 (2026-08-23): this used to return the caller's path as-is, so `tg ... src` got its
     # OWN session store under src/.tensor-grep/ and could not see a daemon started at the repo
     # root. Measured on published v1.111.7: `session show <id>` worked from src/ and returned
@@ -161,10 +161,20 @@ def _resolve_root(path: Path) -> Path:
     # repeat gave hits=1).
     #
     # Anchoring to the project root makes both lookups agree regardless of which directory inside
-    # the project the caller passes. No marker found -> keep the old behaviour.
-    resolved = path.expanduser().resolve()
+    # the project the caller passes. No marker found -> keep the old behaviour. ``must_exist`` (B-03,
+    # `open_session`): a typo'd PATH raises instead of anchoring to its parent and writing state there.
+    resolved = require_existing_path(path) if must_exist else path.expanduser().resolve()
     start = resolved if resolved.is_dir() else resolved.parent
     return _find_project_root(start) or start
+
+
+def require_existing_path(path: str | Path) -> Path:
+    """Resolve ``path`` or raise FileNotFoundError (B-03): a typo'd PATH must fail loudly, never
+    silently re-anchor to the cwd / an ancestor and write state there."""
+    resolved = Path(path).expanduser().resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"Path not found: {path}")
+    return resolved
 
 
 def _sessions_dir(root: Path) -> Path:

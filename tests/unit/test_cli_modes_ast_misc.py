@@ -967,7 +967,9 @@ def test_calibrate_command_delegates_to_native_tg(monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
+        lambda cmd, check=False, env=None: (
+            seen.update({"cmd": list(cmd), "check": check}) or _Completed()
+        ),
     )
 
     runner = CliRunner()
@@ -991,7 +993,9 @@ def test_calibrate_command_json_flag_forwards_to_native_tg(monkeypatch):
     monkeypatch.setattr(
         subprocess,
         "run",
-        lambda cmd, check=False: seen.update({"cmd": list(cmd), "check": check}) or _Completed(),
+        lambda cmd, check=False, env=None: (
+            seen.update({"cmd": list(cmd), "check": check}) or _Completed()
+        ),
     )
 
     runner = CliRunner()
@@ -1061,7 +1065,7 @@ def test_main_entry_should_delegate_top_level_pcre2_version_to_native_binary(
     native_binary.write_text("binary", encoding="utf-8")
     seen: dict[str, object] = {}
 
-    def _fake_run(cmd, capture_output, text):
+    def _fake_run(cmd, capture_output, text, env=None):
         seen["cmd"] = list(cmd)
         seen["capture_output"] = capture_output
         seen["text"] = text

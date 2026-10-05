@@ -780,7 +780,7 @@ def test_upgrade_refreshes_stale_native_frontdoor_when_python_package_is_latest(
     native_binary.write_text("old native", encoding="utf-8")
     downloads: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")
@@ -953,7 +953,7 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
     calls: list[list[str]] = []
     pip_attempts = {"count": 0}
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             raise FileNotFoundError("uv not found")
@@ -993,7 +993,7 @@ def test_upgrade_falls_back_to_ensurepip_then_pip(monkeypatch):
 def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1027,7 +1027,7 @@ def test_upgrade_fails_when_post_upgrade_python_cannot_import_tensor_grep(monkey
 def test_upgrade_fails_with_clear_error_messages_when_uv_and_pip_fail(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             raise FileNotFoundError("uv not found")
@@ -1069,7 +1069,7 @@ def test_upgrade_schedules_windows_helper_when_tg_exe_is_locked(monkeypatch, tmp
         "(os error 32)"
     )
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         command = list(cmd)
         calls.append(command)
         if command[0] == "uv":
@@ -1135,7 +1135,7 @@ def test_upgrade_scheduled_windows_helper_restarts_preexisting_session_daemon(
         "(os error 32)"
     )
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         command = list(cmd)
         if command[0] == "uv":
             raise subprocess.CalledProcessError(returncode=1, cmd=command, stderr=locked_error)
@@ -1558,7 +1558,7 @@ def test_upgrade_schedules_windows_helper_for_realworld_uv_pip_ensurepip_lock(
         "Check the permissions."
     )
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         command = list(cmd)
         calls.append(command)
         if command[0] == "uv":

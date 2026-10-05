@@ -164,7 +164,11 @@ def test_core_race_A_release_does_not_delete_B_live_lock(tmp_path: Path) -> None
     index_path = tmp_path / "index.json"
     lock_path = _index_lock._lock_path_for(index_path)
 
-    cm_a = _index_lock.index_lock(
+    # H.5: this test drives the LEGACY protocol (token backstop + stale reclaim) directly. Two
+    # nested `index_lock` holders can no longer both be inside it -- the OS sidecar lock
+    # serializes new-version processes (see test_stale_lock_reclaim_race.py) -- but the legacy
+    # protocol is unchanged and still what an old-version holder runs, so it stays covered here.
+    cm_a = _index_lock._legacy_index_lock(
         index_path, stale_after_s=0.05, timeout_s=5.0, heartbeat_interval_s=999.0
     )
     cm_a.__enter__()  # A acquires
@@ -177,7 +181,7 @@ def test_core_race_A_release_does_not_delete_B_live_lock(tmp_path: Path) -> None
         os.utime(lock_path, (stale_mtime, stale_mtime))
 
         # B runs the REAL acquire loop: sees A's lock as stale, reclaims it, writes its own.
-        cm_b = _index_lock.index_lock(index_path, stale_after_s=0.05, timeout_s=5.0)
+        cm_b = _index_lock._legacy_index_lock(index_path, stale_after_s=0.05, timeout_s=5.0)
         cm_b.__enter__()
         try:
             token_b = _index_lock._token_for_lock(lock_path)
