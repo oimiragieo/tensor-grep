@@ -389,3 +389,31 @@ def test_ast_grep_language_applies_matches_double_suffix_and_markdown():
     assert _ast_grep_language_applies({"markdown"}, "README.md")
     assert _ast_grep_language_applies({"markdown"}, "x.MARKDOWN")
     assert not _ast_grep_language_applies({"python"}, "README.md")
+
+
+def test_oserror_while_decode_checking_an_in_scope_file_is_disclosed_not_dropped(
+    tmp_path, monkeypatch
+):
+    # silent-loss ratchet: an OSError in the decode-check loop must not make the scan read `clear`.
+    import builtins
+
+    (tmp_path / "ok.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "locked.py").write_text("x = 2\n", encoding="utf-8")
+    assert "unreadable_paths" not in _ast_scan(tmp_path, monkeypatch)  # control: both readable
+
+    real_open = builtins.open
+
+    def flaky_open(file, *args, **kwargs):
+        if str(file).endswith("locked.py") and args[:1] == ("rb",):
+            raise PermissionError(13, "Permission denied")  # deliberately carries no filename
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", flaky_open)
+    payload = _ast_scan(tmp_path, monkeypatch)
+    assert payload["partial"] is True and payload["partial_reason"] == "unreadable_path"
+    sample = payload["unreadable_paths"]["sample"]
+    assert any("locked.py" in s for s in sample), sample
+    assert not any("ok.py" in s for s in sample)
+    assert "does NOT prove they are clean" in payload["remediation"]
+    # an unreadable file is not "undecodable": the re-encode advice must not be appended
+    assert "not valid UTF-8" not in payload["remediation"]

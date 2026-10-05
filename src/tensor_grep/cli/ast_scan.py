@@ -764,7 +764,9 @@ def _ast_grep_language_applies(languages: set[str], path: str) -> bool:
     return False
 
 
-def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> list[str]:
+def _undecodable_ast_scope_files(
+    files: list[str], ast_languages: set[str], unreadable: Any
+) -> list[str]:
     """Files an AST rule would scan that are not valid UTF-8 (ast-grep skips them silently).
 
     "Would scan" is "could this rule's language apply to this file": ast-grep's own extension
@@ -794,8 +796,12 @@ def _undecodable_ast_scope_files(files: list[str], ast_languages: set[str]) -> l
             decoder.decode(b"", final=True)
         except UnicodeDecodeError:
             bad.append(current_file)
-        except OSError:
-            continue  # unreadable files are disclosed by the walk/regex leg
+        except OSError as exc:
+            # Never drop an in-scope file we could not read: an AST rule may not have examined it
+            # either, so record it for `unreadable_paths` / `partial` instead of reading `clear`.
+            if getattr(exc, "filename", None) is None:
+                exc.filename = current_file
+            unreadable.record(exc)
     return bad
 
 
@@ -1155,7 +1161,7 @@ def _run_ast_scan_payload(
         # ast-grep (AstGrepWrapperBackend) skips non-UTF-8 files without a word; the native
         # AstBackend decodes them lossily. Disclose only for languages a wrapper rule ran on.
         for bad_file in _undecodable_ast_scope_files(
-            _candidate_files_for_filtered_scan(), wrapper_languages
+            _candidate_files_for_filtered_scan(), wrapper_languages, scan_unreadable
         ):
             scan_unreadable.record(OSError(0, "file is not valid UTF-8", bad_file))
             undecodable_seen = True
