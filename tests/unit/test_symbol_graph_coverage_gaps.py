@@ -744,3 +744,29 @@ def test_answer_empty_helper_counts_every_evidence_key():
     assert cg.answer_empty({"references": [], "string_refs": [1]}, "refs") is False
     assert cg.answer_empty({"references": [1]}, "refs") is False
     assert cg.answer_empty({"references": [], "string_refs": []}, "refs") is True
+
+
+def test_deadline_partial_reason_is_not_overwritten_by_a_coverage_gap(tmp_path, monkeypatch):
+    """A deadline-partial blast-radius with a coverage gap present keeps the deadline as the
+    cause (partial_reason / no coverage_gap class) and still DISCLOSES the gap separately."""
+    import time as _time
+    import types
+
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    _capped_repo(tmp_path, monkeypatch)
+    offset = [0.0]
+    shim = types.SimpleNamespace(**{n: getattr(_time, n) for n in dir(_time) if n[0] != "_"})
+    shim.monotonic = lambda: _time.monotonic() + offset[0]
+    monkeypatch.setattr(repo_map, "time", shim)
+    original = repo_map._cap_caller_scan_files
+
+    def _expire(*args, **kwargs):
+        offset[0] = 1000.0
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_cap_caller_scan_files", _expire)
+    payload = repo_map.build_symbol_blast_radius("real_target", tmp_path, deadline_seconds=30)
+    assert payload.get("partial") is True
+    assert payload.get("incomplete_reason_class") != "coverage_gap"
+    assert "coverage_gap_limit" not in payload
+    assert payload["resolution_gaps"][0]["files_sample"] == ["big.py"]

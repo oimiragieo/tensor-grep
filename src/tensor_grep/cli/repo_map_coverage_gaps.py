@@ -302,7 +302,7 @@ def inherit_coverage_gap(payload: dict[str, Any], source: dict[str, Any]) -> boo
     from tensor_grep.cli import repo_map as _rm
 
     remediation = str(source.get("scan_remediation") or "")
-    if not payload.get("result_incomplete"):
+    if not (payload.get("result_incomplete") or payload.get("partial")):
         _rm._mark_result_incomplete(payload, remediation=remediation)
         payload["incomplete_reason"] = source.get("incomplete_reason", "")
         payload["incomplete_reason_class"] = "coverage_gap"

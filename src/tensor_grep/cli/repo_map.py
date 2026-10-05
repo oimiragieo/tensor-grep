@@ -15217,6 +15217,8 @@ def build_symbol_blast_radius_render_from_map(
     # build_symbol_blast_radius_from_map (or _attach_edit_plan_metadata's own edit_plan_seed fold-in
     # just above) already stamped, so `setdefault` here never clobbers a richer upstream signal;
     # this only adds the flag when THIS loop was the one that broke early.
+    if payload.get("partial"):  # a deadline from ANY upstream stage must say why too
+        payload.setdefault("partial_reason", "deadline")
     if source_loop_deadline_hit:
         payload["partial"] = True
         # REQUIRED by the render-family contract: the other three members all stamp it and
