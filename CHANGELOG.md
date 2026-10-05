@@ -1,6 +1,23 @@
 # CHANGELOG
 
 
+## v1.123.16 (2026-10-05)
+
+### Bug Fixes
+
+- **symbol-graph**: Surface unparseable, oversize and grammar-missing files as incomplete answers
+  instead of dropping them silently ([#1205](https://github.com/oimiragieo/tensor-grep/pull/1205),
+  [`7a63865`](https://github.com/oimiragieo/tensor-grep/commit/7a638656fb8cea408260d1b5bb911b3383427cc0))
+
+Symbol graph: unparseable, oversize, lossy-decoded and grammar-missing files become disclosed
+  coverage gaps (empty answer -> exit 2, found answer -> gaps disclosed), one BOM/decode-tolerant
+  source reader, line numbers immune to form feed and U+2028, lang_suffixes as the single JS/TS
+  suffix home, and the render now stamps the deadline partial_reason when the caller scan overruns;
+  MCP contract 1.11.0 (wave-2a Part G1). Codex audit SHIP; CI green on 2520f2e.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.15 (2026-10-05)
 
 ### Bug Fixes
