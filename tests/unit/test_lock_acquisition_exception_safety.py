@@ -50,7 +50,7 @@ def test_start_lock_releases_the_sidecar_when_the_legacy_step_raises(
     released = _spy_releases(monkeypatch, sl)
     real_legacy = sl._legacy_try_acquire_daemon_start_lock
 
-    def _boom(_root: Path) -> bool:
+    def _boom(_root: Path, **_k: Any) -> bool:
         raise error
 
     monkeypatch.setattr(sl, "_legacy_try_acquire_daemon_start_lock", _boom)
@@ -71,7 +71,7 @@ def test_start_lock_releases_the_sidecar_when_the_legacy_step_returns_false(
     root = tmp_path.resolve()
     released = _spy_releases(monkeypatch, sl)
     real_legacy = sl._legacy_try_acquire_daemon_start_lock
-    monkeypatch.setattr(sl, "_legacy_try_acquire_daemon_start_lock", lambda _r: False)
+    monkeypatch.setattr(sl, "_legacy_try_acquire_daemon_start_lock", lambda _r, **_k: False)
     assert sl._try_acquire_daemon_start_lock(root) is False
     assert len(released) == 1
     monkeypatch.setattr(sl, "_legacy_try_acquire_daemon_start_lock", real_legacy)

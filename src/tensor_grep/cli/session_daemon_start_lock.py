@@ -15,12 +15,14 @@ import os
 import threading
 import time
 from pathlib import Path
+from uuid import uuid4
 
 from tensor_grep.cli._index_lock import (
+    _release_lock,
+    publish_new_lock_file,
     register_after_fork_child_hook,
     release_os_file_lock,
     try_os_file_lock,
-    write_new_lock_file,
 )
 from tensor_grep.cli.session_store import _sessions_dir
 
@@ -51,28 +53,33 @@ def _daemon_start_sidecar_path(root: Path) -> Path:
 
 
 def _try_acquire_daemon_start_lock(root: Path) -> bool:
-    _daemon_start_lock_path(root).parent.mkdir(parents=True, exist_ok=True)
+    token = uuid4().hex  # computed BEFORE anything is acquired
+    lock_path = _daemon_start_lock_path(root)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
     fd = try_os_file_lock(_daemon_start_sidecar_path(root))
-    if fd is None:
-        return False
-    # Exception-safe two-stage acquisition: on ANY unsuccessful outcome (a False return, an OSError
-    # such as ENOSPC at the legacy file, or a BaseException like KeyboardInterrupt) the sidecar is
-    # released -- otherwise a long-lived process would block every later daemon start -- and the
-    # primary error propagates unchanged.
+    # Exception-safe two-stage acquisition: the resource is under cleanup in the statement after the
+    # one that acquires it. On ANY unsuccessful outcome (a False return, an OSError such as ENOSPC
+    # at the legacy file, or a BaseException like KeyboardInterrupt) the sidecar is released --
+    # otherwise a long-lived process would block every later daemon start -- and the primary error
+    # propagates unchanged.
     legacy_held = False
     registered = False
     try:
-        legacy_held = _legacy_try_acquire_daemon_start_lock(root)
+        if fd is None:
+            return False
+        legacy_held = _legacy_try_acquire_daemon_start_lock(root, token=token)
         if legacy_held:
             with _DAEMON_START_LOCK_GUARD:
                 _DAEMON_START_LOCK_FDS[str(root)] = fd
             registered = True
         return registered
     finally:
-        if not registered:
+        if fd is not None and not registered:
             try:
-                if legacy_held:
-                    _legacy_release_daemon_start_lock(root)
+                # Token-guarded: removes the lock file only if THIS call published it (an interrupt
+                # after the atomic publish but before `legacy_held` was set still releases it), and
+                # is a no-op otherwise -- another owner's lock is never touched.
+                _release_lock(lock_path, token)
             finally:
                 release_os_file_lock(fd)
 
@@ -88,16 +95,18 @@ def _release_daemon_start_lock(root: Path) -> None:
         release_os_file_lock(fd)
 
 
-def _legacy_try_acquire_daemon_start_lock(root: Path) -> bool:
+def _legacy_try_acquire_daemon_start_lock(root: Path, token: str = "") -> bool:
     # Late-bound so a test (or operator) patching ``session_daemon._DAEMON_START_LOCK_STALE_SECONDS``
     # still takes effect after the move out of that module.
     from tensor_grep.cli import session_daemon
 
+    # Content (pid + ownership token) is computed BEFORE any file is created.
+    content = f"{os.getpid()}\n{token or uuid4().hex}\n".encode()
     lock_path = _daemon_start_lock_path(root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     for _attempt in range(2):
         try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            publish_new_lock_file(lock_path, content)
         except FileExistsError:
             try:
                 lock_age = time.time() - lock_path.stat().st_mtime
@@ -107,7 +116,6 @@ def _legacy_try_acquire_daemon_start_lock(root: Path) -> bool:
             except OSError:
                 pass
             return False
-        write_new_lock_file(fd, lock_path, f"{os.getpid()}\n".encode())
         return True
     return False
 

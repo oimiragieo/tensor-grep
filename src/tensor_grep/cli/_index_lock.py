@@ -1,3 +1,13 @@
+"""Index/lock primitives: atomic writers and the two-stage ``index_lock``.
+
+Contract boundary for lock cleanup: it is exception-safe against every synchronous exception from
+a real syscall (the ``OSError`` family) at every step, plus ``BaseException`` (such as
+``KeyboardInterrupt``) at each acquisition and hand-off step enumerated in
+``tests/unit/test_lock_acquisition_census.py``. Python cannot exclude an asynchronous exception
+between two arbitrary bytecodes; a leak from that is bounded to the process lifetime, because OS
+locks die with the process (a lock FILE left by a hard kill is reclaimed as stale).
+"""
+
 from __future__ import annotations
 
 import dataclasses
@@ -542,32 +552,45 @@ def _legacy_release_allowed(owner_pid: int) -> bool:
     return os.getpid() == owner_pid
 
 
-def write_new_lock_file(fd: int, lock_path: Path, content: bytes) -> None:
-    """Write ``content`` into the lock file THIS call just created (``fd``) and close ``fd``.
+def _publish_tmp_name(lock_path: Path) -> Path:
+    return lock_path.with_name(f".{lock_path.name}.{os.getpid()}.{uuid4().hex}.tmp")
 
-    On ANY failure (``OSError`` such as ENOSPC, or a ``BaseException`` like KeyboardInterrupt) the
-    descriptor is closed and the file this call created is unlinked -- but only after the fd and the
-    path are verified to be the same file (``st_dev``/``st_ino``), so another holder's lock is never
-    deleted -- and the primary error propagates. Otherwise a failed write would leave an empty lock
-    file behind that blocks every later acquisition until it goes stale."""
+
+def publish_new_lock_file(lock_path: Path, content: bytes) -> None:
+    """Atomically create ``lock_path`` holding the COMPLETE ``content``, or raise.
+
+    The lock file is never created at its public path and then written (which left an empty or
+    partial lock a competitor could mistake for stale, and forced failure cleanup to unlink a path
+    someone else may have since taken). Instead: write the whole content to a uniquely named temp
+    file in the same directory (``O_CREAT|O_EXCL``, write, fsync, close), then publish it with
+    ``os.link(tmp, lock_path)``, which fails with ``FileExistsError`` when the lock is held and
+    never replaces it. Only the TEMP file -- a name nobody else uses -- is ever unlinked, so no
+    code path removes the public lock on failure and the public path is never empty or partial
+    (stale-lock reclaim therefore cannot observe a half-written lock created by this code).
+
+    Fail closed: if the filesystem cannot hard-link (``os.link`` raising an ``OSError`` such as
+    ENOTSUP/EPERM/EXDEV on FAT/exFAT or some network mounts), the error propagates -- the lock is
+    NOT silently taken another way. ``PermissionError`` is the Windows delete-pending race that
+    callers already retry until their deadline. A temp left behind by a hard kill is a harmless
+    ``.<lock>.<pid>.<id>.tmp`` file and is never mistaken for the lock.
+    """
+    tmp = _publish_tmp_name(lock_path)
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)  # no \n translation
+    fd = os.open(str(tmp), flags, 0o600)
     try:
-        os.write(fd, content)
-    except BaseException:
         try:
-            held, current = os.fstat(fd), os.stat(lock_path)
-            ours = (held.st_dev, held.st_ino) == (current.st_dev, current.st_ino)
-        except OSError:
-            ours = False
-        try:
-            os.close(fd)
+            view = memoryview(content)
+            while view:
+                view = view[os.write(fd, view) :]
+            os.fsync(fd)
         finally:
-            if ours:
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
-        raise
-    os.close(fd)
+            os.close(fd)
+        os.link(str(tmp), str(lock_path))
+    finally:
+        try:
+            os.unlink(str(tmp))
+        except OSError:
+            pass
 
 
 @contextmanager
@@ -597,36 +620,38 @@ def _legacy_index_lock(
         if heartbeat_interval_s is not None
         else _default_heartbeat_interval_s(stale_after_s, poll_interval_s)
     )
-    fd: int | None = None
-    while True:
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            break
-        except FileExistsError:
-            # Lock is held. Reclaim it if stale (dead holder), else fall through to wait.
-            try:
-                if time.time() - lock_path.stat().st_mtime > stale_after_s:
-                    try:
-                        lock_path.unlink()  # GUARDED: two racing reclaimers must not crash the loser
-                    except OSError:
-                        pass
-                    continue
-            except OSError:
-                pass
-        except PermissionError:
-            # Windows delete-pending race: a concurrent reclaimer just unlink()'d the lock, so the
-            # name is in a "delete pending" state and O_CREAT|O_EXCL raises ERROR_ACCESS_DENIED
-            # (PermissionError) instead of the POSIX FileExistsError/ENOENT. Transient -> fall
-            # through to wait/retry. A genuine permission error self-limits: it will keep failing
-            # here and fail CLOSED at the deadline with IndexLockTimeoutError, never a raw leak.
-            pass
-        if time.monotonic() >= deadline:
-            raise IndexLockTimeoutError(
-                f"could not acquire {lock_path} within {timeout_s}s"
-            ) from None
-        time.sleep(poll_interval_s)
+    content = f"{owner_pid}\n{token}\n".encode()
+    # The acquisition loop is INSIDE the try whose finally releases by ownership token: an
+    # interrupt between the atomic publish and the rest of the acquisition still releases it
+    # (the token guard makes the release a no-op if this call never published).
     try:
-        write_new_lock_file(fd, lock_path, f"{os.getpid()}\n{token}\n".encode())
+        while True:
+            try:
+                publish_new_lock_file(lock_path, content)
+                break
+            except FileExistsError:
+                # Lock is held. Reclaim it if stale (dead holder), else fall through to wait.
+                try:
+                    if time.time() - lock_path.stat().st_mtime > stale_after_s:
+                        try:
+                            lock_path.unlink()  # GUARDED: two racing reclaimers must not crash the loser
+                        except OSError:
+                            pass
+                        continue
+                except OSError:
+                    pass
+            except PermissionError:
+                # Windows delete-pending race: a concurrent reclaimer just unlink()'d the lock, so the
+                # name is in a "delete pending" state and O_CREAT|O_EXCL raises ERROR_ACCESS_DENIED
+                # (PermissionError) instead of the POSIX FileExistsError/ENOENT. Transient -> fall
+                # through to wait/retry. A genuine permission error self-limits: it will keep failing
+                # here and fail CLOSED at the deadline with IndexLockTimeoutError, never a raw leak.
+                pass
+            if time.monotonic() >= deadline:
+                raise IndexLockTimeoutError(
+                    f"could not acquire {lock_path} within {timeout_s}s"
+                ) from None
+            time.sleep(poll_interval_s)
         stop_heartbeat = threading.Event()
         heartbeat = threading.Thread(
             target=_heartbeat_loop,
@@ -770,6 +795,20 @@ if hasattr(os, "register_at_fork"):  # absent on Windows
     )
 
 
+def _acquire_sidecar(
+    index_path: Path, sidecar: Path, deadline: float, timeout_s: float, poll_interval_s: float
+) -> int:
+    while True:
+        fd = try_os_file_lock(sidecar)
+        if fd is not None:
+            return fd
+        if time.monotonic() >= deadline:
+            raise IndexLockTimeoutError(
+                f"could not acquire {_lock_path_for(index_path)} within {timeout_s}s"
+            )
+        time.sleep(poll_interval_s)
+
+
 @contextmanager
 def index_lock(
     index_path: Path,
@@ -779,16 +818,11 @@ def index_lock(
     stale_after_s: float = _STALE_AFTER_S,
     heartbeat_interval_s: float | None = None,
 ) -> Iterator[None]:
+    owner_pid = os.getpid()  # computed BEFORE anything is acquired
     sidecar = _os_lock_path_for(index_path)
     sidecar.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_s
-    while (fd := try_os_file_lock(sidecar)) is None:
-        if time.monotonic() >= deadline:
-            raise IndexLockTimeoutError(
-                f"could not acquire {_lock_path_for(index_path)} within {timeout_s}s"
-            )
-        time.sleep(poll_interval_s)
-    owner_pid = os.getpid()
+    fd = _acquire_sidecar(index_path, sidecar, deadline, timeout_s, poll_interval_s)
     try:
         remaining = max(0.0, deadline - time.monotonic())
         with _legacy_index_lock(
