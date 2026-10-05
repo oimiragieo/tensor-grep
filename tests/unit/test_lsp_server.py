@@ -862,3 +862,61 @@ def test_did_change_ranged_edit_on_unopened_document_never_caches_a_fragment(
     uri = (tmp_path / "doc.py").as_uri()
     _did_change(server, uri, _partial(0, 0, 0, 0, "bar"))
     assert uri not in server.documents_cache
+
+
+def test_did_change_unknown_base_ranged_then_whole_document_caches_the_replacement(
+    tmp_path: Path,
+) -> None:
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    assert uri not in server.documents_cache  # e.g. after LRU eviction
+    _did_change(
+        server,
+        uri,
+        _partial(0, 0, 0, 0, "bar"),
+        TextDocumentContentChangeWholeDocument(text="fresh\n"),
+    )
+    assert server.documents_cache[uri] == "fresh\n"
+
+
+def test_did_change_unknown_base_ranged_only_still_caches_nothing(tmp_path: Path) -> None:
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _did_change(server, uri, _partial(0, 0, 0, 0, "a"), _partial(0, 1, 0, 1, "b"))
+    assert uri not in server.documents_cache
+
+
+def test_did_change_unknown_base_ranged_after_whole_document_applies_on_the_new_base(
+    tmp_path: Path,
+) -> None:
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _did_change(
+        server,
+        uri,
+        _partial(0, 0, 0, 0, "ignored"),
+        TextDocumentContentChangeWholeDocument(text="fresh\n"),
+        _partial(0, 0, 0, 5, "FRESH"),
+    )
+    assert server.documents_cache[uri] == "FRESH\n"
+
+
+def test_did_change_known_base_whole_document_then_ranged_applies_both_in_order(
+    tmp_path: Path,
+) -> None:
+    from lsprotocol.types import TextDocumentContentChangeWholeDocument
+
+    server = TensorGrepLSPServer("test", "v1")
+    uri = (tmp_path / "doc.py").as_uri()
+    _open_text(server, uri, "old\n")
+    _did_change(
+        server,
+        uri,
+        TextDocumentContentChangeWholeDocument(text="fresh\n"),
+        _partial(0, 0, 0, 1, "F"),
+    )
+    assert server.documents_cache[uri] == "Fresh\n"

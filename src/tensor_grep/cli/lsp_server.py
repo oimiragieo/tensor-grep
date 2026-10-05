@@ -1097,14 +1097,16 @@ def _position_to_offset(ls: TensorGrepLSPServer, text: str, position: Any) -> in
 
 
 def _apply_content_changes(ls: TensorGrepLSPServer, text: str | None, changes: Any) -> str | None:
-    """Apply LSP content changes in order; None when a ranged edit has no base document."""
+    """Apply LSP content changes in order; None while the base document is still unknown."""
     for change in changes:
         change_range = getattr(change, "range", None)
         if change_range is None:
             text = cast(Any, change).text
             continue
         if text is None:
-            return None
+            # Unknown base: a ranged edit keeps it unknown (never fabricate a base from the
+            # fragment); a later whole-document change still resets it.
+            continue
         start = _position_to_offset(ls, text, change_range.start)
         end = max(start, _position_to_offset(ls, text, change_range.end))
         text = text[:start] + cast(Any, change).text + text[end:]
