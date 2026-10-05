@@ -346,6 +346,14 @@ def atomic_write_bytes_anchored(
     - ``replace=True`` preserves legacy overwrite semantics via :func:`replace_with_retry`.
     - ``replace=False`` performs a fail-closed, no-clobber publish that refuses to
       create over an existing destination.
+
+    Crash window (``replace=False``): the publish is ``os.link(tmp, path)`` followed by
+    ``tmp.unlink()``. A writer killed between the two leaves BOTH names on the content
+    (``st_nlink == 2``) until someone removes the ``.<name>.<uuid>.tmp`` sibling. This helper cannot
+    recover that itself (it cannot tell a live concurrent writer from an orphan); a caller that needs
+    it serializes writers with ``index_lock`` and sweeps the exact temp-name pattern under the lock --
+    see ``session_daemon_trust._recover_orphan_temps`` for the secret. The other callers write
+    non-secret scaffolding, where a stray ``.tmp`` link is harmless.
     """
     scope = _WRITE_SCOPE.get()
     auth = None

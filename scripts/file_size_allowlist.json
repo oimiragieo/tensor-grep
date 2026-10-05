@@ -23,7 +23,7 @@
     "src/tensor_grep/cli/main.py": 13523,
     "src/tensor_grep/cli/mcp_server.py": 5701,
     "src/tensor_grep/cli/repo_map.py": 15243,
-    "src/tensor_grep/cli/session_daemon.py": 2139,
+    "src/tensor_grep/cli/session_daemon.py": 2137,
     "src/tensor_grep/cli/session_store.py": 1828,
     "tests/unit/test_apply_policy.py": 2375,
     "tests/unit/test_cli_bootstrap.py": 2987,

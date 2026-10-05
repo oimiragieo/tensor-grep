@@ -1,0 +1,586 @@
+"""Windows handle-based file trust primitives for the session-daemon secret (ctypes, no deps).
+
+Every function is win32-only and FAILS CLOSED: any API error returns ``None`` / ``False`` so the
+caller treats the object as untrusted. Nothing here follows links: the file or directory is opened
+with ``FILE_FLAG_OPEN_REPARSE_POINT`` and refused if the OPENED handle is itself a reparse point
+(symlink / junction), and ownership + DACL are read from that same handle (``GetSecurityInfo``),
+so there is no path-spelling TOCTOU between the check and the read.
+"""
+
+from __future__ import annotations
+
+import sys
+from typing import Any
+
+_GENERIC_READ = 0x80000000
+_READ_CONTROL = 0x00020000
+_FILE_SHARE_READ = 0x1  # deny write/delete while open: the object cannot be swapped under us
+_OPEN_EXISTING = 3
+_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_FILE_ATTRIBUTE_DIRECTORY = 0x10
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+_SE_FILE_OBJECT = 1
+_OWNER_AND_DACL = 0x1 | 0x4
+_ACCESS_ALLOWED_ACE_TYPE = 0
+_DENY_ACE_TYPES = frozenset({1, 6, 10, 12})  # a deny ACE only restricts; it never grants
+_INHERIT_ONLY_ACE = 0x08
+_MAX_READ_BYTES = 8192
+
+
+def open_no_follow(
+    path: str, *, directory: bool = False, share: int = _FILE_SHARE_READ
+) -> Any | None:
+    """Open ``path`` for reading WITHOUT following a reparse point; ``None`` if refused/failed."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _FileInfo(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    k32.CreateFileW.restype = ctypes.c_void_p
+    k32.GetFileInformationByHandle.argtypes = [ctypes.c_void_p, ctypes.POINTER(_FileInfo)]
+    k32.GetFileInformationByHandle.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    flags = _FILE_FLAG_OPEN_REPARSE_POINT | (_FILE_FLAG_BACKUP_SEMANTICS if directory else 0)
+    handle = k32.CreateFileW(
+        path,
+        _GENERIC_READ | _READ_CONTROL,
+        share,
+        None,
+        _OPEN_EXISTING,
+        flags,
+        None,
+    )
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        return None
+    info = _FileInfo()
+    if not k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        k32.CloseHandle(handle)
+        return None
+    attrs = info.dwFileAttributes
+    is_dir = bool(attrs & _FILE_ATTRIBUTE_DIRECTORY)
+    if attrs & _FILE_ATTRIBUTE_REPARSE_POINT or is_dir != directory:
+        k32.CloseHandle(handle)
+        return None
+    return handle
+
+
+def link_count(handle: Any) -> int | None:
+    """``nNumberOfLinks`` of the file behind the OPEN ``handle`` (``None`` on failure)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _Info(ctypes.Structure):
+        _fields_ = [
+            ("dwFileAttributes", wintypes.DWORD),
+            ("ftCreationTime", wintypes.FILETIME),
+            ("ftLastAccessTime", wintypes.FILETIME),
+            ("ftLastWriteTime", wintypes.FILETIME),
+            ("dwVolumeSerialNumber", wintypes.DWORD),
+            ("nFileSizeHigh", wintypes.DWORD),
+            ("nFileSizeLow", wintypes.DWORD),
+            ("nNumberOfLinks", wintypes.DWORD),
+            ("nFileIndexHigh", wintypes.DWORD),
+            ("nFileIndexLow", wintypes.DWORD),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetFileInformationByHandle.argtypes = [ctypes.c_void_p, ctypes.POINTER(_Info)]
+    k32.GetFileInformationByHandle.restype = wintypes.BOOL
+    info = _Info()
+    if not k32.GetFileInformationByHandle(handle, ctypes.byref(info)):
+        return None
+    return int(info.nNumberOfLinks)
+
+
+def final_path(handle: Any) -> str | None:
+    """``GetFinalPathNameByHandleW`` of the OPEN ``handle`` (normalized DOS name), or ``None``."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetFinalPathNameByHandleW.argtypes = [
+        ctypes.c_void_p,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+    ]
+    k32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+    buf = ctypes.create_unicode_buffer(32768)
+    length = k32.GetFinalPathNameByHandleW(handle, buf, 32768, 0)
+    if length == 0 or length >= 32768:
+        return None
+    return str(buf.value)
+
+
+def close_handle(handle: Any) -> None:
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    k32.CloseHandle(handle)
+
+
+def read_all(handle: Any) -> bytes | None:
+    """Read the whole (small) file through the SAME handle; ``None`` on error or oversize."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.ReadFile.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    k32.ReadFile.restype = wintypes.BOOL
+    out = b""
+    while len(out) <= _MAX_READ_BYTES:
+        buf = ctypes.create_string_buffer(4096)
+        got = wintypes.DWORD(0)
+        if not k32.ReadFile(handle, buf, 4096, ctypes.byref(got), None):
+            return None
+        if got.value == 0:
+            return out
+        out += buf.raw[: got.value]
+    return None
+
+
+def _sid_string(sid_ptr: Any) -> str | None:
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+    adv.ConvertSidToStringSidW.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    out = wintypes.LPWSTR()
+    if not adv.ConvertSidToStringSidW(sid_ptr, ctypes.byref(out)):
+        return None
+    try:
+        return str(out.value)
+    finally:
+        k32.LocalFree(ctypes.cast(out, ctypes.c_void_p))
+
+
+def current_user_sid() -> str | None:
+    """The SID string of the current PROCESS TOKEN's user, or ``None`` on any failure."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    adv.OpenProcessToken.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    adv.OpenProcessToken.restype = wintypes.BOOL
+    adv.GetTokenInformation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    adv.GetTokenInformation.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    token = ctypes.c_void_p()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        return None
+    try:
+        needed = wintypes.DWORD(0)
+        adv.GetTokenInformation(token, 1, None, 0, ctypes.byref(needed))  # 1 = TokenUser
+        if needed.value == 0:
+            return None
+        buf = ctypes.create_string_buffer(needed.value)
+        if not adv.GetTokenInformation(token, 1, buf, needed.value, ctypes.byref(needed)):
+            return None
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        return _sid_string(sid_ptr)
+    finally:
+        k32.CloseHandle(token)
+
+
+def token_owner_sid() -> str | None:
+    """The SID string of the process token's DEFAULT OWNER (``TokenOwner``): the owner given to
+    objects this process creates (the user for a normal token, Administrators when elevated)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetCurrentProcess.restype = ctypes.c_void_p
+    adv.OpenProcessToken.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    adv.OpenProcessToken.restype = wintypes.BOOL
+    adv.GetTokenInformation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    adv.GetTokenInformation.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [ctypes.c_void_p]
+    token = ctypes.c_void_p()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x8, ctypes.byref(token)):  # TOKEN_QUERY
+        return None
+    try:
+        needed = wintypes.DWORD(0)
+        adv.GetTokenInformation(token, 4, None, 0, ctypes.byref(needed))  # 4 = TokenOwner
+        if needed.value == 0:
+            return None
+        buf = ctypes.create_string_buffer(needed.value)
+        if not adv.GetTokenInformation(token, 4, buf, needed.value, ctypes.byref(needed)):
+            return None
+        sid_ptr = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]
+        return _sid_string(sid_ptr)
+    finally:
+        k32.CloseHandle(token)
+
+
+def owner_and_dacl_entries(handle: Any) -> tuple[str, list[tuple[str, int]]] | None:
+    """``(owner SID, [(SID, access mask)] granted by the DACL)`` read from the OPENED handle.
+
+    ``None`` when anything cannot be established. A NULL DACL (everyone full access) or any
+    allow-type ACE this code does not parse is reported as a sentinel entry so the caller's
+    allow-list rejects it.
+    """
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _AclSizeInfo(ctypes.Structure):
+        _fields_ = [
+            ("AceCount", wintypes.DWORD),
+            ("AclBytesInUse", wintypes.DWORD),
+            ("AclBytesFree", wintypes.DWORD),
+        ]
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    pp = ctypes.POINTER(ctypes.c_void_p)
+    adv.GetSecurityInfo.argtypes = [
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        pp,
+        pp,
+        pp,
+        pp,
+        pp,
+    ]
+    adv.GetSecurityInfo.restype = wintypes.DWORD
+    adv.GetAclInformation.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.c_int,
+    ]
+    adv.GetAclInformation.restype = wintypes.BOOL
+    adv.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, pp]
+    adv.GetAce.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    owner = ctypes.c_void_p()
+    dacl = ctypes.c_void_p()
+    sd = ctypes.c_void_p()
+    rc = adv.GetSecurityInfo(
+        handle,
+        _SE_FILE_OBJECT,
+        _OWNER_AND_DACL,
+        ctypes.byref(owner),
+        None,
+        ctypes.byref(dacl),
+        None,
+        ctypes.byref(sd),
+    )
+    if rc != 0:
+        return None
+    try:
+        if not owner.value:
+            return None
+        owner_sid = _sid_string(owner)
+        if owner_sid is None:
+            return None
+        if not dacl.value:
+            return owner_sid, [("NULL-DACL", 0xFFFFFFFF)]
+        info = _AclSizeInfo()
+        if not adv.GetAclInformation(dacl, ctypes.byref(info), ctypes.sizeof(info), 2):
+            return None
+        granted: list[tuple[str, int]] = []
+        for index in range(info.AceCount):
+            ace = ctypes.c_void_p()
+            if not adv.GetAce(dacl, index, ctypes.byref(ace)) or not ace.value:
+                return None
+            header = ctypes.string_at(ace.value, 8)
+            ace_type, ace_flags = header[0], header[1]
+            mask = int.from_bytes(header[4:8], "little")
+            if ace_type in _DENY_ACE_TYPES or ace_flags & _INHERIT_ONLY_ACE:
+                continue
+            if ace_type != _ACCESS_ALLOWED_ACE_TYPE:
+                granted.append((f"UNPARSED-ACE-TYPE-{ace_type}", 0xFFFFFFFF))
+                continue
+            sid = _sid_string(ace.value + 8)
+            if sid is None:
+                return None
+            granted.append((sid, mask))
+        return owner_sid, granted
+    finally:
+        k32.LocalFree(sd)
+
+
+def owner_and_dacl_sids(handle: Any) -> tuple[str, list[str]] | None:
+    """``(owner SID, SIDs granted any access)``: the SID-only view of the entries above."""
+    queried = owner_and_dacl_entries(handle)
+    if queried is None:
+        return None
+    return queried[0], [sid for sid, _mask in queried[1]]
+
+
+def create_new_restricted(path: str, sid: str) -> Any | None:
+    """Create ``path`` (``CREATE_NEW``, exclusive share mode 0) whose DACL is ``D:P(A;;FA;;;<sid>)``
+    FROM THE FIRST INSTANT: a protected descriptor passed in ``SECURITY_ATTRIBUTES`` at creation, so
+    the file is never broader than the current user, not even briefly and not by inheritance.
+    Tightening a DACL afterwards does not revoke handles opened against the broad one.
+    Returns the open write handle, or ``None`` on any failure (fail closed)."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    k32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+    ]
+    k32.CreateFileW.restype = ctypes.c_void_p
+    descriptor = ctypes.c_void_p()
+    # SDDL_REVISION_1 = 1. Owner defaults to the creating token; "P" blocks DACL inheritance.
+    if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"D:P(A;;FA;;;{sid})", 1, ctypes.byref(descriptor), None
+    ):
+        return None
+    try:
+        attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
+        handle = k32.CreateFileW(
+            path,
+            0x40000000 | _READ_CONTROL,  # GENERIC_WRITE | READ_CONTROL
+            0,  # share mode 0: nobody else can open the file while we hold it
+            ctypes.byref(attrs),
+            1,  # CREATE_NEW
+            0x80 | _FILE_FLAG_OPEN_REPARSE_POINT,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+    finally:
+        k32.LocalFree(descriptor)
+    if handle is None or handle == ctypes.c_void_p(-1).value:
+        return None
+    return handle
+
+
+def create_directory_restricted(path: str, sid: str) -> bool:
+    """``CreateDirectoryW`` with a PROTECTED descriptor ``D:P(A;OICI;FA;;;<sid>)``: the directory (and
+    what it will contain) is user-only from the first instant, with no grants inherited from the
+    parent (which on a multi-account machine may hand other accounts Modify / delete rights).
+    True if created or it already exists (a race), False on any failure."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class _SecurityAttributes(ctypes.Structure):
+        _fields_ = [
+            ("nLength", wintypes.DWORD),
+            ("lpSecurityDescriptor", ctypes.c_void_p),
+            ("bInheritHandle", wintypes.BOOL),
+        ]
+
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_void_p,
+    ]
+    adv.ConvertStringSecurityDescriptorToSecurityDescriptorW.restype = wintypes.BOOL
+    k32.LocalFree.argtypes = [ctypes.c_void_p]
+    k32.CreateDirectoryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p]
+    k32.CreateDirectoryW.restype = wintypes.BOOL
+    descriptor = ctypes.c_void_p()
+    if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+        f"D:P(A;OICI;FA;;;{sid})", 1, ctypes.byref(descriptor), None
+    ):
+        return False
+    try:
+        attrs = _SecurityAttributes(ctypes.sizeof(_SecurityAttributes), descriptor, False)
+        if k32.CreateDirectoryW(path, ctypes.byref(attrs)):
+            return True
+        return int(ctypes.get_last_error()) == 183  # ERROR_ALREADY_EXISTS
+    finally:
+        k32.LocalFree(descriptor)
+
+
+def write_all(handle: Any, data: bytes) -> bool:
+    """Write ``data`` through ``handle`` and flush it to disk; ``False`` on any failure."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WriteFile.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+        ctypes.c_void_p,
+    ]
+    k32.WriteFile.restype = wintypes.BOOL
+    k32.FlushFileBuffers.argtypes = [ctypes.c_void_p]
+    k32.FlushFileBuffers.restype = wintypes.BOOL
+    view = memoryview(data)
+    offset = 0
+    while offset < len(data):
+        chunk = bytes(view[offset : offset + 65536])
+        written = wintypes.DWORD(0)
+        if not k32.WriteFile(handle, chunk, len(chunk), ctypes.byref(written), None) or (
+            written.value == 0
+        ):
+            return False
+        offset += written.value
+    return bool(k32.FlushFileBuffers(handle))
+
+
+def open_process(pid: int) -> Any | None:
+    """``OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE)``.
+
+    While the returned handle is open the pid cannot be recycled for another process, so anything
+    verified and done through it concerns exactly this process. ``None`` on any failure."""
+    if sys.platform != "win32" or pid <= 0:
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = ctypes.c_void_p
+    handle = k32.OpenProcess(0x0001 | 0x1000 | 0x00100000, False, pid)
+    return handle if handle else None
+
+
+def process_create_time(handle: Any) -> float | None:
+    """Creation time (seconds since the Unix epoch) of the process behind ``handle``
+    (``GetProcessTimes``), directly comparable with ``psutil``'s ``create_time()``."""
+    if sys.platform != "win32":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.GetProcessTimes.argtypes = [ctypes.c_void_p] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+    k32.GetProcessTimes.restype = wintypes.BOOL
+    created, exited, kernel, user = (wintypes.FILETIME() for _ in range(4))
+    if not k32.GetProcessTimes(
+        handle,
+        ctypes.byref(created),
+        ctypes.byref(exited),
+        ctypes.byref(kernel),
+        ctypes.byref(user),
+    ):
+        return None
+    ticks = (created.dwHighDateTime << 32) | created.dwLowDateTime
+    return ticks / 10_000_000 - 11644473600
+
+
+def terminate_process(handle: Any, exit_code: int = 1) -> bool:
+    """``TerminateProcess(handle, exit_code)``: terminates exactly the process behind ``handle``."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.TerminateProcess.argtypes = [ctypes.c_void_p, wintypes.UINT]
+    k32.TerminateProcess.restype = wintypes.BOOL
+    return bool(k32.TerminateProcess(handle, exit_code))
+
+
+def wait_process(handle: Any, timeout_ms: int) -> bool:
+    """``WaitForSingleObject`` bounded by ``timeout_ms``; True once the process has exited."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, wintypes.DWORD]
+    k32.WaitForSingleObject.restype = wintypes.DWORD
+    return int(k32.WaitForSingleObject(handle, max(0, int(timeout_ms)))) == 0

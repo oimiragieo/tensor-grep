@@ -931,7 +931,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11588,
+    "lineno": 11563,
     "enclosing_symbol": "_run_install_dense",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1000,22 +1000,22 @@
     "hardened_in": null
   },
   {
-    "module": "cli/main.py",
-    "lineno": 8650,
-    "enclosing_symbol": "session_daemon_status",
+    "module": "cli/session_daemon_stop_cli.py",
+    "lineno": 141,
+    "enclosing_symbol": "run_session_daemon_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "evidence": "except Exception around get_session_daemon_status(path) in run_session_daemon_status (relocated from main.py::session_daemon_status): the exception text is escaped to ASCII, printed (stderr, or a structured status_failed error in --json) and the helper returns exit code 2, which the command raises as typer.Exit.",
     "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
     "hardened_in": null
   },
   {
-    "module": "cli/main.py",
-    "lineno": 8678,
-    "enclosing_symbol": "session_daemon_stop",
+    "module": "cli/session_daemon_stop_cli.py",
+    "lineno": 101,
+    "enclosing_symbol": "run_session_daemon_stop",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception as exc: typer.echo(str(exc), err=True); raise typer.Exit(1) from exc",
+    "evidence": "except Exception around stop_session_daemon(path) in run_session_daemon_stop (relocated from main.py::session_daemon_stop): the exception text is printed to stderr and the helper returns exit code 1, which the command raises as typer.Exit.",
     "reason": "INTENTIONAL-BOUNDARY: standard CLI command-boundary fail-closed pattern -- the handler prints the exception text to stderr (or, for typer.Exit-aware commands, re-raises typer.Exit unchanged first) and terminates the process with a non-zero exit code via typer.Exit. The AST heuristic already classifies this as provably-disclosing (a bare typer.echo(str(exc)) call satisfies _body_records_reason); the ledger record exists for completeness of the cumulative population, not because the census could not prove it.",
     "hardened_in": null
   },
@@ -1031,7 +1031,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8749,
+    "lineno": 8724,
     "enclosing_symbol": "session_show",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1041,7 +1041,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8782,
+    "lineno": 8757,
     "enclosing_symbol": "session_refresh",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1051,7 +1051,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8871,
+    "lineno": 8846,
     "enclosing_symbol": "session_context_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1061,7 +1061,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9012,
+    "lineno": 8987,
     "enclosing_symbol": "session_context_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1071,7 +1071,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9114,
+    "lineno": 9089,
     "enclosing_symbol": "session_edit_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1081,7 +1081,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9189,
+    "lineno": 9164,
     "enclosing_symbol": "session_blast_radius_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1091,7 +1091,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9238,
+    "lineno": 9213,
     "enclosing_symbol": "session_importers_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1101,7 +1101,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9345,
+    "lineno": 9320,
     "enclosing_symbol": "session_blast_radius_render_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1111,7 +1111,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9434,
+    "lineno": 9409,
     "enclosing_symbol": "session_blast_radius_plan_cmd",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1121,7 +1121,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9473,
+    "lineno": 9448,
     "enclosing_symbol": "session_serve",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1131,7 +1131,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9493,
+    "lineno": 9468,
     "enclosing_symbol": "checkpoint_create",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1151,7 +1151,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 9784,
+    "lineno": 9677,
     "enclosing_symbol": "checkpoint_undo",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1161,7 +1161,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11776,
+    "lineno": 11751,
     "enclosing_symbol": "audit_verify",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1171,7 +1171,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11828,
+    "lineno": 11803,
     "enclosing_symbol": "audit_history",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1181,7 +1181,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 11890,
+    "lineno": 11865,
     "enclosing_symbol": "audit_diff",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -1261,7 +1261,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 13006,
+    "lineno": 12981,
     "enclosing_symbol": "ledger_record",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3071,7 +3071,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 313,
+    "lineno": 330,
     "enclosing_symbol": "_restrict_windows_file_to_current_user",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3081,27 +3081,47 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 482,
+    "lineno": 496,
     "enclosing_symbol": "_pid_looks_like_tg_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around 'import psutil' (an optional dependency): when psutil cannot be imported the function returns False, which makes _terminate_daemon_by_pid skip the kill.",
-    "reason": "A deliberate fail-safe: identity of the pid cannot be proven, so the pid-kill fallback refuses to terminate an arbitrary process that may have reused the recorded pid. It fails closed with respect to killing. Residual: it also removes the escalation that stop_session_daemon relies on for a wedged daemon (see stop_session_daemon handler 0).",
+    "evidence": "except Exception around _process_cmdline(pid) (the psutil argv seam): any failure to read the command line (psutil missing, AccessDenied, no such process) returns False.",
+    "reason": "A deliberate fail-closed identity helper kept for compatibility: it is no longer on the kill path (_daemon_pid_state decides that, with three explicit outcomes instead of a bare False). Unreadable means 'not provably a tensor-grep daemon', so nothing is signalled.",
     "hardened_in": null
   },
   {
-    "module": "cli/session_daemon.py",
-    "lineno": 486,
-    "enclosing_symbol": "_pid_looks_like_tg_daemon",
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 146,
+    "enclosing_symbol": "_process_info",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around 'import psutil' (an optional dependency): re-raised as OSError('psutil unavailable') from the original exception.",
+    "reason": "Nothing is swallowed: the failure is converted into the typed 'cannot read' outcome that _daemon_pid_state maps to 'unverifiable', so the caller refuses to signal and reports the stop as unconfirmed (running True, stopped False) instead of guessing.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 147,
+    "enclosing_symbol": "_process_info",
     "handler_index_within_symbol": 1,
     "category": "INTENTIONAL-BOUNDARY",
-    "evidence": "except Exception around psutil.Process(pid).cmdline() (NoSuchProcess, AccessDenied or any psutil error): the function returns False and the caller does not kill the pid.",
-    "reason": "The same deliberate fail-closed identity check: any inability to read the command line is treated as 'not provably a tensor-grep daemon', so an unrelated or unreadable process is never signalled. Nothing is reported to the caller beyond False. Residual as for handler 0: a real but unreadable daemon is not terminated.",
+    "evidence": "except Exception around psutil.Process(pid).cmdline()/create_time() after the NoSuchProcess clause: AccessDenied or any other psutil error is re-raised as OSError from the original exception.",
+    "reason": "Nothing is swallowed: an unreadable argv becomes the typed 'cannot read' outcome (-> 'unverifiable', no signal, metadata kept); only NoSuchProcess maps to LookupError ('gone'), the sole case where stale metadata may be cleaned.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 169,
+    "enclosing_symbol": "_classify_daemon_pid",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around _process_info(pid) after the LookupError clause: any unreadable-argv/identity error returns ('unverifiable', None).",
+    "reason": "Fails closed and loudly: 'unverifiable' is never signalled, and stop_session_daemon reports running True / stopped False / stop_method none and keeps daemon.json, so the failure is surfaced in the result, not swallowed.",
     "hardened_in": null
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 581,
+    "lineno": 586,
     "enclosing_symbol": "_probe_daemon",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -3111,7 +3131,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 636,
+    "lineno": 646,
     "enclosing_symbol": "_merge_live_daemon_stats",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3121,7 +3141,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 895,
+    "lineno": 922,
     "enclosing_symbol": "stop_session_daemon",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3131,7 +3151,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1566,
+    "lineno": 1632,
     "enclosing_symbol": "_flush_demand_metrics_if_dirty",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3141,7 +3161,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1643,
+    "lineno": 1709,
     "enclosing_symbol": "_attach_demand_metrics",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -3151,7 +3171,7 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1862,
+    "lineno": 1837,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 0,
     "category": "SILENT-SWALLOW",
@@ -3161,19 +3181,29 @@
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 1948,
+    "lineno": 1928,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 1,
     "category": "LOGGED-DEGRADE",
-    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again; since 2026-10-02 the response's serve_cache.refresh_trigger names the exception class that caused the rebuild. A failure of the rebuild or of the second serve is not caught and propagates to the outer handler.",
-    "reason": "The original exception object is still discarded and not logged, but HARDENED 2026-10-02 (HANDLER-CENSUS-W3-j): the response now carries an in-band marker, serve_cache.refresh_trigger, with the exception class name (absent on the normal path; narrowing the catch was rejected because the set of errors that legitimately warrant a refresh, e.g. a missing or corrupt payload, is not enumerable). It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as an invalid_request error carrying the second error, and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug still triggers a full rebuild (now visible as refresh_trigger), and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
+    "evidence": "except Exception around the first serve attempt (_load_payload_with_status_retry plus _serve_daemon_response_with_cache) in the non-stats command branch. When the request has refresh_on_stale unset the exception is re-raised to the outer handler (becomes an invalid_request error response). When refresh_on_stale is true, ANY exception, not only SessionStaleError, is discarded: refresh_session(...) rebuilds the session with a WARM_DAEMON_DEFAULT_DEADLINE_SECONDS budget, record_refresh() counts it, and the payload is reloaded and served again; since 2026-10-02 the response's serve_cache.refresh_trigger names the exception class that caused the rebuild. A failure of the rebuild or of the second serve is caught by the nested handler recorded as index 2 and re-raised as _DaemonRefreshFailed.",
+    "reason": "The original exception object is still discarded and not logged, but HARDENED 2026-10-02 (HANDLER-CENSUS-W3-j): the response now carries an in-band marker, serve_cache.refresh_trigger, with the exception class name (absent on the normal path; narrowing the catch was rejected because the set of errors that legitimately warrant a refresh, e.g. a missing or corrupt payload, is not enumerable). It does not let a client be told something false: the rebuild really ran before anything is reported, the retry reloads the rebuilt payload and re-runs the staleness gate, a failed rebuild or retry surfaces as a refresh_failed error carrying the trigger, the original error and the rebuild error (bug-hunt F-03), and a deadline-truncated rebuild stamps partial and deadline_limit on the repo map, which the shared partial handling disclosed in the response. Residuals, none a proven fail-open: a non-staleness bug still triggers a full rebuild (now visible as refresh_trigger), and a persistently failing serve under refresh_on_stale costs a rebuild per request.",
     "hardened_in": "HANDLER-CENSUS-W3-j"
   },
   {
     "module": "cli/session_daemon.py",
-    "lineno": 2021,
+    "lineno": 1966,
     "enclosing_symbol": "handle",
     "handler_index_within_symbol": 2,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the stale-session rebuild (refresh_session, the payload reload and the second _serve_daemon_response_with_cache call) in the refresh_on_stale branch of _SessionDaemonHandler.handle: the exception is wrapped as _DaemonRefreshFailed(trigger, original_error, rebuild_error) and raised from the original; the outer _DaemonRefreshFailed clause turns it into an error response with code 'refresh_failed'.",
+    "reason": "Nothing is swallowed: the failure is re-raised immediately with the original trigger and both error messages attached, and the client receives a structured refresh_failed error (not a success-shaped result and no longer mislabeled invalid_request, which hid the trigger). The inflight counter is still released by the outer finally. The failure is not logged server-side, same as the surrounding request containment.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon.py",
+    "lineno": 2013,
+    "enclosing_symbol": "handle",
+    "handler_index_within_symbol": 3,
     "category": "INTENTIONAL-BOUNDARY",
     "evidence": "except Exception around the whole authenticated request body in _SessionDaemonHandler.handle: the exception is converted into a {version, session_id, error: {code: 'invalid_request', message: str(exc)}} response, the finally block decrements inflight_requests under the request lock, and the response is written and flushed to the client socket after the try. Unauthorized requests return earlier with an 'unauthorized' error and never reach this handler.",
     "reason": "A deliberate per-request containment point of a long-lived threaded daemon: one failing request must not kill the handler thread or the server, and the client receives a structured error with the message instead of a success-shaped result, so a request that was not served is never reported as served. The inflight counter is released in finally, so the lifecycle monitor cannot be pinned by a failed request. The failure is not logged server-side, and a client that ignores the error key would treat the response as data, which is the protocol contract.",
@@ -3347,6 +3377,16 @@
     "category": "SILENT-SWALLOW",
     "evidence": "except Exception around the per-line read/decode/append loop over process.stderr in the stderr thread: any failure appends an optional debug-trace entry (off by default, so nothing is recorded by default) and ends the thread. stop() closing the pipe from another thread lands here too and is the expected case.",
     "reason": "Not a wrong-answer path: stderr is diagnostics only (stderr_tail in status()). Residual: after a read failure that is not caused by stop(), the stderr pipe is no longer drained, stderr_tail silently stops updating, and a server that keeps writing to stderr can fill the pipe buffer and block. That child would then stall and surface as request timeouts. No handle is leaked, stop() closes the stream.",
+    "hardened_in": null
+  },
+  {
+    "module": "cli/session_daemon_trust.py",
+    "lineno": 386,
+    "enclosing_symbol": "_terminate_identified",
+    "handler_index_within_symbol": 0,
+    "category": "INTENTIONAL-BOUNDARY",
+    "evidence": "except Exception around the whole guarded escalation in _terminate_identified (guard.verify, the _process_info re-read, guard.terminate, guard.wait): any failure (NoSuchProcess, AccessDenied, OSError, a vanished process) returns False; the guard (Windows process handle / Linux pidfd) is released in the finally clause.",
+    "reason": "Fails closed: if the process cannot be opened, re-read or signalled, or its create_time/argv changed since classification, NOTHING is reported as signalled and the caller reports the stop as unconfirmed (running True / stopped False); a delivered signal is in any case only believed after the endpoint REFUSES connections. Nothing is swallowed into a success.",
     "hardened_in": null
   }
 ]

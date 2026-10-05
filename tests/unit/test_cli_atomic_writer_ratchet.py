@@ -885,6 +885,14 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "`atomic_write_bytes_anchored`, so the detector correctly does not credit it as helper-"
         "backed. Same rationale as the os.open entry above; sanctioned together."
     ),
+    ("session_daemon_trust.py", "_write_secret_posix", "os.open"): (
+        "Round 7: the per-user daemon secret is created RELATIVE to a verified directory fd "
+        "(`os.open(..., dir_fd=)` for the temp file, `os.link(..., src_dir_fd/dst_dir_fd)` to publish "
+        "without replacing, `os.unlink(..., dir_fd=)` for the temp name), so a swapped path "
+        "component cannot redirect the write. `atomic_write_bytes_anchored` is path-based and "
+        "cannot express dir_fd-relative creation; it remains the fallback where dir_fd is unsupported. "
+        "Every READ of the secret is by fd as well."
+    ),
 }
 
 
@@ -1488,6 +1496,11 @@ _EXPECTED_HELPER_BACKED = {
         "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
     ),
     ("main.py", "new", "tensor_grep.cli._index_lock.atomic_write_bytes_anchored"),
+    (
+        "session_daemon_trust.py",
+        "_write_secret_posix",
+        "tensor_grep.cli._index_lock.atomic_write_bytes_anchored",
+    ),
     # The bidirectional control's "current" arm (also asserted directly above).
     ("codemap.py", "_atomic_write_text", "tensor_grep.cli._index_lock.atomic_write_bytes"),
     # --- Newly discovered once the census walked the full _CLI_SRC directory ---
@@ -1588,6 +1601,7 @@ _EXPECTED_SANCTIONED = {
         "_write_daemon_metadata_windows",
         "tensor_grep.cli._index_lock.replace_with_retry",
     ),
+    ("session_daemon_trust.py", "_write_secret_posix", "os.open"),
 }
 
 # H2 (docs/BACKLOG.md backlog closeout) classified and, where warranted, fixed all 16

@@ -22,20 +22,45 @@ from uuid import uuid4
 
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
+from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
+    _METADATA_REASONS,
+    DAEMON_HOST,
+    _attestation_fields,
+    _await_endpoint_refused,
+    _classify_daemon_pid,
+    _daemon_invocation_root,
+    _daemon_pid_state,
+    _daemon_ping_proof,
+    _daemon_secret_path,
+    _DaemonRefreshFailed,
+    _endpoint_flag,
+    _is_loopback_host,
+    _load_or_create_user_secret,
+    _metadata_state,
+    _metadata_unconfirmed,
+    _ping_proof_fields,
+    _process_info,
+    _read_user_secret,
+    _refresh_failed_error,
+    _stale_success_fields,
+    _stale_unconfirmed,
+    _stop_success,
+    _terminate_identified,
+    _unconfirmed_fields,
+    _valid_daemon_port,
+    _verify_ping_reply,
+)
 from tensor_grep.cli.session_store import (
     _DEFAULT_SESSION_AGENT_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_CONTEXT_RENDER_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_EDIT_PLAN_REPO_MAP_LIMIT,
     _DEFAULT_SESSION_ORIENT_REPO_MAP_LIMIT,
-    _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
     _DEFAULT_SESSION_SYMBOL_REPO_MAP_LIMIT,
-    _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
     _SESSION_VERSION,
     WARM_DAEMON_DEFAULT_DEADLINE_SECONDS,
-    _configured_positive_int,
     _ensure_session_not_stale,
     _index_path,
-    _json_size_bytes,
     _load_index,
     _resolve_request_session_target,
     _resolve_root,
@@ -43,7 +68,6 @@ from tensor_grep.cli.session_store import (
     _session_payload_path,
     _sessions_dir,
     _SessionServeCache,
-    _SessionServeResponseCacheEntry,
     _write_index,
     _write_json_atomic,
     open_session,
@@ -53,7 +77,7 @@ from tensor_grep.cli.session_store import (
 
 _DAEMON_METADATA_FILE = "daemon.json"
 _DAEMON_START_LOCK_FILE = ".daemon-start.lock"
-_DAEMON_HOST = "127.0.0.1"
+_DAEMON_HOST = DAEMON_HOST
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 # moat P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
@@ -73,7 +97,6 @@ _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
 _DAEMON_RESPONSE_TIMEOUT_ENV = "TG_SESSION_DAEMON_RESPONSE_TIMEOUT_SECONDS"
 _DAEMON_START_TIMEOUT_SECONDS = 5.0
 _DAEMON_SESSION_LOOKUP_RETRY_SECONDS = 0.25
-_DAEMON_RESPONSE_CACHE_MAX_ENTRIES = 32
 _DAEMON_IMPLICIT_SESSION_MAX_ENTRIES = 16
 _DAEMON_RESPONSE_CACHE_SCOPE = (
     "daemon-routed top-level/session context-render/edit-plan/defs/impact/refs/callers/"
@@ -196,13 +219,9 @@ def _nearby_daemon_roots(path: str = ".") -> list[Path]:
 
 
 def _read_daemon_metadata(root: Path) -> dict[str, Any] | None:
-    metadata_path = _daemon_metadata_path(root)
-    if not metadata_path.exists():
-        return None
-    try:
-        return cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError):
-        return None
+    """The metadata dict, or ``None`` for absent / unreadable / invalid. Callers that must tell
+    absence from damage use ``_metadata_state`` (only ABSENT is proof that nothing is recorded)."""
+    return _metadata_state(_daemon_metadata_path(root))[1]
 
 
 def _write_daemon_metadata(root: Path, payload: dict[str, Any]) -> None:
@@ -459,59 +478,36 @@ def _daemon_identity(metadata: dict[str, Any] | None) -> tuple[int | None, int |
         return None, None
     try:
         pid: int | None = int(metadata["pid"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         pid = None
+    # Identity-only (guards unlinking daemon.json; never dials), so the tolerant int() coercion
+    # pinned by test_remove_daemon_metadata_guarded_matches_string_pid_and_port_on_disk stays --
+    # but an inf/huge float must resolve to None instead of raising OverflowError.
     try:
         port: int | None = int(metadata["port"])
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):
         port = None
     return pid, port
 
 
 def _pid_looks_like_tg_daemon(pid: int) -> bool:
-    """Best-effort check that ``pid`` is a tensor-grep session daemon (audit I7).
-
-    Uses psutil (a dev/optional dependency) to inspect the command line so the PID-kill
-    fallback never terminates an unrelated process that happens to reuse the recorded pid. If
-    psutil is unavailable we cannot prove identity and return ``False`` (skip the kill).
-    """
-    if pid <= 0:
-        return False
+    """Best-effort: ``pid`` is running a genuine ``python -m tensor_grep.cli.session_daemon`` launch
+    (kept for callers/tests; the kill path decides through ``_classify_daemon_pid``)."""
     try:
-        import psutil  # type: ignore[import-not-found]
+        return pid > 0 and _daemon_invocation_root(_process_info(pid)[0]) is not None
     except Exception:
         return False
-    try:
-        cmdline = " ".join(psutil.Process(pid).cmdline())
-    except Exception:
-        return False
-    return "tensor_grep.cli.session_daemon" in cmdline
 
 
-def _terminate_daemon_by_pid(metadata: dict[str, Any] | None) -> bool:
+def _terminate_daemon_by_pid(metadata: dict[str, Any] | None, *, root: Path | None = None) -> bool:
     """Terminate the daemon process recorded in ``metadata`` (audit I7).
 
-    Only fires when the pid can be validated as a tensor-grep daemon. Returns True if a
-    terminate signal was delivered.
+    Only fires when the pid is provably the tensor-grep daemon serving ``root`` (a genuine
+    ``-m tensor_grep.cli.session_daemon --root <root>`` launch) and is still the same process
+    (create_time unchanged). Returns True if a terminate signal was delivered.
     """
-    if not metadata:
-        return False
-    try:
-        pid = int(metadata["pid"])
-    except (KeyError, TypeError, ValueError):
-        return False
-    if pid <= 0 or pid == os.getpid() or not _pid_looks_like_tg_daemon(pid):
-        return False
-    try:
-        if os.name == "nt":
-            import signal
-
-            os.kill(pid, signal.SIGTERM)
-        else:
-            os.kill(pid, 15)
-    except OSError:
-        return False
-    return True
+    state, identity = _classify_daemon_pid(metadata, root)
+    return state == "ours" and identity is not None and _terminate_identified(identity)
 
 
 def _daemon_request(
@@ -522,6 +518,10 @@ def _daemon_request(
     response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
     token: str = "",
 ) -> dict[str, Any]:
+    if not _is_loopback_host(host):
+        raise ValueError(f"refusing non-loopback session daemon host: {host!r}")
+    if _valid_daemon_port(port) is None:
+        raise ValueError(f"refusing malformed session daemon port: {port!r}")
     # audit S3: every request must carry the per-daemon token. Inject it here so the in-process
     # client (which read the token from the 0600 daemon.json) authenticates transparently.
     if token:
@@ -570,17 +570,27 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     metadata = _read_daemon_metadata(root)
     if metadata is None:
         return None
+    host = metadata.get("host", _DAEMON_HOST)
+    if not _is_loopback_host(host):
+        return None
+    connected_port = _valid_daemon_port(metadata.get("port"))
+    if connected_port is None:
+        return None
+    nonce = secrets.token_hex(16)
     try:
         response = _daemon_request(
-            str(metadata.get("host", _DAEMON_HOST)),
-            int(metadata["port"]),
-            {"command": "ping"},
+            str(host),
+            connected_port,
+            {"command": "ping", "nonce": nonce},
             response_timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
             token=_daemon_token(metadata),
         )
     except Exception:
         return None
     if not response.get("ok"):
+        return None
+    # F-01: daemon.json is repo-controlled, so "ok" proves nothing -- require the per-user HMAC.
+    if not _verify_ping_reply(response, nonce, root, connected_port):
         return None
     # Task #94 PR-1 safety addition: a daemon can survive a `tg upgrade` (daemons live up to
     # TG_SESSION_DAEMON_MAX_UPTIME_SECONDS, 24h default) and keep serving stale-code responses
@@ -592,7 +602,9 @@ def _probe_daemon(root: Path) -> dict[str, Any] | None:
     # existing idle/max-uptime lifecycle monitor.
     if metadata.get("package_version") != _expected_tg_version():
         return None
-    return metadata
+    # The metadata's own `pid` is unverified (repo-controlled); the signed reply's is proven.
+    # Callers that escalate to a pid kill must only ever see the proven one.
+    return {**metadata, "pid": int(response["pid"])}
 
 
 def _merge_live_daemon_stats(status: dict[str, Any], *, token: str = "") -> dict[str, Any]:
@@ -645,7 +657,16 @@ def _merge_live_daemon_stats(status: dict[str, Any], *, token: str = "") -> dict
 
 def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
     root = _resolve_root(Path(path))
-    metadata = _read_daemon_metadata(root)
+    meta_state, metadata = _metadata_state(_daemon_metadata_path(root))
+    if meta_state in ("unreadable", "invalid"):  # damage is not absence
+        return {
+            "version": _SESSION_VERSION,
+            "root": str(root),
+            "discovered": False,
+            "running": False,
+            "stale_metadata": True,
+            "metadata_error": _METADATA_REASONS[meta_state],
+        }
     if metadata is None:
         for discovered_root in _nearby_daemon_roots(path):
             if discovered_root == root:
@@ -688,6 +709,7 @@ def get_session_daemon_status(path: str = ".") -> dict[str, Any]:
                 "discovered": False,
                 "running": False,
                 "stale_metadata": True,
+                **_endpoint_flag(metadata),
             },
             root,
         )
@@ -864,8 +886,24 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
     if metadata is None:
         # audit I7: cooperative probe failed, but a stale daemon may still be running (e.g. its
         # socket is wedged). Fall back to terminating the recorded pid if it validates.
-        stale_metadata = _read_daemon_metadata(root)
-        killed = _terminate_daemon_by_pid(stale_metadata)
+        meta_state, stale_metadata = _metadata_state(_daemon_metadata_path(root))
+        if meta_state in ("unreadable", "invalid"):  # damage is not absence: keep the file
+            return {
+                "version": _SESSION_VERSION,
+                "root": str(root),
+                **_metadata_unconfirmed(meta_state),
+            }
+        killed = _terminate_daemon_by_pid(stale_metadata, root=root)
+        # Stale metadata is removed only after PROVEN absence: the process is gone ("gone") or, after
+        # a delivered signal, the connection is refused. A live process we could not stop (ours but
+        # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.
+        state = "gone" if killed else _daemon_pid_state(stale_metadata, root)
+        # EXISTING metadata must be proven stale by a REFUSED connection before ANY removal (a dead
+        # pid alone does not prove the listener is gone); a missing / null / invalid endpoint cannot
+        # be checked, so it is unconfirmed too: keep daemon.json (see _stale_unconfirmed).
+        blocked = _stale_unconfirmed(stale_metadata, state, _DAEMON_START_TIMEOUT_SECONDS)
+        if blocked is not None:
+            return {"version": _SESSION_VERSION, "root": str(root), **blocked}
         # Task #143a-a: only remove the metadata that still identifies the STALE daemon we just
         # targeted -- never whatever happens to be on disk by the time we get here. A concurrent
         # autostart elsewhere may have already spawned and published a healthy replacement's
@@ -879,43 +917,71 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
         return {
             "version": _SESSION_VERSION,
             "root": str(root),
-            "running": False,
-            "stopped": killed,
-            "stop_method": "pid" if killed else "none",
+            **_stale_success_fields(killed, stale_metadata is not None),
         }
     response: dict[str, Any]
-    stop_method = "cooperative"
     try:
         response = _daemon_request(
             str(metadata.get("host", _DAEMON_HOST)),
-            int(metadata["port"]),
+            metadata.get("port", 0),  # _daemon_request refuses a malformed port before connecting
             {"command": "stop"},
             token=_daemon_token(metadata),
         )
     except Exception:
         response = {"version": _SESSION_VERSION, "ok": False}
-        stop_method = "none"
+    # Only an ok:true reply can start a cooperative stop (a failed/unauthorized reply is no
+    # evidence of anything), and even then it is not PROOF: see the refusal check below.
+    stop_method = "cooperative" if response.get("ok") is True else "none"
+
+    def _refused() -> bool:
+        return _await_endpoint_refused(
+            metadata.get("host", _DAEMON_HOST), metadata.get("port"), _DAEMON_START_TIMEOUT_SECONDS
+        )
+
+    delivered = False
+
+    def _kill() -> bool:
+        nonlocal delivered
+        delivered = _terminate_daemon_by_pid(metadata, root=root) or delivered
+        return delivered
+
+    still_up = False
     deadline = time.time() + _DAEMON_START_TIMEOUT_SECONDS
     while time.time() < deadline:
         if _probe_daemon(root) is None:
-            if stop_method == "none" and _terminate_daemon_by_pid(metadata):
-                stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
+            if stop_method == "none":
+                if _kill():
+                    stop_method = "pid"  # stop request failed: a None probe is ambiguous (wedged?)
+                else:
+                    still_up = _daemon_pid_state(metadata, root) != "gone"
             break
         time.sleep(0.05)
     else:
-        # audit I7: no effect within the deadline; escalate to a validated pid terminate.
-        stop_method = "pid" if _terminate_daemon_by_pid(metadata) else "none"
+        # audit I7: no effect within the deadline; escalate to a validated terminate of the pid
+        # PROVEN by the signed ping reply.
+        stop_method = "pid" if _kill() else "none"
+        still_up = stop_method == "none"  # still answering and never signalled
+    # An ok reply / a delivered signal is not a stopped daemon: "cooperative" and "pid" are
+    # reported only once a connection to the verified endpoint is REFUSED. An unproven cooperative
+    # stop falls through to the proven-pid path (which needs the same refusal).
+    if stop_method == "cooperative" and not _refused():
+        stop_method = "pid" if _kill() else "none"
+    if stop_method == "pid" and not _refused():
+        stop_method = "none"
+    if stop_method == "none" and (still_up or not _refused()):
+        still_up = True
+    if still_up:
+        # Unconfirmed: keep daemon.json and say why.
+        state = "gone" if delivered else _daemon_pid_state(metadata, root)
+        response.update(root=str(root), **_unconfirmed_fields(state, delivered))
+        return response
     # Task #143a-a: only remove daemon.json if it still identifies the SAME daemon this call
     # targeted (captured in `metadata` above) -- a replacement may have spawned and published its
     # own metadata in the window since. See _remove_daemon_metadata's docstring for the full race.
     target_pid, target_port = _daemon_identity(metadata)
     if target_pid is not None:
         _remove_daemon_metadata(root, expected_pid=target_pid, expected_port=target_port)
-    response["running"] = False
-    response["root"] = str(root)
-    response["stopped"] = stop_method != "none"  # "none": no evidence it ended
-    response["stop_method"] = stop_method
-    return response
+    return _stop_success(response, root, stop_method)
 
 
 def _daemon_response_timeout() -> float:
@@ -1647,94 +1713,6 @@ def _attach_demand_metrics(status: dict[str, Any], metrics_root: Path) -> dict[s
     return status
 
 
-class _SessionResponseCache:
-    def __init__(
-        self,
-        max_entries: int = _DAEMON_RESPONSE_CACHE_MAX_ENTRIES,
-        max_size_bytes: int | None = None,
-    ) -> None:
-        self._max_entries = max(1, max_entries)
-        self._max_size_bytes = (
-            _configured_positive_int(
-                _SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES_ENV,
-                _DEFAULT_SESSION_SERVE_RESPONSE_CACHE_MAX_BYTES,
-            )
-            if max_size_bytes is None
-            else max(1, int(max_size_bytes))
-        )
-        self._entries: OrderedDict[tuple[str, ...], _SessionServeResponseCacheEntry] = OrderedDict()
-        self._size_bytes = 0
-        self._hits = 0
-        self._misses = 0
-        self._puts = 0
-        self._oversized_skips = 0
-        self._lock = threading.RLock()
-
-    def get(self, key: tuple[str, ...]) -> dict[str, Any] | None:
-        with self._lock:
-            entry = self._entries.pop(key, None)
-            if entry is None:
-                self._misses += 1
-                return None
-            self._hits += 1
-            self._entries[key] = entry
-            return copy.deepcopy(entry.payload)
-
-    def put(self, key: tuple[str, ...], response: dict[str, Any]) -> None:
-        with self._lock:
-            self._puts += 1
-            size_bytes = _json_size_bytes(response)
-            if size_bytes > self._max_size_bytes:
-                self._oversized_skips += 1
-                return
-            previous = self._entries.pop(key, None)
-            if previous is not None:
-                self._size_bytes -= previous.size_bytes
-            entry = _SessionServeResponseCacheEntry(
-                payload=copy.deepcopy(response),
-                size_bytes=size_bytes,
-            )
-            self._entries[key] = entry
-            self._size_bytes += entry.size_bytes
-            while len(self._entries) > self._max_entries or self._size_bytes > self._max_size_bytes:
-                _, evicted = self._entries.popitem(last=False)
-                self._size_bytes -= evicted.size_bytes
-
-    @property
-    def hits(self) -> int:
-        with self._lock:
-            return self._hits
-
-    @property
-    def misses(self) -> int:
-        with self._lock:
-            return self._misses
-
-    @property
-    def puts(self) -> int:
-        with self._lock:
-            return self._puts
-
-    @property
-    def entry_count(self) -> int:
-        with self._lock:
-            return len(self._entries)
-
-    @property
-    def size_bytes(self) -> int:
-        with self._lock:
-            return self._size_bytes
-
-    @property
-    def max_size_bytes(self) -> int:
-        return self._max_size_bytes
-
-    @property
-    def oversized_skips(self) -> int:
-        with self._lock:
-            return self._oversized_skips
-
-
 class _ThreadedSessionDaemon(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -1879,6 +1857,11 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                 return
             if command == "ping":
                 response = {"version": _SESSION_VERSION, "ok": True}
+                response.update(
+                    _ping_proof_fields(
+                        request.get("nonce"), server.root, int(server.server_address[1])
+                    )
+                )
                 self.wfile.write((json.dumps(response) + "\n").encode("utf-8"))
                 self.wfile.flush()
                 return
@@ -1950,6 +1933,7 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     if not refresh_on_stale:
                         raise
                     refresh_trigger = type(exc).__name__  # ANY error rebuilds; name it (disclosed)
+                    original_error = str(exc)
                     load_started_at = monotonic()
                     # Task #304: bound the staleness-triggered rebuild with the SAME budget the
                     # warm daemon already applies to `agent`/`orient`/context-render
@@ -1959,28 +1943,33 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                     # could be exceeded roughly twofold, the truncation disclosed nowhere. Reusing
                     # the existing constant (not a second one) keeps the daemon budgets from
                     # drifting, so a reader can tell which one applied to a request.
-                    refresh_session(
-                        request_session_id,
-                        request_path,
-                        payload_cache=server.payload_cache,
-                        deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
-                    )
-                    server.payload_cache.record_refresh()
-                    payload, cache_status = _load_payload_with_status_retry(
-                        server.payload_cache,
-                        request_session_id,
-                        request_path,
-                    )
-                    loaded_at = monotonic()
-                    response, response_cache_status = _serve_daemon_response_with_cache(
-                        server=server,
-                        command=command,
-                        session_id=request_session_id,
-                        path=request_path,
-                        request=request,
-                        payload=payload,
-                    )
-                    served_at = monotonic()
+                    try:
+                        refresh_session(
+                            request_session_id,
+                            request_path,
+                            payload_cache=server.payload_cache,
+                            deadline_monotonic=(monotonic() + WARM_DAEMON_DEFAULT_DEADLINE_SECONDS),
+                        )
+                        server.payload_cache.record_refresh()
+                        payload, cache_status = _load_payload_with_status_retry(
+                            server.payload_cache,
+                            request_session_id,
+                            request_path,
+                        )
+                        loaded_at = monotonic()
+                        response, response_cache_status = _serve_daemon_response_with_cache(
+                            server=server,
+                            command=command,
+                            session_id=request_session_id,
+                            path=request_path,
+                            request=request,
+                            payload=payload,
+                        )
+                        served_at = monotonic()
+                    except Exception as rebuild_exc:
+                        raise _DaemonRefreshFailed(
+                            refresh_trigger, original_error, str(rebuild_exc)
+                        ) from rebuild_exc
                 response["serve_cache"] = {
                     "status": cache_status,
                     "session_count": server.payload_cache.session_count,
@@ -2018,6 +2007,12 @@ class _SessionDaemonHandler(socketserver.StreamRequestHandler):
                         build_metric: max(0.0, served_at - loaded_at),
                         "total_seconds": max(0.0, served_at - overall_started_at),
                     }
+        except _DaemonRefreshFailed as failed:
+            response = {
+                "version": _SESSION_VERSION,
+                "session_id": request_session_id,
+                "error": _refresh_failed_error(failed),
+            }
         except Exception as exc:
             response = {
                 "version": _SESSION_VERSION,
@@ -2081,6 +2076,8 @@ def run_session_daemon_server(path: str = ".") -> None:
     # audit S3: generate a per-daemon token and publish it (0600) so only local clients that can
     # read daemon.json may issue commands.
     token = secrets.token_urlsafe(32)
+    if _load_or_create_user_secret() is None:
+        raise RuntimeError("cannot establish per-user daemon secret; refusing to serve")
     with _ThreadedSessionDaemon(root, (_DAEMON_HOST, 0), token=token) as server:
         # tg-ledger step-0: load any prior demand-metrics history for this root before serving,
         # so a daemon restart never clobbers the day-bucket counts a prior run already persisted.
@@ -2100,6 +2097,7 @@ def run_session_daemon_server(path: str = ".") -> None:
                 "pid": os.getpid(),
                 "started_at": datetime.now(UTC).isoformat(),
                 _DAEMON_TOKEN_FIELD: token,
+                **_attestation_fields(root, int(port)),  # HMAC proof of "this is the real daemon"
             },
         )
         stop_event = threading.Event()

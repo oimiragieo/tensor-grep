@@ -94,6 +94,28 @@ def cleanup_external_lsp_providers():
         manager.stop_all()
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_daemon_secret_dir(tmp_path_factory):
+    """Point the session daemon's per-user HMAC secret at a throwaway dir for the whole run.
+
+    The daemon ping proof (``session_daemon_trust``) reads/creates a per-user secret in the real
+    user state dir; without this every real-daemon test would write the developer's actual
+    ``~/.local/state/tensor-grep`` / ``%LOCALAPPDATA%``. Session scope + direct ``os.environ`` (not
+    ``monkeypatch``, see the fixture docstring below for why) means spawned daemon subprocesses
+    inherit the same dir as the in-process client. A test-local ``TG_DAEMON_SECRET_DIR`` set via
+    ``monkeypatch`` still overrides it for that test.
+    """
+    key = "TG_DAEMON_SECRET_DIR"
+    created = key not in os.environ
+    if created:
+        os.environ[key] = str(tmp_path_factory.mktemp("tg-secret"))
+    try:
+        yield
+    finally:
+        if created:
+            os.environ.pop(key, None)
+
+
 @pytest.fixture(autouse=True)
 def _disable_session_daemon_autostart_by_default():
     """Task #94 PR-1 trap T3: TG_SESSION_DAEMON_AUTOSTART now defaults ON (opt-out, see
