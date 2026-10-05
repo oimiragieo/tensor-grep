@@ -20,6 +20,7 @@ from tensor_grep.cli._index_lock import (
     register_after_fork_child_hook,
     release_os_file_lock,
     try_os_file_lock,
+    write_new_lock_file,
 )
 from tensor_grep.cli.session_store import _sessions_dir
 
@@ -106,10 +107,7 @@ def _legacy_try_acquire_daemon_start_lock(root: Path) -> bool:
             except OSError:
                 pass
             return False
-        try:
-            os.write(fd, f"{os.getpid()}\n".encode())
-        finally:
-            os.close(fd)
+        write_new_lock_file(fd, lock_path, f"{os.getpid()}\n".encode())
         return True
     return False
 

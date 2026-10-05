@@ -720,9 +720,11 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "internally-derived sibling path) -- not a caller-selected artifact destination. "
         "(H.5: this is the original `index_lock` body moved verbatim under the OS sidecar lock.)"
     ),
-    ("_index_lock.py", "_legacy_index_lock", "os.write"): (
-        "Writes the pid+ownership-token into the just-opened, already-confined lock fd from "
-        "the same acquisition (same function as the os.open entry directly above)."
+    ("_index_lock.py", "write_new_lock_file", "os.write"): (
+        "Writes the pid(+ownership-token) into the lock fd the caller JUST created with O_EXCL at "
+        "an already-confined internal lock path (`_legacy_index_lock` and the daemon start lock "
+        "both route through it); on failure it closes the fd and unlinks only the file this call "
+        "created (fd/path st_dev+st_ino verified), so a failed write never orphans a lock file."
     ),
     ("_index_lock.py", "try_os_file_lock", "os.open"): (
         "Sidecar lock-handle open on a fixed internal path (`_os_lock_path_for(index_path)` or "
@@ -837,11 +839,6 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "destination) with `O_CREAT|O_EXCL` -- the exact same shape as the already-sanctioned "
         "`_index_lock.py::_legacy_index_lock` entry above. (H.5: the original acquire body moved "
         "verbatim under the OS sidecar lock.)"
-    ),
-    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.write"): (
-        "Writes only the acquiring pid into the just-opened, already-confined lock fd from the "
-        "same acquisition -- same pattern as `_index_lock.py::_legacy_index_lock`'s os.write "
-        "entry above."
     ),
     # --- H2 (backlog closeout, docs/BACKLOG.md): individually reviewed against the real source,
     # classifying the 17-line-item / 16-identity population the task named. ---
@@ -1582,7 +1579,7 @@ _EXPECTED_SANCTIONED = {
     ("_index_lock.py", "replace_with_retry", "os.replace"),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"),
     ("_index_lock.py", "_legacy_index_lock", "os.open"),
-    ("_index_lock.py", "_legacy_index_lock", "os.write"),
+    ("_index_lock.py", "write_new_lock_file", "os.write"),
     ("_index_lock.py", "try_os_file_lock", "os.open"),
     ("windows_launcher.py", "_write_windows_exe_bridge_marker", "Path.write_text"),
     ("doctor_report.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"),
@@ -1600,7 +1597,6 @@ _EXPECTED_SANCTIONED = {
     ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"),
     ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"),
     ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.open"),
-    ("session_daemon_start_lock.py", "_legacy_try_acquire_daemon_start_lock", "os.write"),
     # --- H2 (backlog closeout) ---
     ("ast_workflows.py", "test_command", "Path.write_text"),
     ("lsp_provider_setup.py", "_download", "os.open"),

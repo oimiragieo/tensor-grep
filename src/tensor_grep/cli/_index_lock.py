@@ -542,6 +542,34 @@ def _legacy_release_allowed(owner_pid: int) -> bool:
     return os.getpid() == owner_pid
 
 
+def write_new_lock_file(fd: int, lock_path: Path, content: bytes) -> None:
+    """Write ``content`` into the lock file THIS call just created (``fd``) and close ``fd``.
+
+    On ANY failure (``OSError`` such as ENOSPC, or a ``BaseException`` like KeyboardInterrupt) the
+    descriptor is closed and the file this call created is unlinked -- but only after the fd and the
+    path are verified to be the same file (``st_dev``/``st_ino``), so another holder's lock is never
+    deleted -- and the primary error propagates. Otherwise a failed write would leave an empty lock
+    file behind that blocks every later acquisition until it goes stale."""
+    try:
+        os.write(fd, content)
+    except BaseException:
+        try:
+            held, current = os.fstat(fd), os.stat(lock_path)
+            ours = (held.st_dev, held.st_ino) == (current.st_dev, current.st_ino)
+        except OSError:
+            ours = False
+        try:
+            os.close(fd)
+        finally:
+            if ours:
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    pass
+        raise
+    os.close(fd)
+
+
 @contextmanager
 def _legacy_index_lock(
     index_path: Path,
@@ -557,6 +585,18 @@ def _legacy_index_lock(
     lock_path = _lock_path_for(index_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_s
+    # audit #14: a uuid4 ownership token (not just the pid, which can collide across a
+    # crash+relaunch) identifies THIS acquisition. Written alongside the pid so a stale
+    # legacy/pid-only lock (no second line) is still tolerated by `_token_for_lock`. Everything
+    # that can raise is computed BEFORE the lock file exists, so nothing can be created and then
+    # orphaned between creation and the write below.
+    owner_pid = os.getpid()
+    token = uuid4().hex
+    hb_interval = (
+        heartbeat_interval_s
+        if heartbeat_interval_s is not None
+        else _default_heartbeat_interval_s(stale_after_s, poll_interval_s)
+    )
     fd: int | None = None
     while True:
         try:
@@ -585,21 +625,8 @@ def _legacy_index_lock(
                 f"could not acquire {lock_path} within {timeout_s}s"
             ) from None
         time.sleep(poll_interval_s)
-    # audit #14: a uuid4 ownership token (not just the pid, which can collide across a
-    # crash+relaunch) identifies THIS acquisition. Written alongside the pid so a stale
-    # legacy/pid-only lock (no second line) is still tolerated by `_token_for_lock`.
-    owner_pid = os.getpid()
-    token = uuid4().hex
-    hb_interval = (
-        heartbeat_interval_s
-        if heartbeat_interval_s is not None
-        else _default_heartbeat_interval_s(stale_after_s, poll_interval_s)
-    )
     try:
-        try:
-            os.write(fd, f"{os.getpid()}\n{token}\n".encode())
-        finally:
-            os.close(fd)
+        write_new_lock_file(fd, lock_path, f"{os.getpid()}\n{token}\n".encode())
         stop_heartbeat = threading.Event()
         heartbeat = threading.Thread(
             target=_heartbeat_loop,
@@ -680,28 +707,30 @@ def try_os_file_lock(lock_path: Path) -> int | None:
     file that was locked (identity re-check)."""
     with _REGISTRY_LOCK:
         fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        handed_off = False
         try:
-            if sys.platform == "win32":
-                import msvcrt
+            try:
+                if sys.platform == "win32":
+                    import msvcrt
 
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                else:
+                    import fcntl
 
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            os.close(fd)
-            return None
-        if not _lock_identity_matches(fd, lock_path):
-            _unlock_and_close(fd)  # never re-enter the (non-reentrant) registry lock here
-            return None
-        try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                return None  # contended: the finally below closes the descriptor
+            if not _lock_identity_matches(fd, lock_path):
+                return None
             _register_held_fd(fd)
-        except BaseException:
-            _unlock_and_close(fd)  # a failed registration must not leak the held lock
-            raise
-        return fd
+            handed_off = True  # ownership transfers ONLY on a successful return
+            return fd
+        finally:
+            if not handed_off:
+                # Any early return or ANY exception (KeyboardInterrupt included) between the open
+                # and the hand-off: unlock + close here. Never re-enter the registry lock.
+                _unlock_and_close(fd)
 
 
 def release_os_file_lock(fd: int) -> None:
