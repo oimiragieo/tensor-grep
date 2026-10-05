@@ -173,13 +173,14 @@ PR -> CI green -> merge (burst-then-hold) -> verify on merged main -> update thi
 
 ## Wave status
 
-Status as of 2026-10-04 (closure phase: each PR got a final Codex/Opus gate that blocked only on a
+Status as of 2026-10-05. Closure phase: each PR got a final Codex/Opus gate that blocked only on a
 reproduced regression versus main or a violation of the PR's own contract; everything else became a
-"Follow-ups (wave 3)" entry in that PR's body, each with an acceptance test).
+"Follow-ups (wave 3)" entry in that PR's body, each with an acceptance test.
 
 | Wave | Scope | Plan | Thinktank | PRs | Merged |
 |---|---|---|---|---|---|
-| W1 | Parts A-E + doctor LSP hang | `docs/plans/2026-10-03-bughunt-wave1.md` (`C47E03AE`) | approved by adjudication (2026-10-03) | #1194 A, #1195 D, #1196 E, #1197 B, #1198 C, #1199 doctor | #1198 (v1.123.13); #1194, #1199, #1195 (v1.123.14); #1196 (v1.123.15); **#1197 open** (ancestor-trust fix for the CI runners' home layout) |
-| W2a | F front door, G1 silent drops, G2 repo-map | `docs/superpowers/plans/2026-10-03-bughunt-wave2a.md` (`3D1EA3F2`; F.1-F.3 as an executed prototype) | APPROVED_DEGRADED, rounds 43+44 (4-seat roster claude/codex/droid_glm/agy) | #1201 F, #1202 G2, #1205 G1 | #1202 (v1.123.14); #1201 (v1.123.15); **#1205 open** (CI green; fixes a main bug: render now stamps the deadline partial_reason; MCP contract 1.11.0) |
-| W2b | H CLI state, I native core, K1 scan/lsp/doctor, K2 MCP validation | `docs/superpowers/plans/2026-10-03-bughunt-wave2b.md` (`5660ED80`) | APPROVED_DEGRADED, rounds 32+33 | #1200 I, #1203 K2, #1204 K1; H not built | #1200 (v1.123.14); #1203 (v1.123.15, MCP contract 1.10.0); **#1204 open** (cleared; unreadable-file disclosure fix, CI pending); **H not started** (depends on #1197) |
+| W1 | Parts A-E + doctor LSP hang | `docs/plans/2026-10-03-bughunt-wave1.md` (`C47E03AE`) | approved by adjudication (2026-10-03) | #1194 A, #1195 D, #1196 E, #1197 B, #1198 C, #1199 doctor | all merged: #1198 (v1.123.13); #1194, #1199, #1195 (v1.123.14); #1196 (v1.123.15); #1197 (v1.123.17) |
+| W2a | F front door, G1 silent drops, G2 repo-map | `docs/superpowers/plans/2026-10-03-bughunt-wave2a.md` (`3D1EA3F2`; F.1-F.3 as an executed prototype) | APPROVED_DEGRADED, rounds 43+44 (4-seat roster claude/codex/droid_glm/agy) | #1201 F, #1202 G2, #1205 G1 | all merged: #1202 (v1.123.14); #1201 (v1.123.15); #1205 (v1.123.16, MCP contract 1.11.0) |
+| W2b | H CLI state, I native core, K1 scan/lsp/doctor, K2 MCP validation | `docs/superpowers/plans/2026-10-03-bughunt-wave2b.md` (`5660ED80`) | APPROVED_DEGRADED, rounds 32+33 | #1200 I, #1203 K2, #1204 K1, #1207 H | #1200 (v1.123.14); #1203 (v1.123.15, MCP contract 1.10.0); #1204 (v1.123.18); **#1207 H open** (five Codex rounds; lock acquisition redesigned to temp-file + `os.link` publish; round 5's one finding, a pre-existing release-path token-read edge, ruled non-blocking and tracked in the PR body) |
+| Found during closeout | front-door delegation loop (P0); host-dependent tests | - | - | #1208, #1209 | **#1208 open** (`TG_REEXEC_GUARD` honoured by the full CLI + `TG_FRONTDOOR_HOPS` depth cap on both doors); **#1209 open** (tests only) |
 | W3 | enhancements (abstention, tg trace, code2test, repair-env --check) + P3 + every PR's "Follow-ups (wave 3)" list | `C:\tmp\tensor-grep\bughunt-20261003\plan3-part{L,M}.md` (drafts) | not started | - | - |

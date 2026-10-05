@@ -1,25 +1,22 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-10-03)
+## Live reconciliation (2026-10-05)
 
-At `origin/main` `cc8bbc9`, `pyproject.toml` identifies v1.123.12 (release commit `faea630`; PyPI
-serves 1.123.12; every publish job succeeded). Releases since the prior stamp (v1.123.10):
-v1.123.11 (`2f8bb9a`, `serve_cache.refresh_trigger`) and v1.123.12 (`faea630`, MCP tool descriptions).
-Merged since, from the 2026-10-03 prompt audit: #1187 (`7527e8f`, instruction-file and skill fixes;
-one burst-then-hold merge rule), #1185 (`c366da3`, audit-fix-loop verdict holes, skill-audit ledger
-script), #1186 (`33faafd`, MCP descriptions + legacy-tool deprecation notes; published wheel's stdio
-tools/list dogfooded 12/12, 9/12 fail on 1.123.11 as the control), #1188 (`cc8bbc9`, AGENTS.md laws
-lead with the current rule; receipts in `docs/agent-laws-receipts.md`). Earlier work since v1.123.1
-(Wave 3 handler census 95 -> 0, chain integrity, silent-degradation disclosures) is in `backlog.md`.
-No canonical row's Status changed. The open-PR set is empty (queried 2026-10-03). Read CI verdicts
-per SHA (`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not treat the
-dated open-PR tables below as live.
+At `origin/main` `6862df3`, `pyproject.toml` identifies v1.123.18 (PyPI serves 1.123.18).
+Releases since the prior stamp (v1.123.12) all come from the 2026-10-03 bug hunt (per-PR receipts:
+`docs/audits/2026-10-03-bughunt-tracker.md`, Wave status): v1.123.13 (`05bfdb6`), v1.123.14
+(`700d3d1`; first tag push `161fd53` failed and self-healed), v1.123.15 (`14d8596`), v1.123.16
+(`f9e5167`), v1.123.17 (`9d1a1a0`), v1.123.18 (`6862df3`) -- PRs #1194-#1205, plus docs-only #1206.
+None owns a canonical row, so no canonical row's Status changed. Open PRs (queried 2026-10-05):
+#1207 (wave 2b Part H), #1208 (P0: native and Python front doors re-delegated `search -s|-N --json`
+to each other without bound), #1209 (host-dependent tests made hermetic). The prior 2026-10-03
+stamp covered #1185-#1188. Read CI verdicts per SHA
+(`gh api "repos/oimiragieo/tensor-grep/actions/runs?head_sha=<sha>"`); do not treat the dated
+open-PR tables below as live.
 
 The canonical index below contains **44 rows: 29 unfinished** (9 READY, 10 BLOCKED,
 4 CEO_GATED, 6 DEMAND_GATED, 0 IN_FLIGHT) and 15 terminal (9 SHIPPED, 6 RETIRED), counted
-from its `Status:` fields. Six former IN_FLIGHT rows had cited already-merged PRs;
-they now retain those receipts as history while their remaining scope is READY or
-dependency-blocked. No canonical row claims PR #1166 owns its product scope.
+from its `Status:` fields. No canonical row claims PR #1166 owns its product scope.
 
 ## Audit planning update (2026-09-07; historical)
 
@@ -226,7 +223,7 @@ Canonical status index version: 2026-09-07.1
 
 ## Live campaign snapshot
 
-Last reconciled: **2026-10-03** (stamp `post-**v1.123.12**`; live release/PR census and canonical
+Last reconciled: **2026-10-05** (stamp `post-**v1.123.18**`; live release/PR census and canonical
 status counts are recorded at the top of this file. This does not re-audit every row's
 underlying product behavior.)
 
