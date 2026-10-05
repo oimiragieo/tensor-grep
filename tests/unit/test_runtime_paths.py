@@ -579,11 +579,16 @@ def test_bootstrap_resolution_parity(tmp_path):
         text=True,
     )
 
-    # Because it uses the shared helper, it should fail with a FileNotFoundError,
-    # NOT silently fall back and successfully run a search.
-    assert result.returncode != 0
-    assert "FileNotFoundError" in result.stderr
+    # Because it uses the shared helper, a bad override is an ERROR, NOT a silent fallback to a
+    # successful search. Front-door contract (wave-2a F.5): a clean exit 2 with an ASCII message,
+    # never a raw traceback (exit 1 would read as "no match").
+    assert result.returncode == 2
     assert "Configured binary" in result.stderr
+    assert "missing_binary" in result.stderr
+    assert "TG_NATIVE_TG_BINARY" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert "FileNotFoundError" not in result.stderr
+    assert result.stderr.isascii()
 
 
 def test_mcp_sidecar_env_propagation():

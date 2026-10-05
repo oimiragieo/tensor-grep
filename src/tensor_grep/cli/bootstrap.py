@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import time
@@ -11,9 +10,12 @@ from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
 from tensor_grep.cli.commands import PYTHON_FULL_HELP_COMMANDS as _PYTHON_FULL_HELP_COMMANDS
 from tensor_grep.cli.runtime_paths import (
     env_flag_enabled,
-    resolve_native_tg_binary,
     resolve_ripgrep_binary,
 )
+
+# Explicit re-export: bootstrap_search_guards.resolve_native_or_exit reads
+# `bootstrap.resolve_native_tg_binary`, and ~90 tests monkeypatch this name.
+from tensor_grep.cli.runtime_paths import resolve_native_tg_binary as resolve_native_tg_binary
 from tensor_grep.cli.subprocess_policy import run_subprocess as run_subprocess
 
 # perf/#48: `tensor_grep.io.directory_scanner` is deliberately NOT imported at module level.
@@ -308,10 +310,6 @@ _SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS = {
     "--max-depth",
     "--maxdepth",
 }
-_SEARCH_UNCONDITIONAL_SCAN_BOUND_PREFIXES = (
-    "--max-depth=",
-    "--maxdepth=",
-)
 _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS = {
     "-g",
     "-t",
@@ -321,12 +319,6 @@ _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS = {
     "--type",
     "--type-not",
 }
-_SEARCH_PATH_CONDITIONAL_SCAN_BOUND_PREFIXES = (
-    "--glob=",
-    "--iglob=",
-    "--type=",
-    "--type-not=",
-)
 _SEARCH_NO_IGNORE_FLAGS = {
     "--no-ignore",
     "--no-ignore-dot",
@@ -337,6 +329,13 @@ _SEARCH_NO_IGNORE_FLAGS = {
     "--no-ignore-vcs",
 }
 _SEARCH_HIDDEN_FLAGS = {"-.", "--hidden"}
+
+
+def _flag_present(search_args: list[str], names: set[str]) -> bool:
+    """(P) presence of a flag in RAW argv: cluster-, value- and `--`-aware (guards module)."""
+    from tensor_grep.cli.bootstrap_search_guards import flag_present
+
+    return flag_present(search_args, names)
 
 
 def _prefer_rust_first_search() -> bool:
@@ -434,9 +433,12 @@ def _top_level_command_refusal(argv: list[str]) -> tuple[str, list[str]] | None:
     from tensor_grep.cli.commands import RESERVED_TOP_LEVEL_COMMANDS
 
     rest = argv[1:]
+    # (P) value-aware: `tg PATTERN -e -h` searches for `-h` (rg: `-h` is -e's value).
     if any(token.startswith("-") for token in rest):
-        if first_arg in RESERVED_TOP_LEVEL_COMMANDS or any(
-            token in {"--help", "-h"} for token in rest
+        from tensor_grep.cli.bootstrap_search_guards import has_any_option
+
+        if has_any_option(rest) and (
+            first_arg in RESERVED_TOP_LEVEL_COMMANDS or _flag_present(rest, {"--help", "-h"})
         ):
             return (first_arg, _nearest_commands(first_arg))
     return None
@@ -478,15 +480,15 @@ def _is_public_help_invocation(argv: list[str]) -> bool:
     return False
 
 
-def _requires_full_cli(search_args: list[str]) -> bool:
+def _requires_full_cli(search_args: list[str], *, ignore_json: bool = False) -> bool:
     if not search_args:
         return True
+    # (P) help/completion only count in option position: `-e -h` and `-- -h` search for `-h`.
+    help_names = {"--help", "-h", "--show-completion", "--install-completion"}
+    if _flag_present(search_args, help_names):
+        return True
     for arg in search_args:
-        if arg in {"--help", "-h"}:
-            return True
-        if arg in {"--show-completion", "--install-completion"}:
-            return True
-        if arg in _TG_ONLY_SEARCH_FLAGS:
+        if arg in _TG_ONLY_SEARCH_FLAGS and not (ignore_json and arg == "--json"):
             return True
         if arg.startswith(_TG_ONLY_SEARCH_FLAG_PREFIXES):
             return True
@@ -519,38 +521,23 @@ def _requires_full_cli_ignoring_rg_json(search_args: list[str]) -> bool:
     tensor-grep aggregate-JSON flag. Any OTHER TG-only flag riding along (``--cpu``,
     ``--force-cpu``, ``--rank``, ``--gpu-device-ids``, ...) must still force the full CLI,
     since real ``rg`` rejects those flags outright and dies (audit #8)."""
-    return _requires_full_cli([arg for arg in search_args if arg != "--json"])
+    return _requires_full_cli(search_args, ignore_json=True)
 
 
 def _strip_noop_rg_format(search_args: list[str]) -> list[str] | None:
-    stripped: list[str] = []
-    index = 0
-    while index < len(search_args):
-        arg = search_args[index]
-        if arg == "--format":
-            index += 1
-            if index >= len(search_args) or search_args[index] != "rg":
-                return None
-        elif arg.startswith("--format="):
-            if arg.split("=", 1)[1] != "rg":
-                return None
-        else:
-            stripped.append(arg)
-        index += 1
-    return stripped
+    from tensor_grep.cli.bootstrap_search_guards import strip_noop_rg_format
+
+    return strip_noop_rg_format(search_args)  # option-position `--format rg` only
 
 
 def _explicit_rg_format_requested(search_args: list[str]) -> bool:
-    for index, arg in enumerate(search_args):
-        if arg == "--format":
-            return index + 1 < len(search_args) and search_args[index + 1] == "rg"
-        if arg == "--format=rg":
-            return True
-    return False
+    from tensor_grep.cli.bootstrap_search_guards import explicit_rg_format
+
+    return explicit_rg_format(search_args)
 
 
 def _explicit_json_requested(search_args: list[str]) -> bool:
-    return "--json" in search_args
+    return _flag_present(search_args, {"--json"})
 
 
 # Render-only flags the aggregate plain-``--json`` path cannot honor. Mirrors
@@ -576,27 +563,20 @@ def _json_aggregate_blocks_passthrough(search_args: list[str]) -> bool:
     passthrough — the native front door deadlocks/fork-bombs on e.g. ``--json -b``.
     Route to the full Python CLI, which rejects the combo with a structured exit 2
     (audit C3)."""
-    if "--json" not in search_args or _explicit_rg_format_requested(search_args):
+    if not _explicit_json_requested(search_args) or _explicit_rg_format_requested(search_args):
         return False
-    for token in search_args:
-        if token == "--":
-            break
-        base = token.split("=", 1)[0]
-        if any(base in group for group in _JSON_INCOMPATIBLE_RENDER_FLAGS):
-            return True
-    return False
+    # (P) cluster-, value- and `--`-aware: `-nb` is `-b`; `-e -b` and `-- -b` are patterns.
+    return any(_flag_present(search_args, set(g)) for g in _JSON_INCOMPATIBLE_RENDER_FLAGS)
 
 
 def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
     if not search_args:
         return False
 
-    supported_trigger = any(
-        arg in {"--cpu", "--force-cpu", "--json", "--ndjson", "--gpu-device-ids"}
-        or arg.startswith("--gpu-device-ids=")
-        for arg in search_args
-    )
-    if not supported_trigger:
+    # (P) `-e --cpu pat` searches for the pattern `--cpu`; it is not a delegation trigger.
+    if not _flag_present(
+        search_args, {"--cpu", "--force-cpu", "--json", "--ndjson", "--gpu-device-ids"}
+    ):
         return False
 
     unsupported_flags = {
@@ -651,19 +631,9 @@ def _can_delegate_to_native_tg_search(search_args: list[str]) -> bool:
         # native binary's fallback already provides correctly, so it keeps delegating.
         "--count-matches",
     }
-    unsupported_prefixes = ("--format=", "--lang=", "--replace=", "--regexp=", "--file=")
-    if any(arg in unsupported_flags or arg.startswith(unsupported_prefixes) for arg in search_args):
-        return False
-    # Attached short-flag value form (`-efoo` == `-e foo`, `-fpats.txt` == `-f pats.txt`).
-    # The bare `-e`/`-f` tokens are already covered by `unsupported_flags` above; `-F`
-    # (fixed-strings, uppercase) and `--file`/`--regexp=...` (double-dash) are untouched by
-    # this lowercase single-dash prefix check.
-    if any(
-        arg.startswith(("-e", "-f")) and not arg.startswith("--") and arg not in {"-e", "-f"}
-        for arg in search_args
-    ):
-        return False
-    return True
+    # (P) one cluster-aware check replaces the exact-token, `--x=` prefix and `-e<val>`/`-f<val>`
+    # prefix checks: `-efoo`, `-ie foo`, `--format=rg` all name a flag in option position.
+    return not _flag_present(search_args, unsupported_flags)
 
 
 def _search_args_include_explicit_path(search_args: list[str]) -> bool:
@@ -673,20 +643,7 @@ def _search_args_include_explicit_path(search_args: list[str]) -> bool:
     their attached values are skipped with the same helpers the dispatch logic already uses, so a
     value like `-g *.py` cannot be mistaken for a path.
     """
-    positionals = 0
-    skip_next = False
-    for arg in search_args:
-        if skip_next:
-            skip_next = False
-            continue
-        if arg.startswith("-") and arg != "-":
-            if arg in _SEARCH_FLAGS_WITH_VALUES:
-                skip_next = True
-            continue
-        positionals += 1
-        if positionals > 1:
-            return True
-    return False
+    return not _search_args_paths_defaulted(search_args)
 
 
 def _defaulted_scope_note() -> str:
@@ -735,8 +692,10 @@ def _write_defaulted_scope_note() -> None:
 
 
 def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
-    for arg in search_args:
-        if not arg or arg == "-" or arg.startswith("-"):
+    # PATH positionals from the tokenizer, not raw argv: a flag VALUE (`-g .claude`) or the pattern
+    # is not a root (council wave-2a r40), and a genuine PATH still is.
+    for arg in _search_path_args_raw(search_args):
+        if not arg or arg == "-":
             continue
         normalized = arg.replace("\\", "/").rstrip("/").lower()
         if normalized in _GUARDED_BROAD_SEARCH_ROOTS:
@@ -744,14 +703,6 @@ def _search_args_include_guarded_broad_root(search_args: list[str]) -> bool:
         if any(normalized.endswith(f"/{root}") for root in _GUARDED_BROAD_SEARCH_ROOTS):
             return True
     return False
-
-
-def _is_short_flag_with_attached_value(arg: str) -> bool:
-    if not arg.startswith("-") or arg.startswith("--"):
-        return False
-    return any(
-        arg.startswith(flag) and len(arg) > len(flag) for flag in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS
-    )
 
 
 def _search_args_include_generated_scan_bound(
@@ -766,23 +717,12 @@ def _search_args_include_generated_scan_bound(
     ``paths or ["."]`` fallback collapses "no path" and an explicit "." into the same
     value and so cannot make this distinction.
     """
-    for arg in search_args:
-        if arg in _SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS:
-            return True
-        if arg.startswith(_SEARCH_UNCONDITIONAL_SCAN_BOUND_PREFIXES):
-            return True
-        if not arg.startswith("--") and arg.startswith("-d") and len(arg) > len("-d"):
-            return True
-        if not paths_defaulted:
-            if arg in _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS:
-                return True
-            if arg.startswith(_SEARCH_PATH_CONDITIONAL_SCAN_BOUND_PREFIXES):
-                return True
-            if not arg.startswith("--") and any(
-                arg.startswith(flag) and len(arg) > len(flag) for flag in ("-g", "-t", "-T")
-            ):
-                return True
-    return False
+    # Cluster- and value-aware (F.3): `-id1`/`-ig '*.py'` bound; the PATTERN in `-e -d1` does not.
+    if _flag_present(search_args, _SEARCH_UNCONDITIONAL_SCAN_BOUND_FLAGS):
+        return True
+    return not paths_defaulted and _flag_present(
+        search_args, _SEARCH_PATH_CONDITIONAL_SCAN_BOUND_FLAGS
+    )
 
 
 # Task #269 independent-gate finding: the naive `arg.startswith("-u")` this replaced only
@@ -800,176 +740,35 @@ def _search_args_include_generated_scan_bound(
 # out of parity with each other -- the exact "one rule, two implementations" trap this whole PR
 # exists to close for `.gitignore` honoring.
 def _search_args_request_unrestricted(search_args: list[str]) -> bool:
-    for arg in search_args:
-        if arg == "--unrestricted":
-            return True
-        if not arg.startswith("-") or arg.startswith("--"):
-            continue
-        for ch in arg[1:]:
-            if ch == "u":
-                return True
-            if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
-                break
-    return False
+    return _flag_present(search_args, {"-u", "--unrestricted"})  # cluster/value/`--`-aware
 
 
 def _search_args_request_unrestricted_generated_scan(search_args: list[str]) -> bool:
-    files_mode = "--files" in search_args
-    if files_mode and any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args):
+    # RAW argv to every call (council r19/r36): one parse per predicate, never a filtered copy.
+    if _flag_present(search_args, {"--files"}) and _flag_present(search_args, _SEARCH_HIDDEN_FLAGS):
         return True
-    if any(arg in _SEARCH_NO_IGNORE_FLAGS for arg in search_args):
+    if _flag_present(search_args, _SEARCH_NO_IGNORE_FLAGS):
         return True
     return _search_args_request_unrestricted(search_args)
 
 
-def _attached_cluster_value_offset(arg: str) -> int | None:
-    """For a bundled/clustered short-flag token (`-ieneedle`, `-tpy`, a plain boolean cluster
-    like `-in`, ...), return the index INTO `arg` of the first ATTACHED-VALUE short-flag
-    character in the cluster, or `None` if the token carries no attached-value flag at all (a
-    plain boolean cluster, or not a dash-prefixed multi-char token to begin with). Shared by
-    `_search_args_contains_pattern_source_flag`'s pre-pass and `_search_path_args_raw`'s
-    extraction walk below so the two passes cannot silently diverge on which characters count
-    (task #269 independent-gate BLOCKING-1's own root cause was two separate passes computing
-    the same thing differently)."""
-    if arg.startswith("--") or len(arg) <= 2 or not arg.startswith("-"):
-        return None
-    for offset, ch in enumerate(arg[1:], start=1):
-        if f"-{ch}" in _SEARCH_ATTACHED_VALUE_SHORT_FLAGS:
-            return offset
-    return None
-
-
 def _search_args_contains_pattern_source_flag(search_args: list[str]) -> bool:
-    """Pre-pass: does ANY pattern-source flag (`-e`/`--regexp`/`-f`/`--file`, in every accepted
-    spelling -- exact, `--flag=value`, attached short (`-eVAL`), and mid-bundle attached short
-    (`-ieVAL`)) appear anywhere in `search_args` BEFORE a `--` end-of-options sentinel?
-
-    Task #269 independent-gate BLOCKING-1: rg's own grammar is ORDER-INDEPENDENT -- a pattern
-    can be supplied via a flag either before OR after the positional PATH
-    (`rg sub -eneedle` == `rg -eneedle sub`) -- but `_search_path_args_raw`'s extraction walk
-    is a single left-to-right pass whose `regexp_pattern_seen` state used to start `False` and
-    only flip `True` at the MOMENT it encountered the flag. A PATH positional occurring BEFORE
-    that flag in argv (`tg search otherdir -eneedle`) was therefore silently misread as the
-    bare pattern under the "first non-flag token is the pattern" rule, `_search_path_args_raw`
-    returned the wrong (empty) root list, and `_run_rg_passthrough` injected the WRONG root's
-    ignore file -- reproducing the #264 signature (`--json` landed on the correct engine,
-    plain text did not) A FOURTH time, inside this same PR. This pre-pass supplies the correct
-    STARTING value for `regexp_pattern_seen` instead, so a PATH appearing anywhere relative to
-    the flag is handled identically.
-
-    Deliberately mirrors ONLY the flag-classification portion of `_search_path_args_raw`'s
-    walk (not positional extraction, which this function does not need) -- and shares
-    `_attached_cluster_value_offset` with it rather than re-deriving the same cluster logic a
-    second time, so the two passes cannot drift apart on which argv shapes count.
-    """
-    skip_next = False
-    for arg in search_args:
-        if skip_next:
-            skip_next = False
-            continue
-        if arg == "--":
-            break
-        if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
-            return True
-        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
-            return True
-        offset = _attached_cluster_value_offset(arg)
-        if offset is not None:
-            if arg[offset] in ("e", "f"):
-                return True
-            # Independent-gate re-gate BLOCKING-2: a non-pattern-source attached-value flag
-            # (e.g. `-tpy`, `-im5`) is only self-contained when its value is ATTACHED within
-            # the same token. When the value char is the token's LAST character (`-ir`, `-ig`
-            # -- a bundled `-i` plus `-r`/`-g` with the value in the NEXT argv token, `-ir
-            # needle`), that next token is the flag's VALUE, not a genuine positional -- it
-            # must be skipped here too, exactly like the extraction walk below already does,
-            # or a value that happens to look like a pattern-source flag gets misclassified.
-            # The prior version of this pre-pass shared `_attached_cluster_value_offset` (the
-            # OFFSET) with the extraction walk but let each pass decide `skip_next`
-            # independently -- the offset was unified, the CONSUMPTION was not, and that
-            # asymmetry (`-r -e needle` correctly not a pattern source; `-ir -e needle`
-            # wrongly WAS, because the un-skipped "-e" got read as its own flag) is exactly
-            # the "one rule, two implementations" trap this whole PR exists to close.
-            if offset == len(arg) - 1:
-                skip_next = True
-            continue
-        if arg in _SEARCH_FLAGS_WITH_VALUES:
-            skip_next = True
-            continue
-        if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
-            continue
-        # A bare boolean flag (no value) or a genuine positional needs no further handling
-        # here -- this pre-pass only answers "does a pattern-source flag appear anywhere
-        # before `--`", not where positionals fall; that is the extraction walk's job below.
-    return False
+    """Is ANY pattern-source flag (`-e`/`--regexp`/`-f`/`--file`; separated, `=`, attached `-eVAL`,
+    mid-cluster `-ieVAL`) in OPTION position before the real `--`? A pre-pass, because rg's grammar
+    is order-independent (`rg sub -eneedle` == `rg -eneedle sub`, task #269 BLOCKING-1). (P) A
+    presence check, so it goes through `flag_present`: `-r -e needle` and `-ir -e needle` consume
+    `-e` as `-r`'s value, and `-e --` does not end options."""
+    return _flag_present(search_args, _SEARCH_PATTERN_SOURCE_FLAGS)
 
 
 def _search_path_args_raw(search_args: list[str]) -> list[str]:
-    """Same walk as ``_search_path_args`` but WITHOUT its ``paths or ["."]`` fallback --
-    an empty return means the caller supplied no explicit PATH positional at all
-    (``paths_defaulted``), which the fallback-collapsed public helper cannot
-    distinguish from an explicit ``.`` (both become ``["."]`` there).
-    ``_search_args_paths_defaulted`` below is the only reason this is split out; keep
-    both derived from one walk so they can never drift out of sync with each other.
+    """PATH positionals WITHOUT the ``["."]`` fallback (empty == the scope defaulted to the cwd, see
+    ``_search_args_paths_defaulted``). Parsed by the guards module's single rg grammar, the same one
+    every other scan uses, so ``-e --``, ``-ie --``, a bare ``-`` and ``--files`` cannot drift
+    between walkers. A bare ``-`` is a path (stdin) after the pattern, or the pattern itself."""
+    from tensor_grep.cli.bootstrap_search_guards import path_args
 
-    Task #269 independent-gate BLOCKING-1: `regexp_pattern_seen` is seeded from
-    `_search_args_contains_pattern_source_flag`'s pre-pass (a TWO-pass walk) rather than
-    starting `False` and flipping mid-walk -- see that function's docstring for why a
-    single-pass walk silently misread a PATH positional occurring BEFORE the pattern-source
-    flag in argv as the bare pattern instead."""
-    paths: list[str] = []
-    bare_pattern_seen = False
-    regexp_pattern_seen = _search_args_contains_pattern_source_flag(search_args)
-    skip_next = False
-    parse_options = True
-    for index, arg in enumerate(search_args):
-        if skip_next:
-            skip_next = False
-            continue
-        if parse_options and arg == "--":
-            parse_options = False
-            continue
-        if parse_options:
-            if arg in _SEARCH_PATTERN_SOURCE_FLAGS:
-                regexp_pattern_seen = True
-                skip_next = index + 1 < len(search_args)
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_SOURCE_FLAGS):
-                regexp_pattern_seen = True
-                continue
-            # Bundled/clustered short-flag walk (mirrors `_requires_full_cli`'s bundled scan
-            # and `_search_args_request_unrestricted`'s cluster walk, both above in this same
-            # module -- cited by NAME rather than a line range on purpose, per the NB-2 lesson
-            # from this task's independent gate: a raw line-number citation drifted stale
-            # within the SAME commit that added it): scan past leading BOOLEAN short flags
-            # (e.g. `-i`, `-n`) until the first ATTACHED-VALUE short flag, which swallows the
-            # remainder of the token -- or, if it is the token's LAST character, the NEXT argv
-            # token -- as its own value. Shares `_attached_cluster_value_offset` with the
-            # pre-pass above rather than re-deriving the same cluster logic a second time.
-            offset = _attached_cluster_value_offset(arg)
-            if offset is not None:
-                ch = arg[offset]
-                if ch in ("e", "f"):
-                    regexp_pattern_seen = True
-                if offset == len(arg) - 1:
-                    # The attached-value flag is the LAST character of this token -- its
-                    # value is the NEXT argv token, not attached (`-ie needle` / `-im 5`).
-                    skip_next = index + 1 < len(search_args)
-                continue
-            if arg in _SEARCH_FLAGS_WITH_VALUES:
-                skip_next = index + 1 < len(search_args)
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
-                continue
-            if _is_short_flag_with_attached_value(arg):
-                continue
-            if arg.startswith("-"):
-                continue
-        if not regexp_pattern_seen and not bare_pattern_seen:
-            bare_pattern_seen = True
-            continue
-        paths.append(arg)
-    return paths
+    return path_args(search_args)
 
 
 def _search_path_args(search_args: list[str]) -> list[str]:
@@ -1144,14 +943,14 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
     )
 
     probe_config = SearchConfig(
-        hidden=any(arg in _SEARCH_HIDDEN_FLAGS for arg in search_args),
-        no_ignore="--no-ignore" in search_args,
-        no_ignore_dot="--no-ignore-dot" in search_args,
-        no_ignore_exclude="--no-ignore-exclude" in search_args,
-        no_ignore_files="--no-ignore-files" in search_args,
-        no_ignore_global="--no-ignore-global" in search_args,
-        no_ignore_parent="--no-ignore-parent" in search_args,
-        no_ignore_vcs="--no-ignore-vcs" in search_args,
+        hidden=_flag_present(search_args, _SEARCH_HIDDEN_FLAGS),
+        no_ignore=_flag_present(search_args, {"--no-ignore"}),
+        no_ignore_dot=_flag_present(search_args, {"--no-ignore-dot"}),
+        no_ignore_exclude=_flag_present(search_args, {"--no-ignore-exclude"}),
+        no_ignore_files=_flag_present(search_args, {"--no-ignore-files"}),
+        no_ignore_global=_flag_present(search_args, {"--no-ignore-global"}),
+        no_ignore_parent=_flag_present(search_args, {"--no-ignore-parent"}),
+        no_ignore_vcs=_flag_present(search_args, {"--no-ignore-vcs"}),
     )
     count = 0
     for raw_path in paths:
@@ -1166,7 +965,7 @@ def _search_paths_include_oversized_implicit_root(paths: list[str], search_args:
 
 
 def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
-    if "--allow-broad-generated-scan" in search_args:
+    if _flag_present(search_args, {"--allow-broad-generated-scan"}):  # (P) not as a pattern/value
         return False
     paths_defaulted = _search_args_paths_defaulted(search_args)
     if _search_args_include_generated_scan_bound(search_args, paths_defaulted=paths_defaulted):
@@ -1184,75 +983,26 @@ def _search_args_include_unbounded_broad_scan(search_args: list[str]) -> bool:
 
 
 def _regex_patterns_from_search_args(search_args: list[str]) -> list[str]:
-    skip_next = False
-    bare_pattern: str | None = None
-    regexp_patterns: list[str] = []
-    parse_options = True
-    for index, arg in enumerate(search_args):
-        if skip_next:
-            skip_next = False
-            continue
-        if parse_options and arg == "--":
-            parse_options = False
-            continue
-        if parse_options:
-            if arg in _SEARCH_PATTERN_FLAGS:
-                if index + 1 < len(search_args):
-                    regexp_patterns.append(search_args[index + 1])
-                    skip_next = True
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_PATTERN_FLAGS):
-                regexp_patterns.append(arg.split("=", 1)[1])
-                continue
-            if arg in _SEARCH_FLAGS_WITH_VALUES:
-                skip_next = True
-                continue
-            if any(arg.startswith(f"{flag}=") for flag in _SEARCH_FLAGS_WITH_VALUES):
-                continue
-            if arg.startswith("-"):
-                continue
-        # Past the `--` sentinel (or a plain positional arg before it): the first
-        # positional token is the bare pattern, exactly like `_search_path_args` treats it
-        # -- even when it looks like a flag (e.g. an unbalanced-paren regex starting with
-        # `-`). Before this fix, content after `--` still fell through to the
-        # `arg.startswith("-")` check above and was silently dropped as an "unrecognized
-        # option", so an invalid regex passed after `--` (e.g. `tg search -- '-(unbalanced'`)
-        # never reached `_search_args_include_obviously_invalid_regex`'s re.compile check
-        # (audit #24).
-        if bare_pattern is None:
-            bare_pattern = arg
-    if regexp_patterns:
-        return regexp_patterns
-    return [bare_pattern] if bare_pattern is not None else []
+    from tensor_grep.cli.bootstrap_search_guards import regex_patterns
+
+    return regex_patterns(search_args)  # (V) lives in the guards module: one rg-grammar parse
 
 
 def _search_args_include_obviously_invalid_regex(search_args: list[str]) -> bool:
-    if any(arg in _SEARCH_LITERAL_FLAGS for arg in search_args):
-        return False
-    if any(arg in _SEARCH_PCRE2_FLAGS for arg in search_args):
-        return False
-    for pattern in _regex_patterns_from_search_args(search_args):
-        if not pattern:
-            continue
-        try:
-            re.compile(pattern)
-        except re.error:
-            return True
-    return False
+    from tensor_grep.cli.bootstrap_search_guards import obviously_invalid_regex
+
+    return obviously_invalid_regex(search_args)
 
 
 def _effective_native_tg_search_args(search_args: list[str]) -> list[str]:
-    if (
-        not env_flag_enabled("TG_FORCE_CPU")
-        or "--cpu" in search_args
-        or "--force-cpu" in search_args
-    ):
+    from tensor_grep.cli.bootstrap_search_guards import end_of_options_index
+
+    if not env_flag_enabled("TG_FORCE_CPU") or _flag_present(search_args, {"--cpu", "--force-cpu"}):
         return list(search_args)
-    # Audit #11: forced ``--cpu`` must land before a user ``--`` sentinel, not after it.
-    if "--" in search_args:
-        sentinel_index = search_args.index("--")
-        return [*search_args[:sentinel_index], "--cpu", *search_args[sentinel_index:]]
-    return [*search_args, "--cpu"]
+    # Audit #11: forced ``--cpu`` must land before a user ``--`` sentinel, not after it. (S) the
+    # value-aware index (`len` when absent): in `-e --` the `--` is a pattern, not the sentinel.
+    at = end_of_options_index(search_args)
+    return [*search_args[:at], "--cpu", *search_args[at:]]
 
 
 def _terminate_child(proc: subprocess.Popen[bytes]) -> None:
@@ -1447,10 +1197,10 @@ def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:
 
     ignore_file_ops = root_ignore_file_args(
         _search_path_args(search_args),
-        no_ignore="--no-ignore" in search_args,
-        no_ignore_files="--no-ignore-files" in search_args,
-        no_ignore_vcs="--no-ignore-vcs" in search_args,
-        no_ignore_dot="--no-ignore-dot" in search_args,
+        no_ignore=_flag_present(search_args, {"--no-ignore"}),
+        no_ignore_files=_flag_present(search_args, {"--no-ignore-files"}),
+        no_ignore_vcs=_flag_present(search_args, {"--no-ignore-vcs"}),
+        no_ignore_dot=_flag_present(search_args, {"--no-ignore-dot"}),
         unrestricted=int(_search_args_request_unrestricted(search_args)),
     )
     return _streaming_passthrough_returncode(
@@ -1573,8 +1323,9 @@ def main_entry() -> None:
             if _run_requires_ast_workflow(argv[1:]):
                 _run_ast_workflow_cli(argv)
                 return
-            native_binary_path = resolve_native_tg_binary()
-            native_binary = str(native_binary_path) if native_binary_path else None
+            from tensor_grep.cli.bootstrap_search_guards import resolve_native_or_exit
+
+            native_binary = resolve_native_or_exit()
             if native_binary is not None:
                 raise SystemExit(_run_native_tg_command(native_binary, argv))
             _run_full_cli()
@@ -1595,7 +1346,7 @@ def main_entry() -> None:
         # (a nonexistent command has no help); `--json`-shaped refusals get exactly one
         # structured JSON object on stderr. The help/JSON-precedence rule: help wins.
         first_arg, nearest = refusal
-        if any(token in {"--help", "-h"} for token in argv[1:]):
+        if _flag_present(argv[1:], {"--help", "-h"}):
             _emit_unknown_command_human(first_arg, nearest)
         else:
             _emit_unknown_command_json(first_arg, nearest)
@@ -1603,6 +1354,8 @@ def main_entry() -> None:
 
     search_args = _normalize_search_invocation(argv)
     if search_args is not None:
+        from tensor_grep.cli.bootstrap_search_guards import scope_note_applies
+
         passthrough_search_args = _strip_noop_rg_format(search_args)
         if passthrough_search_args is None:
             _run_full_cli()
@@ -1619,8 +1372,9 @@ def main_entry() -> None:
         )
 
         effective_search_args = _effective_native_tg_search_args(passthrough_search_args)
-        native_binary_path = resolve_native_tg_binary()
-        native_binary = str(native_binary_path) if native_binary_path else None
+        from tensor_grep.cli.bootstrap_search_guards import resolve_native_or_exit
+
+        native_binary = resolve_native_or_exit()
         if os.environ.get("TG_REEXEC_GUARD"):
             # We were spawned by the native front door (it delegated a `--json` +
             # passthrough-flag search to us). Never delegate search BACK to the native
@@ -1670,7 +1424,11 @@ def main_entry() -> None:
             #
             # stderr, not the JSON body: stdout is the machine contract and the native binary owns
             # that document. Injecting a field here would mean parsing and re-emitting its output.
-            if exit_code == 1 and not _search_args_include_explicit_path(command_args):
+            if (
+                exit_code == 1
+                and not _search_args_include_explicit_path(command_args)
+                and scope_note_applies(command_args)
+            ):
                 _write_defaulted_scope_note()
             raise SystemExit(exit_code)
 
@@ -1690,8 +1448,10 @@ def main_entry() -> None:
             binary_name = str(rg_binary_path) if rg_binary_path else None
             if binary_name is not None:
                 exit_code = _run_rg_passthrough(binary_name, passthrough_search_args)
-                if exit_code == 1 and not _search_args_include_explicit_path(
-                    passthrough_search_args
+                if (
+                    exit_code == 1
+                    and not _search_args_include_explicit_path(passthrough_search_args)
+                    and scope_note_applies(passthrough_search_args)
                 ):
                     _write_defaulted_scope_note()
                 raise SystemExit(exit_code)
