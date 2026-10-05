@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from tensor_grep.cli.commands import KNOWN_COMMANDS as _KNOWN_COMMANDS
 from tensor_grep.cli.commands import PYTHON_FULL_HELP_COMMANDS as _PYTHON_FULL_HELP_COMMANDS
@@ -1023,7 +1024,7 @@ def _terminate_child(proc: subprocess.Popen[bytes]) -> None:
             pass
 
 
-def _popen_child(argv: list[str]) -> subprocess.Popen[bytes]:
+def _popen_child(argv: list[str], env: dict[str, str] | None = None) -> subprocess.Popen[bytes]:
     """Thin wrapper around subprocess.Popen; exposed at module level so tests can patch it.
 
     H3 fix: retries on Windows sharing-violation / PermissionError up to
@@ -1037,7 +1038,7 @@ def _popen_child(argv: list[str]) -> subprocess.Popen[bytes]:
     last_exc: BaseException | None = None
     for attempt in range(_LAUNCH_RETRY_MAX):
         try:
-            return subprocess.Popen(argv)
+            return subprocess.Popen(argv) if env is None else subprocess.Popen(argv, env=env)
         except PermissionError as exc:
             last_exc = exc
             if attempt >= _LAUNCH_RETRY_MAX - 1:
@@ -1060,7 +1061,7 @@ def _popen_child(argv: list[str]) -> subprocess.Popen[bytes]:
 
 
 def _streaming_passthrough_returncode(
-    argv: list[str], *, timeout_env_var: str | None = None
+    argv: list[str], *, timeout_env_var: str | None = None, env: dict[str, str] | None = None
 ) -> int:
     """Run an interactive streaming passthrough, returning its exit code and converting
     a subprocess timeout into a clean exit 124 instead of an uncaught TimeoutExpired
@@ -1087,10 +1088,13 @@ def _streaming_passthrough_returncode(
     # back to the old subprocess.run path so those tests continue to pass.
     if run_subprocess is not _ORIG_RUN_SUBPROCESS:
         try:
+            shim_kwargs: dict[str, Any] = {} if env is None else {"env": env}
             if timeout_env_var is not None:
-                result = run_subprocess(argv, check=False, timeout_env_var=timeout_env_var)
+                result = run_subprocess(
+                    argv, check=False, timeout_env_var=timeout_env_var, **shim_kwargs
+                )
             else:
-                result = run_subprocess(argv, check=False)
+                result = run_subprocess(argv, check=False, **shim_kwargs)
             return int(result.returncode)
         except subprocess.TimeoutExpired:
             sys.stderr.write(
@@ -1117,13 +1121,13 @@ def _streaming_passthrough_returncode(
         timeout_seconds = configured_subprocess_timeout_seconds()
 
     try:
-        proc = _popen_child(argv)
+        proc = _popen_child(argv) if env is None else _popen_child(argv, env)
     except OSError as exc:
         # A failed spawn must read as an ERROR (exit 2, the full CLI's contract in
         # `_delegate_to_native_tg_search`), never an uncaught traceback + exit 1, which a caller
         # reads as "no match" (ripgrep convention).
         sys.stderr.write(
-            f"tensor-grep: could not start {os.path.basename(argv[0])} ({exc}); "
+            f"tensor-grep: could not start {os.path.basename(argv[0])!a} ({str(exc)!a}); "
             "output cannot be trusted.\n"
         )
         return 2
@@ -1175,9 +1179,12 @@ def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    from tensor_grep.cli.frontdoor_hops import run_with_hop_stamp
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
 
-    return run_with_hop_stamp(lambda: _streaming_passthrough_returncode([binary_name, *argv]))
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        return refusal
+    return _streaming_passthrough_returncode([binary_name, *argv], env=child_env)
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:

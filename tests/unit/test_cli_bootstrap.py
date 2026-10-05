@@ -2734,7 +2734,7 @@ def test_main_entry_should_delegate_run_to_managed_native_when_available(monkeyp
         bootstrap, "_run_ast_workflow_cli", lambda argv: pytest.fail("workflow cli should not run")
     )
 
-    def _fake_run(command, check=False):
+    def _fake_run(command, check=False, env=None):
         seen["command"] = [str(part) for part in command]
         seen["check"] = check
         return subprocess.CompletedProcess(command, 0)

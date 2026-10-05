@@ -205,7 +205,7 @@ def test_agent_gpu_evidence_command_stamps_and_refuses(monkeypatch: pytest.Monke
 def test_bootstrap_spawn_failure_is_exit_2_not_a_traceback(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    def _boom(argv: list[str]) -> Any:
+    def _boom(argv: list[str], env: dict[str, str] | None = None) -> Any:
         raise FileNotFoundError(2, "No such file or directory", argv[0])
 
     monkeypatch.setattr(bootstrap, "_popen_child", _boom)
@@ -291,13 +291,13 @@ def test_timeout_is_124_and_spawn_failure_is_2_and_the_stamp_does_not_leak(
         def wait(self, timeout: float | None = None) -> int:
             raise subprocess.TimeoutExpired("tg", timeout or 0)
 
-    monkeypatch.setattr(bootstrap, "_popen_child", lambda argv: _Proc())
+    monkeypatch.setattr(bootstrap, "_popen_child", lambda argv, env=None: _Proc())
     monkeypatch.setattr(bootstrap, "_terminate_child", MagicMock())
     monkeypatch.setenv("TG_RG_TIMEOUT_SECONDS", "0.05")
     assert bootstrap._run_native_tg_search("tg", ["ERROR", "."]) == 124
     assert bootstrap._run_native_tg_command("tg", ["search", "ERROR"]) == 124
 
-    def _boom(argv: list[str]) -> Any:
+    def _boom(argv: list[str], env: dict[str, str] | None = None) -> Any:
         raise PermissionError(13, "denied")
 
     monkeypatch.setattr(bootstrap, "_popen_child", _boom)
@@ -306,3 +306,74 @@ def test_timeout_is_124_and_spawn_failure_is_2_and_the_stamp_does_not_leak(
 
     # Four calls above stamped four times; none of it may leak into this process.
     assert FRONTDOOR_HOPS_ENV not in os.environ
+
+
+# ---------------------------------------------------------------------------
+# Concurrency: the hop stamp is per-child, never a process-global write
+# ---------------------------------------------------------------------------
+
+
+def test_concurrent_bootstrap_spawns_each_see_exactly_parent_plus_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    import threading
+
+    monkeypatch.setenv(FRONTDOOR_HOPS_ENV, "1")
+    barrier = threading.Barrier(2, timeout=10)  # both spawns are in flight at once
+    seen: list[str | None] = []
+    seen_lock = threading.Lock()
+
+    class _Proc:
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    def fake_popen_child(argv: list[str], env: dict[str, str] | None = None) -> Any:
+        barrier.wait()
+        effective = os.environ if env is None else env
+        with seen_lock:
+            seen.append(effective.get(FRONTDOOR_HOPS_ENV))
+        barrier.wait()
+        return _Proc()
+
+    monkeypatch.setattr(bootstrap, "_popen_child", fake_popen_child)
+    results: list[int] = []
+
+    def worker(fn: Any, *args: Any) -> None:
+        results.append(fn(*args))
+
+    threads = [
+        threading.Thread(target=worker, args=(bootstrap._run_native_tg_search, "tg", ["a", "."])),
+        threading.Thread(target=worker, args=(bootstrap._run_native_tg_command, "tg", ["run"])),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert results == [0, 0]
+    assert seen == ["2", "2"], seen
+    assert os.environ[FRONTDOOR_HOPS_ENV] == "1"  # the parent is untouched
+
+
+# ---------------------------------------------------------------------------
+# Spawn-failure message is ASCII even for a Unicode executable name / exception text
+# ---------------------------------------------------------------------------
+
+
+def test_bootstrap_spawn_failure_message_is_ascii(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    snowman = chr(0x2603)
+
+    def _boom(argv: list[str], env: dict[str, str] | None = None) -> Any:
+        raise FileNotFoundError(2, "no such file " + snowman, argv[0])
+
+    monkeypatch.setattr(bootstrap, "_popen_child", _boom)
+    rc = bootstrap._run_native_tg_search("missing-" + snowman + ".exe", ["hello", "a.txt"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert err.isascii(), err
+    assert "could not start" in err

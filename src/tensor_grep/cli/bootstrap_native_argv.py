@@ -366,12 +366,12 @@ def bootstrap_native_tg_search_argv(search_args: list[str]) -> list[str]:
 
 def run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
     from tensor_grep.cli.bootstrap import _streaming_passthrough_returncode
-    from tensor_grep.cli.frontdoor_hops import run_with_hop_stamp
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
 
-    return run_with_hop_stamp(
-        lambda: _streaming_passthrough_returncode([
-            binary_name,
-            "search",
-            *bootstrap_native_tg_search_argv(search_args),
-        ])
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        return refusal
+    return _streaming_passthrough_returncode(
+        [binary_name, "search", *bootstrap_native_tg_search_argv(search_args)],
+        env=child_env,
     )

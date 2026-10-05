@@ -48,7 +48,6 @@ _STAMP_TOKENS = {
     "child_env_or_refusal",
     "next_hop_env",
     "probe_env",
-    "run_with_hop_stamp",
 }
 _SPAWN_NAMES = {
     "run",
@@ -154,7 +153,6 @@ def _census() -> list[dict]:
                 "calls": calls,
                 "native": bool(tokens & (_NATIVE_TOKENS | _PROBE_FLAGS)),
                 "stamped": bool(tokens & _STAMP_TOKENS),
-                "stamps_environ": "run_with_hop_stamp" in tokens,
             })
     return rows
 
@@ -194,7 +192,7 @@ def test_every_native_capable_spawn_is_stamped_or_exempt() -> None:
 def test_stamped_spawns_actually_pass_the_stamped_env() -> None:
     offenders = []
     for r in _census():
-        if not r["stamped"] or r["stamps_environ"]:
+        if not r["stamped"]:
             continue
         for call in r["calls"]:
             if not any(kw.arg == "env" for kw in call.keywords):
@@ -255,3 +253,77 @@ def test_every_rust_python_spawn_is_stamped_before_spawning() -> None:
     body = _rust_fn_bodies(sidecar)["configure_python_child_environment"]
     assert "stamp_python_child(command)?" in body
     assert body.index("stamp_python_child") < body.index("configure_python_module_path")
+
+
+# ---------------------------------------------------------------------------
+# No process-global environment writes in the hop plumbing (race: two threads)
+# ---------------------------------------------------------------------------
+
+_ENVIRON_MUTATORS = {"update", "pop", "setdefault", "clear", "popitem"}
+
+
+def _environ_writes(node: ast.AST) -> list[int]:
+    lines: list[int] = []
+
+    def is_environ(expr: ast.AST) -> bool:
+        return isinstance(expr, ast.Attribute) and expr.attr == "environ"
+
+    for child in ast.walk(node):
+        if isinstance(child, (ast.Assign, ast.AugAssign, ast.Delete)):
+            targets = child.targets if not isinstance(child, ast.AugAssign) else [child.target]
+            for target in targets:
+                if isinstance(target, ast.Subscript) and is_environ(target.value):
+                    lines.append(child.lineno)
+        elif isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute):
+            if child.func.attr in {"putenv", "unsetenv"}:
+                lines.append(child.lineno)
+            elif child.func.attr in _ENVIRON_MUTATORS and is_environ(child.func.value):
+                lines.append(child.lineno)
+    return lines
+
+
+def test_hop_plumbing_never_writes_os_environ() -> None:
+    offenders: list[str] = []
+    hops = ast.parse((SRC / "cli" / "frontdoor_hops.py").read_text(encoding="utf-8"))
+    offenders += [f"frontdoor_hops.py:{n}" for n in _environ_writes(hops)]
+    targets = {
+        "cli/bootstrap.py": {
+            "_popen_child",
+            "_streaming_passthrough_returncode",
+            "_run_native_tg_command",
+        },
+        "cli/bootstrap_native_argv.py": {"run_native_tg_search"},
+    }
+    for rel, names in targets.items():
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        found = {qual for qual, _ in _functions(tree)}
+        assert names <= found, f"census target vanished: {names - found}"
+        for qual, func in _functions(tree):
+            if qual in names:
+                offenders += [f"{rel}::{qual}:{n}" for n in _environ_writes(func)]
+    assert not offenders, f"os.environ/putenv writes in the hop plumbing (racy): {offenders}"
+
+
+def test_environ_write_detector_can_fail() -> None:
+    sample = ast.parse(
+        "import os\nos.environ['X'] = '1'\nos.environ.pop('X')\nos.putenv('X', '1')\n"
+    )
+    assert len(_environ_writes(sample)) == 3
+
+
+def test_bootstrap_passthrough_callers_pass_the_stamped_env() -> None:
+    for rel, name in (
+        ("cli/bootstrap.py", "_run_native_tg_command"),
+        ("cli/bootstrap_native_argv.py", "run_native_tg_search"),
+    ):
+        tree = ast.parse((SRC / rel).read_text(encoding="utf-8"))
+        func = dict(_functions(tree))[name]
+        calls = [
+            c
+            for c in ast.walk(func)
+            if isinstance(c, ast.Call)
+            and isinstance(c.func, ast.Name)
+            and c.func.id == "_streaming_passthrough_returncode"
+        ]
+        assert calls, f"{name} no longer calls _streaming_passthrough_returncode"
+        assert all(any(k.arg == "env" for k in c.keywords) for c in calls), name

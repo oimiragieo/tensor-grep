@@ -16,7 +16,7 @@ Contract (mirrored in rust_core/src/python_sidecar.rs):
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 
 FRONTDOOR_HOPS_ENV = "TG_FRONTDOOR_HOPS"
 _MAX_HOPS_DIGITS = 9
@@ -84,23 +84,3 @@ def child_env_or_refusal() -> tuple[dict[str, str] | None, int]:
     except FrontdoorHopLimitError as exc:
         sys.stderr.write(str(exc))
         return None, exc.exit_code
-
-
-def run_with_hop_stamp(spawn: Callable[[], int]) -> int:
-    """Run ``spawn`` (a bootstrap passthrough that inherits ``os.environ``; ``_popen_child`` takes
-    no ``env``) with the next hop stamped, or return exit code 2 after writing the refusal.
-
-    The stamp is RESTORED afterwards: a leaked counter would make every later call in the same
-    process (a test run, an embedding host) count up toward the cap and refuse spuriously."""
-    child_env, refusal = child_env_or_refusal()
-    if child_env is None:
-        return refusal
-    previous = os.environ.get(FRONTDOOR_HOPS_ENV)
-    os.environ[FRONTDOOR_HOPS_ENV] = child_env[FRONTDOOR_HOPS_ENV]
-    try:
-        return spawn()
-    finally:
-        if previous is None:
-            os.environ.pop(FRONTDOOR_HOPS_ENV, None)
-        else:
-            os.environ[FRONTDOOR_HOPS_ENV] = previous
