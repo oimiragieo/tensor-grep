@@ -168,9 +168,42 @@ def test_a_user_owned_symlink_ancestor_is_refused(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX home path")
-def test_real_home_state_path_is_accepted() -> None:
-    # POSITIVE CONTROL on the real home path (the production default location).
-    assert trust._ancestors_trusted(Path.home() / ".local" / "state" / "tensor-grep") is True
+def test_real_home_existing_ancestors_of_the_default_location_are_accepted() -> None:
+    # POSITIVE CONTROL on the real home layout (a stock runner's /home/runner is 0750 owned by the user,
+    # /home is root 0755). The default location's own directories (~/.local/state/tensor-grep) usually do
+    # NOT exist yet -- production creates them (0700) before it checks -- so check the deepest EXISTING
+    # directory along the default path, with no filesystem side effect.
+    deepest = Path.home() / ".local" / "state" / "tensor-grep"
+    while not deepest.exists() and deepest != deepest.parent:
+        deepest = deepest.parent
+    assert trust._ancestors_refusal(deepest / "child") is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX layout")
+def test_a_missing_ancestor_is_refused_and_the_reason_names_it(tmp_path: Path) -> None:
+    # The refusal that the first CI run hit on a real runner: ~/.local/state did not exist.
+    reason = trust._ancestors_refusal(tmp_path / "missing" / "state" / "tensor-grep")
+    assert reason is not None
+    assert "FileNotFoundError" in reason
+    assert "missing" in reason
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX home path")
+def test_the_production_default_location_is_created_then_accepted_under_a_stock_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The standard layout on a stock Linux runner: a user-owned home with NO ~/.local at all. The daemon
+    # must still get its secret (the directories are created 0700 by us, THEN vetted).
+    home = tmp_path / "home" / "runner"
+    home.mkdir(parents=True)
+    home.chmod(0o750)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.delenv("TG_DAEMON_SECRET_DIR", raising=False)
+    assert not (home / ".local").exists()
+    assert trust._load_or_create_user_secret() is not None
+    state = home / ".local" / "state" / "tensor-grep"
+    assert stat.S_IMODE(state.stat().st_mode) == 0o700
+    assert trust._ancestors_trusted(state) is True
 
 
 # ---- fail closed ----

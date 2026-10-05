@@ -177,7 +177,10 @@ def test_a_new_secret_directory_is_created_user_only_even_under_a_foreign_modify
         queried = trust._win_dacl_entries(handle)
         assert queried is not None
         owner, entries = queried
-        assert [sid for sid, _mask in entries] == [trust._win_current_user_sid()]  # user-only: nothing inherited (an elevated token OWNS it as Administrators)
+        user = trust._win_current_user_sid()
+        # user-only: nothing inherited. An elevated token OWNS it as Administrators (default owner).
+        assert owner in trust._our_owners(user)
+        assert [sid for sid, _mask in entries] == [user]
     finally:
         trust._winsec.close_handle(handle)
     assert trust._parent_trusted(secret_dir) is True
