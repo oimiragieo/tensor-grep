@@ -12870,7 +12870,7 @@ def build_symbol_refs_from_map(
     )
     repo_root = _repo_map_root_dir(repo_map)
     refs_universe_files, refs_universe_tests = _repo_map_file_and_test_universe(repo_map)
-    bounded_files, refs_ceiling_hit = _cap_caller_scan_files(
+    bounded_files, refs_ceiling_hit = _self._cap_caller_scan_files(
         [*refs_universe_files, *refs_universe_tests],
         symbol=symbol,
         test_files=refs_universe_tests,
@@ -13837,7 +13837,7 @@ def build_symbol_callers_from_map(
         return _attach_profiling(payload, _profiling_collector)
     repo_root = _repo_map_root_dir(repo_map)
     callers_universe_files, callers_universe_tests = _repo_map_file_and_test_universe(repo_map)
-    bounded_files, callers_ceiling_hit = _cap_caller_scan_files(
+    bounded_files, callers_ceiling_hit = _self._cap_caller_scan_files(
         [*callers_universe_files, *callers_universe_tests],
         symbol=symbol,
         test_files=callers_universe_tests,
