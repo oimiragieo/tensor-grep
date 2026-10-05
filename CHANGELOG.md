@@ -1,6 +1,33 @@
 # CHANGELOG
 
 
+## v1.123.17 (2026-10-05)
+
+### Bug Fixes
+
+- **session-daemon**: Authenticate the daemon endpoint, detect added files in empty sessions,
+  disclose rebuild failures ([#1197](https://github.com/oimiragieo/tensor-grep/pull/1197),
+  [`cb3e381`](https://github.com/oimiragieo/tensor-grep/commit/cb3e38184d496358578512d608008649fbef96ed))
+
+Session daemon: endpoint authenticated with a per-user HMAC secret (owner-only creation, ancestor
+  trust walk that names the failing directory and rule, Windows DACL checks tolerant of the
+  elevated-token default owner), added files detected in empty sessions, and rebuild failures
+  disclosed instead of swallowed (wave-1 Part B). Codex audit SHIP; CI green on 4a10a38.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+### Documentation
+
+- **audits**: Record the 2026-10-03 bug-hunt wave 1/2a/2b merge state
+  ([#1206](https://github.com/oimiragieo/tensor-grep/pull/1206),
+  [`6779ea0`](https://github.com/oimiragieo/tensor-grep/commit/6779ea03ed9f97b7ec71c1f091d8f67d4e86f13f))
+
+Records the 2026-10-03 bug-hunt merge state in the tracker's Wave status table and a one-line
+  pointer in docs/BACKLOG.md (docs only, no release).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.16 (2026-10-05)
 
 ### Bug Fixes
