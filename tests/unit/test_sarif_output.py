@@ -420,3 +420,24 @@ def test_without_a_base_path_the_path_is_left_alone() -> None:
         "uri"
     ]
     assert uri == "/repo/src/app.py"
+
+
+def test_zero_match_rules_are_catalogued_but_emit_no_result() -> None:
+    clear = {
+        "rule_id": "py-clear",
+        "language": "python",
+        "severity": "high",
+        "message": "m",
+        "matches": 0,
+        "status": "clear",
+        "files": [],
+        "fingerprint": "b" * 64,
+        "evidence": [],
+    }
+    base = _payload()["findings"][0]
+    doc = scan_payload_to_sarif(_payload(findings=[base, clear]), tool_version=_VERSION)
+    run = doc["runs"][0]
+    assert [r["ruleId"] for r in run["results"]] == [base["rule_id"]]
+    assert {r["id"] for r in run["tool"]["driver"]["rules"]} == {base["rule_id"], "py-clear"}
+    for result in run["results"]:
+        assert run["tool"]["driver"]["rules"][result["ruleIndex"]]["id"] == result["ruleId"]

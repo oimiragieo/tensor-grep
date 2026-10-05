@@ -298,6 +298,15 @@ def scan_payload_to_sarif(
                 rule["properties"] = {"language": language}
             rules.append(rule)
 
+        matches_value = finding.get("matches")
+        if finding.get("status") == "clear" or (
+            isinstance(matches_value, int)
+            and not isinstance(matches_value, bool)
+            and matches_value == 0
+        ):
+            # Catalogued in driver.rules above; a rule that did not fire is not an alert.
+            continue
+
         result: dict[str, Any] = {
             "ruleId": rule_id,
             "ruleIndex": rule_index_by_id[rule_id],

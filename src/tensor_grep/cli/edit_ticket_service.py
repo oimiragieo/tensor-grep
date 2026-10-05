@@ -1,32 +1,56 @@
+"""Edit-ready tickets: pre-edit fingerprints and a fail-closed verify (AGT-04).
+
+Threat model (bug hunt G-03/G-08):
+
+* Defends against a cooperative-but-fallible agent that edits outside its declared scope or
+  reports edits it did not make (pre-edit fingerprints vs the current tree). It is NOT a
+  sandbox against a hostile agent: `.git/hooks`, `$HOME`, and edits inside a vendored
+  `node_modules` are out of scope (residual risk).
+* The population is a plain bounded filesystem walk with NO git dependency and a small,
+  UNAMBIGUOUS prune set. Pruned at any depth by NAME: `_ALWAYS_PRUNED_DIRS` (never source).
+  Pruned at any depth by CONTENT, where the marker must be a REGULAR, non-symlink file directly
+  inside the directory: `pyvenv.cfg` (a Python venv, whatever its name), a `CACHEDIR.TAG` with
+  the standard Cache Directory Tagging signature, `.rustc_info.json` (cargo target-dir root),
+  and `CMakeCache.txt` only WITHOUT a sibling `CMakeLists.txt` (an in-source CMake build keeps
+  real source beside the cache). EVERYTHING else is covered: `build/`, `dist/`, `target/`
+  without a tag, `venv/` without `pyvenv.cfg`, git-ignored files, nested repos' working files.
+* Availability cost (disclosed): an untagged large build output is walked and may hit the
+  per-file/aggregate byte budget -> `population_incomplete` -> verify FAILs closed (unusable,
+  never wrong).
+* Unreadable subtrees (`os.walk` onerror) -> `unreadable_path`; more than `_MAX_WALK_DIRS`
+  directories -> `dir_count_limit`. Symlink leaves are fingerprinted as `symlink:<target>` and
+  never followed.
+* Residuals: a `pyvenv.cfg` inside a SUBdirectory that also holds hand-edited source prunes
+  that subdirectory (the walk root is never pruned); a marker planted BEFORE minting is outside
+  the cooperative threat model.
+* Every pruned directory (by name or by marker) is recorded at mint in `pruned_set`; at verify
+  a pruned directory that did not exist at mint is `newly_pruned:<dir>` (fail closed: an agent
+  that runs `npm install` mid-ticket must re-mint or declare it), a changed marker is
+  `marker_changed:<dir>`, a dropped content-prune is `no_longer_pruned:<dir>`.
+"""
+
 from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import time
 import uuid
+from collections.abc import Generator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-# AGT-04 (docs/plans/2026-09-07-agentic-quality-simplification.md Task 04, first-fix slice):
-# reviewed set of dependency-tree / build-output directory names to prune BEFORE descending,
-# not filter after a full walk. This is deliberately narrow (well-known package-manager and
-# build-tool output dirs only) -- it never matches an ordinary tracked dotfile like .github or
-# .gitignore, so those remain hashed (see test_tracked_dotfile_survives_pruning).
-_IGNORED_DEPENDENCY_DIRS = frozenset({
-    "node_modules",
-    ".venv",
-    "venv",
-    "target",
-    "dist",
-    "build",
-    ".git",
-    "__pycache__",
-    ".mypy_cache",
-    ".pytest_cache",
-    ".ruff_cache",
-    "site-packages",
-})
+from tensor_grep.cli import edit_ticket_walk as _walk
+from tensor_grep.cli.edit_ticket_walk import (  # noqa: F401 - re-exported for callers
+    _FINGERPRINT_TAGS,
+    _MAX_REPORTED_PRUNED,
+    _NAME_PRUNED,
+    _BudgetExceeded,
+    _link_from_stat,
+    _PopulationWalkError,
+    compute_file_fingerprint,
+)
 
 _DEFAULT_MAX_FILES = 20_000
 _DEFAULT_MAX_FILE_BYTES = 10_000_000
@@ -73,17 +97,6 @@ class EditReadyTicketV1:
         )
 
 
-def compute_file_fingerprint(path: str | Path) -> str:
-    p = Path(path)
-    if not p.is_file():
-        return ""
-    hasher = hashlib.sha256()
-    with open(p, "rb") as f:
-        while chunk := f.read(65536):
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
 def _walk_tracked_files_bounded(
     repo_root: str | Path,
     *,
@@ -95,71 +108,137 @@ def _walk_tracked_files_bounded(
     path, plus an explicit population-result dict (AGT-04: a budget hit must report
     "incomplete", never silently truncate and claim a complete population).
 
-    Uses os.walk with topdown pruning so a dependency tree in _IGNORED_DEPENDENCY_DIRS is never
-    entered at all -- unlike a post-hoc filter over Path.rglob, which still reads every file in
-    node_modules/.venv/target before discarding the results.
+    Lazy generator (`_population_paths`) consumed by the file/byte budgets; see the module
+    docstring for the prune set and threat model.
     """
-    root = Path(repo_root)
+    # A legitimate root alias (a checkout behind a symlink or junction, e.g. macOS /tmp and
+    # /var) is resolved ONCE, explicitly; the RESOLVED root is authenticated by lstat and its
+    # identity recorded. Every descendant stays no-follow.
+    root = Path(repo_root)  # replaced by the resolved root INSIDE the boundary below
+    root_identity: list[int] | None = None
     result: dict[str, str] = {}
     scanned_files = 0
-    scanned_bytes = 0
+    ledger = _walk._ByteLedger(max_file_bytes, max_aggregate_bytes)
     incomplete_reason: str | None = None
+    limit_kind: str | None = None
+    pruned: list[str] = []
+    content_pruned: dict[str, str] = {}
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames.sort()
-        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DEPENDENCY_DIRS]
-        for name in sorted(filenames):
-            item = Path(dirpath) / name
-            rel_parts = item.relative_to(root).parts
-            rel = "/".join(rel_parts)
+    paths: Generator[tuple[str, str | None], None, None] | None = None
+    handle_root_identity: list[int] = []
+    cleanup_failed = False
+    try:
+        root = Path(os.path.realpath(repo_root))  # a filesystem call: inside the boundary
+        try:
+            root_st = _walk._lstat(root)
+        except OSError as exc:
+            raise _PopulationWalkError("unreadable_path") from exc
+        if not stat.S_ISDIR(root_st.st_mode) or _link_from_stat(root_st):
+            raise _PopulationWalkError("unreadable_path")
+        root_identity = [root_st.st_dev, root_st.st_ino]  # fallback for handle-less walkers
+        paths = _walk._population_paths(
+            root,
+            pruned,
+            content_pruned,
+            ledger,
+            root_ident=(root_st.st_dev, root_st.st_ino),
+            root_identity_out=handle_root_identity,
+        )
+        for rel, emitted_fp in paths:
+            item = root / rel
 
             if scanned_files >= max_files:
                 incomplete_reason = "file_count_limit"
                 break
 
+            if emitted_fp is not None:
+                # hashed exactly once, at classification; nothing left to stat, size or read
+                result[rel] = emitted_fp
+                scanned_files += 1
+                continue
+
             try:
-                size = item.stat().st_size
+                size_st = _walk._lstat(item)  # ONE lstat sizes the leaf (links: link-text length)
+                # a link's size is its target text, which is read (and charged) exactly once
+                # by `_fingerprint_enumerated`; the size check must not read it a second time
+                size = 0 if _link_from_stat(size_st) else size_st.st_size
             except OSError:
-                # A file that vanishes or becomes unreadable mid-walk (permission change, a
-                # concurrent delete) must not silently disappear from `result` while the
-                # population still reports "complete" -- that is the exact false-PASS this
-                # function exists to prevent (see the module docstring). Skip the file but mark
-                # the population incomplete rather than `continue`ing silently.
+                # A file that vanishes or becomes unreadable mid-walk must not silently
+                # disappear from `result` while the population still reports "complete" --
+                # that is the exact false-PASS this function exists to prevent.
                 incomplete_reason = incomplete_reason or "unreadable_path"
                 continue
 
-            if size > max_file_bytes:
+            if size > ledger.per_file_limit:
                 incomplete_reason = "per_file_byte_limit"
                 scanned_files += 1
                 continue
 
-            if scanned_bytes + size > max_aggregate_bytes:
+            if size > ledger.remaining:
                 incomplete_reason = "aggregate_byte_limit"
                 break
 
-            result[rel] = compute_file_fingerprint(item)
+            try:
+                fingerprint = _walk._fingerprint_enumerated(item, ledger)
+            except _BudgetExceeded as exc:
+                # every byte read is already on the ledger: nothing is refunded
+                incomplete_reason = exc.reason
+                if exc.reason == "per_file_byte_limit":
+                    # the item alone is too big (the more specific reason); if its read also
+                    # exhausted the aggregate allowance, the NEXT item trips the aggregate
+                    # limit at its own size check / read (cap 0), so the walk still stops
+                    scanned_files += 1
+                    continue
+                break
+            except OSError:
+                incomplete_reason = incomplete_reason or "unreadable_path"
+                continue
+            result[rel] = fingerprint
             scanned_files += 1
-            scanned_bytes += size
-        if incomplete_reason is not None:
-            break
+    except _PopulationWalkError as exc:
+        if incomplete_reason is None:
+            incomplete_reason = exc.reason
+            limit_kind = exc.kind
+    except OSError:  # backstop: an OSError is never an exception for mint / verify
+        if incomplete_reason is None:
+            incomplete_reason = "unreadable_path"
+    finally:
+        if paths is not None:
+            try:
+                paths.close()  # release held directory handles / dirfds even on an early break
+            except (_PopulationWalkError, OSError):
+                cleanup_failed = True  # a lost close can never come back as a complete population
+    if cleanup_failed and incomplete_reason is None:
+        incomplete_reason = "cleanup_failed"
+    if handle_root_identity:
+        root_identity = handle_root_identity  # recorded from the walked HANDLE, not a pathname
 
     if incomplete_reason is not None:
         population = {
             "verified": False,
             "status": "incomplete",
             "reason": incomplete_reason,
-            "population_policy": "agt04-v1",
+            "limit_kind": limit_kind,
+            "population_policy": "agt04-v2",
+            "population_source": "filesystem-walk",
+            "root_identity": root_identity,
+            "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
+            "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
-            "scanned_bytes": scanned_bytes,
+            "scanned_bytes": ledger.consumed,
         }
     else:
         population = {
             "verified": True,
             "status": "complete",
             "reason": None,
-            "population_policy": "agt04-v1",
+            "population_policy": "agt04-v2",
+            "population_source": "filesystem-walk",
+            "root_identity": root_identity,
+            "pruned_dirs": sorted(pruned)[:_MAX_REPORTED_PRUNED],
+            "pruned_set": dict(sorted(content_pruned.items())),
             "scanned_files": scanned_files,
-            "scanned_bytes": scanned_bytes,
+            "scanned_bytes": ledger.consumed,
         }
     return result, population
 
@@ -235,6 +314,30 @@ def _normalized_root(root: str | Path) -> str:
         return _fold(str(root))
 
 
+def _content_pruned_violations(minted: dict[str, Any], current: dict[str, Any]) -> list[str]:
+    """Directories whose content-pruning differs between mint and verify.
+
+    A marker planted into an existing directory hides every file in it from the verify-time
+    walk (the declared file then reads as deleted and undeclared siblings are never seen), so
+    any difference in the pruned set or in a marker's bytes is a violation. Tickets minted
+    before this field existed carry no record and are skipped (documented legacy path)."""
+    before = minted.get("pruned_set")
+    if not isinstance(before, dict):
+        return []
+    after = current.get("pruned_set") or {}
+    out: list[str] = []
+    for rel in sorted(set(before) | set(after)):
+        if rel not in before:
+            out.append(f"newly_pruned:{rel}")
+        elif before[rel] == _NAME_PRUNED:
+            continue  # existed at mint, pruned by name: its contents stay out of scope
+        elif rel not in after:
+            out.append(f"no_longer_pruned:{rel}")
+        elif before[rel] != after[rel]:
+            out.append(f"marker_changed:{rel}")
+    return out
+
+
 def verify_edit_ticket(
     *,
     repo_root: str,
@@ -243,8 +346,28 @@ def verify_edit_ticket(
 ) -> dict[str, Any]:
     # AGT-04 fail-closed gate: a ticket built from an incomplete population may be missing
     # fingerprints for files a budget cut off, so drift there is undetectable -- never let an
-    # incomplete population reach PASS. "unknown" (legacy tickets predating this field) is
-    # deliberately NOT treated as incomplete -- that is the documented compatibility path.
+    # incomplete population reach PASS. A ticket with no population record at all ("unknown")
+    # is REFUSED below as ticket_format_outdated, not verified through a compatibility path.
+    # Old-format (untagged) fingerprints are REFUSED, never re-tagged on read: old tickets could
+    # hold links hashed by the colliding scheme, so tagging them `file:` would keep the hole
+    # open for exactly the tickets that predate the fix. Re-mint.
+    # The same refusal covers a ticket with no `pruned_set` or policy fields: without the
+    # mint-time record of pruned directories a marker planted afterwards (modify the declared
+    # file, add an undeclared sibling, plant src/pyvenv.cfg) cannot be detected.
+    pop = ticket.population_status
+    if (
+        not isinstance(pop.get("pruned_set"), dict)
+        or pop.get("population_policy") != "agt04-v2"
+        or not pop.get("population_source")
+        or not pop.get("root_identity")
+    ) or any(not fp.startswith(_FINGERPRINT_TAGS) for fp in ticket.pre_edit_fingerprints.values()):
+        return {
+            "verdict": "FAIL",
+            "reason": "ticket_format_outdated",
+            "violations": ["ticket_format_outdated"],
+            "ticket_id": ticket.ticket_id,
+        }
+
     if ticket.population_status.get("status") == "incomplete":
         return {
             "verdict": "FAIL",
@@ -298,7 +421,18 @@ def verify_edit_ticket(
             "violations": [],
             "ticket_id": ticket.ticket_id,
         }
+    if list(ticket.population_status.get("root_identity") or []) != list(
+        current_population.get("root_identity") or []
+    ):
+        # the (resolved) repo root now is a different directory than the one minted from
+        return {
+            "verdict": "FAIL",
+            "reason": "verify_population_incomplete",
+            "violations": ["root_identity_changed"],
+            "ticket_id": ticket.ticket_id,
+        }
     all_paths = set(ticket.pre_edit_fingerprints) | set(current_fps)
+    pruned_violations = _content_pruned_violations(ticket.population_status, current_population)
 
     undeclared_drift: list[str] = []
     for path in sorted(all_paths):
@@ -307,11 +441,11 @@ def verify_edit_ticket(
         if pre_fp != cur_fp and path not in norm_declared:
             undeclared_drift.append(path)
 
-    if undeclared_drift:
+    if undeclared_drift or pruned_violations:
         return {
             "verdict": "FAIL",
             "reason": "edit_contract_violated",
-            "violations": undeclared_drift,
+            "violations": pruned_violations + undeclared_drift,
             "ticket_id": ticket.ticket_id,
         }
 

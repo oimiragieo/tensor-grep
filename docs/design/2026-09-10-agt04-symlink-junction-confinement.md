@@ -68,6 +68,8 @@ path.
    items 1-3 for the common case. The filesystem walk becomes the **fallback** for repos without
    `.git` (or where `git ls-files` fails), not the only path — meaning items 1-3 stay required, but
    exercised less often in practice.
+   **Superseded 2026-10 (bug hunt G-03): unambiguous name/content pruning, no git dependency.**
+   See the `edit_ticket_service.py` module docstring for the prune set and threat model.
 5. **Full control-matrix re-run** (the plan's last remaining item): once implemented, re-run the
    existing bounded-budget control matrix (file-count limit, per-file-byte limit, aggregate-byte
    limit, unreadable-path) PLUS new symlink/junction control rows (in-root symlink target,
