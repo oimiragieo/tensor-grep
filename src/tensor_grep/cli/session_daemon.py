@@ -23,6 +23,13 @@ from uuid import uuid4
 from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
+from tensor_grep.cli.session_daemon_start_lock import (  # noqa: F401  (re-exported for tests)
+    _DAEMON_START_LOCK_FILE,
+    _daemon_start_lock_path,
+    _release_daemon_start_lock,
+    _try_acquire_daemon_start_lock,
+)
+from tensor_grep.cli.session_daemon_stop import _stop_rejected_daemon
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
     _METADATA_REASONS,
     DAEMON_HOST,
@@ -76,7 +83,6 @@ from tensor_grep.cli.session_store import (
 )
 
 _DAEMON_METADATA_FILE = "daemon.json"
-_DAEMON_START_LOCK_FILE = ".daemon-start.lock"
 _DAEMON_HOST = DAEMON_HOST
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
@@ -377,40 +383,6 @@ def _confine_path_to_root(root: Path, candidate: Path) -> Path:
     return candidate
 
 
-def _daemon_start_lock_path(root: Path) -> Path:
-    return _sessions_dir(root) / _DAEMON_START_LOCK_FILE
-
-
-def _try_acquire_daemon_start_lock(root: Path) -> bool:
-    lock_path = _daemon_start_lock_path(root)
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    for _attempt in range(2):
-        try:
-            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            try:
-                lock_age = time.time() - lock_path.stat().st_mtime
-                if lock_age > _DAEMON_START_LOCK_STALE_SECONDS:
-                    lock_path.unlink()
-                    continue
-            except OSError:
-                pass
-            return False
-        try:
-            os.write(fd, f"{os.getpid()}\n".encode())
-        finally:
-            os.close(fd)
-        return True
-    return False
-
-
-def _release_daemon_start_lock(root: Path) -> None:
-    try:
-        _daemon_start_lock_path(root).unlink()
-    except OSError:
-        pass
-
-
 def _remove_daemon_metadata(
     root: Path, *, expected_pid: int | None = None, expected_port: int | None = None
 ) -> None:
@@ -517,6 +489,7 @@ def _daemon_request(
     *,
     response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
     token: str = "",
+    connect_timeout: float | None = None,
 ) -> dict[str, Any]:
     if not _is_loopback_host(host):
         raise ValueError(f"refusing non-loopback session daemon host: {host!r}")
@@ -537,7 +510,7 @@ def _daemon_request(
     request = {**request, "client_pid": os.getpid()}
     with socket.create_connection(
         (host, int(port)),
-        timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
+        timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout,
     ) as conn:
         conn.settimeout(response_timeout)
         conn.sendall((json.dumps(request) + "\n").encode("utf-8"))
@@ -893,7 +866,18 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
                 "root": str(root),
                 **_metadata_unconfirmed(meta_state),
             }
-        killed = _terminate_daemon_by_pid(stale_metadata, root=root)
+        # F-07: a daemon the probe rejected (version skew, ...) is stopped only after it PROVES it
+        # serves this root; ineligible / unverifiable endpoints are never signalled or deleted.
+        rejected, rejected_outcome = _stop_rejected_daemon(root, stale_metadata)
+        if rejected is not None:
+            return rejected
+        # A listener that answered but could NOT prove it serves this root (e.g. another root's
+        # credentials planted here) is never reached by the signal path unless the recorded pid is
+        # independently attested as this root's daemon (the real function re-checks as well).
+        unprovable = rejected_outcome == "unverified" and (
+            _daemon_pid_state(stale_metadata, root) != "ours"
+        )
+        killed = not unprovable and _terminate_daemon_by_pid(stale_metadata, root=root)
         # Stale metadata is removed only after PROVEN absence: the process is gone ("gone") or, after
         # a delivered signal, the connection is refused. A live process we could not stop (ours but
         # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.

@@ -1716,6 +1716,12 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
         fake_build_symbol_blast_radius_plan_json,
     )
 
+    # B-05: blast-radius-plan now uses the shared 0/1/2 emitter, so a plan for a symbol that does
+    # not exist exits 1. The fixture defines the symbol so the provider option is exercised on a
+    # FOUND plan (exit 0), which is what this test is about.
+    (tmp_path / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n", encoding="utf-8"
+    )
     result = CliRunner().invoke(
         app,
         [
@@ -1729,9 +1735,10 @@ def test_cli_blast_radius_plan_accepts_provider_option(tmp_path: Path, monkeypat
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["semantic_provider"] == "hybrid"
+    assert payload["not_found"] is False
 
 
 def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path) -> None:
@@ -1748,6 +1755,11 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path) -> None
     repointed. The wrapper they referenced is deleted too: it had zero real references in
     `main.py` (AST-checked; the only grep hit is a comment calling it "the old ... helper").
     """
+    # B-05: blast-radius-render now uses the shared 0/1/2 emitter, so a symbol that does not
+    # exist exits 1. The fixture defines it so the provider option is exercised on a FOUND result.
+    (tmp_path / "payments.py").write_text(
+        "def create_invoice(total, tax):\n    return total + tax\n", encoding="utf-8"
+    )
     result = CliRunner().invoke(
         app,
         [
@@ -1761,9 +1773,10 @@ def test_cli_blast_radius_render_accepts_provider_option(tmp_path: Path) -> None
         ],
     )
 
-    assert result.exit_code == 0
+    assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["semantic_provider"] == "lsp"
+    assert payload["not_found"] is False
 
 
 def test_mcp_defs_accepts_provider_parameter(tmp_path: Path, monkeypatch) -> None:

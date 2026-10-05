@@ -715,13 +715,21 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
     ("_index_lock.py", "replace_with_retry", "os.replace"): (
         "Defines the shared retry-wrapped publish primitive itself."
     ),
-    ("_index_lock.py", "index_lock", "os.open"): (
-        "Lock-file acquisition, confined to `_lock_path_for(index_path)` (a dot-prefixed, "
-        "internally-derived sibling path) -- not a caller-selected artifact destination."
+    ("_index_lock.py", "publish_new_lock_file", "os.open"): (
+        "Creates a uniquely named TEMP file (O_CREAT|O_EXCL, 0600) beside the lock at an "
+        "already-confined internal path (`_lock_path_for(index_path)` / the daemon start-lock "
+        "path -- never a caller-selected artifact destination); the lock itself is published "
+        "from it with os.link and only the temp is ever unlinked. Used by `_legacy_index_lock` "
+        "and the daemon start lock."
     ),
-    ("_index_lock.py", "index_lock", "os.write"): (
-        "Writes the pid+ownership-token into the just-opened, already-confined lock fd from "
-        "the same acquisition (same function as the os.open entry directly above)."
+    ("_index_lock.py", "publish_new_lock_file", "os.write"): (
+        "Writes the complete pid(+ownership-token) content into the temp file created two "
+        "statements above in the same function, before the atomic os.link publish."
+    ),
+    ("_index_lock.py", "try_os_file_lock", "os.open"): (
+        "Sidecar lock-handle open on a fixed internal path (`_os_lock_path_for(index_path)` or "
+        "the daemon start-lock sidecar); O_CREAT without O_EXCL by design (the file is never "
+        "deleted and carries no content, only the OS advisory lock)."
     ),
     ("windows_launcher.py", "_write_windows_exe_bridge_marker", "Path.write_text"): (
         "Fixed-content (`_WINDOWS_EXE_BRIDGE_MARKER_CONTENT`), no externally-sourced bytes; "
@@ -824,16 +832,6 @@ _SANCTIONED_SITES: dict[tuple[str, str, str], str] = {
         "dict), no externally-sourced bytes, guarded by `if package_json.exists(): return` so an "
         "existing file is never overwritten -- same fixed-content-marker shape as `main.py::_"
         "write_windows_exe_bridge_marker` above."
-    ),
-    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.open"): (
-        "Lock-file acquisition at a fixed, internally-derived path (`_daemon_start_lock_path(root)`"
-        " = `_sessions_dir(root) / _DAEMON_START_LOCK_FILE`, never a caller-selected artifact "
-        "destination) with `O_CREAT|O_EXCL` -- the exact same shape as the already-sanctioned "
-        "`_index_lock.py::index_lock` entry above."
-    ),
-    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.write"): (
-        "Writes only the acquiring pid into the just-opened, already-confined lock fd from the "
-        "same acquisition -- same pattern as `_index_lock.py::index_lock`'s os.write entry above."
     ),
     # --- H2 (backlog closeout, docs/BACKLOG.md): individually reviewed against the real source,
     # classifying the 17-line-item / 16-identity population the task named. ---
@@ -1573,8 +1571,9 @@ _EXPECTED_SANCTIONED = {
     ("native_frontdoor.py", "_download_native_frontdoor_asset", "os.open"),
     ("_index_lock.py", "replace_with_retry", "os.replace"),
     ("_index_lock.py", "atomic_write_bytes_anchored", "os.open"),
-    ("_index_lock.py", "index_lock", "os.open"),
-    ("_index_lock.py", "index_lock", "os.write"),
+    ("_index_lock.py", "publish_new_lock_file", "os.open"),
+    ("_index_lock.py", "publish_new_lock_file", "os.write"),
+    ("_index_lock.py", "try_os_file_lock", "os.open"),
     ("windows_launcher.py", "_write_windows_exe_bridge_marker", "Path.write_text"),
     ("doctor_report.py", "_doctor_gpu_search_runtime_probe", "Path.write_text"),
     ("windows_launcher.py", "_refresh_windows_tensor_grep_com_bridges", "shutil.copy2"),
@@ -1590,8 +1589,6 @@ _EXPECTED_SANCTIONED = {
     ("lsp_provider_setup.py", "_safe_extract_tar", "archive.extractall"),
     ("lsp_provider_setup.py", "_safe_extract_zip", "archive.extractall"),
     ("lsp_provider_setup.py", "_write_package_json", "Path.write_text"),
-    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.open"),
-    ("session_daemon.py", "_try_acquire_daemon_start_lock", "os.write"),
     # --- H2 (backlog closeout) ---
     ("ast_workflows.py", "test_command", "Path.write_text"),
     ("lsp_provider_setup.py", "_download", "os.open"),

@@ -698,6 +698,9 @@ def _stub_blast_radius_plan_payload(symbol: str, path: str) -> dict:
         "files": [],
         "tests": [],
         "symbols": [],
+        # B-05: the plan now uses the shared 0/1/2 emitter, so a resolved stub needs a definition
+        # to read as "found" (an empty definitions list is a genuine not-found, exit 1).
+        "definitions": [{"name": symbol, "file": "m.py", "line": 1}],
     }
 
 
