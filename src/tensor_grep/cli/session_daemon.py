@@ -565,6 +565,103 @@ def _terminate_daemon_by_pid(metadata: dict[str, Any] | None, *, root: Path | No
     return state == "ours" and identity is not None and _terminate_identified(identity)
 
 
+# A refused loopback connect can take ~2 s on Windows; the stop probes need to see the refusal.
+_DAEMON_STOP_PROBE_CONNECT_TIMEOUT_SECONDS = 3.0
+
+
+def _stop_unprobed_daemon(root: Path, metadata: dict[str, Any] | None) -> tuple[str, int | None]:
+    """Stop a daemon that ``_probe_daemon`` rejected (e.g. a package-version skew) -- but only one
+    that PROVES it serves ``root``. Returns ``(outcome, proven_pid)``; outcome is one of:
+
+    * ``absent``: no metadata recorded.
+    * ``ineligible``: non-loopback host or malformed port: no request, no pid fallback.
+    * ``not_listening``: the verified-eligible endpoint REFUSED the first ping (nothing to stop).
+    * ``unverified``: could not PROVE the listener serves ``root`` (no/forged HMAC proof, timeout,
+      auth failure): nothing is stopped by THIS function; the caller's existing attested-pid path
+      (``_classify_daemon_pid`` == "ours") remains the only thing that may still signal.
+    * ``current_version``: proof verified but the daemon runs THIS package version, so it is not the
+      version-skew case this function exists for (the probe failed for another reason): left to the
+      caller's existing path.
+    * ``cooperative``: proof verified, ``stop`` acked, and the endpoint then REFUSED connections.
+    * ``unresponsive``: proof verified but no refusal observed (the pid escalation, if any, uses the
+      PROVEN pid from the signed reply, never the metadata's).
+
+    A refused connection is the only accepted evidence that a daemon is gone: a timeout, an auth
+    failure, an ack or a delivered signal is not (council wave-2b r3/r25).
+    """
+    if not metadata:
+        return "absent", None
+    host, port = metadata.get("host", _DAEMON_HOST), _valid_daemon_port(metadata.get("port"))
+    if port is None or not _is_loopback_host(host):
+        return "ineligible", None
+    timeouts: dict[str, Any] = {
+        "response_timeout": _DAEMON_CONNECT_TIMEOUT_SECONDS,
+        "connect_timeout": _DAEMON_STOP_PROBE_CONNECT_TIMEOUT_SECONDS,
+        "token": _daemon_token(metadata),
+    }
+    nonce = secrets.token_hex(16)
+    try:
+        reply = _daemon_request(str(host), port, {"command": "ping", "nonce": nonce}, **timeouts)
+    except ConnectionRefusedError:
+        return "not_listening", None
+    except Exception:
+        return "unverified", None
+    if not reply.get("ok") or not _verify_ping_reply(reply, nonce, root, port):
+        return "unverified", None
+    proven_pid = int(reply["pid"])
+    if metadata.get("package_version") == _expected_tg_version():
+        return "current_version", proven_pid
+    try:
+        ack = _daemon_request(str(host), port, {"command": "stop"}, **timeouts)
+    except Exception:
+        return "unresponsive", proven_pid
+    if not ack.get("ok"):
+        return "unresponsive", proven_pid
+    if _await_endpoint_refused(host, port, _DAEMON_START_TIMEOUT_SECONDS):
+        return "cooperative", proven_pid
+    return "unresponsive", proven_pid
+
+
+def _records_no_process(metadata: dict[str, Any]) -> bool:
+    pid = metadata.get("pid")
+    return isinstance(pid, int) and not isinstance(pid, bool) and pid <= 0
+
+
+def _stop_rejected_daemon(
+    root: Path, stale_metadata: dict[str, Any] | None
+) -> tuple[dict[str, Any] | None, str]:
+    """``(result, outcome)`` for a daemon ``_probe_daemon`` rejected. ``result`` is None when the
+    caller's established path must decide (no metadata, unverified, current version, or a refused
+    endpoint whose pid may be a live process). See ``_stop_unprobed_daemon``."""
+    outcome, proven_pid = _stop_unprobed_daemon(root, stale_metadata)
+    if stale_metadata is None or outcome in {"absent", "unverified", "current_version"}:
+        return None, outcome
+    if outcome == "not_listening" and not _records_no_process(stale_metadata):
+        # A refused endpoint plus a pid that may be a LIVE process keeps the established attested-pid /
+        # unconfirmed handling (the caller's path); only metadata that records no process at all
+        # (pid <= 0) is settled by the refusal alone.
+        return None, outcome
+    base: dict[str, Any] = {"version": _SESSION_VERSION, "root": str(root)}
+    if outcome == "ineligible":
+        return {**base, **_unconfirmed_fields("gone", False, endpoint_ok=False)}, outcome
+    host, port = str(stale_metadata.get("host", _DAEMON_HOST)), stale_metadata.get("port")
+    stale_pid, stale_port = _daemon_identity(stale_metadata)
+    if outcome == "unresponsive" and proven_pid is not None:
+        target = {**stale_metadata, "pid": proven_pid}
+        signalled = _terminate_daemon_by_pid(target, root=root)
+        # A delivered signal is not a stopped daemon: only a refused connection is (r25).
+        if signalled and _await_endpoint_refused(host, port, _DAEMON_START_TIMEOUT_SECONDS):
+            outcome = "pid"
+        else:
+            state = _daemon_pid_state(target, root)
+            return {**base, **_unconfirmed_fields(state, signalled)}, outcome  # metadata KEPT
+    if stale_pid is not None:
+        _remove_daemon_metadata(root, expected_pid=stale_pid, expected_port=stale_port)
+    if outcome == "not_listening":
+        return {**base, **_stale_success_fields(False, True)}, outcome
+    return _stop_success(dict(base), root, "pid" if outcome == "pid" else "cooperative"), outcome
+
+
 def _daemon_request(
     host: str,
     port: int,
@@ -572,6 +669,7 @@ def _daemon_request(
     *,
     response_timeout: float | None = _DAEMON_RESPONSE_TIMEOUT_SECONDS,
     token: str = "",
+    connect_timeout: float | None = None,
 ) -> dict[str, Any]:
     if not _is_loopback_host(host):
         raise ValueError(f"refusing non-loopback session daemon host: {host!r}")
@@ -592,7 +690,7 @@ def _daemon_request(
     request = {**request, "client_pid": os.getpid()}
     with socket.create_connection(
         (host, int(port)),
-        timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS,
+        timeout=_DAEMON_CONNECT_TIMEOUT_SECONDS if connect_timeout is None else connect_timeout,
     ) as conn:
         conn.settimeout(response_timeout)
         conn.sendall((json.dumps(request) + "\n").encode("utf-8"))
@@ -948,7 +1046,18 @@ def stop_session_daemon(path: str = ".") -> dict[str, Any]:
                 "root": str(root),
                 **_metadata_unconfirmed(meta_state),
             }
-        killed = _terminate_daemon_by_pid(stale_metadata, root=root)
+        # F-07: a daemon the probe rejected (version skew, ...) is stopped only after it PROVES it
+        # serves this root; ineligible / unverifiable endpoints are never signalled or deleted.
+        rejected, rejected_outcome = _stop_rejected_daemon(root, stale_metadata)
+        if rejected is not None:
+            return rejected
+        # A listener that answered but could NOT prove it serves this root (e.g. another root's
+        # credentials planted here) is never reached by the signal path unless the recorded pid is
+        # independently attested as this root's daemon (the real function re-checks as well).
+        unprovable = rejected_outcome == "unverified" and (
+            _daemon_pid_state(stale_metadata, root) != "ours"
+        )
+        killed = not unprovable and _terminate_daemon_by_pid(stale_metadata, root=root)
         # Stale metadata is removed only after PROVEN absence: the process is gone ("gone") or, after
         # a delivered signal, the connection is refused. A live process we could not stop (ours but
         # termination failed) or could not prove to be ours is UNCONFIRMED: keep daemon.json.
