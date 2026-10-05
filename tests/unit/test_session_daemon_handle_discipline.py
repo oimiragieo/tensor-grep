@@ -38,8 +38,8 @@ _TRUSTED_INSTALLER = "S-1-5-80-956008885-3418522649-1831038044-1853292631-227147
 
 
 @pytest.fixture(autouse=True)
-def _secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(tmp_path / "secret"))
+def _secret_dir(trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(trusted_base_dir / "secret"))
 
 
 # ---- ancestor OWNER policy ----
@@ -57,9 +57,9 @@ def test_any_other_ancestor_owner_is_refused(owner: Any) -> None:
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ancestor handles")
 def test_an_ancestor_with_a_foreign_owner_is_refused_and_the_control_is_accepted(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = tmp_path / "secret"
+    secret_dir = trusted_base_dir / "secret"
     assert trust._load_or_create_user_secret() is not None
     me = trust._win_current_user_sid()
     real = trust._win_dacl_entries
@@ -81,19 +81,19 @@ def test_an_ancestor_with_a_foreign_owner_is_refused_and_the_control_is_accepted
 # ---- link count, binding, swaps ----
 
 
-def test_a_hard_linked_secret_is_not_trusted(tmp_path: Path) -> None:
+def test_a_hard_linked_secret_is_not_trusted(trusted_base_dir: Path) -> None:
     secret = trust._load_or_create_user_secret()
     assert secret is not None
     path = trust._daemon_secret_path()
     assert trust._read_user_secret(path) == secret
-    os.link(path, tmp_path / "elsewhere-link")
+    os.link(path, trusted_base_dir / "elsewhere-link")
     assert path.stat().st_nlink == 2
     assert (
         trust._read_user_secret(path) is None
     )  # nlink != 1: some other name can reach the content
 
 
-def test_a_crash_leftover_link_is_recovered_not_refused_forever(tmp_path: Path) -> None:
+def test_a_crash_leftover_link_is_recovered_not_refused_forever(trusted_base_dir: Path) -> None:
     secret = trust._load_or_create_user_secret()
     assert secret is not None
     path = trust._daemon_secret_path()
@@ -106,14 +106,14 @@ def test_a_crash_leftover_link_is_recovered_not_refused_forever(tmp_path: Path) 
 
 
 def test_swapping_the_parent_after_the_ancestor_check_never_yields_the_swapped_in_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = tmp_path / "secret"
+    secret_dir = trusted_base_dir / "secret"
     original = trust._load_or_create_user_secret()
     assert original is not None
     path = trust._daemon_secret_path()
     # an attacker-chosen directory holding a file with a VALID owner and ACL (made by this same user)
-    attacker_dir = tmp_path / "attacker"
+    attacker_dir = trusted_base_dir / "attacker"
     monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(attacker_dir))
     attacker = trust._load_or_create_user_secret()
     assert attacker is not None and attacker != original
@@ -151,7 +151,9 @@ def test_final_path_binding_compares_the_files_directory_with_the_pinned_directo
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows file / directory handles")
-def test_the_real_secret_handle_reports_one_link_and_the_pinned_directory(tmp_path: Path) -> None:
+def test_the_real_secret_handle_reports_one_link_and_the_pinned_directory(
+    trusted_base_dir: Path,
+) -> None:
     assert trust._load_or_create_user_secret() is not None
     path = trust._daemon_secret_path()
     parent_handle = trust._winsec.open_no_follow(str(path.parent), directory=True, share=0x3)
@@ -170,7 +172,7 @@ def test_the_real_secret_handle_reports_one_link_and_the_pinned_directory(tmp_pa
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX dirfd / mode bits")
-def test_posix_creation_and_read_use_the_verified_directory_fd(tmp_path: Path) -> None:
+def test_posix_creation_and_read_use_the_verified_directory_fd(trusted_base_dir: Path) -> None:
     secret = trust._load_or_create_user_secret()
     assert secret is not None
     path = trust._daemon_secret_path()

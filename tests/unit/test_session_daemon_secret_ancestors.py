@@ -40,7 +40,10 @@ _READ_EXEC = 0x1200A9
 
 def _secret_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *parts: str) -> Path:
     d = tmp_path.joinpath(*parts)
-    d.mkdir(parents=True, exist_ok=True)
+    d.parent.mkdir(parents=True, exist_ok=True)
+    trust._ensure_secret_dir(
+        d
+    )  # Windows: a user-only DACL, as production creates it (not inherited)
     monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(d))
     return d
 
@@ -86,10 +89,13 @@ def test_real_local_app_data_path_is_accepted() -> None:
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows reparse points")
-def test_a_junction_ancestor_is_refused(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    real = tmp_path / "real"
-    (real / "secret").mkdir(parents=True)
-    junction = tmp_path / "jn"
+def test_a_junction_ancestor_is_refused(
+    trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = trusted_base_dir / "real"
+    (real).mkdir(parents=True)
+    trust._ensure_secret_dir(real / "secret")
+    junction = trusted_base_dir / "jn"
     done = subprocess.run(
         ["cmd", "/c", "mklink", "/J", str(junction), str(real)], capture_output=True, check=False
     )
@@ -106,15 +112,17 @@ def test_a_junction_ancestor_is_refused(tmp_path: Path, monkeypatch: pytest.Monk
 
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACLs")
 def test_an_ancestor_granting_everyone_write_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = _secret_dir(tmp_path, monkeypatch, "a", "b", "secret")
+    secret_dir = _secret_dir(trusted_base_dir, monkeypatch, "a", "b", "secret")
     # control first: the same layout WITHOUT the grant works
     assert trust._load_or_create_user_secret() is not None
     path = secret_dir / "daemon-secret.json"
     assert trust._read_user_secret(path) is not None
     done = subprocess.run(
-        ["icacls", str(tmp_path / "a"), "/grant", "*S-1-1-0:(W)"], capture_output=True, check=False
+        ["icacls", str(trusted_base_dir / "a"), "/grant", "*S-1-1-0:(W)"],
+        capture_output=True,
+        check=False,
     )
     assert done.returncode == 0, done.stderr
     assert trust._read_user_secret(path) is None
@@ -241,15 +249,15 @@ def test_the_walk_is_bounded_and_fails_closed(
 
 
 def test_an_api_error_while_walking_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    trusted_base_dir: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret_dir = _secret_dir(tmp_path, monkeypatch, "a", "secret")
+    secret_dir = _secret_dir(trusted_base_dir, monkeypatch, "a", "secret")
     assert trust._ancestors_trusted(secret_dir) is True  # control
     real_lstat = os.lstat
     calls: list[Any] = []
 
     def _boom(p: Any, *a: Any, **k: Any) -> Any:
-        if Path(p) == tmp_path / "a":
+        if Path(p) == trusted_base_dir / "a":
             calls.append(p)
             raise PermissionError("denied")
         return real_lstat(p, *a, **k)
