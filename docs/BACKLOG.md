@@ -1,6 +1,6 @@
 # tensor-grep — Project Backlog & PR Tracker
 
-## 2026-10-04: 2026-10-03 bug hunt closeout -- 9 PRs merged and released (#1194-#1196, #1198-#1203; v1.123.13/.14/.15); OPEN #1197 B, #1204 K1, #1205 G1, W2b H unbuilt, wave 3 -- canonical status + per-PR receipts in `docs/audits/2026-10-03-bughunt-tracker.md` (Wave status).
+## 2026-10-05: 2026-10-03 bug hunt closeout -- 13 PRs merged and released (#1194-#1206; v1.123.13-v1.123.18); OPEN #1207 W2b H, #1208 front-door loop (P0), #1209 hermetic tests; wave 3 not started -- canonical status + per-PR receipts in `docs/audits/2026-10-03-bughunt-tracker.md` (Wave status).
 
 ## 2026-09-24: v1.122.1 dogfood remediation SHIPPED (#1173-#1178 -> 1.122.2/1.123.0/1.123.1). OPEN: this file is AT its line ceiling -- do the archival split `scripts/check_governance_doc_size.py` prescribes; `--focus` demand-gated; verify model2vec-rs license.
 
