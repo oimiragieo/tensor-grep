@@ -18,7 +18,7 @@ ALLOWLISTED_DICTS = {
     ("cli/inventory.py", "_LANGUAGE_BY_SUFFIX"),
     ("cli/sql_query.py", "lang_map"),
 }
-SHARED_MODULE = "cli/lang_suffixes.py"
+SHARED_MODULE = "core/lang_suffixes.py"
 
 
 def _literal_strings(node: ast.AST) -> set[str] | None:

@@ -434,3 +434,42 @@ def test_stringzilla_in_memory_index_cache_obeys_entry_cap(tmp_path, monkeypatch
     assert (str(files[0]), False, False) not in cache
     assert (str(files[1]), False, False) in cache
     assert (str(files[2]), False, False) in cache
+
+
+@pytest.mark.parametrize("index", ["1", "0"])
+def test_stringzilla_smart_case(tmp_path, monkeypatch, index):
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", index)
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(tmp_path / "idx"))
+    f = tmp_path / "a.log"
+    f.write_text("Error one\nerror two\n", encoding="utf-8")
+    cfg = SearchConfig(fixed_strings=True, smart_case=True)
+    assert StringZillaBackend().search(str(f), "error", cfg).total_matches == 2
+    assert StringZillaBackend().search(str(f), "Error", cfg).total_matches == 1  # control
+
+
+@pytest.mark.parametrize("index", ["1", "0"])
+def test_stringzilla_max_count_zero_returns_nothing(tmp_path, monkeypatch, index):
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", index)
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(tmp_path / "idx"))
+    f = tmp_path / "a.log"
+    f.write_text("ERROR a\nERROR b\n", encoding="utf-8")
+    r = StringZillaBackend().search(str(f), "ERROR", SearchConfig(fixed_strings=True, max_count=0))
+    assert r.total_matches == 0 and r.matches == []
+    # control: without -m 0 the same search finds both lines
+    assert (
+        StringZillaBackend().search(str(f), "ERROR", SearchConfig(fixed_strings=True)).total_matches
+        == 2
+    )
+
+
+@pytest.mark.parametrize("index", ["1", "0"])
+def test_stringzilla_undecodable_text_carries_an_incomplete_reason(tmp_path, monkeypatch, index):
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX", index)
+    monkeypatch.setenv("TENSOR_GREP_STRING_INDEX_DIR", str(tmp_path / "idx"))
+    f = tmp_path / "lat.txt"
+    f.write_bytes(b"caf\xe9 needle\n")
+    # "needle" takes the index path (>= 3 chars); "ne" (< 3 chars) takes the plain-scan path.
+    for pattern in ("needle", "ne"):
+        r = StringZillaBackend().search(str(f), pattern, SearchConfig(fixed_strings=True))
+        assert r.result_incomplete and r.incomplete_reason, pattern
+        assert "lat.txt" in r.incomplete_reason

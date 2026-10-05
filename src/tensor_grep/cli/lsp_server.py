@@ -1081,11 +1081,50 @@ def did_close(ls: TensorGrepLSPServer, params: DidCloseTextDocumentParams) -> No
                 pass
 
 
+_LSP_EOL_RE = re.compile(r"\r\n|\r|\n")
+
+
+def _position_to_offset(ls: TensorGrepLSPServer, text: str, position: Any) -> int:
+    starts = [0]
+    starts.extend(m.end() for m in _LSP_EOL_RE.finditer(text))
+    line = max(0, int(position.line))
+    if line >= len(starts):
+        return len(text)
+    end = starts[line + 1] if line + 1 < len(starts) else len(text)
+    body = text[starts[line] : end].rstrip("\r\n")
+    col = min(_to_cp_col(ls, body, max(0, int(position.character))), len(body))
+    return starts[line] + col
+
+
+def _apply_content_changes(ls: TensorGrepLSPServer, text: str | None, changes: Any) -> str | None:
+    """Apply LSP content changes in order; None while the base document is still unknown."""
+    for change in changes:
+        change_range = getattr(change, "range", None)
+        if change_range is None:
+            text = cast(Any, change).text
+            continue
+        if text is None:
+            # Unknown base: a ranged edit keeps it unknown (never fabricate a base from the
+            # fragment); a later whole-document change still resets it.
+            continue
+        start = _position_to_offset(ls, text, change_range.start)
+        end = max(start, _position_to_offset(ls, text, change_range.end))
+        text = text[:start] + cast(Any, change).text + text[end:]
+    return text
+
+
 @server.feature(TEXT_DOCUMENT_DID_CHANGE)  # type: ignore
 def did_change(ls: TensorGrepLSPServer, params: DidChangeTextDocumentParams) -> None:
     """Document changed."""
     if params.content_changes:
-        new_text = cast(Any, params.content_changes[0]).text
+        uri = params.text_document.uri
+        new_text = _apply_content_changes(
+            ls, _lru_get(ls.documents_cache, uri), params.content_changes
+        )
+        if new_text is None:
+            # A ranged edit with no base document: never cache the bare fragment.
+            _invalidate_repo_map_cache(ls, uri)
+            return
         # audit I3: use LRU-bounded cache.
         _lru_put(ls.documents_cache, params.text_document.uri, new_text, _DOCUMENTS_CACHE_MAX)
         _invalidate_repo_map_cache(ls, params.text_document.uri)

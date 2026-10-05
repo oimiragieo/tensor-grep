@@ -32,13 +32,20 @@ def test_import_order_does_not_matter(statements: str) -> None:
 def test_lang_suffixes_imports_nothing_from_tensor_grep() -> None:
     import ast
 
-    tree = ast.parse(Path(SRC, "tensor_grep", "cli", "lang_suffixes.py").read_text("utf-8"))
-    imported = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and "tensor_grep" in ast.unparse(node)
+    # The definition lives in the layer-neutral core module and imports nothing; the cli module is
+    # a re-export whose ONLY tensor_grep import is that core module (no cycle is possible).
+    def tensor_grep_imports(*parts: str) -> list[str]:
+        tree = ast.parse(Path(SRC, "tensor_grep", *parts).read_text("utf-8"))
+        return [
+            ast.unparse(node)
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and "tensor_grep" in ast.unparse(node)
+        ]
+
+    assert tensor_grep_imports("core", "lang_suffixes.py") == []
+    assert tensor_grep_imports("cli", "lang_suffixes.py") == [
+        "from tensor_grep.core.lang_suffixes import JS_TS_SUFFIXES, TS_SUFFIXES"
     ]
-    assert imported == []
 
 
 def test_test_paths_js_like_suffixes_are_the_shared_set() -> None:
