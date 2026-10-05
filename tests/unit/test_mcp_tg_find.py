@@ -351,3 +351,13 @@ def test_tg_find_max_tokens_default_matches_cli():
 
     mcp_default = inspect.signature(mcp_server.tg_find).parameters["max_tokens"].default
     assert mcp_default == mcp_server._DEFAULT_MCP_FIND_MAX_TOKENS
+
+
+@pytest.mark.parametrize(("query", "limit"), [("", 10), ("   ", 10), ("hello", -1), ("hello", 0)])
+def test_tg_find_rejects_empty_query_and_non_positive_limit(tmp_path, monkeypatch, query, limit):
+    _stub_dense_unavailable(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "a.py").write_text("hello = 1\n", encoding="utf-8")
+    payload = json.loads(mcp_server.tg_find(query, str(tmp_path), limit=limit))
+    assert payload["error"]["code"] == "invalid_input"
+    assert "matches" not in payload or not payload["matches"]

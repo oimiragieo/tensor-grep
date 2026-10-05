@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from tensor_grep.cli.incompleteness import disclosed_incomplete
+from tensor_grep.cli.mcp_arg_validation import unsupported_ast_language_message
 
 if TYPE_CHECKING:
     from tensor_grep.cli import mcp_server as _self
@@ -501,6 +502,9 @@ def _validate_rewrite_inputs(pattern: str, lang: str, path: str) -> str | None:
         return "Pattern must not be empty."
     if not lang.strip():
         return "Language must not be empty."
+    lang_error = unsupported_ast_language_message(lang)
+    if lang_error is not None:
+        return lang_error
     if not path.strip():
         return "Path must not be empty."
     if not Path(path).expanduser().exists():

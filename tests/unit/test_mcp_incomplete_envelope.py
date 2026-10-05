@@ -16,6 +16,8 @@ documented in the tensor-grep-architecture-contract skill).
 
 import json
 
+from tensor_grep.backends.base import BackendExecutionError
+from tensor_grep.cli import mcp_server
 from tensor_grep.cli.incompleteness import unified_incomplete_envelope
 from tensor_grep.cli.mcp_server import (
     _TG_MCP_SERVER_CONTRACT_VERSION,
@@ -27,6 +29,7 @@ from tensor_grep.cli.mcp_server import (
 )
 from tensor_grep.core import completeness
 from tensor_grep.core.completeness import CompletenessEvidence, project
+from tensor_grep.core.result import SearchResult
 
 # Frozen truth table fixtures (mirrors test_completeness_projection.py's TRUTH_TABLE) --
 # AGT-07 Task 09's "migrate one consumer first; run every truth-table row through old and
@@ -347,3 +350,104 @@ def test_contract_version_bumped_for_incomplete_envelope() -> None:
     assert (major, minor) >= (1, 8), (
         f"_TG_MCP_SERVER_CONTRACT_VERSION={_TG_MCP_SERVER_CONTRACT_VERSION} was not bumped"
     )
+
+
+def test_max_repo_files_cap_is_budget_remediable_scan_limit():
+    raw = json.dumps({
+        "truncated": True,
+        "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
+    })
+    inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
+    assert inc["cause"] == "scan_limit" and inc["budget_remediable"] is True
+
+
+def test_scan_limit_of_unknown_shape_stays_fail_closed():
+    raw = json.dumps({"truncated": True, "scan_limit": {"possibly_truncated": True}})
+    inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
+    assert inc["cause"] == "truncated" and inc["budget_remediable"] is False
+
+
+def test_unreadable_paths_still_outrank_the_max_repo_files_cap():
+    raw = json.dumps({
+        "truncated": True,
+        "unreadable_paths": {"count": 1},
+        "scan_limit": {"max_repo_files": 5, "scanned_files": 5, "possibly_truncated": True},
+    })
+    inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
+    assert inc["cause"] == "unreadable_path" and inc["budget_remediable"] is False
+
+
+def test_backend_failure_beside_the_file_cap_stays_non_remediable():
+    # council wave-2b r28: an AST backend failure is recorded as an explicit, UNCLASSIFIED
+    # incomplete_reason and the scan keeps going, so the same envelope can also carry the
+    # cause-less max_repo_files scan_limit. No larger budget repairs a backend failure, so the
+    # cap inference must not mark it remediable.
+    raw = json.dumps({
+        "truncated": True,
+        "result_incomplete": True,
+        "incomplete_reason": "AST backend failed on a.py",
+        "scan_limit": {"max_repo_files": 1, "scanned_files": 1, "possibly_truncated": True},
+    })
+    inc = json.loads(_inject_mcp_contract_fields(raw))["incomplete"]
+    assert inc["cause"] == "AST backend failed on a.py" and inc["budget_remediable"] is False
+
+
+def _forced_ast_pipeline(monkeypatch, search_impl):
+    """Force tg_ast_search onto one recording backend.
+
+    The tool builds `_self.Pipeline(config=config)` and calls `pipeline.get_backend()`, refuses
+    any backend whose class name is not AstBackend/AstGrepWrapperBackend, and calls
+    `backend.search(current_file, pattern, config=config)`.
+    """
+    calls = []
+
+    class AstGrepWrapperBackend:  # the name is load-bearing: the tool allowlists class names
+        def search(self, file_path, pattern, config=None):
+            calls.append(file_path)
+            return search_impl(file_path, pattern, config)
+
+    class _ForcedPipeline:
+        def __init__(self, config=None, **_kwargs):
+            self._backend = AstGrepWrapperBackend()
+
+        def get_backend(self):
+            return self._backend
+
+    monkeypatch.setattr(mcp_server, "Pipeline", _ForcedPipeline)
+    return calls
+
+
+def _two_file_root(tmp_path, monkeypatch):
+    (tmp_path / "a.py").write_text("def a():\n    pass\n", encoding="utf-8")
+    (tmp_path / "b.py").write_text("def b():\n    pass\n", encoding="utf-8")
+    monkeypatch.setenv("TG_MCP_ROOT", str(tmp_path))
+
+
+def test_tg_ast_search_backend_failure_then_cap_is_non_remediable(tmp_path, monkeypatch):
+    _two_file_root(tmp_path, monkeypatch)
+
+    def _boom(_file_path, _pattern, _config):
+        raise BackendExecutionError("simulated AST failure")
+
+    calls = _forced_ast_pipeline(monkeypatch, _boom)
+    payload = json.loads(
+        mcp_server.tg_ast_search("def $F(): $$$B", "python", str(tmp_path), max_repo_files=1)
+    )
+    assert len(calls) == 1, (calls, payload)
+    assert "error" not in payload, payload
+    assert payload["result_incomplete"] is True, payload
+    assert "AST backend failed" in (payload.get("incomplete_reason") or ""), payload
+    assert payload["scan_limit"]["max_repo_files"] == 1, payload
+    assert payload["scan_limit"]["possibly_truncated"] is True, payload
+    assert payload["incomplete"]["budget_remediable"] is False, payload
+
+
+def test_tg_ast_search_cap_only_same_route_is_remediable(tmp_path, monkeypatch):
+    _two_file_root(tmp_path, monkeypatch)
+    calls = _forced_ast_pipeline(monkeypatch, lambda _f, _p, _c: SearchResult())
+    payload = json.loads(
+        mcp_server.tg_ast_search("def $F(): $$$B", "python", str(tmp_path), max_repo_files=1)
+    )
+    assert len(calls) == 1, (calls, payload)
+    assert payload["scan_limit"]["possibly_truncated"] is True, payload
+    assert payload["incomplete"]["budget_remediable"] is True, payload

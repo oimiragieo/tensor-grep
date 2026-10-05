@@ -841,12 +841,12 @@ def test_write_path_confinement_resolution_failure_sanitizes_and_logs(tmp_path, 
 
 def test_mcp_wire_str_exc_closed_world_ast_ratchet():
     """SEC-007: Closed-world ratchet enforcing that across all 3 MCP tool modules:
-    - src/tensor_grep/cli/mcp_server.py (26 sites)
+    - src/tensor_grep/cli/mcp_server.py (25 sites)
     - src/tensor_grep/cli/mcp_symbol_tools.py (11 sites)
     - src/tensor_grep/cli/mcp_audit_tools.py (15 sites)
     - src/tensor_grep/cli/mcp_rewrite_tools.py (2 sites)
-    exactly 54 authorized str(exc) callsites exist, and ALL 54 are PathConfinementError sites
-    (53 tool handlers + 1 _meta_confinement_error helper).
+    exactly 53 authorized str(exc) callsites exist, and ALL 53 are PathConfinementError sites
+    (52 tool handlers + 1 _meta_confinement_error helper).
     Zero un-allowlisted sites permitted, verified by exact function identity and handler type,
     matching the enclosing handler's bound exception variable name regardless of spelling.
     """
@@ -873,7 +873,7 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
             ("tg_session_blast_radius_render", "PathConfinementError"): 1,
             ("tg_session_blast_radius_plan", "PathConfinementError"): 1,
             ("tg_find", "PathConfinementError"): 1,
-            ("tg_search", "PathConfinementError"): 2,
+            ("tg_search", "PathConfinementError"): 1,
             ("tg_ast_search", "PathConfinementError"): 1,
             ("tg_classify_logs", "PathConfinementError"): 1,
             ("tg_session_open", "PathConfinementError"): 1,
@@ -977,8 +977,8 @@ def test_mcp_wire_str_exc_closed_world_ast_ratchet():
         assert actual_counts == expected_sites, (
             f"Counts mismatch in {mod_name}: {actual_counts} vs {expected_sites}"
         )
-    assert total_sites_count == 54, (
-        f"Expected exactly 54 closed-world str(exc) sites across all 4 modules, found {total_sites_count}"
+    assert total_sites_count == 53, (
+        f"Expected exactly 53 closed-world str(exc) sites across all 4 modules, found {total_sites_count}"
     )
 
     # Negative control: assert that mutation with a different exception variable name (e.g. 'err') is caught

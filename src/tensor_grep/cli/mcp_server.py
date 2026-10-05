@@ -31,6 +31,7 @@ from tensor_grep.backends.cpu_backend import (
     native_walk_deadline_exceeded,
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
+from tensor_grep.cli import mcp_arg_validation as _av
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
@@ -174,7 +175,8 @@ def _mcp_server_version() -> str:
 # existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.9.0"  # 1.8.0 was P3: unified `incomplete` envelope
+# 1.10.0 (Part K2): invalid_input for bad tg_search/tg_find/AST-language/rewrite args; file cap remediable.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.10.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -2799,6 +2801,16 @@ def tg_session_blast_radius_plan(
         return _sanitized_tool_error_text("tg_session_blast_radius_plan", exc)
 
 
+def _find_invalid_input(query: str, path: str, message: str) -> str:
+    payload = _envelope_base(
+        routing_backend=_FIND_ROUTING_BACKEND,
+        routing_reason=_FIND_ROUTING_REASON,
+        include_schema_version=False,
+    )
+    payload.update(query=query, path=path, error={"code": "invalid_input", "message": message})
+    return json.dumps(payload, indent=2)
+
+
 @_register_legacy_tool  # type: ignore
 def tg_find(
     query: str,
@@ -2847,15 +2859,11 @@ def tg_find(
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            payload = _envelope_base(
-                routing_backend=_FIND_ROUTING_BACKEND,
-                routing_reason=_FIND_ROUTING_REASON,
-                include_schema_version=False,
-            )
-            payload["query"] = query
-            payload["path"] = "[refused]"
-            payload["error"] = {"code": "invalid_input", "message": str(exc)}
-            return json.dumps(payload, indent=2)
+            return _find_invalid_input(query, "[refused]", str(exc))
+
+        refusal = _av.tg_find_refusal(query, limit)
+        if refusal is not None:
+            return _find_invalid_input(query, path, refusal)
 
         try:
             result = _execute_find(
@@ -2931,6 +2939,9 @@ def tg_find(
         return _sanitized_tool_error_text("tg_find", exc)
 
 
+_search_invalid_input_response = _av.search_invalid_input_response
+
+
 @_register_legacy_tool  # type: ignore
 @_bounds.bounded_response
 def tg_search(
@@ -2989,9 +3000,7 @@ def tg_search(
             both are set.
     """
     try:
-        search_pattern = pattern or query
-        if not search_pattern:
-            return "Search failed: either pattern or query is required."
+        search_pattern = pattern or query or ""
 
         # Bug #88: capture the "was path left at its default" signal from the RAW caller-supplied
         # value BEFORE confinement below reassigns `path` to its confined (absolute) form -- once
@@ -3004,28 +3013,15 @@ def tg_search(
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
-            if structured_json:
-                payload = {
-                    "pattern": search_pattern,
-                    "path": "[refused]",
-                    "total_matches": 0,
-                    "total_files": 0,
-                    "rendered_match_count": 0,
-                    "rendered_file_count": 0,
-                    "matches": [],
-                    "truncated": False,
-                    "result_incomplete": True,
-                    "incomplete_reason": str(exc),
-                    # Routed through the helper for STRUCTURAL coverage: every serialized
-                    # `result_incomplete` payload passes through one place, so a future auditor can
-                    # verify the seam mechanically. This site legitimately contributes {} -- nothing
-                    # was walked, so no completeness class applies. `error.code` carries the signal.
-                    **_incomplete_class_fragment(None),
-                    "error": {"code": "invalid_input", "message": str(exc)},
-                }
-                # M14: this no-scan error envelope crossed the wire un-stamped.
-                return _self._inject_mcp_contract_fields(json.dumps(payload, indent=2))
-            return f"Search failed: {exc}"
+            return _search_invalid_input_response(
+                search_pattern, str(exc), path="[refused]", structured_json=structured_json
+            )
+
+        invalid_arg = _av.search_arg_error(search_pattern, context, max_count, type_filter)
+        if invalid_arg is not None:
+            return _search_invalid_input_response(
+                search_pattern, invalid_arg, path=path, structured_json=structured_json
+            )
 
         rendered_file_limit = max(0, max_files if max_files is not None else 15)
         rendered_result_limit = min(
@@ -3123,6 +3119,7 @@ def tg_search(
                     if result.total_files > 0 or result.total_matches > 0:
                         all_results.total_files += 1
                     _merge_runtime_routing(all_results, result)
+                files_scanned or _av.probe_backend(backend, search_pattern, config)
                 # The 200k-entry DirectoryScanner traversal budget (Q14) is a separate,
                 # coarser defensive cap than max_repo_files -- it can trip first and
                 # truncate the walk below max_repo_files without ever hitting the
@@ -3229,7 +3226,7 @@ def tg_search(
             )
             if all_results.is_empty:
                 if structured_json:
-                    payload = {
+                    payload: dict[str, Any] = {
                         "pattern": search_pattern,
                         "path": path,
                         "total_matches": 0,
@@ -3407,6 +3404,13 @@ def tg_search(
 
             return "\n".join(_bounds._cap_output_lines(output))
 
+        except _av.SEARCH_ERRORS as e:
+            invalid = _av.search_error_message(e)
+            if invalid is None:
+                return _sanitized_tool_error_text("tg_search", e)
+            return _search_invalid_input_response(
+                search_pattern, invalid, path=path, structured_json=structured_json
+            )
         except Exception as e:
             return _sanitized_tool_error_text("tg_search", e)
     except Exception as exc:
@@ -3475,6 +3479,12 @@ def tg_ast_search(
                     )
                 )
             return f"AST search failed: {exc}"
+
+        lang_error = _av.unsupported_ast_language_message(lang)
+        if lang_error is not None:
+            return _ast_error_result(
+                "invalid_input", lang_error, pattern, lang, path, structured_json
+            )
 
         normalized_max_repo_files = max(1, int(max_repo_files))
         config = SearchConfig(ast=True, lang=lang, no_messages=True)
