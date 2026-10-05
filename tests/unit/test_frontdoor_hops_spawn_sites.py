@@ -377,3 +377,64 @@ def test_bootstrap_spawn_failure_message_is_ascii(
     err = capsys.readouterr().err
     assert err.isascii(), err
     assert "could not start" in err
+
+
+# ---------------------------------------------------------------------------
+# Contract A for the info actions: under TG_REEXEC_GUARD never spawn native
+# ---------------------------------------------------------------------------
+
+
+def _no_rg(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(cli_main, "resolve_ripgrep_binary", lambda: None)
+
+
+def test_type_list_under_reexec_guard_spawns_no_native_and_uses_the_fallback(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    _no_rg(monkeypatch)
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    result = CliRunner().invoke(cli_main.app, ["search", "--type-list"])
+    assert recorder.calls == [], recorder.calls  # ZERO native spawns
+    assert result.exit_code == 0, result.output
+    assert "py" in result.output  # the built-in type list, not empty
+
+
+def test_type_list_without_the_guard_does_spawn_native(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    _no_rg(monkeypatch)
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    monkeypatch.delenv("TG_REEXEC_GUARD", raising=False)
+    CliRunner().invoke(cli_main.app, ["search", "--type-list"])
+    assert [argv[0] for argv, _m in recorder.calls] == [str(fake_native)]  # positive control
+
+
+def test_pcre2_version_under_reexec_guard_spawns_no_native(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import sys
+
+    _no_rg(monkeypatch)
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    monkeypatch.setenv("TG_REEXEC_GUARD", "1")
+    monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main_entry()
+    assert recorder.calls == [], recorder.calls  # ZERO native spawns
+    assert excinfo.value.code == 1  # the existing "no backend available" fallback
+    assert "unavailable" in capsys.readouterr().err
+
+
+def test_pcre2_version_without_the_guard_does_spawn_native(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    import sys
+
+    _no_rg(monkeypatch)
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    monkeypatch.delenv("TG_REEXEC_GUARD", raising=False)
+    monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
+    with pytest.raises(SystemExit):
+        cli_main.main_entry()
+    assert [argv[0] for argv, _m in recorder.calls] == [str(fake_native)]  # positive control

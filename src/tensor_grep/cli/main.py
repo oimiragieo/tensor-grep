@@ -2628,7 +2628,9 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
     child_env, refusal = child_env_or_refusal()
     if child_env is None:
         raise typer.Exit(refusal)
-    candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+    # TG_REEXEC_GUARD: the native door spawned this process; never hand back to it (contract A).
+    native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+    candidates = [native, _self.resolve_ripgrep_binary()]
     last_completed: subprocess.CompletedProcess[str] | None = None
     for candidate in candidates:
         if not candidate or not candidate.exists():
@@ -13357,7 +13359,9 @@ def main_entry() -> None:
             pcre2_env, pcre2_refusal = child_env_or_refusal()
             if pcre2_env is None:
                 sys.exit(pcre2_refusal)
-            candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+            # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
+            native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+            candidates = [native, _self.resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():

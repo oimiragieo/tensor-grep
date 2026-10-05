@@ -101,19 +101,15 @@ def _native_binary() -> Path | None:
         if not candidate.is_absolute():
             candidate = (REPO_ROOT / candidate).resolve()
         return candidate if _is_executable(candidate) else None
-    try:
-        sys.path.insert(0, str(REPO_ROOT / "src"))
-        from tensor_grep.cli.runtime_paths import resolve_native_tg_binary
-
-        resolved = resolve_native_tg_binary()
-        if resolved is not None:
-            return Path(resolved).resolve()
-    except Exception:
-        pass
-    # No `shutil.which("tg")` fallback: PATH `tg` is the INSTALLED front door (possibly a stale
-    # or foreign build, or the Python shim that re-delegates to native), not this checkout's. An
-    # unresolvable repo binary skips with a reason (see `_require_binary`) instead of diffing the
-    # wrong engine, and instead of risking a native<->python front-door loop.
+    # ONLY this checkout's own build output. `resolve_native_tg_binary()` is NOT consulted: it scans
+    # PATH and the managed install dir, i.e. the INSTALLED front door (possibly stale/foreign, or
+    # the Python shim that re-delegates to native). Diffing the wrong engine, or risking a
+    # native<->python front-door loop, is worse than skipping with a reason (`_require_binary`).
+    exe = "tg.exe" if os.name == "nt" else "tg"
+    for profile in ("release", "debug"):
+        candidate = REPO_ROOT / "rust_core" / "target" / profile / exe
+        if candidate.is_file() and _is_executable(candidate):
+            return candidate.resolve()
     return None
 
 
@@ -279,3 +275,20 @@ def test_producers_agree_on_the_shared_contract(corpus: Path) -> None:
         f"  native-only: {sorted(native_matches - python_matches)}\n"
         f"  python-only: {sorted(python_matches - native_matches)}"
     )
+
+
+def test_native_binary_never_returns_the_installed_resolver_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Contract D: `resolve_native_tg_binary()` scans PATH / the managed install (the INSTALLED
+    tg). `_native_binary()` must not consult it: only the explicit override or this checkout's
+    own `rust_core/target/{release,debug}` build."""
+    installed = tmp_path / ("tg.exe" if os.name == "nt" else "tg")
+    installed.write_text("installed", encoding="utf-8")
+    monkeypatch.delenv("TG_PARITY_NATIVE_BINARY", raising=False)
+    import tensor_grep.cli.runtime_paths as runtime_paths
+
+    monkeypatch.setattr(runtime_paths, "resolve_native_tg_binary", lambda: installed)
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: pytest.fail("probed a binary"))
+    monkeypatch.setattr(Path, "is_file", lambda self: False)  # no checkout build present
+    assert _native_binary() is None
