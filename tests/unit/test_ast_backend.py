@@ -1367,12 +1367,13 @@ class TestAstBackend:
         first = AstBackend().search(str(src), "function_definition", SearchConfig(ast=True))
         entries = list(cache_dir.rglob("*.json"))
         assert entries, "premise: the first search must write a persistent result-cache entry"
-        assert _RESULT_CACHE_FORMAT == 3
+        pre_fix_format = 2  # what an older tg wrote; the live constant must have moved past it
+        assert _RESULT_CACHE_FORMAT != pre_fix_format
         for entry in entries:  # make every entry look like a pre-fix format-2 entry with wrong text
             data = json.loads(entry.read_text(encoding="utf-8"))
             if "matches" not in data:
                 continue  # not a result-cache entry (e.g. node-type index)
-            data["format"] = 2
+            data["format"] = pre_fix_format
             for m in data["matches"]:
                 m["text"] = "STALE PRE-FIX TEXT"
             entry.write_text(json.dumps(data), encoding="utf-8")
