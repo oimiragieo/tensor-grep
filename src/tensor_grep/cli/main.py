@@ -472,6 +472,7 @@ persisted repeated-query acceleration, and optional GPU routing.
 **Environment overrides**
 - `TG_SIDECAR_PYTHON`: Path to the Python executable used for sidecar-backed commands.
 - `TG_NATIVE_TG_BINARY`: Path to the native front door used by Python-backed commands.
+- `TG_FRONTDOOR_HOPS`: Native/Python front-door hand-off depth (internal; absent means 0). A door refuses with exit 2 at 4 hops to stop a routing loop.
 - `TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR`: Set to `nvidia` to prefer NVIDIA release-native front-door assets, with CPU fallback.
 - `TG_RG_PATH`: Path to the ripgrep executable used for text-search passthrough.
 - `TG_FORCE_CPU`: Force CPU routing for search commands.
@@ -925,11 +926,15 @@ def _delegate_to_native_tg_search(
     # (bootstrap.py `_streaming_passthrough_returncode`): a hung native search must not hang the
     # CLI forever, and `TimeoutExpired` must become a clean exit 124 (coreutils `timeout`
     # convention), not an uncaught traceback (H5 audit).
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
     from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
 
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        return refusal
     try:
         completed = subprocess.run(
-            command, check=False, timeout=configured_ripgrep_timeout_seconds()
+            command, check=False, timeout=configured_ripgrep_timeout_seconds(), env=child_env
         )
     except subprocess.TimeoutExpired:
         sys.stderr.write(
@@ -2619,12 +2624,21 @@ def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") 
 
 
 def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
-    candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    # TG_REEXEC_GUARD: the native door spawned this process; never hand back to it (contract A).
+    native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+    candidates = [native, _self.resolve_ripgrep_binary()]
     last_completed: subprocess.CompletedProcess[str] | None = None
     for candidate in candidates:
         if not candidate or not candidate.exists():
             continue
-        completed = subprocess.run([str(candidate), flag], capture_output=True, text=True)
+        completed = subprocess.run(
+            [str(candidate), flag], capture_output=True, text=True, env=child_env
+        )
         last_completed = completed
         if completed.returncode == 0:
             if completed.stdout:
@@ -3720,6 +3734,12 @@ def search_command(
                 exit_code=2,
             )
     native_tg_binary = _self.resolve_native_tg_binary()
+    if os.environ.get("TG_REEXEC_GUARD"):
+        # The native door spawned this process for a flag it routes to Python (python_sidecar.rs
+        # `configure_python_child_environment`). Delegating back is the native<->python loop
+        # (2026-10-05 P0). The bootstrap honours this guard and falls through to THIS site for
+        # `--json`, so this site must honour it too: search runs in-process.
+        native_tg_binary = None
     if (
         native_tg_binary is not None
         and not guarded_broad_root
@@ -4557,10 +4577,15 @@ def calibrate(
         )
         raise typer.Exit(1)
 
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
     argv = [str(native_tg_binary), "calibrate"]
     if json_output:
         argv.append("--json")
-    completed = subprocess.run(argv, check=False)
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    completed = subprocess.run(argv, check=False, env=child_env)
     raise typer.Exit(int(completed.returncode))
 
 
@@ -13307,7 +13332,12 @@ def worker(
     if stop:
         cmd.append("--stop")
 
-    completed = subprocess.run(cmd, check=False)
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
+    completed = subprocess.run(cmd, check=False, env=child_env)
     raise typer.Exit(int(completed.returncode))
 
 
@@ -13324,13 +13354,23 @@ def main_entry() -> None:
         first_arg = sys.argv[1]
 
         if first_arg == "--pcre2-version":
-            candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
+            from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+            pcre2_env, pcre2_refusal = child_env_or_refusal()
+            if pcre2_env is None:
+                sys.exit(pcre2_refusal)
+            # TG_REEXEC_GUARD: never hand back to the native door that spawned us (contract A).
+            native = None if os.environ.get("TG_REEXEC_GUARD") else _self.resolve_native_tg_binary()
+            candidates = [native, _self.resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():
                     continue
                 completed = subprocess.run(
-                    [str(candidate), "--pcre2-version"], capture_output=True, text=True
+                    [str(candidate), "--pcre2-version"],
+                    capture_output=True,
+                    text=True,
+                    env=pcre2_env,
                 )
                 last_completed = completed
                 if completed.returncode == 0:

@@ -302,7 +302,7 @@ def test_symlink_escape_exits_2_through_the_cli(tmp_path: Path, monkeypatch: Any
 def test_symlink_escape_exits_2_in_a_real_subprocess(tmp_path: Path) -> None:
     repo, _ = _escaping_symlink_repo(tmp_path)
     src = Path(di.__file__).resolve().parents[2]
-    env = {**os.environ, "PYTHONPATH": str(src)}
+    env = {**os.environ, "PYTHONPATH": str(src), "TG_DISABLE_NATIVE_TG": "1"}
     proc = subprocess.run(
         [sys.executable, "-m", "tensor_grep", "diff-impact", "--json"],
         cwd=repo,

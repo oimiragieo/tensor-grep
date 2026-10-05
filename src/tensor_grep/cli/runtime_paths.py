@@ -112,9 +112,15 @@ def _expected_tg_version() -> str:
 
 
 def _native_tg_version(candidate: Path) -> str | None:
+    from tensor_grep.cli.frontdoor_hops import probe_env
+
+    child_env = probe_env()
+    if child_env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
+        return None
     try:
         result = subprocess.run(
             [str(candidate), "--version"],
+            env=child_env,
             capture_output=True,
             text=True,
             timeout=2,

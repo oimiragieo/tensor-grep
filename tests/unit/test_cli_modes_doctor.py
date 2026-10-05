@@ -1796,7 +1796,7 @@ def test_cli_should_delegate_force_cpu_search_to_native_binary(monkeypatch):
         lambda *args, **kwargs: True,
     )
 
-    def _fake_run(cmd, check=False, timeout=None):
+    def _fake_run(cmd, check=False, timeout=None, env=None):
         seen["cmd"] = list(cmd)
         seen["check"] = check
         seen["timeout"] = timeout

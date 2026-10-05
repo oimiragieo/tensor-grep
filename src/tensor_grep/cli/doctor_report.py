@@ -471,8 +471,17 @@ def _doctor_rust_binary_version(native_tg_binary: Path | None) -> str | None:
     try:
         import subprocess
 
+        from tensor_grep.cli.frontdoor_hops import probe_env
+
+        probe = probe_env()
+        if probe is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
+            return None
         res = subprocess.run(
-            [str(native_tg_binary), "--version"], capture_output=True, text=True, timeout=2
+            [str(native_tg_binary), "--version"],
+            env=probe,
+            capture_output=True,
+            text=True,
+            timeout=2,
         )
         if res.returncode == 0:
             return res.stdout.strip()
@@ -780,7 +789,11 @@ def _doctor_rust_binary_warning(
 
 
 def _doctor_tg_candidate_version(candidate: Path) -> str | None:
-    env = os.environ.copy()
+    from tensor_grep.cli.frontdoor_hops import probe_env
+
+    env = probe_env()
+    if env is None:  # TG_FRONTDOOR_HOPS limit/malformed: do not spawn native tg
+        return None
     for key in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV", "__PYVENV_LAUNCHER__"):
         env.pop(key, None)
     try:
@@ -1290,9 +1303,17 @@ def _doctor_gpu_search_runtime_probe(native_tg_binary: Path | None) -> dict[str,
             probe_target,
         ]
         base["command"] = " ".join([*command[:-1], "<doctor-gpu-probe-file>"])
+        from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+        probe_env, _refusal = child_env_or_refusal()
+        if probe_env is None:
+            base["status"] = "failed"
+            base["error"] = "front-door hop limit reached (TG_FRONTDOOR_HOPS); probe not run"
+            return base
         try:
             result = _self.subprocess.run(
                 command,
+                env=probe_env,
                 check=False,
                 capture_output=True,
                 text=True,

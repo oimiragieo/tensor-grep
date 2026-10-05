@@ -920,7 +920,7 @@ def test_cli_keeps_non_ascii_replacement_tokens_literal(monkeypatch):
 def test_upgrade_uses_uv_when_available(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -965,7 +965,7 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
     ])
     restarted: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1004,7 +1004,7 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
 def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1042,7 +1042,7 @@ def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch
 def test_upgrade_pins_exact_latest_pypi_version_when_local_metadata_is_stale(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1167,7 +1167,7 @@ def test_latest_pypi_probe_uses_pip_index_when_json_and_simple_are_stale(monkeyp
 def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_latest(monkeypatch):
     calls: list[list[str]] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, env=None):
         calls.append(list(cmd))
         if cmd[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1195,7 +1195,7 @@ def test_upgrade_reports_latest_pypi_version_when_verified_version_matches_lates
 
 def test_native_frontdoor_asset_candidates_default_to_cpu_even_when_host_has_nvidia(monkeypatch):
 
-    def _fake_run(cmd, capture_output=True, text=True, check=False, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=False, timeout=None, env=None):
         raise AssertionError(f"default asset selection should not probe hardware: {cmd}")
 
     monkeypatch.delenv("TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR", raising=False)
@@ -1241,7 +1241,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_is_unavailable
     native_binary.write_text("old native", encoding="utf-8")
     downloads: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1314,7 +1314,7 @@ def test_upgrade_falls_back_to_cpu_native_asset_when_nvidia_asset_smoke_fails(
     native_binary.write_text("old native", encoding="utf-8")
     downloads: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1382,7 +1382,7 @@ def test_upgrade_restores_previous_native_binary_when_install_verification_fails
     native_binary.write_text("old native", encoding="utf-8")
     downloads: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1442,7 +1442,7 @@ def test_upgrade_refreshes_managed_native_frontdoor_after_package_upgrade(monkey
     unrelated_native_env.write_text("other native", encoding="utf-8")
     downloads: list[str] = []
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Installed 1 package", stderr="")
@@ -1543,7 +1543,7 @@ def test_upgrade_repairs_windows_path_order_for_python_subprocess_tg(monkeypatch
     fake_winreg.QueryValueEx = _query_value_ex
     fake_winreg.SetValueEx = _set_value_ex
 
-    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None):
+    def _fake_run(cmd, capture_output=True, text=True, check=True, timeout=None, env=None):
         command = [str(part) for part in cmd]
         if command[0] == "uv":
             return subprocess.CompletedProcess(cmd, 0, stdout="Audited 1 package", stderr="")

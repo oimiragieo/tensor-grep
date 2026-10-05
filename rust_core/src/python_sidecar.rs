@@ -144,7 +144,7 @@ fn execute_python_passthrough_command_inner(
     let is_daemon_launch = is_long_running_passthrough_command(command, &args);
 
     let mut child = command_for_executable(&python);
-    configure_python_child_environment(&mut child);
+    configure_python_child_environment(&mut child)?;
     let pipe_stdin = stdin_bytes.is_some();
     child
         .arg("-m")
@@ -300,7 +300,7 @@ pub fn execute_python_passthrough_command_captured(
     let passthrough_timeout = resolve_help_probe_timeout();
 
     let mut child = command_for_executable(&python);
-    configure_python_child_environment(&mut child);
+    configure_python_child_environment(&mut child)?;
     #[cfg(unix)]
     unsafe {
         child.pre_exec(|| {
@@ -394,7 +394,7 @@ pub fn invoke_sidecar(request: SidecarRequest) -> Result<SidecarCommandResult, S
     })?;
 
     let mut child = command_for_executable(&python);
-    configure_python_child_environment(&mut child);
+    configure_python_child_environment(&mut child)?;
     if let Some(device_ids) = gpu_device_ids_env_value(&request) {
         child.env("TENSOR_GREP_DEVICE_IDS", device_ids);
     }
@@ -899,13 +899,16 @@ fn configure_python_module_path(command: &mut Command) {
     );
 }
 
-fn configure_python_child_environment(command: &mut Command) {
+fn configure_python_child_environment(command: &mut Command) -> Result<(), SidecarError> {
+    // Checked FIRST: a refusal must spawn nothing (see frontdoor_hops.rs).
+    crate::frontdoor_hops::stamp_python_child(command)?;
     configure_python_module_path(command);
     // Mark the spawned Python as a re-exec OF the native front door. The Python launcher
     // checks this and refuses to delegate search back to the native binary — otherwise
     // `tg --json <native-passthrough-flag>` (e.g. --debug/--stats) ping-pongs
     // native<->python forever (the C3 fork-bomb, which render-flag guards alone did not
-    // fully close). This breaks the mutual-delegation cycle for ALL flag combinations.
+    // fully close). The bootstrap honoured it but the full CLI's search_command did not, which
+    // reopened the cycle for -s/-N; TG_FRONTDOOR_HOPS is the depth backstop for that class.
     command.env("TG_REEXEC_GUARD", "1");
     if let Some(native_tg_binary) = native_tg_binary_env_override(
         env::var_os(TG_NATIVE_TG_BINARY_ENV),
@@ -913,6 +916,7 @@ fn configure_python_child_environment(command: &mut Command) {
     ) {
         command.env(TG_NATIVE_TG_BINARY_ENV, native_tg_binary);
     }
+    Ok(())
 }
 
 fn native_tg_binary_env_override(
