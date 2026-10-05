@@ -38,6 +38,15 @@ def _rg_binary() -> str | None:
     return str(path) if path else None
 
 
+def _native_rust_core_available() -> bool:
+    """The exact condition `CPUBackend._rust_match_set` imports on (the native extension)."""
+    try:
+        from tensor_grep.rust_core import RustBackend  # noqa: F401
+    except (ImportError, ModuleNotFoundError):
+        return False
+    return True
+
+
 def _rg_count(tmp_path, args, pattern, lines):
     """Match count from the real rg (call only on the with-rg arm)."""
     rg = _rg_binary()
@@ -119,12 +128,18 @@ def test_cpu_backend_titlecase_smart_case_matches_rg(tmp_path, fixed):
     f = tmp_path / "t.txt"
     f.write_bytes("ǆABC\n".encode())
     cfg = SearchConfig(fixed_strings=fixed, smart_case=True)
-    if _rg_binary() is None:
+    # Mirror CPUBackend.search exactly: the native Rust core is tried FIRST and folds case with the
+    # same Unicode tables as rg, so with the extension installed there is no refusal and no
+    # delegation; only the Python path (extension absent) hands a non-ASCII -i search to rg or,
+    # with no rg, refuses.
+    if not _native_rust_core_available() and _rg_binary() is None:
         _assert_fails_closed(lambda: CPUBackend().search(str(f), "ǅabc", cfg))
         return
     got = CPUBackend().search(str(f), "ǅabc", cfg).total_matches
-    flags = ["-F", "-S"] if fixed else ["-S"]
-    assert got == _rg_count(tmp_path, flags, "ǅabc", ["ǆABC"]) == 1
+    assert got == 1  # the correct count, whichever engine answered
+    if _rg_binary() is not None:
+        flags = ["-F", "-S"] if fixed else ["-S"]
+        assert got == _rg_count(tmp_path, flags, "ǅabc", ["ǆABC"])
 
 
 def test_ascii_case_insensitive_search_needs_no_rg(tmp_path, monkeypatch):
@@ -171,3 +186,31 @@ def test_fold_cases_keep_their_non_ascii_code_points():
     # a text tool once normalized the Kelvin sign to ASCII "K", silently voiding that case
     texts = {text for text, _pattern in _UNICODE_FOLD_CASES}
     assert {"K", "ς", "ſ", "ı", "İ", "ß", "ẞ"} <= texts
+
+
+def test_cpu_backend_native_core_answers_titlecase_itself_without_refusing(tmp_path, monkeypatch):
+    # The production condition behind the "DID NOT RAISE" on lanes that build the extension: the
+    # native core is tried first, so a non-ASCII -i search is answered there (no delegation, no
+    # refusal) whether or not rg exists. Simulated with a stand-in extension so it runs everywhere.
+    import sys
+    import types
+
+    calls = []
+
+    class _FakeRustBackend:
+        def search(self, *, pattern, path, ignore_case, fixed_strings, invert_match):
+            calls.append((pattern, ignore_case))
+            return [(1, "ǆABC")] if ignore_case else []
+
+    fake = types.ModuleType("tensor_grep.rust_core")
+    fake.RustBackend = _FakeRustBackend  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "tensor_grep.rust_core", fake)
+    assert _native_rust_core_available()
+
+    f = tmp_path / "t.txt"
+    f.write_bytes("ǆABC\n".encode())
+    cfg = SearchConfig(fixed_strings=True, smart_case=True)
+    result = CPUBackend().search(str(f), "ǅabc", cfg)
+    assert result.total_matches == 1
+    assert result.routing_reason == "cpu_rust_regex"
+    assert calls == [("ǅabc", True)]  # smart-case resolved to insensitive for the titlecase pattern
