@@ -27,6 +27,13 @@ from tensor_grep.cli.main import app
 
 runner = CliRunner()
 
+# G1.1: the shared reader no longer swallows undecodable bytes; the file is analysed and the lossy
+# decode is disclosed as a coverage gap (was: extraction_failed: UnicodeDecodeError).
+_LOSSY_GAP_REASON = (
+    "coverage_gap: file(s) are not valid UTF-8; undecodable bytes were replaced and symbols in "
+    "them may be missing"
+)
+
 
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
@@ -550,9 +557,7 @@ def test_real_extractor_swallowed_decode_error_is_not_analyzed(
     res = runner.invoke(app, ["diff-impact", "--json"])
     assert res.exit_code == 2, res.stdout
     data = json.loads(res.stdout)
-    assert data["not_analyzed_paths"] == [
-        {"path": "app.py", "reason": "extraction_failed: UnicodeDecodeError"}
-    ]
+    assert data["not_analyzed_paths"] == [{"path": "app.py", "reason": _LOSSY_GAP_REASON}]
 
 
 def test_valid_symbol_free_python_file_stays_analyzed(tmp_path: Path, monkeypatch: Any) -> None:
@@ -650,7 +655,7 @@ def test_deletion_exemption_never_suppresses_analysis_of_a_surviving_source_file
         (b"def changed():\n    return 2\ndef broken(:\n", "extraction_failed: SyntaxError"),
         (
             b"def changed():\n    return 2\n# bad byte \xff\n",
-            "extraction_failed: UnicodeDecodeError",
+            _LOSSY_GAP_REASON,
         ),
     ],
 )
@@ -668,7 +673,7 @@ def test_uppercase_python_suffix_cannot_bypass_the_parse_check(
     assert res.exit_code == 2, res.stdout
     data = json.loads(res.stdout)
     assert data["not_analyzed_paths"] == [{"path": name, "reason": reason}]
-    assert data["incomplete_reason"] == "extraction_failed"
+    assert data["incomplete_reason"] == reason.split(":", 1)[0]
 
 
 def test_uppercase_suffix_symbol_free_valid_file_stays_analyzed(

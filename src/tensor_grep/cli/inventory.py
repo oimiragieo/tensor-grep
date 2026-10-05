@@ -26,6 +26,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import lang_suffixes
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.repo_map import (
     _DeadlineBreakFlag,
@@ -60,6 +61,8 @@ _LANGUAGE_BY_SUFFIX: dict[str, str] = {
     ".cjs": "javascript",
     ".ts": "typescript",
     ".tsx": "typescript",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".go": "go",
     ".java": "java",
     ".c": "c",
@@ -96,7 +99,6 @@ _LANGUAGE_BY_BASENAME: dict[str, str] = {
 _CODE_SUFFIXES = frozenset({
     ".c",
     ".cc",
-    ".cjs",
     ".cpp",
     ".cs",
     ".css",
@@ -104,17 +106,13 @@ _CODE_SUFFIXES = frozenset({
     ".h",
     ".hpp",
     ".java",
-    ".js",
-    ".jsx",
     ".kt",
     ".lua",
-    ".mjs",
     ".php",
     ".py",
     ".rs",
     ".swift",
-    ".ts",
-    ".tsx",
+    *lang_suffixes.JS_TS_SUFFIXES,
 })
 _DOC_SUFFIXES = frozenset({".md", ".markdown", ".rst", ".adoc", ".txt"})
 _CONFIG_SUFFIXES = frozenset({".json", ".toml", ".yaml", ".yml", ".cfg", ".ini"})

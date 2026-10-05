@@ -26,6 +26,7 @@ used to verify:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -373,9 +374,10 @@ def test_go_coverage_gap_remediation_is_honest_about_zero_rows() -> None:
     assert "fall back to plain literal-text/regex matching" in fallback_text
 
 
-def test_grammar_absent_cli_exit_code_is_honest_not_found(tmp_path: Path, monkeypatch) -> None:
-    """A Go-only target with the grammar missing must exit 1 (honest not-found) -- never a
-    silent 0 (which would imply a fabricated/incorrect match) and never a crash."""
+def test_grammar_absent_empty_answer_is_incomplete_exit_2(tmp_path: Path, monkeypatch) -> None:
+    """A Go-only target with the grammar missing must exit 2 (INCOMPLETE, coverage_gap): an empty answer under a missing
+    grammar is unverified, not absent (F13 predates the fail-closed coverage-gap contract);
+    never a silent 0 and never a crash."""
     from typer.testing import CliRunner
 
     from tensor_grep.cli.main import app
@@ -383,9 +385,12 @@ def test_grammar_absent_cli_exit_code_is_honest_not_found(tmp_path: Path, monkey
     _write_go_fixture(tmp_path)
     monkeypatch.setattr(lang_go, "_go_parser", lambda: None)
 
-    result = CliRunner().invoke(app, ["defs", str(tmp_path), "Helper"])
+    result = CliRunner().invoke(app, ["defs", "--json", str(tmp_path), "Helper"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 2, result.output
+    payload = json.loads(result.output[result.output.index("{") :])
+    assert payload["result_incomplete"] is True
+    assert payload["incomplete_reason_class"] == "coverage_gap"
 
 
 # ---------------------------------------------------------------------------

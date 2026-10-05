@@ -5,10 +5,12 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
+from tensor_grep.cli.lang_suffixes import JS_TS_SUFFIXES
+
 _TEST_DIR_NAMES = frozenset({"tests", "test", "__tests__"})
-# Mirrors repo_map._JS_TS_SUFFIXES plus the module-flavoured .mts/.cts. Kept local so this module
-# stays import-pure (it must not import repo_map).
-_JS_LIKE_SUFFIXES = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts"})
+# The shared JS/TS suffix set (lang_suffixes imports nothing from tensor_grep, so this module
+# stays import-pure: it must not import repo_map).
+_JS_LIKE_SUFFIXES = JS_TS_SUFFIXES
 _CLASS_TEST_SUFFIXES = frozenset({".java", ".kt", ".scala", ".cs", ".php"})
 
 # Main's legacy rule: only `tests` / `__tests__` path parts. The singular `test` is honoured ONLY

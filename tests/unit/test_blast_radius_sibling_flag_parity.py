@@ -114,71 +114,117 @@ def test_render_only_flags_are_not_demanded_of_the_plain_command() -> None:
         )
 
 
-def test_blast_radius_render_source_loop_overrun_stamps_partial_reason(tmp_path, monkeypatch):
-    """An overrun on the RENDER path must say WHY, not just that it is partial.
+class _RepoMapClock:
+    """A controllable clock for `repo_map`'s OWN `time` name only (never the stdlib module).
 
-    Deliberately NOT added to `_RENDER_FAMILY_DEADLINE_COMMAND_ARGS` in
-    tests/unit/test_cli_deadline_coverage_gaps.py: that set is defined by the stage it patches
-    (`build_context_pack_from_map`), which this command never touches. Adding it there fails for
-    a STRUCTURAL reason -- the simulated overrun cannot fire -- which would look like a product
-    defect and is not one. This test patches the stage `blast-radius-render` actually runs.
-
-    The contract being pinned: `partial=true` with `partial_reason=None` tells an agent the
-    result is incomplete but not why. `deadline_limit` alone is not equivalent -- a consumer
-    that learned `partial_reason` on `tg prepare` reads None here and can only conclude
-    "partial for an unknown reason". Every other deadline-bearing command stamps the reason.
+    `--deadline 30` is never reached by the wall clock, so nothing trips by accident on a slow or
+    loaded box; the test decides EXACTLY when the budget is gone by advancing `offset`. This
+    replaced a `--deadline 0.3` + `sleep(0.4)` race that failed ~1 run in 4 on main: on a loaded
+    machine the cold call-graph scan itself exceeded 0.3s and the deadline tripped in the CALLER
+    scan, before the stage the test meant to exercise.
     """
-    import time as _time
 
-    from tensor_grep.cli import repo_map
+    def __init__(self, monkeypatch, repo_map) -> None:
+        import time as _time
+        import types
 
+        self.offset = 0.0
+        shim = types.SimpleNamespace(**{
+            name: getattr(_time, name) for name in dir(_time) if not name.startswith("_")
+        })
+        shim.monotonic = lambda: _time.monotonic() + self.offset
+        monkeypatch.setattr(repo_map, "time", shim)
+
+
+def _render_fixture(tmp_path):
     (tmp_path / "helper.py").write_text("def helper(x):\n    return x\n", encoding="utf-8")
     (tmp_path / "caller.py").write_text(
         "from helper import helper\n\n\ndef use(y):\n    return helper(y)\n", encoding="utf-8"
     )
 
-    original = repo_map.build_symbol_blast_radius_from_map
 
-    calls: list[str] = []
-
-    def _slow(*args, **kwargs):
-        result = original(*args, **kwargs)
-        calls.append("patched")
-        # DETERMINISTIC, not racy: the sleep strictly exceeds the deadline below, so
-        # `time.monotonic() >= deadline_monotonic` is guaranteed true by the time the source
-        # loop performs its check. No wall-clock luck is involved.
-        _time.sleep(0.4)
-        return result
-
-    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_from_map", _slow)
-
-    result = CliRunner().invoke(
-        app,
-        ["blast-radius-render", str(tmp_path), "helper", "--deadline", "0.3", "--json"],
-    )
+def _render_json(tmp_path):
     import json as _json
 
-    payload = _json.loads(result.stdout)
+    result = CliRunner().invoke(
+        app, ["blast-radius-render", str(tmp_path), "helper", "--deadline", "30", "--json"]
+    )
+    return _json.loads(result.stdout)
 
-    # SETUP ASSERTIONS -- these run BEFORE the real one so a broken harness fails loudly
-    # instead of quietly making the assertion below vacuous.
-    #
-    # An earlier revision of this test SKIPPED when the overrun did not fire, which a codex
-    # audit correctly flagged HIGH: a test that can silently skip provides no coverage in the
-    # environment where it skips, while still reporting success. Skipping is only honest when
-    # the precondition is genuinely outside the test's control. Here it is not -- the test owns
-    # the patch and the deadline, so a non-firing overrun means the HARNESS broke and must fail.
+
+def test_blast_radius_render_source_loop_overrun_stamps_partial_reason(tmp_path, monkeypatch):
+    """An overrun on the RENDER path must say WHY, not just that it is partial.
+
+    Deliberately NOT added to `_RENDER_FAMILY_DEADLINE_COMMAND_ARGS` in
+    tests/unit/test_cli_deadline_coverage_gaps.py: that set is defined by the stage it patches
+    (`build_context_pack_from_map`), which this command never touches. This test patches the stage
+    `blast-radius-render` actually runs, and spends the budget right after it (deterministically,
+    via `_RepoMapClock`), so every stage after the radius observes an expired deadline.
+
+    The contract being pinned: `partial=true` with `partial_reason=None` tells an agent the
+    result is incomplete but not why.
+    """
+    from tensor_grep.cli import repo_map
+
+    _render_fixture(tmp_path)
+    clock = _RepoMapClock(monkeypatch, repo_map)
+    original = repo_map.build_symbol_blast_radius_from_map
+    calls: list[str] = []
+
+    def _spend_budget(*args, **kwargs):
+        result = original(*args, **kwargs)
+        calls.append("patched")
+        clock.offset = 1000.0  # the 30s budget is gone, exactly after the radius stage
+        return result
+
+    monkeypatch.setattr(repo_map, "build_symbol_blast_radius_from_map", _spend_budget)
+    payload = _render_json(tmp_path)
+
+    # SETUP ASSERTIONS -- run BEFORE the real one so a broken harness fails loudly instead of
+    # quietly making the assertion below vacuous (a skip-on-no-overrun would be a silent pass).
     assert calls, (
-        "build_symbol_blast_radius_from_map was never called, so the deadline patch never ran -- "
+        "build_symbol_blast_radius_from_map was never called, so the budget patch never ran -- "
         "this test would have asserted nothing. The render path likely changed shape."
     )
     assert payload.get("partial") is True, (
-        "the forced overrun did not produce partial=true even though the patch slept 0.4s against "
-        f"a 0.3s deadline. payload keys={sorted(payload)[:10]}"
+        f"the forced overrun did not produce partial=true. payload keys={sorted(payload)[:10]}"
     )
 
     assert payload.get("partial_reason") == "deadline", (
         "blast-radius-render reported partial=true without saying why. "
+        f"partial_reason={payload.get('partial_reason')!r} "
+        f"deadline_limit={payload.get('deadline_limit')!r}"
+    )
+
+
+def test_blast_radius_render_upstream_deadline_overrun_also_stamps_partial_reason(
+    tmp_path, monkeypatch
+):
+    """The same contract when the budget is already gone BEFORE the radius stage: the caller scan
+    trips, the radius payload arrives `partial` with a `deadline_limit` and NO `partial_reason`,
+    and the render must still say why (it used to stamp the reason only when its own source loop
+    broke). This is the shape the old 0.3s race hit by accident."""
+    from tensor_grep.cli import repo_map
+
+    _render_fixture(tmp_path)
+    clock = _RepoMapClock(monkeypatch, repo_map)
+    original = repo_map._cap_caller_scan_files
+    fired: list[str] = []
+
+    def _expire_before_caller_scan(*args, **kwargs):
+        clock.offset = 1000.0  # repo map is built; the budget is gone as the caller scan starts
+        fired.append("expired")
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(repo_map, "_cap_caller_scan_files", _expire_before_caller_scan)
+    payload = _render_json(tmp_path)
+
+    assert fired, "the caller scan never started, so the budget was never spent: harness broke"
+    assert payload.get("partial") is True, sorted(payload)[:10]
+    assert "caller_files_scanned" in payload.get("deadline_limit", {}), payload.get(
+        "deadline_limit"
+    )
+    assert payload.get("partial_reason") == "deadline", (
         f"partial_reason={payload.get('partial_reason')!r} "
         f"deadline_limit={payload.get('deadline_limit')!r}"
     )

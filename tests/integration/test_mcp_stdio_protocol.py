@@ -11,6 +11,8 @@ import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
+from tensor_grep.cli.mcp_server import _TG_MCP_SERVER_CONTRACT_VERSION
+
 pytestmark = [pytest.mark.integration]
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -55,10 +57,9 @@ async def _stdio_protocol_roundtrip() -> None:
             # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
             # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
             # fields on tg_search); 1.7.0 -> 1.8.0 (P3, unified `incomplete` envelope via
-            # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows);
-            # 1.9.0 -> 1.10.0 (Part K2, invalid_input envelopes). Keep this comment in step with the assert below.
+            # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows); 1.9.0 -> 1.10.0 (K2); 1.10.0 -> 1.11.0 (G1, coverage_gap). Keep this comment in step with the assert below.
             assert (
-                initialized.serverInfo.version == "1.10.0"
+                initialized.serverInfo.version == _TG_MCP_SERVER_CONTRACT_VERSION
             )  # task 336: budget_remediable on the repo_map-backed wire
 
             listed = await session.list_tools()
@@ -138,10 +139,9 @@ async def _stdio_content_length_initialize_roundtrip() -> None:
         # _TG_MCP_SERVER_CONTRACT_VERSION history: 1.3.0 -> 1.4.0 (#98, 10 additive
         # task-shaped meta-tools); 1.4.0 -> 1.5.0 (#283, additive scan_limit cause
         # fields on tg_search); 1.7.0 -> 1.8.0 (P3, unified `incomplete` envelope via
-        # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows);
-        # 1.9.0 -> 1.10.0 (Part K2, invalid_input envelopes). Keep this comment in step with the assert below.
+        # incompleteness.py); 1.8.0 -> 1.9.0 (E-04, bounded match rows); 1.9.0 -> 1.10.0 (K2); 1.10.0 -> 1.11.0 (G1, coverage_gap). Keep this comment in step with the assert below.
         assert (
-            server_info["version"] == "1.10.0"
+            server_info["version"] == _TG_MCP_SERVER_CONTRACT_VERSION
         )  # task 336: budget_remediable on the repo_map-backed wire
     finally:
         if process.stdin is not None:

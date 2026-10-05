@@ -21,7 +21,9 @@ import os
 from pathlib import Path
 from typing import Any
 
-_JS_TS_SUFFIXES = {".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"}
+from tensor_grep.cli.lang_suffixes import JS_TS_SUFFIXES
+
+_JS_TS_SUFFIXES = set(JS_TS_SUFFIXES)
 _TSCONFIG = "tsconfig.json"
 # Bound the upward walk so a scan on a deep path cannot turn into an unbounded stat storm.
 _MAX_ANCESTORS = 24

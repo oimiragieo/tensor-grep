@@ -211,8 +211,8 @@ def go_imports_and_symbols(path: Path) -> tuple[list[str], list[dict[str, Any]]]
         return [], []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return [], []
 
     source_bytes = source.encode("utf-8")
@@ -335,8 +335,8 @@ def go_imports_with_lines(path: Path) -> list[dict[str, Any]]:
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return []
 
     source_bytes = source.encode("utf-8")
@@ -374,8 +374,8 @@ def go_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]]:
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return []
 
     source_bytes = source.encode("utf-8")
@@ -759,8 +759,8 @@ def go_references_and_calls(
         return [], []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return [], []
 
     source_bytes = source.encode("utf-8")

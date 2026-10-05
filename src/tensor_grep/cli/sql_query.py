@@ -14,6 +14,7 @@ import typer
 
 from tensor_grep.cli.docs_coverage import _SOURCE_SUFFIXES as _DOCS_SOURCE_SUFFIXES
 from tensor_grep.cli.inventory import _CODE_SUFFIXES as _INVENTORY_CODE_SUFFIXES
+from tensor_grep.cli.repo_map_coverage_gaps import python_syntax_error_gap
 
 # Suffixes of files that can carry imports. A file with no registered language spec counts as
 # an undetermined import set ONLY when it is one of these; docs, config, data and binaries have
@@ -369,7 +370,7 @@ def _run_imports_pass(
             if unreadable_hit is not None:
                 unreadable_hit.record(exc)
             continue
-        if file_size > max_parse_bytes():
+        if file_size > max_parse_bytes() or python_syntax_error_gap([file_path]) is not None:
             imports_unsupported_files_hit = True
             continue
         try:
@@ -660,6 +661,8 @@ def sql_command(
         ".rs": "rust",
         ".ts": "typescript",
         ".tsx": "typescript",
+        ".mts": "typescript",
+        ".cts": "typescript",
         ".js": "javascript",
         ".jsx": "javascript",
         ".go": "go",

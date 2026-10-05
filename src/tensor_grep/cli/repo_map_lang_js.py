@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from tensor_grep.cli import lang_registry
 from tensor_grep.cli.repo_map_cache import _SOURCE_READ_CACHE_MAXSIZE as _SOURCE_READ_CACHE_MAXSIZE
 from tensor_grep.cli.repo_map_cache import _mtime_aware_cache as _mtime_aware_cache
 from tensor_grep.cli.repo_map_cache import _resolved_path_str as _resolved_path_str
@@ -769,7 +770,7 @@ def _js_ts_references_and_calls(
     # independent (path, mtime, size)-keyed cache lookups, so a file edited between them would leave
     # tree node line-indices (from the parse) indexing into stale `lines` -> wrong reported line
     # content / IndexError. The pre-parse text read keeps using `source` (a cheap heuristic gate).
-    lines = parsed_source.splitlines()
+    lines = lang_registry.split_source_lines(parsed_source)
     references: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
 
@@ -893,7 +894,7 @@ def _js_ts_provider_alias_calls(
     except (OSError, UnicodeDecodeError):
         return []
 
-    lines = source.splitlines()
+    lines = lang_registry.split_source_lines(source)
     alias_resolution_by_name: dict[str, dict[str, Any]] = {}
     for binding in _js_ts_named_import_bindings(source):
         if str(binding.get("statement_kind", "import")) != "import":
@@ -1053,7 +1054,7 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
     if path.suffix.lower() not in _self._JS_TS_SUFFIXES:
         return []
 
-    if path.suffix.lower() in {".ts", ".tsx"}:
+    if path.suffix.lower() in _self._TS_SUFFIXES:
         parser = _self._typescript_parser(tsx=path.suffix.lower() == ".tsx")
     else:
         parser = _self._javascript_parser()
@@ -1061,8 +1062,8 @@ def _js_ts_parser_symbol_sources(path: Path, symbol: str) -> list[dict[str, Any]
         return []
 
     try:
-        source = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+        source = lang_registry.read_source_text(path)
+    except OSError:
         return []
 
     source_bytes = source.encode("utf-8")
@@ -1123,7 +1124,7 @@ def _js_ts_imports_with_lines(path: Path) -> list[dict[str, Any]]:
     if file_size > _self._max_parse_bytes():
         return []
     try:
-        lines = _self._read_source_text_cached(str(path)).splitlines()
+        lines = lang_registry.split_source_lines(_self._read_source_text_cached(str(path)))
     except (OSError, UnicodeDecodeError):
         return []
 

@@ -18,6 +18,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tensor_grep.cli import lang_suffixes
 from tensor_grep.cli.incompleteness import budget_remediable
 from tensor_grep.cli.inventory import DEFAULT_MAX_INVENTORY_FILES, _is_test_path
 from tensor_grep.cli.repo_map import (
@@ -80,12 +81,6 @@ def _is_fixture_path(path: Path) -> bool:
 _SOURCE_SUFFIXES = frozenset({
     ".py",
     ".pyi",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".cjs",
     ".rs",
     ".go",
     ".java",
@@ -107,6 +102,7 @@ _SOURCE_SUFFIXES = frozenset({
     ".svelte",
     ".m",
     ".mm",
+    *lang_suffixes.JS_TS_SUFFIXES,
 })
 
 # Per-doc read cap (DoS hardening, mirrors the round-5 directory-scanner / gitignore byte caps): a

@@ -111,7 +111,7 @@
     },
     "incomplete_reason_class": {
       "type": "string",
-      "description": "Machine-branchable cause accompanying result_incomplete (docs/CONTRACTS.md). Values wired so far: unreadable_path, scan_limit, deadline, timeout, workspace_root_refused. Deliberately NOT constrained by an enum here: CONTRACTS.md records this as the set wired so far, so pinning an enum would make the schema REJECT a valid payload the first time a new cause is added. An ABSENT class means 'cause not classifiable', never 'scan complete' -- completeness is carried by result_incomplete alone."
+      "description": "Machine-branchable cause accompanying result_incomplete (docs/CONTRACTS.md). Values wired so far: unreadable_path, scan_limit, deadline, timeout, workspace_root_refused, coverage_gap. Deliberately NOT constrained by an enum here: CONTRACTS.md records this as the set wired so far, so pinning an enum would make the schema REJECT a valid payload the first time a new cause is added. An ABSENT class means 'cause not classifiable', never 'scan complete' -- completeness is carried by result_incomplete alone."
     }
   },
   "$defs": {

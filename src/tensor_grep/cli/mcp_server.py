@@ -175,8 +175,8 @@ def _mcp_server_version() -> str:
 # existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
-# 1.10.0 (Part K2): invalid_input for bad tg_search/tg_find/AST-language/rewrite args; file cap remediable.
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.10.0"  # 1.8.0 was P3: unified `incomplete` envelope
+# 1.10.0 (K2): invalid_input args; 1.11.0 (G1): coverage_gap fields on symbol tools (docs/CONTRACTS.md).
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.11.0"  # 1.8.0 was P3: unified `incomplete` envelope
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:

@@ -35,7 +35,7 @@ from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
-from tensor_grep.cli.completeness_output import _output_limit_note
+from tensor_grep.cli.completeness_output import _output_limit_note, coverage_gap_banner
 from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
@@ -6913,7 +6913,7 @@ def _scan_truncation_warning(payload: dict[str, Any]) -> str | None:
     # Deliberately LAST, so every specific message above still wins and keeps naming its knob.
     # This is the floor, not the answer -- a new cause should still get its own branch.
     if _scan_incomplete(payload):
-        return _truncation_message("the scan did not finish")
+        return coverage_gap_banner(payload) or _truncation_message("the scan did not finish")
     return None
 
 
@@ -6930,7 +6930,7 @@ def _scan_incomplete(payload: dict[str, Any]) -> bool:
     scan truncation or an upstream-stamped incompleteness (that would silently flip an
     output-cap-only invocation to exit 2 and break the output-cap-stays-0 pins).
     """
-    for key in ("scan_limit", "caller_scan_limit"):
+    for key in ("scan_limit", "caller_scan_limit", "coverage_gap_limit"):
         limit = payload.get(key)
         if isinstance(limit, dict) and limit.get("possibly_truncated"):
             return True

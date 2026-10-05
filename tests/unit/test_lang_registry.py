@@ -93,6 +93,9 @@ def test_graph_suffixes_matches_the_historical_hardcoded_union() -> None:
         ".cjs",
         ".ts",
         ".tsx",
+        # wave-2a G1.4: .mts/.cts register as TypeScript (they were silently dropped before)
+        ".mts",
+        ".cts",
         ".rs",
         ".go",
         ".java",
@@ -436,3 +439,37 @@ def test_blast_radius_downgrades_graph_trust_summary_when_gaps_present(tmp_path:
     assert "resolution_gaps" in payload
     if payload["resolution_gaps"]:
         assert payload["graph_trust_summary"].get("resolution_gaps_present") is True
+
+
+def test_mts_cts_resolve_to_typescript_and_yield_defs(tmp_path):
+    assert lang_registry.spec_for_path("a.mts").language_id == "typescript"
+    assert lang_registry.spec_for_path("a.cts").language_id == "typescript"
+    (tmp_path / "a.mts").write_text("export function hello() { return 1; }\n", encoding="utf-8")
+    defs = repo_map.build_symbol_defs("hello", tmp_path)["definitions"]
+    assert len(defs) == 1
+
+
+def test_go_importers_empty_answer_is_incomplete(tmp_path):
+    (tmp_path / "a.go").write_text("package a\nfunc A() {}\n", encoding="utf-8")
+    payload = repo_map.build_file_importers(tmp_path / "a.go", tmp_path)
+    assert payload["importer_count"] == 0
+    assert payload["result_incomplete"] is True
+
+
+def test_python_importers_empty_answer_stays_complete(tmp_path):
+    # positive control: a language WITH a reverse-import resolver keeps a complete empty answer
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    payload = repo_map.build_file_importers(tmp_path / "a.py", tmp_path)
+    assert payload["importer_count"] == 0
+    assert not payload.get("result_incomplete")
+
+
+def test_python_importers_empty_answer_with_skipped_potential_importer_is_incomplete(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("TENSOR_GREP_MAX_PARSE_BYTES", "1024")
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "big.py").write_text("import a\n# " + "x" * 4000 + "\n", encoding="utf-8")
+    payload = repo_map.build_file_importers(tmp_path / "a.py", tmp_path)
+    assert payload["importer_count"] == 0
+    assert payload["result_incomplete"] is True
