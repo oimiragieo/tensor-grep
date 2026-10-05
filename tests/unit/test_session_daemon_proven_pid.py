@@ -33,7 +33,19 @@ def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def _daemon(root: Path, *, metadata_pid: int, package_version: str | None = None) -> Iterator[Any]:
     server = sd._ThreadedSessionDaemon(root, ("127.0.0.1", 0), token="tok")
     real_shutdown = server.shutdown
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
+
+    def _serve_then_close() -> None:
+        # A real daemon is a PROCESS: when serve_forever returns the process exits and its listening
+        # socket disappears (connections are REFUSED). In this in-process stand-in the socket would
+        # otherwise stay bound, and on Linux a listening-but-not-accepting socket still completes
+        # connects via the kernel backlog (probed on Linux), so a cooperative stop could never be
+        # confirmed there. Close the listener when the loop ends, as process exit does.
+        try:
+            server.serve_forever()
+        finally:
+            server.server_close()
+
+    thread = threading.Thread(target=_serve_then_close, daemon=True)
     thread.start()
     server._test_real_shutdown = real_shutdown  # type: ignore[attr-defined]
     sd._write_daemon_metadata(
