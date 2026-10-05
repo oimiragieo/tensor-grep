@@ -807,51 +807,77 @@ def _posix_dir_ok(st: os.stat_result) -> bool:
     return not st.st_mode & 0o022 or bool(st.st_mode & _stat.S_ISVTX)  # writable => sticky (/tmp)
 
 
-def _ancestors_trusted(parent: Path) -> bool:
-    """StrictModes-style: every ancestor of the secret's directory up to the root is trustworthy.
+def _posix_dir_refusal(st: os.stat_result) -> str | None:
+    """Why a POSIX directory is not trustworthy, or None. Same rule as ``_posix_dir_ok``."""
+    if sys.platform == "win32":
+        return "not_posix"
+    if not _stat.S_ISDIR(st.st_mode):
+        return "not_a_directory"
+    if st.st_uid not in (os.geteuid(), 0):
+        return f"foreign_owner(uid={st.st_uid})"
+    if st.st_mode & 0o022 and not st.st_mode & _stat.S_ISVTX:
+        return f"writable_by_others_without_sticky(mode={st.st_mode & 0o7777:o})"
+    return None
+
+
+def _ancestors_refusal(parent: Path) -> str | None:
+    """None when every ancestor of the secret's directory up to the root is trustworthy, else a short
+    reason naming WHICH ancestor failed and WHICH rule (diagnosable; never contains secret material).
 
     POSIX: a real directory owned by the user or root (a symlink is allowed only if root-owned,
     e.g. /var -> /private/var, and the RESOLVED chain is then checked too); group/world-writable
-    is refused unless sticky. Windows: not a reparse point and no write/modify grant to Everyone,
-    Users or Authenticated Users; the drive root is exempt. Bounded; any error fails closed.
+    is refused unless sticky. Windows: not a reparse point, an owner of user/SYSTEM/Administrators/
+    TrustedInstaller, and no write/modify grant to Everyone, Users or Authenticated Users; the drive
+    root is exempt. A MISSING ancestor is refused (callers create the directory first). Bounded; any
+    error fails closed.
     """
     path = Path(os.path.abspath(parent))
     if len(path.parts) > _MAX_ANCESTOR_DEPTH:
-        return False
+        return "too_deep"
     if sys.platform == "win32":
         user = _win_current_user_sid()
         if user is None:
-            return False
+            return "no_current_user_sid"
         for anc in path.parents:
             if anc.parent == anc:
                 continue  # drive root: a system root, not attacker-modifiable
             handle = _winsec.open_no_follow(str(anc), directory=True)
             if handle is None:  # error, or the ancestor is a reparse point (symlink/junction)
-                return False
+                return f"{anc}: unopenable_or_reparse_point"
             try:
                 queried = _win_dacl_entries(handle)
             finally:
                 _winsec.close_handle(handle)
             if queried is None or not _windows_owner_ok(queried[0], user):
-                return False  # a foreign owner can WRITE_DAC: its DACL proves nothing
+                owner = None if queried is None else queried[0]
+                return f"{anc}: foreign_or_unknown_owner({owner})"
             if not _windows_ancestor_dacl_ok(queried[1], user):
-                return False
-        return True
+                return f"{anc}: foreign_principal_ace"
+        return None
     try:
         for anc in path.parents:
             st = _lstat(anc)
             if _stat.S_ISLNK(st.st_mode):
                 if st.st_uid != 0:
-                    return False
+                    return f"{anc}: symlink_not_root_owned(uid={st.st_uid})"
                 continue
-            if not _posix_dir_ok(st):
-                return False
+            why = _posix_dir_refusal(st)
+            if why:
+                return f"{anc}: {why}"
         real = Path(os.path.realpath(path))
         if len(real.parts) > _MAX_ANCESTOR_DEPTH:
-            return False
-        return all(_posix_dir_ok(_lstat(anc)) for anc in (real, *real.parents))
-    except OSError:
-        return False
+            return "too_deep"
+        for anc in (real, *real.parents):
+            why = _posix_dir_refusal(_lstat(anc))
+            if why:
+                return f"{anc}: {why}"
+        return None
+    except OSError as exc:
+        return f"os_error({type(exc).__name__}: {exc.filename})"
+
+
+def _ancestors_trusted(parent: Path) -> bool:
+    return _ancestors_refusal(parent) is None
 
 
 def _read_secret_windows(path: Path) -> bytes | None:
