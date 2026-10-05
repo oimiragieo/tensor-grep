@@ -208,7 +208,23 @@ fn native_refuses_python_passthrough_at_the_hop_cap() {
 fn native_refuses_python_passthrough_on_a_malformed_hop_count() {
     // RED on main: a malformed marker must fail closed, not be read as 0 (which would let a
     // corrupted chain restart its count and loop again).
-    for bad in ["abc", "-1", "1.5"] {
+    // ONE grammar on both doors: 1-9 ASCII digits only. Includes the Unicode-digit, underscore,
+    // sign, whitespace and empty shapes Python's int() would have normalised.
+    let long = "1".repeat(5000);
+    for bad in [
+        "abc",
+        "-1",
+        "+1",
+        "1.5",
+        "0_0",
+        " 1",
+        "1 ",
+        "",
+        "\u{660}",
+        "\u{663}",
+        "abc\u{2603}",
+        long.as_str(),
+    ] {
         let run = run_observed_shape("-s", &[(HOPS_ENV, bad)]);
         assert!(run.record.is_none(), "hops={bad:?}\n{}", describe(&run));
         assert_eq!(
@@ -217,5 +233,20 @@ fn native_refuses_python_passthrough_on_a_malformed_hop_count() {
             "hops={bad:?}\n{}",
             describe(&run)
         );
+        let stderr = String::from_utf8_lossy(&run.output.stderr).into_owned();
+        assert!(
+            stderr.contains(HOPS_ENV),
+            "hops={bad:?}\n{}",
+            describe(&run)
+        );
+        assert!(
+            stderr.is_ascii(),
+            "non-ASCII refusal: hops={bad:?}\n{stderr}"
+        );
+    }
+    // The allowed values are NOT refused (0 and 3 reach the fake interpreter).
+    for ok in ["0", "3"] {
+        let run = run_observed_shape("-s", &[(HOPS_ENV, ok)]);
+        assert!(run.record.is_some(), "hops={ok:?}\n{}", describe(&run));
     }
 }

@@ -651,7 +651,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 787,
+    "lineno": 807,
     "enclosing_symbol": "_doctor_tg_candidate_version",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -661,7 +661,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1103,
+    "lineno": 1123,
     "enclosing_symbol": "_doctor_gpu_tier_installed",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -671,7 +671,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1119,
+    "lineno": 1139,
     "enclosing_symbol": "_doctor_gpu_tier_usable",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -681,7 +681,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1138,
+    "lineno": 1158,
     "enclosing_symbol": "_doctor_gpu_status",
     "handler_index_within_symbol": 0,
     "category": "LOGGED-DEGRADE",
@@ -701,7 +701,7 @@
   },
   {
     "module": "cli/doctor_report.py",
-    "lineno": 1408,
+    "lineno": 1436,
     "enclosing_symbol": "_doctor_resident_worker_status",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -921,7 +921,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 7250,
+    "lineno": 7275,
     "enclosing_symbol": "_maybe_swap_reversed_session_path",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",
@@ -981,7 +981,7 @@
   },
   {
     "module": "cli/main.py",
-    "lineno": 8594,
+    "lineno": 8619,
     "enclosing_symbol": "session_open",
     "handler_index_within_symbol": 0,
     "category": "INTENTIONAL-BOUNDARY",

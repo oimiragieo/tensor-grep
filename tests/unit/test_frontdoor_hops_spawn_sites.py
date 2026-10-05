@@ -52,7 +52,8 @@ def _markers(env: Any) -> dict[str, str]:
 
 def test_next_hop_env_counts_from_absent_to_the_cap() -> None:
     assert next_hop_env({})[FRONTDOOR_HOPS_ENV] == "1"
-    assert next_hop_env({FRONTDOOR_HOPS_ENV: ""})[FRONTDOOR_HOPS_ENV] == "1"
+    assert next_hop_env({FRONTDOOR_HOPS_ENV: "0"})[FRONTDOOR_HOPS_ENV] == "1"
+    assert next_hop_env({FRONTDOOR_HOPS_ENV: "1"})[FRONTDOOR_HOPS_ENV] == "2"
     last_ok = next_hop_env({FRONTDOOR_HOPS_ENV: str(MAX_FRONTDOOR_HOPS - 1)})
     assert last_ok[FRONTDOOR_HOPS_ENV] == str(MAX_FRONTDOOR_HOPS)
     with pytest.raises(FrontdoorHopLimitError) as excinfo:
@@ -61,12 +62,42 @@ def test_next_hop_env_counts_from_absent_to_the_cap() -> None:
     assert excinfo.value.exit_code == 2
 
 
-@pytest.mark.parametrize("bad", ["abc", "-1", "1.5", "0x1"])
+#: The shared grammar (rust_core/src/frontdoor_hops.rs): 1-9 ASCII digits and nothing else.
+_MALFORMED = [
+    "abc",
+    "-1",
+    "+1",
+    "1.5",
+    "0x1",
+    "0_0",
+    " 1",
+    "1 ",
+    "",
+    chr(0x660),  # ARABIC-INDIC DIGIT ZERO: int() would normalise it to 0
+    chr(0x663),
+    "abc" + chr(0x2603),  # snowman: printable non-ASCII
+    "1" * 5000,  # past int()'s 4300-digit limit, which would raise ValueError
+]
+
+
+@pytest.mark.parametrize("bad", _MALFORMED)
 def test_next_hop_env_fails_closed_on_a_malformed_value(bad: str) -> None:
     # A malformed marker read as 0 would let a corrupted chain restart its count and loop again.
     with pytest.raises(FrontdoorHopLimitError) as excinfo:
         next_hop_env({FRONTDOOR_HOPS_ENV: bad})
-    assert FRONTDOOR_HOPS_ENV in str(excinfo.value)
+    message = str(excinfo.value)
+    assert FRONTDOOR_HOPS_ENV in message
+    assert message.isascii(), message  # no raw printable Unicode on stderr
+
+
+@pytest.mark.parametrize("bad", [chr(0x2603) + "abc", "abc" + chr(0x2603)])
+def test_child_env_or_refusal_stderr_is_ascii(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], bad: str
+) -> None:
+    monkeypatch.setenv(FRONTDOOR_HOPS_ENV, bad)
+    env, code = child_env_or_refusal()
+    assert env is None and code == 2
+    assert capsys.readouterr().err.isascii()
 
 
 def test_next_hop_env_preserves_the_rest_of_the_environment() -> None:
@@ -183,3 +214,95 @@ def test_bootstrap_spawn_failure_is_exit_2_not_a_traceback(
     err = capsys.readouterr().err
     assert "could not start" in err
     assert "output cannot be trusted" in err
+
+
+# ---------------------------------------------------------------------------
+# Info actions and version probes (the sites the first cut of #1208 missed)
+# ---------------------------------------------------------------------------
+
+
+def test_type_list_stamps_and_refuses_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    result = CliRunner().invoke(cli_main.app, ["search", "--type-list"])
+    assert result.exit_code == 0, result.output
+    assert recorder.calls and recorder.calls[0][1].get(FRONTDOOR_HOPS_ENV) == "1"
+
+    recorder.calls.clear()
+    monkeypatch.setenv(FRONTDOOR_HOPS_ENV, "4")
+    result = CliRunner().invoke(cli_main.app, ["search", "--type-list"])
+    assert recorder.calls == []
+    assert result.exit_code == 2, result.output
+
+
+def test_pcre2_version_refuses_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    import sys
+
+    recorder = _RunRecorder(monkeypatch, cli_main.subprocess, "run")
+    monkeypatch.setenv(FRONTDOOR_HOPS_ENV, "4")
+    monkeypatch.setattr(sys, "argv", ["tg", "--pcre2-version"])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_main.main_entry()
+    assert excinfo.value.code == 2
+    assert recorder.calls == []
+
+
+def test_version_probes_stamp_and_do_not_spawn_at_the_cap(
+    monkeypatch: pytest.MonkeyPatch, fake_native: Path
+) -> None:
+    from tensor_grep.cli import doctor_report, runtime_paths
+
+    recorder = _RunRecorder(monkeypatch, subprocess, "run")
+    runtime_paths._native_tg_version(fake_native)
+    doctor_report._doctor_rust_binary_version(fake_native)
+    doctor_report._doctor_tg_candidate_version(fake_native)
+    assert len(recorder.calls) == 3
+    assert all(markers.get(FRONTDOOR_HOPS_ENV) == "1" for _argv, markers in recorder.calls)
+
+    recorder.calls.clear()
+    monkeypatch.setenv(FRONTDOOR_HOPS_ENV, "4")
+    assert runtime_paths._native_tg_version(fake_native) is None
+    assert doctor_report._doctor_rust_binary_version(fake_native) is None
+    assert doctor_report._doctor_tg_candidate_version(fake_native) is None
+    assert recorder.calls == []
+
+
+# ---------------------------------------------------------------------------
+# Layer C must not change main's other exit codes: timeout stays 124, spawn failure is 2
+# ---------------------------------------------------------------------------
+
+
+def test_timeout_is_124_and_spawn_failure_is_2_and_the_stamp_does_not_leak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+    from unittest.mock import MagicMock
+
+    class _Proc:
+        pid = 1
+        returncode = None
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise subprocess.TimeoutExpired("tg", timeout or 0)
+
+    monkeypatch.setattr(bootstrap, "_popen_child", lambda argv: _Proc())
+    monkeypatch.setattr(bootstrap, "_terminate_child", MagicMock())
+    monkeypatch.setenv("TG_RG_TIMEOUT_SECONDS", "0.05")
+    assert bootstrap._run_native_tg_search("tg", ["ERROR", "."]) == 124
+    assert bootstrap._run_native_tg_command("tg", ["search", "ERROR"]) == 124
+
+    def _boom(argv: list[str]) -> Any:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(bootstrap, "_popen_child", _boom)
+    assert bootstrap._run_native_tg_search("tg", ["ERROR", "."]) == 2
+    assert bootstrap._run_native_tg_command("tg", ["search", "ERROR"]) == 2
+
+    # Four calls above stamped four times; none of it may leak into this process.
+    assert FRONTDOOR_HOPS_ENV not in os.environ

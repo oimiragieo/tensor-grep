@@ -1175,12 +1175,9 @@ def _run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
 
 
 def _run_native_tg_command(binary_name: str, argv: list[str]) -> int:
-    from tensor_grep.cli.frontdoor_hops import stamp_bootstrap_hop_or_refuse
+    from tensor_grep.cli.frontdoor_hops import run_with_hop_stamp
 
-    refused = stamp_bootstrap_hop_or_refuse()
-    if refused is not None:
-        return refused
-    return _streaming_passthrough_returncode([binary_name, *argv])
+    return run_with_hop_stamp(lambda: _streaming_passthrough_returncode([binary_name, *argv]))
 
 
 def _run_rg_passthrough(binary_name: str, search_args: list[str]) -> int:

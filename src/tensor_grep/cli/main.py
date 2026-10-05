@@ -2623,12 +2623,19 @@ def _generate_shell_completion_script(*, generator: str, prog_name: str = "tg") 
 
 
 def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
+    from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        raise typer.Exit(refusal)
     candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
     last_completed: subprocess.CompletedProcess[str] | None = None
     for candidate in candidates:
         if not candidate or not candidate.exists():
             continue
-        completed = subprocess.run([str(candidate), flag], capture_output=True, text=True)
+        completed = subprocess.run(
+            [str(candidate), flag], capture_output=True, text=True, env=child_env
+        )
         last_completed = completed
         if completed.returncode == 0:
             if completed.stdout:
@@ -13345,13 +13352,21 @@ def main_entry() -> None:
         first_arg = sys.argv[1]
 
         if first_arg == "--pcre2-version":
+            from tensor_grep.cli.frontdoor_hops import child_env_or_refusal
+
+            pcre2_env, pcre2_refusal = child_env_or_refusal()
+            if pcre2_env is None:
+                sys.exit(pcre2_refusal)
             candidates = [_self.resolve_native_tg_binary(), _self.resolve_ripgrep_binary()]
             last_completed: subprocess.CompletedProcess[str] | None = None
             for candidate in candidates:
                 if not candidate or not candidate.exists():
                     continue
                 completed = subprocess.run(
-                    [str(candidate), "--pcre2-version"], capture_output=True, text=True
+                    [str(candidate), "--pcre2-version"],
+                    capture_output=True,
+                    text=True,
+                    env=pcre2_env,
                 )
                 last_completed = completed
                 if completed.returncode == 0:

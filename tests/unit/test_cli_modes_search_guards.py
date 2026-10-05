@@ -1396,7 +1396,7 @@ def test_search_pcre2_version_should_run_special_action_without_pattern(
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: rg_binary)
 
-    def _fake_run(cmd, capture_output=False, text=False):
+    def _fake_run(cmd, capture_output=False, text=False, env=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="PCRE2 10.42\n", stderr="")
 
@@ -1418,7 +1418,7 @@ def test_search_type_list_should_run_special_action_without_pattern(
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: None)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: rg_binary)
 
-    def _fake_run(cmd, capture_output=False, text=False):
+    def _fake_run(cmd, capture_output=False, text=False, env=None):
         seen["cmd"] = list(cmd)
         return subprocess.CompletedProcess(cmd, 0, stdout="rust: *.rs\n", stderr="")
 
@@ -1448,7 +1448,7 @@ def test_search_type_list_should_not_mask_backend_failure(monkeypatch, tmp_path)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_native_tg_binary", lambda: native_binary)
     monkeypatch.setattr("tensor_grep.cli.main.resolve_ripgrep_binary", lambda: None)
 
-    def _fake_run(cmd, capture_output=False, text=False):
+    def _fake_run(cmd, capture_output=False, text=False, env=None):
         return subprocess.CompletedProcess(cmd, 2, stdout="", stderr="backend failed")
 
     monkeypatch.setattr("tensor_grep.cli.main.subprocess.run", _fake_run)

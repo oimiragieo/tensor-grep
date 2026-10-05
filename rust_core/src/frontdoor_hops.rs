@@ -9,8 +9,11 @@
 //!
 //! Contract: `TG_FRONTDOOR_HOPS` is the number of cross-door hops already taken (absent means 0).
 //! A door spawning the OTHER door passes `hops + 1`. At `hops >= MAX_FRONTDOOR_HOPS`, or on a
-//! malformed value, the door refuses with exit 2 and a message naming the variable, BEFORE it
-//! spawns anything.
+//! malformed value, the door refuses with exit 2 and an ASCII-only message naming the variable,
+//! BEFORE it spawns anything.
+//!
+//! Grammar (identical on both doors): 1-9 ASCII digits, nothing else. No whitespace, sign,
+//! underscore or Unicode digit; the empty string is malformed (only "absent" means 0).
 
 use std::env;
 use std::ffi::OsString;
@@ -35,21 +38,29 @@ fn refusal(detail: String) -> SidecarError {
     }
 }
 
+fn parse_hops(text: &str) -> Option<u32> {
+    let bytes = text.as_bytes();
+    if bytes.is_empty() || bytes.len() > 9 || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    text.parse::<u32>().ok()
+}
+
 /// The hop count to stamp on the child, or a fail-closed exit-2 refusal.
 pub fn next_frontdoor_hops(raw: Option<OsString>) -> Result<u32, SidecarError> {
     let current = match raw {
         None => 0,
         Some(value) => {
             let text = value.to_string_lossy();
-            let trimmed = text.trim();
-            if trimmed.is_empty() {
-                0
-            } else {
-                trimmed.parse::<u32>().map_err(|_| {
-                    refusal(format!(
-                        "{TG_FRONTDOOR_HOPS_ENV}={text:?} is not a non-negative integer"
-                    ))
-                })?
+            match parse_hops(&text) {
+                Some(parsed) => parsed,
+                None => {
+                    let head: String = text.chars().take(64).collect();
+                    let shown = head.escape_default().to_string();
+                    return Err(refusal(format!(
+                        "{TG_FRONTDOOR_HOPS_ENV}=\"{shown}\" is not 1-9 ASCII digits"
+                    )));
+                }
             }
         }
     };
@@ -77,26 +88,42 @@ mod tests {
     }
 
     #[test]
-    fn absent_and_blank_count_from_zero() {
+    fn absent_counts_from_zero_and_ascii_digits_are_allowed() {
         assert_eq!(next_frontdoor_hops(None).unwrap(), 1);
-        assert_eq!(hops("").unwrap(), 1);
-        assert_eq!(hops(" 2 ").unwrap(), 3);
+        assert_eq!(hops("0").unwrap(), 1);
+        assert_eq!(hops("1").unwrap(), 2);
+        assert_eq!(hops("3").unwrap(), MAX_FRONTDOOR_HOPS);
     }
 
     #[test]
-    fn last_hop_below_the_cap_is_allowed_and_the_cap_refuses() {
-        assert_eq!(hops("3").unwrap(), MAX_FRONTDOOR_HOPS);
+    fn the_cap_refuses() {
         let err = hops("4").unwrap_err();
         assert_eq!(err.exit_code, 2);
         assert!(err.message.contains(TG_FRONTDOOR_HOPS_ENV));
     }
 
     #[test]
-    fn malformed_values_fail_closed() {
-        for bad in ["abc", "-1", "1.5", "0x1"] {
+    fn malformed_values_fail_closed_with_an_ascii_message() {
+        let long = "1".repeat(5000);
+        for bad in [
+            "abc",
+            "-1",
+            "+1",
+            "1.5",
+            "0x1",
+            "0_0",
+            " 1",
+            "1 ",
+            "",
+            "\u{660}",
+            "\u{663}",
+            "abc\u{2603}",
+            long.as_str(),
+        ] {
             let err = hops(bad).unwrap_err();
-            assert_eq!(err.exit_code, 2, "{bad}");
-            assert!(err.message.contains(TG_FRONTDOOR_HOPS_ENV), "{bad}");
+            assert_eq!(err.exit_code, 2, "{bad:?}");
+            assert!(err.message.contains(TG_FRONTDOOR_HOPS_ENV), "{bad:?}");
+            assert!(err.message.is_ascii(), "{bad:?}");
         }
     }
 }

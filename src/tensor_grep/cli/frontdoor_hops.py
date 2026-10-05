@@ -16,9 +16,10 @@ Contract (mirrored in rust_core/src/python_sidecar.rs):
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 FRONTDOOR_HOPS_ENV = "TG_FRONTDOOR_HOPS"
+_MAX_HOPS_DIGITS = 9
 #: tg -> py -> tg -> py is the deepest LEGITIMATE chain (native sidecar command whose Python
 #: handler shells out to native search, which passes a Python-only flag through). 4 leaves one
 #: hop of headroom and still bounds a runaway to a handful of processes.
@@ -31,18 +32,18 @@ class FrontdoorHopLimitError(RuntimeError):
 
 def _current_hops(environ: Mapping[str, str]) -> int:
     raw = environ.get(FRONTDOOR_HOPS_ENV)
-    if raw is None or raw.strip() == "":
+    if raw is None:
         return 0
-    try:
-        value = int(raw.strip())
-    except ValueError:
-        value = -1
-    if value < 0:
+    # ONE grammar shared with rust_core/src/frontdoor_hops.rs: 1-9 ASCII digits, no whitespace,
+    # no sign, no underscores, no Unicode digits, empty refused. (`int()` alone accepts all of
+    # those and has a 4300-digit limit that raises.)
+    # `isascii() and isdigit()` == `[0-9]+` (no `re` import on the startup-sensitive fast path).
+    if not (raw.isascii() and raw.isdigit() and 1 <= len(raw) <= _MAX_HOPS_DIGITS):
         raise FrontdoorHopLimitError(
-            f"tensor-grep: refusing to delegate between the native and Python front doors: "
-            f"{FRONTDOOR_HOPS_ENV}={raw!r} is not a non-negative integer.\n"
+            "tensor-grep: refusing to delegate between the native and Python front doors: "
+            f"{FRONTDOOR_HOPS_ENV}={raw[:64]!a} is not 1-9 ASCII digits.\n"
         )
-    return value
+    return int(raw)
 
 
 def next_hop_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -61,6 +62,18 @@ def next_hop_env(environ: Mapping[str, str] | None = None) -> dict[str, str]:
     return child
 
 
+def probe_env() -> dict[str, str] | None:
+    """Child env for a read-only ``native --version`` probe, or None at the hop limit.
+
+    A probe cannot refuse with an exit code (its callers are resolvers), so at the limit the
+    probe is NOT RUN and the caller's existing "version unverified" path applies -- which never
+    selects the native binary, i.e. the safe direction."""
+    try:
+        return next_hop_env()
+    except FrontdoorHopLimitError:
+        return None
+
+
 def child_env_or_refusal() -> tuple[dict[str, str] | None, int]:
     """``(child_env, 0)`` for a cross-door spawn, or ``(None, 2)`` after writing the refusal to
     stderr. One call-site shape for every ``subprocess.run(native_tg, ...)`` in the Python door."""
@@ -73,17 +86,21 @@ def child_env_or_refusal() -> tuple[dict[str, str] | None, int]:
         return None, exc.exit_code
 
 
-def stamp_bootstrap_hop_or_refuse() -> int | None:
-    """For the bootstrap passthrough spawns, which inherit ``os.environ`` (``_popen_child`` takes no
-    ``env``): stamp the next hop into THIS process's environment, or return exit code 2 after
-    writing the refusal. Safe only because the bootstrap is a pure passthrough that exits with the
-    child's code immediately afterwards."""
-    import sys
+def run_with_hop_stamp(spawn: Callable[[], int]) -> int:
+    """Run ``spawn`` (a bootstrap passthrough that inherits ``os.environ``; ``_popen_child`` takes
+    no ``env``) with the next hop stamped, or return exit code 2 after writing the refusal.
 
-    try:
-        child_env = next_hop_env()
-    except FrontdoorHopLimitError as exc:
-        sys.stderr.write(str(exc))
-        return exc.exit_code
+    The stamp is RESTORED afterwards: a leaked counter would make every later call in the same
+    process (a test run, an embedding host) count up toward the cap and refuse spuriously."""
+    child_env, refusal = child_env_or_refusal()
+    if child_env is None:
+        return refusal
+    previous = os.environ.get(FRONTDOOR_HOPS_ENV)
     os.environ[FRONTDOOR_HOPS_ENV] = child_env[FRONTDOOR_HOPS_ENV]
-    return None
+    try:
+        return spawn()
+    finally:
+        if previous is None:
+            os.environ.pop(FRONTDOOR_HOPS_ENV, None)
+        else:
+            os.environ[FRONTDOOR_HOPS_ENV] = previous

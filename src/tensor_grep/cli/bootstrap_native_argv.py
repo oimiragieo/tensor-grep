@@ -366,13 +366,12 @@ def bootstrap_native_tg_search_argv(search_args: list[str]) -> list[str]:
 
 def run_native_tg_search(binary_name: str, search_args: list[str]) -> int:
     from tensor_grep.cli.bootstrap import _streaming_passthrough_returncode
-    from tensor_grep.cli.frontdoor_hops import stamp_bootstrap_hop_or_refuse
+    from tensor_grep.cli.frontdoor_hops import run_with_hop_stamp
 
-    refused = stamp_bootstrap_hop_or_refuse()
-    if refused is not None:
-        return refused
-    return _streaming_passthrough_returncode([
-        binary_name,
-        "search",
-        *bootstrap_native_tg_search_argv(search_args),
-    ])
+    return run_with_hop_stamp(
+        lambda: _streaming_passthrough_returncode([
+            binary_name,
+            "search",
+            *bootstrap_native_tg_search_argv(search_args),
+        ])
+    )
