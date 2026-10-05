@@ -10,7 +10,9 @@ from pathlib import Path
 from typing import ClassVar
 
 from tensor_grep.backends.base import BackendExecutionError, ComputeBackend
+from tensor_grep.backends.unicode_fold import ascii_fold_exact, delegate_to_rg
 from tensor_grep.cli.subprocess_policy import configured_ripgrep_timeout_seconds
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import (
     MatchLine,
@@ -448,7 +450,7 @@ class CPUBackend(ComputeBackend):
                 rust_results = self._rust_match_set(
                     file_path,
                     pattern,
-                    config.ignore_case or (config.smart_case and pattern.islower()),
+                    effective_ignore_case(config, pattern),
                     config.fixed_strings,
                     config.invert_match,
                 )
@@ -600,16 +602,20 @@ class CPUBackend(ComputeBackend):
                 exc,
             )
 
+        if effective_ignore_case(config, pattern) and not ascii_fold_exact(pattern, file_path):
+            # re.IGNORECASE is not rg's Unicode case folding (U+0130/U+0131 vs i): rg decides
+            return delegate_to_rg(file_path, pattern, config)
+
         matches = []
         flags = 0
 
-        if config.ignore_case or (config.smart_case and pattern.islower()):
+        if effective_ignore_case(config, pattern):
             flags |= re.IGNORECASE
 
         regex_str, regex = self._compile_regexes(pattern=pattern, flags=flags, config=config)
         prefilter_literal = None
         routing_reason = "cpu_python_regex"
-        ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
+        ignore_case = effective_ignore_case(config, pattern)
         source_lines: list[str] | None = None
         candidate_line_indexes: set[int] | None = None
         if not (
@@ -929,7 +935,7 @@ class CPUBackend(ComputeBackend):
         engine) or drop the -C/-A/-B/-w/-x/--pcre2 flag combination.
         """
         rust_query_pattern, rust_query_fixed_strings = self._build_rust_query(pattern, config)
-        ignore_case = bool(config.ignore_case or (config.smart_case and pattern.islower()))
+        ignore_case = effective_ignore_case(config, pattern)
 
         try:
             rust_results = self._rust_match_set(
@@ -1038,7 +1044,7 @@ class CPUBackend(ComputeBackend):
 
     def _search_ltl(self, path: Path, pattern: str, config: SearchConfig) -> SearchResult:
         flags = 0
-        if config.ignore_case or (config.smart_case and pattern.islower()):
+        if effective_ignore_case(config, pattern):
             flags |= re.IGNORECASE
 
         # `_compile_ltl` is preserved as the sole grammar parser (tests monkeypatch it) and

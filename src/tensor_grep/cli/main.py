@@ -33,7 +33,6 @@ from tensor_grep.cli import backend_fallback as _backend_fallback
 from tensor_grep.cli import doctor_payload as _doctor_payload
 from tensor_grep.cli import doctor_report as _doctor_report
 from tensor_grep.cli import native_frontdoor as _native_frontdoor
-from tensor_grep.cli import rg_replacement as _rg_replacement
 from tensor_grep.cli import windows_launcher as _windows_launcher
 from tensor_grep.cli._index_lock import atomic_write_bytes_anchored
 from tensor_grep.cli.completeness_output import _output_limit_note
@@ -41,6 +40,7 @@ from tensor_grep.cli.formatters.base import OutputFormatter
 from tensor_grep.cli.prepare_service import (
     _build_prepare_payload,
 )
+from tensor_grep.cli.rg_post_process import post_process_matches as _rg_out
 from tensor_grep.cli.runtime_paths import (
     _native_tg_version as _native_tg_version,
 )
@@ -73,6 +73,7 @@ from tensor_grep.cli.runtime_paths import (
 )
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
+from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
 from tensor_grep.core.reranker import build_why_ranked_reasons, route_labels
 from tensor_grep.core.retrieval_chunker import MAX_CHUNKS
@@ -114,7 +115,7 @@ else:
 
 if TYPE_CHECKING:
     from tensor_grep.core.config import SearchConfig
-    from tensor_grep.core.result import MatchLine, SearchResult
+    from tensor_grep.core.result import SearchResult
     from tensor_grep.core.retrieval_chunker import Chunk
     from tensor_grep.io.directory_scanner import DirectoryScanner
 
@@ -1990,9 +1991,7 @@ def _validate_search_regex(pattern: str, config: "SearchConfig") -> None:
     if config.fixed_strings or _engine_is_explicit_pcre2(config):
         return
 
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
+    flags = case_regex_flags(config, pattern, strict=False)
 
     candidate = pattern
     if config.line_regexp:
@@ -2494,7 +2493,6 @@ def _can_passthrough_rg(
         and (not json_mode or rg_json_passthrough)
         and not ndjson_mode
         and not (files_mode and json_mode)
-        and not only_matching
         and not (rg_json_passthrough and stats_mode)
         and not (rg_json_passthrough and (config.count or config.count_matches))
         and not (rg_json_passthrough and (files_with_matches or files_without_match))
@@ -2643,87 +2641,6 @@ def _run_rg_compatible_info_action(flag: str, unavailable_message: str) -> None:
         raise typer.Exit(int(last_completed.returncode or 1))
     typer.echo(unavailable_message, err=True)
     raise typer.Exit(1)
-
-
-def _replace_lines(
-    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
-) -> list["MatchLine"]:
-    if config.replace_str is None:
-        return matches
-
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
-
-    if config.fixed_strings:
-        regex = re.compile(re.escape(pattern), flags)
-    elif config.line_regexp:
-        regex = re.compile(f"^{pattern}$", flags)
-    elif config.word_regexp:
-        regex = re.compile(rf"\b{pattern}\b", flags)
-    else:
-        regex = re.compile(pattern, flags)
-
-    extracted: list[MatchLine] = []
-    for match in matches:
-        replacement = config.replace_str
-        if config.fixed_strings and "$" not in replacement:
-            flags_val = flags
-            if flags_val & re.IGNORECASE:
-                new_text = re.sub(
-                    re.escape(pattern),
-                    replacement.replace("\\", r"\\"),
-                    match.text,
-                    flags=re.IGNORECASE,
-                )
-            else:
-                new_text = match.text.replace(pattern, replacement)
-            extracted.append(replace(match, text=new_text))
-            continue
-        if regex is not None:
-
-            def _expand_match(current: re.Match[str], replacement: str = replacement) -> str:
-                return _expand_ripgrep_replacement(replacement, current)
-
-            new_text = regex.sub(
-                _expand_match,
-                match.text,
-            )
-        else:
-            new_text = match.text
-        extracted.append(replace(match, text=new_text))
-    return extracted
-
-
-# Split to cli/rg_replacement.py under the file-size ratchet; alias keeps the local name.
-_expand_ripgrep_replacement = _rg_replacement.expand_ripgrep_replacement
-
-
-def _only_matching_lines(
-    matches: list["MatchLine"], pattern: str, config: "SearchConfig"
-) -> list["MatchLine"]:
-    flags = 0
-    if config.ignore_case or (config.smart_case and pattern.islower()):
-        flags |= re.IGNORECASE
-
-    if config.fixed_strings:
-        regex = re.compile(re.escape(pattern), flags)
-    elif config.line_regexp:
-        regex = re.compile(f"^{pattern}$", flags)
-    elif config.word_regexp:
-        regex = re.compile(rf"\b{pattern}\b", flags)
-    else:
-        regex = re.compile(pattern, flags)
-
-    extracted: list[MatchLine] = []
-    for match in matches:
-        for token in regex.findall(match.text):
-            if isinstance(token, tuple):
-                token = "".join(token)
-            token_text = str(token)
-            if token_text:
-                extracted.append(replace(match, text=token_text))
-    return extracted
 
 
 def _normalize_string_list(value: object, fallback: list[str]) -> list[str]:
@@ -3980,7 +3897,7 @@ def search_command(
 
     try:
         pipeline = Pipeline(force_cpu=effective_force_cpu, config=config)
-    except ConfigurationError as exc:
+    except (ConfigurationError, BackendExecutionError) as exc:
         # Task #166 finding A: Pipeline's explicit-routing guards (e.g. --gpu-device-ids with
         # no GPU backend available, or --pcre2 with no PCRE2-capable rg) deliberately raise
         # ConfigurationError as a fail-closed signal (core/pipeline.py), but this CLI boundary
@@ -4123,6 +4040,8 @@ def search_command(
             except Exception as exc:
                 if _is_invalid_regex_error(exc):
                     _exit_invalid_regex(exc, json_mode=json)
+                if isinstance(exc, BackendExecutionError):  # e.g. rg output not representable
+                    _exit_search_error("backend_error", str(exc), json_mode=json)
                 raise
             if span is not None:
                 span.set_attribute("matches", result.total_matches)
@@ -4271,12 +4190,13 @@ def search_command(
             all_results.result_incomplete = True
             sys.stderr.write(f"tg: {all_results.incomplete_reason}\n")
 
-    if config.replace_str is not None:
-        all_results.matches = _replace_lines(all_results.matches, pattern, config)
+    try:  # rg's own -o/-r output; a record it cannot represent exactly is a clean exit 2
+        all_results.matches = _rg_out(all_results.matches, pattern, config, only_matching)
+    except BackendExecutionError as exc:
+        _exit_search_error("backend_error", str(exc), json_mode=json)
 
     if only_matching:
-        all_results.matches = _only_matching_lines(all_results.matches, pattern, config)
-        all_results.total_matches = len(all_results.matches)
+        all_results.total_matches = sum(m.rg_kind != "context" for m in all_results.matches)
         all_results.total_files = len({m.file for m in all_results.matches})
         matched_file_paths = {m.file for m in all_results.matches}
         matched_file_paths_ordered = []
@@ -4509,7 +4429,7 @@ def search_command(
             from tensor_grep.cli.formatters.json_fmt import JsonFormatter
 
             _safe_stdout_line(JsonFormatter().format(all_results))
-        sys.exit(2 if exit_incomplete else 1)
+        sys.exit(2 if exit_incomplete else int(not all_results.rg_exit_zero))
 
     if quiet:
         _emit_stats()

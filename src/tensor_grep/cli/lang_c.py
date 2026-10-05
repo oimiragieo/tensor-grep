@@ -178,7 +178,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from tensor_grep.cli import lang_c_cpp_include
+from tensor_grep.cli import lang_c_cpp_include, lang_registry
 
 # ---------------------------------------------------------------------------
 # Duplicated tiny helpers -- see the module docstring: no import from repo_map.py, to avoid an
@@ -188,11 +188,11 @@ from tensor_grep.cli import lang_c_cpp_include
 # them ever change there.
 # ---------------------------------------------------------------------------
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
 
 
 def _is_clean_symbol_name(name: str) -> bool:
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
+    return lang_registry.is_clean_symbol_name(name)
 
 
 def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:

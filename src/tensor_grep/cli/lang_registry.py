@@ -32,13 +32,28 @@ from typing import Any
 # to avoid a cycle, so the couple of one-line helpers a LanguageSpec's callables might want are
 # copied here rather than imported). Keep these BYTE-IDENTICAL to their repo_map.py twins
 # (``_tree_sitter_node_text`` / ``_is_clean_symbol_name`` there) if either ever changes.
+# ``_CLEAN_SYMBOL_NAME_RE`` is pinned byte-identical across its 8 copies by
+# tests/unit/test_clean_symbol_name_regex_pin.py; ``is_clean_symbol_name`` below is the shared
+# predicate every copy's ``_is_clean_symbol_name`` wrapper delegates to.
 # ---------------------------------------------------------------------------
 
-_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
+_CLEAN_SYMBOL_NAME_RE = re.compile(r"^[^\s\x00-\x23\x25-\x2f\x3a-\x40\x5b-\x5e\x60\x7b-\x7f]+$")
+
+
+def is_clean_symbol_name(name: str) -> bool:
+    """The ONE identifier verdict every ``_is_clean_symbol_name`` wrapper delegates to.
+
+    The regex copies are a structural prefilter only (no whitespace / ASCII punctuation). The
+    verdict validates the WHOLE name with ``str.isidentifier`` (Unicode XID_Start/XID_Continue),
+    after mapping ``$`` -- the one extra character these languages allow -- to ``_``. So a
+    decomposed ``cafe`` + U+0301, ``\u2118x`` and ``x\u2160`` are accepted, while
+    ``a\u00b2`` (a No-category character the word-character class admits) is rejected.
+    """
+    return bool(_CLEAN_SYMBOL_NAME_RE.match(name)) and name.replace("$", "_").isidentifier()
 
 
 def _is_clean_symbol_name(name: str) -> bool:
-    return bool(_CLEAN_SYMBOL_NAME_RE.match(name))
+    return is_clean_symbol_name(name)
 
 
 def _tree_sitter_node_text(source_bytes: bytes, node: Any) -> str:

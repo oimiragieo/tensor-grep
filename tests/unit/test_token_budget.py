@@ -1200,3 +1200,51 @@ def test_truncate_large_file_does_not_call_budget_check_proportionally_to_line_c
         "constant independent of line count, not one call per surviving line (O(k) rebuild "
         "regression?)."
     )
+
+
+def test_ensure_primary_source_moves_present_primary_to_front() -> None:
+    neighbour = {"file": "/r/a.py", "name": "neighbour", "line_map": []}
+    primary = {"file": "/r/b.py", "name": "target_fn", "line_map": []}
+    payload = {
+        "edit_plan_seed": {"primary_file": "/r/b.py", "primary_symbol": {"name": "target_fn"}}
+    }
+    ordered = repo_map._ensure_primary_source_in_sources(
+        {},
+        payload,
+        [neighbour, primary],
+        max_sources=3,
+        render_profile="llm",
+        optimize_context=True,
+    )
+    assert [s["name"] for s in ordered] == ["target_fn", "neighbour"]
+
+
+def test_context_render_budget_does_not_starve_primary_behind_neighbours(tmp_path: Path) -> None:
+    src = tmp_path / "project" / "src"
+    body = "\n".join(f"    step_{i} = {i}" for i in range(300))
+    small = "\n".join(f"    s{i} = {i}" for i in range(60))
+    _write(
+        src / "diff_impact.py",
+        f"def build_diff_blast_radius(x):\n    total = x\n{small}\n    return total\n",
+    )
+    _write(
+        src / "repo_map.py",
+        f"def build_symbol_blast_radius_from_map(m):\n    # diff blast radius build\n{body}\n    return m\n",
+    )
+    _write(
+        src / "blast_radius.py",
+        f"def blast_radius(m):\n    # build diff blast radius\n{body}\n    return m\n",
+    )
+    payload = repo_map.build_context_render(
+        "build diff blast radius",
+        tmp_path / "project",
+        max_files=3,
+        max_sources=3,
+        max_tokens=300,
+        optimize_context=True,
+        render_profile="llm",
+    )
+    first = payload["sources"][0]
+    assert Path(first["file"]).name == "diff_impact.py"
+    assert first["source_budget"]["truncated"] is False
+    assert payload["context_consistency"]["primary_symbol_truncated"] is False

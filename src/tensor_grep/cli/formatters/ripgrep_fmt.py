@@ -1,7 +1,10 @@
+import sys
 from collections import defaultdict
-from pathlib import Path
 
+from tensor_grep.backends.rust_backend import _first_nul_offset
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.cli.formatters.json_fmt import _REGEX_META, _literal_column_index
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
@@ -9,11 +12,12 @@ from tensor_grep.core.result import MatchLine, SearchResult
 class RipgrepFormatter(OutputFormatter):
     def __init__(self, config: SearchConfig | None = None):
         self.config = config or SearchConfig()
+        self._column_notice_emitted = False
 
     @staticmethod
     def _binary_notice(file_path: str) -> str:
         try:
-            offset = Path(file_path).read_bytes().find(b"\0")
+            offset = _first_nul_offset(file_path)
         except OSError:
             offset = -1
         if offset < 0:
@@ -50,28 +54,31 @@ class RipgrepFormatter(OutputFormatter):
         pattern = self.config.query_pattern or ""
         if not pattern and self.config.regexp:
             pattern = self.config.regexp[0]
+        is_literal = bool(self.config.fixed_strings) or not (_REGEX_META & set(pattern))
         if not pattern:
-            return 1
-        if self.config.fixed_strings:
-            index = match.text.find(pattern)
-        else:
-            try:
-                import re
-
-                flags = (
-                    re.IGNORECASE
-                    if self.config.ignore_case or (self.config.smart_case and pattern.islower())
-                    else 0
-                )
-                found = re.search(pattern, match.text, flags=flags)
-                index = -1 if found is None else found.start()
-            except re.error:
-                index = match.text.find(pattern)
+            return 1  # an empty pattern matches at the start of the line: column 1 is exact
+        if not is_literal:
+            # KNOWN APPROXIMATION: --column/--vimgrep mandate a column field (rg never omits it).
+            # A regex line with no authoritative offset prints 1 (never a guess from re-running
+            # the user's regex) and says so on stderr. The pipeline routes column requests to rg
+            # whenever rg exists, so this is only reached with rg absent.
+            return self._approximate_column()
+        if self.config.word_regexp or self.config.line_regexp:
+            return self._approximate_column()  # find() ignores -w/-x boundaries -- never guess
+        # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
+        ignore_case = effective_ignore_case(self.config, pattern)
+        index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
         if index < 0:
-            return 1
+            return self._approximate_column()
         # ripgrep/--vimgrep columns are BYTE offsets, not character indices: advance
         # by the UTF-8 width of the text before the match (audit MED parity).
         return len(match.text[:index].encode("utf-8")) + 1
+
+    def _approximate_column(self) -> int:
+        if not self._column_notice_emitted:
+            self._column_notice_emitted = True
+            sys.stderr.write("tg: column approximated (1): rg not available for exact offsets\n")
+        return 1
 
     def _submatch_columns(self, match: MatchLine) -> list[int] | None:
         """rg's authoritative 1-based byte columns for every occurrence on this line.
@@ -175,7 +182,10 @@ class RipgrepFormatter(OutputFormatter):
             if self.config.line_number:
                 prefix_parts.append(str(match.line_number))
 
-            if self.config.column:
+            if match.rg_kind == "context":
+                # rg: context lines use `-` between fields and have no column
+                lines.append("-".join([*prefix_parts, str(match.text)]))
+            elif self.config.column:
                 columns = submatch_columns or [self._column_for_match(match)]
                 for column in columns:
                     lines.append(":".join([*prefix_parts, str(column), str(match.text)]))

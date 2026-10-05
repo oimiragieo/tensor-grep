@@ -997,6 +997,7 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
 
     let inputs = split_search_inputs(&config)?;
     let mut effective_config = config;
+    effective_config.count &= !(effective_config.json || effective_config.ndjson); // J-06
     effective_config.with_filename = should_print_with_filename(&effective_config, &inputs);
     let matcher = build_matcher(&effective_config)?;
     let mut stats = SearchStats::default();
@@ -1010,9 +1011,8 @@ pub fn run_native_search(config: NativeSearchConfig) -> Result<SearchStats> {
         let root_stats = if should_use_parallel_walk_search(&effective_config) {
             search_walk_roots_parallel(&effective_config, &inputs.roots)?
         } else {
-            // Task 276 slice B3: the serial walk's own error count must reach `stats`, or the
-            // `--json` envelope at :2436 reports a COMPLETE scan of an INCOMPLETE walk -- the
-            // exact defect task 276 exists to close, on the one path that had no channel for it.
+            // Task 276 slice B3: the serial walk's error count must reach `stats`, or the `--json`
+            // envelope reports a COMPLETE scan of an INCOMPLETE walk.
             let walked = collect_walked_files(&effective_config, &inputs.roots)?;
             let mut walk_stats =
                 run_native_search_files(&effective_config, &matcher, walked.files)?;

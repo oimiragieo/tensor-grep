@@ -23,10 +23,17 @@ def expand_ripgrep_replacement(template: str, match: re.Match[str]) -> str:
             return ""
         try:
             if all(_is_ascii_digit(char) for char in token):
-                group_value = match.group(int(token))
+                # bound BEFORE int(): a 4301+ digit token trips Python's int max-str-digits limit
+                digits = token.lstrip("0") or "0"
+                if len(digits) > len(str(match.re.groups)):
+                    return ""
+                group_value = match.group(int(digits))
             else:
                 group_value = match.group(token)
-        except Exception:
+        except (
+            IndexError,
+            ValueError,
+        ):  # bad group number or name: a NARROW handler (was a broad one on main)
             return ""
         return "" if group_value is None else str(group_value)
 

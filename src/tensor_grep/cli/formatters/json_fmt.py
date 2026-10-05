@@ -1,11 +1,26 @@
 import json
-import re
 
 from tensor_grep.cli.formatters.base import OutputFormatter
+from tensor_grep.core.case_semantics import effective_ignore_case
 from tensor_grep.core.config import SearchConfig
 from tensor_grep.core.result import MatchLine, SearchResult
 
 JSON_OUTPUT_VERSION = 1
+
+
+_REGEX_META = frozenset("\\.^$|?*+()[]{}")
+
+
+def _literal_column_index(text: str, pattern: str, *, ignore_case: bool) -> int:
+    """Linear (no backtracking) first-occurrence index for a LITERAL pattern, else -1."""
+    if not pattern:
+        return -1
+    if not ignore_case:
+        return text.find(pattern)
+    if not (text.isascii() and pattern.isascii()):
+        # lower() is not Unicode caseless matching (sigma vs final sigma) -- never guess
+        return -1
+    return text.lower().find(pattern.lower())
 
 
 def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> int | None:
@@ -13,8 +28,9 @@ def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> i
 
     Priority:
     1. match.range["start"]["column"] (0-based → 1-based), provided by ast-grep backend.
-    2. Pattern-based scan of match.text using config (mirrors RipgrepFormatter logic).
-    3. None — caller should omit or null the field rather than emit a wrong value.
+    2. rg submatch byte offsets (authoritative).
+    3. A linear scan for a LITERAL pattern only; a regex is never evaluated in Python.
+    4. None — caller should omit or null the field rather than emit a wrong value.
     """
     if match.range is not None:
         start = match.range.get("start")
@@ -23,28 +39,25 @@ def _column_for_match(match: MatchLine, config: SearchConfig | None = None) -> i
             if isinstance(column, int):
                 return column + 1
 
+    for sub in match.submatches or ():
+        start = sub.get("start") if isinstance(sub, dict) else None
+        if isinstance(start, int) and not isinstance(start, bool):
+            return start + 1  # rg's authoritative 0-based BYTE offset
+
     if config is None:
         return None
 
     pattern = config.query_pattern or ""
     if not pattern and config.regexp:
         pattern = config.regexp[0]
-    if not pattern:
-        return None
-
-    if config.fixed_strings:
-        index = match.text.find(pattern)
-    else:
-        try:
-            flags = (
-                re.IGNORECASE
-                if config.ignore_case or (config.smart_case and pattern.islower())
-                else 0
-            )
-            found = re.search(pattern, match.text, flags=flags)
-            index = -1 if found is None else found.start()
-        except re.error:
-            index = match.text.find(pattern)
+    is_literal = bool(config.fixed_strings) or not (_REGEX_META & set(pattern))
+    if not pattern or not is_literal:
+        return None  # a real regex is never evaluated in Python
+    if config.word_regexp or config.line_regexp:
+        return None  # first-occurrence find() ignores -w/-x boundaries -- omit, never guess
+    # explicit -s (case_sensitive) overrides smart case, as in RipgrepBackend._build_cmd
+    ignore_case = effective_ignore_case(config, pattern)
+    index = _literal_column_index(match.text, pattern, ignore_case=ignore_case)
     if index < 0:
         return None
     # ripgrep/--vimgrep/--json columns are BYTE offsets, not character indices:
@@ -70,7 +83,10 @@ def _match_payload(match: MatchLine, config: SearchConfig | None = None) -> dict
         "line_number": match.line_number,
         "text": match.text,
     }
-    column = _column_for_match(match, config)
+    is_context = match.rg_kind == "context"
+    if is_context:
+        payload["kind"] = "context"  # additive: only context records carry a kind
+    column = None if is_context else _column_for_match(match, config)
     if column is not None:
         payload["column"] = column
     if match.range is not None:

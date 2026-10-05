@@ -809,7 +809,12 @@ A90_MATRIX = [
     (["edit-ready", "target.txt", "--json"], True, None),
     (["edit-ready", "target.txt"], False, None),
     (["qqq", "--json"], False, None),
-    (["qqq", "--help"], True, ["lsp", "map", "mcp", "new", "run"]),
+    # A-04: rank order (edit distance, then name) -- closest first, THEN cap at 5. Recomputed
+    # from the fixed `bootstrap._nearest_commands`; both doors must emit the identical list.
+    (["qqq", "--help"], True, ["sql", "lsp", "map", "mcp", "new"]),
+    (["ru", "--help"], True, ["run", "lsp", "map", "mcp", "new"]),
+    (["sq", "--help"], True, ["sql", "lsp", "map", "mcp", "new"]),
+    (["scn", "--help"], True, ["scan", "mcp", "run", "sql", "find"]),
     (["search", "workspace", "--json"], False, None),
     (["searhc", "--help"], True, ["search"]),
     (["qqqqzzzz", "--help"], True, []),
