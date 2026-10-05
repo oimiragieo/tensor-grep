@@ -20,8 +20,8 @@ from tensor_grep.cli.runtime_paths import _expected_tg_version
 
 
 @pytest.fixture(autouse=True)
-def _env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(tmp_path / "secret"))
+def _env(trusted_daemon_secret_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TG_DAEMON_SECRET_DIR", str(trusted_daemon_secret_dir))
     monkeypatch.setattr(sd, "_DAEMON_START_TIMEOUT_SECONDS", 0.5)
 
 

@@ -132,6 +132,11 @@ def test_reverse_import_distances_returns_partial_not_discarded(
     all_files, imports_by_file = _all_files_and_imports(rm)
     hub = _hub_path(all_files)
     real_monotonic = _repo_map.time.monotonic
+    # Relative to the REAL clock, never an absolute constant: on Windows ``time.monotonic()`` is
+    # system uptime, so a hard-coded 500_000.0 is already in the past on a box up for > ~5.8 days
+    # and every "before deadline" read would look expired (leaving an empty result).
+    deadline = real_monotonic() + 3600.0
+    past_deadline = deadline + 1.0
 
     call_count = 0
 
@@ -140,12 +145,12 @@ def test_reverse_import_distances_returns_partial_not_discarded(
         call_count += 1
         # First 5 inner-loop checks read "before deadline"; the 6th onward reads "already past"
         # -- lets a few leaves accumulate into `distances` before the trip.
-        return 1_000_000.0 if call_count > 5 else real_monotonic()
+        return past_deadline if call_count > 5 else real_monotonic()
 
     monkeypatch.setattr(_repo_map.time, "monotonic", clock)
     flag = _repo_map._DeadlineBreakFlag()
     result = _repo_map._reverse_import_distances(
-        [hub], all_files, imports_by_file, deadline_monotonic=500_000.0, deadline_hit=flag
+        [hub], all_files, imports_by_file, deadline_monotonic=deadline, deadline_hit=flag
     )
 
     assert flag.hit is True
@@ -349,15 +354,18 @@ def test_raw_validation_plan_for_tests_no_tests_branch_forwards_deadline(
         return real_iter_repo_files(root, **kwargs)
 
     monkeypatch.setattr(_repo_map, "_iter_repo_files", spy)
+    # Real-clock-relative, not an absolute constant: Windows monotonic() is uptime, so 500_000.0
+    # is already expired on a box up > ~5.8 days and the branch short-circuits before forwarding.
+    deadline = _repo_map.time.monotonic() + 3600.0
     _repo_map._raw_validation_plan_for_tests(
         [],  # no tests -> exercises the "no tests" branch
         repo_root=tmp_path,
         precomputed_file_paths=None,
-        deadline_monotonic=500_000.0,
+        deadline_monotonic=deadline,
         deadline_hit=_repo_map._DeadlineBreakFlag(),
     )
 
-    assert captured.get("deadline_monotonic") == 500_000.0
+    assert captured.get("deadline_monotonic") == deadline
 
 
 # ---------------------------------------------------------------------------------------------

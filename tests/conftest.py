@@ -107,13 +107,59 @@ def _isolated_daemon_secret_dir(tmp_path_factory):
     """
     key = "TG_DAEMON_SECRET_DIR"
     created = key not in os.environ
+    fallback: Path | None = None
     if created:
-        os.environ[key] = str(tmp_path_factory.mktemp("tg-secret"))
+        chosen, fallback = _secret_dir_with_trusted_ancestors(tmp_path_factory.mktemp("tg-secret"))
+        os.environ[key] = str(chosen)
     try:
         yield
     finally:
         if created:
             os.environ.pop(key, None)
+        if fallback is not None:
+            shutil.rmtree(fallback, ignore_errors=True)
+
+
+def _secret_dir_with_trusted_ancestors(preferred: Path) -> tuple[Path, Path | None]:
+    """``(secret_dir, fallback_to_delete)`` for the daemon secret, honouring the product's ancestor-trust walk.
+
+    The daemon refuses to create or read its secret when ANY ancestor directory grants a foreign
+    principal modify rights (``session_daemon_trust._ancestors_refusal``). That is correct product
+    behaviour, but it makes ``tmp_path`` an environment-dependent place for the secret: on a Windows
+    dev box whose ``%TEMP%`` carries inherited grants for sandbox/service accounts (e.g.
+    ``CodexSandboxUsers``) every real-daemon test fails with "cannot establish per-user daemon
+    secret", while GitHub's runners pass. Where ``preferred`` is refused, fall back to a throwaway
+    directory under ``%LOCALAPPDATA%\\tensor-grep`` (the product's own default location, whose
+    ancestors the product itself must accept). If that is refused too, keep ``preferred`` and let the
+    test fail honestly.
+    """
+    if sys.platform != "win32" or not os.environ.get("LOCALAPPDATA"):
+        return preferred, None
+    from tensor_grep.cli import session_daemon_trust as trust
+
+    if trust._ancestors_refusal(preferred) is None:
+        return preferred, None
+    import uuid
+
+    fallback = (
+        Path(os.environ["LOCALAPPDATA"]) / "tensor-grep" / f"pytest-secret-{uuid.uuid4().hex}"
+    )
+    fallback.mkdir(parents=True, exist_ok=True)  # a MISSING ancestor is refused, so create first
+    if trust._ancestors_refusal(fallback / "secret") is not None:
+        shutil.rmtree(fallback, ignore_errors=True)
+        return preferred, None
+    return fallback / "secret", fallback
+
+
+@pytest.fixture
+def trusted_daemon_secret_dir(tmp_path):
+    """A per-test secret dir the product's ancestor-trust walk accepts (see the helper above)."""
+    chosen, fallback = _secret_dir_with_trusted_ancestors(tmp_path / "secret")
+    try:
+        yield chosen
+    finally:
+        if fallback is not None:
+            shutil.rmtree(fallback, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)
