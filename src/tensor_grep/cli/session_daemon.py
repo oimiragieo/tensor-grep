@@ -20,7 +20,14 @@ from time import monotonic
 from typing import Any, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import IndexLockTimeoutError, index_lock, replace_with_retry
+from tensor_grep.cli._index_lock import (
+    IndexLockTimeoutError,
+    index_lock,
+    register_after_fork_child_hook,
+    release_os_file_lock,
+    replace_with_retry,
+    try_os_file_lock,
+)
 from tensor_grep.cli.runtime_paths import _expected_tg_version
 from tensor_grep.cli.session_daemon_response_cache import _SessionResponseCache
 from tensor_grep.cli.session_daemon_trust import (  # noqa: F401  (re-exported for tests)
@@ -381,7 +388,55 @@ def _daemon_start_lock_path(root: Path) -> Path:
     return _sessions_dir(root) / _DAEMON_START_LOCK_FILE
 
 
+# F-05 / F-10: an OS advisory sidecar lock (`<start-lock>.os`) WRAPS the unchanged legacy protocol
+# below, exactly as `_index_lock.index_lock` does. Only one new-version process at a time can be
+# inside the legacy section, so the check-then-unlink stale reclaim cannot interleave and a
+# release can never unlink another holder's lock. New-vs-old is the legacy protocol, unchanged.
+_DAEMON_START_LOCK_FDS: dict[str, int] = {}
+_DAEMON_START_LOCK_GUARD = threading.Lock()
+
+
+def _reset_start_lock_state_after_fork() -> None:
+    """A fork child never owns the parent's start lock (its inherited fds were closed by
+    `_index_lock`); forget the bookkeeping so a child release is a no-op."""
+    global _DAEMON_START_LOCK_GUARD
+    _DAEMON_START_LOCK_GUARD = threading.Lock()
+    _DAEMON_START_LOCK_FDS.clear()
+
+
+register_after_fork_child_hook(_reset_start_lock_state_after_fork)
+
+
+def _daemon_start_sidecar_path(root: Path) -> Path:
+    lock_path = _daemon_start_lock_path(root)
+    return lock_path.with_name(lock_path.name + ".os")
+
+
 def _try_acquire_daemon_start_lock(root: Path) -> bool:
+    _daemon_start_lock_path(root).parent.mkdir(parents=True, exist_ok=True)
+    fd = try_os_file_lock(_daemon_start_sidecar_path(root))
+    if fd is None:
+        return False
+    if not _legacy_try_acquire_daemon_start_lock(root):
+        release_os_file_lock(fd)
+        return False
+    with _DAEMON_START_LOCK_GUARD:
+        _DAEMON_START_LOCK_FDS[str(root)] = fd
+    return True
+
+
+def _release_daemon_start_lock(root: Path) -> None:
+    with _DAEMON_START_LOCK_GUARD:
+        fd = _DAEMON_START_LOCK_FDS.pop(str(root), None)
+    if fd is None:
+        return  # this process holds no start lock for `root`: touch nothing (F-10)
+    try:
+        _legacy_release_daemon_start_lock(root)
+    finally:
+        release_os_file_lock(fd)
+
+
+def _legacy_try_acquire_daemon_start_lock(root: Path) -> bool:
     lock_path = _daemon_start_lock_path(root)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     for _attempt in range(2):
@@ -404,7 +459,7 @@ def _try_acquire_daemon_start_lock(root: Path) -> bool:
     return False
 
 
-def _release_daemon_start_lock(root: Path) -> None:
+def _legacy_release_daemon_start_lock(root: Path) -> None:
     try:
         _daemon_start_lock_path(root).unlink()
     except OSError:

@@ -4,6 +4,7 @@ import dataclasses
 import json
 import os
 import stat
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -529,8 +530,20 @@ def _heartbeat_loop(lock_path: Path, token: str, stop: threading.Event, interval
             pass  # transient (e.g. Windows delete-pending); next beat retries
 
 
+def _outer_release_allowed(owner_pid: int) -> bool:
+    """False in a fork child that inherited an active ``index_lock`` context: it must release
+    nothing (the sidecar fd number may already belong to a lock the child acquired itself)."""
+    return os.getpid() == owner_pid
+
+
+def _legacy_release_allowed(owner_pid: int) -> bool:
+    """False in a fork child: its inherited legacy cleanup would unlink the PARENT's lock file
+    (the token matches), so the release step is skipped there."""
+    return os.getpid() == owner_pid
+
+
 @contextmanager
-def index_lock(
+def _legacy_index_lock(
     index_path: Path,
     *,
     poll_interval_s: float = _POLL_S,
@@ -538,6 +551,9 @@ def index_lock(
     stale_after_s: float = _STALE_AFTER_S,
     heartbeat_interval_s: float | None = None,
 ) -> Iterator[None]:
+    """The original O_EXCL + token + heartbeat + stale-reclaim protocol, unchanged apart from the
+    fork-child release guard. Old-version processes only ever see this file, so wrapping it in the
+    OS sidecar lock (``index_lock``) keeps new-vs-old behaviour identical to the pre-sidecar one."""
     lock_path = _lock_path_for(index_path)
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_s
@@ -572,6 +588,7 @@ def index_lock(
     # audit #14: a uuid4 ownership token (not just the pid, which can collide across a
     # crash+relaunch) identifies THIS acquisition. Written alongside the pid so a stale
     # legacy/pid-only lock (no second line) is still tolerated by `_token_for_lock`.
+    owner_pid = os.getpid()
     token = uuid4().hex
     hb_interval = (
         heartbeat_interval_s
@@ -593,7 +610,162 @@ def index_lock(
         try:
             yield
         finally:
-            stop_heartbeat.set()
-            heartbeat.join(timeout=1.0)  # bounded: never hang release on a wedged thread
+            if _legacy_release_allowed(owner_pid):
+                stop_heartbeat.set()
+                heartbeat.join(timeout=1.0)  # bounded: never hang release on a wedged thread
     finally:
-        _release_lock(lock_path, token)
+        if _legacy_release_allowed(owner_pid):
+            _release_lock(lock_path, token)
+
+
+# --- OS advisory sidecar lock (F-05 / F-10) ---------------------------------------------------
+#
+# Every NEW process takes an OS advisory lock on `<lockfile>.os` first, then runs the unchanged
+# legacy protocol above on the original lock file. New-vs-new exclusion is exact (the sidecar
+# admits one process at a time, so two reclaimers can never interleave on the legacy file);
+# new-vs-old is exactly the legacy protocol, as between two old processes. The OS releases the
+# lock when the handle closes or the process dies; the sidecar file is never deleted.
+
+_HELD_LOCK_FDS: set[int] = set()
+_REGISTRY_LOCK = threading.Lock()
+_AFTER_FORK_CHILD_HOOKS: list[Callable[[], None]] = []
+
+
+def register_after_fork_child_hook(hook: Callable[[], None]) -> None:
+    """Run ``hook`` in a fork child after this module reset its own lock state (POSIX only)."""
+    _AFTER_FORK_CHILD_HOOKS.append(hook)
+
+
+def _os_lock_path_for(index_path: Path) -> Path:
+    legacy = _lock_path_for(index_path)
+    return legacy.with_name(legacy.name + ".os")
+
+
+def _register_held_fd(fd: int) -> None:
+    _HELD_LOCK_FDS.add(fd)
+
+
+def _unlock_and_close(fd: int) -> None:
+    """Unlock and close ``fd``; never raises and never touches the registry lock."""
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+def _lock_identity_matches(fd: int, lock_path: Path) -> bool:
+    try:
+        held, current = os.fstat(fd), os.stat(lock_path)
+    except OSError:
+        return False
+    return (held.st_dev, held.st_ino) == (current.st_dev, current.st_ino)
+
+
+def try_os_file_lock(lock_path: Path) -> int | None:
+    """Non-blocking exclusive OS lock on ``lock_path`` (created, never unlinked). Returns the
+    held descriptor, or None when another handle/process holds it or the path no longer names the
+    file that was locked (identity re-check)."""
+    with _REGISTRY_LOCK:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return None
+        if not _lock_identity_matches(fd, lock_path):
+            _unlock_and_close(fd)  # never re-enter the (non-reentrant) registry lock here
+            return None
+        _register_held_fd(fd)
+        return fd
+
+
+def release_os_file_lock(fd: int) -> None:
+    with _REGISTRY_LOCK:
+        _HELD_LOCK_FDS.discard(fd)
+        _unlock_and_close(fd)
+
+
+if hasattr(os, "register_at_fork"):  # absent on Windows
+
+    def _before_fork() -> None:
+        _REGISTRY_LOCK.acquire()
+
+    def _after_fork_in_parent() -> None:
+        _REGISTRY_LOCK.release()
+
+    def _after_fork_in_child() -> None:
+        # A fork child inherits the open-file descriptions of every held sidecar lock. Closing the
+        # child's copies does NOT unlock (flock releases when the LAST descriptor closes and the
+        # parent's stays open), but leaving them open would keep the lock held after the parent
+        # dies for as long as the child lives.
+        global _REGISTRY_LOCK
+        _REGISTRY_LOCK = threading.Lock()
+        for held_fd in list(_HELD_LOCK_FDS):
+            try:
+                os.close(held_fd)
+            except OSError:
+                pass
+        _HELD_LOCK_FDS.clear()
+        for hook in _AFTER_FORK_CHILD_HOOKS:
+            hook()
+
+    os.register_at_fork(
+        before=_before_fork,
+        after_in_parent=_after_fork_in_parent,
+        after_in_child=_after_fork_in_child,
+    )
+
+
+@contextmanager
+def index_lock(
+    index_path: Path,
+    *,
+    poll_interval_s: float = _POLL_S,
+    timeout_s: float = _TIMEOUT_S,
+    stale_after_s: float = _STALE_AFTER_S,
+    heartbeat_interval_s: float | None = None,
+) -> Iterator[None]:
+    sidecar = _os_lock_path_for(index_path)
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_s
+    while (fd := try_os_file_lock(sidecar)) is None:
+        if time.monotonic() >= deadline:
+            raise IndexLockTimeoutError(
+                f"could not acquire {_lock_path_for(index_path)} within {timeout_s}s"
+            )
+        time.sleep(poll_interval_s)
+    owner_pid = os.getpid()
+    try:
+        remaining = max(0.0, deadline - time.monotonic())
+        with _legacy_index_lock(
+            index_path,
+            poll_interval_s=poll_interval_s,
+            timeout_s=remaining,
+            stale_after_s=stale_after_s,
+            heartbeat_interval_s=heartbeat_interval_s,
+        ):
+            yield
+    finally:
+        if _outer_release_allowed(owner_pid):
+            release_os_file_lock(fd)
