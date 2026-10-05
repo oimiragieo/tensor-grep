@@ -14,7 +14,7 @@ from time import monotonic
 from typing import Any, TextIO, cast
 from uuid import uuid4
 
-from tensor_grep.cli._index_lock import atomic_write_json, index_lock
+from tensor_grep.cli._index_lock import atomic_write_json, index_lock, record_from_entry
 from tensor_grep.cli.agent_capsule import build_agent_capsule_from_map
 from tensor_grep.cli.orient_capsule import build_orient_capsule_from_map
 from tensor_grep.cli.repo_map import (
@@ -395,7 +395,7 @@ def _load_index(root: Path) -> list[SessionRecord]:
     if not index_path.exists():
         return []
     payload = json.loads(index_path.read_text(encoding="utf-8"))
-    return [SessionRecord(**entry) for entry in payload]
+    return [record_from_entry(SessionRecord, entry) for entry in payload]
 
 
 def _write_json_atomic(path: Path, payload: Any, *, mode: int | None = None) -> None:

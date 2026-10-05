@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import stat
@@ -446,6 +447,16 @@ def atomic_write_json(path: Path, payload: Any, *, mode: int | None = None) -> N
     with its own precomputed bytes instead, so its on-disk output stays byte-for-byte unchanged.
     """
     atomic_write_bytes(path, json.dumps(payload, indent=2).encode("utf-8"), mode=mode)
+
+
+def record_from_entry(record_cls: Any, entry: dict[str, Any]) -> Any:
+    """Build ``record_cls`` from an index entry, ignoring keys it does not declare (F-12).
+
+    An index written by a newer tg carries extra fields; ``record_cls(**entry)`` would raise
+    TypeError and wedge every command that loads the index. A rewritten index drops the unknown
+    keys, which is acceptable for a forward-compat read."""
+    names = {f.name for f in dataclasses.fields(record_cls)}
+    return record_cls(**{k: v for k, v in entry.items() if k in names})
 
 
 def _lock_path_for(index_path: Path) -> Path:
