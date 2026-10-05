@@ -72,6 +72,7 @@ from tensor_grep.cli.runtime_paths import (
     translate_path_for_windows_binary as translate_path_for_windows_binary,
 )
 from tensor_grep.cli.session_resume_service import session_prepare_cmd, session_resume_cmd
+from tensor_grep.cli.symbol_output import defined_without_results, source_text_lines
 from tensor_grep.core import result as _JSON_OUTPUT_VERSION_CONTRACT
 from tensor_grep.core.case_semantics import case_regex_flags
 from tensor_grep.core.observability import nvtx_range
@@ -6778,14 +6779,16 @@ def _symbol_not_found_claim(payload: dict[str, Any], result_key: str) -> bool:
     an output cap is a complete analysis capped for display, so it must NOT suppress
     ``not_found``.
 
-    Exit codes are unaffected: ``_scan_incomplete``-true payloads already exit 2 on a branch
-    evaluated before ``not_found`` is consulted, so this only changes what the FIELD says to a
-    caller reading the JSON.
+    Exit codes: ``_scan_incomplete``-true payloads still exit 2 on a branch evaluated before
+    ``not_found`` is consulted. A DEFINED symbol with zero references/callers on a complete scan is
+    a complete result, not an absent symbol (B-09): ``not_found`` is False and the command exits 0,
+    where it used to exit 1 -- a behaviour change for scripts that read exit 1 as "no callers".
     """
     return (
         _symbol_payload_has_no_results(payload, result_key)
         and not _scan_incomplete(payload)
         and not bool(payload.get("result_incomplete"))
+        and not defined_without_results(payload, result_key)
     )
 
 
@@ -7119,6 +7122,7 @@ def _emit_symbol_command_result(
     result_key: str,
     json_output: bool,
     emit_text: Callable[[dict[str, Any]], None],
+    keep_candidate_symbols: bool = False,
 ) -> None:
     """Emit a symbol-command payload and honor the no-match exit convention (L1).
 
@@ -7143,7 +7147,8 @@ def _emit_symbol_command_result(
 
     suggestions = suggestions_for_payload(payload) if not_found else []
     payload["suggestions"] = suggestions
-    payload.pop("candidate_symbols", None)
+    if not keep_candidate_symbols:
+        payload.pop("candidate_symbols", None)
     caveat, is_truncation = _annotate_result_completeness(payload, result_key=result_key)
     # FAIL-CLOSED COUPLING between the message and the exit code below.
     #
@@ -7496,8 +7501,8 @@ def source(
         raise typer.Exit(1) from exc
 
     def _emit_text(current: dict[str, Any]) -> None:
-        typer.echo(f"Source for {current['symbol']} in {current['path']}")
-        typer.echo(f"sources={len(current['sources'])} files={len(current['files'])}")
+        for line in source_text_lines(current):
+            typer.echo(line)
 
     _emit_symbol_command_result(
         payload,
@@ -8475,18 +8480,15 @@ def blast_radius_render(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    # Cold path (Cluster B, 2026-07-06): build the payload once and dump it here (byte-identical to
-    # the old build_symbol_blast_radius_render_json helper: json.dumps(payload, indent=2)) so both
-    # json and text branches share the same scan-truncation gate below -- output the full payload
-    # FIRST, then exit 2 if the scan itself (not just the output) was capped.
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        _emit_scan_incompleteness_banner(payload)
-        typer.echo(payload["rendered_context"])
-
-    if _scan_incomplete(payload):
-        raise typer.Exit(2)
+    # Shared 0/1/2 emitter (B-05): unknown symbol -> 1, scan truncation -> 2 with result_incomplete.
+    # candidate_symbols stays in the JSON (additive-only contract for this payload).
+    _emit_symbol_command_result(
+        payload,
+        result_key="definitions",
+        json_output=json_output,
+        emit_text=lambda current: typer.echo(current["rendered_context"]),
+        keep_candidate_symbols=True,
+    )
 
 
 @app.command(name="blast-radius-plan")
@@ -8556,22 +8558,22 @@ def blast_radius_plan(
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
 
-    # F14 (Fable audit MED): output the payload FIRST, then gate on the shared _scan_incomplete
-    # contract -- mirrors blast-radius/map/context-render/edit-plan/blast-radius-render (Cluster B,
-    # 2026-07-06). This payload is built from build_symbol_blast_radius_from_map and carries the
-    # exact scan_limit/caller_scan_truncated markers the gate checks; without this, a scan-truncated
-    # plan exited 0 while the sibling `blast-radius` command exits 2 on identical truncation.
-    if json_output:
-        typer.echo(json.dumps(payload, indent=2))
-    else:
-        _emit_scan_incompleteness_banner(payload)
-        typer.echo(f"Blast radius plan for {payload['symbol']} in {payload['path']}")
+    # Shared 0/1/2 emitter (B-05, supersedes the F14 local gate): unknown symbol -> 1, scan
+    # truncation -> 2 with result_incomplete. candidate_symbols stays in the JSON (additive-only).
+    def _emit_text(current: dict[str, Any]) -> None:
+        typer.echo(f"Blast radius plan for {current['symbol']} in {current['path']}")
         typer.echo(
-            f"files={len(payload['files'])} tests={len(payload['tests'])} symbols={len(payload['symbols'])}"
+            f"files={len(current['files'])} tests={len(current['tests'])} "
+            f"symbols={len(current['symbols'])}"
         )
 
-    if _scan_incomplete(payload):
-        raise typer.Exit(2)
+    _emit_symbol_command_result(
+        payload,
+        result_key="definitions",
+        json_output=json_output,
+        emit_text=_emit_text,
+        keep_candidate_symbols=True,
+    )
 
 
 @session_app.command("open")
