@@ -95,3 +95,20 @@ mypy (173 files), size/bare ratchets; 30 diagnostic/decoding source replay rows.
 guard attempt reported passing assertions but exceeded its 120-second process deadline, so
 it supplied no clearance. The completed retry used an external 240-second deadline. Final
 metadata review and CI must name the rebased head; publication/replay remain separate.
+
+## CI entrypoint and consumer test corrections
+
+Run `37423447650` on `7fab9f21615d7aace70786bff99a297a35c36544` exposed a collection
+error: the console `pytest` entrypoint does not add the repository root needed by a
+`scripts` namespace import. The guard test now loads its exact script path using the
+existing file-size-test import pattern. All 94 guard assertions pass through the actual
+console entrypoint. The same run found an older GPU test asserting text capture; a sibling
+PCRE2 test had the same stale expectation. Both now supply bytes and assert byte capture.
+Unicode JSON survives the consumer boundary; malformed successful PCRE2 output produces
+the exact UTF-8 refusal and exit 1. Existing malformed GPU JSON controls remain intact.
+
+Test-only commit `14f85effc9cb2660141902512d16e4838e64bc68` leaves production, scripts,
+policy inventory and exceptions unchanged. Bounded canonical checks pass: 94 console guard
+tests, 159 capsule/navigation/session/probe tests, three PCRE2 tests, focused Ruff/preview
+formatting and the unchanged file-size gate. The raw bundle records dirty starting trees
+and identifies this final test commit; these checks do not clear the new head's full CI.
