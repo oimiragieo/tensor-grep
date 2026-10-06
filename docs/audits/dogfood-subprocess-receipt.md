@@ -83,3 +83,15 @@ new refusals. The census remains 72 sinks / 16 decoding calls / 12 generated cal
 inventory adds an explicit positional-options field without changing call identities.
 Changed-file Ruff and preview formatting pass. Production `src/` is unchanged from `1f3a442`.
 These results supersede the 82-test guard result only; exact-head reviews and CI remain required.
+
+## Replay onto merged diagnostics
+
+PR #1214 merged as `d0d9f7e960622f868a4a41c14c8d21a6e81ac1c8`. Rebased subprocess source
+`a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6` replays only the reviewed dependency-to-candidate
+delta onto that merge. Its complete Git tree equals the Sol/Opus-cleared `06e7fd4` tree.
+All repeated canonical-venv gates record this exact head and a clean starting worktree: 94
+guard tests; 102 MCP/diagnostic tests; 28 path tests (3 POSIX skips); full Ruff, preview format,
+mypy (173 files), size/bare ratchets; 30 diagnostic/decoding source replay rows. The first
+guard attempt reported passing assertions but exceeded its 120-second process deadline, so
+it supplied no clearance. The completed retry used an external 240-second deadline. Final
+metadata review and CI must name the rebased head; publication/replay remain separate.

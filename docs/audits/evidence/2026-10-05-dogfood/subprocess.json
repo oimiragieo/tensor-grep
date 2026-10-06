@@ -640,5 +640,179 @@
       }
     ],
     "limits": "Prior 82-test guard and prior reviews did not cover hidden positional options; final review and exact-head CI remain required."
+  },
+  "merged_dependency_rebase": {
+    "source_sha": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+    "reviewed_tree_sha": "06e7fd4c2bcb297f055c86a1d99c5063eca064a5",
+    "base_merge_sha": "d0d9f7e960622f868a4a41c14c8d21a6e81ac1c8",
+    "whole_git_tree_equal": true,
+    "method": "Replay exact binary Git diff from reviewed diagnostics dependency to reviewed subprocess head onto the byte-identical diagnostics squash; assert complete Git tree equality before commit.",
+    "checks": [
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_subprocess_decoding_guard.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 106.48,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-guard.log",
+        "raw_output": "........................................................................ [ 76%]\n......................                                                   [100%]\n94 passed in 101.80s (0:01:41)\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_mcp_server_rewrite_audit.py",
+          "tests/unit/test_dogfood_diagnostics.py",
+          "tests/unit/test_gpu_native_proof_contract.py",
+          "tests/unit/test_agent_capsule_gpu_probe.py",
+          "-q"
+        ],
+        "exit_code": 0,
+        "seconds": 32.17,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-consumers.log",
+        "raw_output": "........................................................................ [ 70%]\n..............................                                           [100%]\n102 passed in 28.04s\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "-m",
+          "pytest",
+          "tests/unit/test_codemap.py",
+          "tests/unit/test_evidence_receipt.py",
+          "-q",
+          "-k",
+          "tracked or path or unicode or porcelain or decode or excluding"
+        ],
+        "exit_code": 0,
+        "seconds": 56.47,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-paths.log",
+        "raw_output": "s.......................ss.....                                          [100%]\n28 passed, 3 skipped, 80 deselected in 52.92s\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 2.84,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-ruff.log",
+        "raw_output": "All checks passed!\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "ruff",
+          "format",
+          "--preview",
+          "--check",
+          "."
+        ],
+        "exit_code": 0,
+        "seconds": 0.98,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-format.log",
+        "raw_output": "1224 files already formatted\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "mypy",
+          "src/"
+        ],
+        "exit_code": 0,
+        "seconds": 35.48,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-mypy.log",
+        "raw_output": "Success: no issues found in 173 source files\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/file_size_budget.py"
+        ],
+        "exit_code": 0,
+        "seconds": 29.03,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-size.log",
+        "raw_output": "file-size budget OK: 1117 files scanned, 25 grandfathered, 0 regressions\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "scripts/bare_call_ratchet.py"
+        ],
+        "exit_code": 0,
+        "seconds": 35.75,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-bare.log",
+        "raw_output": "bare-call ratchet OK: 3 modules, 0 bare calls, 0 regressions\n"
+      },
+      {
+        "root": "C:/dev/projects/tg-dogfood-subprocess-deliver",
+        "head_sha_at_start": "a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6",
+        "status_at_start": "",
+        "command": [
+          "uv",
+          "run",
+          "--no-sync",
+          "python",
+          "C:\\dev\\projects\\tg-dogfood-evidence\\published_replay.py",
+          "--cases",
+          "diagnostics,decoding"
+        ],
+        "exit_code": 0,
+        "seconds": 13.94,
+        "log": "C:\\dev\\projects\\tg-dogfood-evidence\\subprocess-rebased-replay.log",
+        "raw_output": "[tensor-grep-mcp] index_search_subprocess_utf8 failed: Traceback (most recent call last):\n  File \"C:\\dev\\projects\\tg-dogfood-subprocess-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 1284, in _execute_index_search_command\n    completed = _self._run_rewrite_subprocess(command)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-subprocess-deliver\\src\\tensor_grep\\cli\\mcp_rewrite_tools.py\", line 629, in _run_rewrite_subprocess\n    stdout = decode_protocol_output(completed.stdout)\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"C:\\dev\\projects\\tg-dogfood-subprocess-deliver\\src\\tensor_grep\\cli\\subprocess_policy.py\", line 21, in decode_protocol_output\n    return value.decode(\"utf-8\")\n           ^^^^^^^^^^^^^^^^^^^^^\nUnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\n[mcp] native rewrite stderr: invalid pattern\ufffd\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\ntg: rg count search timed out; returning the partial tally. Scope the search to a smaller path or raise TG_RG_TIMEOUT_SECONDS.\n{\n  \"version\": \"1.123.19\",\n  \"python\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n  \"package\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-subprocess-deliver\\\\src\\\\tensor_grep\\\\__init__.py\",\n  \"rows\": [\n    {\n      \"issue\": \"repair_env_utf8_malformed\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: installer: \\u2603 bad=\\ufffd\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.152\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: installer: \\\\u2603 bad=\\\\ufffd\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.152\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"repair_env_absent_output\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: Process exited with 17\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.0\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: Process exited with 17\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.0\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"repair_env_timeout\",\n      \"raw\": {\n        \"exit\": 1,\n        \"payload\": {\n          \"status\": \"failed\",\n          \"error\": \"Repair failed: Command '['C:\\\\\\\\dev\\\\\\\\projects\\\\\\\\tensor-grep\\\\\\\\.venv\\\\\\\\Scripts\\\\\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\\\\\Users\\\\\\\\oimir\\\\\\\\AppData\\\\\\\\Local\\\\\\\\Temp\\\\\\\\tg-published-dogfood-5tsblcdv\\\\\\\\editable', '--no-deps']' timed out after 60 seconds\",\n          \"previous_version\": \"1.123.19\",\n          \"duration_seconds\": 0.0\n        },\n        \"stdout\": \"{\\n  \\\"status\\\": \\\"failed\\\",\\n  \\\"error\\\": \\\"Repair failed: Command '['C:\\\\\\\\\\\\\\\\dev\\\\\\\\\\\\\\\\projects\\\\\\\\\\\\\\\\tensor-grep\\\\\\\\\\\\\\\\.venv\\\\\\\\\\\\\\\\Scripts\\\\\\\\\\\\\\\\python.exe', '-m', 'pip', 'install', '-e', 'C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\oimir\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\tg-published-dogfood-5tsblcdv\\\\\\\\\\\\\\\\editable', '--no-deps']' timed out after 60 seconds\\\",\\n  \\\"previous_version\\\": \\\"1.123.19\\\",\\n  \\\"duration_seconds\\\": 0.0\\n}\\n\",\n        \"exception\": {\n          \"type\": \"SystemExit\",\n          \"message\": \"1\"\n        },\n        \"producer_kwargs\": {\n          \"capture_output\": true,\n          \"text\": true,\n          \"encoding\": \"utf-8\",\n          \"errors\": \"replace\",\n          \"check\": false,\n          \"timeout\": 60\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_NativeGpuBackend_False\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"sidecar_used\": false\n        },\n        \"consumer\": {\n          \"status\": \"supported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"routing_reason\": null,\n          \"sidecar_used\": false,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": null\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-x7uqcyow\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_GpuSidecar_True\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"GpuSidecar\",\n          \"sidecar_used\": true\n        },\n        \"consumer\": {\n          \"status\": \"unsupported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"GpuSidecar\",\n          \"routing_reason\": null,\n          \"sidecar_used\": true,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": \"GPU route lacks proved native execution (routing_backend=GpuSidecar, sidecar_used=True).\"\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-v9vkudbg\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_proof_NativeGpuBackend_None\",\n      \"raw\": {\n        \"injected_producer\": {\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"sidecar_used\": null\n        },\n        \"consumer\": {\n          \"status\": \"unsupported\",\n          \"requested_gpu_device_ids\": [\n            0\n          ],\n          \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n          \"exit_code\": 0,\n          \"routing_backend\": \"NativeGpuBackend\",\n          \"routing_reason\": null,\n          \"sidecar_used\": null,\n          \"routing_gpu_device_ids\": [],\n          \"native_error_kind\": null,\n          \"error\": \"GPU route lacks proved native execution (routing_backend=NativeGpuBackend, sidecar_used=None).\"\n        },\n        \"argv\": [\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe\",\n          \"search\",\n          \"--gpu-device-ids\",\n          \"0\",\n          \"--json\",\n          \"--no-ignore\",\n          \"--\",\n          \"tg doctor gpu runtime probe\",\n          \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-doctor-gpu-probe-snewp727\\\\probe.log\"\n        ],\n        \"timeout\": 2.0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"gpu_non_object_json\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\producer-control.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 0,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU runtime probe returned invalid JSON object: expected a JSON object\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_positive\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning')\"\n        ],\n        \"returncode\": 0,\n        \"stdout\": \"[]\",\n        \"stderr\": \"warning\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_malformed_stderr\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[]'); sys.stderr.buffer.write(b'warning\\\\xff')\"\n        ],\n        \"returncode\": 0,\n        \"stdout\": \"[]\",\n        \"stderr\": \"warning\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_malformed_stdout\",\n      \"raw\": {\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'[\\\\xff]'); sys.stderr.buffer.write(b'warning')\"\n        ],\n        \"exception\": \"BackendExecutionError\",\n        \"message\": \"ast-grep command returned invalid UTF-8 protocol output.\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ast_utf8_input\",\n      \"raw\": {\n        \"stdout\": \"snowman \\u2603\",\n        \"stderr\": \"\",\n        \"returncode\": 0\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_git_error\",\n      \"raw\": {\n        \"resolved\": null,\n        \"error\": \"Could not resolve --against ref 'missing': fatal unresolved\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_agent_exit_0\",\n      \"raw\": {\n        \"status\": \"malformed\",\n        \"command\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe -B -c \\\"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(0)\\\"\",\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(0)\"\n        ],\n        \"exit_code\": 0,\n        \"stderr\": \"GPU unavailable\\ufffd\",\n        \"reason\": \"GPU evidence command returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_doctor_exit_0\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 0,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU runtime probe returned invalid UTF-8 JSON: 'utf-8' codec can't decode byte 0xff in position 1: invalid start byte\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_agent_exit_17\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"command\": \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe -B -c \\\"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(17)\\\"\",\n        \"argv\": [\n          \"C:\\\\dev\\\\projects\\\\tensor-grep\\\\.venv\\\\Scripts\\\\python.exe\",\n          \"-B\",\n          \"-c\",\n          \"import sys; sys.stdout.buffer.write(b'{\\\\xff}'); sys.stderr.buffer.write(b'GPU unavailable\\\\xff'); sys.exit(17)\"\n        ],\n        \"exit_code\": 17,\n        \"stderr\": \"GPU unavailable\\ufffd\",\n        \"reason\": \"GPU evidence command exited with code 17.\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_doctor_exit_17\",\n      \"raw\": {\n        \"status\": \"failed\",\n        \"requested_gpu_device_ids\": [\n          0\n        ],\n        \"command\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\\\\decoding-producer.exe search --gpu-device-ids 0 --json --no-ignore -- tg doctor gpu runtime probe <doctor-gpu-probe-file>\",\n        \"exit_code\": 17,\n        \"routing_backend\": null,\n        \"routing_reason\": null,\n        \"sidecar_used\": null,\n        \"routing_gpu_device_ids\": [],\n        \"native_error_kind\": null,\n        \"error\": \"GPU unavailable\\ufffd\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stdout_valid\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e322e330a\",\n        \"versions\": [\n          \"1.2.3\"\n        ]\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stdout_malformed\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e32ff2e330a\",\n        \"versions\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stderr_valid\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e322e330a\",\n        \"versions\": [\n          \"1.2.3\"\n        ]\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_pip_stderr_malformed\",\n      \"raw\": {\n        \"wire_hex\": \"417661696c61626c652076657273696f6e733a20312e32ff2e330a\",\n        \"versions\": []\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_partial\",\n      \"raw\": {\n        \"wire_hex\": \"7b226d617463686573223a205b7b2266696c65223a20227061727469616c2e7079222c20226c696e655f6e756d626572223a20312c202274657874223a202278227d5d2c2022746f74616c5f6d617463686573223a20312c2022726573756c745f696e636f6d706c657465223a20747275652c2022696e636f6d706c6574655f726561736f6e5f636c617373223a20227363616e5f6c696d6974227d\",\n        \"producer_exit\": 2,\n        \"consumer\": {\n          \"matches\": [\n            {\n              \"file\": \"partial.py\",\n              \"line_number\": 1,\n              \"text\": \"x\"\n            }\n          ],\n          \"total_matches\": 1,\n          \"result_incomplete\": true,\n          \"incomplete_reason_class\": \"scan_limit\",\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.11.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_diff_content\",\n      \"raw\": {\n        \"wire_hex\": \"2d2d2d20610a2b2b2b20620a2dff0a\",\n        \"producer_exit\": 0,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.11.0\",\n          \"schema_version\": 1,\n          \"routing_backend\": \"AstBackend\",\n          \"routing_reason\": \"ast-native\",\n          \"sidecar_used\": false,\n          \"diff\": \"--- a\\n+++ b\\n-\\ufffd\\n\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_invalid_protocol\",\n      \"raw\": {\n        \"wire_hex\": \"7bff7d\",\n        \"producer_exit\": 0,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.11.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false,\n          \"query\": \"x\",\n          \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\",\n          \"error\": {\n            \"code\": \"invalid_output\",\n            \"message\": \"Index search command returned invalid UTF-8 JSON output.\"\n          }\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_mcp_index_failed_protocol\",\n      \"raw\": {\n        \"wire_hex\": \"7bff7d\",\n        \"producer_exit\": 17,\n        \"consumer\": {\n          \"version\": 1,\n          \"mcp_contract_version\": \"1.11.0\",\n          \"routing_backend\": \"TrigramIndex\",\n          \"routing_reason\": \"index-accelerated\",\n          \"sidecar_used\": false,\n          \"query\": \"x\",\n          \"path\": \"C:\\\\Users\\\\oimir\\\\AppData\\\\Local\\\\Temp\\\\tg-published-dogfood-5tsblcdv\",\n          \"error\": {\n            \"code\": \"invalid_input\",\n            \"message\": \"Invalid rewrite input or options.\"\n          }\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_windows_git_codemap\",\n      \"raw\": {\n        \"wire_hex\": \"636166e92e74787400\",\n        \"consumer\": null\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_windows_git_revision\",\n      \"raw\": {\n        \"wire_hex\": \"2323206d61696e00204d20636166e92e74787400\",\n        \"consumer\": {\n          \"status\": \"unavailable\",\n          \"reason\": \"git status path could not be represented: 'utf-8' codec can't decode byte 0xe9 in position 3: invalid continuation byte\"\n        }\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_timeout_counts_lf\",\n      \"raw\": {\n        \"wire_hex\": \"206c656164696e67206e616d653a320a6f746865723a3132\",\n        \"total_matches\": 2,\n        \"total_files\": 1,\n        \"paths\": [\n          \" leading name\"\n        ],\n        \"counts\": {\n          \" leading name\": 2\n        },\n        \"incomplete\": true,\n        \"reason_class\": \"timeout\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_timeout_counts_nul\",\n      \"raw\": {\n        \"wire_hex\": \"206c656164696e67206e616d6500320a6f74686572003132\",\n        \"total_matches\": 2,\n        \"total_files\": 1,\n        \"paths\": [\n          \" leading name\"\n        ],\n        \"counts\": {\n          \" leading name\": 2\n        },\n        \"incomplete\": true,\n        \"reason_class\": \"timeout\"\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ndjson_path_match\",\n      \"raw\": {\n        \"producer\": {\n          \"type\": \"match\",\n          \"data\": {\n            \"path\": {\n              \"bytes\": \"c3JjL3Nub3dtYW5f4piDLnB5\"\n            },\n            \"lines\": {\n              \"bytes\": \"bGluZf8K\"\n            },\n            \"line_number\": 1,\n            \"absolute_offset\": 0,\n            \"submatches\": []\n          }\n        },\n        \"matches\": [\n          {\n            \"file\": \"src/snowman_\\u2603.py\",\n            \"line\": 1,\n            \"text\": \"line\\ufffd\"\n          }\n        ],\n        \"paths\": [\n          \"src/snowman_\\u2603.py\"\n        ],\n        \"counts\": {\n          \"src/snowman_\\u2603.py\": 1\n        },\n        \"total\": 1\n      },\n      \"verdict\": \"PASS\"\n    },\n    {\n      \"issue\": \"decoding_ndjson_path_context\",\n      \"raw\": {\n        \"producer\": {\n          \"type\": \"context\",\n          \"data\": {\n            \"path\": {\n              \"bytes\": \"c3JjL3Nub3dtYW5f4piDLnB5\"\n            },\n            \"lines\": {\n              \"bytes\": \"bGluZf8K\"\n            },\n            \"line_number\": 1,\n            \"absolute_offset\": 0,\n            \"submatches\": []\n          }\n        },\n        \"matches\": [\n          {\n            \"file\": \"src/snowman_\\u2603.py\",\n            \"line\": 1,\n            \"text\": \"line\\ufffd\"\n          }\n        ],\n        \"paths\": [],\n        \"counts\": {},\n        \"total\": 0\n      },\n      \"verdict\": \"PASS\"\n    }\n  ],\n  \"compiled_extension\": {\n    \"path\": \"C:\\\\dev\\\\projects\\\\tg-dogfood-subprocess-deliver\\\\src\\\\tensor_grep\\\\rust_core.pyd\",\n    \"sha256\": \"4c77228288637aa228ec2594a3a01ac9362819acdc4b3c9e150ff103c69df54e\"\n  }\n}\n"
+      }
+    ]
   }
 }

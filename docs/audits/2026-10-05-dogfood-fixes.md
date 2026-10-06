@@ -6,7 +6,7 @@ are outside this change. Each row remains open until its own published-artifact 
 
 | ID | Owner | Disposition | Completion trigger |
 |---|---|---|---|
-| DOGFOOD-DIAGNOSTICS | CLI maintainer | IN_FLIGHT, PR #1214 | Installer failure and GPU route proof regressions; release replay |
+| DOGFOOD-DIAGNOSTICS | CLI maintainer | MERGED, PR #1214 (`d0d9f7e`); publication/replay pending | Completed release and published installer/GPU proof replay |
 | DOGFOOD-DECODING | Runtime maintainer | IN_FLIGHT, PR #1217 | Classified production subprocess inventory, mutation-tested guard, release replay |
 | DOGFOOD-FILENAME | Ranking maintainer | IN_FLIGHT, PR #1215 | Pinned precedence/order, context/edit agreement, cached/session and release replay |
 | DOGFOOD-LABELS | Checkpoint maintainer | IN_FLIGHT, PR #1216 | CLI/MCP/store round trips, invalid-input no-write proof, recovery and release replay |
@@ -87,7 +87,10 @@ and output; artifact identity is recorded separately from installed version.
 The initial Opus review hit HTTP 429. After its reset, Opus cleared exact `7c657aa` with 37
 independently run tests. Its misleading rejection-message finding was folded with a non-object
 JSON failure guard in `f57bebc`. Sol and Opus cleared the resulting diagnostics head `d96bb9e`;
-its exact-head CI remains pending. Nothing has merged.
+CI `37418321723` cleared that exact head with 38 terminal jobs and 49 clear PR checks.
+PR #1214 merged as `d0d9f7e960622f868a4a41c14c8d21a6e81ac1c8`; its complete tree matches
+`d96bb9e`. Seven merged-source replay rows and imported-bytecode/provenance checks pass.
+Main CI `37422114884` and publication remain pending; no published fix is claimed yet.
 
 Independent Sol review of `87cdbd9` found an unchanged missing-boolean proof gap. The reviewed
 amendment requires explicit JSON `sidecar_used=false` for native GPU success and preserves unknown
@@ -113,6 +116,12 @@ The corrected integrated source `1f3a442026d450a5b19c7ddcc6c0fc0dff633d99` passe
 the final artifact; prior Sol clearance is not treated as specialist approval.
 Guard-only follow-up `4fbb2c4` also closes implicit text activation through encoding/errors/
 universal-newlines flags, with 82 guard tests and exact-prior acceptance/refusal controls.
+Guard `1049b0a` additionally rejects concealed positional options; 94 checks pass. Sol and
+Opus cleared exact final head `06e7fd4`. After diagnostics merged, its subprocess delta was
+replayed onto that squash as `a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6`, with complete Git
+tree equality to `06e7fd4` checked before commit. Canonical Windows re-verification passed
+94 guard, 102 consumer and 28 path tests (3 POSIX skips), full Ruff/preview/mypy, size/bare
+ratchets and 30 source replay rows. Final-head review and CI still apply after rebase.
 
 ## Deferred diagnostic behavior
 

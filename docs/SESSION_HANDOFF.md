@@ -2,11 +2,11 @@
 
 Last updated: 2026-10-06
 
-Bounded dogfood campaign: IN_FLIGHT diagnostics #1214, decoding #1217, ranking #1215, labels
-#1216. [Live ledger](audits/2026-10-05-dogfood-fixes.md) records exact source/installed/CI
+Bounded dogfood campaign: diagnostics #1214 merged as `d0d9f7e`, publication/replay pending;
+IN_FLIGHT decoding #1217, ranking #1215, labels #1216. [Live ledger](audits/2026-10-05-dogfood-fixes.md) records source/installed/CI
 identities and remaining gates. Original detached checkout and untracked files are preserved.
-Opus became available after its quota reset; its findings are being folded before release.
-Resume exact-artifact reviews and CI, then sequential release and published-artifact replay.
+Main release CI `37422114884` owns the hold window. Subprocess was rebased onto the merged
+diagnostics with identical reviewed content; resume exact-head gates, then sequential publication/replay.
 
 **2026-09-22 map dogfood correction:** PR #1164 merged as
 `1867329514db7510d0c3baf570b7e9042c3cb54e` after a real first-head CI failure
