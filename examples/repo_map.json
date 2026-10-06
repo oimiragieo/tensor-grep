@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "repo-map",
+  "sidecar_used": false,
+  "path": "C:\\example\\project\\repo_map",
+  "files": [
+    "C:\\example\\project\\repo_map\\src\\sample.py"
+  ],
+  "symbols": [
+    {
+      "name": "Widget",
+      "kind": "class",
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
+      "line": 3
+    },
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
+      "line": 6
+    }
+  ],
+  "imports": [
+    {
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
+      "imports": [
+        "json"
+      ]
+    }
+  ],
+  "tests": [
+    "C:\\example\\project\\repo_map\\tests\\test_sample.py"
+  ],
+  "related_paths": [
+    "C:\\example\\project\\repo_map\\src\\sample.py",
+    "C:\\example\\project\\repo_map\\tests\\test_sample.py"
+  ],
+  "coverage": {
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}

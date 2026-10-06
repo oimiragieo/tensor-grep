@@ -1,0 +1,1966 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+        <link rel="prev" href="../tool_comparison/">
+      
+      
+        <link rel="next" href="../harness_api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Contracts - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#api-and-data-contracts" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Contracts
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-the-completeness-contract-governs-every-section-below" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. The completeness contract (governs every section below)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-configuration-sgconfigyml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Configuration (sgconfig.yml)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-ast-cache-project_data_v6json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. AST Cache (project_data_v6.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-text-search-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Text-search compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-machine-readable-cli-output-json-and-ndjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Machine-readable CLI output (--json and --ndjson)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-operational-diagnostics-tg-doctor-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Operational diagnostics (tg doctor --json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-python-library-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Python Library API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-explicitly-unstable-experimental-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Explicitly unstable / experimental surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-evidencereceipt-signing-tg-evidence-emit-sign-tg-evidence-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. EvidenceReceipt signing (tg evidence emit --sign / tg evidence verify)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-ledger-claims-tg-ledger-claim-release-list-advisory-code-scoped-agent-coordination-slice-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Ledger claims (tg ledger claim / release / list) -- advisory, code-scoped agent coordination (Slice 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-ledger-findings-tg-ledger-record-find-content-addressed-reuse-of-computed-artifacts-slice-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Ledger findings (tg ledger record / find) -- content-addressed reuse of computed artifacts (Slice 2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-review-bundles-tg-review-bundle-create-verify-evidence-receipt-ci-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Review bundles (tg review-bundle create / verify) -- evidence-receipt CI gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#0-the-completeness-contract-governs-every-section-below" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        0. The completeness contract (governs every section below)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#1-configuration-sgconfigyml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Configuration (sgconfig.yml)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-ast-cache-project_data_v6json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. AST Cache (project_data_v6.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-text-search-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Text-search compatibility
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-machine-readable-cli-output-json-and-ndjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Machine-readable CLI output (--json and --ndjson)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-operational-diagnostics-tg-doctor-json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Operational diagnostics (tg doctor --json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-python-library-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Python Library API
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-explicitly-unstable-experimental-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Explicitly unstable / experimental surface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-evidencereceipt-signing-tg-evidence-emit-sign-tg-evidence-verify" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. EvidenceReceipt signing (tg evidence emit --sign / tg evidence verify)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-ledger-claims-tg-ledger-claim-release-list-advisory-code-scoped-agent-coordination-slice-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Ledger claims (tg ledger claim / release / list) -- advisory, code-scoped agent coordination (Slice 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#10-ledger-findings-tg-ledger-record-find-content-addressed-reuse-of-computed-artifacts-slice-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        10. Ledger findings (tg ledger record / find) -- content-addressed reuse of computed artifacts (Slice 2)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#11-review-bundles-tg-review-bundle-create-verify-evidence-receipt-ci-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        11. Review bundles (tg review-bundle create / verify) -- evidence-receipt CI gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="api-and-data-contracts">API and Data Contracts</h1>
+<p>This document defines the backward-compatibility guarantees for data structures and CLI outputs used by enterprise integrations, IDEs, and editor-plane agents.</p>
+<p>release_docs_current_tag: v1.124.0</p>
+<h2 id="0-the-completeness-contract-governs-every-section-below">0. The completeness contract (governs every section below)</h2>
+<blockquote>
+<p><strong>Every <code>tg</code> answer is either complete, or it names exactly how it is incomplete and whether
+the caller can do anything about it.</strong></p>
+</blockquote>
+<p>This is the one promise the rest of this document implements. It exists because <code>tg</code>'s primary
+caller is an AI agent, and an agent cannot tell a genuinely empty result from a silently truncated
+one. "No callers found" acted on in good faith deletes working code. A result that is smaller than
+the question it claims to answer, with no marker saying so, is a <strong>wrong answer</strong> -- not a smaller
+one.</p>
+<p>Three obligations follow, in priority order:</p>
+<ul>
+<li><strong>P1 -- no silent loss.</strong> A command that drops an entry it could not read must say so. Never
+  return a shortened collection with a success marker. Where dropping the entry would corrupt the
+  answer rather than shrink it, fail closed instead: refuse, and leave the caller's state untouched.</li>
+<li><strong>P2 -- actionable disclosure.</strong> Naming the incompleteness is not enough; the caller needs to know
+  whether it is theirs to fix. A budget cause (<code>scan_limit</code>, <code>deadline</code>) is remediable -- raise the
+  knob. An unreadable path is not: no budget increase makes it readable. Handing over the wrong knob
+  is its own defect class, and the reason <code>unreadable_path</code> OUTRANKS every budget cause when both
+  fire.</li>
+<li><strong>P3 -- surface agreement.</strong> The CLI, the <code>--json</code> envelope, the exit code and the MCP tools must
+  tell the same story about the same run. A renderer must never change the answer.</li>
+</ul>
+<h2 id="1-configuration-sgconfigyml">1. Configuration (<code>sgconfig.yml</code>)</h2>
+<p>The root-level keys and structure of <code>sgconfig.yml</code> are guaranteed to be stable within a major version. Unrecognized keys will be ignored rather than causing fatal errors to allow progressive rollout of new configurations.</p>
+<h2 id="2-ast-cache-project_data_v6json">2. AST Cache (<code>project_data_v6.json</code>)</h2>
+<p>The schema of the <code>.tg_cache/ast/project_data_v6.json</code> cache is versioned within its filename.
+- Backward compatibility is NOT guaranteed across major/minor versions.
+- If the schema changes (for example to <code>v7</code>), <code>tensor-grep</code> will automatically invalidate older cache files and rebuild them transparently.</p>
+<h2 id="3-text-search-compatibility">3. Text-search compatibility</h2>
+<p>The stable text-search compatibility contract is the validated compatibility set covered by the parity suite and contract benchmark runner. <code>tg search --help</code> may expose more rg-style flags, but only the rows below and explicitly named deterministic edges are part of the public rg-compatibility claim.</p>
+<p>Current validated rows:
+- <code>-i/--ignore-case</code>
+- <code>-v/--invert-match</code>
+- <code>-C/--context</code>
+- <code>-A/--after-context</code>
+- <code>-B/--before-context</code>
+- <code>-g/--glob</code>
+- <code>-l/--files-with-matches</code>
+- <code>--files-without-match</code>
+- tensor-grep aggregate <code>--json</code>
+- ripgrep JSON Lines via explicit <code>--format rg --json</code>
+- <code>--ndjson</code>
+- <code>-F/--fixed-strings</code>
+- <code>-w/--word-regexp</code>
+- <code>-m/--max-count</code>
+- <code>--files</code>
+- <code>-t/--type</code>
+- <code>-./--hidden</code>
+- <code>-L/--follow</code>
+- <code>-S/--smart-case</code>
+- <code>-n/--line-number</code>
+- <code>--column</code>
+- <code>-c/--count</code>
+- <code>--count-matches</code>
+- <code>-a/--text</code>
+- <code>-0/--null</code>
+- <code>-U/--multiline</code>
+- <code>--multiline-dotall</code></p>
+<p>Character-for-character identity is not required for help formatting, but command presence, supported rows, accepted normalization, and the deterministic parity corpus are part of the public contract. Additional rg-style flags may be exposed in <code>tg search --help</code>, but they are not covered by the stable compatibility claim until they are added to the contract suite and benchmark runner.</p>
+<p>Agent automation contracts:
+- <code>tg search PATTERN</code> defaults to the current directory when no path is provided.
+- Invalid regex syntax exits as an error distinct from no-match and emits a diagnostic that recommends <code>--fixed-strings</code> for literal searches.
+- <code>tg search --json</code> emits a valid tensor-grep aggregate JSON object even when there are zero matches.
+- <code>tg search --format rg --json</code> forwards to ripgrep and emits rg JSON Lines events without a tensor-grep envelope for tools that require rg's event schema.
+- <code>tg search --files-with-matches</code> stays root-based on the ripgrep path instead of expanding large candidate-file lists into the Windows process argument vector, and plain path-list output emits one trailing line separator only.
+- <code>tg search</code> with <code>--format rg</code> is a public exact ripgrep-style text formatter for automation that needs rg-shaped stdout. Pair it with <code>--sort path</code> when deterministic path ordering matters across backends.
+- The native front door treats <code>--format rg</code> as a no-op for rg-compatible text output and preserves <code>--sort path</code> when forwarding to ripgrep. Non-rg <code>--format</code> search output remains a Python CLI formatting surface.
+- The public native front door must not reject flags advertised by the public Python CLI. It may execute the request natively, forward to ripgrep, or route to the Python sidecar, but sidecar routing must be intentional and covered by a public-native regression test.
+- Root shortcut invocations with option-first common search flags, including <code>tg -t js PATTERN PATH</code> and <code>tg --count-matches PATTERN PATH</code>, are treated as <code>tg search ...</code> and must preserve those flags through native, ripgrep, or sidecar routing instead of falling back to positional-only parsing.
+- Cached-session requests must stay on the warm path by default. One-shot <code>tg session ...</code> commands and daemon-routed session requests validate files captured in the session snapshot with direct size/mtime checks and must not walk the full repository merely to check for added files. Added-file discovery belongs to explicit refresh paths: <code>tg session refresh ...</code> and requests that opt into <code>--refresh-on-stale</code>. A session opened on a repo with zero context files is still subject to added-file detection on those explicit paths. Daemon response-cache hits intentionally use <code>detect_added_files=False</code> before serving cached <code>context-render</code> / <code>edit-plan</code> payloads so truncated implicit sessions stay fast; new files under the repo are invisible to response-cache invalidation until <code>refresh_on_stale</code> or <code>tg session refresh</code>. Daemon <code>stats</code> exposes <code>response_cache_stale_detection = "snapshot_mtime_only"</code> and <code>response_cache_added_file_detection = false</code> so agents can see the tradeoff without guessing. The 5 symbol commands (<code>defs</code> / <code>impact</code> / <code>refs</code> / <code>callers</code> / <code>blast-radius</code>) are also response-cached: a repeated warm request with an identical symbol/provider/max-tests/max-depth/max-repo-files is served straight from the daemon's response cache instead of re-running the caller-scan or blast-radius graph walk. Unlike <code>context-render</code> / <code>edit-plan</code>, the symbol-command gate honors the request's real <code>refresh_on_stale</code> flag -- added-file detection included -- before trusting a cache hit, because a caller/blast-radius answer that silently omits a newly-added call site is a wrong answer, not merely a stale one; a genuinely new file (or a modified/removed tracked file) busts a symbol-command cache entry on the very next request. Session edit-plan graph ranking, test matching, and blast-radius metadata must stay bounded to selected context budgets and report the bounded radius scope in <code>edit_plan_seed.blast_radius_scope</code>; daemon requests should keep a short connect probe while allowing longer edit-plan/context responses. Top-level native-provider <code>tg context-render</code> and <code>tg edit-plan</code> may reuse an already-running daemon and create an implicit session keyed by root and <code>max_repo_files</code> so repeated agent-loop calls hit daemon response-cache counters without reusing a smaller scan budget for later larger requests. <code>tg session list</code> and <code>tg session daemon status</code> should discover nearby session scopes when the requested/current root has no direct session metadata, and JSON output should expose whether discovery was used. Daemon-routed relative paths are resolved against the daemon root before session lookup so <code>tg session edit-plan ID . --daemon</code> works from the served project root and does not accidentally target the daemon process working directory.
+- <code>tg checkpoint list PATH</code> must keep default discovery nearby and bounded: direct scope, ancestors, and immediate non-generated children only when the direct scope is empty. Recursive child-scope discovery is opt-in through <code>--discover</code>; generated/cache roots require the explicit <code>--discover-full</code> mode. Explicit recursive discovery may cache fingerprinted checkpoint index paths for repeat calls, but <code>create</code> and <code>undo</code> must invalidate ancestor discovery caches so agent loops do not reuse stale scope lists after checkpoint state changes.
+- <code>tg search --files</code> remains a generated-root guardrail surface. The native front door may route it to the Python sidecar so broad generated-root refusal, <code>--glob</code>, <code>--type</code>, <code>--max-depth</code>, and <code>--allow-broad-generated-scan</code> keep the same public semantics.
+- <code>tg search --multiline</code> / <code>-U</code>, <code>--multiline-dotall</code>, and <code>-0/--null</code> must be accepted by the native front door and forwarded to the backend that preserves rg-compatible behavior for the requested output mode.
+- <code>--sort path</code> is the deterministic contract for <code>--files-with-matches</code>, <code>--files-without-match</code>, <code>--replace</code>, and path-list automation. The parity suite also checks match, no-match, parse-error, and binary-skip exit-code behavior.
+- Default output ordering for root-scale <code>--files-with-matches</code>, <code>--count</code>, and <code>--force-cpu</code> is a semantic result parity contract, not a golden stdout ordering contract. Use <code>--sort path</code> when automation needs deterministic path ordering across backends.
+- Broad generated roots such as <code>.claude</code> are routed through Python guardrails instead of rust-first/native passthrough so generated <code>.claude/context</code> snapshots can be pruned by default.
+- Unbounded broad generated-root scan requests are refused with exit code <code>2</code> when hidden file-list scans contain generated, cache, or dependency child directories, or when content searches directly target a generated/cache/dependency root. Explicit <code>--no-ignore</code> content searches over an ordinary project root follow ripgrep and may traverse ignored generated child directories; direct generated roots still require a scoped path, <code>--glob</code>, <code>--type</code>, <code>--max-depth</code>, or <code>--allow-broad-generated-scan</code>. Unbounded searches against a parent that looks like a multi-project workspace root are also refused before the broad walk. <code>tg scan</code> / MCP ruleset scans apply the same safety posture to AST/ruleset workflows: direct temp, AppData, user-home, filesystem-root, generated/cache/dependency, or multi-project workspace roots must be scoped to a project/subdirectory, bounded with <code>--max-depth</code> (and optionally <code>--glob</code> / <code>--type</code>), or explicitly opted in with <code>--allow-broad-generated-scan</code> before any scanner walk begins.
+- <code>tg search</code> honors a root <code>.ignore</code>/<code>.gitignore</code>/<code>.rgignore</code> uniformly, including in a non-git directory, where raw <code>rg</code>'s own <code>require_git</code> default makes an un-flagged <code>.gitignore</code> inert. This is a deliberate, permanent divergence from raw <code>rg</code> in that one cell, not an unintended parity gap: <code>--no-ignore</code> and <code>--no-ignore-vcs</code> opt back out, matching rg's own documented per-flag scope.
+- An implicit-path <code>tg search</code> (<code>PATH</code> omitted, defaulting to the current directory per the earlier bullet) whose directory WALK exceeds an internal file-count ceiling (1500 files visited, counted independent of match count or glob/type selectivity) is refused with exit code <code>2</code> and an actionable message instead of running unbounded. This guard runs as the first statement of <code>execute_ripgrep_search</code> itself, so it applies uniformly across every entry point that can reach that function -- the full Python CLI, the standalone native binary's default search front door (including its <code>-e</code>/<code>--regexp</code> form), the positional CLI, <code>tg-search-fast</code>, and the PyO3 FFI bridge -- rather than one call site that a different entry point could bypass. An explicit, deliberately-scoped <code>PATH</code> is never refused regardless of size.
+- <code>tg search --type-list</code> prints a built-in fallback list when no ripgrep or standalone native binary is available. <code>--pcre2-version</code> follows ripgrep semantics and exits with an error when no PCRE2-capable backend is available.
+- <code>tg ast-info --json</code> exposes AST language identifiers via <code>{"languages": [...]}</code> for agent discovery without help-text scraping.
+- Read-only <code>tg run</code> follows search-style no-match semantics: zero AST matches exit <code>1</code> while successful matches exit <code>0</code>; parse/configuration errors remain distinct non-zero failures. On Windows, if the received pattern is still wrapped in single quotes, <code>tg run</code> warns that <code>cmd.exe</code> treats those quotes literally and suggests double quotes for <code>cmd.exe</code>.
+- Native exit-code honesty: <code>0</code> found, <code>1</code> genuinely no match, <code>2</code> error or incomplete. A child process (ripgrep, the Python sidecar) that is killed by a signal or crashes with a negative NTSTATUS exits <code>2</code>, never <code>1</code>; <code>tg run</code> command errors (for example <code>Path not found</code>) and <code>--index</code> search failures exit <code>2</code>; a <code>--apply</code> that fails part-way exits <code>2</code> and its error lists <code>files_written</code> and <code>files_failed</code> (written files are NOT rolled back, and a failed file may be partially modified). <code>--index</code> decodes non-UTF-8 files lossily (U+FFFD in match text) instead of aborting the search. <code>-c/--count</code> combined with <code>--json</code> or <code>--ndjson</code> now emits only the normal structured payload (with <code>match_counts_by_file</code>) instead of plain <code>path:count</code> lines mixed into JSON; this is a payload-size increase for count users. The did-you-mean <code>nearest[]</code> list is ranked by edit distance (closest first, alphabetical tie-break) BEFORE the cap of 5 in both front doors.
+- On Windows, PowerShell automation should invoke <code>tg</code> or <code>tg.ps1</code> for regex metacharacters. PowerShell double quotes expand <code>$NAME</code>-style values before tensor-grep receives argv, so literal patterns containing <code>$</code> should use single quotes or escape <code>$</code> as <code>`$</code>. Direct <code>.cmd</code> invocation from PowerShell is not a safe argv-preserving contract for unescaped metacharacters such as <code>|</code> because <code>cmd.exe</code> parses the line before the batch wrapper receives arguments; <code>tg.cmd</code> is for <code>cmd.exe</code>.
+- The quoted multi-word no-match pattern case from <code>cmd.exe</code>, direct <code>tg.cmd</code>, and Python <code>subprocess.run([...])</code> is a public launcher contract. The launcher must preserve the phrase as one argv item and must not turn it into a shorter false-positive search plus bogus paths.
+- Stable managed install scripts should prefer the matching release-native CPU <code>tg</code> binary as the public front door when the GitHub release asset is available, set <code>TG_SIDECAR_PYTHON</code> for Python-backed commands, set <code>TG_NATIVE_TG_BINARY</code> for the sidecar, and fall back to <code>python -m tensor_grep</code> when no native asset exists. On Windows, the managed native front-door directory must be placed on User PATH ahead of compatibility shim directories so <code>cmd</code>, unprofiled PowerShell, and <code>subprocess.run(["tg", ...])</code> resolve <code>~/.tensor-grep/bin/tg.exe</code> before the slower argv-safe <code>tg.cmd</code> bridge. If a tensor-grep-owned <code>tg.com</code> bridge is copied into another PATH directory to outrank a foreign same-directory <code>tg.exe</code>, the bridge must still find <code>~/.tensor-grep/.venv</code> for sidecar-backed commands and must point <code>TG_NATIVE_TG_BINARY</code> back at the managed front door rather than the bridge copy.
+- <code>tg doctor --json</code> must make launcher routing observable. It should report <code>path_tg_first_launcher_kind</code> for the current process PATH, <code>fresh_shell_path_tg_first_launcher_kind</code> for Windows fresh-shell PATH when available, <code>python_subprocess_path_tg_first_launcher_kind</code> for Python <code>subprocess.run(["tg", ...])</code> style resolution, and <code>path_tg_launcher_warning</code> when the current process still resolves a compatibility shim even though a fresh shell would resolve the managed native front door. It also exposes <code>shell_escaping_guidance</code> so automation can surface PowerShell <code>$</code> expansion and <code>cmd.exe</code> metacharacter escaping guidance without scraping README prose. This warning is diagnostic: it means restart or refresh PATH before timing subprocess-heavy workflows. Python subprocess resolution is its own contract because Windows <code>CreateProcess</code> can choose a foreign same-directory <code>tg.exe</code> even when shells prefer a tensor-grep <code>tg.com</code> bridge through <code>PATHEXT</code>.
+- <code>tg doctor --json</code> must also make GPU search routing observable. <code>gpu.search_runtime_probe</code> should run a small fixed-string <code>tg search --gpu-device-ids ... --json</code> probe through the resolved native front door and report <code>requested_gpu_device_ids</code>, <code>routing_backend</code>, <code>routing_reason</code>, <code>sidecar_used</code>, <code>routing_gpu_device_ids</code>, and a <code>status</code> that is <code>supported</code> only for <code>NativeGpuBackend</code> with <code>sidecar_used = false</code>.
+- If the first PATH or Python-subprocess <code>tg</code> reports a version string that is not tensor-grep-shaped (<code>tg ...</code> or <code>tensor-grep ...</code>), <code>tg doctor --json</code> should classify it as <code>foreign</code>, set <code>path_tg_first_is_foreign</code>, <code>fresh_shell_path_tg_first_is_foreign</code>, or <code>python_subprocess_path_tg_first_is_foreign</code>, and emit a warning plus remediation field such as <code>path_tg_foreign_warning</code>, <code>path_tg_foreign_remediation</code>, <code>fresh_shell_path_tg_foreign_warning</code>, <code>fresh_shell_path_tg_foreign_remediation</code>, <code>python_subprocess_path_tg_foreign_warning</code>, and <code>python_subprocess_path_tg_foreign_remediation</code>. Foreign launchers are not tensor-grep-owned stale launchers: readiness should fail with explicit remediation, and installer/doctor code must not delete or overwrite unrelated tools. The explicit repair path is <code>tg repair-launcher</code>: it removes verified tensor-grep-owned Python Scripts entrypoints and backs up self-identifying orphaned tensor-grep Python Scripts entrypoints that shadow the managed native front door. With <code>--allow-foreign-rename</code>, it is Windows-only, backs up the first foreign Python-subprocess <code>tg.exe</code> to a <code>.bak</code> file, installs the verified managed native front door into that same PATH slot, and must refuse to act on a foreign launcher without the allow flag.
+- Stable installers must build replacement managed environments and front-door files in a staging directory and only swap them into <code>~/.tensor-grep</code> after package installation and front-door generation succeed. PowerShell installer native commands must check <code>$LASTEXITCODE</code> before the staged swap. A failed package resolve/install must preserve the previous managed install and shims.
+- <code>tg upgrade</code> must not infer "latest PyPI version" solely from unchanged local metadata. It should refresh package metadata, skip yanked PyPI releases when selecting an exact version, pin the latest same-or-newer PyPI version when known, verify the target Python can import <code>tensor_grep</code>, and report a verification error instead of success if the sidecar is corrupted. The scheduled Windows self-upgrade helper must run the same import/version verification before writing a success log. Managed installs must also refresh the managed release-native front door to the verified sidecar package version, refresh stale tensor-grep-owned <code>tg.com</code> PATH bridges when present, or schedule a Windows native-front-door retry helper when the running native <code>tg.exe</code> is locked.
+- <code>tg classify --format json</code> is a public sidecar command even when invoked through the native front door. Default <code>classify</code> should use deterministic local heuristics without probing tokenizer/model providers. JSON output includes additive top-level <code>classification_backend</code> provenance with <code>provider_requested</code>, <code>provider_used</code>, <code>provider_status</code>, <code>fallback_reason</code>, and <code>cache.status</code> / <code>cache.offline</code> / <code>cache.local_files_only</code> so agents can distinguish local, provider, cache, offline, and fallback results without scraping stderr. JSON classification rows include <code>label</code>, <code>confidence</code>, <code>file</code>, <code>path</code>, 1-based <code>line</code>, and <code>snippet</code> so agents can map labels back to source evidence. Operators must opt into the CyBERT/Triton provider with <code>TENSOR_GREP_CLASSIFY_PROVIDER=cybert</code>; provider failures still fall back before tokenization or Hugging Face model loading so agent calls fail fast and quietly. MCP <code>tg_classify_logs</code> follows the same local-first provider contract.
+- GPU benchmark correctness compares result sets, not only successful match exits. <code>rg</code> exit code <code>1</code> is a valid no-match outcome, so no-match patterns must be accepted as correctness passes when <code>tg</code> also returns no matches. The GPU scale gates should include 1GB and 5GB rows and exact match/file-set correctness for every &gt;=1GB GPU corpus before any GPU promotion claim. GPU auto-recommendation must remain false unless required 1GB/5GB correctness checks pass and a selected GPU beats both <code>rg</code> and <code>tg_cpu</code> at the required scale and declared workload class. Explicit <code>--gpu-device-ids</code> routing must not initialize or warn about unselected GPUs, unsupported-device inventory warnings must not be attached to unrelated selected-GPU timing rows, and scale benchmarks must record the runtime backend actually handling <code>--gpu-device-ids</code>. Sidecar-routed GPU requests are not valid native CUDA scale-gate timings, and the artifact contract must include <code>fallback_or_sidecar_counts_as_gpu_proof = false</code>.
+- Public managed GPU promotion additionally requires a managed NVIDIA native front door with release provenance. Installers and <code>tg upgrade</code> write <code>tg-native-metadata.json</code>; <code>benchmarks/run_gpu_native_benchmarks.py --public-managed-proof</code> must require <code>native_frontdoor_metadata_status = present</code>, <code>native_frontdoor_metadata_version</code> matching the expected public <code>tg</code> version, a nonempty NVIDIA <code>native_frontdoor_asset_name</code>, <code>NativeGpuBackend</code>, <code>sidecar_used = false</code>, native 1GB/5GB direct-<code>rg</code> route/correctness, and an advanced many fixed-string proof gate that beats the fair single-invocation <code>rg -F -e ... -e ...</code> baseline. Promotion artifacts must expose <code>public_managed_promotion_ready</code> and <code>public_gpu_proof</code>; local CUDA-feature builds and single-pattern speed wins are implementation evidence, not public managed proof.
+- GPU benchmark artifacts must make proof status machine-readable. Top-level <code>gpu_evidence_status</code>, <code>gpu_proof</code>, <code>native_gpu_unavailable</code>, and <code>not_gpu_proof_reason</code> distinguish promotion-ready native CUDA evidence from CPU fallback or sidecar compatibility output. <code>scale_gate_summary.workload_taxonomy</code> and <code>scale_gate_summary.promotion_evidence_contract.promotion_scope = "declared_workload_class_only"</code> record that many fixed-pattern claims require a fair single-invocation <code>rg -F -e ... -e ...</code> baseline and that resident repeated-query claims remain candidate/not-measured until a benchmark exists. Per-row <code>promotion_evidence = false</code> and <code>not_gpu_proof_reason</code> are required for unsupported GPU rows.
+- Cold-path benchmark artifacts must distinguish the configured launcher experiment from the command kind actually being timed. <code>run_benchmarks.py</code> records <code>environment.tg_launcher_mode</code> and <code>environment.tg_launcher_command_kind</code> so native-exe, <code>.cmd</code> shim, <code>uv</code>, and Python-module timings are not mixed into one speed claim. It must also record <code>tg_binary_version_status</code>; a stale in-tree native tg binary is a claim blocker by default in benchmark scripts unless the operator explicitly passes <code>--allow-claim-unsafe-launcher</code> for exploratory timing. Benchmark artifacts should emit top-level warnings when timings include shim or interpreter overhead.
+- Agent workflow benchmark artifacts must keep capsule/edit-loop evidence separate from raw search-speed evidence. <code>run_agent_workflow_benchmarks.py</code> records the literal positioning <code>agent-native workflow benchmark; not a cold exact-text speed claim</code>, then reports <code>agent_capsule</code> contract metrics and <code>edit_loop</code> search/plan/apply/verify timings. Use it to evaluate confidence, alternatives, validation alignment, snippets, rollback, and edit order, not to imply <code>tg</code> beats <code>rg</code> for cold exact-text search.
+- Agent success harness artifacts must keep end-to-end agent success evidence separate from raw search-speed evidence. <code>run_agent_success_harness.py</code> writes <code>artifacts/bench_agent_success_harness.json</code>, records the literal positioning <code>agent-native end-to-end success harness; not a raw search speed claim</code>, reports <code>workflow_surfaces</code> for <code>intent</code>, <code>context</code>, <code>edit_seed</code>, <code>apply</code>, <code>verify</code>, and <code>rollback</code>, and refuses stale in-tree native <code>tg</code> binaries by default unless <code>--allow-claim-unsafe-launcher</code> marks the run as exploratory. Use it to evaluate whether a task can move from query intent to checkpointed edit and rollback, not to imply <code>tg</code> beats <code>rg</code> for cold exact-text search.
+- The fast agent-readiness gate is <code>python scripts/agent_readiness.py --output artifacts/agent_readiness.json</code>; <code>tg dogfood --output artifacts/dogfood_readiness.json</code> wraps the same gate with a verdict envelope for agent and CI logs and writes the nested readiness child report beside the explicit output as <code>artifacts/dogfood_readiness.agent-readiness.json</code>. For the current <code>v1.124.0</code> release line it checks public shell version probes, sidecar-backed public launcher probes, <code>public-windows-launcher-quoted-patterns</code>, the installed-public <code>public-search-advertised-flag-sweep</code> for advertised rg-style search flags and option-first root forwarding, repo doctor sanity, launcher route diagnostics including foreign launcher ownership, <code>context_consistency</code>, deterministic rg parity edges, broad generated-root scan guardrails, AST smoke, MCP context-render smoke, the <code>agent-capsule</code> CLI/MCP smoke, the <code>agent-capsule-mixed-language</code> trust regression, the <code>agent-capsule-hardcases</code> polyglot monorepo/noisy generated-root regression, docs claim hygiene, the managed native-upgrade contract, and the public positioning that <code>rg</code> remains the cold exact-text baseline while <code>ast-grep</code> remains the structural-search feature/performance baseline. The dogfood report also emits <code>world_class_readiness.status = "not_claimed"</code> with explicit limitation surfaces such as <code>raw_cold_text_search</code>, <code>full_ast_grep_surface</code>, <code>public_gpu_acceleration</code>, <code>lsp_semantic_provider</code>, and <code>agent_target_selection_metrics</code>; a PASS verdict is fast release-readiness evidence, not proof of full rg replacement, full ast-grep replacement, production GPU acceleration, production LSP navigation, or enterprise target-selection accuracy.
+- AST workflow compatibility is scoped. <code>tg run</code> is a validated AST slice for structural search and guarded rewrites; read-only <code>tg run</code> accepts and routes the accepted ast-grep semantic option slice (<code>--selector</code>, <code>--strictness</code>, <code>--stdin</code>, and repeated <code>--globs</code>) through the wrapper path with honest routing. JavaScript/TypeScript standalone class-method patterns may be contextualized through a synthetic class wrapper so users can search for <code>static method(...) { ... }</code> without writing the parent class shape. <code>--files-with-matches</code> is a read-only text output mode and must reject JSON or rewrite/apply combinations. <code>tg scan</code>, <code>tg test</code>, and <code>tg new</code> are tensor-grep workflow surfaces for bounded rule/config operations, not an ast-grep replacement. Help text and docs must describe unsupported ast-grep flags as roadmap gaps instead of implying full CLI parity.
+- <code>tg run</code> already delegates to the ast-grep <code>sg</code> binary verbatim when it is on PATH, so <code>$NAME</code>/<code>$$$ARGS</code>/<code>--selector</code>/<code>--strictness</code> patterns are already ast-grep-compatible with no translation layer. When <code>sg</code> is absent and a <code>$</code>-metavariable (wrapper-shaped) pattern is used, <code>tg run</code> fails closed with a clean <code>Error: ...</code> message and exit code <code>2</code> instead of an uncaught traceback or a silent reroute to the native tree-sitter backend, which speaks a different query DSL and would otherwise return a wrong or mistranslated result instead of an honest error. A zero-match <code>tg run</code> (exit <code>1</code>) additionally emits static, heuristic remediation -- common idiom shapes, a pointer to <code>tg ast-info</code> for supported LANGUAGES, and cheap pattern/<code>--lang</code> heuristics -- on stderr for text output modes and as an additive <code>remediation</code> JSON key for <code>--json</code>; it never emits a specific "did-you-mean" correction, and it is scoped to <code>tg run</code> only, never <code>tg scan</code> (a 0-finding scan is a clean pass). <code>tg scan --ruleset</code>/<code>tg_ruleset_scan</code> additionally accept a small set of resolve-only 1:1 mental-model aliases (for example <code>auth</code>, <code>secrets</code>, <code>crypto</code>, <code>tls</code>/<code>ssl</code>, <code>subprocess</code>, <code>deserialize</code>/<code>deserialization</code>) that resolve to the matching canonical <code>-safe</code>/<code>-basic</code> pack name; real pack names always take precedence, the aliases are never listed by <code>tg rulesets</code>/<code>list_rule_packs()</code>, and a shared-category word such as <code>security</code> raises an actionable error listing the packs in that category instead of guessing one.</p>
+<p>Context and edit-planning contracts:
+- <code>context-render</code> and MCP context output must not let <code>edit_plan_seed.primary_file</code>, <code>navigation_pack.primary_target.file</code>, rendered source sections, and follow-up reads contradict each other.
+- <code>context_consistency</code> reports whether the primary file is included, whether rendered context matches the primary target, whether confidence was downgraded, and why a primary file was omitted from rendered budget.
+- The default JSON/LLM render profile includes executable body lines for selected functions. Compact rendering can remove comments, docstrings, blank lines, type-only imports, and boilerplate, but it must preserve matched behavior unless the caller requests a summary-only profile in a future contract.
+- Validation command hints use <code>validation_plan[].detection</code> with values of <code>detected</code>, <code>heuristic</code>, or <code>generic</code>. JavaScript package-manager commands require <code>package.json</code> evidence; Python commands require tests, project markers, or Python layout evidence; omit commands entirely when no runner evidence exists instead of inventing <code>npm test</code> or <code>uv run pytest</code>.
+- Validation hints must align with the selected primary target language unless verified cross-language dependency evidence exists. <code>validation_alignment</code> records whether validation remained aligned or whether incompatible commands were filtered; a TypeScript primary target must not silently receive pytest-only validation, and a Python primary target must not silently receive JS-only validation.
+- Edit validation command templates support <code>$file</code> and <code>{file}</code> placeholders. For applied rewrites, placeholders are replaced with each edited file path and the command runs once per edited file; commands without a file placeholder run once against the original target working directory. Examples should quote the placeholder, such as <code>python -m py_compile "$file"</code>, so Windows paths with spaces remain one argv item.
+- <code>edit-plan</code> and <code>context-render</code> JSON both expose top-level <code>validation_commands</code> copied from <code>navigation_pack</code> or <code>edit_plan_seed</code> for quick agent access. Agents should not need command-specific parsing just to find the recommended validation command list. <code>edit-plan</code> JSON additionally exposes a top-level <code>validation_plan</code> (the structured step list -- <code>command</code>, <code>confidence</code>, <code>detection</code>, <code>runner</code>, <code>scope</code>, optional <code>target</code> -- copied from <code>edit_plan_seed.validation_plan</code>), matching the shape <code>agent</code> JSON already surfaces at its own top level; this is additive and never removes or mutates <code>validation_commands</code>.
+- <code>edit-plan</code> JSON also exposes top-level <code>confidence</code> (<code>{overall, downgrade_reasons}</code>) and <code>ask_user_before_editing</code> (<code>{required, reasons}</code>), matching the shape <code>agent</code> JSON already surfaces at its own top level. Both are derived through the SAME trust-check + confidence + ambiguity ladder <code>agent</code> uses (shared helpers in <code>agent_capsule.py</code>, called from <code>repo_map._edit_plan_confidence_and_ask</code>) -- not a separately invented heuristic -- so the &gt;=0.75 no-ask threshold, the query-language and validation-alignment downgrades, the scan-truncation ask-gate, AND the alternative-target-tie confidence cap (0.74) + unrequested-marker-helper ask-reason all read identically across both commands. <code>ask_user_before_editing.required</code> is the hard auto-edit safety gate, so it MUST match <code>agent</code> on ambiguity: the tie and marker-helper signals depend only on the ranked-alternatives (<code>candidate_edit_targets</code>/<code>file_matches</code>) and the query -- not on rendered snippets -- so <code>edit-plan</code> computes them, and validation-based tie RESOLUTION is applied too (it reads <code>edit-plan</code>'s own <code>validation_plan</code>). Only the genuinely snippet-/call-site-/LSP-evidence-gated enrichments stay <code>agent</code>-only, because <code>edit-plan</code> renders no source text and has no such evidence to corroborate against: the graph-corroborated + token-budget confidence UPLIFTS, the LSP confidence BOOST and LSP-based tie RESOLUTION, and the snippet-only / rendered-context-consistency ask-reasons (every ambiguity cause <code>edit-plan</code> can have already contributes its own direct ask-reason, so this never under-reports). This is an honest omission, not a regression.
+- Repo-map and context-ranking defaults exclude generated/cache/dependency directories, binary files, logs, and hidden non-code files from normal code context.
+- Future token-efficiency profiles must be opt-in and recoverable. Do not mutate raw <code>--format rg</code>, <code>--json</code>, or <code>--ndjson</code> contracts to save tokens; add explicit agent profiles with hard budgets, grouped excerpts, omission counts, and refetch commands.
+- Compact output should cap breadth before cutting semantic payload. Selected functions must preserve matched lines and executable body slices, and omissions should be reported in metadata or clearly non-code delimiters instead of comment-shaped placeholders inside source blocks.
+- <code>tg agent</code> / Actionable Context Capsule output is a separate agent contract, not a changed search contract. <code>capsule_version = 1</code> payloads include primary file/function, alternative targets for plausible non-primary candidates, route rationale, bounded source snippets with line maps, validation evidence with provenance, risk/edit order, checkpoint or rollback metadata, omission counts, confidence, follow-up read commands, call-site evidence status, optional <code>gpu_acceleration</code> route evidence, and an "ask user before editing" recommendation when uncertainty or risk is high. Capsule v1 leaves <code>related_call_sites</code> empty unless verified call-site evidence is explicitly collected. Future capsule changes should be additive. When the underlying repo scan was truncated, the capsule additively carries the same scan-side fields the other code-intelligence commands expose — <code>scan_limit</code>, <code>scan_remediation</code>, <code>partial</code>, <code>partial_reason</code>, <code>deadline_limit</code>, and <code>result_incomplete</code> — only when present; a pure render/token output cap on the capsule's own snippet budget never sets these. <code>partial_reason</code> is currently always <code>"deadline"</code> when present on <code>agent</code>/<code>context</code>/<code>context-render</code>/<code>edit-plan</code> output (mirrors <code>tg codemap</code>'s own <code>partial_reason</code> field, which additionally distinguishes <code>"scan_limit"</code>/<code>"self_verify"</code>/<code>"unreadable_path"</code> for its own coverage contract -- and note <code>"unreadable_path"</code> is the ONE value in that set that is NOT budget-remediable: <code>"scan_limit"</code> and <code>"deadline"</code> are both answered by raising a limit, but no <code>--max-repo-files</code> or <code>--deadline</code> value makes a permission-denied subtree readable, so <code>tg codemap</code>'s <code>remediation</code> string says so explicitly and, when a budget cause fires alongside it, names the budget knob while stating that raising it still leaves the hole. <code>"unreadable_path"</code> is also a NEW exit-2 trigger for <code>tg codemap</code>, matching the same closed vocabulary <code>incomplete_reason_class</code> uses on the search routes at <code>:132</code>. Do NOT read this list as closed against future causes -- it is the set wired so far): <code>partial = true</code> on these four commands is a strictly time-budget signal, so a <code>partial_reason = "deadline"</code> payload can be substantively complete and correct — every stage that ran found everything it looked for — but still reports <code>partial</code> because SOME stage, checkpointed or not, pushed total elapsed time past the caller's <code>--deadline</code> before the payload returned. This is a deliberate false-partial: each command's builder rechecks the shared absolute deadline one final time at its own return point (regardless of which internal stage actually consumed the time) and would rather flag a technically-complete-but-late response as <code>partial</code> than silently report <code>exit 0</code> on a response that blew its declared time budget. <code>partial_reason = "deadline"</code> is therefore NOT the same signal as <code>result_incomplete</code> (which means data was actually dropped by a <code>--max-repo-files</code> / count cap) — a payload can be <code>partial</code> with <code>partial_reason = "deadline"</code> and NOT <code>result_incomplete</code>, or vice versa, or both at once.
+- When <code>tg agent</code>'s <code>deadline_limit</code> is present (per the false-partial rationale above), it additively carries <code>assembly_stages_skipped</code> — a list naming which POST-collection ASSEMBLY stage(s) (currently <code>"vendored_subtree_detection"</code>, <code>"suggested_scope"</code>, <code>"context_pack_assembly"</code>) were skipped because the shared <code>--deadline</code> budget was already exhausted by the time that stage would have started. This is distinct from <code>scan_limit</code>/<code>deadline_limit.files_scanned</code>, which describe the COLLECTION (repo-map walk/parse) stage only: <code>assembly_stages_skipped</code> is present only when at least one assembly stage actually cut work short, so a capsule with no assembly-tail impact stays byte-identical to before this field existed, and it is always nested under <code>deadline_limit</code> (never a standalone top-level key implying honesty independent of <code>deadline_exceeded</code>).
+- Agent GPU evidence is opt-in through explicit selected device IDs. It may batch query terms through <code>tg search --gpu-device-ids ... -e ...</code> to collect extra evidence, but it must report <code>NativeGpuBackend</code> with <code>sidecar_used = false</code> before the capsule treats that evidence as used. Sidecar-routed GPU output is compatibility evidence only and must be reported as unsupported, not as GPU acceleration or a speed claim.
+- Search JSON and NDJSON should distinguish requested GPU IDs from routed GPU IDs. <code>requested_gpu_device_ids</code> records the user-selected IDs; <code>routing_gpu_device_ids</code> records the devices actually used by the runtime route. A request that falls back to <code>NativeCpuBackend</code> with <code>gpu-auto-fallback-cpu</code> must emit <code>routing_gpu_device_ids = []</code>; that is CPU fallback, not GPU acceleration proof. JSON envelopes for explicit GPU requests should add <code>gpu_evidence_status</code>, <code>gpu_proof</code>, <code>native_gpu_unavailable</code>, and <code>not_gpu_proof_reason</code> so harnesses do not infer GPU proof from the presence of <code>--gpu-device-ids</code>.
+- <code>tg search</code> has one three-state exit contract: <code>0</code> = complete search with matches, <code>1</code> = complete search with no matches, and <code>2</code> = incomplete search whose answer cannot be trusted as complete. An unhonoured explicit GPU request does not independently change that exit code: a complete CPU fallback keeps <code>0</code>/<code>1</code>, while the JSON/NDJSON envelope reports the routing fact through <code>requested_gpu_device_ids</code>, <code>routing_gpu_device_ids</code>, <code>gpu_evidence_status</code>, <code>gpu_proof</code>, <code>native_gpu_unavailable</code>, and <code>not_gpu_proof_reason</code>. processor choice is evidence about how the complete search ran, not evidence that the repository scan was truncated. The MCP <code>tg_search</code> tool does not accept <code>gpu_device_ids</code> at all (only <code>tg_agent_capsule</code> and <code>tg_context</code> do), and MCP tools return payloads rather than process exit codes, so MCP callers likewise read GPU availability from the payload.
+- <code>tg file-api PATH</code> lists every SIGNATURE in one file with no bodies -- the API surface an agent needs before deciding whether to read the file at all. It is the file-granularity gap between <code>tg defs</code> (which answers "where is symbol X" and REQUIRES a symbol) and <code>tg codemap</code> (which requires a DIRECTORY); before it, learning a file's API meant reading the whole file. Signatures are lifted as TEXT, never recorded as a line range, so an edit above a declaration cannot silently invalidate them (the same reason this repo cites symbols rather than line numbers). A declaration that has not closed within a bounded lookahead is emitted truncated and flagged <code>signature_truncated</code>, so a pathological or minified file cannot turn this command into the whole-file read it exists to avoid. It follows the same three-state exit contract as <code>tg search</code>: <code>0</code> = a complete answer, <code>2</code> = the answer cannot be trusted as complete. <strong>A zero <code>symbol_count</code> is never reported as a confident empty.</strong> When the language has no symbol parser in tg (<code>incomplete_reason: "language_not_parser_backed"</code>) or the file could not be read (<code>"file_unreadable"</code>), the payload carries <code>result_incomplete: true</code> plus a remediation naming the cause, because "this file has no API" and "I could not parse this file" are different answers and a caller must be able to tell them apart. A file tg CAN parse that genuinely holds no symbols is a COMPLETE answer and exits <code>0</code> -- the flag would carry no information if every empty result set it. Text and JSON carry the same disclosure (P3).
+- Capsule confidence must be honest when query language hints, exact symbol intent, primary target language, selected snippets, and validation commands disagree. In mismatch cases, both <code>confidence.overall</code> and <code>primary_target.confidence</code> should be capped, <code>ask_user_before_editing.required</code> should become true, and <code>context_consistency</code> should expose <code>query_language_hints</code>, <code>primary_target_language</code>, <code>validation_alignment</code>, and <code>validation_filtered_count</code>. Unresolved equal-confidence alternatives should expose <code>alternative_confidence_tie</code>, <code>alternative_confidence_tie_count</code>, and <code>tied_alternative_targets</code>, cap confidence below the normal edit threshold, require confirmation, and mirror the decision in top-level <code>ambiguity.status = "tie_requires_confirmation"</code>; validation-resolved ties must record <code>ambiguity.status = "tie_resolved"</code>, <code>resolved_by = "targeted-validation"</code>, and concrete <code>resolution_evidence</code> commands, while LSP-resolved ties require explicit provider-response proof. A <code>tie_requires_confirmation</code> capsule additively narrows <code>suggested_scope</code> when it is not already populated by a scan-limit truncation: it prefers the same centrality-weighted directory rollup <code>tg orient</code> exposes, and falls back to the tied candidates' own deepest common parent directory when that whole-repo signal is flat/tied; <code>suggested_scope</code> stays <code>null</code> (never a guess, never the scan root) when neither source finds a strict subdirectory to narrow to.
+- <code>tg orient</code> and <code>tg agent</code> additionally surface <code>suggested_scope</code> PROACTIVELY -- even absent any scan truncation or confirmation tie -- when the scanned root itself looks like a multi-project workspace parent. An additive <code>workspace_root_detected: true</code> flag fires using the SAME closed-vocabulary project-marker set and child-count thresholds that already gate <code>tg search</code>'s unbounded-workspace-root refusal (<code>BROAD_WORKSPACE_PROJECT_MARKERS</code>, <code>BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD</code> for an unmarked root, <code>BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD</code> for a root that carries its own project marker -- <code>io/directory_scanner.py</code>, reused via <code>cli/main.py</code>'s <code>_workspace_project_child_names</code>) rather than a second, independently hand-rolled detector, so <code>tg search</code>'s hard refusal and this advisory hint never disagree about what "looks like a workspace root" means for the same directory; it is a single, cheap, one-level <code>Path.iterdir()</code> check on the scan root, never a second recursive walk. When it fires, <code>suggested_scope</code> is computed through the same <code>_suggested_scope_from_map</code> centrality rollup <code>tg orient</code> already uses, still degrading to <code>null</code> when there is no clear winner. This is advisory only: the full, unscoped result is always returned unchanged (never silently re-scanned or narrowed, never a changed exit code), and both <code>workspace_root_detected</code> and this trigger's <code>suggested_scope</code> are additive-conditional (present only when true/non-null), so a single-project repo's capsule -- including this very repo, whose root <code>pyproject.toml</code> plus its two manifest-bearing children <code>npm/</code> and <code>rust_core/</code> sit far below the marked-root threshold -- stays byte-identical to before this fix.
+- A token-budget-only rendering cut with a graph-corroborated primary must not be reported as resolution uncertainty. When the ONLY reason capsule confidence dropped is a render/token-budget artifact (<code>payload.truncated</code>, or the capsule's own snippet budget cutting a non-primary source) and blast-radius call-site collection independently corroborates the primary (the primary matches the query and verified caller evidence was collected), <code>confidence.overall</code> and <code>primary_target.confidence</code> may rise to <code>0.8</code> with <code>context_consistency.confidence_basis = "resolution-quality"</code>, and the budget-only <code>ask_user_before_editing</code> reasons are cleared so <code>required</code> becomes <code>false</code>. This uplift must never fire for a genuine misroute (the primary was never ranked/selected, or does not match the query), a genuine equal-confidence alternative-target tie, a language-mismatch trust cap, or an unrequested marker-helper demotion — any of those must still cap confidence and keep <code>ask_user_before_editing.required = true</code>.
+- Capsule and search-intent routing evidence should label claims as <code>parser-backed</code>, <code>rg-backed</code>, <code>graph-derived</code>, <code>heuristic</code>, <code>LSP-confirmed</code>, or <code>stale/uncertain</code>. If these signals disagree, confidence should be downgraded and the contradiction should be explicit instead of hidden behind a single ranked file.
+- LSP provider availability is not semantic proof. <code>tg doctor --with-lsp</code> provider entries must distinguish install availability from request health with <code>health_status</code> and <code>health_check</code>. Provider-backed navigation payloads must include <code>lsp_proof</code>, <code>lsp_evidence_status</code>, and <code>not_lsp_proof_reason</code> when <code>lsp</code> / <code>hybrid</code> mode falls back to native evidence or returns no provider evidence. A row only counts as <code>lsp_proof</code> when it carries an explicit <code>lsp_provider_response = true</code> marker from a completed provider request; <code>provenance = "lsp-*"</code> alone is not proof. Use <code>tg lsp --debug-trace &lt;language&gt; --path &lt;workspace&gt;</code> to capture a one-shot JSON-RPC health trace, timeout budgets, status, and stderr tail when provider startup or semantic probes fail.
+- <code>context-render</code>, <code>edit-plan</code>, and <code>agent</code> keep semantic providers opt-in through <code>--provider native|lsp|hybrid</code>. Default <code>native</code> behavior must not start LSP providers. When opted in, the payload records <code>semantic_provider</code>; primary targets may carry <code>lsp_provider_response</code>, <code>lsp_proof</code>, <code>lsp_operation</code>, and <code>lsp_resolution_basis</code> only when an actual provider request confirms the native planning anchor.
+- <code>TG_CAPSULE_LSP_CONFIDENCE_BOOST=1</code> temporarily opts <code>tg agent</code> into hybrid primary-target proof for capsule confidence only. When the selected primary target has row-level LSP proof on an allowlisted provider language, equal-confidence alternatives can be marked <code>ambiguity.status = "tie_resolved"</code> with <code>resolved_by = "lsp"</code> and confidence remains capped at <code>0.85</code>; lower trust caps still win.
+- Agent command surfaces must accept both explicit flags and positional aliases for the user-facing target. Query commands (<code>context</code>, <code>context-render</code>, <code>agent</code>, <code>edit-plan</code>, and matching <code>session</code> commands) accept <code>PATH QUERY</code> or <code>QUERY</code>; symbol commands (<code>defs</code>, <code>source</code>, <code>impact</code>, <code>refs</code>, <code>callers</code>, <code>blast-radius*</code>, and matching <code>session</code> commands) accept <code>PATH SYMBOL</code> or <code>SYMBOL</code>; teach the positional form, though <code>--query</code> / <code>--symbol</code> remain accepted as deprecated automation flags (a warning is printed) for backward compatibility. Supplying both forms for the same target is invalid.
+- <strong>Exit <code>1</code> does NOT mean "the thing is absent" -- it means "absent from the scope that was actually
+  searched", and that scope may not be the one you named.</strong> <code>tg search PATTERN</code> with no PATH defaults
+  to the current directory, runs to completion, and exits <code>1</code> on no match. That is a COMPLETE scan of
+  a scope nobody chose, and it is indistinguishable from a complete scan of the right scope <strong>by exit
+  code alone</strong>. The disclosure is in-band: <code>path_was_defaulted: true</code> plus a human-readable
+  <code>scope_note</code> (both emitted across the search JSON/NDJSON surfaces). <strong>An agent must branch on
+  <code>path_was_defaulted</code>, not on the exit code, before concluding a symbol is absent</strong> -- on <code>true</code>,
+  re-run with an explicit PATH before reporting absence. This is deliberately NOT a new exit code:
+  exit <code>2</code> is reserved for INCOMPLETE (see below), a defaulted-scope search is complete, and every
+  consumer's exit-2 tolerance is an allow-list keyed on an incompleteness marker, so widening it
+  would be rejected by those consumers by construction. Note two current gaps to code around rather
+  than rely on: the disclosure is emitted on the no-match path, so a search that FOUND something over
+  a defaulted scope does not carry <code>scope_note</code>; and it is suppressed when the request was itself
+  scope-filtered. Treat <code>path_was_defaulted</code> as authoritative when present, not as universally
+  present.</p>
+<ul>
+<li>
+<p>Symbol-command exit codes are a three-state agent contract: <strong><code>0</code></strong> = complete result (trust it); <strong><code>1</code></strong> = genuine not-found on a <em>complete</em> scan (the symbol/result truly is absent -- a symbol that IS defined but has zero references/callers is a COMPLETE result, <code>not_found: false</code>, exit <code>0</code>, not an absent one; <code>tg blast-radius-plan</code> and <code>tg blast-radius-render</code> use this same shared 0/1/2 emitter, so an unknown symbol exits <code>1</code> and a truncated scan exits <code>2</code> with <code>result_incomplete</code>); <strong><code>2</code></strong> = INCOMPLETE — the scan was truncated by <code>--deadline</code> (<code>partial: true</code> + <code>partial_reason: "deadline"</code> + <code>deadline_limit</code>) or a <code>--max-repo-files</code> cap (<code>result_incomplete: true</code>), so a zero or small count is NOT the full answer; parse the JSON and consult <code>incomplete_reason_class</code> before retrying -- <code>"scan_limit"</code>/<code>"deadline"</code>/<code>"timeout"</code> are fixable by retrying with a larger budget/cap or a narrower scope, but <code>"unreadable_path"</code> is NOT: no budget increase makes a permission-denied or missing path readable, so the correct remediation there is to make the path readable or scope the request away from it, never a bigger <code>--max-repo-files</code>/<code>--deadline</code>. <code>"coverage_gap"</code> (wave-2a G1) is ALSO not budget-remediable: a file the symbol graph could not read was skipped (over <code>TENSOR_GREP_MAX_PARSE_BYTES</code>, a Python syntax error, unreadable, not valid UTF-8, or its tree-sitter grammar is not installed), so the remedy is to raise <code>TENSOR_GREP_MAX_PARSE_BYTES</code>, fix or re-encode the files named in <code>resolution_gaps[].files_sample</code>, install the grammar, or narrow PATH -- never <code>--max-repo-files</code>. <code>tg agent</code>, <code>tg context</code>, <code>tg context-render</code>, and <code>tg edit-plan</code> each recheck the shared absolute deadline one final time at their own return point, so <code>partial</code>/<code>partial_reason</code> reflect ANY stage overrunning the budget — not only the specific sibling stages each command happens to instrument — and can fire even when every stage that ran completed and found everything it looked for (see the capsule contract above for the full false-partial rationale). An agent must never treat an exit-2 result (or its possibly-empty list) as complete. This mirrors <code>tg search</code>'s <code>2 = result_incomplete</code> convention. The same three-state contract covers <code>tg map</code>, <code>tg context</code>, <code>tg context-render</code>, <code>tg edit-plan</code>, <code>tg blast-radius-render</code>, and <code>tg agent</code> — <strong>including their warm-daemon fast-paths</strong> (<code>tg session daemon start</code> + <code>--daemon</code>/auto-routed requests,  extended <code>agent</code>'s fast-path to match): a scan-truncated <code>scan_limit.possibly_truncated</code> / <code>caller_scan_limit.possibly_truncated</code> / <code>partial</code> / <code>caller_scan_truncated</code> payload still prints its full JSON or rendered text (never swallowed), then exits <code>2</code>, on the daemon route exactly as on the cold route. <code>tg orient</code> has NO exit-2 contract at all, cold or warm — it never gates on <code>_scan_incomplete</code>; a truncated <code>tg orient</code> scan still exits <code>0</code>, surfacing <code>scan_limit</code>/<code>truncated</code>/<code>suggested_scope</code> as informational fields only, not a retry signal. When the underlying repo walk hit an unreadable path, <code>tg orient</code> additionally surfaces <code>partial: true</code>, <code>partial_reason: "unreadable_path"</code>, and the same <code>incomplete_reason_class</code>/<code>incomplete_reason</code> fields <code>tg search</code> uses — still purely informational; the exit code stays <code>0</code>. <code>tg orient --deadline</code> (CLI consistency fix, added for command-surface parity so an agent that learned <code>--deadline</code> on the symbol commands does not get a Click "No such option" exit-2 here) is the same story: a deadline-truncated scan additively surfaces <code>partial</code>/<code>deadline_limit</code> (mirroring <code>_copy_partial_signal</code>'s shape) purely as informational fields, never flipping orient's exit code. An OUTPUT-only cap (<code>output_limit.possibly_truncated</code> from <code>--max-files</code> on <code>map</code>, or <code>--max-callers</code>/<code>--max-files</code> render caps) is a COMPLETE analysis capped only for display and stays exit <code>0</code>; only a SCAN truncation exits <code>2</code>.</p>
+</li>
+<li>
+<p><code>--deadline</code>  is additionally accepted on the true symbol commands <code>tg source</code> and <code>tg blast-radius-plan</code> follows the same three-state exit contract as <code>defs</code>/<code>impact</code>/<code>refs</code>/<code>callers</code>/<code>blast-radius</code>; both thread <code>deadline_seconds</code> into <code>build_symbol_source</code>/<code>build_symbol_blast_radius_plan</code> the same additive way (<code>build_repo_map</code>'s existing <code>deadline_monotonic</code> parameter), so a truncated scan now correctly surfaces <code>partial</code>/<code>deadline_limit</code> and exits <code>2</code> on both. It is also accepted on <code>tg docs-coverage</code> (both the default coverage report and <code>--stale</code> mode): a <code>--deadline</code>-caused walk truncation is a NEW, separate signal from the command's pre-existing <code>--max-repo-files</code> count-cap (<code>scan_limit.possibly_truncated</code> with <code>truncation_cause: "project-files"</code>, unchanged, still exits <code>0</code> — raising the cap is a real remedy, so the caller can always fix it and the field alone suffices) — the <code>partial</code>/<code>deadline_limit</code> time-budget signal exits <code>2</code>, checked <em>before</em> <code>--check</code>'s own exit-<code>1</code> gate so truncation trumps a (possibly wrong) confident coverage/stale count, mirroring the found-vs-truncated precedent above. <strong><code>scan_limit.truncation_cause</code> is a CLOSED VOCABULARY</strong>. <code>tg inventory --json</code> and <code>tg docs-coverage --json</code> expose exactly three values, and an agent branches on the string to decide whether retrying is worthwhile: <strong><code>project-files</code></strong> — the <code>--max-files</code>/<code>--max-repo-files</code> count cap, BUDGET-REMEDIABLE, raise it; <strong><code>deadline</code></strong> — the <code>--deadline</code> wall-clock bound, BUDGET-REMEDIABLE, raise it; <strong><code>unreadable-path</code></strong> — the walk, or a per-file read/stat inside it, hit a path it could not read, and this one is <strong>NOT budget-remediable</strong>: no cap or deadline value makes a permission-denied path readable, so the correct response is to make the path readable or scope the request away from it, never a bigger budget. An unrecognised value must never be treated as budget-remediable (the fail-closed allow-list rule). NOTE this field is DISTINCT from <code>incomplete_reason_class</code>/<code>partial_reason</code> documented above, which the search and codemap routes carry with an UNDERSCORED vocabulary (<code>scan_limit</code>/<code>deadline</code>/<code>timeout</code>/<code>unreadable_path</code>). The two spellings are deliberate and each is internally consistent within its own field — <code>truncation_cause</code>'s siblings are hyphenated, <code>incomplete_reason_class</code>'s are not. Do NOT "unify" them: renaming either breaks a documented contract for no correctness gain. <code>truncation_cause: "unreadable-path"</code> also exits <code>2</code>; the <code>"project-files"</code> budget-cap contract stays exit <code>0</code>. <code>tg imports</code> also accepts <code>--deadline</code> but is a documented NO-OP: it resolves a single file's own imports (O(1), no repo scan to bound), so the flag exists solely so an agent that learned <code>--deadline</code> works elsewhere does not get a Click "No such option" exit-2 here; the value is never threaded anywhere and output is byte-identical with or without it.</p>
+</li>
+<li><strong><code>budget_remediable</code> on the CLI <code>scan_limit</code>/<code>output_limit</code> objects.</strong> The remediability distinction the MCP <code>tg_search</code> surface has carried since contract <code>1.5.0</code> (see the MCP bullet below) is now also emitted CLI-side, so a caller does not have to re-derive it from the cause string. It appears on <code>tg inventory</code>, <code>tg docs-coverage</code>, and the shared repo-map payloads (<code>tg map</code>, <code>tg session open</code>/<code>show</code>/<code>refresh</code>) — additively, and ONLY when a cause is present, so a COMPLETE scan emits neither field and stays byte-identical to before. Its value is derived from the ONE shared allow-list in <code>src/tensor_grep/cli/incompleteness.py::budget_remediable</code>, never re-implemented per surface, because two copies is how CLI and MCP drift into giving opposite advice for the same cause. <strong>It is gated on whether a cause exists, NOT on <code>possibly_truncated</code></strong>: in the repo-map payloads <code>possibly_truncated</code> is deliberately narrow (true only for dropped project files), so gating there would omit the flag for an <code>unreadable-path</code> cap — withholding <code>budget_remediable: false</code> when a larger budget cannot fix the cause, which would give the caller incorrect retry advice. <code>output_limit</code> is the one surface where truncated and capped are the same condition; its value is still derived from the cause rather than hardcoded, so a future cause cannot silently inherit "just raise the limit".</li>
+<li><code>tg orient</code> and <code>tg agent</code> join the warm-session-daemon fast path (<code>TG_SESSION_DAEMON_AUTOSTART</code>, default ON; no separate flag) via <code>orient</code>/<code>agent</code> daemon commands, <code>build_orient_capsule_from_map</code>/<code>build_agent_capsule_from_map</code>, and dedicated response-cache key builders (<code>_orient_response_cache_key</code>/<code>_agent_response_cache_key</code>) that key on every output-affecting flag, mirroring the 5 symbol commands' anti-bleed discipline. Both are added-file-sensitive: an implicit session honors the caller's <code>refresh_on_stale</code> for added-file detection, not the context-render/edit-plan <code>detect_added_files=False</code> shortcut, because a new central file (orient) or a new call site (agent) changes the answer, not just its staleness. Warm answers must preserve these correctness checks: <strong>TRAP A</strong> — <code>agent</code>'s call-site-evidence collector runs <code>build_symbol_blast_radius_from_map</code> against the daemon's cached map, which has no literal-seed rescue (unlike the cold <code>build_symbol_blast_radius</code> wrapper, which retries via <code>_literal_symbol_seed_files</code> on a truncated no_match); when that condition fires, the response carries an internal <code>daemon_evidence_unreliable: true</code> sentinel and the client (<code>main._maybe_agent_via_running_daemon</code>) discards the whole response and falls back to cold instead of serving call-site evidence it cannot trust. <strong>TRAP B</strong> — <code>suggested_scope</code> is computed in the <code>build_context_render</code> WRAPPER (not <code>build_context_render_from_map</code>); <code>build_agent_capsule_from_map</code> replicates that exact block against its own map so a warm capsule does not silently drop <code>suggested_scope</code> on a truncated scan. <code>--gpu-device-ids</code> on <code>tg agent</code> never routes to the daemon (the GPU evidence probe shells out to a fresh <code>tg search</code> subprocess, which must not run inside a daemon worker thread) — it always takes the cold path.</li>
+<li><code>--deadline</code> on the cold path of <code>tg agent</code>, <code>tg context-render</code>, <code>tg edit-plan</code>, <code>tg orient</code>, and <code>tg codemap</code> is measured from <strong>CLI command entry</strong>, not just the underlying repo scan: <code>main.py</code>'s <code>_cli_deadline_monotonic</code> anchors the absolute <code>time.monotonic()</code> deadline at the TOP of the command body — before the lazy builder import, path/query resolution, GPU-id parsing, and the warm-daemon-skip gate — so that front-door time is budgeted the same way scan time already is. The five cold-path builders (<code>build_agent_capsule</code>, <code>build_context_render</code>, <code>build_context_edit_plan</code>, <code>build_orient_capsule</code>, <code>build_codemap</code>) accept an optional pre-anchored <code>deadline_monotonic</code> override that takes precedence over recomputing a fresh one from <code>deadline_seconds</code>; direct callers that only pass <code>deadline_seconds</code> (the MCP tool, the session daemon's own <code>_from_map</code> variants, tests) are unaffected — the fallback computation is byte-identical to the prior behavior. <code>tg agent</code>'s own separate cold-path-only default (<code>DEFAULT_AGENT_CLI_DEADLINE_SECONDS</code>, applied only when neither <code>--deadline</code> nor <code>--no-deadline</code> is passed) is unaffected by this fix and keeps its existing anchor point, computed after the daemon-miss decision — that generous default bound is not the small-explicit-<code>--deadline</code> case this fix targets. The remaining process-startup prefix — interpreter boot plus Typer/Click argument dispatch, which runs before Python even reaches the command body — is a separate startup interval that no CLI command body can account for; it is not included in any <code>--deadline</code> budget.</li>
+<li><code>tg route-test</code> runs the FULL <code>context-render</code> AND <code>edit-plan</code> builds back to back to compare their primary targets, so — unlike <code>context-render</code>/<code>edit-plan</code> themselves, which stay unbounded by default — it is the one command in this family with a cold-only DEFAULT <code>--deadline</code> bound: it reuses <code>DEFAULT_AGENT_CLI_DEADLINE_SECONDS</code> (<code>tg agent</code>'s existing 60s cold-path constant) rather than inventing a second default, because the composite cost was observed overrunning an external harness's own timeout under concurrent load even though a single side alone finished well inside it. Both builder calls share ONE pre-anchored <code>deadline_monotonic</code> (anchored at CLI command entry, before path/query resolution) — side 2 (<code>edit-plan</code>) naturally receives whatever wall-clock side 1 (<code>context-render</code>) left rather than each side getting its own fresh budget. <code>--no-deadline</code> disables the bound entirely; an explicit <code>--deadline</code> overrides the default. Honesty: when EITHER side's builder payload stamps its own <code>partial</code> (a deadline truncation), route-test's composite JSON additively stamps top-level <code>partial: true</code>, <code>partial_reason: "deadline"</code>, <code>deadline_limit</code> (<code>{deadline_exceeded, context_render, edit_plan}</code> naming which side(s) truncated), and <code>agreement_basis: "partial"</code> — the tell that the reported <code>agreement</code> boolean was computed from one or two truncated sides and must not be trusted as a full-confidence verdict just because the two sides happen to still agree — then exits <code>2</code> through the same <code>_scan_incomplete</code> gate the sibling commands use. <code>route-test</code> has no warm-daemon fast path (cold-only), and a complete comparison (neither side truncated) omits all four additive fields, staying byte-identical to the pre- payload.</li>
+<li><code>tg prepare</code> is a thin composition over <code>tg agent</code>'s existing capsule builder, not new ranking/scan logic: ONE <code>build_agent_capsule</code> call supplies <code>primary_target</code>, <code>confidence</code>, <code>ask_user_before_editing</code>, <code>validation_plan</code>, and <code>validation_commands</code> verbatim, plus a NEW <code>blast_radius_floor</code> (<code>{symbol, callers_count, top_callers, source, graph_trust_summary, resolution_gaps, possibly_incomplete}</code>) that closes a real gap in the capsule's own call-site collector: <code>_collect_capsule_call_site_evidence</code> only collects when the query names the primary symbol AND its pre-cap confidence is &gt;=0.75, so a natural-language task query leaves it empty even when the SELECTED primary target has real callers. <code>prepare</code> reuses the capsule's own call-site evidence when it already ran (<code>blast_radius_floor.source = "capsule_call_site_evidence"</code>); otherwise it runs exactly ONE supplementary FS-backed scan through the literal-seed-rescue-equipped <code>build_symbol_blast_radius</code> (never the rescue-less <code>_from_map</code> sibling, whose no_match on a possibly-truncated map is a false-complete absence, not a proof the symbol has no callers) keyed on the symbol the capsule actually selected, not the raw query text (<code>source = "supplementary_blast_radius"</code>). <code>prepare</code> additionally emits <code>coordination.claim</code> (a <code>tg ledger claim</code> command preview) and <code>coordination.evidence</code> (a <code>tg evidence emit</code> command preview, since <code>prepare</code> does not itself persist a capsule file to pass as <code>--capsule</code>); the claim is EMIT-ARGS-ONLY by default (<code>submitted: false</code>, no <code>.tensor-grep/ledger</code> write) and only actually calls <code>ledger_store.submit_claim</code> — a claim failure is caught and reported inline, never raised, matching <code>submit_claim</code>'s own "never blocks" contract one level up — when <code>--claim</code> is passed. Like <code>route-test</code>, <code>prepare</code> has no warm-daemon fast path and defaults its cold-only <code>--deadline</code> to <code>DEFAULT_AGENT_CLI_DEADLINE_SECONDS</code> (60s) rather than running unbounded, sharing ONE pre-anchored <code>deadline_monotonic</code> across both the capsule build and the blast-radius floor scan so the floor naturally receives whatever wall-clock the capsule build left; <code>--no-deadline</code> disables the bound and an explicit <code>--deadline</code> overrides the default. Honesty: when EITHER the capsule or the floor scan reports its own deadline truncation, <code>prepare</code> additively stamps top-level <code>partial: true</code>, <code>partial_reason: "deadline"</code>, and <code>deadline_limit</code> (<code>{deadline_exceeded, capsule, blast_radius_floor}</code> naming which side(s) truncated) before printing the full JSON and exiting <code>2</code> through the same <code>_scan_incomplete</code> gate the sibling commands use — a plain <code>max_callers</code> OUTPUT cap on the floor (<code>possibly_incomplete</code> true but no deadline cutoff) stays exit <code>0</code>, mirroring the output-cap-stays-<code>0</code> contract above; a complete run omits all of the additive fields and stays exit <code>0</code>.</li>
+</ul>
+<p>Known current limitations:
+- Explicitly opted-in broad generated-root walks can still be expensive. The Python path-list output path and managed Windows launchers force UTF-8, but scope file-list commands to the smallest useful root whenever possible.
+- Broad generated roots remain agent-hostile when callers opt in to them. Use scoped paths, globs, file types, and <code>--max-depth</code> for <code>tg search</code> before reaching for opt-in; <code>--max-repo-files</code>, <code>--max-callers</code>, and <code>--max-files</code> are code-intelligence command budgets, not <code>tg search</code> flags.
+- <code>impact SYMBOL</code> is a broader planning signal and can be noisier than <code>blast-radius</code>; use <code>blast-radius</code> for direct symbol impact checks.</p>
+<h2 id="4-machine-readable-cli-output-json-and-ndjson">4. Machine-readable CLI output (<code>--json</code> and <code>--ndjson</code>)</h2>
+<p>The JSON schemas emitted by <code>tensor-grep search --json</code>, <code>tensor-grep search --ndjson</code>, and the documented harness/editor-plane flows are considered public APIs. <code>tensor-grep search --format rg --json</code> is a compatibility route for ripgrep's JSON Lines event schema, so consumers should use rg's event contract rather than the tensor-grep envelope for that mode.
+- Existing fields (for example <code>file</code>, <code>line</code>, <code>match</code>, <code>context</code>) will not be renamed or removed without a major version bump.
+- New fields may be added in minor versions.
+- Consumers should ignore unrecognized JSON fields.
+- <code>result_incomplete: true</code> payloads additively carry <code>incomplete_reason_class</code> alongside the free-text <code>incomplete_reason</code> -- a closed vocabulary (<code>"unreadable_path"</code>, <code>"scan_limit"</code>, <code>"deadline"</code>, <code>"timeout"</code>, <code>"workspace_root_refused"</code>, <code>"coverage_gap"</code>) an agent can branch on WITHOUT string-sniffing the human-readable reason. It is omitted entirely (not <code>null</code>) on a complete result, matching <code>result_incomplete</code>/<code>incomplete_reason</code>'s own omit-when-complete convention, so a complete search stays byte-identical. It is present on the two Python-implemented <code>tg search</code> routes that can set <code>result_incomplete</code>: the <code>rg</code>-backend route (rg's own soft per-path exit-2 error, always <code>"unreadable_path"</code>; a timed-out rg subprocess, <code>"timeout"</code>) and the Python <code>CPUBackend</code> fallback route reached when native delegation is refused or unavailable -- no compiled native <code>tg</code> binary on the machine, or a flag native delegation does not support (a directory scan that hit an unreadable path, <code>"unreadable_path"</code>; the scanner's own defensive entry-count budget, <code>"scan_limit"</code>; the native per-file wall-clock budget, <code>"timeout"</code>). A multi-project workspace-root refuse (Python CLI <code>_emit_broad_scan_refusal</code>) uses <code>"workspace_root_refused"</code> so agents do not confuse a parent-workspace refuse with a file-cap truncation; other broad-scan ceilings retain <code>"scan_limit"</code>. The compiled native/Rust engine also emits these fields. <code>--cpu</code>, <code>--force-cpu</code>, and <code>--json</code> are themselves native-delegation TRIGGERS (<code>bootstrap.py</code>), so on a normal install with the native <code>tg</code> binary present, <code>tg search ... --cpu --json</code> is answered by the compiled Rust front door reporting <code>routing_backend = "NativeCpuBackend"</code>. That route counts unreadable entries into <code>SearchStats.walk_errors</code> (<code>native_search.rs</code>, <code>struct SearchStats</code>), declares the triple on <code>struct NativeJsonOutput</code> and stamps it in <code>emit_json_matches</code> (same file), and exits <code>2</code> when the count is non-zero in <code>run_native_search_with_optional_rg_fallback</code> (<code>main.rs</code>) -- the same disclosure and the same exit code as <code>rg</code> on the same directory.  The serial-walk collector was the last producer without a count channel and now carries one (<code>WalkedFiles</code>, #276 slice B3).
+  - Route support must be established from the documented backend and its envelope contract, not inferred from an absent reason class alone. Compiled single-pattern CPU output uses <code>NativeJsonOutput</code>; multi-pattern <code>-e</code>/<code>-f</code> routes use <code>SearchResultJson</code> and <code>SearchSummaryNdjson</code>; CUDA output uses <code>GpuNativeSearchResultJson</code> and <code>GpuNativeSearchStats::walk_errors</code>. These producers share <code>incomplete_envelope_fields</code>. The route name alone does not distinguish single-pattern and multi-pattern native CPU execution.
+- <code>resolution_gaps</code> (symbol commands: <code>defs</code>, <code>refs</code>, <code>callers</code>, <code>source</code>, <code>impact</code>, <code>blast-radius*</code>, <code>imports</code>, <code>importers</code>, <code>file-api</code>) lists every file the symbol graph could not fully read or cover. Each entry carries <code>language</code>, <code>reason</code>, <code>files_affected</code>, <code>files_sample</code> (up to 5, root-relative), <code>remediation</code> and <code>affects_completeness</code> in <code>{"never", "when_empty", "always"}</code>. Kinds: no registered extractor / no reverse-import resolver (<code>never</code>), grammar not installed (<code>when_empty</code>), file over <code>TENSOR_GREP_MAX_PARSE_BYTES</code>, Python syntax error (or <code>RecursionError</code>/NUL byte at parse time), unreadable file, and not-valid-UTF-8 (undecodable bytes were replaced) -- all <code>when_empty</code>. A <code>when_empty</code> gap flips <code>result_incomplete</code> (exit <code>2</code>, <code>incomplete_reason_class: "coverage_gap"</code>) ONLY when the answer is EMPTY, because an empty answer is the one case where silence reads as "proven absent"; a non-empty answer keeps exit <code>0</code> and discloses the gap. An earlier cause (a scan limit, a deadline, an unreadable path) keeps <code>incomplete_reason</code>/class/remediation; the gap stays listed. <code>blast-radius</code>, <code>blast-radius-render</code> and <code>blast-radius-plan</code> additionally stamp <code>coverage_gap_limit</code> (<code>possibly_truncated</code>, <code>reason</code>, <code>files_sample</code>, <code>remediation</code>) when a gap blocked the answer, which is what their exit-2 gate and banner read. <strong>Missing-grammar behavior:</strong> a defs/refs/callers lookup whose grammar is missing and whose answer is empty now exits <code>2</code> : an empty answer under a missing grammar is unverified, not absent. <code>tg diff-impact</code> adds <code>unparsed_changed_files</code> (changed files whose symbols could not be extracted) and <code>tg search --enrich-ast</code> marks matches in unparseable files with <code>enclosing_symbol_status: "unparsed"</code>.
+- <code>incomplete_reason_class</code> matters because the causes are NOT equally remediable: <code>"scan_limit"</code>/<code>"deadline"</code>/<code>"timeout"</code> are genuinely fixable by raising a budget (<code>--max-repo-files</code>, <code>--deadline</code>, <code>TG_RG_TIMEOUT_SECONDS</code>/<code>TG_DIR_SCAN_MAX_ENTRIES</code>) or narrowing scope; <code>"workspace_root_refused"</code> is remediable by scoping (<code>--glob</code>/<code>--type</code>/<code>--max-depth</code>/explicit path) or <code>--allow-broad-generated-scan</code>, never by raising a file-cap; <code>"unreadable_path"</code> is NOT budget-remediable -- the path needs to become readable, or the search needs to be scoped away from it. See the exit-code bullet below for the same distinction applied to <code>tg search</code>'s exit-<code>2</code> retry guidance.
+- The MCP <code>tg_search</code> tool exposes the SAME remediability distinction on its own <code>scan_limit</code> object, from contract version <code>1.5.0</code>. When -- and only when -- the scan was actually truncated it additively carries <code>truncation_cause</code> (<code>"scan_limit"</code> / <code>"unreadable_path"</code> / <code>"unknown"</code>), <code>budget_remediable</code> (bool), and, when non-zero, <code>unreadable_path_count</code>. A complete scan emits none of them and stays byte-identical to contract <code>1.4.0</code>. <code>budget_remediable</code> is the field a caller should branch on before advising a retry: it is <code>false</code> for <code>"unreadable_path"</code> (no <code>max_repo_files</code> value makes a denied directory readable) and ALSO <code>false</code> for <code>"unknown"</code>, because an unrecognised cause must never be answered with "raise the limit" -- guidance about whether a signal can be trusted is an allow-list, never a deny-list. TWO known asymmetries, deliberately recorded rather than papered over: (1) <code>possibly_truncated: true</code> can still appear with NO <code>truncation_cause</code>, because the per-file <code>max_repo_files</code> cap and the native-walk deadline set it independently of the <code>DirectoryScanner</code>, so "truncated implies a cause is present" is NOT an invariant a client may rely on; (2) this <code>truncation_cause</code> vocabulary is NOT identical to the CLI's <code>incomplete_reason_class</code> above, and the two must NOT be unified : MCP's <code>truncation_cause</code> has <code>"unknown"</code> where the CLI raises loudly. <strong>From contract <code>1.6.0</code> the MCP <code>tg_search</code>/<code>tg_ast_search</code> payloads ALSO carry the CLI-family <code>incomplete_reason_class</code> at top level</strong>, additively and only when the cause is classifiable -- both native-walk deadline paths emit <code>"deadline"</code>, and a broad-scan refusal emits <code>"scan_limit"</code>. An AST-backend failure sets <code>result_incomplete</code> and deliberately emits NO class, because a backend fault is none of the four members and the vocabulary is an allow-list. <strong>An ABSENT class therefore means "cause not classifiable", NEVER "scan complete"</strong> -- completeness is carried by <code>result_incomplete</code> alone. <strong>From contract <code>1.7.0</code> the same <code>budget_remediable</code> flag ALSO appears on the <code>scan_limit</code> / <code>output_limit</code> of every <code>build_repo_map</code>-backed tool</strong> -- <code>tg_repo_map</code> and the <code>tg_session</code> family -- because those handlers return the CLI payload VERBATIM. Same additive rule as above -- emitted only on a CAPPED scan, absent and byte-identical on a complete one -- and the same single allow-list (<code>cli/incompleteness.py</code>) supplies the value on both surfaces, because two copies is how CLI and MCP drift into opposite retry advice. <strong>From contract <code>1.8.0</code> every MCP tool JSON envelope ALSO carries a unified top-level <code>incomplete: {status: bool, cause: str|None, budget_remediable: bool}</code> object</strong>, injected by <code>_inject_mcp_contract_fields</code> (the single choke point that already stamps <code>mcp_contract_version</code>/<code>schema_version</code> on every tool response) via <code>cli/incompleteness.py::unified_incomplete_envelope</code>, so a client can check ONE consistent field regardless of which of the 58 tools it called instead of learning each tool's own surface-specific vocabulary (<code>result_incomplete</code>/<code>truncation_cause</code>/<code>incomplete_reason_class</code>/...). It is DERIVED, never a replacement: every pre-existing field above stays present and byte-identical, <code>incomplete.status</code> mirrors <code>result_incomplete</code> (default <code>False</code> for a tool with no incompleteness concept), <code>incomplete.cause</code> mirrors the free-text <code>incomplete_reason</code> (never the closed-vocabulary class), and <code>incomplete.budget_remediable</code> mirrors the tool's own <code>budget_remediable</code> when <code>status</code> is true and is forced <code>False</code> when it is not. A tool that builds its own <code>incomplete</code> key is never overwritten (<code>setdefault</code>).
+- <strong><code>result_incomplete</code> alone is NOT a sufficient completeness check.</strong> It answers exactly one question -- "was the SCAN cut short?" -- and a payload can therefore report <code>result_incomplete: false</code> with exit <code>0</code> while still handing back materially less than it found. An agent that branches only on <code>result_incomplete</code> (or only on the exit code) will read those payloads as complete. Three additional fields carry that information, and their PRESENCE RULES DIFFER -- read each one's rule below rather than assuming a single convention, because "the field is absent" means different things across them:
+  - <strong><code>token_budget</code></strong> (<code>defs</code> / <code>refs</code> / <code>callers</code> / <code>impact</code>, and the <code>agent</code> capsule) -- an OUTPUT cap from <code>--max-tokens</code>. PRESENCE RULE: emitted whenever <code>--max-tokens</code> is in effect, INCLUDING on a complete result, where it reads <code>truncated: false</code> / <code>primary_truncated: false</code> and carries no <code>primary_omitted</code> at all. So unlike the two fields below, the object's presence proves nothing on its own -- you must read <code>primary_truncated</code>. (The sibling <code>omissions</code> envelope is likewise always present, with an empty <code>omitted_sections</code> when nothing was trimmed.) <code>token_budget.truncated</code> says something was dropped for display; <code>primary_truncated</code> says the drop hit the PRIMARY result list, not just secondary sections; <code>primary_omitted</code> is how many primary rows were withheld. <code>omissions.omitted_sections[]</code> names each trimmed section with a <code>reason</code>. <strong>This is deliberately NOT a scan truncation</strong> -- the analysis ran to completion and only the rendering was capped -- which is why it stays exit <code>0</code> and does not set <code>result_incomplete</code> (see the OUTPUT-cap rule above). That distinction is correct and load-bearing, but it means <code>primary_truncated</code> is the ONLY field that will tell you the answer you are reading is a subset. Branch on it. Concretely: <code>tg callers . &lt;symbol&gt; --json</code> can return 1 of 4 callers with <code>result_incomplete: false</code>, <code>not_found: false</code>, exit <code>0</code>, and <code>token_budget.primary_omitted: 3</code> -- every one of those is contract-correct, and only the last one is the whole story. Raise <code>--max-tokens</code> (or pass <code>--max-tokens 0</code>) to get the full set.
+  - <strong><code>incomplete_paths_count</code></strong> (compiled-native <code>--json</code> / <code>--ndjson</code> search envelopes) -- how many walk-error EVENTS the search hit, alongside <code>result_incomplete</code> and <code>incomplete_reason_class</code>. Omitted entirely on a complete walk. <strong>Despite the name it is NOT a count of distinct paths, and it can exceed one</strong>: the walker visits each ROOT you pass, without deduplicating overlapping roots, so <code>tg search PAT . src</code> walks <code>src</code> twice and one unreadable directory under it raises the count twice. With overlapping roots, a failed path can be visited repeatedly, so the number is a faithful count of failed reads rather than a defect -- but a caller that needs "how many distinct places could I not look" must not read this field as that answer. For a genuine per-path count see MCP's <code>unreadable_path_count</code>, which is a different field with different semantics (<code>directory_scanner.py</code>, once per failed <code>os.scandir</code>) and is deliberately NOT unified with this one.
+  - <strong><code>not_found</code></strong> -- asserts the symbol is genuinely ABSENT, and is therefore only meaningful on a scan that finished. It is suppressed whenever the scan was truncated, so <code>not_found: false</code> on an exit-<code>2</code> payload means "we did not finish looking", NOT "we found it".
+  - <strong><code>output_limit</code></strong> (<code>tg map</code>, <code>tg blast-radius</code>, and the <code>defs</code> / <code>refs</code> / <code>callers</code> / <code>impact</code> symbol commands) -- an OUTPUT cap from <code>--max-files</code>/<code>--max-callers</code>/<code>--max-tests</code>. It describes DISPLAY omissions, never analysis completeness: <code>result_incomplete</code> describes the analysis/scan, and an output-only cap keeps it <code>false</code> with exit <code>0</code>, disclosing instead via an <code>OUTPUT LIMITED: display omitted N caller(s)/file(s)/test file(s)/import consumer(s); raise --max-* to see more</code> caveat (a trailing <code>note:</code> in text; in <code>--mermaid</code> a <code>tg_output_limited</code> advisory node, distinct from the scan-truncation <code>tg_incomplete</code> node). A capped subset is NOT exhaustive: read the exact <code>omitted_*</code> counts and raise the named knob to get the rest. Only a SCAN truncation (<code>scan_limit</code>/<code>caller_scan_limit</code>/<code>partial</code>/<code>caller_scan_truncated</code>, or a preexisting upstream-stamped <code>result_incomplete: true</code>) exits <code>2</code> with a leading <code>INCOMPLETE RESULT</code> warning; when a scan truncation and an output cap are both present the caveat discloses both facts, and the deadline is never masked by the display cap.
+  The general rule, and the reason this list is written out rather than left implicit: <strong>a field that a caller must read to detect incompleteness has to be NAMED in this contract, or the contract fails open</strong> -- a consumer who does not know the field exists cannot branch on it, and silence reads as completeness. Adding a new truncation or omission channel means adding it here in the same change.</p>
+<ul>
+<li>
+<p><strong>A THIRD backend name reaches <code>--cpu --json</code> on a plain <code>pip</code>/<code>uvx</code> install: <code>"RustCoreBackend"</code>.</strong> The paragraph above describes the machine that HAS the compiled native <code>tg</code> binary, where <code>--cpu --json</code> reports <code>"NativeCpuBackend"</code> (emitted by the Rust binary itself, <code>rust_core/src/routing.rs</code>). A wheel install has no such binary, so the same command is answered by the PYTHON <code>RustCoreBackend</code> class over the <code>tensor_grep.rust_core</code> extension, reporting <code>routing_backend = "RustCoreBackend"</code> / <code>routing_reason = "rust_regex"</code>.
+  This is not cosmetic, because the allow-list rule stated above is keyed on these exact strings. A consumer who allow-lists only <code>"CPUBackend"</code> and the <code>rg</code> route will correctly REJECT <code>"RustCoreBackend"</code> (fail-closed, which is the desired direction) -- but will do so while the scan was in fact complete, so the failure mode is a false incompleteness rather than a false completeness. Both names must therefore be in the reader's model: <code>"NativeCpuBackend"</code> = compiled front door, <code>"RustCoreBackend"</code> = Python-over-extension, and neither carries the native-envelope incompleteness fields the <code>rg</code> route and the Python <code>CPUBackend</code> route provide.</p>
+</li>
+<li>
+<p><strong>Two similarly-named count fields mean different things and can legitimately disagree in one payload.</strong> <code>scan_limit.scanned_files</code> counts files the repo-map COLLECTION stage actually walked/parsed. <code>deadline_limit.files_scanned</code> counts files the specific deadline-bounded stage got through before the budget expired, against <code>deadline_limit.files_total</code>. A single <code>tg refs ... --deadline 0.1 --json</code> payload can therefore carry <code>scan_limit.scanned_files: 247</code> and <code>deadline_limit.files_scanned: 0</code> simultaneously and be internally consistent -- the map was already built, and the reference-scan that consumes it never started. Neither field is a repo-wide total; for "was this complete?" use <code>partial</code> / <code>result_incomplete</code> / the exit code, never a comparison between these two numbers.</p>
+</li>
+<li>
+<p><strong><code>deadline_limit</code>'s scanned/total pairs name WHICH stage ran out of budget; <code>deadline_exceeded</code> alone cannot.</strong> <code>deadline_exceeded</code> is a single shared boolean, and several stages read the same clock, so a caller seeing it knows only THAT the budget expired. Each deadline-bounded stage therefore contributes its own pair, emitted additively and only when that stage actually ran: <code>files_scanned</code>/<code>files_total</code> (repo-map collection), <code>caller_files_scanned</code>/<code>caller_files_total</code> (<code>tg callers</code>), <code>reference_files_scanned</code>/<code>reference_files_total</code> (<code>tg refs</code>), <code>importer_candidates_scanned</code>/<code>importer_candidates_total</code> (reverse-import walk), <code>source_candidates_examined</code>/<code>source_candidates_total</code> (definition preference), and <code>test_candidates_scanned</code>/<code>test_candidates_total</code> (the whole-repo test-relevance scorer on the callers/impact/refs paths). A pair's ABSENCE means that stage did not run, not that it completed. <strong><code>test_candidates_*</code> additionally SUMS ACROSS SCANS</strong>: <code>tg callers</code> reaches the test-relevance scorer twice <strong>when the symbol has callers</strong> (the second scan sits behind an <code>if caller_files:</code> guard; <code>tg impact</code> and <code>tg refs</code> reach it once), so a 6-test repo typically reports <code>test_candidates_total: 12</code>, and <code>6/12</code> there means the first scan completed and the second never started -- NOT 50% coverage of the repo's tests. Read the pair as "candidate slots walked out of slots this command was going to walk", never as a count of distinct test files. <strong><code>scanned</code> may legitimately be <code>0</code> against a non-zero <code>total</code></strong> — the stage was reached and stopped before its first item, which is still an honest attribution; <code>total</code> is stamped before the loop so this reports <code>0/N</code> rather than a <code>0/0</code> that would read as "never ran". Reason a pair is missing, not a <code>scanned</code> of zero.</p>
+</li>
+<li>
+<p><code>tg checkpoint undo --json</code> distinguishes a MISSING checkpoint from a CORRUPT one.
+  <code>error: "checkpoint_not_found"</code> means the record could not be resolved. <code>error:
+  "checkpoint_corrupt"</code> (added in this change) means the record WAS found and its snapshot blobs
+  are missing or unreadable, so undo refused before touching a single working-tree file. Both
+  exit <code>1</code>. Before this, every undo failure reported <code>checkpoint_not_found</code>, which sent the reader
+  hunting a checkpoint that was sitting right there and hid the only fact that mattered -- the
+  snapshot cannot restore the tree. Treat this as ADDITIVE: a consumer that only knows
+  <code>checkpoint_not_found</code> still sees <code>ok: false</code> and a human-readable <code>detail</code>, and the new value
+  appears exactly where the old one was wrong.</p>
+</li>
+<li>
+<p><code>tg checkpoint create [PATH] --label TEXT</code> accepts an optional trimmed label of 1-120 printable
+  Unicode characters. The label is carried in create/list JSON and human-readable list output,
+  and is persisted in both checkpoint metadata and <code>index.json</code>; omitted labels are <code>null</code> in new
+  records and absent or malformed stored labels load as <code>null</code> without hiding the checkpoint.
+  Labels may repeat and never select
+  restoration: the CLI retains its checkpoint-ID and <code>--last</code> forms, while MCP undo requires the
+  checkpoint ID. MCP <code>tg_checkpoint_create</code> and
+  <code>tg_checkpoint(action="create")</code> accept the same label; supplying it to meta-tool <code>list</code> or
+  <code>undo</code> returns <code>error.code = "invalid_input"</code>. Printable strings are preserved literally
+  over MCP, including <code>"null"</code>, numeric text, quoted text and JSON-shaped arrays or objects.
+  Non-text values passed directly to the Python handler return <code>invalid_input</code>; over MCP,
+  schema-invalid types are rejected by protocol argument validation (<code>isError</code>) before the
+  handler runs. Invalid text that reaches the handler returns structured <code>invalid_input</code>.
+  The storage version remains v1. Older clients that rewrite the index may discard labels they
+  do not understand.</p>
+</li>
+</ul>
+<h2 id="5-operational-diagnostics-tg-doctor-json">5. Operational diagnostics (<code>tg doctor --json</code>)</h2>
+<p><code>tg doctor --json</code> is intended for operational automation and support workflows.
+- The doctor payload includes top-level <code>schema_version</code> and <code>doctor_schema_version</code>. Additive minor-version schema changes must bump these fields when consumer-visible shapes change.
+- LSP diagnostics expose both a stable array and a keyed compatibility map. <code>lsp.providers</code> and top-level <code>lsp_provider_items</code> are the provider arrays. Top-level <code>lsp_providers</code> and <code>lsp.providers_by_language</code> are keyed by language for consumers that used the older object shape. Keyed entries include <code>health</code> as an alias for <code>health_status</code>.
+- Existing top-level sections remain additive-only within a major version.
+- Individual diagnostic fields may grow as new probes are added.
+- Consumers should treat missing optional fields as a valid state and ignore unknown fields.
+- Implicit native-binary resolution must not select stale in-tree <code>rust_core/target/*/tg(.exe)</code> binaries. Stale in-tree candidates should be reported under <code>skipped_native_tg_binaries</code> with <code>rust_binary_version_status = stale-skipped</code>; <code>TG_NATIVE_TG_BINARY</code> is the explicit opt-in for using a specific standalone binary anyway.
+- PATH candidate probes should distinguish tensor-grep launchers from foreign <code>tg</code> commands owned by other software. A foreign command ahead of the managed native front door is an environment blocker for public readiness and benchmark interpretation, not permission to remove the other command automatically.</p>
+<h2 id="6-python-library-api">6. Python Library API</h2>
+<p>Classes and functions exposed in <code>tensor_grep.api</code> are stable within a major version. Internal modules (prefixed with <code>_</code> or deep inside <code>tensor_grep.core</code>, <code>tensor_grep.cli</code>, or backend-specific packages) are subject to change without notice.</p>
+<h2 id="7-explicitly-unstable-experimental-surface">7. Explicitly unstable / experimental surface</h2>
+<p>The items documented in <a href="../EXPERIMENTAL/">docs/EXPERIMENTAL.md</a> are not covered by the stability guarantees in this file.
+- Hidden commands such as <code>tg worker</code>
+- Opt-in runtime flags such as <code>TG_RESIDENT_AST</code>
+- Temporary backend override environment variables used during migration or benchmarking</p>
+<p>These surfaces may change, move, or be removed in minor releases.</p>
+<h2 id="8-evidencereceipt-signing-tg-evidence-emit-sign-tg-evidence-verify">8. EvidenceReceipt signing (<code>tg evidence emit --sign</code> / <code>tg evidence verify</code>)</h2>
+<p><code>tg evidence emit</code> always attaches a top-level <code>receipt_sha256</code> -- a keyless SHA-256 integrity/dedup/chain digest, present whether or not the receipt is signed. Passing <code>--sign</code> additionally attaches <code>signing</code> and <code>signature</code> blocks; passing <code>--previous &lt;path&gt;</code> attaches <code>previous_receipt_sha256</code> independent of <code>--sign</code>.
+- <strong>Algorithm</strong>: Ed25519 (<code>cryptography</code>'s <code>Ed25519PrivateKey</code>/<code>Ed25519PublicKey</code>), chosen because a downstream verifier (for example an external service) is a separate trust domain from the machine that emits receipts -- an asymmetric signature lets it verify without ever holding a key that could forge one. <code>tg audit</code>'s HMAC-SHA256 (<code>audit_manifest.py</code>) remains correct for its own same-operator local tamper-evidence use case.
+- <strong>Canonicalization (<code>tg-canonical-json-v1</code>)</strong>: <code>json.dumps(receipt_without_signature_and_receipt_sha256, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False).encode("utf-8")</code>. Only the <code>signature</code> and <code>receipt_sha256</code> fields are excluded from the signed/hashed bytes -- the <code>signing</code> block itself (including its <code>algorithm</code> claim) is signed, so an algorithm-downgrade or public-key-swap attack invalidates both the digest and the signature. <code>receipt_sha256</code> and the Ed25519 signature are computed over the identical canonical bytes.
+- <strong>Number formatting is CPython-specific (cross-implementation caveat)</strong>: <code>tg-canonical-json-v1</code> inherits CPython's <code>json</code> number formatting -- notably its <code>float.__repr__</code> (shortest round-trip, e.g. <code>0.1 + 0.2</code> serializes as <code>0.30000000000000004</code>) and its arbitrary-precision integer output. This is <em>not</em> RFC 8785 / JCS canonical-number formatting. A verifier written in another runtime (JavaScript / Go) MUST reproduce CPython's exact number serialization to recompute the same canonical bytes, or its digest/signature check will spuriously fail on any receipt containing a non-trivial float. Practical guidance: <code>tg</code>'s own receipt fields are simple (small integers, short decimals like a <code>confidence</code> of <code>0.72</code>, and strings), which round-trip identically across implementations; a downstream verifier should either match CPython number formatting exactly or treat numeric fields with care (and any caller-supplied <code>--cost-json</code> should avoid high-precision floats). A future <code>tg-canonical-json-v2</code> could adopt JCS if a cross-language verifier needs stricter number canonicalization.
+- <strong>Wire shape when signed</strong>: <code>"signing": {"algorithm": "ed25519", "key_id": "sha256:&lt;hex of the raw 32-byte public key&gt;", "public_key": "&lt;base64 raw 32 bytes&gt;", "signed_at": "&lt;RFC3339&gt;", "canonicalization": "tg-canonical-json-v1", "receipt_id": "&lt;uuid4&gt;"}</code> plus <code>"signature": {"value": "&lt;base64 signature&gt;"}</code>. The signature block holds only the raw signature value; the signer's identity lives in the (signed) <code>signing</code> block.
+- <strong>Trust bootstrap (never trust an embedded key for authenticity)</strong>: <code>tg evidence verify</code> always reports the signer's key fingerprint (<code>key_id</code>), computed from the embedded public key's own bytes -- never from a claimed label. An embedded public key only proves internal self-consistency (anyone can generate a keypair and sign with it); actual authenticity requires an out-of-band pinned key, supplied via repeatable <code>--trusted-key &lt;base64-public-key&gt;</code> or <code>TG_EVIDENCE_TRUSTED_KEYS</code> (comma-separated). <code>--require-trusted</code> fails <code>valid</code> closed unless the embedded key's fingerprint matches a pinned entry (<code>hmac.compare_digest</code>); a trusted-key check against an unsigned receipt is always invalid, mirroring <code>audit_manifest.py</code>'s "signing key supplied but manifest unsigned" rule.
+- <strong>Key management</strong>: the private key defaults to <code>~/.tensor-grep/keys/evidence_ed25519.key</code> (per-user home, never the per-repo <code>.tensor-grep/</code> that <code>tg audit</code> writes to), overridable via <code>--signing-key</code> / <code>TG_EVIDENCE_SIGNING_KEY</code>. <code>tg evidence keygen</code> writes the private key at file mode 0600 via an atomic create-then-rename (refusing to overwrite an existing file or write through a symlink unless <code>--force</code>) and the public key alongside at <code>&lt;path&gt;.pub</code> (0644). <code>tg evidence pubkey</code> prints the public key and <code>key_id</code> for registration with a downstream verifier.
+- <strong>Fail-closed</strong>: <code>--sign</code> with no resolvable signing key (or an unavailable <code>cryptography</code> install) exits non-zero and writes no receipt -- it never falls back to emitting an unsigned receipt. Every receipt-file read is size-bounded (rejects a file over a few megabytes) before parsing/hashing: both the primary receipt (<code>tg evidence verify &lt;path&gt;</code>) and the <code>--previous</code> chain file (reachable from both <code>tg evidence verify --previous</code> and <code>tg evidence emit --previous</code>).
+- <strong>Consumer note</strong>: signatures do not expire; replay/staleness detection (via <code>receipt_id</code>, <code>signed_at</code>, and the <code>revision.commit_sha</code>/<code>dirty_tree_sha256</code> repo binding) is the downstream verifier's responsibility, not <code>tg</code>'s for a standalone receipt verified directly with <code>tg evidence verify</code> (which has no ref-comparison flag). When a receipt is embedded in a review bundle instead, section 11 below's <code>tg review-bundle verify --against &lt;ref&gt;</code> provides an in-tool, fail-closed freshness check against a caller-supplied git ref -- the CI-gate path this note used to say <code>tg</code> does not provide.</p>
+<h2 id="9-ledger-claims-tg-ledger-claim-release-list-advisory-code-scoped-agent-coordination-slice-1">9. Ledger claims (<code>tg ledger claim</code> / <code>release</code> / <code>list</code>) -- advisory, code-scoped agent coordination (Slice 1)</h2>
+<p><code>tg ledger</code> is a local, ADVISORY, code-scoped agent-to-agent coordination plane. A claim is a lightweight, TTL-expiring, best-effort record that one agent intends to touch a symbol or file -- it is <strong>never a lock on an edit</strong>. <code>tg ledger claim</code> always succeeds (exit <code>0</code>) even when a live overlapping claim exists from another agent; overlap information is reported for the caller to act on, and <code>tg</code> never refuses or blocks an edit because of it. State lives at <code>&lt;canonical-repo-root&gt;/.tensor-grep/ledger/claims/index.json</code> and is created only by the first <code>claim</code> in a repo (default-inert: <code>list</code>/<code>release</code> never create it).</p>
+<p><strong>Status: EXPERIMENTAL / preview (Slice 1)</strong>, unlike section 8's EvidenceReceipt above -- the CLI surface and JSON schema documented in this section may change in a minor release. <code>tg ledger --help</code> and each subcommand's own <code>--help</code> are marked <code>EXPERIMENTAL (Slice 1)</code> for the same reason, mirroring how <code>tg find</code>'s docstring is prefixed <code>EXPERIMENTAL:</code>.</p>
+<ul>
+<li><strong>PATH scoping </strong>: <code>claim</code>/<code>release</code>/<code>list</code> all canonicalize <code>PATH</code> to the nearest <code>.git</code> ancestor -- the SAME shared claims index for one repository, regardless of which subtree of it <code>PATH</code> names (<code>.git</code> is the one unambiguous, universally-understood repo-boundary signal; falls back to <code>PATH</code> taken literally, unchanged, when no <code>.git</code> is found, so a non-git working directory is not regressed).  <code>PATH</code> is now preserved as the claim's <code>scope</code> (root-relative, POSIX-normalized -- Windows separators, a leading <code>./</code>, and a trailing <code>/</code> are all normalized for free) instead of being (mis)used as the physical storage location. This canonicalization applies on the SAME terms to Slice 2 (<code>record</code>/<code>find</code>, below) as well -- both slices share the one <code>_ledger_physical_root</code> derivation (derive the current call-site membership from <code>grep -n "_ledger_physical_root(path)" src/tensor_grep/cli/ledger_store.py</code>, never from an enumerated list -- a name list goes stale the moment a new entry point is added); the non-git literal-<code>PATH</code> fallback described above is likewise shared by both slices, unchanged. <strong>Migration honesty</strong>: a claim written by a PRE-fix version through a subtree <code>PATH</code> lives in that subtree's old physical store (<code>&lt;subtree&gt;/.tensor-grep/ledger/</code>), which post-fix commands never read or write again -- it becomes invisible to <code>list</code> and unreleasable by <code>release</code> (no crash; the orphaned index simply sits as a dead file whose claims are TTL-expired within their own TTL window, default 15 minutes). During that window, a <code>release</code> targeting such a pre-fix claim reports <code>unmatched_reason</code> and a <code>live_claims_elsewhere</code> drawn from the NEW canonical store -- it cannot see the orphan -- so a just-upgraded agent should simply let the old claim expire rather than chase the release. Do not delete the whole <code>.tensor-grep/</code> directory to remove an old ledger store: it may also contain sessions and durable checkpoints.</li>
+<li><strong>Exit-code contract (two states only, not the three-state symbol-command contract in section 3 above)</strong>: <code>0</code> = the command completed and its JSON/text output can be trusted, including a claim with non-empty <code>overlaps</code>, a release that matched zero claims, and a list with zero live claims -- none of those are errors. <code>2</code> = a fail-closed condition fired and <strong>nothing was written</strong>: a claims-index lock-acquire timeout, a symlink at the index destination, a <code>--files</code> entry that resolves outside the repo root (<code>../...</code>, an absolute path, or a symlink escape), a corrupt or oversized on-disk index, or missing required arguments (<code>claim</code> with neither <code>--symbol</code> nor <code>--files</code>; <code>release</code> with neither <code>--claim-id</code> nor <code>--symbol</code>). There is no exit <code>1</code> for this command family.</li>
+<li><strong>Claim record shape</strong>: <code>{ledger_schema_version, kind: "claim", claim_id, agent_id, symbols, files, scope, intent, note, created_at, expires_at, ttl_seconds, revision}</code>. <code>claim_id</code> is <code>claim-&lt;UTC-compact-timestamp&gt;-&lt;8-hex&gt;</code>. <code>scope</code> is <code>PATH</code> normalized against the canonicalized repo root -- <code>"."</code> for the repo root itself, e.g. <code>"core/hooks"</code> for a subtree (see "PATH scoping" above; an entry read back from a pre-fix on-disk record with no <code>scope</code> key at all is stamped <code>"."</code> on the way out, never dropped). <code>revision</code> is the same <code>{status, commit_sha, branch, dirty, dirty_tree_sha256, dirty_file_count}</code> / <code>{status: "unavailable", reason}</code> shape section 8's EvidenceReceipt uses (<code>_repo_revision_identity</code>) -- captured for free at claim time so a caller can tell whether an overlapping claim was filed against the same commit.</li>
+<li><strong><code>tg ledger claim PATH [--symbol S ...] [--files a,b] [--intent edit] [--ttl SECONDS] [--agent-id ID] [--note TEXT] [--json]</code></strong>: <code>--symbol</code> is repeatable; <code>--files</code> is one comma-separated value of root-relative paths (traversal-refused, per the exit-2 contract above, against the canonicalized repo root). Requires at least one <code>--symbol</code> or <code>--files</code> entry. Response JSON: <code>{version, schema_version, routing_backend: "Ledger", routing_reason: "ledger-claim", sidecar_used: false, ledger_schema_version, advisory: true, claim: {...}, overlaps: [...]}</code>. <code>overlaps</code> lists LIVE (non-expired) claims whose <code>symbols</code>/<code>files</code> literally intersect the new claim, and is never scope-filtered (a symbol/file overlap matters regardless of which subtree each claimant used). Self-suppression -- dropping the caller's OWN other claims, since an agent overlapping itself is not a coordination conflict -- applies ONLY when the caller has a real identity. The default <code>agent_id</code> is the literal sentinel <code>"anonymous"</code>, which is the ABSENCE of an identity rather than one, so two zero-config agents both filed as <code>"anonymous"</code> DO see each other's overlaps (<code>ledger_store._find_overlaps</code> gates its suppression on <code>agent_id != _DEFAULT_AGENT_ID</code>; pinned by <code>tests/unit/test_anonymous_claims_are_not_one_agent.py</code>). Each overlap entry is <code>{claim_id, agent_id, symbols, files, intent, expires_at, revision_matches}</code>; <code>revision_matches</code> is <code>true</code>/<code>false</code> only when both sides have a resolved git identity, and <code>null</code> (never fabricated) when either side's revision capture came back <code>unavailable</code>.</li>
+<li><strong><code>tg ledger release PATH (--claim-id ID | --symbol S) [--agent-id ID] [--json]</code></strong>: <code>--claim-id</code> releases an exact claim regardless of which agent owns it (the opaque id itself is the authorization -- e.g. an orchestrator garbage-collecting a crashed sub-agent's claim). <code>--symbol</code> releases only the resolved <code>--agent-id</code>'s OWN live claim(s) covering that symbol, so a common/guessable symbol name can never release another agent's claim by accident. <code>PATH</code> only resolves WHICH repository's canonical claims index this call operates on (see "PATH scoping" above) -- it does NOT filter which claim matches (deliberately unchanged from the pre-fix contract, unlike <code>list</code> below: adding scope-rollup matching to <code>release</code> could let a call silently drop an unrelated sibling agent's claim just because it shares a symbol name under a broader/ancestor scope). Response JSON: <code>{..., routing_reason: "ledger-release", released: [...], released_count, listed_scope, unmatched_reason, live_claims_elsewhere: [...], live_claims_elsewhere_count, live_claims_elsewhere_truncated}</code>. Releasing zero matching claims (already released, already expired, or never existed) is not an error and does not change the exit code -- but <code>unmatched_reason</code> (a short, human-readable string) and <code>live_claims_elsewhere</code> (bounded to 10 entries, each <code>{claim_id, agent_id, scope, symbols, files, intent, expires_at}</code>, with <code>live_claims_elsewhere_count</code> as the true total and <code>live_claims_elsewhere_truncated</code> set when the count exceeds what is shown) are now populated so a wrong <code>--claim-id</code>/<code>--symbol</code> is self-diagnosing instead of an indistinguishable bare <code>released_count: 0</code>. <code>listed_scope</code> is <code>PATH</code> normalized the same way a claim's <code>scope</code> is. All five of these fields are <code>None</code>/empty/<code>0</code>/<code>false</code> (as appropriate) when <code>released_count &gt; 0</code>.</li>
+<li><strong><code>tg ledger list PATH [--symbol S] [--agent-id ID] [--json]</code></strong>: pure read -- prunes expired entries for display only and never writes (so <code>list</code> alone can never create <code>.tensor-grep/ledger/</code>). <strong>Rolls scope UP</strong>: listing a broader/ancestor <code>PATH</code> (e.g. the default <code>.</code>, the repo root) shows every live claim scoped to it OR to any descendant subtree -- e.g. a claim made with <code>tg ledger claim core/hooks</code> shows up in <code>tg ledger list</code> (default <code>.</code>) and in <code>tg ledger list core</code>, but not in <code>tg ledger list docs</code> (a disjoint sibling) and not the other way around (<code>tg ledger list core/hooks/sub</code> does NOT show a claim scoped to <code>core</code> or to <code>.</code> -- rollup is one-directional: a narrower listing never gains visibility into a broader ancestor scope). Containment is segment-wise (lexical), never a raw string-prefix test -- a claim scoped to <code>core/ho</code> does not falsely match a listing of <code>core/hoodie</code> or vice versa. <code>--symbol</code>/<code>--agent-id</code> filters apply AFTER the scope-rollup filter, combined as AND. Response JSON: <code>{..., routing_reason: "ledger-list", claims: [...], count}</code> -- each entry in <code>claims</code> carries its own <code>scope</code>.</li>
+<li><strong><code>agent_id</code> resolution</strong>: <code>--agent-id</code> (when non-blank) wins; else <code>TG_LEDGER_AGENT_ID</code>; else <code>TG_EVIDENCE_AGENT_ID</code> (shared fallback with <code>tg evidence</code>); else the literal string <code>"anonymous"</code>. Recorded verbatim, never inferred from process/user identity. Do not put secrets in <code>--agent-id</code> or <code>--note</code> -- both are written to a plaintext, per-repo, multi-agent-readable JSON file with no access control beyond the filesystem.</li>
+<li><strong>TTL and expiry</strong>: default <code>900</code> seconds, overridable per-claim with <code>--ttl</code> or globally via <code>TG_LEDGER_CLAIM_TTL_SECONDS</code>. A dead agent's claim needs no special crash handling -- it simply stops appearing in <code>list</code>/overlap results once <code>expires_at</code> passes; physical removal from disk happens lazily on the next <code>claim</code>/<code>release</code> write (a pure <code>list</code> never rewrites the index). A record with a missing or unparseable <code>expires_at</code> (corrupt write, foreign edit) is treated as already-expired, not as immortal.</li>
+<li><strong>Concurrency and DoS bounds</strong>: every write (<code>claim</code>/<code>release</code>) is a read-modify-write serialized under the same per-root <code>index_lock</code> primitive <code>tg session</code>/<code>tg checkpoint</code> use (cross-process safe, self-healing stale-lock reclaim, no lost inserts under concurrent writers) -- "per-root" now means per CANONICALIZED root, so two <code>tg ledger claim</code> calls for two different subtrees of the SAME repository correctly serialize against each other, while two calls against two genuinely different (non-git, or differently-<code>.git</code>-rooted) directories still do not. The on-disk index is capped at 256 live claims per root (oldest <code>created_at</code> evicted first) as a bound distinct from TTL expiry -- a flood of claims with a long TTL cannot grow the index without limit even though none of them are individually expired yet. The index read is byte-bounded before parsing (8 MiB) as a pre-parse DoS guard.</li>
+<li><strong>Not yet built (future slices, do not assume present)</strong>: no MCP tool surface (CLI-only in Slice 1), no task-level or cross-repo coordination, no automatic claim renewal/heartbeat, no enforcement mechanism of any kind -- <code>tg ledger</code> reports; it never blocks, queues, or serializes an actual edit.</li>
+</ul>
+<h2 id="10-ledger-findings-tg-ledger-record-find-content-addressed-reuse-of-computed-artifacts-slice-2">10. Ledger findings (<code>tg ledger record</code> / <code>find</code>) -- content-addressed reuse of computed artifacts (Slice 2)</h2>
+<p><code>tg ledger record</code>/<code>find</code> extend the Slice 1 coordination plane (section 9) with a content-addressed artifact-reuse cache: one agent <code>record</code>s an evidence-receipt/blast-radius/context-pack/repo-map artifact it already computed; a sibling agent <code>find</code>s it by symbol and reuses the artifact instead of recomputing -- the artifact reuse mechanism. State lives at <code>&lt;root&gt;/.tensor-grep/ledger/findings/index.json</code> (a separate index from claims' <code>claims/index.json</code>) plus <code>&lt;root&gt;/.tensor-grep/ledger/findings/blobs/&lt;receipt_sha256&gt;.json</code> (one file per DISTINCT artifact, content-addressed and dedup'd -- recording the identical artifact twice writes the same blob path). Created only by the first <code>record</code> in a repo (default-inert: <code>find</code> never creates it, mirroring claims' <code>list</code>). <strong><code>record</code>/<code>find</code> canonicalize <code>PATH</code> to the nearest <code>.git</code> ancestor on the SAME terms as Slice 1</strong> -- see the PATH-scoping bullet in section 9 for the derivation (<code>_ledger_physical_root</code>, membership derived from its call sites, not enumerated); a <code>record</code>/<code>find</code> from a different subtree of the same repository shares the repo-root index, not a separate one.</p>
+<p><strong>Status: EXPERIMENTAL / preview (Slice 2)</strong>, same posture as section 9 -- CLI surface and JSON schema may change in a minor release. <code>tg ledger record --help</code> / <code>tg ledger find --help</code> are marked <code>EXPERIMENTAL (Slice 2)</code>. <strong>Default-OFF in the sense that matters</strong>: nothing in <code>tg agent</code>/<code>tg edit-plan</code> consults the ledger automatically in this slice -- <code>record</code>/<code>find</code> are explicit-invoke only (automatic consultation is not implemented).</p>
+<ul>
+<li><strong>PATH scoping — <code>record</code>/<code>find</code> canonicalize on the SAME terms as Slice 1.</strong> Both resolve <code>PATH</code>
+  to the nearest <code>.git</code> ancestor via <code>_ledger_physical_root</code> (<code>grep -n "_ledger_physical_root" src/tensor_grep/cli/ledger_store.py</code>
+  for the current call-site membership -- do not enumerate or count the sites here, that list rots
+  the moment a new entry point is added), so <code>tg ledger find ./src</code> sees an artifact recorded at the repo root. Slice 2 was genuinely more
+  path-literal than Slice 1 once; section 9's scoping bullet and this one are now both current.
+  Re-derive the membership from the call sites above rather than trusting either prose bullet by
+  itself: a behaviour that spreads to a new call site does not retroactively update a sentence
+  that enumerated the old ones -- that is what happened here once already.</li>
+<li><strong>Exit-code contract for <code>record</code> (two states, same shape as section 9's claim/release/list)</strong>: <code>0</code> = the artifact was ingested (or an identical artifact was already present -- dedup is not an error) and nothing else is asserted. <code>2</code> = a fail-closed condition fired and <strong>nothing was written</strong>: missing <code>--receipt</code>, an <code>--artifact-kind</code> outside <code>{blast-radius, evidence-receipt, context-pack, repo-map}</code>, a missing/oversized (&gt;8 MiB)/non-JSON <code>--receipt</code> file, a findings-index lock-acquire timeout, or a write failure.</li>
+<li><strong>Exit-code contract for <code>find</code> (three states -- distinct from every other <code>tg ledger</code> subcommand, deliberately mirroring the <code>tg defs</code>/<code>callers</code>/<code>blast-radius</code> symbol-command contract in section 3)</strong>: <code>0</code> = at least one returned finding is <code>fresh: true</code> (safe to reuse). <code>1</code> = zero returned findings are fresh (recompute) -- this covers both "no finding matched <code>--symbol</code>/<code>--artifact-kind</code> at all" and "matches exist but none are fresh," including when <code>--fresh-only</code> filtered every match away. <code>2</code> = a fail-closed condition fired: missing/blank <code>--symbol</code>, a corrupt/oversized findings index, or -- the case unique to <code>find</code> -- a blob that fails its integrity check (see below). A harness branches on this directly: <code>if tg ledger find PATH --symbol S --fresh-only; then reuse the artifact; else compute; fi</code>.</li>
+<li><strong>Finding record shape</strong>: <code>{ledger_schema_version, kind: "finding", finding_id, agent_id, artifact_kind, symbol, receipt_sha256, blob_relpath, signed, key_id, revision, created_at, expires_at, ttl_seconds}</code>. <code>finding_id</code> is <code>finding-&lt;UTC-compact-timestamp&gt;-&lt;8-hex&gt;</code>. <code>receipt_sha256</code> is <code>tensor_grep.cli.evidence_signing.receipt_digest()</code> computed over the artifact JSON -- the SAME canonical-JSON content-address function <code>tg evidence</code> uses (<code>tg-canonical-json-v1</code>: compact, key-sorted, ASCII-only, <code>signature</code>/<code>receipt_sha256</code> fields excluded), so a plain (non-receipt) artifact hashes identically regardless of incidental whitespace, and an artifact that already happens to carry its own <code>receipt_sha256</code>/<code>signature</code> fields (a real EvidenceReceipt) is not self-referentially corrupted by them. <code>revision</code> is the same <code>_repo_revision_identity</code> shape sections 8/9 use. <code>signed</code>/<code>key_id</code> are captured at record time from the artifact's own (self-claimed, unverified) <code>signing</code> block presence -- never proof of authenticity by themselves (see the trust-bootstrap rule below).</li>
+<li><strong><code>tg ledger record PATH --receipt FILE.json [--artifact-kind K] [--symbol S] [--agent-id ID] [--ttl SECONDS] [--json]</code></strong>: <code>--artifact-kind</code> defaults to <code>evidence-receipt</code> and is validated against the fixed enum at WRITE time (rejects garbage before it enters the store). <code>--receipt</code> is read bounded (refuses over 8 MiB before parsing -- the same "pre-auth unbounded read" DoS guard section 8/9 use elsewhere) and must parse as a JSON object. Response JSON: <code>{version, schema_version, routing_backend: "Ledger", routing_reason: "ledger-record", sidecar_used: false, ledger_schema_version, advisory: true, finding: {...}}</code>.</li>
+<li><strong><code>tg ledger find PATH --symbol S [--artifact-kind K] [--fresh-only] [--trusted-key KEY ...] [--json]</code></strong>: <code>--symbol</code> is required (validated in the store, not by Typer, so a missing value still returns the standard <code>{"error": {...}}</code> JSON envelope under <code>--json</code> rather than a bare Click usage error). <code>--artifact-kind</code>, UNLIKE <code>record</code>, is a plain string-equality filter at READ time -- not validated against the enum, so an unrecognized value simply matches nothing rather than erroring. Response JSON: <code>{..., routing_reason: "ledger-find", findings: [...], count, any_fresh}</code>; each entry in <code>findings</code> is the finding record plus <code>fresh: bool</code> and <code>key_trusted: bool | None</code> (<code>null</code> when the finding is unsigned or no <code>--trusted-key</code>/<code>TG_EVIDENCE_TRUSTED_KEYS</code> was supplied).</li>
+<li><strong>Freshness (revision-primary, never silently served as current)</strong>: a finding is <code>fresh: true</code> only when BOTH its captured <code>revision</code> and the CURRENT repo's <code>_repo_revision_identity(root)</code> resolved to <code>status: "present"</code> AND their <code>commit_sha</code> AND <code>dirty_tree_sha256</code> both match exactly -- so a single uncommitted edit anywhere in the tracked/untracked diff (which changes <code>dirty_tree_sha256</code>) flips a finding to <code>fresh: false</code> even on the same commit. An unresolvable revision on EITHER side (not a git repo, git unavailable) fails closed to <code>fresh: false</code>, never fabricated. Both capture (at <code>record</code> time) and the current-state recheck (at <code>find</code> time) exclude the ledger's own <code>.tensor-grep/ledger/</code> subtree from the dirty-tree computation (<code>_repo_revision_identity(..., exclude_prefixes=(".tensor-grep/ledger",))</code>, mirroring section 8's <code>tg codemap --check</code> self-dirty fix) -- otherwise the very act of <code>record</code>ing would make the repo read as dirty against itself and poison every subsequent freshness check. This is a wall-clock-independent check computed fresh on every <code>find</code> call; the TTL below is a separate, secondary backstop.</li>
+<li><strong>Integrity (fail-closed, never serve tampered data)</strong>: every finding actually being returned (i.e. surviving the <code>--symbol</code>/<code>--artifact-kind</code>/<code>--fresh-only</code> filters) has its blob read back and its content digest recomputed via <code>receipt_digest</code>; a mismatch (or a missing/oversized/non-JSON blob) raises and the WHOLE <code>find</code> call exits <code>2</code> -- it never silently drops the bad finding and returns the rest, and never serves unverified content. A finding excluded by <code>--fresh-only</code> is never integrity-checked (only findings about to be served are). <code>--trusted-key</code>/<code>TG_EVIDENCE_TRUSTED_KEYS</code> additionally re-verifies a <code>signed</code> finding's embedded signature against the CALLER's current trust config (which may differ from whatever was configured at record time) to compute <code>key_trusted</code>; this mirrors section 8's trust-bootstrap rule exactly -- an embedded public key alone proves internal consistency, never authenticity.</li>
+<li><strong>TTL, cap, and GC</strong>: a wall-clock backstop TTL defaults to <code>86400</code> seconds (24h; overridable per-record with <code>--ttl</code> or globally via <code>TG_LEDGER_FINDING_TTL_SECONDS</code>) -- deliberately far longer-lived than a claim's 900s default, since a finding is a reusable artifact pointer, not a short-lived coordination signal. The index is capped at 512 live findings per root; total on-disk bytes across all DISTINCT (dedup'd) blobs is separately capped (default 256 MiB, <code>TG_LEDGER_MAX_BLOB_BYTES</code>) since a flood of small findings could stay under the count cap while a few large artifacts still grow disk unboundedly. Either cap evicts the oldest <code>created_at</code> findings first. Every <code>record</code> call prunes TTL-expired findings and garbage-collects any blob no longer referenced by a live finding (a shared/dedup'd blob is kept until its LAST referencing finding is gone).</li>
+<li><strong>Not yet built (future slices, do not assume present)</strong>: no automatic <code>tg agent</code>/<code>edit-plan</code> consultation (explicit-invoke only in Slice 2), no MCP tool surface, no manual <code>release</code>/delete for a findings entry (rely on TTL/cap eviction), no cross-repo lookup.</li>
+</ul>
+<h2 id="11-review-bundles-tg-review-bundle-create-verify-evidence-receipt-ci-gate">11. Review bundles (<code>tg review-bundle create</code> / <code>verify</code>) -- evidence-receipt CI gate</h2>
+<p><code>tg review-bundle create</code> packages an audit manifest plus optional scan results, checkpoint metadata, a manifest diff, and (additive) signed EvidenceReceipts into one JSON artifact; <code>tg review-bundle verify</code> re-checks its integrity, signatures, and -- when asked -- receipt trust and freshness against a git ref. This section documents the additive <code>--receipt</code> / <code>--against</code> / <code>--trusted-key</code> / <code>--require-trusted</code> surface that closes the loop between section 8's EvidenceReceipt signing and an actual CI gate.</p>
+<ul>
+<li><strong><code>evidence_receipts</code> component (optional, additive)</strong>: <code>_REVIEW_BUNDLE_COMPONENTS</code> now includes <code>evidence_receipts</code> alongside <code>audit_manifest</code> (required), <code>scan_results</code>, <code>checkpoint_metadata</code>, and <code>diff</code> (all optional). A bundle created without <code>--receipt</code> sets <code>evidence_receipts: null</code>, exactly like the other optional components when their source flag is omitted; a bundle written by a pre-this-feature <code>tg</code> (no <code>evidence_receipts</code> key at all) verifies identically, since the generic per-component checksum loop treats "key absent" and "key present with <code>null</code>" the same way for a non-required component. Adding this component to the existing checksum/<code>bundle_sha256</code> machinery is sufficient for it to inherit the SAME tamper-evidence every other component already has -- no separate integrity mechanism was added.</li>
+<li><strong><code>tg review-bundle create --receipt FILE.json [--receipt FILE2.json ...]</code></strong>: repeatable. Each path is read through <code>evidence_signing.read_receipt_file</code> (the SAME bounded reader -- 5 MB pre-parse DoS guard, JSON-object validation -- <code>tg evidence verify</code> uses; not reimplemented). The parsed receipt objects are embedded verbatim, in argument order, as <code>evidence_receipts</code>. The text-mode summary line's <code>components=</code> list additively includes <code>evidence_receipts</code> when at least one <code>--receipt</code> was supplied; <code>--json</code> output's top-level <code>evidence_receipts</code> key is <code>null</code> when omitted, matching <code>scan_results</code>/<code>checkpoint_metadata</code>/<code>diff</code>.</li>
+<li><strong><code>tg review-bundle verify BUNDLE --against REF [--trusted-key KEY ...] [--require-trusted]</code></strong>: for each embedded receipt, re-verifies its digest/signature/trust via <code>evidence_signing.verify_receipt</code> (the identical function <code>tg evidence verify</code> calls -- no separate crypto path) and, only when <code>--against</code> is supplied, its freshness against <code>REF</code>. <code>--trusted-key</code> (repeatable, base64 Ed25519 public key from <code>tg evidence pubkey</code>) and <code>TG_EVIDENCE_TRUSTED_KEYS</code> (comma-separated fallback) behave exactly like section 8's <code>tg evidence verify</code> flags of the same name, including the same stderr warning when a trusted key is supplied without <code>--require-trusted</code> (an untrusted embedded key then still reports <code>valid=true</code> for that receipt's signature check). Response JSON additively carries <code>receipts</code> (a list, one entry per embedded receipt, <code>{index, receipt_sha256, signature: {...same shape tg evidence verify returns...}, freshness: {...only when --against was given...}, valid}</code>) and, only when <code>--against</code> was supplied, top-level <code>against: {ref, resolved_commit_sha, valid, error}</code>. Every receipt's <code>valid</code> and (when applicable) <code>against.valid</code> are ANDed into the bundle's existing top-level <code>valid</code>; because <code>review-bundle verify --json</code> already exits <code>1</code> whenever <code>valid</code> is <code>false</code> (section-3-style H1 contract, pre-existing), an unsigned/untrusted/tampered/stale/unresolvable-ref receipt fails the whole command with no new exit-code logic.</li>
+<li><strong>Ref resolution is fail-closed, never bundle-path-derived</strong>: <code>--against REF</code> is resolved via <code>git rev-parse --verify REF^{commit}</code> run against the verifying process's OWN current working directory (e.g. the CI job's checkout) -- <strong>never</strong> a path embedded in the (attacker-influenceable) bundle JSON, which would let a tampered bundle redirect ref resolution. An unresolvable ref (typo, ref not fetched, not a git repository, git missing or timing out) sets <code>against.valid = false</code> with a populated <code>against.error</code> and fails the WHOLE bundle closed (<code>valid = false</code>) even when the bundle carries zero receipts -- there is no "the ref didn't resolve, so skip this check" outcome.</li>
+<li><strong>Freshness definition (commit + clean tree, not the CI working tree's own dirty-tree hash)</strong>: a receipt is fresh against a resolved <code>--against</code> commit only when its <code>revision.status == "present"</code>, <code>revision.commit_sha</code> equals the resolved commit, AND <code>revision.dirty is false</code>. This deliberately does NOT re-derive and compare a <code>dirty_tree_sha256</code> against the CI checkout's live working tree the way section 10's ledger-finding freshness check does -- a CI checkout can legitimately be sitting on a merge commit (or an actions/checkout ref) whose tree differs from the PR-head tree the receipt was captured against, so comparing tree hashes here would falsely flag every receipt stale. A receipt captured against a dirty working tree fails regardless of commit match, since a dirty capture is not reproducible from a commit alone.</li>
+<li><strong>CRITICAL CI wiring trap -- use the PR head SHA, never <code>$GITHUB_SHA</code></strong>: in a GitHub Actions <code>pull_request</code> workflow, <code>$GITHUB_SHA</code> (and the default <code>actions/checkout</code> ref) resolves to an ephemeral <strong>merge commit</strong> of the PR branch into the base branch, not the PR's actual head commit. Passing <code>--against "$GITHUB_SHA"</code> (or omitting an explicit <code>ref:</code> on <code>actions/checkout</code>) means every embedded receipt's <code>revision.commit_sha</code> -- captured against the real PR head -- will NEVER match, and the gate fails RED on every single PR regardless of whether the evidence is actually fresh. The correct value is the pull_request event's head SHA (<code>github.event.pull_request.head.sha</code>), paired with an explicit <code>actions/checkout</code> <code>ref: ${{ github.event.pull_request.head.sha }}</code> so the checkout the receipt was captured against and the ref verified against are the same commit. See <code>docs/enterprise_review_bundle_ci.md</code> for a full worked CI recipe.</li>
+<li><strong>CRITICAL presence caveat -- integrity alone does NOT prove evidence is present</strong>: a bundle with <code>evidence_receipts</code> <code>null</code>, absent, or <code>[]</code> verifies <code>valid = true</code> by default (an empty/missing OPTIONAL component is valid, exactly like <code>scan_results</code>/<code>checkpoint_metadata</code>/<code>diff</code>). Because the keyless checksums and <code>bundle_sha256</code> are plain SHA-256 (no signing key required to recompute them), an author with write access to <code>review-bundle.json</code> can strip every embedded receipt, recompute those checksums to stay internally consistent, and the bundle will still verify green with <strong>no evidence at all</strong> -- integrity alone only proves "this JSON file is internally self-consistent," not "genuine evidence is present." <code>--min-receipts</code> and <code>--expect-key</code> below are the opt-in policy levers that close this: <strong>only read a passing <code>tg review-bundle verify</code> as proof genuine evidence is present when the gate was run with <code>--min-receipts &gt;= 1</code></strong> (and <code>--expect-key</code> when a specific signer must be represented).</li>
+<li><strong><code>tg review-bundle verify BUNDLE --min-receipts N</code></strong> (default <code>0</code> = no enforcement, back-compat): after the existing checks above are computed, if the count of embedded receipts that are present, well-formed, AND pass signature/trust/freshness verification (i.e. each has <code>receipts[].valid = true</code> under whatever <code>--require-trusted</code>/<code>--against</code> were also passed) is less than <code>N</code>, verification fails closed (<code>valid = false</code>) with a reason string <code>"policy requires &gt;=N valid evidence receipts; found M"</code>. <code>N = 0</code> (the default) is always trivially satisfied and adds no new top-level field -- byte-identical output to before this flag existed.</li>
+<li><strong><code>tg review-bundle verify BUNDLE --expect-key KEY_ID</code></strong> (repeatable, default none): requires that at least one valid, embedded receipt was signed by each named <code>key_id</code> (the SAME <code>sha256:&lt;hex&gt;</code> fingerprint format <code>tg evidence pubkey</code> and <code>receipts[].signature.key_id</code> already use -- reused, not reinvented). A named key with no matching valid receipt fails verification closed with a reason string naming the missing <code>key_id</code>. This pins WHICH signer(s) are REQUIRED to be represented, distinct from <code>--trusted-key</code> (section 8), which pins which signers are cryptographically TRUSTED at all -- an org might trust several keys (<code>--trusted-key</code>) while requiring evidence specifically from one of them (<code>--expect-key</code>).</li>
+<li><strong><code>policy</code> JSON field (additive, only present when <code>--min-receipts &gt; 0</code> or <code>--expect-key</code> is used)</strong>: <code>{min_receipts, valid_receipt_count, min_receipts_satisfied, expect_key_ids, missing_expect_key_ids, expect_keys_satisfied, valid, reasons}</code>. <code>policy.valid</code> is ANDed into the bundle's top-level <code>valid</code> exactly like every other check family in this section; omitting both flags omits this field entirely (not merely a <code>null</code>/trivial value), so a caller that never opts in sees byte-identical JSON to before this hardening.</li>
+<li><strong>What this does NOT change</strong>: <code>tg review-bundle create</code>/<code>verify</code> without <code>--receipt</code>/<code>--against</code>/<code>--min-receipts</code>/<code>--expect-key</code> are byte-for-byte the same contract as before this section -- no required component changed, no exit-code semantics changed, no existing field was renamed or removed. <code>tg evidence emit</code>/<code>verify</code> (section 8) are unchanged; <code>--against</code>/<code>--min-receipts</code>/<code>--expect-key</code> are review-bundle-only surfaces, not new <code>tg evidence verify</code> flags.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

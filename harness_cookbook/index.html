@@ -1,0 +1,2307 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+        <link rel="prev" href="../SUPPORT_MATRIX/">
+      
+      
+        <link rel="next" href="../runbooks/cache-management/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Automation Recipes - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#harness-cookbook" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Automation Recipes
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#search-json-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search JSON Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexed-search-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexed Search Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repo-map-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo Map Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-pack-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Pack Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-reuse-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Reuse Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#end-to-end-cli-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-End CLI Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#end-to-end-mcp-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-End MCP Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rewrite-planning-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite Planning Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diff-review-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diff Review Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply-verify-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apply + Verify Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-attempt-replay-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Attempt Replay Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#patch-score-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch Score Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-mode-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure Mode Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoint-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ndjson-streaming-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NDJSON Streaming Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-workflow-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Workflow Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibrate-and-routing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibrate and Routing Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#large-corpus-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Large Corpus Guidance
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#search-json-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search JSON Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#indexed-search-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Indexed Search Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#repo-map-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo Map Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#context-pack-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Context Pack Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#session-reuse-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Session Reuse Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#end-to-end-cli-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-End CLI Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#end-to-end-mcp-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        End-to-End MCP Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rewrite-planning-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rewrite Planning Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#diff-review-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Diff Review Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#apply-verify-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apply + Verify Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multi-attempt-replay-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multi-Attempt Replay Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#patch-score-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Patch Score Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-mode-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failure Mode Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#checkpoint-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Checkpoint Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ndjson-streaming-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NDJSON Streaming Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#mcp-workflow-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MCP Workflow Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#calibrate-and-routing-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Calibrate and Routing Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#large-corpus-guidance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Large Corpus Guidance
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="harness-cookbook">Harness Cookbook</h1>
+<p>Use this guide when consuming <code>tensor-grep</code> as a search/edit substrate from another tool or agent. The goal is to stay on the public surface only:</p>
+<ul>
+<li>CLI JSON</li>
+<li>CLI NDJSON</li>
+<li>MCP tools</li>
+</ul>
+<p>For field-level contracts, use <a href="../harness_api/">Harness API</a>. This cookbook focuses on workflow shape.</p>
+<h2 id="search-json-flow">Search JSON Flow</h2>
+<p>Use JSON when you want one complete response object.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">search</span> <span class="p">-</span><span class="n">-json</span> <span class="n">ERROR</span> <span class="p">.\</span><span class="n">logs</span>
+</code></pre></div>
+<p>Expected top-level fields:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"query"</code></li>
+<li><code>"path"</code></li>
+<li><code>"total_files"</code></li>
+<li><code>"total_matches"</code></li>
+<li><code>"matched_file_paths"</code></li>
+<li><code>"match_counts_by_file"</code></li>
+<li><code>"matches"</code></li>
+</ul>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>parse one JSON document from stdout</li>
+<li>inspect <code>routing_backend</code> / <code>routing_reason</code></li>
+<li>iterate <code>matches[]</code></li>
+</ol>
+<h2 id="indexed-search-flow">Indexed Search Flow</h2>
+<p>Use the index path when the corpus is warm and routing policy allows it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">search</span> <span class="p">-</span><span class="n">-index</span> <span class="p">-</span><span class="n">-json</span> <span class="n">ERROR</span> <span class="p">.\</span><span class="n">logs</span>
+</code></pre></div>
+<p>Expected differences from plain search:</p>
+<ul>
+<li><code>"routing_backend": "TrigramIndex"</code></li>
+<li><code>"routing_reason": "index-accelerated"</code></li>
+</ul>
+<p>Consumers should treat the payload shape as the same as Search JSON.</p>
+<h2 id="repo-map-flow">Repo Map Flow</h2>
+<p>Use repo-map output before planning edits when the agent needs a deterministic view of files, symbols, imports, and likely related test files.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">map</span> <span class="p">-</span><span class="n">-json</span> <span class="p">.\</span><span class="n">src</span>
+</code></pre></div>
+<p>Expected top-level fields:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"coverage"</code></li>
+<li><code>"path"</code></li>
+<li><code>"files"</code></li>
+<li><code>"symbols"</code></li>
+<li><code>"imports"</code></li>
+<li><code>"tests"</code></li>
+<li><code>"related_paths"</code></li>
+</ul>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>request the repo map before multi-file edit planning</li>
+<li>choose a small set of relevant files from <code>files</code>, <code>symbols</code>, and <code>related_paths</code></li>
+<li>feed only that subset into the next search or rewrite step</li>
+</ol>
+<p>Current coverage values describe the limits of this surface:</p>
+<ul>
+<li><code>"language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"</code> -- every language with a registered symbol-graph <code>LanguageSpec</code>, derived live from <code>lang_registry.LANGUAGE_REGISTRY</code> (10 languages as of this writing).</li>
+<li><code>"symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:"</code> -- honest about tiers: <code>tg refs</code>/<code>tg callers</code>/<code>tg blast-radius</code> are AST/tree-sitter-verified for every registered language. The <code>foundational-defs-imports-only:</code> segment (languages with parser-backed defs/imports but refs/callers falling back to a regex-heuristic text match) is currently EMPTY -- C++ was the last language in that tier -- but the segment is always emitted so the descriptor's shape never changes.</li>
+<li><code>"test_matching": "filename+import+graph-heuristic"</code></li>
+</ul>
+<h2 id="context-pack-flow">Context Pack Flow</h2>
+<p>Use context packs when the agent already has a task/query and wants a smaller ranked subset than the full repo map.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">context</span> <span class="p">.\</span><span class="n">src</span> <span class="s2">"invoice payment"</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Expected top-level fields:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"coverage"</code></li>
+<li><code>"query"</code></li>
+<li><code>"path"</code></li>
+<li><code>"files"</code></li>
+<li><code>"symbols"</code></li>
+<li><code>"imports"</code></li>
+<li><code>"tests"</code></li>
+<li><code>"related_paths"</code></li>
+</ul>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>use the raw user task or issue title as the initial query</li>
+<li>take the top ranked <code>files</code> and <code>tests</code> as the first edit/search context</li>
+<li>use symbol <code>score</code> to decide which definitions to inspect before planning edits</li>
+<li>inspect <code>coverage</code> before treating the results as cross-language semantic truth</li>
+</ol>
+<p>When an agent is ready to move from discovery into editing, prefer <code>edit-plan</code> or <code>context-render</code> and read <code>navigation_pack.parallel_read_groups[]</code> first. That gives a deterministic fan-out plan: inspect the <code>primary</code> phase first, then parallelize the <code>related</code> phase, then run the <code>test</code> phase before validation. If a caller does not understand phased reads yet, <code>navigation_pack.follow_up_reads[]</code> is still the flat fallback.</p>
+<p>Before any autonomous edit, inspect the top-level <code>ambiguity</code> object. <code>ambiguity.status = "tie_requires_confirmation"</code> is a hard stop for editing without user confirmation. <code>ambiguity.status = "tie_resolved"</code> is only safe when <code>ambiguity.resolved_by</code> names explicit evidence such as exact language intent, direct validation imports, or implementation-definition ranking; otherwise treat the task as unresolved and ask.</p>
+<p>Resolve exact definitions:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">tg</span> <span class="n">defs</span> <span class="p">.\</span><span class="n">src</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-max-repo-files</span> <span class="n">512</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Fetch the exact source block:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">tg</span> <span class="n">source</span> <span class="p">.\</span><span class="n">src</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-max-repo-files</span> <span class="n">512</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Estimate likely change impact:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">tg</span> <span class="n">impact</span> <span class="p">.</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-max-repo-files</span> <span class="n">512</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Find reference sites:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">tg</span> <span class="n">refs</span> <span class="p">.</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-max-repo-files</span> <span class="n">512</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Find call sites plus likely impacted tests:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">tg</span> <span class="n">callers</span> <span class="p">.</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-max-repo-files</span> <span class="n">512</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Reference and caller resolution depends on language, scan scope, and provider.
+Inspect provenance and <code>resolution_gaps</code> before interpreting an empty result.
+For JavaScript and TypeScript, compare <code>tg refs</code> and <code>tg callers</code> when the task
+requires both reference and call information; they answer different questions.</p>
+<p>For <code>tg blast-radius ... --json</code>, <code>blast_radius_score</code> is a bounded <code>0.0</code> to
+<code>1.0</code> evidence-density score derived from ranked files, direct callers, and
+related tests before output limiting. Use <code>affected_files</code> for the concrete
+file list and treat the score as a prioritization hint, not a correctness
+proof.</p>
+<p>For broad repo roots, read <code>scan_limit</code> before assuming the inventory is complete. If <code>no_match</code> is true on <code>defs</code> or <code>source</code>, treat the compact payload as a real miss and refine the symbol/query instead of scanning unrelated inventories.</p>
+<h2 id="session-reuse-flow">Session Reuse Flow</h2>
+<p>Use sessions when the agent will issue multiple context queries against the same repo during one edit loop. When several agents work the same repo concurrently, sessions plus the warm daemon become a shared code-intelligence plane -- see <a href="../multi_agent_context_plane/">docs/multi_agent_context_plane.md</a> for what is (and is not) shared across agents.</p>
+<p>Open a cached session:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">open</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Inspect cached session metadata:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">list</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">show</span> <span class="n">session</span><span class="p">-</span><span class="n">20260320071200-rewrite</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">refresh</span> <span class="n">session</span><span class="p">-</span><span class="n">20260320071200-rewrite</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Reuse the cached repo map for another query:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">context</span> <span class="n">session</span><span class="p">-</span><span class="n">20260320071200-rewrite</span> <span class="p">.</span> <span class="s2">"invoice payment"</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">serve</span> <span class="n">session</span><span class="p">-</span><span class="n">20260320071200-rewrite</span> <span class="p">.</span> <span class="p">&lt;</span> <span class="n">requests</span><span class="p">.</span><span class="n">jsonl</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">tg</span> <span class="n">session</span> <span class="n">serve</span> <span class="n">session</span><span class="p">-</span><span class="n">20260320071200-rewrite</span> <span class="p">.</span> <span class="p">-</span><span class="n">-refresh-on-stale</span> <span class="p">&lt;</span> <span class="n">requests</span><span class="p">.</span><span class="n">jsonl</span>
+</code></pre></div>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>open one session at the start of a multi-step edit task</li>
+<li>reuse <code>session context</code> for follow-up queries instead of rebuilding repo inventory</li>
+<li>keep the returned <code>session_id</code> with the task state until the edit loop finishes</li>
+<li>run <code>session refresh</code> after accepted file mutations or use <code>--refresh-on-stale</code> for automated recovery</li>
+<li>use <code>session serve</code> for repeated repo-map, context, defs, refs, callers, and impact requests</li>
+<li>keep honoring the same <code>coverage</code> contract as <code>tg map</code> / <code>tg context</code></li>
+</ol>
+<p>Example <code>requests.jsonl</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="p">{</span><span class="nt">"command"</span><span class="p">:</span><span class="s2">"repo_map"</span><span class="p">}</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="p">{</span><span class="nt">"command"</span><span class="p">:</span><span class="s2">"context"</span><span class="p">,</span><span class="nt">"query"</span><span class="p">:</span><span class="s2">"invoice payment"</span><span class="p">}</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="p">{</span><span class="nt">"command"</span><span class="p">:</span><span class="s2">"callers"</span><span class="p">,</span><span class="nt">"symbol"</span><span class="p">:</span><span class="s2">"create_invoice"</span><span class="p">}</span>
+</code></pre></div>
+<h2 id="end-to-end-cli-flow">End-to-End CLI Flow</h2>
+<p>Use this as the canonical low-noise CLI chain for one edit task:</p>
+<ol>
+<li>inventory the repo</li>
+<li>narrow context</li>
+<li>inspect exact symbols if needed</li>
+<li>plan rewrites or edits</li>
+<li>apply and verify</li>
+<li>score the result</li>
+</ol>
+<p>Minimal command chain:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">map</span> <span class="p">-</span><span class="n">-json</span> <span class="p">.\</span><span class="n">src</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">context</span> <span class="p">.\</span><span class="n">src</span> <span class="s2">"invoice payment"</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="n">tg</span> <span class="n">defs</span> <span class="p">.\</span><span class="n">src</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="n">tg</span> <span class="n">callers</span> <span class="p">.\</span><span class="n">src</span> <span class="n">create_invoice</span> <span class="p">-</span><span class="n">-json</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s1">'lambda $$$ARGS: $EXPR'</span> <span class="p">-</span><span class="n">-json</span> <span class="s1">'def $F($$$ARGS): return $EXPR'</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s1">'lambda $$$ARGS: $EXPR'</span> <span class="p">-</span><span class="n">-apply</span> <span class="p">-</span><span class="n">-verify</span> <span class="p">-</span><span class="n">-checkpoint</span> <span class="p">-</span><span class="n">-lint-cmd</span> <span class="s2">"ruff check ."</span> <span class="p">-</span><span class="n">-test-cmd</span> <span class="s2">"pytest -q"</span> <span class="p">-</span><span class="n">-json</span> <span class="s1">'def $F($$$ARGS): return $EXPR'</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_patch_bakeoff</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-scenarios</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">patch_eval</span><span class="p">/</span><span class="n">real_patch_bakeoff_scenarios</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-predictions</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff_scored</span><span class="p">.</span><span class="n">json</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">render_patch_scorecard</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-inputs</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff_scored</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_scorecard</span><span class="p">.</span><span class="nb">md</span>
+</code></pre></div>
+<p>PowerShell expands <code>$NAME</code>/<code>$$$ARGS</code> inside double quotes, so Windows AST patterns and rewrite templates should use single quotes.</p>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>treat <code>map</code> / <code>context</code> as context acquisition, not final truth</li>
+<li>use <code>defs</code>, <code>source</code>, <code>refs</code>, <code>impact</code>, or <code>callers</code> only when the ranked context still leaves ambiguity</li>
+<li>prefer <code>navigation_pack.primary_target</code> plus <code>navigation_pack.follow_up_reads[]</code> as the first read set for planner/executor loops</li>
+<li>apply only after a plan or diff is acceptable</li>
+<li>use the patch bakeoff artifact as the machine-readable final score</li>
+</ol>
+<h2 id="end-to-end-mcp-flow">End-to-End MCP Flow</h2>
+<p>Use this as the canonical MCP chain for the same task shape:</p>
+<ol>
+<li><code>tg_mcp_capabilities</code></li>
+<li><code>tg_repo_map</code></li>
+<li><code>tg_context_pack</code></li>
+<li><code>tg_symbol_defs</code> or <code>tg_symbol_callers</code></li>
+<li><code>tg_agent_capsule</code></li>
+<li><code>tg_edit_plan</code></li>
+<li><code>tg_rewrite_diff</code> when <code>native_tg.available = true</code></li>
+<li><code>tg_rewrite_apply</code></li>
+<li><code>tg_audit_manifest_verify</code></li>
+</ol>
+<p>Minimal MCP chain:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>tg_mcp_capabilities()
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>tg_repo_map(path=".")
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a>tg_context_pack(query="invoice payment", path=".")
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>tg_symbol_defs(symbol="create_invoice", path=".")
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a>tg_symbol_callers(symbol="create_invoice", path=".")
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>tg_agent_capsule(query="invoice payment", path=".")
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a>tg_edit_plan(query="invoice payment", path=".")
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a>tg_rewrite_diff(pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".")
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a>tg_rewrite_apply(pattern="def $F($$$ARGS): return $EXPR", replacement="lambda $$$ARGS: $EXPR", lang="python", path=".", verify=True, checkpoint=True)
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a>tg_audit_manifest_verify(manifest_path="rewrite-audit.json")
+</code></pre></div>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>call <code>tg_mcp_capabilities</code> before picking rewrite/index tools in PyPI or sandboxed installs</li>
+<li>preserve machine-readable envelopes from each tool instead of scraping prose</li>
+<li>treat <code>native-required</code> tools as unavailable unless <code>native_tg.available = true</code></li>
+<li>inspect <code>native_required_options</code> before calling <code>tg_rewrite_apply</code>; <code>verify</code>, <code>audit_manifest</code>, <code>audit_signing_key</code>, <code>lint_cmd</code>, and <code>test_cmd</code> require standalone native <code>tg</code></li>
+<li>use simple <code>tg_rewrite_plan</code> / <code>tg_rewrite_apply</code>, including checkpointed apply, as the embedded-safe fallback when native <code>tg</code> is unavailable</li>
+<li>treat <code>tg_edit_plan</code> as the plan contract and <code>tg_rewrite_apply</code> as the patch-attempt plus validation contract</li>
+<li>use <code>tg_audit_manifest_verify</code> when the workflow needs trust or replay validation</li>
+<li>if final outcome needs benchmark-style scoring, hand the produced patch artifact to <code>run_patch_bakeoff.py</code></li>
+</ol>
+<h2 id="rewrite-planning-flow">Rewrite Planning Flow</h2>
+<p>Plan first. Do not mutate files until the plan is accepted.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s2">"lambda $$$ARGS: $EXPR"</span> <span class="p">-</span><span class="n">-json</span> <span class="s2">"def $F($$$ARGS): return $EXPR"</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+</code></pre></div>
+<p>Important plan fields:</p>
+<ul>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"total_edits"</code></li>
+<li><code>"edits"</code></li>
+</ul>
+<p>Each <code>edits[]</code> object includes stable provenance:</p>
+<ul>
+<li><code>id</code></li>
+<li><code>file</code></li>
+<li><code>line</code></li>
+<li><code>byte_range</code></li>
+<li><code>original_text</code></li>
+<li><code>replacement_text</code></li>
+<li><code>metavar_env</code></li>
+</ul>
+<h2 id="diff-review-flow">Diff Review Flow</h2>
+<p>Review diffs before apply when a human or agent policy requires it.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s2">"lambda $$$ARGS: $EXPR"</span> <span class="p">-</span><span class="n">-diff</span> <span class="s2">"def $F($$$ARGS): return $EXPR"</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+</code></pre></div>
+<p>This emits a unified diff, not JSON. Expect:</p>
+<ul>
+<li><code>---</code></li>
+<li><code>+++</code></li>
+<li><code>@@</code></li>
+</ul>
+<p>Use this when your agent needs a review artifact before mutation.</p>
+<p>If only part of the plan is acceptable, pass stable edit IDs back into the next command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s2">"lambda $$$ARGS: $EXPR"</span> <span class="p">-</span><span class="n">-apply-edit-ids</span> <span class="s2">"e0000:sample.py:0-27"</span> <span class="p">-</span><span class="n">-diff</span> <span class="s2">"def $F($$$ARGS): return $EXPR"</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+</code></pre></div>
+<h2 id="apply-verify-flow">Apply + Verify Flow</h2>
+<p>Apply only after planning succeeds. Prefer <code>--verify</code> for harness use.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">run</span> <span class="p">-</span><span class="n">-lang</span> <span class="n">python</span> <span class="p">-</span><span class="n">-rewrite</span> <span class="s2">"lambda $$$ARGS: $EXPR"</span> <span class="p">-</span><span class="n">-apply</span> <span class="p">-</span><span class="n">-verify</span> <span class="p">-</span><span class="n">-checkpoint</span> <span class="p">-</span><span class="n">-lint-cmd</span> <span class="s2">"ruff check ."</span> <span class="p">-</span><span class="n">-test-cmd</span> <span class="s2">"pytest -q"</span> <span class="p">-</span><span class="n">-json</span> <span class="s2">"def $F($$$ARGS): return $EXPR"</span> <span class="p">.\</span><span class="n">src</span><span class="p">\</span><span class="n">sample</span><span class="p">.</span><span class="n">py</span>
+</code></pre></div>
+<p>Selection flags are supported here too:</p>
+<ul>
+<li><code>--apply-edit-ids &lt;id1,id2,...&gt;</code></li>
+<li><code>--reject-edit-ids &lt;id1,id2,...&gt;</code></li>
+</ul>
+<p>Use them when the agent or reviewer accepts only part of the proposed edit set.</p>
+<p>The response is a single JSON document with:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"checkpoint"</code> when pre-apply rollback capture is requested</li>
+<li><code>"plan"</code></li>
+<li><code>"validation"</code> when post-apply commands are requested</li>
+<li><code>"verification"</code></li>
+</ul>
+<h2 id="multi-attempt-replay-flow">Multi-Attempt Replay Flow</h2>
+<p>Use this flow when a task may take more than one patch attempt and the controller needs a replayable, auditable chain instead of ad hoc retry notes.</p>
+<p>Canonical machine-readable artifact:</p>
+<ul>
+<li><a href="../examples/attempt_ledger.json"><code>examples/attempt_ledger.json</code></a></li>
+<li><a href="../examples/multi_session_attempt_ledger.json"><code>examples/multi_session_attempt_ledger.json</code></a> for a multi-session replay chain</li>
+<li><a href="../examples/multi_task_attempt_ledger.json"><code>examples/multi_task_attempt_ledger.json</code></a> for a multi-task replay chain</li>
+</ul>
+<p>Producer command:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">build_attempt_ledger</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">agent_loop</span><span class="p">/</span><span class="n">attempts</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">agent_loop</span><span class="p">/</span><span class="n">attempt_ledger</span><span class="p">.</span><span class="n">json</span>
+</code></pre></div>
+<p>Integrated producer path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_tensor_grep_patch_driver</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-scenarios</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">patch_eval</span><span class="p">/</span><span class="n">real_patch_driver_scenarios</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver_attempt_ledger</span><span class="p">.</span><span class="n">json</span>
+</code></pre></div>
+<p>The patch-driver artifact preserves <code>navigation_pack</code> alongside <code>edit_plan_seed</code>, so downstream agent loops can use the compact next-read / next-edit bundle directly instead of rebuilding it from the larger planning payload.</p>
+<p>Scored producer path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_patch_bakeoff</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-scenarios</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">patch_eval</span><span class="p">/</span><span class="n">real_patch_bakeoff_scenarios</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-predictions</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_skill_ab_limit12_current_claude_md_bakeoff</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_skill_ab_limit12_scored</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">attempt_ledgers</span>
+</code></pre></div>
+<p>Claude A/B producer path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_claude_skill_ab</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_skill_ab</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_ab_attempt_ledgers</span>
+</code></pre></div>
+<p>Gemini A/B producer path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_gemini_skill_ab</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_ab_attempt_ledgers</span>
+</code></pre></div>
+<p>Competitor prediction producer paths:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_claude_patch_predictions</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_patch_predictions</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">claude_prediction_attempt_ledgers</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_copilot_patch_predictions</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">copilot_patch_predictions</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">copilot_prediction_attempt_ledgers</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_gemini_patch_predictions</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">tensor_grep_patch_driver</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_patch_predictions</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-attempt-ledger-dir</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_prediction_attempt_ledgers</span>
+</code></pre></div>
+<p>External agent comparison path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">build_external_agent_patch_driver_comparison</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-summary</span> <span class="n">gemini</span><span class="p">=</span><span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">gemini_patch_driver_validation_summary</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-summary</span> <span class="n">claude</span><span class="p">=</span><span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">claude_patch_driver_validation_summary</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-summary</span> <span class="n">codex</span><span class="p">=</span><span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">codex_patch_driver_validation_summary</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">external_agent_patch_driver_comparison</span><span class="p">.</span><span class="n">json</span>
+</code></pre></div>
+<p>External agent scorecard path:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-26-1" name="__codelineno-26-1" href="#__codelineno-26-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">build_external_agent_patch_driver_scorecard</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">external_agent_patch_driver_comparison</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">external_validation</span><span class="p">/</span><span class="n">external_agent_patch_driver_scorecard</span><span class="p">.</span><span class="n">json</span>
+</code></pre></div>
+<p>The comparison artifact now also preserves <code>parallel_read_groups</code> from the live patch-driver output when available, so the scorecard can measure serial read-step reduction instead of only compactness and validation-fit.</p>
+<p>Producer:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">build_attempt_ledger</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-input</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">attempt_ledger_input</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">attempt_ledger</span><span class="p">.</span><span class="n">json</span>
+</code></pre></div>
+<p>Recommended ledger sequence:</p>
+<ol>
+<li>keep one <code>task_id</code> stable across retries</li>
+<li>append one <code>attempts[]</code> row per materialized attempt</li>
+<li>record <code>retry_stage</code> as the narrowest safe replay boundary</li>
+<li>carry forward checkpoint and audit-manifest links instead of rewriting history</li>
+<li>update <code>final_outcome</code> only when one attempt is accepted or the chain is terminally rejected</li>
+</ol>
+<p>Minimal control flow:</p>
+<ol>
+<li>produce <code>tg_edit_plan</code> or <code>tg_rewrite_diff</code></li>
+<li>apply with <code>tg_rewrite_apply</code> or <code>tg.exe run --rewrite ... --apply --verify --json</code></li>
+<li>record validation success or failure for that attempt</li>
+<li>if retrying, append a new attempt row with <code>parent_attempt_id</code></li>
+<li>verify the trust chain with <code>tg_audit_manifest_verify</code></li>
+<li>score the accepted or terminal output with the patch bakeoff only after the attempt chain is complete</li>
+</ol>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>treat the attempt ledger as the source of truth for multi-attempt provenance</li>
+<li>preserve the full replay chain instead of overwriting failed attempts</li>
+<li>use <code>partial_retry_ledger</code> as the machine-readable partial retry ledger and resume from the narrowest safe stage</li>
+<li>keep <code>audit_chain</code> entries stable so later replay or trust verification can re-check the exact accepted path</li>
+<li>only treat an attempt as terminal when <code>final_outcome.status</code> is set or retry policy says to stop</li>
+</ol>
+<p>When the controller crosses cached sessions, keep a multi-session replay chain instead of flattening the handoff into prose. Preserve both <code>session_id</code> values, record the handoff reason, and keep the accepted attempt linked back to the prior session state through the ledger.</p>
+<p>When the controller advances from one bounded task to the next, keep a multi-task replay chain instead of treating the second task as a fresh unrelated run. Preserve the ordered <code>tasks[]</code> inventory, keep the accepted attempt for each task, and record the cross-task chain in <code>replay.task_chain</code> so later audit and replay can reconstruct why the later task depended on the earlier accepted result.</p>
+<h2 id="patch-score-flow">Patch Score Flow</h2>
+<p>Use the patch bakeoff when the agent already has prediction artifacts and needs a machine-readable final score.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-28-1" name="__codelineno-28-1" href="#__codelineno-28-1"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">run_patch_bakeoff</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-scenarios</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">patch_eval</span><span class="p">/</span><span class="n">real_patch_bakeoff_scenarios</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-predictions</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff_scored</span><span class="p">.</span><span class="n">json</span>
+<a id="__codelineno-28-2" name="__codelineno-28-2" href="#__codelineno-28-2"></a><span class="n">python</span> <span class="n">benchmarks</span><span class="p">/</span><span class="n">render_patch_scorecard</span><span class="p">.</span><span class="n">py</span> <span class="p">-</span><span class="n">-inputs</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_bakeoff_scored</span><span class="p">.</span><span class="n">json</span> <span class="p">-</span><span class="n">-output</span> <span class="n">artifacts</span><span class="p">/</span><span class="n">patch_eval_demo</span><span class="p">/</span><span class="n">gemini_skill_ab_limit12_scorecard</span><span class="p">.</span><span class="nb">md</span>
+</code></pre></div>
+<p>Expected machine-readable fields:</p>
+<ul>
+<li><code>"artifact"</code></li>
+<li><code>"suite"</code></li>
+<li><code>"summary"</code></li>
+<li><code>"rows"</code></li>
+<li><code>"missing_predictions"</code></li>
+</ul>
+<p>Recommended consumer behavior:</p>
+<ol>
+<li>treat <code>rows[]</code> as the per-scenario final score surface</li>
+<li>use <code>summary</code> for aggregate decisions only after <code>missing_predictions</code> is empty</li>
+<li>rerun the producer with <code>--resume</code> if <code>"missing_predictions"</code> is non-empty</li>
+<li>retry the producer, not the scorer, when a model row is absent</li>
+<li>rerun only the scorer when the prediction artifact exists but the markdown scorecard is stale</li>
+</ol>
+<p>Common failure signals and retries:</p>
+<ul>
+<li><code>reason="no patch emitted"</code>: keep the artifact as a scored failure; do not treat it as a harness crash</li>
+<li><code>reason</code> containing <code>timeout after</code>: treat it as a model/runtime failure line, not a scoring failure</li>
+<li>non-empty <code>"missing_predictions"</code>: the generation run is incomplete; resume the generator first</li>
+<li>corrupt or partial producer artifact: discard incomplete rows only if the generator supports safe resume semantics, then rerun</li>
+</ul>
+<p>Verification is byte-level exact-text verification. Consumers should fail closed if <code>verification.mismatches</code> is non-empty.
+Validation is command-level repo health verification. Consumers should fail closed if <code>validation.success</code> is <code>false</code>.</p>
+<h2 id="failure-mode-examples">Failure Mode Examples</h2>
+<p>Use these public examples when wiring retries or stop conditions into an external agent loop:</p>
+<ul>
+<li><a href="../examples/session_invalid_request_stale.json"><code>examples/session_invalid_request_stale.json</code></a>: stale session request; refresh the session or enable <code>--refresh-on-stale</code></li>
+<li><a href="../examples/patch_bakeoff_incomplete.json"><code>examples/patch_bakeoff_incomplete.json</code></a>: incomplete producer run; resume the generator before reading <code>summary</code></li>
+<li><a href="../examples/patch_bakeoff_no_patch.json"><code>examples/patch_bakeoff_no_patch.json</code></a>: producer finished but emitted no usable patch; keep the scored failure and move on</li>
+<li><a href="../examples/defs_provider_disagreement.json"><code>examples/defs_provider_disagreement.json</code></a>: provider disagreement metadata; treat provider state as diagnostic context, not proof that the native answer is wrong</li>
+<li><a href="../examples/provider_status_unavailable.json"><code>examples/provider_status_unavailable.json</code></a>: provider unavailable snapshot; fall back to native behavior or surface the limitation to the caller</li>
+<li><a href="../examples/provider_status_unavailable.json"><code>examples/provider_status_unavailable.json</code></a>: provider unavailable; read <code>provider_status.last_error</code>, stay on native routing, and avoid blind provider retries</li>
+<li><a href="../examples/rewrite_apply_verify_validation_failed.json"><code>examples/rewrite_apply_verify_validation_failed.json</code></a>: patch applied and verified, but repo validation failed; rollback metadata records the restored files before retry or repair</li>
+</ul>
+<p>Recommended control-flow policy:</p>
+<ol>
+<li>retry stale-session and missing-prediction failures</li>
+<li>do not retry scored no-patch failures inside the scorer</li>
+<li>fail closed on post-apply validation failure</li>
+<li>treat provider disagreement as a planning-quality warning, not an automatic retry trigger</li>
+<li>treat provider unavailability as transport health; prefer native answers until <code>provider_status.last_error</code> clears</li>
+</ol>
+<h2 id="checkpoint-flow">Checkpoint Flow</h2>
+<p>Use checkpoints when an agent needs an explicit rollback point before or after an edit session.</p>
+<p>Create a checkpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="n">tg</span> <span class="n">checkpoint</span> <span class="n">create</span> <span class="p">.</span> <span class="p">-</span><span class="n">-label</span> <span class="s2">"before module migration"</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>List checkpoints:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-30-1" name="__codelineno-30-1" href="#__codelineno-30-1"></a><span class="n">tg</span> <span class="n">checkpoint</span> <span class="n">list</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Undo a checkpoint:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-31-1" name="__codelineno-31-1" href="#__codelineno-31-1"></a><span class="n">tg</span> <span class="n">checkpoint</span> <span class="n">undo</span> <span class="n">ckpt</span><span class="p">-</span><span class="n">20260320120000-deadbeef</span> <span class="p">.</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>Current behavior:</p>
+<ul>
+<li>inside a Git repo, <code>mode</code> is <code>git-worktree-snapshot</code></li>
+<li>outside Git, <code>mode</code> is <code>filesystem-snapshot</code></li>
+<li>undo restores files captured at checkpoint creation and removes paths created afterward inside the checkpoint scope</li>
+<li>labels are trimmed, printable Unicode text (1-120 characters) shown in create/list output; they
+  may repeat and do not select an undo target, which uses the checkpoint ID (or CLI <code>--last</code>)</li>
+<li>older clients that rewrite <code>index.json</code> may discard labels they do not understand</li>
+</ul>
+<h2 id="ndjson-streaming-flow">NDJSON Streaming Flow</h2>
+<p>Use NDJSON when you want incremental consumption for large result sets.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-32-1" name="__codelineno-32-1" href="#__codelineno-32-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">search</span> <span class="p">-</span><span class="n">-ndjson</span> <span class="n">ERROR</span> <span class="p">.\</span><span class="n">src</span> <span class="p">.\</span><span class="n">tests</span> <span class="p">.\</span><span class="n">docs</span>
+</code></pre></div>
+<p>Each line is a standalone JSON object with:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"query"</code></li>
+<li><code>"path"</code></li>
+<li><code>"file"</code></li>
+<li><code>"line"</code></li>
+<li><code>"text"</code></li>
+</ul>
+<p>Read stdout line-by-line and parse each row independently.</p>
+<h2 id="mcp-workflow-flow">MCP Workflow Flow</h2>
+<p>Use MCP when the consumer speaks tool calls instead of shelling out directly.</p>
+<p>Available workflow tools:</p>
+<ul>
+<li><code>tg_mcp_capabilities</code></li>
+<li><code>tg_repo_map</code></li>
+<li><code>tg_context_pack</code></li>
+<li><code>tg_symbol_defs</code></li>
+<li><code>tg_symbol_source</code></li>
+<li><code>tg_symbol_impact</code></li>
+<li><code>tg_symbol_refs</code></li>
+<li><code>tg_symbol_callers</code></li>
+<li><code>tg_session_open</code></li>
+<li><code>tg_session_list</code></li>
+<li><code>tg_session_show</code></li>
+<li><code>tg_session_refresh</code></li>
+<li><code>tg_session_context</code></li>
+<li><code>tg_agent_capsule</code></li>
+<li><code>tg_checkpoint_create</code></li>
+<li><code>tg_checkpoint_list</code></li>
+<li><code>tg_checkpoint_undo</code></li>
+<li><code>tg_index_search</code></li>
+<li><code>tg_rewrite_plan</code></li>
+<li><code>tg_rewrite_apply</code></li>
+<li><code>tg_rewrite_diff</code></li>
+</ul>
+<p>Example flow:</p>
+<ol>
+<li>call <code>tg_mcp_capabilities()</code></li>
+<li>call <code>tg_index_search("ERROR", path=".")</code> only if it is <code>native-required</code> and native <code>tg</code> is available</li>
+<li>call <code>tg_agent_capsule(...)</code> when the agent needs primary target, validation, rollback, confidence, or optional GPU evidence before editing</li>
+<li>pass <code>gpu_device_ids=[...]</code> to <code>tg_agent_capsule</code> only for explicit native GPU evidence probes; sidecar-routed GPU evidence is returned as unsupported</li>
+<li>call <code>tg_rewrite_plan(...)</code></li>
+<li>call <code>tg_rewrite_diff(...)</code> only when native <code>tg</code> is available</li>
+<li>call <code>tg_checkpoint_create(path=".", label="before rewrite")</code> if rollback is required</li>
+<li>call <code>tg_rewrite_apply(..., verify=True, checkpoint=True)</code> only when native <code>tg</code> is available; otherwise use simple embedded-safe apply without verify/checkpoint</li>
+</ol>
+<p>The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:</p>
+<ul>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"error.code" == "unavailable"</code> with <code>"native-tg-unavailable"</code> routing before retrying native-required tools</li>
+</ul>
+<h2 id="calibrate-and-routing-flow">Calibrate and Routing Flow</h2>
+<p>Use calibration to teach the native router where CPU and GPU cross over on the local machine.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-33-1" name="__codelineno-33-1" href="#__codelineno-33-1"></a><span class="n">tg</span><span class="p">.</span><span class="n">exe</span> <span class="n">calibrate</span>
+</code></pre></div>
+<p>Expected top-level fields:</p>
+<ul>
+<li><code>"version"</code></li>
+<li><code>"routing_backend"</code></li>
+<li><code>"routing_reason"</code></li>
+<li><code>"sidecar_used"</code></li>
+<li><code>"corpus_size_breakpoint_bytes"</code></li>
+<li><code>"recommendation"</code></li>
+<li><code>"measurements"</code></li>
+</ul>
+<p>Interpretation:</p>
+<ul>
+<li><code>cpu_always</code>: stay on CPU for the measured hardware/workload</li>
+<li><code>gpu_above_*</code>: GPU is worthwhile only above the measured breakpoint</li>
+</ul>
+<p>Do not force GPU just because it exists. Follow the measured crossover unless you are running a benchmark experiment.</p>
+<h2 id="large-corpus-guidance">Large Corpus Guidance</h2>
+<p>Use these rules:</p>
+<ol>
+<li>plain cold search:</li>
+<li>use <code>tg.exe search --json ...</code></li>
+<li>repeated text search on unchanged corpora:</li>
+<li>use <code>tg.exe search --index --json ...</code></li>
+<li>large result streams:</li>
+<li>use <code>tg.exe search --ndjson ...</code></li>
+<li>structural edits:</li>
+<li>use plan -&gt; diff -&gt; apply+verify</li>
+<li>GPU:</li>
+<li>use only when routing or explicit calibration says it wins</li>
+</ol>
+<p>For stable field semantics, see <a href="../harness_api/">Harness API</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,1624 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Native GPU Benchmark Requirements - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#native-gpu-benchmark-requirements" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Native GPU Benchmark Requirements
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#required-promotion-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Required Promotion Rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#supported-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported semantics
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Supported semantics">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#native-cuda-kernel-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Native CUDA-kernel lane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-gpu-sidecar-lane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python GPU sidecar lane
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="native-gpu-benchmark-requirements">Native GPU Benchmark Requirements</h1>
+<p>GPU search is experimental and explicitly requested with <code>--gpu-device-ids</code>.
+Device discovery or a successful CPU fallback does not prove GPU acceleration.
+<code>NativeGpuBackend</code> identifies native execution; <code>GpuSidecar</code> identifies a Python sidecar.
+<code>fallback_or_sidecar_counts_as_gpu_proof</code> must remain false.
+A qualifying result must identify the installed binary, selected backend,
+workload, correctness oracle, and timed phases.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/run_gpu_native_benchmarks.py<span class="w"> </span>--output<span class="w"> </span>artifacts/bench_run_gpu_native_benchmarks.json
+</code></pre></div>
+<p>Keep file reads, host preprocessing, CPU staging, host-to-device transfer, kernel
+execution, and output materialization visible. Record CUDA compilation/cache
+state and end-to-end wall time. Fixed-string multi-pattern workloads and cold
+single-pattern searches must be reported separately; no crossover is guaranteed.</p>
+<p>The artifact separates <code>scale_gate_summary.native_cuda_runtime_gate</code>,
+<code>correctness_gate</code>, <code>speed_gate</code>, and <code>promotion_ready</code>. Unsupported routes must
+retain <code>gpu_proof = false</code>, <code>native_gpu_unavailable</code>, <code>gpu_evidence_status</code>, and
+<code>not_gpu_proof_reason</code>. The <code>native_gpu</code> route must be observed rather than inferred from requested flags.
+A local CUDA-feature build is not public managed-release
+proof.</p>
+<h2 id="required-promotion-rule">Required Promotion Rule</h2>
+<p>The fair many-pattern baseline is a single <code>rg -F -e ... -e ...</code> invocation.
+Sidecar-routed rows are unsupported for native CUDA promotion.</p>
+<p>Do not promote GPU speed from device discovery, sidecar availability, or correctness alone. A promotion-ready artifact must show all of the following:</p>
+<ol>
+<li>Native CUDA backend, not only Python/Torch sidecar rows.</li>
+<li>Exact match and file-set correctness at every required 1GB and 5GB corpus against both <code>tg --cpu</code> and direct <code>rg --json</code>.</li>
+<li>GPU faster than both <code>rg</code> and <code>tg_cpu</code> at the required scale and declared workload class.</li>
+<li>No failed error-handling or throughput gates.</li>
+<li>For public managed promotion, the dispatch-only <code>public-gpu-proof.yml</code> workflow, managed NVIDIA <code>tg-native-metadata.json</code>, <code>--public-managed-proof</code>, direct <code>rg --json</code> 1GB/5GB route/correctness, the advanced many-pattern fair-baseline proof gate, <code>public_managed_promotion_ready = true</code>, and <code>public_gpu_proof = true</code>.</li>
+</ol>
+<p>Until those are true, the public routing decision is explicit GPU search only.</p>
+<h2 id="supported-semantics">Supported semantics</h2>
+<p>The native GPU backend uses a <strong>position-parallel brute-force byte-compare</strong> kernel
+(<code>gpu_text_search_positions</code> in <code>rust_core/src/gpu_native.rs</code>): each GPU thread owns a text
+position and tests every fixed-string pattern at that position, with the pattern set staged in
+shared memory. It is optimized for <strong>fixed-string multi-pattern</strong> search over large corpora — a
+workload class targeted by the implementation. (A PFAC /
+failureless-Aho-Corasick automaton is a <em>future</em> optimization, not what ships today.)</p>
+<p>There are two independent GPU-adjacent lanes in this codebase, and they do <strong>not</strong> share one
+support matrix — a semantic unsupported in one can be supported in the other. The two tables
+below are intentionally separate so every row is unambiguous about which lane it describes:</p>
+<ol>
+<li>The <strong>native CUDA-kernel lane</strong>, compiled only into the CUDA-feature release build
+   (<code>cargo build --features cuda</code>) and gated by <code>gpu_native_fallback_reason</code> in
+   <code>rust_core/src/main.rs</code>.</li>
+<li>The <strong>Python GPU sidecar lane</strong>, the CuDF/Torch backends in
+   <code>src/tensor_grep/core/pipeline.py</code>, reachable from any build — including the standard
+   public binary — whenever a Python sidecar handles the search (directly, or as the native
+   binary's own redirect target when a request falls outside lane 1).</li>
+</ol>
+<h3 id="native-cuda-kernel-lane">Native CUDA-kernel lane</h3>
+<p><code>gpu_native_fallback_reason(&amp;GpuSearchParams) -&gt; Option&lt;&amp;'static str&gt;</code> (<code>rust_core/src/main.rs</code>)
+is the single source of truth for this lane: it returns <code>None</code> when the request reaches the
+native CUDA kernel unmodified, or <code>Some(reason)</code> when the request must be redirected instead.
+Every <code>Some(reason)</code> case falls through <code>handle_gpu_search</code> to <code>handle_gpu_sidecar_search</code> (the
+Python GPU sidecar) first; if that sidecar is itself unavailable, CPU is the final fallback (see
+the <a href="#python-gpu-sidecar-lane">Python GPU sidecar lane</a> below).</p>
+<table>
+<thead>
+<tr>
+<th>Semantic</th>
+<th>Native CUDA kernel</th>
+<th>Redirected to</th>
+<th>Exact <code>gpu_native_fallback_reason</code> string</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Fixed-string multi-pattern (<code>-F -e PAT1 -e PAT2 …</code>), or literal patterns without <code>-F</code> that contain no regex metacharacters</td>
+<td>Supported (position-parallel byte-compare CUDA kernel)</td>
+<td>—</td>
+<td>— (<code>None</code>)</td>
+</tr>
+<tr>
+<td>Count / counting mode (<code>-c</code>, <code>--count</code>)</td>
+<td>Supported (native kernel emits counts directly)</td>
+<td>—</td>
+<td>— (<code>None</code>)</td>
+</tr>
+<tr>
+<td>Hidden-file or no-ignore overrides (<code>--hidden</code>, <code>--no-ignore</code>)</td>
+<td>Supported (<code>GpuSearchParams</code> carries <code>hidden</code>/<code>no_ignore</code>; the native file walk honors both)</td>
+<td>—</td>
+<td>— (<code>None</code>)</td>
+</tr>
+<tr>
+<td>Case-insensitive or smart-case matching (<code>-i</code>, <code>-S</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>case-insensitive searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Binary-as-text search (<code>--text</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>binary-as-text searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Patterns containing a literal newline or carriage return</td>
+<td>Not supported</td>
+<td>CPU or Python GPU sidecar</td>
+<td><code>line-terminator patterns require CPU or sidecar routing</code></td>
+</tr>
+<tr>
+<td>Invert-match (<code>-v</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>invert-match searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Context-line output (<code>-A</code>, <code>-B</code>, <code>-C</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>context line searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Max-count (<code>-m</code>, <code>--max-count</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>max-count searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Word-boundary matching (<code>-w</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>word-boundary searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td>Regex patterns containing metacharacters, run without <code>-F</code> (<code>patterns_require_regex_engine</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>regex patterns still require the Python GPU sidecar</code></td>
+</tr>
+<tr>
+<td><code>--replace</code></td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>--replace searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td><code>--only-matching</code> (<code>-o</code>)</td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>--only-matching searches are not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td><code>--max-filesize</code></td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>--max-filesize is not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td><code>--color</code></td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>--color is not yet supported by native GPU routing</code></td>
+</tr>
+<tr>
+<td><code>--no-ignore-vcs</code></td>
+<td>Not supported</td>
+<td>Python GPU sidecar</td>
+<td><code>--no-ignore-vcs is not yet supported by native GPU routing</code></td>
+</tr>
+</tbody>
+</table>
+<p>Multiline mode (<code>-U</code>, <code>--multiline</code>, <code>--multiline-dotall</code>) and exact-line matching (<code>-x</code>,
+<code>--line-regexp</code>) never reach <code>GpuSearchParams</code> at all — they are forced to plain CPU/<code>rg</code>
+passthrough further upstream regardless of <code>--gpu-device-ids</code>
+(<code>SEARCH_PYTHON_PASSTHROUGH_FLAGS</code> / <code>search_requires_ripgrep_passthrough</code> in
+<code>rust_core/src/main.rs</code>), so they are outside the <code>gpu_native_fallback_reason</code> contract above.</p>
+<p>When the native GPU kernel is unavailable or the request falls outside this lane, <code>tg</code> emits a
+<code>UserWarning</code> with a human-readable explanation. The <code>fallback_reason</code> attribute on the
+<code>Pipeline</code> object captures the same text for programmatic inspection; it is surfaced in the JSON
+route envelope via the <code>fallback_reason</code> field so callers can observe it without parsing log
+output.</p>
+<p>GPU routing is <strong>explicit and opt-in</strong> (<code>--gpu-device-ids</code>). Heuristic auto-routing
+is disabled until the public managed binary passes the promotion proof gate described
+in <a href="#required-promotion-rule">Required Promotion Rule</a>.</p>
+<h3 id="python-gpu-sidecar-lane">Python GPU sidecar lane</h3>
+<p>The Python-layer pipeline (<code>Pipeline</code> in <code>src/tensor_grep/core/pipeline.py</code>) has its own,
+independent support matrix for the CuDF/Torch GPU backends, reachable from any build (not only
+the CUDA-feature release). It governs both the native binary's Python-sidecar redirect described
+above and any direct Python-pipeline invocation. Unlike the native lane, an <strong>explicit</strong>
+<code>--gpu-device-ids</code> request outside this lane's support does <strong>not</strong> silently fall back to CPU:
+<code>Pipeline</code> raises a <code>ConfigurationError</code> and refuses the search (the Backend Fail-Closed
+Contract), because a quiet CPU-fallback result here would otherwise look like GPU acceleration
+proof without being any.</p>
+<table>
+<thead>
+<tr>
+<th>Semantic</th>
+<th>Sidecar (CuDF / Torch)</th>
+<th>Explicit <code>--gpu-device-ids</code> behavior</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AST search (<code>--ast</code>)</td>
+<td>Not supported</td>
+<td>Fails closed: <code>ConfigurationError</code> ("AST search has no GPU backend")</td>
+</tr>
+<tr>
+<td>Count mode (<code>-c</code>, <code>--count</code>)</td>
+<td>Not supported</td>
+<td>Fails closed: <code>ConfigurationError</code> ("count (-c) search has no GPU backend")</td>
+</tr>
+<tr>
+<td>Fixed-string patterns (<code>-F</code>)</td>
+<td>Not supported</td>
+<td>Fails closed: <code>ConfigurationError</code> ("fixed-string (-F) search has no GPU backend"); served by the StringZilla SIMD CPU backend instead</td>
+</tr>
+<tr>
+<td>Context, line-regexp, word-regexp, or LTL queries (<code>-A</code>/<code>-B</code>/<code>-C</code>, <code>-x</code>, <code>-w</code>, LTL)</td>
+<td>Not supported</td>
+<td>Fails closed: <code>ConfigurationError</code> ("context/line-regexp/word-regexp/LTL search has no GPU backend")</td>
+</tr>
+<tr>
+<td>General regex (anything not listed above)</td>
+<td>Supported</td>
+<td>Routes to <code>CuDFBackend</code>, falling back to <code>TorchBackend</code> if CuDF is unavailable</td>
+</tr>
+</tbody>
+</table>
+<p>Fixed-string patterns (<code>-F</code>) in the Python pipeline are always served by the StringZilla SIMD
+backend regardless of <code>--gpu-device-ids</code>; the fixed-string CUDA-kernel semantics in the
+native-lane table above apply only to the CUDA-feature native route, never to this sidecar lane.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

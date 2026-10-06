@@ -1,0 +1,1784 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Rebuild guide: tg ledger (claim / release / list / record / find) - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rebuild-guide-tg-ledger-claim-release-list-record-find" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Rebuild guide: tg ledger (claim / release / list / record / find)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-problem-this-feature-solves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The problem this feature solves
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-flow-end-to-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Data flow, end to end
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-every-file-involved" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Every file involved
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-on-disk-format-verified-by-actually-creating-and-inspecting-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. On-disk format (verified by actually creating and inspecting one)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-the-path-scope-footgun-the-load-bearing-trap-demonstrated-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. The PATH-scope footgun (the load-bearing trap; demonstrated live)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-contracts-and-traps-a-naive-rebuild-gets-wrong" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Contracts and traps a naive rebuild gets wrong
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-non-git-fallback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Non-git fallback
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-what-done-looks-like-validating-a-rebuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. What "done" looks like — validating a rebuild
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-explicitly-out-of-scope-for-this-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        9. Explicitly out of scope for this guide
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="rebuild-guide-tg-ledger-claim-release-list-record-find">Rebuild guide: <code>tg ledger</code> (claim / release / list / record / find)</h1>
+<p>Examples illustrate the state format and command flow. Re-run them against the
+version being changed in a disposable directory; they are not current release evidence.</p>
+<h2 id="1-the-problem-this-feature-solves">1. The problem this feature solves</h2>
+<p><code>tg ledger</code> is an advisory, code-scoped coordination plane for concurrent coding agents working
+the same repository. It has two independent slices under one CLI sub-app:</p>
+<ul>
+<li><strong>Slice 1 — claims</strong> (<code>tg ledger claim</code> / <code>release</code> / <code>list</code>): an agent ADVERTISES intent to
+  edit a symbol or file. A claim is advisory only — it is NEVER a lock. <code>submit_claim</code> always
+  returns normally on success, even when other agents hold live overlapping claims on the same
+  symbol/file; those overlaps are reported back in an <code>overlaps</code> list for the caller to act on,
+  never raised as an error. A dead agent's claim simply expires via TTL — there is no
+  crash-recovery special case, because nothing was ever locked.</li>
+<li><strong>Slice 2 — findings</strong> (<code>tg ledger record</code> / <code>find</code>, marked <code>EXPERIMENTAL</code> in the CLI's own
+  <code>--help</code> text): one agent <code>record</code>s an already-computed evidence-receipt / blast-radius /
+  context-pack / repo-map artifact; a sibling agent <code>find</code>s it by symbol and reuses it instead of
+  recomputing — but only if it is still <code>fresh</code> (the recorded repo revision — <code>commit_sha</code> AND a
+  dirty-tree hash — matches the CURRENT repo state) and the blob's bytes still hash to the
+  recorded <code>receipt_sha256</code>. A tampered or corrupted blob raises <code>LedgerIntegrityError</code> (CLI exit
+  2) rather than silently serving bad data.</li>
+</ul>
+<p>Both slices share a path-scoping constraint (§5): every claim/list/release/record/find call names a <code>path</code>
+argument, but that path is NOT simply where the on-disk index lives — see §5.</p>
+<h2 id="2-data-flow-end-to-end">2. Data flow, end to end</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>tg ledger claim &lt;path&gt; --symbol S [--files F ...]
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>        |
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        v
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>main.py: ledger_claim()                        &lt;- CLI adapter (Typer command)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        |  (src/tensor_grep/cli/main.py,
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        |   @ledger_app.command("claim"), main.py:12788-12789)
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>        v
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>ledger_store.submit_claim(path, symbols=..., files=..., ...)   (ledger_store.py:641)
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        |  called at main.py:12845
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        |
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        +-- _ledger_physical_root(path)         &lt;- canonicalize to the nearest .git ancestor
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        |     (ledger_store.py:438)                 (the PATH-scope fix, see §5)
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        |
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        +-- _normalize_scope(path, root)        &lt;- preserve the caller's ORIGINAL path
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        |     (ledger_store.py:450)                 as this claim's "scope" (root-relative)
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        |
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        +-- validate: at least one of --symbol/--files (else LedgerUsageError)
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        |
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        +-- build a ClaimRecord (ledger_store.py:233)
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>        |
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>        +-- index_lock(index_path):             &lt;- from tensor_grep.cli._index_lock
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>              _load_index(root)                     (ledger_store.py:527)
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>              _prune_expired(existing, now=now)      (ledger_store.py:550)
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>              _find_overlaps(live, record)            (ledger_store.py:592) -- BEFORE appending
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>              live.append(record.to_dict())
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>              _evict_oldest_over_cap(live)            (ledger_store.py:566)
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>              _write_index(root, live)                (ledger_store.py:543)
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>tg ledger list &lt;path&gt; [--symbol S] [--agent-id A]
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>        v
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>main.py: ledger_list()  (main.py:13014-13015)
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>        v
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>ledger_store.list_claims(path, symbol=symbol, agent_id=agent_id)   (main.py:13039)
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>        |  -- a pure read, mirrors session_store.list_sessions: prunes expired
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>        |     entries for DISPLAY only and never writes, so a bare `list` cannot
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>        |     itself create .tensor-grep/ledger/ (default-inert until first `claim`)
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>        +-- rolls scope UP via _scope_contains (ledger_store.py:479) -- see §5
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>tg ledger release &lt;path&gt; (--claim-id C | --symbol S) [--agent-id A]
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>        v
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>main.py: ledger_release()  (main.py:12906-12907)
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>        v
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>ledger_store.release_claim(...)   (main.py:12946)
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>        |  -- EXACT claim-id/symbol matching only, no rollup (see §5 for why)
+<a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>
+<a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>tg ledger record &lt;path&gt; --receipt R --artifact-kind K --symbol S
+<a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>        v
+<a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>main.py: ledger_record()  (main.py:13083-13084)
+<a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>        v
+<a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>ledger_store.record_finding(...)   (main.py:13126, ledger_store.py:1219)
+<a id="__codelineno-0-51" name="__codelineno-0-51" href="#__codelineno-0-51"></a>        |  -- same _ledger_physical_root + index_lock shape, separate on-disk
+<a id="__codelineno-0-52" name="__codelineno-0-52" href="#__codelineno-0-52"></a>        |     subtree: findings/index.json + findings/blobs/&lt;receipt_sha256&gt;.json
+<a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a>
+<a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a>tg ledger find &lt;path&gt; --symbol S
+<a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>        v
+<a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>main.py: ledger_find()  (main.py:13177-13178)
+<a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a>        v
+<a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a>ledger_store.find_findings(...)   (main.py:13223, ledger_store.py:1356)
+<a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a>        |  -- re-verifies the blob's bytes still hash to receipt_sha256 on every
+<a id="__codelineno-0-60" name="__codelineno-0-60" href="#__codelineno-0-60"></a>        |     read (_verify_finding_blob, ledger_store.py:1314); checks freshness
+<a id="__codelineno-0-61" name="__codelineno-0-61" href="#__codelineno-0-61"></a>        |     against the CURRENT repo revision, never trusts the stored one alone
+</code></pre></div>
+<p><strong>No MCP tool wraps <code>tg ledger</code>.</strong> Verified: <code>grep -c "ledger" src/tensor_grep/cli/mcp_server.py</code>
+returns <code>0</code>. Contrast with <code>tg-checkpoint.md</code>, whose feature DOES have MCP adapters — this guide
+covers the CLI surface only.</p>
+<h2 id="3-every-file-involved">3. Every file involved</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contributes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/tensor_grep/cli/ledger_store.py</code> (1,417 lines)</td>
+<td>All business logic: PATH canonicalization, the <code>ClaimRecord</code>/<code>FindingRecord</code> data types (ledger_store.py:233, :253), <code>submit_claim</code>/<code>release_claim</code>/<code>list_claims</code> (Slice 1), <code>record_finding</code>/<code>find_findings</code> (Slice 2), and every <code>LedgerError</code> subclass.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/_index_lock.py</code></td>
+<td>Shared atomic-write and cross-process/cross-thread file-lock primitives (<code>atomic_write_json</code>, <code>index_lock</code>) — ledger reuses these rather than re-implementing locking, the same way <code>checkpoint_store.py</code> does.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/session_store.py</code></td>
+<td><code>_resolve_root</code> — the literal (non-canonicalized) path resolution <code>_ledger_physical_root</code> builds on top of.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/evidence_receipt.py</code></td>
+<td><code>_repo_revision_identity</code> — captures <code>commit_sha</code>/<code>dirty</code>/<code>dirty_tree_sha256</code>, used to stamp every claim's <code>revision</code> field and every finding's freshness check. Both <code>record</code>/<code>find</code> call it with <code>exclude_prefixes=(".tensor-grep/ledger",)</code> so the ledger's own on-disk writes never make the repo look dirty against itself (mirrors the same param on <code>tg codemap --check</code>).</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/evidence_signing.py</code></td>
+<td><code>receipt_digest</code> (content-hash a finding's artifact bytes) and <code>verify_receipt</code> — Slice 2 findings are content-addressed and integrity-checked using the same functions <code>tg evidence</code> itself uses.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/main.py</code></td>
+<td>The Typer CLI adapter — five commands under <code>ledger_app</code> (registered via <code>app.add_typer(ledger_app, name="ledger")</code> at main.py:10856; the sub-app itself defined at main.py:552). Pure JSON/text formatting and exit-code mapping — no business logic.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="4-on-disk-format-verified-by-actually-creating-and-inspecting-one">4. On-disk format (verified by actually creating and inspecting one)</h2>
+<p>Demo dir: a fresh <code>git init</code> repo with one committed file <code>a.txt</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>$ tg ledger claim . --symbol foo_bar --agent-id agentA --note "editing foo" --json
+</code></pre></div>
+<p>Real (trimmed) output:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"routing_backend"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Ledger"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"routing_reason"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ledger-claim"</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"sidecar_used"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"ledger_schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">"advisory"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"claim"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">    </span><span class="nt">"ledger_schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"claim"</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">"claim_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"claim-20260820210706875425-4e7fc092"</span><span class="p">,</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">"agent_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"agentA"</span><span class="p">,</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">    </span><span class="nt">"symbols"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"foo_bar"</span><span class="p">],</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="w">    </span><span class="nt">"files"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="w">    </span><span class="nt">"scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"."</span><span class="p">,</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a><span class="w">    </span><span class="nt">"intent"</span><span class="p">:</span><span class="w"> </span><span class="s2">"edit"</span><span class="p">,</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">    </span><span class="nt">"note"</span><span class="p">:</span><span class="w"> </span><span class="s2">"editing foo"</span><span class="p">,</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">    </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20T21:07:06.875425+00:00"</span><span class="p">,</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">    </span><span class="nt">"expires_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20T21:22:06.875425+00:00"</span><span class="p">,</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">    </span><span class="nt">"ttl_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mi">900</span><span class="p">,</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">    </span><span class="nt">"revision"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">      </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"present"</span><span class="p">,</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">      </span><span class="nt">"commit_sha"</span><span class="p">:</span><span class="w"> </span><span class="s2">"eccaa8a43cf72fad51487ed8b08df56b41f138b4"</span><span class="p">,</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">      </span><span class="nt">"branch"</span><span class="p">:</span><span class="w"> </span><span class="s2">"master"</span><span class="p">,</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">      </span><span class="nt">"dirty"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">"dirty_tree_sha256"</span><span class="p">:</span><span class="w"> </span><span class="s2">"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"</span><span class="p">,</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">      </span><span class="nt">"dirty_file_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a><span class="w">  </span><span class="nt">"overlaps"</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a><span class="p">}</span>
+</code></pre></div>
+<p>Note explicitly — a real, load-bearing observation, not filler: the outer envelope carries
+<strong>both</strong> <code>schema_version</code> (the shared tg CLI envelope) <strong>and</strong> <code>ledger_schema_version</code>
+(<code>LEDGER_SCHEMA_VERSION = 1</code>, ledger_store.py:117) — two different version fields with different
+meanings, easy to conflate in a naive rebuild.</p>
+<p>Real on-disk layout after that single claim (<code>find .tensor-grep -maxdepth 6</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>.tensor-grep/
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  ledger/
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    claims/
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>      index.json
+</code></pre></div>
+<p>(No <code>.tensor-grep/ledger/findings/</code> subtree until the first <code>record</code> — same "default-inert until
+first write" posture as <code>checkpoint_store.py</code>.)</p>
+<p><code>index.json</code>'s content at this point is a <strong>JSON array</strong>, one object per claim, the same shape as
+the <code>claim</code> object above — i.e. the index IS the array of claim records, no wrapper object (cite
+<code>_load_index</code>/<code>_write_index</code>, ledger_store.py:527, :543).</p>
+<h2 id="5-the-path-scope-footgun-the-load-bearing-trap-demonstrated-live">5. The PATH-scope footgun (the load-bearing trap; demonstrated live)</h2>
+<p>This section documents a real shipped bug (PR #706) and its fix, both currently guarded by
+tests.</p>
+<p><strong>The bug, as it shipped.</strong> From the module's own docstring
+(<code>src/tensor_grep/cli/ledger_store.py</code>, the "PATH scoping" paragraph): <code>claim core/hooks</code> and
+<code>list .</code> each independently resolved <code>root</code> to a DIFFERENT physical directory
+(<code>core/hooks/.tensor-grep/...</code> vs <code>./.tensor-grep/...</code>), so a claim filed from one subtree was
+invisible to a list/release call from another subtree of the SAME repository, with no error or
+signal.</p>
+<p><strong>The fix.</strong> <code>_ledger_physical_root(path)</code> (ledger_store.py:438) canonicalizes to the nearest
+<code>.git</code> ancestor via <code>_discover_repo_root</code> (ledger_store.py:398) — git is treated as the one
+unambiguous repo-boundary signal. Every claim/list/release/record/find call for the SAME
+repository now reads and writes the SAME physical index regardless of which subtree <code>path</code>
+names. The caller's original <code>path</code> is preserved SEPARATELY as that claim's <code>scope</code>
+(root-relative, POSIX-normalized via <code>_normalize_scope</code>, ledger_store.py:450) — it is not lost,
+just no longer used to pick a physical directory. Falls back to today's literal-path behavior,
+unchanged, when no <code>.git</code> is found (a non-git working directory is not regressed — see §7).</p>
+<p><strong>Rollup semantics on <code>list</code>.</strong> Listing a broader/ancestor path shows every live claim scoped to
+it OR to any descendant subtree, via <code>_scope_contains</code> (ledger_store.py:479) — segment-wise
+containment (<code>PurePosixPath.parts</code>), explicitly NOT a raw string-prefix test (the function's own
+docstring gives <code>"core/ho"</code> must not match <code>"core/hoodie"</code> as the reason). Deliberately
+ONE-DIRECTIONAL: listing a narrower path does not show claims scoped to its ancestors.
+<code>release_claim</code> does NOT get this rollup — an exact <code>--claim-id</code>/<code>--symbol</code> match only, because
+rollup-matching a release could silently drop an unrelated sibling agent's claim that happens to
+share a symbol name under a shared ancestor scope. When a release matches nothing, the response
+names what IS live elsewhere (<code>unmatched_reason</code> / <code>live_claims_elsewhere</code>) instead of an
+indistinguishable <code>released_count: 0</code>.</p>
+<p><strong>Example repository-scope round trip:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>$ tg ledger claim . --symbol foo_bar --agent-id agentA --json      # from repo root
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a># scope: "."
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>$ cd core/hooks
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>$ tg ledger claim . --symbol baz_qux --agent-id agentB --json      # from a subtree
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a># scope: "core/hooks"
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>$ cd ../..
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>$ tg ledger list . --json      # from repo root -- sees BOTH claims
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a># "count": 2
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>$ tg ledger list core --json   # from an intermediate ancestor -- sees only the descendant claim
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a># "count": 1  (agentB's claim, scope "core/hooks")
+</code></pre></div>
+<p>This proves the fix end to end: a claim filed from a subtree is visible to a list call from the
+root (and, at an intermediate ancestor, rolls up correctly to only the descendant claim) — exactly
+the failure mode #706 fixed.</p>
+<p><strong>Also demonstrated: overlap reporting and release honesty.</strong> A third claim on the same symbol
+from a different agent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$ tg ledger claim . --symbol foo_bar --agent-id agentC --json
+</code></pre></div>
+<p>returned <code>"overlaps": [{"claim_id": "...4e7fc092", "agent_id": "agentA", ..., "revision_matches":
+true}]</code> — agentA's live claim, reported back, not raised as an error (never blocks, per §1).
+Releasing a non-existent selector afterward:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$ tg ledger release . --symbol nope_symbol --agent-id agentA --json
+</code></pre></div>
+<p>returned <code>"released_count": 0</code>, <code>"unmatched_reason": "No live claim matched the given
+--claim-id/--symbol; 2 live claim(s) exist in this repository -- see live_claims_elsewhere."</code>,
+with <code>live_claims_elsewhere</code> naming both remaining live claims (agentC's <code>.</code>-scoped and agentB's
+<code>core/hooks</code>-scoped) — the honesty fields described above, example output.</p>
+<p><strong>Shared findings scope.</strong> Findings use <code>_ledger_physical_root</code> on the same
+terms as claims, so recording at the repository root and finding from a subtree
+operate on the same index.</p>
+<p><strong>Example findings round trip:</strong> a finding was <code>record</code>ed from the
+repo root (via <code>tg evidence emit --query foo_bar --out receipt.json</code> then <code>tg ledger record .
+--receipt receipt.json --artifact-kind evidence-receipt --symbol foo_bar --agent-id agentA
+--json</code>); <code>tg ledger find . --symbol foo_bar --json</code> from a DIFFERENT subtree (<code>core/hooks</code>)
+returned the SAME finding: <code>"count": 1</code>, <code>"any_fresh": true</code> — record-at-root, find-from-subtree
+round-trips correctly.</p>
+<h2 id="6-contracts-and-traps-a-naive-rebuild-gets-wrong">6. Contracts and traps a naive rebuild gets wrong</h2>
+<ol>
+<li>
+<p><strong>The PATH-scope footgun</strong> — already covered in full in §5.</p>
+</li>
+<li>
+<p><strong>A <code>--files</code> entry naming a path outside the repo root, or an absolute path, must be refused
+   before anything is written — not silently normalized into something inside the root.</strong>
+   Actually demonstrated:</p>
+</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>$ tg ledger claim . --files "../../etc/passwd" --json
+</code></pre></div>
+<p>example error: <code>{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
+   "Refusing claim --files entry outside repo root: '../../etc/passwd'"}}</code>, exit code 2. The same
+   refusal, same <code>fail_closed</code> error code, same exit 2, fires for an absolute path. Cite
+   <code>_normalize_relative_file</code> (ledger_store.py:374) as the guard and <code>LedgerTraversalError</code>
+   (ledger_store.py:202) as the raised type.</p>
+<ol>
+<li><strong>A tampered or corrupted findings blob must fail closed, never be silently served.</strong>
+   Actually demonstrated: after recording a finding successfully, its blob file at
+   <code>.tensor-grep/ledger/findings/blobs/&lt;receipt_sha256&gt;.json</code> was overwritten with unrelated
+   content (<code>{"tampered": true}</code>), then:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>$ tg ledger find . --symbol foo_bar --json
+</code></pre></div>
+<p>example error: <code>{"...": "...", "advisory": true, "error": {"code": "fail_closed", "message":
+   "Finding finding-20260820210740411003-662f8209 blob content does not match its recorded
+   receipt_sha256 (tampered or corrupted)."}}</code>, exit code 2. Cite <code>LedgerIntegrityError</code> (ledger_store.py:223) and the blob-hash
+   re-check at <code>_verify_finding_blob</code> (ledger_store.py:1314) — the recorded <code>receipt_sha256</code> is
+   re-derived from the blob's actual bytes on every read, not trusted from the index alone.</p>
+<ol>
+<li>
+<p><strong>A retention cap must evict by actual creation time, not by list/insertion order.</strong> Naive:
+   <code>records[:max]</code> after prepending the newest. Under concurrent writers, lock-arrival order does
+   not reliably match creation order (the timestamp is stamped before the lock is acquired). Fix:
+   <code>_evict_oldest_over_cap</code> (ledger_store.py:566) sorts explicitly by <code>created_at</code> before slicing,
+   capped at <code>_MAX_LIVE_CLAIMS = 256</code> (ledger_store.py:133). The function's own comment explains
+   why <code>max_records</code> is resolved from the module constant <code>_MAX_LIVE_CLAIMS</code> INSIDE the function
+   body rather than as a parameter default: a default-argument value binds once at
+   function-definition time, so a test doing <code>monkeypatch.setattr(ledger_store, "_MAX_LIVE_CLAIMS",
+   N)</code> would silently have no effect if the constant were captured as a default instead.</p>
+</li>
+<li>
+<p><strong>An unavailable git identity on either side of a comparison must report "unknown", never a
+   guessed match/mismatch.</strong> <code>_revision_matches</code> (ledger_store.py:580) returns <code>None</code> — not
+   <code>True</code> or <code>False</code> — whenever either side's revision <code>status</code> is not <code>"present"</code>. The function's
+   own docstring gives the reasoning: an honest "unknown" beats a fabricated match/mismatch,
+   mirroring how the rest of the codebase treats an unavailable evidence block. Contrast with the
+   non-git-repo case demonstrated in §7: <code>list</code> from an unrelated non-git directory correctly
+   returns <code>count: 0</code> rather than crashing or fabricating a match.</p>
+</li>
+</ol>
+<h2 id="7-non-git-fallback">7. Non-git fallback</h2>
+<p>A fresh, non-git directory with a subdirectory. <code>tg ledger claim . --symbol z --agent-id a1
+--json</code> from the top returns <code>scope: "."</code> (same as the git case — <code>_normalize_scope</code> degrades
+gracefully). But <code>tg ledger list .</code> run from the SUBDIRECTORY (no <code>.git</code> anywhere at all) returns
+<code>count: 0</code> — i.e. without a <code>.git</code> boundary to canonicalize against, the old literal-path
+behavior applies unchanged: the subdirectory resolves to its own separate physical
+<code>.tensor-grep/</code> root, distinct from the parent's. This is a deliberate, documented
+non-regression, not a gap: the fix in §5 only activates inside a git worktree; a non-git
+directory tree keeps the pre-fix, literal-path semantics for every entry point.</p>
+<h2 id="8-what-done-looks-like-validating-a-rebuild">8. What "done" looks like — validating a rebuild</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>python -m pytest tests/unit/test_ledger_store.py tests/unit/test_ledger_cli.py \
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>    tests/unit/test_ledger_concurrency.py tests/unit/test_findings_ledger_is_repo_scoped.py -q
+</code></pre></div>
+<p>Tests that describe important behavior include:</p>
+<ul>
+<li><code>test_ledger_store.py::test_claim_refuses_files_outside_root</code> (trap 2)</li>
+<li><code>test_ledger_store.py::test_claim_subpath_rolls_up_into_root_list</code> (§5 rollup)</li>
+<li><code>test_ledger_store.py::test_old_format_claim_missing_scope_defaults_to_root_and_stays_visible</code>
+  (an on-disk-compatibility trap not otherwise expanded in this guide: a claim written by a
+  pre-fix binary, before <code>scope</code> existed, defaults to <code>"."</code> — the maximally visible scope — so it
+  stays visible under the new rollup filter instead of silently vanishing)</li>
+<li><code>tests/unit/test_findings_ledger_is_repo_scoped.py::test_a_finding_recorded_at_the_root_is_found_from_a_subtree</code>
+  (§5 Slice-2 fix)</li>
+<li><code>tests/unit/test_ledger_cli.py::test_ledger_find_exit_two_on_tampered_blob</code> (trap 3)</li>
+<li><code>tests/unit/test_ledger_concurrency.py::test_concurrent_claim_no_lost_insert</code> (locking)</li>
+</ul>
+<p>Then the two governance gates every docs-only change in this repo owes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>python -m pytest tests/unit/test_public_docs_governance.py tests/unit/test_skill_library_drift.py -q
+</code></pre></div>
+<h2 id="9-explicitly-out-of-scope-for-this-guide">9. Explicitly out of scope for this guide</h2>
+<ul>
+<li><code>tg ledger release</code>'s exact selector-matching semantics (claim-id vs symbol vs agent-scoping)
+  are covered only enough to explain the rollup asymmetry in §5; full selector-combination
+  behavior is not traced line by line.</li>
+<li>The <code>_index_lock.py</code> locking primitive itself (cross-process/cross-thread file locking,
+  stale-lock reclaim) is treated as a given, shared dependency — not re-derived here. See
+  <code>tg-checkpoint.md</code> if a locking deep-dive is needed (<code>checkpoint_store.py</code> uses the same
+  primitive).</li>
+<li>No MCP tool wraps <code>tg ledger</code> — this guide covers only the CLI surface.</li>
+<li><code>--artifact-kind</code> values other than <code>evidence-receipt</code> (<code>blast-radius</code>, <code>context-pack</code>,
+  <code>repo-map</code>) are not illustrated by the round trip above. Exercise each required artifact kind
+  when rebuilding the feature.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

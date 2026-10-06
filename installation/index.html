@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="GPU-Accelerated Semantic Log Parsing CLI">
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
       
       
         <meta name="author" content="tensor-grep team">
@@ -16,14 +16,14 @@
         <link rel="prev" href="..">
       
       
-        <link rel="next" href="../architecture/">
+        <link rel="next" href="../getting-started/">
       
       
         
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -194,13 +194,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
       </div>
@@ -265,17 +265,18 @@
   
   
   
-    <li class="md-tabs__item">
-      <a href="../architecture/" class="md-tabs__link">
-        
-  
-  
     
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
   
-  Architecture
+  
+  Daily Workflows
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -284,17 +285,58 @@
   
   
   
-    <li class="md-tabs__item">
-      <a href="../benchmarks/" class="md-tabs__link">
+    
+    
+      <li class="md-tabs__item">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
         
   
   
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
     
   
-  Benchmarks
 
-      </a>
-    </li>
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
   
 
       
@@ -330,13 +372,13 @@
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
     </div>
@@ -494,10 +536,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#option-1-using-npx-recommended-for-frontend-devs" class="md-nav__link">
+  <a href="#recommended-channel-by-use-case" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 1: Using npx (Recommended for Frontend Devs)
+        Recommended channel by use case
       
     </span>
   </a>
@@ -505,10 +547,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#option-2-pre-compiled-binaries-direct-download" class="md-nav__link">
+  <a href="#install-with-the-managed-script" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 2: Pre-compiled Binaries (Direct Download)
+        Install with the managed script
       
     </span>
   </a>
@@ -516,10 +558,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#option-3-python-pip" class="md-nav__link">
+  <a href="#install-the-python-package" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 3: Python (pip)
+        Install the Python package
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-a-release-binary-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install a release binary directly
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-the-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify the installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-install-provides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the install provides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channels-not-yet-published" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels not yet published
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintainer-publishing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintainer publishing details
       
     </span>
   </a>
@@ -535,6 +632,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -544,6 +697,205 @@
     
       
       
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
   
   
   
@@ -568,9 +920,38 @@
     </li>
   
 
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     
-      
-      
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
   
   
   
@@ -592,6 +973,416 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -623,10 +1414,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#option-1-using-npx-recommended-for-frontend-devs" class="md-nav__link">
+  <a href="#recommended-channel-by-use-case" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 1: Using npx (Recommended for Frontend Devs)
+        Recommended channel by use case
       
     </span>
   </a>
@@ -634,10 +1425,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#option-2-pre-compiled-binaries-direct-download" class="md-nav__link">
+  <a href="#install-with-the-managed-script" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 2: Pre-compiled Binaries (Direct Download)
+        Install with the managed script
       
     </span>
   </a>
@@ -645,10 +1436,65 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#option-3-python-pip" class="md-nav__link">
+  <a href="#install-the-python-package" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Option 3: Python (pip)
+        Install the Python package
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#install-a-release-binary-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install a release binary directly
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#verify-the-installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verify the installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-install-provides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the install provides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#channels-not-yet-published" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Channels not yet published
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintainer-publishing-details" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Maintainer publishing details
       
     </span>
   </a>
@@ -676,28 +1522,91 @@
 
 
 <h1 id="installation">Installation</h1>
-<p><code>tensor-grep</code> is distributed as a standalone binary, meaning you do not need Python installed to run it.</p>
-<h2 id="option-1-using-npx-recommended-for-frontend-devs">Option 1: Using npx (Recommended for Frontend Devs)</h2>
-<p>If you have Node.js installed, you can use <code>npx</code> to download and run the correct binary for your platform automatically:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>npx<span class="w"> </span>tensor-grep<span class="w"> </span>search<span class="w"> </span><span class="s2">&quot;ERROR&quot;</span><span class="w"> </span>app.log
+<p>As of 2026-10-06, the live install channels described here are PyPI, GitHub Release binaries, and the install scripts that download those binaries. npm, Homebrew, and Winget manifests are present in the repository, but those packages are not published to their registries. Check the <a href="../SUPPORT_MATRIX/">support matrix</a> for tested platforms and versions.</p>
+<h2 id="recommended-channel-by-use-case">Recommended channel by use case</h2>
+<table>
+<thead>
+<tr>
+<th>Use case</th>
+<th>Install method</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Use <code>tg</code> from a managed native command with an isolated Python environment</td>
+<td>Install script</td>
+</tr>
+<tr>
+<td>Use Python directly or pin the package in a Python environment</td>
+<td>PyPI with <code>pip</code> or <code>uv</code></td>
+</tr>
+<tr>
+<td>Manage a binary yourself</td>
+<td>GitHub Release asset</td>
+</tr>
+</tbody>
+</table>
+<p>The managed install script is the simplest choice for most individual users. It installs a native CPU front door where a matching release asset is available and manages Python support files separately. The default published native asset profile is CPU. GPU assets require a separate gated build profile and are not the default install.</p>
+<h2 id="install-with-the-managed-script">Install with the managed script</h2>
+<p><strong>Windows PowerShell:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">irm </span><span class="n">https</span><span class="p">://</span><span class="n">raw</span><span class="p">.</span><span class="n">githubusercontent</span><span class="p">.</span><span class="n">com</span><span class="p">/</span><span class="n">oimiragieo</span><span class="p">/</span><span class="n">tensor-grep</span><span class="p">/</span><span class="n">main</span><span class="p">/</span><span class="n">scripts</span><span class="p">/</span><span class="n">install</span><span class="p">.</span><span class="n">ps1</span> <span class="p">|</span> <span class="nb">iex</span>
 </code></pre></div>
-<p>To install it globally via npm:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>npm<span class="w"> </span>install<span class="w"> </span>-g<span class="w"> </span>tensor-grep
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>tg<span class="w"> </span>search<span class="w"> </span><span class="s2">&quot;ERROR&quot;</span><span class="w"> </span>app.log
+<p><strong>Linux or macOS Bash:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>-LsSf<span class="w"> </span>https://raw.githubusercontent.com/oimiragieo/tensor-grep/main/scripts/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
 </code></pre></div>
-<h2 id="option-2-pre-compiled-binaries-direct-download">Option 2: Pre-compiled Binaries (Direct Download)</h2>
-<p>We provide pre-compiled binaries for Windows, Linux, and macOS.</p>
-<ol>
-<li>Go to the <a href="https://github.com/tensor-grep/tensor-grep/releases">GitHub Releases</a> page.</li>
-<li>Download the binary for your platform (e.g., <code>tg-windows-amd64.exe</code>).</li>
-<li>Add it to your system PATH.</li>
-</ol>
-<h2 id="option-3-python-pip">Option 3: Python (pip)</h2>
-<p>If you prefer to run the tool from source or within a Python environment:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>tensor-grep
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>tg<span class="w"> </span>--help
+<p>The script installs <code>tg</code> and prints its version. These commands fetch an installer from the mutable <code>main</code> branch. For a pinned install, use an exact PyPI version or download a GitHub Release asset and verify its checksum before running it.</p>
+<h2 id="install-the-python-package">Install the Python package</h2>
+<p>Install from PyPI with either <code>pip</code> or <code>uv</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python -m pip install tensor-grep
 </code></pre></div>
-<p><em>Note: The pip version requires a configured Python environment and may require additional setup for GPU acceleration (like installing <code>cudf</code> and <code>torch</code>).</em></p>
+<p>Or run the package with <code>uvx</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>uvx tensor-grep --version
+</code></pre></div>
+<p>To pin an exact version, replace <code>X.Y.Z</code> with the version you selected:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>uvx --from 'tensor-grep==X.Y.Z' tg --version
+</code></pre></div>
+<p>Basic Python installation does not require a GPU, dense model, CUDA, or an API key. Optional dense search dependencies belong to the <a href="../EXPERIMENTAL/">experimental feature setup</a>.</p>
+<p>Python users can add <code>tensor-grep[scan]</code> for structural patterns and rules that use
+the ast-grep command, or <code>tensor-grep[ast]</code> for the optional tree-sitter language
+parsers used by code analysis. These are separate from GPU and dense-model dependencies.
+For example:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python -m pip install "tensor-grep[ast,scan]"
+</code></pre></div>
+<p>The Python package path also supports the <code>tg update</code> / <code>tg upgrade</code> workflow. If you need those commands, install with <code>pip</code> or <code>uv</code> rather than a directly downloaded binary.</p>
+<h2 id="install-a-release-binary-directly">Install a release binary directly</h2>
+<p>Download the CPU asset for your system from <a href="https://github.com/oimiragieo/tensor-grep/releases">GitHub Releases</a>:</p>
+<ul>
+<li>Windows x64: <code>tg-windows-amd64-cpu.exe</code></li>
+<li>Linux x64: <code>tg-linux-amd64-cpu</code></li>
+<li>macOS x64: <code>tg-macos-amd64-cpu</code></li>
+</ul>
+<p>Place it in a directory on your <code>PATH</code>, then verify it against that release's <code>CHECKSUMS.txt</code>. This route does not install the managed Python sidecar. Some Python-backed commands therefore need a Python package installation or an explicitly configured sidecar environment.</p>
+<h2 id="verify-the-installation">Verify the installation</h2>
+<p>Open a new terminal and run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>tg --version
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>tg --help
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>tg search -F 'ERROR' .
+</code></pre></div>
+<p>The final command searches the current directory for the literal word <code>ERROR</code>. It can return no matches if your files do not contain that word; that is a valid search result.</p>
+<p>If <code>tg</code> is not found, open a new terminal so it reads updated <code>PATH</code> settings. On Windows, check which command will run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">where</span><span class="p">.</span><span class="n">exe</span> <span class="n">tg</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nb">Get-Command</span> <span class="n">tg</span> <span class="n">-All</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">tg</span> <span class="n">doctor</span> <span class="p">-</span><span class="n">-json</span>
+</code></pre></div>
+<p>If more than one launcher appears, the first one on <code>PATH</code> wins. Follow the install script's diagnostics before removing old launchers.</p>
+<h2 id="what-the-install-provides">What the install provides</h2>
+<p>Managed native installs use the native binary as the command front door and may invoke a managed Python sidecar for Python-backed commands. PyPI installs begin through the Python command. These are different entry points; <a href="../architecture/">architecture</a> describes the split and <a href="../routing_policy/">routing policy</a> describes text-search engine selection.</p>
+<p>The release's normal native asset profile is CPU. GPU execution is experimental and requires the appropriate opt-in build and compatible hardware and drivers. A platform-specific CI build or manifest does not mean that the install will use a GPU. See <a href="../EXPERIMENTAL/">experimental features</a> and the <a href="../runbooks/gpu-troubleshooting/">GPU troubleshooting runbook</a>.</p>
+<h2 id="channels-not-yet-published">Channels not yet published</h2>
+<p>These source manifests are not live registry packages:</p>
+<ul>
+<li>npm/<code>npx</code>: the repository contains an npm wrapper, but <code>tensor-grep</code> is not published to the npm registry.</li>
+<li>Homebrew: the formula is present in the repository, but no published tap is available.</li>
+<li>Winget: a manifest is present in the repository, but it has not been submitted to the public Winget package index.</li>
+</ul>
+<p>Use PyPI, GitHub Releases, or the install scripts until those channels are published. The existence of a manifest does not make its registry install command available.</p>
+<h2 id="maintainer-publishing-details">Maintainer publishing details</h2>
+<p>Release maintainers can use <a href="../package_manager_publish/">package manager publishing</a> for manifest validation and release steps. See the <a href="../RELEASE_CHECKLIST/">release checklist</a> for the broader release process. Users installing <code>tg</code> do not need to follow those procedures.</p>
 
 
 
@@ -750,7 +1659,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

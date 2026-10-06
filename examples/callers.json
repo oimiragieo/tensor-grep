@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-callers",
+  "sidecar_used": false,
+  "path": "C:\\example\\project\\rewrite",
+  "symbol": "add",
+  "definitions": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "callers": [
+    {
+      "name": "add",
+      "kind": "call",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "text": "def add(x, y): return x + y"
+    }
+  ],
+  "files": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "tests": [],
+  "imports": [],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "score": 3
+    }
+  ],
+  "related_paths": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "coverage": {
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "session-context",
+  "sidecar_used": false,
+  "path": "C:\\example\\project\\rewrite",
+  "query": "add",
+  "files": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "file_matches": [
+    {
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "score": 9,
+      "graph_score": 0.5,
+      "reasons": [
+        "definition",
+        "symbol"
+      ]
+    }
+  ],
+  "file_summaries": [
+    {
+      "path": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "symbols": [
+        {
+          "name": "add",
+          "kind": "function",
+          "line": 1
+        }
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1,
+      "score": 3
+    }
+  ],
+  "imports": [],
+  "tests": [],
+  "test_matches": [],
+  "related_paths": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "session_id": "session-20260320071200-rewrite",
+  "coverage": {
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}

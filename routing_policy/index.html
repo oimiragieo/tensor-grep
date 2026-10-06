@@ -1,0 +1,1935 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+        <link rel="prev" href="../architecture/">
+      
+      
+        <link rel="next" href="../benchmarks/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Execution Routing - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#routing-policy" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Execution Routing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#router-entry-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Router entry point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unified-tg-search-decision-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unified tg search decision tree
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unified tg search decision tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-the-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on the tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admitted-plain-text-native-subset-perf-skip-the-rg-subprocess" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admitted plain-text native subset (perf: skip the rg subprocess)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admission-rate-telemetry-default-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admission-rate telemetry (default-OFF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broken-pipe-exit-code-change-all-native-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broken-pipe exit-code change (all native routes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-index-fail-closed-compatibility-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --index fail-closed compatibility contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-specific-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU-specific behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ast-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AST commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-cross-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source cross-reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unknown-top-level-commands-the-dispatch-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unknown top-level commands — the dispatch contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#router-entry-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Router entry point
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#backend-inventory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Backend inventory
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unified-tg-search-decision-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unified tg search decision tree
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unified tg search decision tree">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#notes-on-the-tree" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notes on the tree
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admitted-plain-text-native-subset-perf-skip-the-rg-subprocess" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admitted plain-text native subset (perf: skip the rg subprocess)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#admission-rate-telemetry-default-off" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Admission-rate telemetry (default-OFF)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broken-pipe-exit-code-change-all-native-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broken-pipe exit-code change (all native routes)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-index-fail-closed-compatibility-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --index fail-closed compatibility contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#gpu-specific-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GPU-specific behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ast-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AST commands
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-cross-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source cross-reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unknown-top-level-commands-the-dispatch-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unknown top-level commands — the dispatch contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="routing-policy">Routing Policy</h1>
+<p>This document describes the unified smart router implemented in <code>rust_core/src/routing.rs</code> and consumed by both <code>run_positional_cli</code> and <code>handle_ripgrep_search</code> in <code>rust_core/src/main.rs</code>.</p>
+<h2 id="router-entry-point">Router entry point</h2>
+<p>Text-search routing now flows through a single decision function:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">route_search</span><span class="p">(</span><span class="n">config</span><span class="p">,</span><span class="w"> </span><span class="n">calibration_data</span><span class="p">,</span><span class="w"> </span><span class="n">index_state</span><span class="p">,</span><span class="w"> </span><span class="n">gpu_available</span><span class="p">)</span><span class="w"> </span><span class="p">-&gt;</span><span class="w"> </span><span class="nc">RoutingDecision</span>
+</code></pre></div>
+<p><code>RoutingDecision</code> carries:</p>
+<ul>
+<li><code>selection</code> (<code>NativeCpu</code>, <code>NativeGpu</code>, <code>TrigramIndex</code>, <code>AstBackend</code>, <code>Ripgrep</code>, <code>GpuSidecar</code>)</li>
+<li><code>routing_backend</code></li>
+<li><code>routing_reason</code></li>
+<li><code>sidecar_used</code></li>
+<li><code>allow_rg_fallback</code></li>
+</ul>
+<h2 id="backend-inventory">Backend inventory</h2>
+<table>
+<thead>
+<tr>
+<th>Backend</th>
+<th>Reason string(s)</th>
+<th>What it means in practice</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NativeCpuBackend</code></td>
+<td><code>force_cpu</code>, <code>json_output</code>, <code>plain-text-native</code>, <code>gpu-auto-fallback-cpu</code>, <code>rg_unavailable</code></td>
+<td>Native Rust text search is used for structured explicit <code>--cpu</code>, JSON/NDJSON output, the admitted plain-text subset (see below), GPU fallback, and when <code>rg</code> is unavailable.</td>
+</tr>
+<tr>
+<td><code>NativeGpuBackend</code></td>
+<td><code>gpu-device-ids-explicit-native</code>, <code>gpu-auto-size-threshold</code></td>
+<td>Native Rust CUDA search. Explicit <code>--gpu-device-ids</code> always targets this route first; calibrated auto-routing can also choose it.</td>
+</tr>
+<tr>
+<td><code>TrigramIndex</code></td>
+<td><code>index-accelerated</code></td>
+<td>Explicit <code>--index</code> and warm compatible <code>.tg_index</code> auto-routing both land here. Explicit <code>--index</code> is gated the same way warm auto-routing is (see the fail-closed note below) -- it is not an unconditional override.</td>
+</tr>
+<tr>
+<td><code>AstBackend</code></td>
+<td><code>ast-native</code></td>
+<td>Native Rust AST search/rewrite path for <code>tg run</code>.</td>
+</tr>
+<tr>
+<td><code>GpuSidecar</code></td>
+<td><code>gpu-device-ids-explicit</code></td>
+<td>Python sidecar fallback used when an explicit GPU request cannot stay on the native GPU path (for example non-CUDA builds or unsupported GPU-native search features).</td>
+</tr>
+<tr>
+<td><code>RipgrepBackend</code></td>
+<td><code>rg_passthrough</code></td>
+<td>Default cold-path backend for generic text search when <code>rg</code> is available and the request does not require native structured output. Also used as the final fallback after a forced native CPU route fails.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="unified-tg-search-decision-tree">Unified <code>tg search</code> decision tree</h2>
+<p>The router's priority order is now explicit and shared:</p>
+<ol>
+<li><code>--index</code> -&gt; <code>TrigramIndex</code></li>
+<li><code>--gpu-device-ids</code> -&gt; <code>NativeGpuBackend</code></li>
+<li><code>--force-cpu</code> / <code>--cpu</code> with structured output or no usable <code>rg</code> -&gt; <code>NativeCpuBackend</code></li>
+<li>AST command -&gt; <code>AstBackend</code></li>
+<li>Warm non-stale compatible <code>.tg_index</code> -&gt; <code>TrigramIndex</code></li>
+<li>Corpus <code>&gt;</code> calibrated threshold <strong>and</strong> GPU available <strong>and</strong> calibration positive -&gt; <code>NativeGpuBackend</code></li>
+<li>Otherwise, if <code>rg</code> is available and structured output is not required <strong>and the request is not
+   an admitted plain-text native request</strong> -&gt; <code>RipgrepBackend</code></li>
+<li>Otherwise -&gt; <code>NativeCpuBackend</code></li>
+<li>If the selected native CPU route fails and <code>allow_rg_fallback</code> is true -&gt; <code>RipgrepBackend</code> final fallback</li>
+</ol>
+<h3 id="notes-on-the-tree">Notes on the tree</h3>
+<ul>
+<li><code>--index</code> is the highest priority override for the <em>routing decision</em> (which backend gets picked). It is not an override of <em>search semantics</em> -- see the fail-closed note below for what happens once <code>TrigramIndex</code> is selected.</li>
+<li><code>--gpu-device-ids</code> overrides warm-index and size-based routing.</li>
+<li><code>--force-cpu</code> overrides auto GPU routing, but not an explicit <code>--gpu-device-ids</code> request.</li>
+<li>Plain <code>--cpu</code> / <code>--force-cpu</code> may still use <code>RipgrepBackend</code> for rg-compatible text output parity.</li>
+<li>Warm-index auto-routing only applies when the cache exists, is not stale, and the query is index-compatible (<code>pattern &gt;= 3 bytes</code>, no <code>-v</code>, no <code>-C</code>, no <code>--max-count</code>, no <code>-w</code>, no <code>-g</code>).</li>
+<li>JSON and NDJSON output do <strong>not</strong> bypass a warm compatible index anymore.</li>
+<li>Auto GPU routing is conservative: no fresh positive calibration means stay on the CPU-side cold path.</li>
+<li><code>rg</code> is again the normal cold-path choice for generic text search when available. Native CPU remains the default only for structured outputs, explicit <code>--cpu</code>, warm index, AST, GPU fallback, and the admitted plain-text subset described below.</li>
+</ul>
+<h3 id="admitted-plain-text-native-subset-perf-skip-the-rg-subprocess">Admitted plain-text native subset (perf: skip the <code>rg</code> subprocess)</h3>
+<p>Spawning <code>rg</code> costs a fixed process round trip on every plain-text search. <code>native_can_serve_plain_text</code> (<code>rust_core/src/routing.rs</code>) is the single, fail-closed predicate that decides when the in-process native CPU engine may answer instead. It is deliberately narrow, and every clause is a refusal:</p>
+<ul>
+<li>Exactly one pattern, and that pattern is not the empty string (<code>run_native_search</code> rejects an empty pattern, and the rg fallback then emits a <code>warning:</code> line <code>rg</code> never prints).</li>
+<li>That pattern is <strong>native-renderable</strong>: it contains no line terminator or NUL (literal or escaped) and it compiles with the native matcher. <code>rg</code> refuses a pattern that can match a line terminator (<code>needle\n</code>, <code>\n</code>, <code>[\n]</code>) or a NUL (<code>\x00</code>) with <strong>exit 2 plus a diagnostic</strong>, while the native matcher accepts it and succeeds with <strong>zero matches (exit 1, silent)</strong> -- an exit-code regression an agent branching on 2-vs-1 would misread as "no matches". A pattern that fails to compile (<code>[</code>, <code>(</code>, <code>\Qx\E</code>, <code>a{500}{500}{500}</code>) exits 2 either way, but only after the rg-fallback net prints a <code>warning: native CPU search failed...</code> line. The check is deliberately over-broad (it also refuses <code>\x</code>/<code>\u</code> escapes wholesale): over-refusal costs one <code>rg</code> spawn, under-refusal costs correctness.</li>
+<li>Exactly one PATH operand that resolves to an existing <strong>regular file</strong> (never a directory -- walking diverges from <code>rg</code> on binary-file messages and on emission order).</li>
+<li>That file passes a <strong>full-content</strong> probe: no <code>\r</code> byte, valid UTF-8, no NUL byte, and within a 512 KiB cap. These were originally DATA-level divergences in the shared native emitter; <strong>the shared emitter handles these cases</strong> (<code>native_search.rs</code>'s <code>strip_native_line_terminator</code>, <code>native_json_text_fields</code>, and <code>emit_binary_match_warning</code>). This probe clause still refuses all three cases as a deliberate conservative margin -- relaxing it to reclaim the perf win on CRLF/non-UTF-8/binary content is a disclosed, not-yet-done follow-up, not a live correctness gap:</li>
+<li>CRLF: the native plain sink used to strip the trailing <code>\r</code> (no CRLF line terminator is ever installed on this path) where <code>rg</code> keeps it.</li>
+<li>non-UTF-8: the native plain sink used <code>grep_searcher::sinks::Lossy</code> and substituted U+FFFD where <code>rg</code> writes raw bytes.</li>
+<li>NUL: <code>rg</code> spells its binary-match notice <code>"\0"</code> where the native engine used to spell it <code>"/0"</code>.</li>
+<li>The PATH was supplied explicitly (an implicit path makes <code>rg</code> print <code>name</code> where the native engine prints <code>./name</code>).</li>
+<li>The PATH is <strong>not</strong> <code>-</code>. That is ripgrep's stdin sentinel, but <code>Path::new("-").is_file()</code> is true whenever a file literally named <code>-</code> exists in the working directory, so the native engine would search that file while <code>rg</code> searched stdin -- exit 0, no stderr, plausible output, wrong data source. Also covers <code>-- -</code> and <code>-e PATTERN -</code>.</li>
+<li>The file's reported size equals the bytes actually read. This refuses pseudo-files such as <code>/proc/self/status</code>, which is a regular file with <code>st_size</code> 0 that returns ~1.4 KB of clean UTF-8 on read: its content is generated per-open, so the probe cannot describe what the search will subsequently read. (<code>/dev/*</code> and FIFOs are already refused for not being regular files; a symlink to a regular file is admitted and correct, since both engines follow an explicit symlink operand.)</li>
+<li>stdout is <strong>not</strong> a terminal (<code>rg</code> is spawned with inherited stdio, so on a terminal it renders its grouped/heading layout with color).</li>
+<li><code>$RIPGREP_CONFIG_PATH</code> is <strong>not</strong> set to a non-empty value. This is the one clause about the process ENVIRONMENT rather than the request: <code>execute_ripgrep_search</code> never clears the environment and passes <code>--no-config</code> only when the user asks for it, so a plain-text search that reaches <code>rg</code> today applies the user's rg config, while the in-process native engine reads no rg config at all. A config containing <code>-i</code> changes which lines match, <code>--vimgrep</code> changes the entire output format, and a dangling path makes <code>rg</code> print a read-failure diagnostic the native route would omit. An empty value is ignored by <code>rg</code>, so the guard is "set AND non-empty".</li>
+<li>No <code>--json</code>, <code>--ndjson</code>, or <code>--format</code>.</li>
+<li>Every flag on the command line is in <code>PLAIN_TEXT_NATIVE_ALLOWED_FLAGS</code>: <code>-i</code>/<code>--ignore-case</code>, <code>-F</code>/<code>--fixed-strings</code>, <code>-w</code>/<code>--word-regexp</code>, <code>-n</code>/<code>--line-number</code>, <code>--verbose</code> (combined short clusters such as <code>-in</code> are accepted, matching clap).</li>
+</ul>
+<p>Anything outside that subset keeps spawning <code>rg</code>, unchanged. The route reports <code>NativeCpuBackend</code> / <code>plain-text-native</code> and keeps <code>allow_rg_fallback = true</code>, so a native failure still falls back to real <code>rg</code>. <code>--verbose</code> stderr intentionally reports the new backend -- that is the flag's purpose.</p>
+<p>The 512 KiB cap bounds the admission probe. Files above the cap keep using <code>rg</code>;
+the routing contract does not imply a speed advantage for every admitted file.</p>
+<p>The two expensive clauses (the pattern compile and the file probe) are evaluated <strong>last</strong>, only after <code>plain_text_native_cheap_checks_pass</code> has cleared every free refusal. That is a latency contract: an interactive terminal search, a <code>--json</code>/<code>--ndjson</code> run and an <code>-A</code>/<code>-B</code>/<code>-C</code> run all reach the clap-side adapter and must not pay for a file read on their way to <code>rg</code>. The probe is also memoized per path, because both adapters run on an admitted request.</p>
+<h3 id="admission-rate-telemetry-default-off">Admission-rate telemetry (default-OFF)</h3>
+<p>Use route-specific instrumentation to measure this early passthrough; benchmark
+scenarios that force JSON output do not exercise the same route.</p>
+<p>Set <code>TG_ROUTE_TELEMETRY=1</code> and <code>tg</code> appends one JSON Lines record per eligibility evaluation, carrying the stage (<code>frontdoor</code> or <code>clap</code>) and every clause. The file defaults to the OS temp directory (never the workspace) and is overridable with <code>TG_ROUTE_TELEMETRY_PATH</code>. Emission is best-effort and fail-silent: telemetry must never change what a search returns.</p>
+<p>Any existing workload works unmodified:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nv">TG_ROUTE_TELEMETRY</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="nv">TG_ROUTE_TELEMETRY_PATH</span><span class="o">=</span>/tmp/route.jsonl<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/run_benchmarks.py
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>python<span class="w"> </span>scripts/summarize_route_telemetry.py<span class="w"> </span>/tmp/route.jsonl
+</code></pre></div>
+<p>The summary reports the admit rate per stage and a histogram of which clause refused first. The <code>clap</code> stage is the real admission surface, since an admitted request always reaches it.</p>
+<h3 id="broken-pipe-exit-code-change-all-native-routes">Broken-pipe exit-code change (all native routes)</h3>
+<p>A consumer that closes the pipe early (<code>tg ... | head -1</code>, <code>| less</code>, an agent reading N lines) is normal termination, not a search failure. Previously the native engine surfaced it as an error: exit <strong>2</strong> plus <code>native standard output search failed for &lt;path&gt;</code> on stderr, and -- where an rg fallback was configured -- a <code>warning: native CPU search failed...</code> line followed by a full re-run of the search into the already-closed pipe. It now exits quietly with ripgrep's code (<strong>1</strong> for the single-file shape this route admits).</p>
+<p>This is a <strong>contract change on a machine-facing surface</strong>: <code>--json</code> and <code>--ndjson</code> consumers that closed the pipe early previously saw exit 2 and now see exit 1, with no structured error emitted (there is no longer anywhere to emit it). The change applies to every native route -- <code>--cpu</code>, <code>--json</code>/<code>--ndjson</code>, rg-unavailable, and the plain-text route -- because a broken pipe was never a search failure on any of them.</p>
+<p>The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-<code>SearchArgs</code> one on the clap path) and they are required to return identical verdicts for every shape the agreement test lists, because the front door is not the only path into <code>route_search</code>. The general invariant is one-directional -- the front door may be stricter, never looser -- and attached-value short spellings (<code>-eneedle</code>) are a known, deliberate asymmetry in that safe direction.</p>
+<h3 id="-index-fail-closed-compatibility-contract"><code>--index</code> fail-closed compatibility contract</h3>
+<p><code>route_search</code> selects <code>TrigramIndex</code> for explicit <code>--index</code> before any compatibility check
+runs (<code>routing.rs:234-236</code>), so <code>handle_index_search</code> (<code>main.rs</code>) enforces the following
+itself, <em>after</em> routing, before running the query:</p>
+<ul>
+<li><strong>Refused (fails closed with a non-zero exit and an error naming the flag):</strong> <code>-v</code>/<code>--invert-match</code>,
+  context (<code>-C</code>/<code>-A</code>/<code>-B</code>), <code>-m</code>/<code>--max-count</code>, <code>-w</code>/<code>--word-regexp</code>, <code>-g</code>/<code>--glob</code>, and multiple
+  <code>-e</code> patterns. These are the same conditions <code>detect_warm_index_state</code> already enforces for
+  warm-index auto-routing (<code>main.rs</code>) -- <code>run_index_query</code> never consults any of them, so honoring
+  <code>--index</code> together with one of them used to silently drop the flag instead of honoring or
+  refusing it (for example, <code>--index -v</code> returned the <em>non-inverted</em> result set with exit 0).</li>
+<li><strong>Transparently handled via an internal full-scan fallback (no error, correct results):</strong>
+  fixed-string patterns shorter than the 3-byte trigram length, and non-ASCII <code>--ignore-case</code>
+  fixed-string patterns. Both cases have zero or mismatched trigrams to prefilter on, so
+  <code>TrigramIndex::search</code> falls back to scanning every indexed file directly instead of trusting an
+  empty/mismatched trigram candidate set as "no match" (<code>index.rs</code>,
+  <code>fixed_string_candidate_selection</code>).</li>
+<li><strong><code>--smart-case</code> (<code>-S</code>) honored per pattern:</strong> <code>-S</code> is not diverted to ripgrep in JSON/NDJSON
+  output mode (<code>search_requires_ripgrep_passthrough</code> gates it behind <code>!json &amp;&amp; !ndjson</code>), so it
+  reaches the index. <code>run_index_query</code> resolves case-sensitivity per pattern
+  (<code>args.ignore_case || (args.smart_case &amp;&amp; smart_case_pattern_is_case_insensitive(pattern))</code>)
+  before calling <code>index.search</code>, so an all-lowercase <code>-S</code> pattern searches case-insensitively
+  (matching an uppercase occurrence) and a pattern containing an uppercase char stays
+  case-sensitive -- identical to native smart-case. This is honored rather than refused because
+  it is index-doable and reuses the same <code>ignore_case</code> path (and its H1b/H1c full-scan safety
+  nets); before this fix <code>-S</code> was silently dropped to a case-sensitive query (a false negative,
+  exit 0). Covers both explicit <code>--index</code> and warm auto-routing, since both reach
+  <code>run_index_query</code>.</li>
+<li><strong><code>--no-ignore</code> mode tracking:</strong> the on-disk index format records the <code>no_ignore</code> mode it was
+  built with (the <code>no_ignore</code> byte was introduced in <code>INDEX_FORMAT_VERSION</code> 4; the current format
+  version is higher -- readers/writers derive it from the constant, never a literal). A query whose
+  <code>--no-ignore</code> request disagrees with the
+  stored build mode is treated as stale and triggers a rebuild under the query's requested mode --
+  this closes both an information-disclosure gap (an index built with <code>--no-ignore</code> silently
+  leaking gitignored content into a later default query) and a false-negative gap (an index built
+  without <code>--no-ignore</code> silently missing gitignored files a later <code>--no-ignore</code> query asked for).
+  This applies to warm auto-routing too, via the same <code>is_stale</code>/<code>staleness_reason</code> check.</li>
+</ul>
+<h2 id="gpu-specific-behavior">GPU-specific behavior</h2>
+<p>The smart router chooses <code>NativeGpuBackend</code> for both explicit and calibrated auto GPU paths, but execution still distinguishes two cases in <code>main.rs</code>:</p>
+<ul>
+<li><strong>Explicit GPU routing:</strong> <code>handle_gpu_search(...)</code></li>
+<li>stays on native GPU when the search shape is GPU-native compatible</li>
+<li>falls back to <code>GpuSidecar</code> for unsupported explicit GPU modes</li>
+<li><strong>Auto GPU routing:</strong> <code>handle_auto_gpu_search(...)</code></li>
+<li>only attempted when the router already proved the search is GPU-native compatible</li>
+<li>if CUDA is unavailable, falls back to <code>NativeCpuBackend</code> with <code>routing_reason = "gpu-auto-fallback-cpu"</code></li>
+<li>CPU fallback emits <code>requested_gpu_device_ids</code> for the user request and <code>routing_gpu_device_ids = []</code>; normal output and docs must call it CPU fallback, not GPU acceleration</li>
+<li>if GPU initialization fails fatally, exits with a user-facing error instead of silently changing backends</li>
+</ul>
+<h2 id="ast-commands">AST commands</h2>
+<p><code>tg run</code> is policy-routed to <code>AstBackend</code> with <code>routing_reason = "ast-native"</code> by default.</p>
+<p>However, <strong>actual runtime native AST execution depends on <code>AstBackend().is_available()</code> in the environment.</strong> If the required dependencies (like <code>torch-geometric</code> or <code>tree-sitter</code>) are not present or the environment lacks support, the router will automatically fall back to <code>AstGrepWrapperBackend</code> (the <code>ast-grep</code> CLI). Additionally, string-based metavariable queries (like <code>def $F($$$ARGS)</code>) that cannot be natively parsed as S-expressions will deliberately trigger this fallback.</p>
+<p>That applies to:</p>
+<ul>
+<li>AST search</li>
+<li>rewrite planning (<code>--rewrite</code>)</li>
+<li>rewrite apply (<code>--apply</code>)</li>
+<li>rewrite diff (<code>--diff</code>)</li>
+<li>batch rewrite flows</li>
+</ul>
+<h2 id="source-cross-reference">Source cross-reference</h2>
+<table>
+<thead>
+<tr>
+<th>Source area</th>
+<th>Current function / block</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Unified routing data types and decision tree</td>
+<td><code>rust_core/src/routing.rs</code> (<code>BackendSelection</code>, <code>RoutingDecision</code>, <code>SearchRoutingConfig</code>, <code>route_search</code>)</td>
+</tr>
+<tr>
+<td>Positional CLI smart-routing call site</td>
+<td><code>run_positional_cli</code></td>
+</tr>
+<tr>
+<td>Search subcommand smart-routing call site</td>
+<td><code>handle_ripgrep_search</code></td>
+</tr>
+<tr>
+<td>Warm-index detection</td>
+<td><code>detect_warm_index_state</code></td>
+</tr>
+<tr>
+<td>Calibration loading for routing</td>
+<td><code>load_search_routing_calibration</code></td>
+</tr>
+<tr>
+<td>Explicit / rebuildable index execution</td>
+<td><code>handle_index_search</code> + <code>run_index_query</code></td>
+</tr>
+<tr>
+<td>Explicit GPU routing execution</td>
+<td><code>handle_gpu_search</code></td>
+</tr>
+<tr>
+<td>Auto GPU execution + CPU fallback</td>
+<td><code>handle_auto_gpu_search</code></td>
+</tr>
+<tr>
+<td>Explicit GPU sidecar fallback</td>
+<td><code>handle_gpu_sidecar_search</code></td>
+</tr>
+<tr>
+<td>AST routing execution</td>
+<td><code>handle_ast_run</code></td>
+</tr>
+<tr>
+<td>Unknown top-level command refusal (A90)</td>
+<td>Python <code>bootstrap._top_level_command_refusal</code> / native <code>top_level_unknown_command_refusal</code> + shared <code>python_set_members</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="unknown-top-level-commands-the-dispatch-contract">Unknown top-level commands — the dispatch contract</h2>
+<p>An unknown top-level command must <strong>never</strong> be swallowed into <code>tg search</code> (which would fake a
+nonexistent command's existence at exit 0). The refusal surface and its boundaries:</p>
+<ul>
+<li><strong>Refuses (exit 2, stderr-only, <code>error.code=unknown_command</code> on the JSON path):</strong></li>
+<li>a RESERVED (roadmap, not-yet-registered) top-level command followed by any flag
+    (<code>tg edit-ready --json</code>), and</li>
+<li>any unknown first arg followed by <code>--help</code>/<code>-h</code> (a nonexistent command has no help).</li>
+<li><strong>Stays search:</strong> bare <code>tg PATTERN</code>, <code>tg PATTERN PATH</code>, unreserved pattern+flag
+  (<code>tg hello --json</code>), reserved+positional with no flag (<code>tg edit-ready docs/</code>), and any
+  dash-first invocation (<code>tg -V</code>, <code>tg --bogus --help</code>). The escape hatch is the explicit
+  <code>tg search &lt;pattern&gt; ...</code> form.</li>
+<li>The reserved set (<code>RESERVED_TOP_LEVEL_COMMANDS</code> in <code>src/tensor_grep/cli/commands.py</code>:
+  <code>edit-ready</code>, <code>verify-edit</code>, <code>workspace</code>) is roadmap-owned; a reserved name is NOT a registered
+  command (<code>RESERVED ∩ KNOWN == ∅</code>, lifecycle-pinned), and is removed from reserved when the
+  command is registered.</li>
+<li>Known/nearest membership is extracted SCOPED to each set block, quote/escape-aware, by the
+  shared <code>python_set_members</code> helper (native) — never a bare quoted-literal scan. <code>nearest[]</code>
+  uses Levenshtein distance &lt;= 3, hides internal <code>__</code> names, caps at 5.</li>
+</ul>
+<p>This policy is enforced by <code>tests/e2e/test_routing_parity.py</code>
+(<code>test_unknown_command_refusal_parity_across_launchers</code>, 15 rows), the Python unit
+<code>_top_level_command_refusal</code> tests, and the native <code>top_level_unknown_command_refusal</code> tests.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

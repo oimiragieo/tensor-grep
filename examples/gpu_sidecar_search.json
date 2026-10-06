@@ -1,0 +1,26 @@
+{
+  "matches": [
+    {
+      "file": "C:\\example\\project\\search_gpu\\sample_a.log",
+      "line_number": 2,
+      "text": "ERROR database failed"
+    },
+    {
+      "file": "C:\\example\\project\\search_gpu\\sample_b.log",
+      "line_number": 2,
+      "text": "ERROR database failed"
+    }
+  ],
+  "requested_gpu_device_ids": [
+    0
+  ],
+  "routing_backend": "GpuSidecar",
+  "routing_gpu_device_ids": [
+    0
+  ],
+  "routing_reason": "gpu-device-ids-explicit",
+  "sidecar_used": true,
+  "total_files": 2,
+  "total_matches": 2,
+  "version": 1
+}

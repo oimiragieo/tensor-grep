@@ -6,22 +6,24 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="GPU-Accelerated Semantic Log Parsing CLI">
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
       
       
         <meta name="author" content="tensor-grep team">
       
       
       
-        <link rel="prev" href="../architecture/">
+        <link rel="prev" href="../routing_policy/">
       
+      
+        <link rel="next" href="../tool_comparison/">
       
       
         
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -192,13 +194,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
       </div>
@@ -261,17 +263,18 @@
   
   
   
-    <li class="md-tabs__item">
-      <a href="../architecture/" class="md-tabs__link">
-        
-  
-  
     
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
   
-  Architecture
+  
+  Daily Workflows
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -282,17 +285,58 @@
     
   
   
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
         
   
   
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
     
   
-  Benchmarks
 
-      </a>
-    </li>
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
   
 
       
@@ -328,13 +372,13 @@
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
     </div>
@@ -450,6 +494,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -459,6 +559,208 @@
     
       
       
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
   
   
   
@@ -483,9 +785,38 @@
     </li>
   
 
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     
-      
-      
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
   
   
     
@@ -551,10 +882,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#semantic-classification-vs-multi-pass-ripgrep" class="md-nav__link">
+  <a href="#benchmark-matrix" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantic Classification vs Multi-Pass Ripgrep
+        Benchmark Matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#artifact-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Artifact Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-workflow-benchmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Workflow Benchmark
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-benchmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a benchmark
       
     </span>
   </a>
@@ -564,6 +939,416 @@
     </ul>
   
 </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
       
     </li>
   
@@ -596,10 +1381,54 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#semantic-classification-vs-multi-pass-ripgrep" class="md-nav__link">
+  <a href="#benchmark-matrix" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Semantic Classification vs Multi-Pass Ripgrep
+        Benchmark Matrix
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#artifact-conventions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Artifact Conventions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-workflow-benchmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent Workflow Benchmark
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#acceptance-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Acceptance Rules
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-a-benchmark" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running a benchmark
       
     </span>
   </a>
@@ -627,33 +1456,190 @@
 
 
 <h1 id="benchmarks">Benchmarks</h1>
-<p><code>tensor-grep</code> is designed to be the fastest log parsing tool available, especially for complex classification tasks.</p>
-<h2 id="semantic-classification-vs-multi-pass-ripgrep">Semantic Classification vs Multi-Pass Ripgrep</h2>
-<p>When checking a log file for multiple distinct error conditions or semantic categories, traditional tools like <code>ripgrep</code> require multiple passes or complex, slow regexes. </p>
-<p><code>tensor-grep</code> leverages cyBERT to classify lines in a single pass.</p>
-<p><strong>Test:</strong> 10,000 line mixed log file, 6 different pattern classifications.</p>
+<p><code>tensor-grep</code> is designed as a routing-first search engine that keeps strict behavioral parity while selecting the best backend per query class.</p>
+<h2 id="benchmark-matrix">Benchmark Matrix</h2>
+<p>These scripts and artifact paths are the accepted benchmark surface for the current line.</p>
 <table>
 <thead>
 <tr>
-<th>Tool</th>
-<th>Time</th>
-<th>Passes Required</th>
+<th>Surface</th>
+<th>Script</th>
+<th>Default artifact</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>ripgrep</code></td>
-<td>0.607s</td>
-<td>6</td>
+<td>End-to-end CLI text search</td>
+<td><code>benchmarks/run_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_benchmarks.json</code></td>
 </tr>
 <tr>
-<td><code>tensor-grep</code></td>
-<td><strong>0.199s</strong></td>
-<td>1</td>
+<td>Cold-path startup/control-plane attribution</td>
+<td><code>benchmarks/run_cold_path_attribution.py</code></td>
+<td><code>artifacts/bench_cold_path_attribution.json</code></td>
+</tr>
+<tr>
+<td>Native CPU large-file / many-file search</td>
+<td><code>benchmarks/run_native_cpu_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_native_cpu_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>Host-local CLI tool comparison</td>
+<td><code>benchmarks/run_tool_comparison_benchmarks.py</code></td>
+<td><code>artifacts/bench_tool_comparison.json</code></td>
+</tr>
+<tr>
+<td>Repeated-query / hot-cache search</td>
+<td><code>benchmarks/run_hot_query_benchmarks.py</code></td>
+<td><code>artifacts/bench_hot_query_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>AST single-query gate</td>
+<td><code>benchmarks/run_ast_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_ast_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>AST multi-language search</td>
+<td><code>benchmarks/run_ast_multilang_benchmarks.py</code></td>
+<td><code>artifacts/bench_ast_multilang.json</code></td>
+</tr>
+<tr>
+<td>AST rewrite plan/diff/apply</td>
+<td><code>benchmarks/run_ast_rewrite_benchmarks.py</code></td>
+<td><code>artifacts/bench_ast_rewrite.json</code></td>
+</tr>
+<tr>
+<td>AST workflow startup</td>
+<td><code>benchmarks/run_ast_workflow_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_ast_workflow_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>Provider-mode hardcase navigation</td>
+<td><code>benchmarks/run_provider_navigation_bakeoff.py</code></td>
+<td><code>artifacts/bench_provider_navigation_click_hardcases.json</code></td>
+</tr>
+<tr>
+<td>Repository planning retrieval</td>
+<td><code>benchmarks/run_repo_retrieval_benchmarks.py</code></td>
+<td><code>artifacts/bench_repo_retrieval_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>Editor-plane context render</td>
+<td><code>benchmarks/run_context_render_benchmarks.py</code></td>
+<td><code>artifacts/bench_context_render.json</code></td>
+</tr>
+<tr>
+<td>Blast-radius render latency</td>
+<td><code>benchmarks/run_blast_radius_benchmarks.py</code></td>
+<td><code>artifacts/bench_blast_radius.json</code></td>
+</tr>
+<tr>
+<td>Python GPU/NLP benchmark</td>
+<td><code>benchmarks/run_gpu_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_gpu_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>Native GPU crossover / throughput</td>
+<td><code>benchmarks/run_gpu_native_benchmarks.py</code></td>
+<td><code>artifacts/bench_run_gpu_native_benchmarks.json</code></td>
+</tr>
+<tr>
+<td>Agent capsule + edit loop workflow</td>
+<td><code>benchmarks/run_agent_workflow_benchmarks.py</code></td>
+<td><code>artifacts/bench_agent_workflow.json</code></td>
+</tr>
+<tr>
+<td>Agent end-to-end success harness</td>
+<td><code>benchmarks/run_agent_success_harness.py</code></td>
+<td><code>artifacts/bench_agent_success_harness.json</code></td>
+</tr>
+<tr>
+<td>Harness loop</td>
+<td><code>benchmarks/run_harness_loop_benchmark.py</code></td>
+<td><code>artifacts/bench_harness_loop.json</code></td>
+</tr>
+<tr>
+<td>Index build/query scaling</td>
+<td><code>benchmarks/run_index_scaling_benchmark.py</code></td>
+<td><code>artifacts/bench_index_scaling.json</code></td>
 </tr>
 </tbody>
 </table>
-<p><em>Result: <code>tensor-grep</code> is ~3x faster for complex semantic parsing.</em></p>
+<h2 id="artifact-conventions">Artifact Conventions</h2>
+<p>Every committed benchmark artifact should make the measurement surface machine-readable.</p>
+<p>Required top-level fields vary by suite, but benchmark artifacts should consistently expose:</p>
+<ul>
+<li><code>suite</code></li>
+<li><code>artifact</code></li>
+<li><code>environment</code></li>
+<li><code>generated_at_epoch_s</code></li>
+<li><code>rows</code> or equivalent summary payload</li>
+</ul>
+<p>Environment blocks should at minimum record:</p>
+<ul>
+<li><code>platform</code></li>
+<li><code>machine</code></li>
+<li><code>python_version</code> when Python orchestrates the benchmark</li>
+</ul>
+<p>For <code>run_benchmarks.py</code>, the environment block should also record <code>tg_launcher_mode</code> and <code>tg_launcher_command_kind</code> so cold-path comparisons stay tied to both the configured entrypoint experiment and the concrete command kind being timed. This prevents native-exe, <code>.cmd</code> shim, <code>uv</code>, or Python-module overhead from being combined into one search-speed claim. Benchmark artifacts should also record <code>tg_binary_kind</code>, <code>tg_binary_version</code>, <code>tg_binary_expected_version</code>, and <code>tg_binary_version_status</code> so stale in-tree native binaries are visible. A top-level <code>warnings</code> array is required when the timed <code>tg</code> entrypoint is a shim/interpreter route. A stale in-tree native tg binary blocks claim-quality benchmark scripts by default; pass <code>--allow-claim-unsafe-launcher</code> only for exploratory timing.</p>
+<p>For <code>run_cold_path_attribution.py</code>, every row should record the requested <code>launcher_mode</code>, <code>resolved_launcher_mode</code>, and <code>tg_launcher_command_kind</code>, plus row-local <code>warnings</code> when the timed command includes a shim/interpreter route. The top-level <code>environment.tg_launcher_command_kinds</code> map should summarize the concrete command kind for each resolved launcher mode, and the top-level <code>warnings</code> array should aggregate binary and launcher warnings. Stale in-tree native binaries block claim-quality cold-path attribution by default; pass <code>--allow-claim-unsafe-launcher</code> only when the output is explicitly exploratory.</p>
+<p>For <code>run_repo_retrieval_benchmarks.py</code>, the metrics block should expose retrieval-quality and context-efficiency keys explicitly:</p>
+<ul>
+<li><code>recall_at_k</code></li>
+<li><code>precision_at_k</code></li>
+<li><code>mrr_at_k</code></li>
+<li><code>ndcg_at_k</code></li>
+<li><code>file_f1</code></li>
+<li><code>line_f1</code></li>
+<li><code>p50_latency_ms</code></li>
+<li><code>token_budget_mean</code></li>
+</ul>
+<p>For <code>run_agent_workflow_benchmarks.py</code>, the artifact is the workflow measurement surface, not a raw grep-speed comparison. It must include the literal positioning string <code>agent-native workflow benchmark; not a cold exact-text speed claim</code>, the top-level <code>workflow_surfaces</code> list, and separate <code>agent_capsule</code> and <code>edit_loop</code> sections. The capsule section should report confidence, alternatives, validation alignment, snippets, rollback, and edit order signals; the edit-loop section should report search/plan/apply/verify medians and pass/fail state.</p>
+<p>For <code>run_agent_success_harness.py</code>, the artifact is an end-to-end agent success proof, not a raw grep-speed comparison. It must include the literal positioning string <code>agent-native end-to-end success harness; not a raw search speed claim</code>, the top-level <code>workflow_surfaces</code> list, top-level <code>warnings</code>, <code>environment.tg_binary_version_status</code>, and scenario rows that cover query intent, rendered context, edit seed, apply, verify, and rollback. Like the raw benchmark scripts, it refuses stale in-tree native <code>tg</code> binaries by default unless <code>--allow-claim-unsafe-launcher</code> explicitly marks the run as exploratory.</p>
+<h2 id="agent-workflow-benchmark">Agent Workflow Benchmark</h2>
+<p><code>benchmarks/run_agent_workflow_benchmarks.py</code> measures agent capsule routing plus safe edit-loop execution. It intentionally measures an agent-native workflow benchmark; not a cold exact-text speed claim.</p>
+<p>The default artifact is <code>artifacts/bench_agent_workflow.json</code> and exposes two surfaces:</p>
+<ul>
+<li><code>agent_capsule</code>: runs ambiguous and explicit invoice-edit tasks through <code>tg agent --json</code>, then records confidence, alternatives, validation alignment, snippets, rollback, and edit order contract metrics.</li>
+<li><code>edit_loop</code>: reuses the AST search -&gt; rewrite plan -&gt; apply -&gt; verify harness loop and records phase medians for <code>search_s</code>, <code>plan_s</code>, <code>apply_s</code>, and <code>verify_s</code>.</li>
+</ul>
+<p>Use this artifact when evaluating improvements to confidence honesty, alternative-target surfacing, validation-command filtering, rollback visibility, edit-order guidance, or whole-loop edit latency. Do not use it to claim that <code>tg</code> beats <code>rg</code> for cold exact-text search.</p>
+<p><code>benchmarks/run_agent_success_harness.py</code> is the end-to-end workflow harness. It runs a bounded scenario from query intent through <code>tg agent</code>, <code>context-render</code>, <code>edit-plan</code>, checkpoint creation, rewrite apply, verification, and checkpoint rollback. The default artifact is <code>artifacts/bench_agent_success_harness.json</code> and exposes these <code>workflow_surfaces</code>: <code>intent</code>, <code>context</code>, <code>edit_seed</code>, <code>apply</code>, <code>verify</code>, and <code>rollback</code>. It now applies the same stale in-tree binary refusal used by claim-quality benchmark scripts, with <code>--allow-claim-unsafe-launcher</code> reserved for exploratory runs. Use it to prove an agent can identify the target, receive context, seed a safe edit, mutate only under checkpoint, verify the mutation, and restore the corpus. It is not a raw search speed claim.</p>
+<h2 id="acceptance-rules">Acceptance Rules</h2>
+<ul>
+<li><strong>Control-plane changes require artifacts:</strong> If a patch changes launcher routing, frontend dispatch, or output formatting, it MUST include updated benchmark artifacts (e.g., <code>artifacts/bench_run_benchmarks.json</code>).</li>
+<li><strong>Regression policy:</strong> If a patch is correct but regresses accepted benchmark lines, it must be either rejected or explicitly justified in the benchmark result and change description.</li>
+<li>Do not update benchmark docs or claims until the relevant artifact has been rerun on the accepted line.</li>
+<li>Compare against the current accepted baseline, not memory.</li>
+<li>Reject wins that only appear in microprofiles if end-to-end artifacts regress.</li>
+<li>Keep backend labels explicit in artifacts so routing claims are auditable.</li>
+<li>Freeze artifact naming once a suite becomes part of release or contract governance.</li>
+</ul>
+<h2 id="running-a-benchmark">Running a benchmark</h2>
+<p>Install the dependencies required by the selected suite:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>dev<span class="w"> </span>--extra<span class="w"> </span>ast
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>uv<span class="w"> </span>sync<span class="w"> </span>--extra<span class="w"> </span>dev<span class="w"> </span>--extra<span class="w"> </span>bench<span class="w"> </span>--extra<span class="w"> </span>nlp
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/run_benchmarks.py<span class="w"> </span>--output<span class="w"> </span>artifacts/bench_run_benchmarks.json
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>benchmarks/run_tool_comparison_benchmarks.py<span class="w"> </span>--output<span class="w"> </span>artifacts/bench_tool_comparison.json
+</code></pre></div>
+<p>Run resource-intensive suites on a dedicated benchmark machine. Record the source
+revision, executable version, dependency versions, corpus generator and seed,
+flags, sample count, warmup policy, and whether the cache is cold or reused.
+Retain raw samples alongside summaries. A result on one machine is not a general
+speed guarantee for another machine or workload.</p>
+<p>AST search uses <code>ast-grep</code> as its structural comparator. Report
+<code>max_ratio_tg_vs_sg</code> and the configured acceptance threshold (Gate (<code>&lt;= 1.1</code>))
+separately from correctness. See <a href="../benchmarks_ast/">AST benchmarks</a>.</p>
+<p>GPU search requires separate route, correctness, and speed evidence. The fair
+many-pattern comparator is one <code>rg -F -e ... -e ...</code> invocation, rather than a
+loop of independent invocations. Sidecar or CPU fallback rows do not establish
+native CUDA acceleration. Artifacts must distinguish <code>native_gpu</code> execution from a sidecar, expose
+<code>not_gpu_proof_reason</code> for unsupported routes, and require
+<code>public_managed_promotion_ready = true</code> for public managed-release promotion.
+See <a href="../gpu_crossover/">GPU benchmark requirements</a>.</p>
+<p>NLP benchmarks may require cyBERT model files and optional Triton dependencies.
+Record unavailable models or runtimes as unsupported; do not silently substitute
+a different workload or treat a skipped row as a successful measurement.</p>
 
 
 
@@ -706,7 +1692,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

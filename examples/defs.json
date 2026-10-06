@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "symbol-defs",
+  "sidecar_used": false,
+  "path": "C:\\example\\project\\rewrite",
+  "symbol": "add",
+  "files": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "symbols": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    },
+    {
+      "name": "mul",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 2
+    }
+  ],
+  "imports": [],
+  "tests": [],
+  "related_paths": [
+    "C:\\example\\project\\rewrite\\rewrite_fixture.py"
+  ],
+  "definitions": [
+    {
+      "name": "add",
+      "kind": "function",
+      "file": "C:\\example\\project\\rewrite\\rewrite_fixture.py",
+      "line": 1
+    }
+  ],
+  "coverage": {
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}

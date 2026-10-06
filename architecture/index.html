@@ -6,24 +6,24 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="GPU-Accelerated Semantic Log Parsing CLI">
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
       
       
         <meta name="author" content="tensor-grep team">
       
       
       
-        <link rel="prev" href="../installation/">
+        <link rel="prev" href="../EXPERIMENTAL/">
       
       
-        <link rel="next" href="../benchmarks/">
+        <link rel="next" href="../routing_policy/">
       
       
         
       
       
       <link rel="icon" href="../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.3">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -194,13 +194,13 @@
     
     
       <div class="md-header__source">
-        <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
       </div>
@@ -262,20 +262,41 @@
   
   
   
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
     
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
+
+      
         
   
   
+  
     
   
-  Architecture
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+  How It Works
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -284,17 +305,38 @@
   
   
   
-    <li class="md-tabs__item">
-      <a href="../benchmarks/" class="md-tabs__link">
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
         
   
   
-    
   
-  Benchmarks
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
 
-      </a>
-    </li>
+        </a>
+      </li>
+    
   
 
       
@@ -330,13 +372,13 @@
   </label>
   
     <div class="md-nav__source">
-      <a href="https://github.com/tensor-grep/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
   <div class="md-source__icon md-icon">
     
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
   </div>
   <div class="md-source__repository">
-    tensor-grep/tensor-grep
+    oimiragieo/tensor-grep
   </div>
 </a>
     </div>
@@ -452,6 +494,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -461,6 +559,208 @@
     
       
       
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
   
   
     
@@ -526,10 +826,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#multi-pass-query-analyzer" class="md-nav__link">
+  <a href="#follow-a-request" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-Pass Query Analyzer
+        Follow a request
       
     </span>
   </a>
@@ -537,10 +837,87 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multi-platform-io" class="md-nav__link">
+  <a href="#the-two-installation-entry-points" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-Platform I/O
+        The two installation entry points
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#search-engines-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search engines and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-a-question-to-relevant-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a question to relevant code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-and-mcp-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI and MCP access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-state-has-different-purposes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local state has different purposes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persisted-semantic-index-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persisted semantic index library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contracts-and-implementation-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contracts and implementation detail
       
     </span>
   </a>
@@ -554,9 +931,38 @@
     </li>
   
 
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     
-      
-      
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
   
   
   
@@ -578,6 +984,416 @@
   
 
       </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
     </li>
   
 
@@ -609,10 +1425,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#multi-pass-query-analyzer" class="md-nav__link">
+  <a href="#follow-a-request" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-Pass Query Analyzer
+        Follow a request
       
     </span>
   </a>
@@ -620,10 +1436,87 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#multi-platform-io" class="md-nav__link">
+  <a href="#the-two-installation-entry-points" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Multi-Platform I/O
+        The two installation entry points
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#search-engines-and-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Search engines and limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#from-a-question-to-relevant-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From a question to relevant code
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cli-and-mcp-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI and MCP access
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#local-state-has-different-purposes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Local state has different purposes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#persisted-semantic-index-library" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Persisted semantic index library
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-map" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source map
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#contracts-and-implementation-detail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contracts and implementation detail
       
     </span>
   </a>
@@ -651,21 +1544,143 @@
 
 
 <h1 id="architecture">Architecture</h1>
-<p><code>tensor-grep</code> uses an <strong>Outside-In Double-Loop</strong> TDD methodology with a <strong>Platform-Aware Architecture</strong>.</p>
-<h2 id="multi-pass-query-analyzer">Multi-Pass Query Analyzer</h2>
-<p>The core of <code>tensor-grep</code> is the Query Analyzer, which routes patterns to the fastest available path:</p>
-<ol>
-<li><strong>CPU Fallback Path:</strong> Simple regexes are routed to standard Python regex processing.</li>
-<li><strong>GPU Fast Path (cuDF):</strong> High-speed string operations executed directly on the GPU.</li>
-<li><strong>NLP Path (cyBERT):</strong> Complex classifications are routed to the transformer network.</li>
-</ol>
-<h2 id="multi-platform-io">Multi-Platform I/O</h2>
-<p>File reading is aggressively optimized for the host OS:</p>
+<p><code>tensor-grep</code> (<code>tg</code>) has a Rust command-line program and a Python package. Which one receives a command first depends on how the user installed it. The command names are designed to feel like one tool, but the two installation entry points do not have identical startup and dependency paths.</p>
+<h2 id="follow-a-request">Follow a request</h2>
+<pre class="mermaid"><code>flowchart TD
+  U[User or tool] --&gt; F{Installed front door}
+  F --&gt;|Managed native binary| R[Rust CLI]
+  F --&gt;|Python package| P[Python CLI]
+  P --&gt;|Eligible delegated command| R
+  R --&gt;|Text search| S{Selected engine}
+  S --&gt; RG[rg, when eligible]
+  S --&gt; CPU[Native CPU]
+  S --&gt; IDX[Trigram index]
+  S --&gt; GPU[Optional GPU route]
+  R --&gt;|Python-backed command| SIDE[Managed Python sidecar]
+  R --&gt;|tg run AST path| AST[AST workflow]
+  P --&gt; AST
+  P --&gt; OTHER[Python command or backend]</code></pre>
+<p>The diagram is a map, not a complete routing specification. Some commands have early passthrough paths, and <code>tg run</code> has an AST path. The maintained conditions are in <a href="../routing_policy/">routing policy</a>.</p>
+<h2 id="the-two-installation-entry-points">The two installation entry points</h2>
 <ul>
-<li><strong>Linux:</strong> Uses <code>KvikIO</code> for GPUDirect Storage (GDS).</li>
-<li><strong>Windows:</strong> Uses <code>dstorage-gpu</code> for Microsoft DirectStorage.</li>
-<li><strong>Fallback:</strong> Standard standard Python I/O with chunking.</li>
+<li><strong>Managed native install:</strong> the released native binary is the <code>tg</code> front door. It handles native text search and can hand Python-backed commands to the managed Python sidecar. A sidecar is a separate process used to provide commands implemented in Python.</li>
+<li><strong>Python package install:</strong> the console command starts through Python. It can use packaged Rust extensions for supported native functionality, and some features that require a standalone executable need an explicitly configured native binary.</li>
 </ul>
+<p>Within the Rust executable, both the bare positional search form (<code>tg PATTERN PATH</code>) and command form (<code>tg search PATTERN PATH</code>) can lead to the text-search router. These are two parser forms inside one binary; they are separate from the native-versus-Python installation choice. <code>tg run</code> follows an AST workflow path. Do not infer the implementation for a command from its name alone; see the route details for current behavior.</p>
+<h2 id="search-engines-and-limits">Search engines and limits</h2>
+<p>The search router can select <code>rg</code>, native CPU search, a trigram index, an AST backend, or optional GPU paths according to flags, output shape, available tools, and project state. A backend is the engine that performs the request. Routing is conditional, so a release containing a GPU-related build configuration does not mean GPU is the default or that every search uses it.</p>
+<p>The trigram index records character groups to narrow which files need a full scan. It is a file named <code>.tg_index</code> at the indexed project root. It can narrow some compatible text searches; whether it is used depends on the query and route. For exact flags and fallbacks, use <a href="../routing_policy/">routing policy</a>.</p>
+<p>AST workflows parse source into an abstract syntax tree (AST), then match or analyze code structure. Parser and language coverage constrain what can be found. Call graphs and caller lists can have unresolved or bounded results, so an absent edge is not proof that no caller exists. Orientation scores suggest central files or entry points from available signals; they are not proof of runtime importance or safety.</p>
+<h2 id="from-a-question-to-relevant-code">From a question to relevant code</h2>
+<p>Commands such as <code>tg context</code> and <code>tg prepare</code> use Python services to gather and rank
+candidate files and symbols. A <strong>symbol</strong> is a named code element, such as a function
+or class. Query words, symbol matches, filenames, and relationships between code elements
+help select useful results. Production files, tests, generated code, and vendored code
+can receive different treatment. Exact symbol evidence takes priority over a filename
+phrase match.</p>
+<p>The selected results must fit an output budget. This makes them practical to read or
+send to an assistant, but it also means that relevant code may be omitted. Sessions
+reuse project snapshots for repeated requests; refreshing a session updates its view
+after files change. Ranking and caching do not establish that a proposed edit is correct.</p>
+<h2 id="cli-and-mcp-access">CLI and MCP access</h2>
+<p>People can read command output in a terminal. Scripts can request structured JSON or
+NDJSON where supported. <strong>MCP</strong> (Model Context Protocol) lets a compatible assistant
+call the tool's search and analysis functions through <code>tg mcp</code>. These interfaces share
+underlying services, while their public input and output contracts are documented in
+the <a href="../harness_api/">harness API</a>. Running an MCP server does not by itself grant a
+client permission to apply every proposed change.</p>
+<p>By default, <code>tg mcp</code> starts a server exposing 58 tools. The registered tool list is
+the source of truth; clients can discover it through MCP, and the
+<a href="../harness_api/#mcp-tool-responses">API reference</a> describes the available operations.</p>
+<h2 id="local-state-has-different-purposes">Local state has different purposes</h2>
+<table>
+<thead>
+<tr>
+<th>Location</th>
+<th>Purpose</th>
+<th>How to treat it</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>.tg_index</code></td>
+<td>Native trigram index file used by eligible text searches</td>
+<td>Rebuildable search data; may be removed when the index is stale</td>
+</tr>
+<tr>
+<td><code>.tg_cache/ast/</code></td>
+<td>AST project data, including <code>project_data_v6.json</code></td>
+<td>Rebuildable parser and project data; separate from the text index</td>
+</tr>
+<tr>
+<td><code>.tensor-grep/sessions/</code></td>
+<td>Persisted session metadata and snapshots</td>
+<td>State for reusable project context; inspect before cleanup</td>
+</tr>
+<tr>
+<td><code>.tensor-grep/checkpoints/</code></td>
+<td>Saved file contents and metadata for rollback</td>
+<td>Durable recovery material; do not delete when clearing caches</td>
+</tr>
+<tr>
+<td>Resident worker memory</td>
+<td>Optional in-process AST data</td>
+<td>Volatile; worker behavior is experimental</td>
+</tr>
+</tbody>
+</table>
+<p>Some session requests may use an optional daemon response cache. That cache is scoped to daemon requests and is not the checkpoint store. See <a href="../runbooks/cache-management/">cache management</a> before removing local state and <a href="../session_daemon_protocol/">session daemon protocol</a> for session behavior.</p>
+<h2 id="persisted-semantic-index-library">Persisted semantic index library</h2>
+<p><code>src/tensor_grep/core/semantic_index.py</code> is retained as a library-only component.
+Its <code>build_and_save</code> and <code>load_or_warn</code> APIs persist chunk-BM25 data under
+<code>.tg_semantic_index/</code> (<code>bm25_chunks.json</code> and <code>bm25_meta.json</code>). This store is
+separate from the native trigram <code>.tg_index</code> and the AST project cache.</p>
+<p>The persisted semantic index is not wired into production CLI, MCP, or session
+requests. There is no <code>tg index</code> command for this store; <code>tg search --rank</code> ranks
+in memory. Keeping the library does not promise persisted acceleration for those
+commands, and the absence of an in-repository caller does not establish that an
+exported library API is unused by downstream applications.</p>
+<p>Loads check the schema, chunker mode, and a fingerprint over sorted source paths
+and modification times. A mismatch warns and returns <code>None</code> so callers can choose
+an in-memory fallback rather than serve stale data. The library's corpus is not
+size-capped; applications must bound input when they need a resource limit.</p>
+<h2 id="source-map">Source map</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>rust_core/</code></td>
+<td>Native CLI, text-search routing, indexing, and native execution paths</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/</code></td>
+<td>Python command handlers and CLI workflows</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/backends/</code></td>
+<td>Backend interfaces and implementations</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/core/</code></td>
+<td>Shared Python core logic</td>
+</tr>
+<tr>
+<td><code>tests/</code></td>
+<td>Tests for command contracts and behavior</td>
+</tr>
+<tr>
+<td><code>scripts/</code></td>
+<td>Build, release, validation, and maintenance tools</td>
+</tr>
+</tbody>
+</table>
+<h2 id="contracts-and-implementation-detail">Contracts and implementation detail</h2>
+<p><a href="../CONTRACTS/">Contracts</a> is the canonical source for compatibility promises, completeness fields, state behavior, and failure semantics. <a href="../harness_api/">Harness API</a> documents machine-readable output. <a href="../EXPERIMENTAL/">Experimental features</a> identifies behavior outside stable guarantees. This overview intentionally avoids duplicating the full routing table and contract ledger.</p>
 
 
 
@@ -718,7 +1733,7 @@
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>

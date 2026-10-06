@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "routing_backend": "RepoMap",
+  "routing_reason": "context-pack",
+  "sidecar_used": false,
+  "query": "invoice payment",
+  "path": "C:\\example\\project\\context_pack",
+  "files": [
+    "C:\\example\\project\\context_pack\\src\\payments.py"
+  ],
+  "file_matches": [
+    {
+      "path": "C:\\example\\project\\context_pack\\src\\payments.py",
+      "score": 21,
+      "graph_score": 0.5,
+      "reasons": [
+        "symbol",
+        "definition"
+      ]
+    }
+  ],
+  "file_summaries": [
+    {
+      "path": "C:\\example\\project\\context_pack\\src\\payments.py",
+      "symbols": [
+        {
+          "name": "PaymentService",
+          "kind": "class",
+          "line": 3
+        },
+        {
+          "name": "create_invoice",
+          "kind": "function",
+          "line": 6
+        }
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "name": "PaymentService",
+      "kind": "class",
+      "file": "C:\\example\\project\\context_pack\\src\\payments.py",
+      "line": 3,
+      "score": 4
+    },
+    {
+      "name": "create_invoice",
+      "kind": "function",
+      "file": "C:\\example\\project\\context_pack\\src\\payments.py",
+      "line": 6,
+      "score": 6
+    }
+  ],
+  "imports": [],
+  "tests": [
+    "C:\\example\\project\\context_pack\\tests\\test_payments.py"
+  ],
+  "test_matches": [
+    {
+      "path": "C:\\example\\project\\context_pack\\tests\\test_payments.py",
+      "score": 2,
+      "reasons": [
+        "filename"
+      ]
+    }
+  ],
+  "related_paths": [
+    "C:\\example\\project\\context_pack\\src\\payments.py",
+    "C:\\example\\project\\context_pack\\tests\\test_payments.py"
+  ],
+  "coverage": {
+    "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
+    "symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:",
+    "test_matching": "filename+import+graph-heuristic"
+  }
+}

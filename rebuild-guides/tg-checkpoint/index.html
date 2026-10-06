@@ -1,0 +1,1749 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Search code and logs, understand symbols, and prepare changes">
+      
+      
+        <meta name="author" content="tensor-grep team">
+      
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Rebuild guide: tg checkpoint (create / list / undo) - tensor-grep</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#rebuild-guide-tg-checkpoint-create-list-undo" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="tensor-grep" class="md-header__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            tensor-grep
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Rebuild guide: tg checkpoint (create / list / undo)
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../installation/" class="md-tabs__link">
+          
+  
+  
+  Getting Started
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../harness_cookbook/" class="md-tabs__link">
+          
+  
+  
+  Daily Workflows
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../architecture/" class="md-tabs__link">
+          
+  
+  
+  How It Works
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../CONTRACTS/" class="md-tabs__link">
+          
+  
+  
+  Technical Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../CI_PIPELINE/" class="md-tabs__link">
+          
+  
+  
+  Maintainers
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="tensor-grep" class="md-nav__button md-logo" aria-label="tensor-grep" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    tensor-grep
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/oimiragieo/tensor-grep" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    oimiragieo/tensor-grep
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting Started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../installation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Installation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Search
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../SUPPORT_MATRIX/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Support Matrix
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Daily Workflows
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Daily Workflows
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../harness_cookbook/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automation Recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../runbooks/cache-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Cache Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../EXPERIMENTAL/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Experimental Features
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How It Works
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How It Works
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../routing_policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Execution Routing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../benchmarks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tool_comparison/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tool Comparison
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Technical Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Technical Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRACTS/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contracts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../harness_api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and MCP API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../session_daemon_protocol/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Session Daemon Protocol
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../multi_agent_context_plane/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multi-Agent Context Plane
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../enterprise_review_bundle_ci/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Review Bundle CI Gate
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Maintainers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Maintainers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CI_PIPELINE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CI Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../RELEASE_CHECKLIST/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Release Checklist
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../HOTFIX_PROCEDURE/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Hotfix Procedure
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../package_manager_publish/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Package Manager Publish
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-the-problem-this-feature-solves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. The problem this feature solves
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-data-flow-end-to-end" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Data flow, end to end
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-every-file-involved-and-what-each-contributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Every file involved, and what each contributes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-on-disk-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. On-disk format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-undo-demonstrated-the-divergence-detection-field-real-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Undo, demonstrated (the divergence-detection field, real output)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-contracts-and-traps-a-naive-rebuild-gets-wrong" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Contracts and traps a naive rebuild gets wrong
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-what-done-looks-like-validating-a-rebuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. What "done" looks like — validating a rebuild
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-explicitly-out-of-scope-for-this-guide" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. Explicitly out of scope for this guide
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="rebuild-guide-tg-checkpoint-create-list-undo">Rebuild guide: <code>tg checkpoint</code> (create / list / undo)</h1>
+<p>Examples illustrate the state format and command flow. Re-run them against the
+version being changed in a disposable directory; they are not current release evidence.</p>
+<h2 id="1-the-problem-this-feature-solves">1. The problem this feature solves</h2>
+<p>An agent (or a human) editing a repo through <code>tg</code> wants a <strong>local, cheap, undo button</strong> that does
+not depend on git: create a snapshot of a file or directory's current state, keep editing, and
+restore that exact state later if the edit went wrong. <code>tg</code>'s own <code>rewrite apply --checkpoint</code>
+flag and <code>apply_policy.py</code>'s rollback path (<code>from tensor_grep.cli.checkpoint_store import
+undo_checkpoint</code>, <code>src/tensor_grep/cli/apply_policy.py:12</code>) both build on this, and <code>tg prepare</code>'s
+<code>rollback</code> field recommends running <code>tg checkpoint create &lt;path&gt;</code> before an edit
+(<code>src/tensor_grep/cli/prepare_service.py</code>, the <code>result["rollback"]</code> block sourced from the
+agent capsule).</p>
+<p>It has to work in three scopes an editor actually hits:</p>
+<ol>
+<li><strong>A single file</strong> — the caller names one file, only that file is snapshotted.</li>
+<li><strong>A directory inside a git worktree</strong> — reuse git's own tracked/untracked file list instead of
+   walking the filesystem by hand (faster, and matches what <code>git status</code> would show).</li>
+<li><strong>A directory with no git repo at all</strong> — fall back to a bounded filesystem walk.</li>
+</ol>
+<p>And it has to survive the two ways a naive implementation of "copy files, then copy them back" is
+wrong: a <strong>crash or interrupt mid-copy must never leave the working tree half-restored</strong>, and a
+<strong>malicious or corrupted checkpoint record must never let a restore write outside the checkpoint's
+own root</strong> (path traversal via a crafted <code>checkpoint_id</code> or a tampered <code>entries</code> manifest — this
+surface is reachable from the CLI, the MCP <code>tg_checkpoint_undo</code> tool, and <code>apply_policy.py</code>'s
+automatic rollback, so all three inherit whatever <code>checkpoint_store.py</code> gets wrong).</p>
+<h2 id="2-data-flow-end-to-end">2. Data flow, end to end</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>tg checkpoint create &lt;path&gt;
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>        |
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>        v
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>main.py: checkpoint_create()                 &lt;- CLI adapter (Typer command)
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>        |  (src/tensor_grep/cli/main.py, @checkpoint_app.command("create"))
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>        v
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>checkpoint_store.create_checkpoint(path)      &lt;- pure business logic, no Typer/JSON here
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        |
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        +-- _detect_checkpoint_scope(path)    &lt;- file? git worktree? plain directory?
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        |
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        +-- _snapshot_entries(scope)          &lt;- which relative paths belong in this checkpoint
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        |     +-- _git_snapshot_entries()         (git ls-files, when scope.mode == git-worktree-snapshot)
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        |     +-- _filesystem_snapshot_entries()  (bounded os.walk, otherwise)
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        |
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>        +-- _check_checkpoint_disk_budget()   &lt;- refuse BEFORE writing anything if too big
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>        |
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a>        +-- copy loop: shutil.copy2(..., follow_symlinks=False) into
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a>        |     .tensor-grep/checkpoints/&lt;checkpoint_id&gt;/snapshot/&lt;rel_path&gt;
+<a id="__codelineno-0-19" name="__codelineno-0-19" href="#__codelineno-0-19"></a>        |
+<a id="__codelineno-0-20" name="__codelineno-0-20" href="#__codelineno-0-20"></a>        +-- _write_checkpoint_metadata()      &lt;- .../metadata.json  (entries manifest, mode, root)
+<a id="__codelineno-0-21" name="__codelineno-0-21" href="#__codelineno-0-21"></a>        |
+<a id="__codelineno-0-22" name="__codelineno-0-22" href="#__codelineno-0-22"></a>        +-- index_lock(...) -&gt; _load_index / _select_retained_checkpoints / _write_index
+<a id="__codelineno-0-23" name="__codelineno-0-23" href="#__codelineno-0-23"></a>              .../index.json  (one row per checkpoint, newest-first, capped at TG_CHECKPOINT_MAX)
+<a id="__codelineno-0-24" name="__codelineno-0-24" href="#__codelineno-0-24"></a>
+<a id="__codelineno-0-25" name="__codelineno-0-25" href="#__codelineno-0-25"></a>tg checkpoint undo &lt;checkpoint_id&gt; &lt;path&gt;
+<a id="__codelineno-0-26" name="__codelineno-0-26" href="#__codelineno-0-26"></a>        |
+<a id="__codelineno-0-27" name="__codelineno-0-27" href="#__codelineno-0-27"></a>        v
+<a id="__codelineno-0-28" name="__codelineno-0-28" href="#__codelineno-0-28"></a>main.py: checkpoint_undo()
+<a id="__codelineno-0-29" name="__codelineno-0-29" href="#__codelineno-0-29"></a>        v
+<a id="__codelineno-0-30" name="__codelineno-0-30" href="#__codelineno-0-30"></a>checkpoint_store.undo_checkpoint(checkpoint_id, path)
+<a id="__codelineno-0-31" name="__codelineno-0-31" href="#__codelineno-0-31"></a>        |
+<a id="__codelineno-0-32" name="__codelineno-0-32" href="#__codelineno-0-32"></a>        +-- PRE-FLIGHT (read-only): resolve every entry's target AND source path,
+<a id="__codelineno-0-33" name="__codelineno-0-33" href="#__codelineno-0-33"></a>        |   assert both stay inside their respective roots, verify every snapshot
+<a id="__codelineno-0-34" name="__codelineno-0-34" href="#__codelineno-0-34"></a>        |   blob that should exist is present and readable. Abort here -&gt; tree untouched.
+<a id="__codelineno-0-35" name="__codelineno-0-35" href="#__codelineno-0-35"></a>        |
+<a id="__codelineno-0-36" name="__codelineno-0-36" href="#__codelineno-0-36"></a>        +-- STAGING (still no working-tree mutation): copy every restorable file
+<a id="__codelineno-0-37" name="__codelineno-0-37" href="#__codelineno-0-37"></a>        |   into a throwaway tempfile.TemporaryDirectory().
+<a id="__codelineno-0-38" name="__codelineno-0-38" href="#__codelineno-0-38"></a>        |
+<a id="__codelineno-0-39" name="__codelineno-0-39" href="#__codelineno-0-39"></a>        +-- COMMIT (mutates the working tree): remove files not in the snapshot,
+<a id="__codelineno-0-40" name="__codelineno-0-40" href="#__codelineno-0-40"></a>        |   remove files the snapshot recorded as deleted, copy staged files over
+<a id="__codelineno-0-41" name="__codelineno-0-41" href="#__codelineno-0-41"></a>        |   their targets -- recording (path, prior_bytes) for every destructive
+<a id="__codelineno-0-42" name="__codelineno-0-42" href="#__codelineno-0-42"></a>        |   step so a failure partway through this phase can revert what it already did.
+<a id="__codelineno-0-43" name="__codelineno-0-43" href="#__codelineno-0-43"></a>        |
+<a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>        +-- best-effort empty-directory cleanup, discovery-cache refresh
+</code></pre></div>
+<p>The three-phase undo (pre-flight -&gt; staging -&gt; commit) is the mechanism that makes "crash-safe"
+true: everything that can fail because of a <em>missing or unreadable</em> file happens in phases that
+have not touched the working tree yet. Only the commit phase mutates real files, and it captures
+enough (<code>committed_removes</code>, <code>committed_overwrites</code>, each holding the actual prior bytes) to revert
+itself if it dies partway through.</p>
+<h2 id="3-every-file-involved-and-what-each-contributes">3. Every file involved, and what each contributes</h2>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Contributes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/tensor_grep/cli/checkpoint_store.py</code> (1,431 lines)</td>
+<td>The core: scope detection, snapshot-entry enumeration, <code>create_checkpoint</code>, <code>undo_checkpoint</code>, <code>list_checkpoints</code>, discovery, path-containment guards, the two error types (<code>CheckpointCorruptError</code>, <code>CheckpointUndoUnsafeError</code>).</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/checkpoint_retention.py</code></td>
+<td>Split out of <code>checkpoint_store.py</code> to keep it under this repo's 1,500-line file-size ratchet (see the module's own docstring, which explains exactly which functions were safe to move — see §6, Trap 5). Holds <code>_select_retained_checkpoints</code>/<code>_prune_checkpoint_records</code> (retention cap) and <code>_check_checkpoint_disk_budget</code> (the per-file/total/free-space pre-flight).</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/_index_lock.py</code></td>
+<td>Shared atomic-write and cross-process/cross-thread file-lock primitives (<code>atomic_write_json</code>, <code>atomic_write_bytes</code>, <code>index_lock</code>) that <code>checkpoint_store.py</code> reuses rather than re-implementing its own.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/subprocess_policy.py</code></td>
+<td><code>run_subprocess</code> / <code>configured_git_timeout_seconds</code> — the one place <code>git</code> is ever invoked from, with a timeout.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/main.py</code></td>
+<td>The Typer CLI adapter: <code>checkpoint_app</code> (a <code>typer.Typer()</code> sub-app, <code>main.py:266</code>), and the three commands <code>checkpoint_create</code> / <code>checkpoint_list</code> / <code>checkpoint_undo</code> (<code>main.py:14117</code>, <code>:14141</code>, <code>:14295</code>). Pure JSON/text formatting and exit-code mapping — no business logic.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/mcp_server.py</code></td>
+<td>The MCP adapter: <code>tg_checkpoint_create</code> / <code>tg_checkpoint_list</code> / <code>tg_checkpoint_undo</code> (<code>mcp_server.py:6212</code>, <code>:6263</code>, <code>:6311</code>), each wrapping the same <code>checkpoint_store</code> functions behind <code>_confine_mcp_path</code> (an MCP-root path-confinement gate the CLI does not need, because the CLI already trusts the local caller's <code>path</code> argument the way any local CLI does).</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/apply_policy.py</code></td>
+<td>A <strong>consumer</strong>, not part of the feature itself: imports <code>undo_checkpoint</code> to power <code>tg rewrite apply</code>'s rollback path.</td>
+</tr>
+<tr>
+<td><code>src/tensor_grep/cli/prepare_service.py</code></td>
+<td>Another consumer: <code>tg prepare</code>'s <code>rollback</code> field recommends <code>tg checkpoint create &lt;path&gt;</code> before an edit (advisory only — it never calls <code>create_checkpoint</code> itself).</td>
+</tr>
+</tbody>
+</table>
+<p>Everything under <code>.tensor-grep/checkpoints/</code> on disk (the on-disk format) is described in §4.</p>
+<h2 id="4-on-disk-format">4. On-disk format</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>$ mkdir demo &amp;&amp; cd demo
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>$ echo "hello world" &gt; a.txt
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>$ mkdir sub &amp;&amp; echo "nested" &gt; sub/b.txt
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>$ tg checkpoint create . --json
+</code></pre></div>
+<p>produced (real output, only the absolute path shortened):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"checkpoint_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ckpt-20260820110732-7d0c7bf3"</span><span class="p">,</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"filesystem-snapshot"</span><span class="p">,</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nt">"root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20T11:07:32.305938+00:00"</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="nt">"file_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"undo_argv"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"tg"</span><span class="p">,</span><span class="w"> </span><span class="s2">"checkpoint"</span><span class="p">,</span><span class="w"> </span><span class="s2">"undo"</span><span class="p">,</span><span class="w"> </span><span class="s2">"ckpt-20260820110732-7d0c7bf3"</span><span class="p">,</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">],</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">  </span><span class="nt">"undo_command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tg checkpoint undo ckpt-20260820110732-7d0c7bf3 ...\\demo"</span><span class="p">,</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="w">  </span><span class="nt">"skipped_nested_repos"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="p">}</span>
+</code></pre></div>
+<p>and left this real layout on disk (from <code>find .tensor-grep</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>.tensor-grep/
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  checkpoint-discovery-cache.json
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  checkpoints/
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    index.json
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    ckpt-20260820110732-7d0c7bf3/
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>      metadata.json
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>      snapshot/
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>        a.txt
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>        sub/
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>          b.txt
+</code></pre></div>
+<p><code>index.json</code> (real content, one row per checkpoint, newest first):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">[</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="p">{</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"checkpoint_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ckpt-20260820110732-7d0c7bf3"</span><span class="p">,</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">    </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"filesystem-snapshot"</span><span class="p">,</span><span class="w"> </span><span class="nt">"root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">,</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">    </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20T11:07:32.305938+00:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"file_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="p">]</span>
+</code></pre></div>
+<p><code>checkpoints/&lt;id&gt;/metadata.json</code> (real content):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"checkpoint_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ckpt-20260820110732-7d0c7bf3"</span><span class="p">,</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"filesystem-snapshot"</span><span class="p">,</span><span class="w"> </span><span class="nt">"root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">,</span><span class="w"> </span><span class="nt">"scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tree"</span><span class="p">,</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">"original_path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">,</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">"created_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-08-20T11:07:32.305938+00:00"</span><span class="p">,</span><span class="w"> </span><span class="nt">"file_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">  </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"a.txt"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"sub/b.txt"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">  </span><span class="nt">"skipped_nested_repos"</span><span class="p">:</span><span class="w"> </span><span class="p">[],</span><span class="w"> </span><span class="nt">"active"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>entries</code> is the manifest that drives undo: each key is a checkpoint-root-relative path, and the
+value is whether that path <strong>existed</strong> when the checkpoint was taken (<code>true</code> -&gt; restore it from
+<code>snapshot/</code>; <code>false</code> -&gt; the checkpoint recorded that this path did NOT exist yet, so undo must
+delete it if a later edit created it). <code>index.json</code> is a <strong>cache</strong> for fast listing — it can always
+be rebuilt from the <code>metadata.json</code> files under <code>checkpoints/*/</code> (see
+<code>_rebuild_index_from_checkpoint_metadata</code>, <code>checkpoint_store.py:582</code>), which is the source of
+truth.</p>
+<h2 id="5-undo-demonstrated-the-divergence-detection-field-real-output">5. Undo, demonstrated (the divergence-detection field, real output)</h2>
+<p>Continuing the same demo: modify <code>a.txt</code>, delete <code>sub/b.txt</code>, add a new untracked <code>c.txt</code>, then
+undo:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$ echo "modified content" &gt; a.txt
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>$ rm sub/b.txt
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>$ echo "new file" &gt; c.txt
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>$ tg checkpoint undo ckpt-20260820110732-7d0c7bf3 . --json
+</code></pre></div>
+<p>Real output:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="p">{</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">"checkpoint_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ckpt-20260820110732-7d0c7bf3"</span><span class="p">,</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"filesystem-snapshot"</span><span class="p">,</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">  </span><span class="nt">"root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"...\\demo"</span><span class="p">,</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">  </span><span class="nt">"restored_files"</span><span class="p">:</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">  </span><span class="nt">"removed_paths"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">  </span><span class="nt">"diverged_paths"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"a.txt"</span><span class="p">],</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">  </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>After this: <code>a.txt</code> is back to <code>hello world</code> (its checkpoint content, even though it was edited
+<em>after</em> the checkpoint — undo always wins, that is what it is for); <code>sub/b.txt</code> is restored;
+<code>c.txt</code> (never part of the checkpoint) is removed. <code>restored_files=2</code> counts the two entries copied
+back from the snapshot; <code>removed_paths=1</code> counts <code>c.txt</code>. <code>diverged_paths</code> is the honesty field
+added in task #308 (<code>_paths_modified_since_checkpoint</code>, <code>checkpoint_store.py:1163</code>): it names every
+path whose <em>mtime</em> is newer than the checkpoint's <code>created_at</code>, i.e. every file whose
+post-checkpoint edits undo is about to discard. It is not a warning that something went wrong —
+discarding post-checkpoint work is undo's entire job — it answers "what did I just lose?", which
+matters most when a <em>second</em> agent edited the same tree between checkpoint and undo.</p>
+<h2 id="6-contracts-and-traps-a-naive-rebuild-gets-wrong">6. Contracts and traps a naive rebuild gets wrong</h2>
+<p>A straightforward "copy the directory, copy it back" implementation would pass a quick smoke test
+and then fail in exactly these ways — each is a real, currently-guarded hazard in
+<code>checkpoint_store.py</code>, with a comment at the guard citing why:</p>
+<ol>
+<li>
+<p><strong>Crash mid-restore must not half-apply.</strong> Naive: overwrite files one at a time as you restore
+   them. If the process dies on file 50 of 100, the tree is an unrecoverable mix of old and new
+   content. Fix: the three-phase pre-flight/staging/commit split in §2 — nothing touches the
+   working tree until every file to be restored has already been staged successfully, and the
+   commit phase records enough (<code>committed_removes</code>, <code>committed_overwrites</code> — pairs of
+   <code>(path, prior_bytes)</code>, not just paths) to revert itself on a later failure
+   (<code>checkpoint_store.py:1207</code>, <code>undo_checkpoint</code>'s <code>except Exception:</code> block).</p>
+</li>
+<li>
+<p><strong>An unreadable file must abort, not silently destroy content.</strong> Naive: <code>path.unlink()</code> before
+   checking whether the file could be read. If the read would have failed, its content is now gone
+   forever with no way to recreate it for a revert. Fix: <code>_bytes_or_abort_undo</code>
+   (<code>checkpoint_store.py:114</code>) reads a file's bytes <em>before</em> any unlink/overwrite touches it, and
+   raises <code>CheckpointUndoUnsafeError</code> — not a silent skip — if the read fails, so the destructive
+   step is never taken without first having a copy to restore from.</p>
+</li>
+<li>
+<p><strong>A crafted <code>checkpoint_id</code> or a tampered <code>entries</code> manifest must not escape the checkpoint
+   root.</strong> Naive: <code>root / entries[key]</code>. If <code>entries</code> (read from disk, and reachable from the MCP
+   <code>tg_checkpoint_undo</code> tool and <code>apply_policy.py</code>'s automatic rollback — not just a trusted human
+   CLI call) contains <code>"../../etc/passwd"</code> or an absolute path, that composition writes or deletes
+   outside the checkpoint scope. Fix: <code>_resolve_within_root</code> (<code>checkpoint_store.py:162</code>) rejects
+   any absolute path or <code>..</code> component, then resolves and asserts containment under the resolved
+   root — applied to <strong>both</strong> the undo target path and the checkpoint id itself
+   (<code>_checkpoint_dir</code>, <code>checkpoint_store.py:714</code>, reuses the same helper so a traversal-shaped
+   <code>checkpoint_id</code> is refused before any metadata file is even opened).</p>
+</li>
+<li>
+<p><strong>A symlinked (or, on Windows, junctioned) <em>ancestor</em> directory is a second escape route the
+   leaf-only check above misses.</strong> Naive: check only whether the final path component is a
+   symlink (what <code>shutil.copy2(..., follow_symlinks=False)</code> alone gives you). If some <em>parent</em>
+   directory in the path is a symlink pointing outside the root, the OS still transparently
+   traverses it — so a leaf-only check reads bytes from (create side) or writes bytes to (undo
+   side) somewhere outside the checkpoint entirely. Fix: <code>_resolve_parent_within_root</code>
+   (<code>checkpoint_store.py:180</code>) resolves and asserts containment on the <strong>parent chain only</strong>,
+   leaving the leaf's raw identity untouched, so a legitimately-tracked leaf symlink is still
+   stored <em>as a link</em> rather than refused or dereferenced. Used on the create side; the same
+   containment check is applied to undo's snapshot <em>source</em> path too
+   (<code>undo_checkpoint</code> pre-flight checks).</p>
+</li>
+<li>
+<p><strong>A single huge file or a legitimately huge repo must not fill the disk.</strong> Naive: copy
+   everything, no size check. Fix: <code>_check_checkpoint_disk_budget</code>
+   (<code>checkpoint_retention.py:144</code>) stats every entry before any copy happens and refuses with
+   <code>CheckpointBudgetExceededError</code> if a single file exceeds <code>TG_CHECKPOINT_MAX_FILE_BYTES</code>
+   (default 512 MiB), the cumulative snapshot exceeds <code>TG_CHECKPOINT_MAX_TOTAL_BYTES</code> (default
+   4 GiB), or the copy would leave less than <code>TG_CHECKPOINT_FREE_SPACE_MARGIN_BYTES</code> (default
+   256 MiB) free — all three are env-overridable so a repo with legitimately large tracked assets
+   is not permanently blocked.</p>
+</li>
+<li>
+<p><strong>A <code>KeyboardInterrupt</code> mid-copy must not orphan a half-written checkpoint directory.</strong> Naive:
+   <code>except Exception:</code> around the copy loop. <code>KeyboardInterrupt</code> and <code>SystemExit</code> subclass
+   <code>BaseException</code> directly, not <code>Exception</code>, so that handler never fires on Ctrl+C and a
+   half-populated <code>checkpoints/&lt;id&gt;/</code> directory is left behind forever. Fix:
+   <code>create_checkpoint</code> cleanup wraps <code>except BaseException:</code> (<code>checkpoint_store.py</code>), removing the whole per-checkpoint directory before re-raising.</p>
+</li>
+<li>
+<p><strong>A git submodule (a gitlink, mode <code>160000</code>) is a real directory on disk that <code>git ls-files</code>
+   reports as a single opaque path, not an expandable file list.</strong> Naive: treat every path
+   <code>git ls-files</code> returns as a file and <code>shutil.copy2()</code> it — crashes (<code>IsADirectoryError</code> /
+   <code>PermissionError</code>) the first time a repo has a submodule. Fix: <code>_git_snapshot_entries</code>
+   (<code>checkpoint_store.py:624</code>) checks <code>candidate.is_dir() and not candidate.is_symlink()</code> and
+   routes any such path to <code>skipped_nested_repos</code> (surfaced in the CLI/MCP JSON output) instead
+   of crashing or silently dropping it.</p>
+</li>
+<li>
+<p><strong>The retention cap must sort by <code>created_at</code>, not insertion order.</strong> Naive: <code>records[:limit]</code>
+   after inserting the newest at index 0. Under concurrent writers, the timestamp is stamped
+   <em>before</em> <code>index_lock</code> is acquired, so lock-arrival order does not reliably match creation
+   order — trusting list position can prune a genuinely newer checkpoint. Fix:
+   <code>_select_retained_checkpoints</code> (<code>checkpoint_retention.py:43</code>) re-sorts by <code>created_at</code>
+   immediately before slicing.</p>
+</li>
+</ol>
+<h2 id="7-what-done-looks-like-validating-a-rebuild">7. What "done" looks like — validating a rebuild</h2>
+<p>Run the real tests, which exist precisely because the naive versions of the eight traps above were
+each shipped and caught once already:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python -m pytest tests/unit/test_checkpoint_atomic_undo.py tests/unit/test_checkpoint_cli.py \
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>    tests/unit/test_checkpoint_containment.py tests/unit/test_checkpoint_create_ancestor_confinement.py \
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>    tests/unit/test_checkpoint_disk_budget.py -q
+</code></pre></div>
+<p>Each file's test names are close to a spec on their own — e.g.
+<code>test_checkpoint_atomic_undo.py::test_undo_commit_failure_restores_a_removed_file</code> (trap 1),
+<code>test_checkpoint_containment.py::test_rust_created_out_of_root_symlink_checkpoint_fails_closed_on_undo</code>
+(trap 4), <code>test_checkpoint_disk_budget.py::test_create_checkpoint_refuses_file_over_per_file_cap</code>
+(trap 5), <code>test_checkpoint_cli.py::test_create_checkpoint_skips_git_submodule_without_crashing</code>
+(trap 7). See <code>docs/rebuild-guides/verification-checklist.md</code> for the general form of this step.</p>
+<h2 id="8-explicitly-out-of-scope-for-this-guide">8. Explicitly out of scope for this guide</h2>
+<ul>
+<li>Rust-side <code>replace_in_place</code> symlink hardening is a separate feature
+  (native in-place rewrite) that happens to share the symlink-containment concern — it is not part
+  of <code>tg checkpoint</code> and this guide does not cover it.</li>
+<li><code>checkpoint-discovery-cache.json</code> (the bounded-discovery-scope cache used by <code>tg checkpoint list
+  --discover</code>) is covered only enough to explain what it is in §4; its full discovery-bounding
+  logic (<code>_bounded_discovery_cache_roots_for_checkpoint</code>, <code>_refresh_bounded_discovery_caches_for_root</code>)
+  is not traced line by line here.</li>
+<li>This guide does not re-verify the MCP <code>_confine_mcp_path</code> gate's own correctness — only that it
+  exists and wraps the same <code>checkpoint_store</code> calls the CLI uses.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.expand", "search.suggest", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
