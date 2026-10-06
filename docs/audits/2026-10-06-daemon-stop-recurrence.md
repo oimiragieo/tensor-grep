@@ -69,3 +69,19 @@ behavioral failure taking precedence over cleanup and observation failures. Boun
 cover interleaved reservations and snapshot/payload/emission failures. These correct the
 instrument, not the unproved hosted daemon cause. Fresh integrated checks, independent reviews
 and exact-head CI remain required; prior verdicts and CI do not clear the new artifact.
+
+A second independent review of `77276eb0` reproduced a completion-boundary defect:
+the pre-cleanup assertion can reject a transient pending record, and joining the serving
+thread does not finish the asynchronous shutdown observer. Builder `90d253c9` removes the
+early completeness assertions and registers completion Events before entered shutdown
+wrappers first observe anything. After release and fixture close/join, one aggregate
+five-second cleanup budget waits for those entered wrappers before final completeness is
+evaluated. It does not change the one-second behavioral stop deadline. A future callback
+that has not entered on an already-failed stop is outside that ownership claim.
+
+Bounded controls prove delayed completion passes, completion timeout remains incomplete,
+and a completed callback with a permanently unfilled record still fails. The provider's
+Opus refresh on `77276eb0` returned HTTP 529 before review and grants no clearance. Both
+demonstrated failures and prior verdicts remain evidence. Fresh exact-head reviews and
+hosted observation are required for this amended diagnostic; the historical cause remains
+unproved.
