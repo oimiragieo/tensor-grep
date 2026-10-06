@@ -112,3 +112,27 @@ policy inventory and exceptions unchanged. Bounded canonical checks pass: 94 con
 tests, 159 capsule/navigation/session/probe tests, three PCRE2 tests, focused Ruff/preview
 formatting and the unchanged file-size gate. The raw bundle records dirty starting trees
 and identifies this final test commit; these checks do not clear the new head's full CI.
+
+## Interpreter-independent fingerprint correction
+
+The next Opus review returned FIX-FIRST on `80cc210`: `ast.dump` formatted the same AST
+differently across interpreters. Exact-source stdlib controls returned 22 guard violations
+on Python 3.11 and 3.13, while canonical 3.12 was clear. Pending CI `37425139246` was
+cancelled because this newly exposed defect required another amendment; it gives no clearance.
+
+The independently approved [portability plan](plans/2026-10-06-subprocess-fingerprint-portability.md)
+has SHA-256 `59fdee74edb15a38a1bde3d08ddf65d1c9532a31ccce044687d79b223f02283e`
+over canonical worktree bytes. Implementation `cfbda04a373583492e62d659f05a6b1e9d72e1d0`
+uses sorted present AST fields, omitting only empty type parameters introduced in 3.12.
+Nonempty type parameters, ordinary empty lists, `None`, list order and values remain significant.
+All 72 calls were paired one-to-one, including the two parent launches of 12 generated calls.
+The same seven exact forwarding exceptions and all operations/options/policies/rationales
+were preserved. Only fingerprint representations and their derived identities changed.
+
+Python 3.11.14, canonical 3.12.12 and 3.13.5 now produce identical full inventories and exact
+exception records, with zero violations and shared normalized JSON SHA-256
+`9c32f9c63e22c83866b51f12f000fd323c71d4088850112275336e3595481d6c`.
+The raw bundle states the hash method and retains each interpreter's complete output.
+All 97 canonical console guard tests, focused Ruff/preview and unchanged size gate pass.
+Production `src/` remains unchanged. Fresh final-head independent/Opus review and CI are
+required; no test skip, new exception or size-pin increase was introduced.
