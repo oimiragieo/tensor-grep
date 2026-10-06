@@ -17,53 +17,53 @@ UNKNOWN_PYTHON_ARGV = "<possible-python-c>"
 # and the owning function AST (which is the bounded producer/provenance fingerprint).
 FORWARDER_ALLOWLIST: dict[tuple[str, str, str, str, str], str] = {
     (
-        "cli/bootstrap.py:_streaming_passthrough_returncode:run_subprocess:b63c889bf0abab3ac8aaa5a9c14154928716b88971ed0a3937187ac2abe017d3:0",
+        "cli/bootstrap.py:_streaming_passthrough_returncode:run_subprocess:b437e4570d25707596480c6cbc9c39d66191d5d1a3596ce6f0aa090291c210f1:0",
         "run_subprocess",
         "shim_kwargs",
-        "b63c889bf0abab3ac8aaa5a9c14154928716b88971ed0a3937187ac2abe017d3",
-        "89c8ca1a20995004aa6e8ccdb4b93ac9f50df577c21864626f0a0c30d22669dd",
+        "b437e4570d25707596480c6cbc9c39d66191d5d1a3596ce6f0aa090291c210f1",
+        "fca67c50cec3579b51c4cfb44a684d77da27c7466261ac458a6e7fb33341bb97",
     ): "legacy subprocess compatibility call forwards only its constructed shim options",
     (
-        "cli/bootstrap.py:_streaming_passthrough_returncode:run_subprocess:de1cbdb62cde6ba1601a45d468b8c0a6d08233b206942a392f7ed04bdc126d04:0",
+        "cli/bootstrap.py:_streaming_passthrough_returncode:run_subprocess:5cde2066bd09cb67c745c60f118a265f64eb474bf7fd5a4dc1ef1a0cf83fd330:0",
         "run_subprocess",
         "shim_kwargs",
-        "de1cbdb62cde6ba1601a45d468b8c0a6d08233b206942a392f7ed04bdc126d04",
-        "89c8ca1a20995004aa6e8ccdb4b93ac9f50df577c21864626f0a0c30d22669dd",
+        "5cde2066bd09cb67c745c60f118a265f64eb474bf7fd5a4dc1ef1a0cf83fd330",
+        "fca67c50cec3579b51c4cfb44a684d77da27c7466261ac458a6e7fb33341bb97",
     ): "legacy subprocess compatibility call forwards only its constructed shim options",
     (
-        "cli/dogfood.py:run_dogfood_readiness:subprocess.Popen:6a3e5700eecea09c03dae08d646fe03091163018357f0670a3b1e9a8eebf1c37:0",
+        "cli/dogfood.py:run_dogfood_readiness:subprocess.Popen:e954fccb42ac247b758f13dff473f28117ca45dbbadbd5c3bcddf729a07ed643:0",
         "subprocess.Popen",
         "popen_kwargs",
-        "6a3e5700eecea09c03dae08d646fe03091163018357f0670a3b1e9a8eebf1c37",
-        "de29a2e612e398e4630591774cf17c1bb20cbba0972883c53e4f46cc66b34a6e",
+        "e954fccb42ac247b758f13dff473f28117ca45dbbadbd5c3bcddf729a07ed643",
+        "babba0ff9efe32801d2fcdbe16fe0bdfcfcdb73a42fbb856a14fc584886c7b90",
     ): "readiness child receives the locally built bounded Popen options",
     (
-        "cli/process_containment.py:_spawn_posix:subprocess.Popen:c0f608e57f74bee0ae3826452d4d180c6b52cd00a1dfdc2dd2f9cdcc6eccd073:0",
+        "cli/process_containment.py:_spawn_posix:subprocess.Popen:e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292:0",
         "subprocess.Popen",
         "popen_kwargs",
-        "c0f608e57f74bee0ae3826452d4d180c6b52cd00a1dfdc2dd2f9cdcc6eccd073",
-        "9c78873310945d3e9878d6149b3d6c90ea899f55b6a51e1f90772f6acd89009e",
+        "e7084bed0981858e86d020949edb2393d9499e99e8a8678ee5c0dc35d3315292",
+        "63ba53cd4fa9bedaed4a6859952e2c52fdc4b83bf9310b26fe8fe2cab15d302d",
     ): "POSIX containment primitive forwards options from its checked caller",
     (
-        "cli/process_containment.py:_spawn_windows:subprocess.Popen:64058ac817fbe312804b0108415cd617065b72ddb412b4ec8a528f99b5e7e248:0",
+        "cli/process_containment.py:_spawn_windows:subprocess.Popen:fd298f8fc8369cd525e0bac6fc0173a95c5b71ebd82d42f7620f38aba468cca9:0",
         "subprocess.Popen",
         "popen_kwargs",
-        "64058ac817fbe312804b0108415cd617065b72ddb412b4ec8a528f99b5e7e248",
-        "12c5b7f23d55fef3691899f823d572de67ce4cabb723ca8ab9cc0c6b08e1bb29",
+        "fd298f8fc8369cd525e0bac6fc0173a95c5b71ebd82d42f7620f38aba468cca9",
+        "8738fd491a3755df63fa84ec355ed46191cbfcf8259c211ca83de4a5cc476300",
     ): "Windows containment primitive forwards options from its checked caller",
     (
-        "cli/session_daemon.py:_spawn_daemon_subprocess:subprocess.Popen:65885bda3e22f206be15098a40df69f2c3a64c5b45d11e8299c30dc0b6fa7daf:0",
+        "cli/session_daemon.py:_spawn_daemon_subprocess:subprocess.Popen:18836de9a392fbedcd6d1c9c81b077de877fed544733faa6e29002ba1c58f99f:0",
         "subprocess.Popen",
         "popen_kwargs",
-        "65885bda3e22f206be15098a40df69f2c3a64c5b45d11e8299c30dc0b6fa7daf",
-        "4ff8375151b5165e903ef3f62b4c26bc4e9121a705e23d743a889d00f4d765c7",
+        "18836de9a392fbedcd6d1c9c81b077de877fed544733faa6e29002ba1c58f99f",
+        "677876295c273e09bf25288b00544a46a78023c1b64de7e987fff0cdfe4ce565",
     ): "daemon spawn uses its locally assembled launch options",
     (
-        "cli/subprocess_policy.py:run_subprocess:subprocess.run:3eca68004418782d9f74c6cc51c25e46ea0c3d71e28ab1503e8fc24e879d298b:0",
+        "cli/subprocess_policy.py:run_subprocess:subprocess.run:6eaec4d190ffafae3d3f611906e7558f07e7f694cb80feb84d63e8de95060f85:0",
         "subprocess.run",
         "kwargs",
-        "3eca68004418782d9f74c6cc51c25e46ea0c3d71e28ab1503e8fc24e879d298b",
-        "0413ef3fdd3cd5ea7f9699938c1bd044527d998d710cf9974c9f373e4828f000",
+        "6eaec4d190ffafae3d3f611906e7558f07e7f694cb80feb84d63e8de95060f85",
+        "103974e4d5d2ceb8009757929a1e2cf0ba48a4daaf48e20b52784a1cded23d33",
     ): "central timeout wrapper forwards caller options without choosing decoding policy",
 }
 
@@ -92,8 +92,18 @@ class Sink:
         return f"{self.path}:{self.function}:{self.target}:{self.fingerprint}:{self.ordinal}"
 
 
-def _dump(node: ast.AST) -> str:
-    return ast.dump(node, annotate_fields=True, include_attributes=False)
+def _dump(node: object) -> str:
+    """Fingerprint parsed semantics without interpreter-specific AST formatting."""
+    if isinstance(node, ast.AST):
+        fields = (
+            f"{name}={_dump(value)}"
+            for name, value in sorted(ast.iter_fields(node))
+            if not (name == "type_params" and isinstance(value, list) and not value)
+        )
+        return f"{type(node).__name__}({','.join(fields)})"
+    if isinstance(node, list):
+        return "[" + ",".join(_dump(value) for value in node) + "]"
+    return repr(node)
 
 
 def _fingerprint(node: ast.AST) -> str:

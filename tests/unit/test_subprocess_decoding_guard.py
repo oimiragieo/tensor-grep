@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib.util
 import json
 import sys
@@ -23,6 +24,41 @@ policy_for = guard.policy_for
 scan_source = guard.scan_source
 scan_tree = guard.scan_tree
 violations = guard.violations
+
+
+def test_fingerprints_normalize_only_empty_type_parameters() -> None:
+    node = ast.parse("def launch():\n    pass\n").body[0]
+    node._fields = tuple(name for name in node._fields if name != "type_params")
+    without = guard._fingerprint(node)
+    node._fields = (*node._fields, "type_params")
+    node.type_params = []
+    assert guard._fingerprint(node) == without
+    node.type_params = [ast.Name(id="T", ctx=ast.Load())]
+    assert guard._fingerprint(node) != without
+    node.type_params = None
+    assert guard._fingerprint(node) != without
+
+
+def test_fingerprints_preserve_ordinary_empty_and_none_fields() -> None:
+    node = ast.parse("def launch():\n    pass\n").body[0]
+    before = guard._fingerprint(node)
+    node.decorator_list = None
+    assert guard._fingerprint(node) != before
+    node.decorator_list = []
+    assert guard._fingerprint(node) == before
+    node.returns = []
+    assert guard._fingerprint(node) != before
+
+
+def test_fingerprints_ignore_field_order_and_locations_but_keep_list_order() -> None:
+    node = ast.parse("def launch():\n    first()\n    second()\n").body[0]
+    before = guard._fingerprint(node)
+    node._fields = tuple(reversed(node._fields))
+    assert guard._fingerprint(node) == before
+    ast.increment_lineno(node, 5)
+    assert guard._fingerprint(node) == before
+    node.body.reverse()
+    assert guard._fingerprint(node) != before
 
 
 def test_guard_resolves_module_and_imported_sink_aliases() -> None:
