@@ -57,7 +57,7 @@ packages are not published yet.
 
 | Task | Start here | What you get |
 |---|---|---|
-| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; optional local BM25 relevance ranking with `--rank` |
+| Investigate code or logs | `tg search PATTERN PATH` | Matching text with file and line information; optional word-based relevance ranking with `--rank` |
 | Find code by its structure | `tg run`, `tg scan`, `tg test` | Parser-based patterns and a validated AST search/rewrite workflow |
 | Learn an unfamiliar repository | `tg inventory`, `tg orient`, `tg map` | File summaries, suggested starting points, and file/symbol maps |
 | Follow a symbol | `tg defs`, `tg source`, `tg refs`, `tg callers` | Definitions, source, references, and caller evidence with coverage limits |

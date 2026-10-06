@@ -5,7 +5,7 @@
 ## Follow a request
 
 ```mermaid
-flowchart LR
+flowchart TD
   U[User or tool] --> F{Installed front door}
   F -->|Managed native binary| R[Rust CLI]
   F -->|Python package| P[Python CLI]
