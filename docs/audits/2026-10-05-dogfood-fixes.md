@@ -81,8 +81,15 @@ missing JSON on absent streams, and both forbidden-`-F` argv controls. These are
 failures, not a claim that the host locale reproduced a decoding exception. Ruff, preview format,
 mypy (173 source files), file-size and bare-call ratchets passed. Real CPU-native probe before and
 after returned exit 0, `unsupported`, `NativeCpuBackend`, `gpu-auto-fallback-cpu`, and no sidecar;
-the patched command omits `-F`. Raw receipts are retained in the session evidence directory.
+the patched command omits `-F`. [Raw diagnostic receipts](evidence/2026-10-05-dogfood/diagnostics.json) retain commands, exits,
+and output; artifact identity is recorded separately from installed version.
 
 The Opus health probe returned PONG, but the actual review ended with HTTP 429 / session limit
 (reset advertised as 01:10 America/New_York). This is an unavailable seat, not approval. Sol
 implementation review and the required Opus security gate remain separate. Nothing has merged.
+
+Independent Sol review of `87cdbd9` found an unchanged missing-boolean proof gap. The reviewed
+amendment requires explicit JSON `sidecar_used=false` for native GPU success and preserves unknown
+values as null in doctor and agent evidence. Implementation `6e7ec8d` also hardens the agent twin;
+110 focused diagnostic, doctor, and agent GPU tests passed in the canonical Windows venv.
+The amended source needs a fresh independent verdict and Opus clearance before merge.
