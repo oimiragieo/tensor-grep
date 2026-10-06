@@ -417,7 +417,7 @@ def _download_bounded(url: str, *, max_bytes: int, timeout_s: float) -> bytes:
     (``TG_RERANK_FETCH_DEADLINE_S``, default 300s -- generous for a ~65MB download on a slow
     link). ``timeout_s`` only bounds a SINGLE ``resp.read()`` call, so a malicious/compromised
     server that keeps every individual recv just under ``timeout_s`` (and every chunk under
-    ``max_bytes``) -- a slow-drip -- could otherwise hang the fetch indefinitely (Opus
+    ``max_bytes``) -- a slow-drip -- could otherwise hang the fetch indefinitely (review
     security-gate nit #87). This is an ADDITIVE third bound: it does not change the per-recv
     socket timeout or the byte cap.
 

@@ -72,7 +72,7 @@ def dense_available() -> tuple[bool, str | None]:
         import model2vec  # noqa: F401
     except ImportError as exc:
         # v1.92.1 dogfood item 3 (UX/honesty batch): lead with the one-shot `tg install-dense`
-        # command (CEO#7) -- the pip extra stays as a parenthetical alternative for a caller who
+        # command  -- the pip extra stays as a parenthetical alternative for a caller who
         # wants to script the install directly. Keep both "model2vec not installed" and
         # "tensor-grep[semantic]" verbatim in the message: pinned by
         # test_retrieval_dense.py::test_false_when_model2vec_missing.
@@ -347,7 +347,7 @@ def _download_bounded(url: str, *, max_bytes: int, timeout_s: float) -> bytes:
     ``max_bytes``) -- a slow-drip -- could otherwise hang the fetch indefinitely. This is an
     ADDITIVE third bound: it does not change the per-recv socket timeout or the byte cap. Mirrors
     ``retrieval_late._download_bounded`` exactly (see that module for the original design note,
-    Opus security-gate nit #87).
+    review security-gate nit #87).
 
     Raises a plain ``OSError``/``ValueError`` on any failure (network error, timeout, the byte
     cap, or the wall-clock deadline). The caller (:func:`fetch_dense_model`) wraps ALL of this

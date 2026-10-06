@@ -536,7 +536,7 @@ def test_daemon_request_separates_connect_and_response_timeouts(monkeypatch) -> 
 
 
 def test_daemon_served_symbol_commands_thread_requested_provider(monkeypatch) -> None:
-    """Moat P0-4: every daemon-served symbol command must forward the requested engine.
+    """capability P0-4: every daemon-served symbol command must forward the requested engine.
 
     Before the fix, all 7 branches called build_symbol_*_from_map with NO semantic_provider kwarg,
     silently pinning daemon-routed refs/callers/impact/blast-radius to native even when the client

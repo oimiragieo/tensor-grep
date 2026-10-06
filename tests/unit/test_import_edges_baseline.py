@@ -26,7 +26,7 @@ from tensor_grep.core.import_edges import (
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SRC_ROOT = _REPO_ROOT / "src" / "tensor_grep"
-_BASELINE_PATH = _REPO_ROOT / "docs" / "design" / "2026-09-07-import-edges-baseline.json"
+_BASELINE_PATH = _REPO_ROOT / "tests" / "fixtures" / "governance" / "import-edges-baseline.json"
 
 
 def _load_baseline() -> set[tuple[str, str]]:

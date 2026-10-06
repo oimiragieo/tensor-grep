@@ -68,7 +68,7 @@ def test_search_exit01_unchanged(monkeypatch) -> None:
 
 
 def test_search_timeout_returns_incomplete_envelope_not_crash(monkeypatch) -> None:
-    """Fable review of #400, finding H2: the aggregate JSON path had NO handler for a
+    """review review of #400, finding H2: the aggregate JSON path had NO handler for a
     timed-out rg subprocess, so ``subprocess.TimeoutExpired`` fell into the broad
     ``except Exception``, got wrapped as a ``RuntimeError``, and propagated as an
     uncaught traceback (exit 1, no JSON envelope, all partial results lost). Fix: catch

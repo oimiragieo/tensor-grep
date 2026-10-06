@@ -104,3 +104,8 @@ results into public docs, tests, issue bodies, or pull-request descriptions.
 
 Ignoring a file does not untrack an existing Git entry or remove earlier commits. Removal from
 the current tree is distinct from history cleanup; assess previously published material separately.
+
+Public documentation, root files, and repository configuration use explicit publication allowlists.
+When adding public material, update `scripts/check_repo_hygiene.py` and the corresponding
+MkDocs, Docker, and package boundaries. Run the publication-boundary tests before submitting.
+Release notes publish version links; internal commit narratives must not become release copy.

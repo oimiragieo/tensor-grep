@@ -327,7 +327,7 @@ class CPUBackend(ComputeBackend):
     @staticmethod
     def _fallback_pattern_is_provably_linear(config: SearchConfig) -> bool:
         """Gate for EVERY path that could re-run a pattern through Python's backtracking `re`
-        after the linear-time Rust engine declined/failed (audit #111 + Opus-gate hardening;
+        after the linear-time Rust engine declined/failed (audit #111 + review hardening;
         sibling to the audit #6/#16 fixes in `_search_word_line_context_via_rust` / `_search_ltl`
         / the `--pcre2` residual).
 
@@ -491,7 +491,7 @@ class CPUBackend(ComputeBackend):
             # ReDoS-safe" and fall through UNCONDITIONALLY to the Python latin-1/replace decode
             # loop below. That premise is the SAME one already refuted for `--pcre2` two blocks
             # down: nested quantifiers like `(a+)+$` are valid, linear-time-safe Rust syntax that
-            # catastrophically backtracks under Python's backtracking `re` -- and, as the Opus
+            # catastrophically backtracks under Python's backtracking `re` -- and, as the review
             # security gate proved, so does quantifier-free variable-length ALTERNATION
             # (`(a|aa)...(a|aa)b` backtracks 2^k with no `*+?{` char), so NO static pattern check
             # is a sound gate. The only shape provably safe for the Python fallback is
@@ -578,7 +578,7 @@ class CPUBackend(ComputeBackend):
                     "PCRE2 support or drop --pcre2"
                 ) from exc
             # Rust failed at runtime for a reason unrelated to pattern syntax (native panic /
-            # IO / version skew) and the caller did NOT request --pcre2. Opus-gate hardening
+            # IO / version skew) and the caller did NOT request --pcre2. review hardening
             # (audit #111, must-fix #2): this used to fall open to Python `re` "for robustness",
             # but that is the NEXT ReDoS hole -- a hazard pattern (`(a+)+$` OR the quantifier-free
             # alternation bomb `(a|aa)...b`) would then backtrack unbounded whenever Rust hit a

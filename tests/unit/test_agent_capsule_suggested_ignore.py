@@ -96,9 +96,9 @@ def test_agent_capsule_suggested_ignore_absent_for_genuine_skills_package(tmp_pa
 def test_agent_capsule_suggested_ignore_absent_for_skills_package_via_symbol_import(
     tmp_path: Path,
 ) -> None:
-    """Opus-gate MUST-FIX regression via M2: the symbol/subpackage-import false positive
+    """review MUST-FIX regression via M2: the symbol/subpackage-import false positive
     (`from skills.auth import Auth`, subpackages with `__init__.py`, no SKILL.md) must not reach the
-    `tg agent` capsule either -- `suggested_ignore` absent. This is the moat-facing surface the gate
+    `tg agent` capsule either -- `suggested_ignore` absent. This is the capability-facing surface the gate
     called out: M2 wires the same detection into the agent/daemon path, so the FP had to be proven
     gone on BOTH commands, not just `tg orient`."""
     project = tmp_path / "workspace"

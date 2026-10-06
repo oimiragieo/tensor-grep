@@ -56,12 +56,12 @@ def test_ast_wrapper_backend_should_use_resolved_binary_path():
         patch("tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result),
     ):
         which.side_effect = lambda name: {
-            "ast-grep": r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD",
+            "ast-grep": r"C:\Users\example\AppData\Roaming\npm\ast-grep.CMD",
             "ast-grep.exe": None,
             "sg": None,
         }.get(name)
 
-        assert backend._get_binary_name() == r"C:\Users\oimir\AppData\Roaming\npm\ast-grep.CMD"
+        assert backend._get_binary_name() == r"C:\Users\example\AppData\Roaming\npm\ast-grep.CMD"
 
 
 def test_ast_wrapper_backend_should_ignore_linux_group_sg_binary():
@@ -371,7 +371,7 @@ def test_ast_wrapper_backend_should_batch_many_files():
         patch.object(
             backend,
             "_get_binary_name",
-            return_value=r"C:\\Users\\oimir\\AppData\\Roaming\\npm\\ast-grep.CMD",
+            return_value=r"C:\\Users\\example\\AppData\\Roaming\\npm\\ast-grep.CMD",
         ),
         patch(
             "tensor_grep.backends.ast_wrapper_backend.subprocess.run", return_value=mock_result

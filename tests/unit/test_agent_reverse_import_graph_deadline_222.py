@@ -32,7 +32,7 @@ This file proves the MECHANISM at the function level: fast, deterministic, no su
 wall-clock dependency (a fake `time.monotonic()` forces the trip). The real-binary wall-to-exit
 proof lives in `tests/integration/test_agent_reverse_import_graph_scale_sla_222.py`.
 
-#691 GATE FOLLOW-UP (independent Opus review of the fix above, SHIP-WITH-NITS): the initial fix
+#691 GATE FOLLOW-UP : the initial fix
 left TWO more un-gated call sites of the same pattern:
 
   NIT-1 (core-value, folded in before merge): `_relevant_tests_for_symbol`'s `if caller_files:`

@@ -1057,7 +1057,7 @@ def execute_rewrite_apply_json(
 
     loaded_policy = None
     if policy is not None:
-        # round-7 security (audit #81 Opus gate #2/#12 follow-up): policy is a caller-named
+        # round-7 security : policy is a caller-named
         # JSON file path read by load_apply_policy below -- unconfined it is a file-existence +
         # JSON-schema read-oracle over any path reachable from any MCP client
         # (PolicyValidationError.details echoes back which required fields are missing/
@@ -1075,7 +1075,7 @@ def execute_rewrite_apply_json(
         # to the target's parent directory when path is not a directory, so a co-located policy
         # is allowed while a traversal escape (policy=../../etc/passwd) is still rejected -- the
         # confinement scope is the apply target's own directory subtree, which the caller is
-        # already rewriting (audit #76 Opus-gate nit; the directory case is unchanged).
+        # already rewriting .
         if not policy_anchor.is_dir():
             policy_anchor = policy_anchor.parent
         try:

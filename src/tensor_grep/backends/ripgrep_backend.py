@@ -307,7 +307,7 @@ class RipgrepBackend(ComputeBackend):
             return search_result
 
         except subprocess.TimeoutExpired as e:
-            # Audit H2 (Fable review of #400): the aggregate JSON path previously had NO
+            # Audit H2 : the aggregate JSON path previously had NO
             # handler for a timed-out rg subprocess, so this fell into the broad `except
             # Exception` below, got wrapped as a RuntimeError, and propagated as an
             # UNCAUGHT traceback all the way through main.py's search command (exit 1, no

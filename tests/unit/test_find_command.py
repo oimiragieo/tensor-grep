@@ -92,7 +92,7 @@ def test_find_bm25_only_when_extra_absent_sets_rank_fallback_reason(
 def test_find_dense_unavailable_at_query_degrades_to_bm25_exit_0(
     tmp_path: Path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
-    """Opus-gate blocker F1 regression: a `DenseUnavailableError` raised at QUERY time (a
+    """review blocker F1 regression: a `DenseUnavailableError` raised at QUERY time (a
     dim/shape mismatch from inside `rank_chunks`'s `DenseIndex.query`, NOT at construction --
     construction is already guarded) must degrade VISIBLY to BM25-only and exit 0, never escape
     as a raw traceback + exit 1. `DenseUnavailableError` subclasses `RuntimeError`, so before the
@@ -709,7 +709,7 @@ def test_find_dense_weight_explicit_env_override_wins_over_adaptive_default(monk
 
 
 def test_find_dense_weight_nonfinite_env_clamps_to_adaptive_default(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP) + thinktank rank-lens must-fix 2
+    """Flip-prep NIT 1 (tg_find_review_ledger.md FLIP-PREP) + review rank-lens must-fix 2
     (2026-07-16): `float("nan")` / `float("inf")` / `float("-inf")` all PARSE without raising
     `ValueError`, so the `except ValueError` guard alone never rejected them -- and plain
     ValueError-triggering garbage (`"banana"`, `"12abc"`) hits the OTHER branch. Pre-#191 both
@@ -754,7 +754,7 @@ def test_find_dense_weight_nonfinite_env_clamps_to_adaptive_default(monkeypatch)
 
 
 def test_find_dense_weight_default_boosts_two_word_lexical_canary(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    """Thinktank rank-lens must-fix 1 (2026-07-16): the whitespace gate is purely structural, so a
+    """review must-fix 1 (2026-07-16): the whitespace gate is purely structural, so a
     2-word LEXICAL phrase (not natural language) is indistinguishable from a 2-word NL phrase and
     ALSO receives the adaptive boost when TG_FIND_DENSE_WEIGHT is unset. The 1:5 sweep is 100% NL
     queries and the literal/identifier3 golden slices are single-token by construction, so this
@@ -805,7 +805,7 @@ def test_find_dense_weight_nonfinite_env_never_reaches_rank_chunks(
     )
 
 
-# --- Accuracy-leg regression fix (Opus-gate finding, PR #717): query-adaptive `combine` routing --
+# --- Accuracy-leg regression fix : query-adaptive `combine` routing --
 # max-combine REGRESSES single-token literal/identifier queries (benchmarks/datasets/
 # literal_golden.jsonl: sum=1.0 exact vs max=0.9631, -0.0369 ndcg@10) because a literal query's
 # true answer is often independently ranked #1 by BOTH bm25 and dense -- sum's per-leg-agreement

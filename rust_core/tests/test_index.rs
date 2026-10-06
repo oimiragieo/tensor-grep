@@ -126,7 +126,7 @@ fn match_tuples(payload: &Value) -> Vec<(String, u64, String)> {
         .collect()
 }
 
-/// Audit fix #1 must-fix (Opus gate on PR #541): `tg search --index -c` (and warm-index `-c`)
+/// Audit fix #1 must-fix : `tg search --index -c` (and warm-index `-c`)
 /// now emit per-file `path:count` output -- one `<path>:<count>` line per MATCHED file, matching
 /// `rg -c` and the native aggregate emitter (`emit_count_search_matches`) -- instead of the old
 /// bare aggregate total. This parses that shape into a basename->count map so the assertions are
@@ -1906,7 +1906,7 @@ fn test_tg_search_index_plain_match_still_exits_zero() {
     );
 }
 
-// -- Audit fix #1 MUST-FIX (Opus gate on PR #541): --index/warm `-c` per-file output shape -------
+// -- Audit fix #1 MUST-FIX : --index/warm `-c` per-file output shape -------
 //
 // The index count arm used to emit a bare aggregate total (`println!("{unique_count}")`, e.g.
 // `3`) while `rg -c`, the native CPU engine, and the sibling native aggregate emitter all print

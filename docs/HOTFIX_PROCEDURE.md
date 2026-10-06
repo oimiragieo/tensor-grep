@@ -35,9 +35,9 @@ When a critical issue requires an immediate patch, the preferred path is still a
 
 ## 2. Rollback Procedure
 
-If a deployed version causes severe regressions, administrators must roll back to the previous stable version.
+If a deployed version causes severe regressions, select a previously verified version from an available install channel. The registry-specific commands below apply only after that channel has been published; see [installation](installation.md).
 
-### Winget (Windows)
+### Winget (Windows, after registry publication)
 ```powershell
 winget install oimiragieo.tensor-grep --version A.B.C
 ```
@@ -47,7 +47,7 @@ winget install oimiragieo.tensor-grep --version A.B.C
 pip install tensor-grep==A.B.C
 ```
 
-### Homebrew (macOS)
+### Homebrew (macOS, after tap publication)
 Homebrew users should use the exact URL to the previous formula commit or download the binary directly from the GitHub Releases page.
 
 ## 3. Reproducible Release Verification

@@ -90,7 +90,7 @@ BROAD_WORKSPACE_PROJECT_CHILD_THRESHOLD = 3
 # being a workspace parent.
 BROAD_WORKSPACE_MARKED_ROOT_CHILD_THRESHOLD = 8
 
-# Item #105-parity (bootstrap raw-rg-passthrough gap, CEO dogfood v1.92.x): the ceiling above
+# Item #105-parity : the ceiling above
 # which an IMPLICIT-path (no explicit PATH positional) search walk must be refused rather than
 # run to completion/timeout. Neither the workspace-root guard above (needs >=3/>=8
 # independently-MARKED sibling dirs) nor the vendored-root guard (needs a top-level vendored dir

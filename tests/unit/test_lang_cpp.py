@@ -368,7 +368,7 @@ def test_declarator_shape_6_struct_is_kind_class(tmp_path: Path) -> None:
 
 @pytest.mark.requires_grammar
 def test_declarator_shape_7_redundant_paren_prototype_is_kind_function(tmp_path: Path) -> None:
-    """Same Opus-gate-caught regression trap C's own fix disclosed: `int (foo)(void);` is a REAL
+    """Same review-caught regression trap C's own fix disclosed: `int (foo)(void);` is a REAL
     function prototype with meaningless redundant parens around the name -- its
     `function_declarator` has its own `declarator` field as a `parenthesized_declarator`, the
     exact same NODE TYPE as shape 4's function-pointer variable. The two are distinguished by

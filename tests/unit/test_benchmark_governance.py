@@ -3,25 +3,21 @@ from pathlib import Path
 
 def test_benchmark_docs_reference_accepted_artifacts():
     """
-    Ensure that docs/benchmarks.md and docs/PAPER.md only reference artifacts
+    Ensure that docs/benchmarks.md references accepted artifacts
     that actually exist or follow the accepted governance policy.
     """
     repo_root = Path(__file__).resolve().parents[2]
     benchmarks_md = repo_root / "docs" / "benchmarks.md"
-    paper_md = repo_root / "docs" / "PAPER.md"
 
     assert benchmarks_md.exists(), "docs/benchmarks.md not found"
-    assert paper_md.exists(), "docs/PAPER.md not found"
 
     benchmarks_content = benchmarks_md.read_text(encoding="utf-8")
-    paper_content = paper_md.read_text(encoding="utf-8")
 
     # We want to check that benchmark commands or references don't claim
     # non-existent artifacts. For now, we just enforce the regression policy
     # exists in the text.
     assert "Control-plane changes require artifacts:" in benchmarks_content
     assert "Regression policy:" in benchmarks_content
-    assert "accepted line" in paper_content or "rejected experiment" in paper_content
 
     # Check that any artifacts/bench_*.json mentioned in the text actually exist
     # (or are historical, but let's at least check the main ones from the table)

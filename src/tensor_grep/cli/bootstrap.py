@@ -900,7 +900,7 @@ def _search_paths_include_vendored_root(paths: list[str]) -> bool:
     return any(iter_top_level_vendored_dirs(paths, UNBOUNDED_VENDORED_ROOT_DIR_NAMES))
 
 
-# Item #105 (bootstrap raw-rg-passthrough gap, CEO dogfood v1.92.x directive): neither
+# Item #105 : neither
 # `_search_paths_include_workspace_root` above (needs >=3/>=8 independently-MARKED sibling
 # dirs) nor `_search_paths_include_vendored_root` (needs a top-level vendored dir NAME) catches
 # a plain, single, large repo root -- e.g. a flat monorepo `src/` with thousands of files, no

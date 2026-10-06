@@ -298,7 +298,7 @@ def test_agent_capsule_prefers_windows_exe_bridge_implementation_over_marker_hel
 
     assert payload["primary_target"]["file"] == str(rust_file.resolve())
     assert payload["primary_target"]["symbol"] == "is_managed_windows_exe_bridge"
-    # Migrate the tie-confirmation moat contract into this DETERMINISTIC fixture (it previously lived
+    # Migrate the tie-confirmation capability contract into this DETERMINISTIC fixture (it previously lived
     # only in the de-fragilized self-referential live-repo test): the demoted marker resurfaces as a
     # tied alternative, so the capsule still flags the ambiguity for confirmation.
     assert payload["ambiguity"]["status"] == "tie_requires_confirmation"

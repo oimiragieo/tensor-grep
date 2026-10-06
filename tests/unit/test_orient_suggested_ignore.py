@@ -154,7 +154,7 @@ def test_suggested_ignore_absent_for_genuine_skills_package_imported_across_repo
 def test_suggested_ignore_absent_for_skills_package_via_subpackage_symbol_import(
     tmp_path: Path,
 ) -> None:
-    # Opus-gate MUST-FIX regression, end-to-end: a genuine product `skills/` package consumed via
+    # review MUST-FIX regression, end-to-end: a genuine product `skills/` package consumed via
     # the COMMON idiom `from skills.auth import Auth` (symbol/subpackage import, subpackages carry
     # `__init__.py`, no SKILL.md) must yield `suggested_ignore is None`. This is the exact form the
     # stem-only import graph can't resolve -- pre-STRONG-3 `main` returned None here, so it is a
@@ -174,7 +174,7 @@ def test_suggested_ignore_absent_for_skills_package_via_subpackage_symbol_import
 
 
 def test_suggested_ignore_absent_for_skills_dir_with_init_py(tmp_path: Path) -> None:
-    # Opus-gate MUST-FIX regression, end-to-end: a `skills/__init__.py` at the tree root is an
+    # review MUST-FIX regression, end-to-end: a `skills/__init__.py` at the tree root is an
     # unambiguous real-Python-package marker -- STRONG-3 is refused, `suggested_ignore is None`.
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()

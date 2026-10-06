@@ -1021,7 +1021,7 @@ _RULE_PACKS: dict[str, dict[str, Any]] = {
 }
 
 
-# CEO#6(c): 1:1 mental-model aliases for `resolve_rule_pack`. RESOLVE-ONLY -- these never
+# 1:1 mental-model aliases for `resolve_rule_pack`. RESOLVE-ONLY -- these never
 # appear in `list_rule_packs()` (see the leaked-alias guardrail in
 # tests/unit/test_new_rule_packs.py), and every key here is deliberately distinct from every
 # real pack name in `_RULE_PACKS` so the single `.get(normalized_name, normalized_name)` lookup
@@ -1068,7 +1068,7 @@ def resolve_rule_pack(
     # is a no-op whenever `normalized_name` is already a real pack.
     normalized_name = _RULE_PACK_ALIASES.get(normalized_name, normalized_name)
     if normalized_name not in _RULE_PACKS:
-        # CEO#6(c): "security" (and any other word that happens to name a shared `category`,
+        # "security" (and any other word that happens to name a shared `category`,
         # e.g. all 6 built-in packs today) is a CATEGORY, not a single ruleset -- resolving it
         # to one pack (or silently unioning all matching packs) would be a guess either way.
         # Surface a smart, actionable error listing the real packs to pick from instead of the

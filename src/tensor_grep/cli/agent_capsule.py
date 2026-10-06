@@ -873,8 +873,8 @@ def build_agent_capsule(
     path pays its pre-PR second blast-radius scan again -- ACCEPTED, because recall on a
     scan-capped repo must not regress and the daemon path (the whole point) keeps the single map.
 
-    ``deadline_seconds`` (CLI consistency fix, CEO v1.71.3 dogfood): `--deadline` used to be
-    undefined on `tg agent` (Click "No such option" exit-2). Converted ONCE (moat P0-6 step-3
+    ``deadline_seconds`` : `--deadline` used to be
+    undefined on `tg agent` (Click "No such option" exit-2). Converted ONCE (capability P0-6 step-3
     pattern) and shared across the repo-map build AND the capsule's own render/ranking pass in
     ``build_agent_capsule_from_map`` below.
 

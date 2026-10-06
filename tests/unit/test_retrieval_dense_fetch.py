@@ -178,7 +178,7 @@ def test_download_exceeds_total_deadline_raises(monkeypatch: pytest.MonkeyPatch,
     # `_download_bounded` must bound the TOTAL wall-clock time of a download, not just the
     # per-recv socket timeout and the total byte cap. A malicious/compromised HF server could
     # slow-drip bytes forever -- each individual recv small and fast enough to dodge both existing
-    # bounds -- and hang the fetch indefinitely (mirrors retrieval_late's Opus security-gate nit
+    # bounds -- and hang the fetch indefinitely (mirrors retrieval_late's review security-gate nit
     # #87 fix).
     #
     # No real sleep: the fake response drips 2 small chunks (well under the byte cap) and

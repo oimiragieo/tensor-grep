@@ -200,8 +200,7 @@ def _legacy_tools_enabled() -> bool:
     tools and the 2 singletons remain, since the meta tools' dispatch bodies call the legacy
     Python functions directly regardless of flag state (`mcp.tool()(fn)` returns `fn`
     unchanged, so a de-advertised legacy function stays fully callable in-process). Consciously
-    flipping this to OFF in production is a separate, deliberate, documented operator/CEO
-    decision (Enablement Discipline) -- never bundled into the default-ON Phase-1 PR.
+    flipping this to OFF in production is a separate, deliberate, documented operator/decision (Enablement Discipline) -- never bundled into the default-ON Phase-1 PR.
     """
     value = os.environ.get("TG_MCP_LEGACY_TOOLS", "")
     return value.strip().lower() not in {"0", "false", "no", "off"}
@@ -235,7 +234,7 @@ _WINDOWS_VARIADIC_METAVAR_RE = re.compile(r"(?<!\$)\$\$([A-Z][A-Z0-9_]*)")
 _NATIVE_TG_REMEDIATION = (
     "Install a standalone native tg binary, put it on PATH, or set TG_NATIVE_TG_BINARY."
 )
-# Raised 512 -> 2000 (Fable completeness review) to match the post-cap-fix CLI default
+# Raised 512 -> 2000  to match the post-cap-fix CLI default
 # (repo_map.DEFAULT_AGENT_REPO_MAP_LIMIT) so MCP routing-family tools (defs/context/etc.)
 # get the same routing accuracy as the CLI. Safe: the caller-scan cost stays independently
 # bounded at 512 by CALLER_SCAN_FILE_CEILING (repo_map.py) regardless of this value -- see
@@ -1237,7 +1236,7 @@ def _finalize_aggregate_result(all_results: SearchResult) -> None:
             )
 
 
-# H3 (Fable MCP-surface audit): the CLI's PR #400 unscoped-search-hang fix (per-file wall-clock
+# H3 : the CLI's PR #400 unscoped-search-hang fix (per-file wall-clock
 # deadline + the vendored/large-root refusal guards, `cli/main.py`) never reached the MCP `tg_search`
 # / `tg_ast_search` walk loops -- they reimplemented the walk from scratch and drifted. This helper
 # REUSES the CLI's own guard functions (imported, never reimplemented) so the two surfaces can never
@@ -2490,7 +2489,7 @@ def tg_session_file_importers(
                 file="[refused]",
             )
 
-        # round-7 security (audit #81 Opus gate #2 follow-up): confine file to the session root
+        # round-7 security : confine file to the session root
         # (path) before any read, same class/rationale as tg_file_imports/tg_file_importers above.
         # Anchored to the session root rather than cwd because that is what session_file_importers
         # itself resolves a relative `file` against (build_file_importers_from_map joins it onto
@@ -3062,7 +3061,7 @@ def tg_search(
                 all_results.routing_backend = all_results.routing_backend or selected_backend_name
                 all_results.routing_reason = all_results.routing_reason or selected_backend_reason
             else:
-                # H3 (Fable MCP-surface audit): before PR #400's fix landed here, this walk had
+                # H3 : before PR #400's fix landed here, this walk had
                 # NO per-file wall-clock deadline, no BackendExecutionError fallback, and no
                 # broad/vendored/large-root refusal -- an unscoped root could hang, and a mid-walk
                 # backend fault fell through to the outer `except Exception` below and discarded
@@ -3261,7 +3260,7 @@ def tg_search(
                 )
 
             if count_matches:
-                # M10 (Fable MCP-surface audit): this branch used to ALWAYS return plain text,
+                # M10 : this branch used to ALWAYS return plain text,
                 # ignoring `structured_json` (default True) -- a default caller doing
                 # `json.loads()` on the response would fail. Honor the flag like every other
                 # branch of this tool.
@@ -3519,7 +3518,7 @@ def tg_ast_search(
         )
         all_results.fallback_reason = getattr(pipeline, "fallback_reason", None)
         try:
-            # H3 (Fable MCP-surface audit): same PR #400 walk-deadline/fallback/broad-root-refusal
+            # H3 : same PR #400 walk-deadline/fallback/broad-root-refusal
             # port as `tg_search` -- the AST walk had the identical unbounded-hang and
             # discard-partial-results-on-fault gaps (this backend is NEVER `RipgrepBackend`, so
             # the large-root probe always applies).
@@ -4171,7 +4170,7 @@ def tg_session_context(
         effective_refresh = _effective_auto_refresh(refresh_on_stale, auto_refresh)
         try:
             payload = session_context(session_id, query, path, refresh_on_stale=effective_refresh)
-            # H4 (Fable MCP-surface audit): every sibling context tool (`tg_context_pack`,
+            # H4 : every sibling context tool (`tg_context_pack`,
             # `tg_context_render`, `tg_agent_capsule`, the session render/edit-plan family) bounds
             # its output by `max_tokens`; this tool called `session_context` ->
             # `build_context_pack_from_map` with NO bound at all (dogfood 1.27.0: unbounded at

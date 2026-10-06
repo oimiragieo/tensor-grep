@@ -1959,7 +1959,7 @@ def test_mcp_blast_radius_render_accepts_provider_parameter(tmp_path: Path, monk
 
 
 # ---------------------------------------------------------------------------
-# Regression (CEO dogfood 2026-07-18): `tg defs/source/refs/callers/impact/
+# Regression : `tg defs/source/refs/callers/impact/
 # blast-radius <FILE> <SYMBOL> --provider lsp/hybrid` used to crash with
 # NotADirectoryError. Root cause: when a repo map is scoped to a single FILE
 # (not a directory), `repo_map["path"]` IS that file. Several `_external_*`

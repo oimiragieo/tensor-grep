@@ -86,7 +86,7 @@ _DAEMON_METADATA_FILE = "daemon.json"
 _DAEMON_HOST = DAEMON_HOST
 _DAEMON_CONNECT_TIMEOUT_SECONDS = 0.5
 _DAEMON_RESPONSE_TIMEOUT_SECONDS = 60.0
-# moat P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
+# capability P0-6 step 5: the client-side socket read timeout for a daemon response is env-configurable so
 # a large repo whose warm-daemon graph query legitimately needs >60s is NOT killed by a hard cap that
 # returns a bare "timed out" / exit 1 / zero JSON (the recurring dogfood "60s cap errors" complaint).
 # #200 added the separate traversal-deadline this comment used to flag as "tracked" -- but only for
@@ -158,7 +158,7 @@ _DAEMON_METRICS_EXPENSIVE_COMMANDS = frozenset({
     "blast_radius",
     "blast_radius_render",
     "blast_radius_plan",
-    # task #108 (Tier-2 daemon moat): orient/agent join the expensive-command set.
+    # task #108 (Tier-2 daemon capability): orient/agent join the expensive-command set.
     "orient",
     "agent",
 })
@@ -1138,7 +1138,7 @@ def _orient_response_cache_key(
     request: dict[str, Any],
     payload: dict[str, Any],
 ) -> tuple[str, ...]:
-    # task #108 (Tier-2 daemon moat): `orient` has NO query (it is a whole-repo capsule, unlike
+    # task #108 (Tier-2 daemon capability): `orient` has NO query (it is a whole-repo capsule, unlike
     # every other cacheable command) -- the literal "orient" command-string field below is what
     # keeps this key isolated from every OTHER command's key space (test: orient-key never
     # collides with agent-key), same anti-bleed discipline as _symbol_command_response_cache_key.
@@ -1160,7 +1160,7 @@ def _agent_response_cache_key(
     request: dict[str, Any],
     payload: dict[str, Any],
 ) -> tuple[str, ...]:
-    # task #108 (Tier-2 daemon moat): EVERY output-affecting flag `tg agent` exposes is a key
+    # task #108 (Tier-2 daemon capability): EVERY output-affecting flag `tg agent` exposes is a key
     # field (query + max_files/max_sources/max_tokens/model/provider/max_repo_files/ignore) -- a
     # missing field here would let two requests differing only in that field collide on the same
     # cached answer, same discipline as _context_render_response_cache_key /
@@ -1397,7 +1397,7 @@ def _serve_daemon_response_with_cache(
     # entirely is the simplest correct option: a follow-up identical request just recomputes with
     # its own fresh budget instead of replaying a stale truncation.
     #
-    # Opus-gate nit (PR #647): this guard is SHARED by every command this function serves,
+    # review nit (PR #647): this guard is SHARED by every command this function serves,
     # including the 5 symbol commands (defs/impact/refs/callers/blast_radius), not just the 4
     # #200 targets. It is currently a proven no-op for the symbol commands: `open_session` builds
     # the cached map with no deadline (session_store.open_session), and the warm symbol path

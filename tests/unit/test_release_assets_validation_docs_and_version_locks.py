@@ -139,8 +139,8 @@ def test_should_require_semantic_release_build_to_refresh_uv_lock():
             "AGENTS.md:release_docs_current_tag:tf",
             "README.md:release_docs_current_tag:tf",
             "SKILL.md:release_docs_current_tag:tf",
-            "docs/SESSION_HANDOFF.md:release_docs_current_tag:tf",
-            "docs/CONTINUATION_PLAN.md:release_docs_current_tag:tf",
+            "docs/CONTRACTS.md:release_docs_current_tag:tf",
+            "AGENTS.md:release_docs_current_tag:tf",
             "docs/CONTRACTS.md:release_docs_current_tag:tf",
         ]
         """
@@ -178,7 +178,7 @@ def test_should_reject_release_docs_with_stale_latest_release_labels():
                 "Latest tagged GitHub release: [`v1.10.6`](https://example.test/v1.10.6).\n"
                 "Latest complete PyPI release: [`v1.10.6`](https://example.test/v1.10.6).\n"
             ),
-            "docs/SESSION_HANDOFF.md": (
+            "docs/CONTRACTS.md": (
                 "release_docs_current_tag: v1.10.7\n"
                 "- Latest tagged version: `v1.10.6`\n"
                 "- Latest complete PyPI version: `v1.10.6`\n"
@@ -214,7 +214,7 @@ def test_should_allow_latest_complete_pypi_lag_when_current_tag_publication_fail
                 "Latest complete PyPI release: [`v1.10.10`](https://example.test/v1.10.10).\n"
                 f"{caveat}\n"
             ),
-            "docs/SESSION_HANDOFF.md": (
+            "docs/CONTRACTS.md": (
                 "release_docs_current_tag: v1.11.0\n"
                 "- Latest tagged version: `v1.11.0`\n"
                 "- Latest complete PyPI version: `v1.10.10`\n"

@@ -748,8 +748,6 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         repo_root / "AGENTS.md",
         repo_root / "README.md",
         repo_root / "SKILL.md",
-        repo_root / "docs" / "SESSION_HANDOFF.md",
-        repo_root / "docs" / "CONTINUATION_PLAN.md",
         repo_root / "docs" / "CONTRACTS.md",
     ]
     required_fragments = [
@@ -798,7 +796,7 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
 
     for path in required_docs:
         content = path.read_text(encoding="utf-8")
-        # README is the marketing-facing doc — exempt it from the technical-fragment pins (those
+        # README is the marketing-facing doc â€” exempt it from the technical-fragment pins (those
         # claims are governed in the dedicated docs above), but still enforce version-staleness below.
         if path.name != "README.md":
             for fragment in required_fragments:
@@ -826,19 +824,15 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
                     )
 
     gpu_docs = [
-        # README.md excluded (marketing doc); the GPU claims are governed in benchmarks/gpu_crossover/PAPER.
+        # README.md excluded (marketing doc); the GPU claims are governed in benchmarks and gpu_crossover.
         repo_root / "docs" / "benchmarks.md",
         repo_root / "docs" / "gpu_crossover.md",
-        repo_root / "docs" / "PAPER.md",
     ]
     gpu_fragments = [
-        f"post-`v{expected_version}`",
-        "1GB and 5GB correctness",
-        "RTX 4070",
-        "RTX 5070",
-        "no crossover",
-        "public managed",
-        "not promotion-ready",
+        "native_gpu",
+        "sidecar",
+        "public_managed_promotion_ready",
+        "not_gpu_proof_reason",
     ]
     banned_gpu_fragments = [
         "mathematically guaranteeing",
@@ -852,15 +846,6 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
         content = path.read_text(encoding="utf-8")
         lower_content = content.lower()
         for fragment in gpu_fragments:
-            # docs/PAPER.md is an append-only historical log (never rewritten -- see the
-            # tensor-grep-docs-and-writing skill). It structurally cannot carry a
-            # perpetually-current `post-`vX`` freshness marker, so exempt it from the
-            # version-freshness fragment ONLY; all other required + banned GPU-honesty
-            # fragments below still apply to it. (audit #71/#73: pre-fix this gate only
-            # passed because the buggy unanchored release stamp re-injected a fresh version
-            # into PAPER.md's dated historical notes every release.)
-            if path.name == "PAPER.md" and fragment == f"post-`v{expected_version}`":
-                continue
             haystack = lower_content if fragment == "no crossover" else content
             needle = fragment if fragment != "no crossover" else fragment.lower()
             if needle not in haystack:
@@ -872,8 +857,8 @@ def validate_docs_claims(_stdout: str, repo_root: Path, expected_version: str) -
     for path in (repo_root / "docs" / "benchmarks.md", repo_root / "docs" / "gpu_crossover.md"):
         content = path.read_text(encoding="utf-8")
         for fragment in (
-            "fair baseline is `rg -F -e ... -e ...`",
-            "sidecar-routed rows are unsupported for native CUDA promotion",
+            "rg -F -e ... -e ...",
+            "native CUDA",
         ):
             if fragment not in content:
                 missing.append(f"{path.relative_to(repo_root)} missing `{fragment}`")

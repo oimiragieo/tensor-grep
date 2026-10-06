@@ -341,12 +341,12 @@ def test_should_forward_rg_inverse_config_override_flags():
 
 def test_should_forward_pattern_file_without_treating_path_as_regex():
     backend = RipgrepBackend()
-    config = SearchConfig(file_patterns=[r"C:\Users\oimir\patterns.txt"])
+    config = SearchConfig(file_patterns=[r"C:\Users\example\patterns.txt"])
 
     with patch.object(backend, "_get_binary_name", return_value="rg"):
         cmd = backend._build_cmd(file_path="test.log", pattern="", config=config, json_mode=False)
 
-    assert cmd[-4:] == ["--file", r"C:\Users\oimir\patterns.txt", "--", "test.log"]
+    assert cmd[-4:] == ["--file", r"C:\Users\example\patterns.txt", "--", "test.log"]
     assert "-e" not in cmd
 
 

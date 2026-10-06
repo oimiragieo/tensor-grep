@@ -441,7 +441,7 @@ def test_tg_search_count_matches_sets_truncated_when_max_repo_files_caps_the_sca
 
 
 def test_tg_search_count_matches_defaults_to_parseable_structured_json():
-    # M10 (Fable MCP-surface audit): `count_matches=True` used to ALWAYS return plain text
+    # M10 : `count_matches=True` used to ALWAYS return plain text
     # regardless of `structured_json` (default True) -- a default caller's `json.loads()`
     # would raise. It must now honor the flag like every other branch of this tool.
     from tensor_grep.cli import mcp_server

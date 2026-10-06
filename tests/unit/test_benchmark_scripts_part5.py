@@ -248,8 +248,8 @@ def test_run_gemini_patch_predictions_should_run_with_isolated_home_env(monkeypa
 
 def test_gemini_project_context_and_skill_should_exist():
     repo_root = Path(__file__).resolve().parents[2]
-    project_context = repo_root / "GEMINI.md"
-    skill_dir = repo_root / ".gemini" / "skills" / "tensor-grep"
+    project_context = repo_root / "benchmarks" / "fixtures" / "gemini" / "GEMINI.md"
+    skill_dir = repo_root / "benchmarks" / "fixtures" / "gemini" / "skills" / "tensor-grep"
 
     assert project_context.exists()
     assert skill_dir.joinpath("SKILL.md").exists()

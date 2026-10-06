@@ -1,4 +1,4 @@
-"""Moat P0-6 step 2: the deadline PARTIAL signal must survive when a symbol builder repackages a
+"""capability P0-6 step 2: the deadline PARTIAL signal must survive when a symbol builder repackages a
 build_symbol_defs result into its own payload. Without _copy_partial_signal, a deadline-truncated
 map silently loses partial:true/deadline_limit the moment it is wrapped by callers/impact/source.
 """

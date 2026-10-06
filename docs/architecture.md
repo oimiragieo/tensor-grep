@@ -77,6 +77,24 @@ the source of truth; clients can discover it through MCP, and the
 
 Some session requests may use an optional daemon response cache. That cache is scoped to daemon requests and is not the checkpoint store. See [cache management](runbooks/cache-management.md) before removing local state and [session daemon protocol](session_daemon_protocol.md) for session behavior.
 
+## Persisted semantic index library
+
+`src/tensor_grep/core/semantic_index.py` is retained as a library-only component.
+Its `build_and_save` and `load_or_warn` APIs persist chunk-BM25 data under
+`.tg_semantic_index/` (`bm25_chunks.json` and `bm25_meta.json`). This store is
+separate from the native trigram `.tg_index` and the AST project cache.
+
+The persisted semantic index is not wired into production CLI, MCP, or session
+requests. There is no `tg index` command for this store; `tg search --rank` ranks
+in memory. Keeping the library does not promise persisted acceleration for those
+commands, and the absence of an in-repository caller does not establish that an
+exported library API is unused by downstream applications.
+
+Loads check the schema, chunker mode, and a fingerprint over sorted source paths
+and modification times. A mismatch warns and returns `None` so callers can choose
+an in-memory fallback rather than serve stale data. The library's corpus is not
+size-capped; applications must bound input when they need a resource limit.
+
 ## Source map
 
 | Area | Role |

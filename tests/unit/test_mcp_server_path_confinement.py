@@ -646,7 +646,7 @@ def test_read_path_param_coverage_rejects_out_of_root(tmp_path, monkeypatch, cas
 
 
 # --- positive-path regression guards: confining the four params above must not break a
-# legitimate in-root call (Opus adversarial gate on #81, fix-council item #2).
+# legitimate in-root call .
 
 
 def test_tg_file_imports_accepts_in_root_path(tmp_path, monkeypatch):
@@ -705,7 +705,7 @@ def test_tg_session_file_importers_accepts_in_root_path(tmp_path, monkeypatch):
 
 
 def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path, monkeypatch):
-    """VERIFY confining `policy` (round-7 fix, Opus gate item #2) does not regress a
+    """VERIFY confining `policy`  does not regress a
     legitimate in-root policy: a policy file inside the scan root must reach
     load_apply_policy's OWN schema validation (code="invalid_policy") rather than being
     refused by the new confinement check (which would instead surface code="invalid_input"
@@ -742,7 +742,7 @@ def test_tg_rewrite_apply_accepts_policy_within_scan_root(tmp_path, monkeypatch)
 
 
 def test_tg_rewrite_apply_accepts_co_located_policy_for_single_file_target(tmp_path, monkeypatch):
-    """audit #76 (Opus-gate nit on #464): when `path` is a single FILE (a targeted rewrite),
+    """audit #76 : when `path` is a single FILE (a targeted rewrite),
     a policy co-located in the file's directory must reach load_apply_policy's schema
     validation (code="invalid_policy"), NOT be fail-closed-refused by confinement
     (code="invalid_input"). Pre-fix the policy anchor was the file itself, which has no

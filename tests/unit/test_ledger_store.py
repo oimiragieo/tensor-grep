@@ -418,7 +418,7 @@ def test_release_by_symbol_does_not_cross_agents(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------------------
-# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): claim/list/release canonicalize to the
+# PATH-scope footgun fix : claim/list/release canonicalize to the
 # SAME repository root regardless of which subtree PATH names; `list` rolls scope up; a
 # `release` that matches nothing names what IS live. Reproduces the exact dogfood sequence:
 # `tg ledger claim core/hooks ...` then `tg ledger list` (or `list .`) used to return EMPTY,

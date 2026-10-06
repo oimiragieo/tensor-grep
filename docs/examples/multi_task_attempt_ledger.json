@@ -2,7 +2,7 @@
   "artifact": "agent_attempt_ledger",
   "suite": "agent_loop",
   "generated_at_epoch_s": 1761941102.0,
-  "root": "C:\\dev\\projects\\tensor-grep",
+  "root": "C:\\example\\project",
   "task_id": "tg-task-1720",
   "tasks": [
     {

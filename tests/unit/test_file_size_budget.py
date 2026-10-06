@@ -1,6 +1,6 @@
 """The enterprise file-size budget gate, and proof that it can actually fail.
 
-`scripts/file_size_budget.py` enforces the CEO's 2026-08-19 size standard via a
+`scripts/file_size_budget.py` enforces the 's 2026-08-19 size standard via a
 grandfathered ratchet. This suite is deliberately weighted toward MUTATION
 CONTROLS rather than toward the happy path, because the happy path is the part
 that cannot tell you anything: a gate that has only ever been observed passing is

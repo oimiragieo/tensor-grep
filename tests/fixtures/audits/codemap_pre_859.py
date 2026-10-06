@@ -1040,7 +1040,7 @@ def build_codemap(
     # and the tail folder-census filter below -- see _is_under_resolved_dir's docstring.
     resolved_out_dir = _resolved_or_self(out_dir)
 
-    # moat P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
+    # capability P0-6 pattern (mirrors build_symbol_impact in repo_map.py): convert the relative
     # --deadline to an ABSOLUTE monotonic timestamp ONCE, then thread it into every phase below --
     # including (tg-codemap 90s-timeout root cause) the revision-identity git calls just below,
     # which used to run BEFORE this anchor even existed. A caller-supplied deadline_monotonic
@@ -1105,7 +1105,7 @@ def build_codemap(
 
     scan_limit = rm.get("scan_limit")
     possibly_truncated = bool(isinstance(scan_limit, dict) and scan_limit.get("possibly_truncated"))
-    # build_repo_map's own --deadline cutoff signal (moat P0-6): a fired deadline sets rm["partial"]
+    # build_repo_map's own --deadline cutoff signal (capability P0-6): a fired deadline sets rm["partial"]
     # (never present -- not False -- when no deadline was supplied), which is DISTINCT from
     # scan_limit's file-COUNT cap (task #384-#395 deadline program parity with callers/refs/impact).
     deadline_hit = bool(rm.get("partial"))

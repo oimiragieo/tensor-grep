@@ -183,6 +183,34 @@ jobs:
       - name: Repo Hygiene Guard
         run: python scripts/check_repo_hygiene.py
 
+      - name: Release publication boundary
+        timeout-minutes: 5
+        env:
+          TG_TEST_DOCKER_CONTEXT: '1'
+        run: |
+          python -m pip install uv==0.11.25
+          timeout 180 uv run --no-project --with python-semantic-release==9.21.1 --with maturin==1.15.0 --with mkdocs==1.6.1 --with pytest python -m pytest --confcutdir=tests/unit tests/unit/test_release_publication_boundary.py -q
+
+      - name: Scan tracked publication files for secrets
+        timeout-minutes: 5
+        env:
+          TG_REQUIRE_GITLEAKS: '1'
+        run: |
+          set -euo pipefail
+          scanner_dir="$RUNNER_TEMP/gitleaks-8.30.1"
+          public_tree="$RUNNER_TEMP/tracked-publication-tree"
+          mkdir -p "$scanner_dir" "$public_tree"
+          curl --fail --silent --show-error --location \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz \
+            --output "$scanner_dir/gitleaks.tar.gz"
+          printf '%s  %s\n' '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb' "$scanner_dir/gitleaks.tar.gz" | sha256sum --check --strict
+          tar -xzf "$scanner_dir/gitleaks.tar.gz" -C "$scanner_dir" gitleaks
+          export GITLEAKS_BIN="$scanner_dir/gitleaks"
+          test "$("$GITLEAKS_BIN" version)" = '8.30.1'
+          timeout 120 uv run --no-project --with pytest python -m pytest --confcutdir=tests/unit tests/unit/test_gitleaks_positive_control_validation.py -q
+          git archive HEAD | tar -x -C "$public_tree"
+          timeout 120 "$GITLEAKS_BIN" dir --no-banner --redact "$public_tree"
+
   smoke:
     name: smoke (ubuntu-latest)
     needs: repo-hygiene
@@ -496,7 +524,7 @@ jobs:
             echo "no .tg-registration.toml present; skipping registration check"
           fi
 
-      # Enterprise file-size budget (CEO standard, 2026-08-19). Contracts <=500, core engine
+      # Enterprise file-size budget . Contracts <=500, core engine
       # <=1500, tests <=2000, fixtures <=2000. Before this gate the standard had NO mechanism
       # anywhere in CI or the suite (grep-verified with a positive control), which is how 33
       # files drifted past it. Those 33 are grandfathered in scripts/file_size_allowlist.json at
@@ -681,7 +709,7 @@ jobs:
         # comment) -- macos-latest included only on the monthly schedule run.
         os: ${{ fromJson(needs.ci-cost-os-gate.outputs.test_os) }}
         rust_channel: [stable, nightly]
-        # CI-cost discipline (thinktank-ratified): the macOS x nightly leg runs a
+        # CI-cost discipline : the macOS x nightly leg runs a
         # non-gating signal (continue-on-error) at ~10x the Linux rate for zero release value.
         # Nightly still runs on linux/windows every PR and all channels weekly via the cron.
         exclude:

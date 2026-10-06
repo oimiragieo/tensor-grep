@@ -956,14 +956,14 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
     daemon_statuses = iter([
         {
             "running": True,
-            "root": r"C:\dev\projects\tensor-grep",
+            "root": r"C:\example\project",
             "host": "127.0.0.1",
             "port": 43123,
             "pid": 9001,
         },
         {
             "running": False,
-            "root": r"C:\dev\projects\tensor-grep",
+            "root": r"C:\example\project",
             "stale_metadata": True,
         },
     ])
@@ -1003,7 +1003,7 @@ def test_upgrade_restarts_preexisting_session_daemon_after_handoff_loss(monkeypa
 
     assert result.exit_code == 0
     assert calls[0][0] == "uv"
-    assert restarted == [r"C:\dev\projects\tensor-grep"]
+    assert restarted == [r"C:\example\project"]
     assert "Session daemon restarted after upgrade" in result.stdout
 
 
@@ -1030,7 +1030,7 @@ def test_upgrade_does_not_start_session_daemon_when_none_was_running(monkeypatch
     )
     monkeypatch.setattr(
         "tensor_grep.cli.main._doctor_session_daemon_status",
-        lambda _path: {"running": False, "root": r"C:\dev\projects\tensor-grep"},
+        lambda _path: {"running": False, "root": r"C:\example\project"},
     )
     monkeypatch.setattr(
         "tensor_grep.cli.session_daemon.start_session_daemon",

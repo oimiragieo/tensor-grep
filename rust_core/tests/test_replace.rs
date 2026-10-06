@@ -538,7 +538,7 @@ fn replace_in_place_refuses_a_directory_symlink_root() {
         "directory mode followed the root link and rewrote the target"
     );
 
-    // Trailing-separator arm (opus gate r4 F1): a trailing separator on the raw path must not
+    // Trailing-separator arm : a trailing separator on the raw path must not
     // defeat the root refusal (POSIX lstat("<link>/") resolves through the final symlink;
     // Windows normalizes trailing separators in attribute queries but the arm is harmless and
     // keeps the guard contract pinned on both platforms).

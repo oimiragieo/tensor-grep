@@ -131,3 +131,36 @@ MEMORY.md
 /.claude/skills/*/*
 !/.claude/skills/*/SKILL.md
 !/.claude/skills/tensor-grep/REFERENCE.md
+
+# Private configuration and operating records are never repository inputs.
+.env.*
+/.gemini/
+/.superpowers/
+/.codex/
+/.cursor/
+/.opencode/
+/GATES.md
+/GEMINI.md
+/backlog.md
+/features/
+/docs/audits/
+/docs/plans/
+/docs/planning/
+/docs/positioning/
+/docs/investigations/
+/docs/decisions/
+/docs/requirements/
+/docs/BACKLOG.md
+/docs/TASK_BOARD.md
+/docs/SESSION_HANDOFF.md
+/docs/CONTINUATION_PLAN.md
+
+# Retired internal documentation must remain outside publication inputs.
+/docs/design/
+/docs/PAPER.md
+/docs/world_class_plan.md
+/docs/FIX_PLAN*.md
+/docs/DOGFOOD*.md
+/docs/agent-laws-receipts.md
+/docs/milestone1_audit.md
+/docs/architecture/native_embeddings.md

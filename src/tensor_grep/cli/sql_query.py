@@ -244,7 +244,7 @@ def _install_query_deadline_handler(
 def _detect_imports_referenced(conn: Any, query: str) -> bool:
     """Prepare-only pass: does *query* actually touch the ``imports`` table?
 
-    Perf finding (CEO round 3 on PR #1175): the imports pass added a +90% latency tax to EVERY
+    Perf finding : the imports pass added a +90% latency tax to EVERY
     `tg sql` call, including a bare ``SELECT * FROM symbols`` that never looks at `imports`. A
     substring/regex check on the query text would be a parser the real SQL grammar can always
     outrun (a CTE, a subquery, a comment containing the word "imports", a case difference). This
@@ -302,7 +302,7 @@ def _run_imports_pass(
     unreadable_hit: Any = None,
 ) -> tuple[list[tuple[str, str, int, str | None]], bool, bool]:
     """The actual `imports` extraction+resolution pass -- ONLY called when
-    `_detect_imports_referenced` says the query needs it (perf finding, CEO round 3 on #1175).
+    `_detect_imports_referenced` says the query needs it .
 
     Defined as a MODULE-LEVEL function in `sql_query.py` (not `repo_map.py`) precisely so a test
     can spy on ITS entry point directly (`monkeypatch.setattr(sql_query, "_run_imports_pass",
@@ -768,7 +768,7 @@ def sql_command(
         # EXACTLY ONCE, immediately before `conn.execute(query)` below, and removed right after --
         # so `--deadline` can only ever affect the query it names.
 
-        # Perf finding (CEO round 3 on #1175): populating `imports` unconditionally taxed EVERY
+        # Perf finding : populating `imports` unconditionally taxed EVERY
         # `tg sql` call +90% (measured on src/tensor_grep), including a bare symbols-only SELECT.
         # `_detect_imports_referenced` asks SQLite's own authorizer whether *query* actually
         # touches `imports` (through any subquery/CTE/alias) BEFORE running the extraction pass;

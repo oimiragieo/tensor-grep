@@ -354,7 +354,7 @@ def test_tg_symbol_impact_uses_bounded_repo_scan_by_default(monkeypatch, tmp_pat
 
     payload = json.loads(mcp_server.tg_symbol_impact("safeParseJSON", str(tmp_path)))
 
-    # Cluster A cap-value decision (Fable completeness review): the MCP default was raised
+    # Cluster A cap-value decision : the MCP default was raised
     # 512 -> 2000 to match the CLI's routing-accuracy default; tg_symbol_impact's *behavior*
     # (forwarding the shared default) is unchanged, so assert against the constant rather
     # than a value that would silently go stale on the next cap-value change.

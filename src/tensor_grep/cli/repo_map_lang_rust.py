@@ -671,7 +671,7 @@ def _rust_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    # PERF increment 1 / Section B mirror (Fable-designed): same alias-aware early exit as
+    # PERF increment 1 / Section B mirror : same alias-aware early exit as
     # _js_ts_references_and_calls above -- bindings only need the source TEXT, so they're
     # resolved before the parse, and a symbol-absent file with no matching `use` binding skips
     # tree-sitter parsing entirely.

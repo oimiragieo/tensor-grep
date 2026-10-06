@@ -2,7 +2,9 @@
 
 `tg.exe` exposes a small set of machine-readable output shapes for harnesses and agents. This document describes the current v1 JSON contracts emitted by the native Rust CLI, plus the current GPU sidecar hybrid shape. `tg.exe search --format rg --json ...` is deliberately not a tensor-grep envelope; it streams ripgrep JSON Lines events for tools that require rg's event schema.
 
-All committed examples live in [`docs/examples/`](examples/) and are valid single-document JSON files generated from real `tg.exe` commands against temporary fixtures created under `bench_data/`.
+Illustrative outputs live in [`docs/examples/`](examples/). Captured local paths
+are normalized to synthetic example paths. These files describe payload shapes;
+they are not evidence that a particular installation, provider, or GPU route is available.
 
 > `bench_data/*.log` is ignored by default because of the repo ignore rules, so search examples that target log files use `--no-ignore`.
 
@@ -113,7 +115,7 @@ Each `matches[]` object carries `file`, `line`, `line_number`, and `text` (both 
 > schema-validating consumer REJECTS a real `tg find` payload with
 > `None is not of type 'string'`. `tg search --json` on the same tree emits
 > `"NativeCpuBackend"` / `"json_output"`, which is the control proving the fields can be
-> populated. Tracked in `docs/BACKLOG.md` as FIND-JSON-CONTRACT-VIOLATION (P1). A consumer
+> populated. A consumer
 > written today must tolerate `null` on those two fields for `find` specifically; that tolerance
 > should be removed once the defect is fixed. Do NOT "fix" it by relaxing the schema — that would
 > weaken the contract for `tg search`, which is correct.
@@ -316,7 +318,7 @@ this document it does **not** carry the common envelope fields (`version`/`routi
 | `token_budget_label` | `string` | Human-readable summary of `token_estimate` and the snippet token budget. |
 | `truncated` | `boolean` | `true` when the snippet token budget clipped or dropped a snippet. |
 | `scan_limit` | `integer` | The effective `max_repo_files` used to build the underlying repo map. |
-| `suggested_scope` | `object \| null` | Additive (audit task 93 SUB-2). Present only when the underlying repo scan itself was truncated (distinct from `truncated` above, which is snippet/token-budget only) AND a centrality-weighted directory rollup found a clear winner: `{dirs: [absolute_path], confidence: "heuristic"}`. `null` on a complete scan, or when the top two directories are tied/near-tied (degrade rather than guess). |
+| `suggested_scope` | `object \| null` | Additive. Present only when the underlying repo scan itself was truncated (distinct from `truncated` above, which is snippet/token-budget only) AND a centrality-weighted directory rollup found a clear winner: `{dirs: [absolute_path], confidence: "heuristic"}`. `null` on a complete scan, or when the top two directories are tied/near-tied (degrade rather than guess). |
 
 `ignore` (repeatable glob, matches basename or repo-relative path) excludes a subtree from the
 **centrality ranking** only -- the files are still walked, just kept out of the central-files/
@@ -367,7 +369,7 @@ Current `coverage` values:
 | Field | Type | Notes |
 | --- | --- | --- |
 | `language_scope` | `string` | Every language with a registered symbol-graph `LanguageSpec` (`lang_registry.LANGUAGE_REGISTRY`), sorted and hyphen-joined. Currently `c-cpp-csharp-go-java-javascript-php-python-rust-typescript` (10 languages). Derived live from the registry, not a hand-maintained literal, so onboarding a new language updates this automatically. |
-| `symbol_navigation` | `string` | Two tiers, derived live from the same registry. `parser-backed-refs-callers:<languages>` lists languages whose `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified. `foundational-defs-imports-only:<languages>` lists languages with parser-backed defs/imports but where refs/callers fall back to a generic regex-heuristic text match (no AST verification) -- these languages' own registration comments in `repo_map.py` self-label "FOUNDATIONAL-TIER". As of the C++ wave (Task 10E, the final wave of the top-10 language-support campaign) this tier is EMPTY -- every registered language carries a real, AST-verified `references_and_calls` extractor -- so the `foundational-defs-imports-only:` segment is always present but always trails an empty list. Currently `parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:`. |
+| `symbol_navigation` | `string` | Two tiers, derived live from the same registry. `parser-backed-refs-callers:<languages>` lists languages whose `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified. `foundational-defs-imports-only:<languages>` lists languages with parser-backed defs/imports but where refs/callers fall back to a generic regex-heuristic text match (no AST verification) -- these languages' own registration comments in `repo_map.py` self-label "FOUNDATIONAL-TIER". As of the C++ wave this tier is EMPTY -- every registered language carries a real, AST-verified `references_and_calls` extractor -- so the `foundational-defs-imports-only:` segment is always present but always trails an empty list. Currently `parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:`. |
 | `test_matching` | `string` | Currently `filename+import+graph-heuristic`. |
 
 ## Context Pack JSON
@@ -1010,7 +1012,9 @@ Each GPU sidecar `matches[]` object has:
 | `line_number` | `integer` | 1-based line number from the Python sidecar. |
 | `text` | `string` | Matching line text. |
 
-On this worker host the real GPU Python backends were unavailable, so the committed example was produced by running the real native `tg.exe` command against `bench_data/` with `TG_SIDECAR_SCRIPT` set to a deterministic mock. That still exercises the Rust sidecar transport and envelope normalization path.
+The sidecar example uses a deterministic mock to illustrate transport and
+envelope normalization. It does not establish native GPU execution, hardware
+availability, or acceleration.
 
 ## Calibrate JSON
 
@@ -1509,7 +1513,7 @@ PyPI wheel installs can serve simple `tg_rewrite_plan(...)` and `tg_rewrite_appl
 
 Call `tg_mcp_capabilities()` first when a client might be running in a PyPI wheel, sandbox, or other runtime where the standalone native binary is uncertain.
 
-Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped meta-tools, Phase-1 MCP consolidation task 98; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
+Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped meta-tools, MCP meta-tool consolidation; re-derive with `grep -n "^def tg_\|^async def tg_" src/tensor_grep/cli/mcp_server.py | wc -l` and cross-check names against `test_harness_api_doc_lists_every_registered_tool_name`, which enumerates the live registry so this list can't silently drift again). Setting `TG_MCP_LEGACY_TOOLS` to `0`/`false`/`no`/`off` de-advertises the 46 legacy tools below that are NOT `tg_mcp_capabilities`/`tg_classify_logs` (those 2 are always-on singletons), leaving the 10 meta-tools + the 2 singletons (12 tools) -- see "Meta-Tools (Phase-1 consolidation)" below):
 
 - `tg_mcp_capabilities()`
 - `tg_rulesets()`
@@ -1520,7 +1524,7 @@ Current tool set (58 tools by default -- 48 legacy + 10 additive task-shaped met
 - `tg_context_pack(query, path=".")`
 - `tg_edit_plan(query, path=".", max_files=3, max_sources=5, max_tokens=None, max_symbols=5)`
 - `tg_context_render(query, path=".", max_files=3, max_sources=5, max_symbols_per_file=6, max_render_chars=None, optimize_context=False, render_profile="full")`
-- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0, deadline=None)` -- `deadline` (task 98/W1b parity) mirrors `tg agent --deadline` / `tg codemap --deadline`.
+- `tg_agent_capsule(query, path=".", max_files=3, max_sources=5, max_tokens=1200, max_repo_files=2000, model=None, gpu_device_ids=None, gpu_timeout_s=5.0, deadline=None)` -- `deadline` mirrors `tg agent --deadline` / `tg codemap --deadline`.
 - `tg_symbol_defs(symbol, path=".")`
 - `tg_symbol_source(symbol, path=".")`
 - `tg_symbol_impact(symbol, path=".", deadline=None)`
@@ -1555,7 +1559,7 @@ understand.
 - `tg_session_file_importers(session_id, file, path=".", refresh_on_stale=False, auto_refresh=None)`
 - `tg_search(pattern=None, path=".", case_sensitive=False, ignore_case=False, fixed_strings=False, word_regexp=False, context=None, max_count=None, max_results=None, max_files=None, count_matches=False, glob=None, type_filter=None, query=None, structured_json=True, max_repo_files=2000, rank=False, semantic=False)`
 - `tg_ast_search(pattern, lang, path=".", structured_json=True, max_repo_files=2000)`
-- `tg_find(query, path=".", limit=10, max_repo_files=2000, max_tokens=4000, deadline=None)` -- whole-repo hybrid semantic search (BM25 [+ local CPU dense embedding]), the agent-callable form of `tg find`; walks and ranks the WHOLE repo (no pattern pre-filter). `path` is confined to the project root as the first operation. Returns the same `matches[]`/`rank_fallback_reason`/`result_incomplete`/`incomplete_reason` envelope shape as [`examples/search.json`](examples/search.json) (serialized via the same `JsonFormatter` the CLI's `tg find --json` uses), plus top-level `query`/`path`. A hard backend fault (e.g. a corrupt dense model) comes back as `error.code = "find_backend_error"`, never a raw traceback. (MaxSim late rerank is NOT reachable from the MCP surface at all -- retired, see `docs/BACKLOG.md`'s F10 entry -- so this description never mentions it, unlike the CLI's `tg find --help`, which still names the reason for a curious reader.)
+- `tg_find(query, path=".", limit=10, max_repo_files=2000, max_tokens=4000, deadline=None)` -- whole-repo hybrid semantic search (BM25 [+ local CPU dense embedding]), the agent-callable form of `tg find`; walks and ranks the WHOLE repo (no pattern pre-filter). `path` is confined to the project root as the first operation. Returns the same `matches[]`/`rank_fallback_reason`/`result_incomplete`/`incomplete_reason` envelope shape as [`examples/search.json`](examples/search.json) (serialized via the same `JsonFormatter` the CLI's `tg find --json` uses), plus top-level `query`/`path`. A hard backend fault (e.g. a corrupt dense model) comes back as `error.code = "find_backend_error"`, never a raw traceback. MaxSim late rerank is not exposed by this MCP tool.
 - `tg_index_search(pattern, path=".")`
 - `tg_classify_logs(file_path, structured_json=True)`
 - `tg_devices(json_output=True)`
@@ -1568,7 +1572,7 @@ understand.
 - `tg_review_bundle_verify(bundle_path)`
 - `tg_rewrite_diff(pattern, replacement, lang, path=".")`
 
-Meta-Tools (Phase-1 consolidation, task 98) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
+Meta-Tools (task-shaped consolidation) -- ALWAYS registered regardless of `TG_MCP_LEGACY_TOOLS`; each composes several of the 46 legacy tools above by an `action` string selector and dispatches to the matching legacy tool FUNCTION directly, so every legacy fail-closed-class behavior (native-unavailable, validation-command gating, plan-drift, ...) is preserved unchanged:
 
 Legacy vs meta surface: the 46 legacy per-function tools stay advertised by default (`TG_MCP_LEGACY_TOOLS` unset), but each one's advertised description now ends with a note naming the covering meta-tool and `action` (for example, `tg_symbol_defs` is covered by `tg_navigate` with `action=defs`). Agents should prefer the 10 meta-tools; set `TG_MCP_LEGACY_TOOLS=off` to advertise only the 12-tool consolidated surface (10 meta-tools + 2 singletons). With the flag off, descriptions and behavior are unchanged.
 
@@ -1592,7 +1596,7 @@ Capability modes:
 | `python-local` | Runs without a standalone native `tg` binary. | `tg_mcp_capabilities`, `tg_repo_map`, `tg_context_pack`, `tg_agent_capsule`, `tg_search`, `tg_ast_search`, `tg_devices`, `tg_checkpoint_create`, `tg_session_context` |
 | `embedded-safe` | Simple requests can use packaged PyO3 rewrite fallback when standalone native `tg` is unavailable. | `tg_rewrite_plan`, `tg_rewrite_apply` |
 | `native-required` | Requires a standalone native `tg` binary via PATH, `TG_NATIVE_TG_BINARY`, in-tree build, or release asset. | `tg_index_search`, `tg_rewrite_diff` |
-| `meta` | Task-shaped meta-tool (task 98) composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
+| `meta` | Task-shaped meta-tool composing several legacy tools by an `action` selector; the per-action `native_required`/`mutation`/`embedded_fallback` flags live under `tools[].actions` in the `tg_mcp_capabilities()` response, not the top-level `tools[].mode`/`native_required` fields those describe for the other 3 modes. | `tg_navigate`, `tg_impact`, `tg_query`, `tg_context`, `tg_explore`, `tg_session`, `tg_scan`, `tg_audit`, `tg_checkpoint`, `tg_rewrite` |
 
 `tg_mcp_capabilities()` response fields:
 
@@ -1707,8 +1711,8 @@ Expected structure:
 Example excerpt from a real run:
 
 ```diff
---- a/C:\dev\projects\tensor-grep\bench_data\harness_api_doc_inputs\rewrite\rewrite_fixture.py
-+++ b/C:\dev\projects\tensor-grep\bench_data\harness_api_doc_inputs\rewrite\rewrite_fixture.py
+--- a/C:\example\project\rewrite\rewrite_fixture.py
++++ b/C:\example\project\rewrite\rewrite_fixture.py
 @@ -1,2 +1,2 @@
 -def add(x, y): return x + y
 -def mul(a, b): return a * b
@@ -1743,6 +1747,3 @@ Rules:
 - field renames, type changes, removing required fields, or changing single-document output into a different transport shape are breaking changes
 - new example artifacts and schema tests must land with any contract expansion
 - docs, example artifacts, and schema tests must stay in sync
-
-
-

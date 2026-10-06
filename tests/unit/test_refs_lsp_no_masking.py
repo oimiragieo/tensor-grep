@@ -1,4 +1,4 @@
-"""P0-1 of the warm-LSP moat: a partial / under-indexed `--provider lsp` references result must NOT
+"""P0-1 of the warm-LSP capability: a partial / under-indexed `--provider lsp` references result must NOT
 discard the correct native answer (dogfood v1.20.0: `tg refs --provider lsp` returned 2 of 14 and
 marked it authoritative -- a silent wrong-output / fail-closed-contract violation)."""
 

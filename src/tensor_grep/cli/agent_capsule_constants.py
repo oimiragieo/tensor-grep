@@ -71,7 +71,7 @@ _BEST_EFFORT_PRIMARY_EVIDENCE = "deadline-truncated-best-effort"
 # discipline `_build_context_pack_from_map` applies with a live check at repo_map.py:7862, just
 # expressed as a slice since a live check would never let this particular pass run at all.
 _BEST_EFFORT_PRIMARY_SCAN_CAP = 500
-# Opus-gate nit (SHIP-WITH-NITS, structural-cap hardening): today a best-effort primary lands at
+# review nit (SHIP-WITH-NITS, structural-cap hardening): today a best-effort primary lands at
 # confidence 0.55 only EMERGENTLY -- because the empty upstream primary happens to force
 # `primary_file_included`/snippets-empty style downgrades through `_confidence`'s existing ladder.
 # That chain of reasoning is correct today but not guaranteed to stay true (e.g. a future change

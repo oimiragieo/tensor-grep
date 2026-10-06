@@ -240,7 +240,7 @@ def test_ledger_list_text_mode_no_claims(tmp_path: Path) -> None:
 
 
 # ========================================================================================
-# PATH-scope footgun fix (CEO v1.92.1 dogfood #1): CLI-level reproduction of the exact
+# PATH-scope footgun fix : CLI-level reproduction of the exact
 # reported sequence, `unmatched_reason`/`live_claims_elsewhere` release honesty, and the
 # `scope` field on claim/list output.
 # ========================================================================================

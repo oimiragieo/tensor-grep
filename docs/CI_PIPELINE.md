@@ -46,7 +46,7 @@ Benchmark behavior:
 
 ### `release.yml`
 
-Manual/backfill release artifact pipeline, dispatched via `workflow_dispatch` TARGETING a published tag ref (`gh workflow run release.yml --ref vX.Y.Z`; `GITHUB_REF` then resolves to that tag). It is NOT triggered by a tag push, so a manually-pushed `v*` tag can no longer bypass semantic-release to auto-publish npm/assets (audit HIGH, hardened 2026-06-29). Do not rely on it for the normal semantic-release path. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
+Manual/backfill release artifact pipeline, dispatched via `workflow_dispatch` TARGETING a published tag ref (`gh workflow run release.yml --ref vX.Y.Z`; `GITHUB_REF` then resolves to that tag). It is NOT triggered by a tag push, so a manually-pushed `v*` tag can no longer bypass semantic-release to auto-publish npm/assets. Do not rely on it for the normal semantic-release path. The authoritative release-bearing path is now `ci.yml` on `main`: semantic-release creates the tag/release, main CI checks the action's `released` output, builds release-native CPU front-door assets from that tag, uploads them to the GitHub release, verifies checksum/package-manager coverage, then allows PyPI publish and `publish-success-gate` to complete.
 
 ### `benchmark.yml` (Benchmarks)
 
@@ -154,7 +154,7 @@ It does **not** auto-merge:
 
 Those remain manual-review changes.
 
-## Rules For Future Agents
+## Changing workflows
 
 If you touch `.github/workflows/*.yml`, `.github/dependabot.yml`, or release/package-manager behavior:
 
@@ -171,7 +171,7 @@ uv run pytest -q
 uv run python scripts/validate_release_assets.py
 ```
 
-Do not hand-wave workflow changes. This repo treats CI behavior as a versioned contract.
+CI behavior is a versioned contract; update its documentation and validation with the workflow.
 
 After a release-bearing push to `main`, semantic-release may create and push a follow-up
 `chore(release): vX.Y.Z [skip ci]` commit that updates `CHANGELOG.md`, version files, package
@@ -188,11 +188,11 @@ PyPI visibility alone is not enough evidence when installer or package-manager U
 GitHub release assets. Non-release main pushes must leave the semantic-release version output empty
 so these asset jobs do not mutate an older GitHub release.
 
-## CI cost gate (2026-08-08)
+## Conditional PR jobs
 
 A `changes` job computes whether a pull_request's diff touches CODE (`src/`, `rust_core/`, `tests/`, `.github/workflows/`, `pyproject.toml`, `Cargo.toml`, `Cargo.lock`, `uv.lock`). The expensive/cross-platform jobs (`agent-readiness`, `windows-agent-readiness`, `static-analysis`, `test-python`, `test-rust-core`, `cuda-feature-check`, `search-golden-parity`, `native-build-smoke`, `test-gpu-linux`, `benchmark-regression`) gate on
 `if: github.event_name != 'pull_request' || needs.changes.outputs.code == 'true'`.
 - MAIN pushes always run the full matrix, so `release` (which `needs:` them) is never skipped.
 - A docs-only PR skips those jobs; a skipped required job counts as SUCCESS for branch protection (never use trigger-level `paths-ignore` — no status => deadlock).
-- `test-rust-core` drops the macOS x nightly leg (continue-on-error signal at ~10x the linux rate; nightly still runs on linux/windows every PR and all channels weekly via cron).
+- `test-rust-core` drops the macOS x nightly leg (nightly still runs on Linux/Windows; consult the workflow for the current channel matrix).
 - Gated jobs declare `needs: [smoke, changes]`; the smoke gate is still enforced (see the release-workflow-configuration validator).

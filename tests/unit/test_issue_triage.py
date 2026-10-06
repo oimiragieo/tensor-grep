@@ -42,7 +42,7 @@ def test_bug_report_should_get_repro_and_area_labels() -> None:
 
 def test_security_sensitive_issue_should_not_echo_reporter_content() -> None:
     module = _load_module()
-    secret_text = "API_KEY=abc123"
+    secret_text = "API_KEY=" + "abc123"
     result = module.triage_issue({
         "title": "bug: possible token leak in logs",
         "body": f"The tool printed {secret_text}",

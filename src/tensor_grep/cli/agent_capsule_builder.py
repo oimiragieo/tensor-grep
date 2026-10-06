@@ -154,12 +154,12 @@ def build_agent_capsule_from_map(
     deadline_monotonic: float | None = None,
     _rescue_call_site_evidence: bool = False,
 ) -> dict[str, Any]:
-    """Task #108 (Tier-2 daemon moat): the map-based core of ``build_agent_capsule``, taking an
+    """Task #108 (Tier-2 daemon capability): the map-based core of ``build_agent_capsule``, taking an
     already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
     the filesystem itself. The RANKING (context-render) + suggested-scope sub-steps here read only
     ``rm``, so they are byte-identical cold-vs-warm for the same map.
 
-    ``_rescue_call_site_evidence`` (the ONE sub-step that MUST differ cold-vs-warm, Opus-gate
+    ``_rescue_call_site_evidence`` (the ONE sub-step that MUST differ cold-vs-warm, review
     FIX-FIRST):
       * ``True`` -- the COLD (direct ``build_agent_capsule``) path. Collect call-site evidence
         through the RESCUE-equipped ``_collect_capsule_call_site_evidence`` -> the FS-backed
@@ -172,7 +172,7 @@ def build_agent_capsule_from_map(
       * ``False`` (default) -- the WARM/DAEMON (``session_store._serve_session_request_from_
         payload``) path. Collect through the RESCUE-LESS
         ``_collect_capsule_call_site_evidence_from_map``, which resolves against the ONE cached
-        ``rm`` (no second FS scan -- the daemon-moat win) and CANNOT rescue an out-of-window def.
+        ``rm`` (no second FS scan -- the daemon-capability win) and CANNOT rescue an out-of-window def.
         On that exact untrustworthy no_match it flags ``daemon_evidence_unreliable``, which the
         client (``main._maybe_agent_via_running_daemon``) treats like a transport error and falls
         back to the cold path above -- which DOES have the rescue.
@@ -232,7 +232,7 @@ def build_agent_capsule_from_map(
     )
     if detect_vendored_deadline_hit.hit:
         skipped_assembly_stages.append("vendored_subtree_detection")
-    # CEO #2 auto-narrow (advisory, additive): the SAME multi-project-workspace-root detection
+    # auto-narrow (advisory, additive): the SAME multi-project-workspace-root detection
     # `tg orient` uses (see `orient_capsule._detect_workspace_root`'s docstring) -- computed once,
     # here, so both the scan-limit-truncation `suggested_scope` gate below and the final result
     # assembly (near this function's return) can read it without a second call.
@@ -244,7 +244,7 @@ def build_agent_capsule_from_map(
         if semantic_provider == "native" and _capsule_lsp_confidence_boost_enabled()
         else semantic_provider
     )
-    # #222 (call-2 enumeration-gap fix, Opus-gate N4 nit on #669/#220): `build_context_render_
+    # #222 : `build_context_render_
     # from_map` -> `build_context_pack_from_map` -> `_build_context_pack_from_map` runs its OWN
     # SECOND `_detect_vendored_subtrees` call (repo_map.py's `auto_deweight` pass) plus the
     # symbol-scoring and pagerank sibling loops, all sharing ONE internal `_DeadlineBreakFlag`
@@ -282,7 +282,7 @@ def build_agent_capsule_from_map(
     # helper) against OUR OWN `rm`, or a warm capsule would silently drop `suggested_scope` on a
     # truncated scan. Mirrors repo_map.build_context_render's own comment/logic verbatim.
     #
-    # CEO #2 auto-narrow (advisory, additive): OR in `workspace_root_detected` as a SECOND,
+    # auto-narrow (advisory, additive): OR in `workspace_root_detected` as a SECOND,
     # independent trigger -- a genuine multi-project workspace root gets the same proactive
     # suggested_scope narrowing even when the scan itself completed without truncating (see
     # `orient_capsule._detect_workspace_root`'s docstring). The scan-limit-truncation trigger
@@ -341,7 +341,7 @@ def build_agent_capsule_from_map(
                 ],
                 _BEST_EFFORT_PRIMARY_EVIDENCE,
             ])
-    # NIT-2 (Opus gate): `partial_primary`/`primary_basis` live on `primary_target` ONLY -- `edit_
+    # NIT-2 : `partial_primary`/`primary_basis` live on `primary_target` ONLY -- `edit_
     # order` and `rollback` below still carry this same best-effort `target["file"]` WITHOUT the
     # flag. That is intentionally safe, not an oversight: both are advisory (a suggested edit
     # order / a recommended checkpoint command), never an auto-apply, and `ask_user_before_editing.
@@ -629,7 +629,7 @@ def build_agent_capsule_from_map(
     # uplift somehow ran anyway, `ask_user_before_editing.required` still forces True here.
     if scan_truncated:
         ask_reasons.append(_CAPSULE_SCAN_TRUNCATED_ASK_REASON)
-    # Mechanical extraction (CEO v1.72.1 dogfood, edit-plan confidence/ask parity): these two
+    # Mechanical extraction : these two
     # checks now live in `_capsule_validation_evidence_ask_reason` / `_capsule_low_confidence_ask_
     # reason` so `_capsule_confidence_and_ask_without_render` (edit-plan's non-render counterpart)
     # can reuse the identical text/thresholds instead of re-deriving them -- text, order, and
@@ -668,7 +668,7 @@ def build_agent_capsule_from_map(
         ),
     )
     if _rescue_call_site_evidence:
-        # COLD path (Opus-gate FIX-FIRST): recover out-of-window callers via the RESCUE-equipped
+        # COLD path : recover out-of-window callers via the RESCUE-equipped
         # collector (a second FS-backed build_symbol_blast_radius scan that literal-seed-rescues a
         # truncated no_match), exactly like pre-PR main. resolved_path is str(rm["path"]);
         # max_repo_files is the caller's cap so the rescue scan uses the same window as ranking.
@@ -720,7 +720,7 @@ def build_agent_capsule_from_map(
         validation_alignment_status=validation_alignment_status,
         validation_kept_count=validation_kept_count,
     )
-    # NIT-1 (Opus gate, structural hardening): runs LAST -- after every existing confidence
+    # NIT-1 : runs LAST -- after every existing confidence
     # mutation in this function, including the T2 uplift immediately above, which is the ONLY
     # place `confidence["overall"]` can be RAISED (via direct assignment) rather than merely
     # clamped. Today a best-effort primary happens to land at confidence 0.55 EMERGENTLY, purely
@@ -892,7 +892,7 @@ def build_agent_capsule_from_map(
     # dogfood finding 1 / council must-fix #2: fold DAR's own deadline break in alongside the
     # inner context-render's -- either one broke on --deadline makes this capsule partial, same
     # "any one of N sibling stages" fold-in the callers/impact/blast-radius seams already use.
-    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): that fold-in only named the sibling stages it
+    # #639 review nit 1 (dogfood #1 RESIDUAL): that fold-in only named the sibling stages it
     # explicitly threaded a deadline-break flag through -- the call-site-evidence rescue scan's
     # OWN partial signal (now propagated onto `call_site_evidence` above) was silently dropped,
     # and nothing re-checked the shared wall-clock budget one FINAL time before this capsule
@@ -947,7 +947,7 @@ def build_agent_capsule_from_map(
     suggested_scope = payload.get("suggested_scope")
     if suggested_scope:
         result["suggested_scope"] = suggested_scope
-    # CEO #2 auto-narrow (advisory, additive): present only when the scanned root itself looks
+    # auto-narrow (advisory, additive): present only when the scanned root itself looks
     # like a multi-project workspace parent -- absent (never `False`) otherwise, so a non-
     # workspace repo's capsule stays byte-identical to before this field existed (mirrors
     # `suggested_scope`'s/`suggested_ignore`'s own additive-conditional convention).

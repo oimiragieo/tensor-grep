@@ -501,7 +501,7 @@ fn user_crossover_config_path() -> Option<PathBuf> {
 // P0-4 (GPU Phase-0 honesty, #596) pointed calibrate-failure guidance at
 // TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR + `tg upgrade`, phrased conditionally ("if published ...
 // falls back to CPU when it is not") so it would never assert a false "no NVIDIA asset
-// published" claim. CEO dogfood (v1.76.6) found that phrasing still misleading in practice:
+// published" claim. user dogfood (v1.76.6) found that phrasing still misleading in practice:
 // no NVIDIA-flavored asset has ever shipped (the release profile that builds one is held
 // off), so the caveated "upgrade" invitation was a permanent dead end dressed up as honest
 // advice. Fix: stop advertising the upgrade from a build that structurally has no CUDA
@@ -611,7 +611,7 @@ enum SearchMode {
 mod tests {
     use super::*;
 
-    // Follow-up to #596 (CEO dogfood, v1.76.6): #596's remediation was honest in isolation
+    // Follow-up to #596 : #596's remediation was honest in isolation
     // ("if published ... falls back to CPU when it is not") but still dangled
     // TENSOR_GREP_NATIVE_FRONTDOOR_FLAVOR=nvidia + `tg upgrade` as an obtainable path, when in
     // reality no NVIDIA-flavored asset has ever shipped (the release profile that builds one

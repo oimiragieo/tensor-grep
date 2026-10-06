@@ -183,7 +183,7 @@ def test_daemon_handler_sets_socket_timeout() -> None:
 
 
 def test_daemon_response_timeout_defaults_and_env_override(monkeypatch) -> None:
-    # moat P0-6 step 5: the client read timeout is env-configurable so a >60s warm-daemon query is
+    # capability P0-6 step 5: the client read timeout is env-configurable so a >60s warm-daemon query is
     # not killed with zero JSON (the "60s cap errors" dogfood complaint).
     monkeypatch.delenv(session_daemon._DAEMON_RESPONSE_TIMEOUT_ENV, raising=False)
     assert session_daemon._daemon_response_timeout() == 60.0

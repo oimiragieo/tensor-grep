@@ -35,7 +35,6 @@ DOC_PATH = _REPO_ROOT / "docs" / "gpu_crossover.md"
 
 NATIVE_LANE_HEADING = "### Native CUDA-kernel lane"
 SIDECAR_LANE_HEADING = "### Python GPU sidecar lane"
-HISTORICAL_HEADING = "## Historical v1.7 Artifact (Superseded)"
 
 # Pinned 1:1, in code order, against the `if`/`else` chain of `gpu_native_fallback_reason`
 # (`rust_core/src/main.rs`, near line 10647 as of this writing). This is the exact set of
@@ -80,7 +79,7 @@ def _native_lane_section(doc: str) -> str:
 
 
 def _sidecar_lane_section(doc: str) -> str:
-    return _section(doc, SIDECAR_LANE_HEADING, HISTORICAL_HEADING)
+    return doc[doc.index(SIDECAR_LANE_HEADING) :]
 
 
 def _table_rows(section: str) -> list[str]:
@@ -96,14 +95,7 @@ def test_doc_splits_native_and_sidecar_lanes_into_separate_tables() -> None:
 
     assert NATIVE_LANE_HEADING in doc
     assert SIDECAR_LANE_HEADING in doc
-    # The native-lane heading must precede the sidecar-lane heading, and both must
-    # precede the historical section, or `_native_lane_section`/`_sidecar_lane_section`
-    # would silently slice the wrong span.
-    assert (
-        doc.index(NATIVE_LANE_HEADING)
-        < doc.index(SIDECAR_LANE_HEADING)
-        < doc.index(HISTORICAL_HEADING)
-    )
+    assert doc.index(NATIVE_LANE_HEADING) < doc.index(SIDECAR_LANE_HEADING)
 
 
 def test_native_lane_cites_its_source_of_truth_function() -> None:

@@ -180,7 +180,7 @@ def test_rust_ref_kind_classification_five_positions(tmp_path: Path) -> None:
 
 def test_mcp_agent_capsule_related_call_sites_carry_ref_kind(tmp_path: Path, monkeypatch) -> None:
     """The ``tg_agent_capsule`` MCP tool surfaces ``related_call_sites`` built from blast-radius
-    callers -- confirm ref_kind survives that hop too (moat closer: an agent consuming the MCP
+    callers -- confirm ref_kind survives that hop too (capability closer: an agent consuming the MCP
     capsule can tell a real call site from a type/field/value mention without re-parsing).
     """
     # round-8 (audit #95): path is now confined to the MCP root (cwd); chdir so tmp_path

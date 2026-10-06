@@ -4,11 +4,11 @@
   "routing_reason": "ast-native",
   "sidecar_used": false,
   "query": "def $F($$$ARGS): $$$BODY",
-  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\ast\\ast_fixture.py",
+  "path": "C:\\example\\project\\ast\\ast_fixture.py",
   "total_matches": 1,
   "matches": [
     {
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\ast\\ast_fixture.py",
+      "file": "C:\\example\\project\\ast\\ast_fixture.py",
       "line": 1,
       "text": "def add(a, b):\n    return a + b",
       "range": {

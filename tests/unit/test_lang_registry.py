@@ -149,7 +149,7 @@ def test_target_and_provider_language_agree_with_registry() -> None:
 
     Parametrize DYNAMICALLY over `lang_registry.LANGUAGE_REGISTRY` (never a hardcoded suffix
     list, which would itself be exactly the kind of thing that drifts) so this is a ratchet
-    against the NEXT language expansion (the #62 CEO fork), not just a snapshot of today's
+    against the NEXT language expansion , not just a snapshot of today's
     five languages: it fails loudly the moment a new `LanguageSpec` is registered without
     teaching both dispatch functions, instead of the new language silently reading as "no
     target language" / "no provider language".

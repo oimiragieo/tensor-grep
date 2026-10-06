@@ -1,4 +1,4 @@
-"""`tg install-dense` (CEO#7, P1 -- "semantic find that works out of the box"): the one-shot
+"""`tg install-dense` : the one-shot
 command that installs the `semantic` extra (model2vec + numpy, both torch/GPU-free) via the same
 uv-tool -> uv pip -> pip cascade `tg upgrade` uses, then fetches the checksum-pinned
 potion-code-16M model via the already-hardened `retrieval_dense.fetch_dense_model` -- closing the

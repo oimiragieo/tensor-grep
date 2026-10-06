@@ -224,7 +224,7 @@ def test_tg_ruleset_scan_inline_rules_rejects_oversized_input(tmp_path, monkeypa
     fast, not hang trying to parse it). NOTE: the length cap ALONE does NOT stop the bomb -- an
     aliased payload detonates by depth ~9 while the cap admits depth ~1000, so the real fix is
     the loader-level alias rejection; see test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb
-    (audit #95 Part-2 Opus-gate BLOCK)."""
+    ."""
     from tensor_grep.cli import mcp_server
 
     monkeypatch.chdir(tmp_path)
@@ -238,7 +238,7 @@ def test_tg_ruleset_scan_inline_rules_rejects_oversized_input(tmp_path, monkeypa
 
 
 def test_tg_ruleset_scan_inline_rules_rejects_yaml_alias_bomb(tmp_path, monkeypatch):
-    """[SEC] YAML alias-expansion DoS (billion-laughs) -- audit #95 Part-2 Opus-gate BLOCK.
+    """[SEC] YAML alias-expansion DoS (billion-laughs) -- audit #95 Part-2 review BLOCK.
 
     SafeLoader SHARES alias nodes, so the load itself is linear -- but the downstream ``str()``
     coercions on ``id``/``severity``/``message`` in ``_load_inline_rule_specs`` deep-walk that

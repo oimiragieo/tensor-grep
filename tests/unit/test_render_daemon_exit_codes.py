@@ -232,7 +232,7 @@ def test_context_render_text_complete_stays_exit_0(tmp_path: Path) -> None:
 
 
 def test_context_render_json_output_cap_only_stays_exit_0(tmp_path: Path) -> None:
-    # F27 (Fable audit LOW): the cold output-cap-only case was pinned only for `map`, not
+    # F27 : the cold output-cap-only case was pinned only for `map`, not
     # `context-render` -- `--max-files` truncates the render bundle to fewer files than the scan
     # actually found (a COMPLETE analysis capped only for display) and must stay exit 0.
     project = _flat_repo(tmp_path, 8)
@@ -603,7 +603,7 @@ def test_blast_radius_render_json_output_cap_only_stays_exit_0(tmp_path: Path) -
 
 
 def test_blast_radius_plan_json_scan_truncated_exits_2_with_full_payload(tmp_path: Path) -> None:
-    # F14 (Fable audit MED): blast-radius-plan's payload is built from
+    # F14 : blast-radius-plan's payload is built from
     # build_symbol_blast_radius_from_map and carries the exact scan_limit/caller_scan_truncated
     # markers `_scan_incomplete` gates on, but the command was UNGATED -- a scan-truncated plan
     # exited 0 while the sibling `blast-radius` command exits 2 on identical truncation.

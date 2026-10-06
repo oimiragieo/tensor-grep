@@ -1,4 +1,4 @@
-"""Moat P0-6 step 4: the --deadline CLI flag threads deadline_seconds into the symbol builders.
+"""capability P0-6 step 4: the --deadline CLI flag threads deadline_seconds into the symbol builders.
 
 End-to-end (partial:true JSON) is dogfooded against the real binary; this is a fast regression guard
 that the flag exists on all 4 commands and forwards the value (or None when absent).
@@ -212,7 +212,7 @@ def test_blast_radius_found_partial_exits_2(tmp_path: Path, monkeypatch) -> None
 
 
 # ==================================================================================================
-# CEO v1.71.3 dogfood gap (HIGH): --deadline is defined on refs/callers/impact/blast-radius/
+# v1.71.3 dogfood gap (HIGH): --deadline is defined on refs/callers/impact/blast-radius/
 # importers/inventory/codemap but was MISSING from the repo-scanning commands agent/edit-plan/
 # context/context-render/map/orient (and defs) -- an agent that learned --deadline works on
 # `tg callers` and passed it to `tg agent`/`tg orient`/etc got a Click "No such option" exit-2,
@@ -608,7 +608,7 @@ def test_orient_capsule_partial_signal_surfaces_informationally(tmp_path: Path) 
 
 
 # ==================================================================================================
-# CEO v1.72.1 dogfood M1: --deadline was still ABSENT on 4 more commands -- source, docs-coverage,
+# v1.72.1 dogfood M1: --deadline was still ABSENT on 4 more commands -- source, docs-coverage,
 # blast-radius-plan, imports -- so passing it Click-exits-2 and burns the agent's turn. Mirrors the
 # #581 pattern above: source/blast-radius-plan are true SCANNING siblings of defs/impact/refs/
 # callers/blast-radius (threaded the same additive way, no --no-deadline companion); imports is a

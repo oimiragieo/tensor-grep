@@ -1,3 +1,81 @@
+# Publish only documentation that has passed the repository publication review.
+# Keep this list synchronized with APPROVED_DOC_FILES in scripts/check_repo_hygiene.py.
+exclude_docs: |
+  **
+  !/CI_PIPELINE.md
+  !/CONTRACTS.md
+  !/ENGINEER_ONBOARDING.md
+  !/EXPERIMENTAL.md
+  !/HOTFIX_PROCEDURE.md
+  !/ONBOARDING_CI_LOCAL.md
+  !/RELEASE_CHECKLIST.md
+  !/SUPPORT_MATRIX.md
+  !/agent_outcome_join.md
+  !/architecture.md
+  !/assets/logo.jpg
+  !/benchmarks.md
+  !/benchmarks_ast.md
+  !/enterprise_review_bundle_ci.md
+  !/examples/ast_run.json
+  !/examples/attempt_ledger.json
+  !/examples/audit_manifest_verify.json
+  !/examples/blast_radius.json
+  !/examples/blast_radius_plan.json
+  !/examples/blast_radius_render.json
+  !/examples/calibrate.json
+  !/examples/callers.json
+  !/examples/context_pack.json
+  !/examples/context_render.json
+  !/examples/defs.json
+  !/examples/defs_provider_disagreement.json
+  !/examples/edit_plan.json
+  !/examples/gpu_cpu_fallback_search.json
+  !/examples/gpu_sidecar_search.json
+  !/examples/impact.json
+  !/examples/index_search.json
+  !/examples/mcp_rewrite_diff.json
+  !/examples/multi_session_attempt_ledger.json
+  !/examples/multi_task_attempt_ledger.json
+  !/examples/patch_bakeoff.json
+  !/examples/patch_bakeoff_incomplete.json
+  !/examples/patch_bakeoff_no_patch.json
+  !/examples/provider_status_unavailable.json
+  !/examples/refs.json
+  !/examples/repo_map.json
+  !/examples/rewrite_apply_verify.json
+  !/examples/rewrite_apply_verify_validation_failed.json
+  !/examples/rewrite_plan.json
+  !/examples/ruleset_scan.json
+  !/examples/rulesets.json
+  !/examples/search.json
+  !/examples/search.ndjson
+  !/examples/session_context.json
+  !/examples/session_invalid_request_stale.json
+  !/examples/session_open.json
+  !/examples/source.json
+  !/getting-started.md
+  !/gpu_crossover.md
+  !/harness_api.md
+  !/harness_cookbook.md
+  !/index.md
+  !/installation.md
+  !/multi_agent_context_plane.md
+  !/package_manager_publish.md
+  !/rebuild-guides/README.md
+  !/rebuild-guides/cache-and-schema-versioning.md
+  !/rebuild-guides/tg-checkpoint.md
+  !/rebuild-guides/tg-ledger.md
+  !/rebuild-guides/verification-checklist.md
+  !/routing_policy.md
+  !/runbooks/cache-management.md
+  !/runbooks/gpu-troubleshooting.md
+  !/runbooks/resident-worker.md
+  !/session_daemon_protocol.md
+  !/subprocess-output-policy-inventory.json
+  !/subprocess-output-policy-inventory.md
+  !/subprocess-output-policy.md
+  !/tool_comparison.md
+
 site_name: tensor-grep
 site_description: Search code and logs, understand symbols, and prepare changes
 site_author: tensor-grep team
@@ -26,20 +104,6 @@ theme:
     - search.suggest
     - search.highlight
     - content.code.copy
-
-# Keep internal research and review records out of the public documentation site.
-# MkDocs otherwise builds Markdown files even when they are absent from navigation.
-exclude_docs: |
-  positioning/
-  audits/
-  investigations/
-  superpowers/
-  agent-laws-receipts.md
-  plans/
-  BACKLOG.md
-  TASK_BOARD.md
-  SESSION_HANDOFF.md
-  CONTINUATION_PLAN.md
 
 nav:
   - Home: index.md

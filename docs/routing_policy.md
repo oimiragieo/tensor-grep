@@ -62,7 +62,7 @@ Spawning `rg` costs a fixed process round trip on every plain-text search. `nati
 - Exactly one pattern, and that pattern is not the empty string (`run_native_search` rejects an empty pattern, and the rg fallback then emits a `warning:` line `rg` never prints).
 - That pattern is **native-renderable**: it contains no line terminator or NUL (literal or escaped) and it compiles with the native matcher. `rg` refuses a pattern that can match a line terminator (`needle\n`, `\n`, `[\n]`) or a NUL (`\x00`) with **exit 2 plus a diagnostic**, while the native matcher accepts it and succeeds with **zero matches (exit 1, silent)** -- an exit-code regression an agent branching on 2-vs-1 would misread as "no matches". A pattern that fails to compile (`[`, `(`, `\Qx\E`, `a{500}{500}{500}`) exits 2 either way, but only after the rg-fallback net prints a `warning: native CPU search failed...` line. The check is deliberately over-broad (it also refuses `\x`/`\u` escapes wholesale): over-refusal costs one `rg` spawn, under-refusal costs correctness.
 - Exactly one PATH operand that resolves to an existing **regular file** (never a directory -- walking diverges from `rg` on binary-file messages and on emission order).
-- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within a 512 KiB cap. These were originally DATA-level divergences in the shared native emitter; **task 266/263 fixed all three in the emitter itself** (`native_search.rs`'s `strip_native_line_terminator`, `native_json_text_fields`, and `emit_binary_match_warning`). This probe clause still refuses all three cases as a deliberate conservative margin -- relaxing it to reclaim the perf win on CRLF/non-UTF-8/binary content is a disclosed, not-yet-done follow-up, not a live correctness gap:
+- That file passes a **full-content** probe: no `\r` byte, valid UTF-8, no NUL byte, and within a 512 KiB cap. These were originally DATA-level divergences in the shared native emitter; **the shared emitter handles these cases** (`native_search.rs`'s `strip_native_line_terminator`, `native_json_text_fields`, and `emit_binary_match_warning`). This probe clause still refuses all three cases as a deliberate conservative margin -- relaxing it to reclaim the perf win on CRLF/non-UTF-8/binary content is a disclosed, not-yet-done follow-up, not a live correctness gap:
   - CRLF: the native plain sink used to strip the trailing `\r` (no CRLF line terminator is ever installed on this path) where `rg` keeps it.
   - non-UTF-8: the native plain sink used `grep_searcher::sinks::Lossy` and substituted U+FFFD where `rg` writes raw bytes.
   - NUL: `rg` spells its binary-match notice `"\0"` where the native engine used to spell it `"/0"`.
@@ -76,13 +76,15 @@ Spawning `rg` costs a fixed process round trip on every plain-text search. `nati
 
 Anything outside that subset keeps spawning `rg`, unchanged. The route reports `NativeCpuBackend` / `plain-text-native` and keeps `allow_rg_fallback = true`, so a native failure still falls back to real `rg`. `--verbose` stderr intentionally reports the new backend -- that is the flag's purpose.
 
-The 512 KiB cap is measured, not guessed: the probe costs ~2% of the win at 200 KB, 16% at 1 MB, 43% at 4 MB and 78% at 8 MB, and on a match-dense 8 MB file the native engine is itself slower than `rg`, turning the whole route into a ~11ms regression. Files above the cap keep spawning `rg`.
+The 512 KiB cap bounds the admission probe. Files above the cap keep using `rg`;
+the routing contract does not imply a speed advantage for every admitted file.
 
 The two expensive clauses (the pattern compile and the file probe) are evaluated **last**, only after `plain_text_native_cheap_checks_pass` has cleared every free refusal. That is a latency contract: an interactive terminal search, a `--json`/`--ndjson` run and an `-A`/`-B`/`-C` run all reach the clap-side adapter and must not pay for a file read on their way to `rg`. The probe is also memoized per path, because both adapters run on an admitted request.
 
 ### Admission-rate telemetry (default-OFF)
 
-Nothing else in the repo can answer "how often is this route actually taken?" -- none of the benchmark scenarios, none of the dogfood calls, and none of the MCP surface (which always builds `--json`) are eligible for it, so the benchmark-regression gate can observe neither its benefit nor a future regression in it.
+Use route-specific instrumentation to measure this early passthrough; benchmark
+scenarios that force JSON output do not exercise the same route.
 
 Set `TG_ROUTE_TELEMETRY=1` and `tg` appends one JSON Lines record per eligibility evaluation, carrying the stage (`frontdoor` or `clap`) and every clause. The file defaults to the OS temp directory (never the workspace) and is overridable with `TG_ROUTE_TELEMETRY_PATH`. Emission is best-effort and fail-silent: telemetry must never change what a search returns.
 
@@ -103,7 +105,7 @@ This is a **contract change on a machine-facing surface**: `--json` and `--ndjso
 
 The predicate has two adapters (a raw-argv one at the pre-clap front door, a parsed-`SearchArgs` one on the clap path) and they are required to return identical verdicts for every shape the agreement test lists, because the front door is not the only path into `route_search`. The general invariant is one-directional -- the front door may be stricter, never looser -- and attached-value short spellings (`-eneedle`) are a known, deliberate asymmetry in that safe direction.
 
-### `--index` fail-closed compatibility contract (audit H1, 2026-07-10)
+### `--index` fail-closed compatibility contract
 
 `route_search` selects `TrigramIndex` for explicit `--index` before any compatibility check
 runs (`routing.rs:234-236`), so `handle_index_search` (`main.rs`) enforces the following
@@ -185,7 +187,7 @@ That applies to:
 | AST routing execution | `handle_ast_run` |
 | Unknown top-level command refusal (A90) | Python `bootstrap._top_level_command_refusal` / native `top_level_unknown_command_refusal` + shared `python_set_members` |
 
-## Unknown top-level commands (A90) — the dispatch contract
+## Unknown top-level commands — the dispatch contract
 
 An unknown top-level command must **never** be swallowed into `tg search` (which would fake a
 nonexistent command's existence at exit 0). The refusal surface and its boundaries:

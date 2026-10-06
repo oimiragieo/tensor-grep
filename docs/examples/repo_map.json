@@ -3,38 +3,38 @@
   "routing_backend": "RepoMap",
   "routing_reason": "repo-map",
   "sidecar_used": false,
-  "path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map",
+  "path": "C:\\example\\project\\repo_map",
   "files": [
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py"
+    "C:\\example\\project\\repo_map\\src\\sample.py"
   ],
   "symbols": [
     {
       "name": "Widget",
       "kind": "class",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py",
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
       "line": 3
     },
     {
       "name": "add",
       "kind": "function",
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py",
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
       "line": 6
     }
   ],
   "imports": [
     {
-      "file": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py",
+      "file": "C:\\example\\project\\repo_map\\src\\sample.py",
       "imports": [
         "json"
       ]
     }
   ],
   "tests": [
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\tests\\test_sample.py"
+    "C:\\example\\project\\repo_map\\tests\\test_sample.py"
   ],
   "related_paths": [
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\src\\sample.py",
-    "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\repo_map\\tests\\test_sample.py"
+    "C:\\example\\project\\repo_map\\src\\sample.py",
+    "C:\\example\\project\\repo_map\\tests\\test_sample.py"
   ],
   "coverage": {
     "language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript",
@@ -42,8 +42,3 @@
     "test_matching": "filename+import+graph-heuristic"
   }
 }
-
-
-
-
-

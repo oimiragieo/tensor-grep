@@ -1,19 +1,7 @@
 # Rebuild guide: `tg checkpoint` (create / list / undo)
 
-> Verified against `origin/main` `7ee3a27e` (2026-08-20). Every symbol below was opened and read
-> at that revision; every command output shown was actually run, not described from memory (the
-> full session transcript that produced this doc is not part of the repo, but the exact commands
-> are reproducible — run them yourself). Installed `tg` used for the live demo is `1.110.16`
-> (`tg --version`), slightly behind the worktree's `main.py`; the field shapes matched what the
-> source at `7ee3a27e` predicts, so the divergence (if any) is cosmetic. Treat the JSON in this
-> doc as a real example, not a frozen contract — re-run `tg checkpoint create --json` yourself
-> before depending on an exact field name.
->
-> This is the template rebuild guide named in `docs/design/README.md`'s companion audit — the
-> proof that a feature in this repo can be documented well enough for **a junior-level analyst to
-> rebuild it from scratch**. Future guides should match this one's shape: problem statement, data
-> flow, file-by-file contribution, contracts, registration sites, tests, and traps — not just an
-> API reference.
+Examples illustrate the state format and command flow. Re-run them against the
+version being changed in a disposable directory; they are not current release evidence.
 
 ## 1. The problem this feature solves
 
@@ -110,7 +98,7 @@ itself if it dies partway through.
 
 Everything under `.tensor-grep/checkpoints/` on disk (the on-disk format) is described in §4.
 
-## 4. On-disk format (verified by actually creating and inspecting one)
+## 4. On-disk format
 
 ```
 $ mkdir demo && cd demo
@@ -262,7 +250,7 @@ and then fail in exactly these ways — each is a real, currently-guarded hazard
    leaving the leaf's raw identity untouched, so a legitimately-tracked leaf symlink is still
    stored *as a link* rather than refused or dereferenced. Used on the create side; the same
    containment check is applied to undo's snapshot *source* path too
-   (`undo_checkpoint`'s pre-flight, "audit H3" comment).
+   (`undo_checkpoint` pre-flight checks).
 
 5. **A single huge file or a legitimately huge repo must not fill the disk.** Naive: copy
    everything, no size check. Fix: `_check_checkpoint_disk_budget`
@@ -277,8 +265,7 @@ and then fail in exactly these ways — each is a real, currently-guarded hazard
    `except Exception:` around the copy loop. `KeyboardInterrupt` and `SystemExit` subclass
    `BaseException` directly, not `Exception`, so that handler never fires on Ctrl+C and a
    half-populated `checkpoints/<id>/` directory is left behind forever. Fix:
-   `create_checkpoint`'s cleanup wraps `except BaseException:` (`checkpoint_store.py`, the
-   "audit #125a" comment), removing the whole per-checkpoint directory before re-raising.
+   `create_checkpoint` cleanup wraps `except BaseException:` (`checkpoint_store.py`), removing the whole per-checkpoint directory before re-raising.
 
 7. **A git submodule (a gitlink, mode `160000`) is a real directory on disk that `git ls-files`
    reports as a single opaque path, not an expandable file list.** Naive: treat every path
@@ -315,8 +302,7 @@ Each file's test names are close to a spec on their own — e.g.
 
 ## 8. Explicitly out of scope for this guide
 
-- The Rust-side `replace_in_place` symlink hardening referenced in
-  `docs/design/2026-08-13-replace-in-place-symlink-threat-model.md` is a **different** feature
+- Rust-side `replace_in_place` symlink hardening is a separate feature
   (native in-place rewrite) that happens to share the symlink-containment concern — it is not part
   of `tg checkpoint` and this guide does not cover it.
 - `checkpoint-discovery-cache.json` (the bounded-discovery-scope cache used by `tg checkpoint list

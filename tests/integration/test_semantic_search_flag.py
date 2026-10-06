@@ -62,7 +62,7 @@ def test_search_semantic_falls_back_to_bm25_when_dense_unavailable(
 def test_search_semantic_zero_matches_still_probes_availability(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """F16 (Fable audit LOW): a 0-match `--semantic` search must still set
+    """F16 : a 0-match `--semantic` search must still set
     `rank_fallback_reason` when the dense leg is unavailable -- skipping the probe on an empty
     result silently omitted the fallback reason from the JSON envelope, even though the leg is
     genuinely unavailable (a dishonest envelope)."""
@@ -116,7 +116,7 @@ def test_search_semantic_not_fetched_uses_friendly_install_dense_hint(
 def test_search_semantic_query_time_dim_mismatch_degrades_to_bm25(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """F1 (Fable audit MED): a query-time `DenseUnavailableError` (e.g. a dim mismatch) raised
+    """F1 : a query-time `DenseUnavailableError` (e.g. a dim mismatch) raised
     from INSIDE `rerank_hybrid`'s call to `DenseIndex.query` -- outside the try/except that only
     guards index CONSTRUCTION -- must still degrade to BM25-only + set `rank_fallback_reason`,
     never a traceback."""
@@ -163,7 +163,7 @@ def test_search_semantic_query_time_dim_mismatch_degrades_to_bm25(
 
 
 def test_search_semantic_corrupt_model_dir_exits_cleanly_json(tmp_path: Path, monkeypatch) -> None:
-    """F4 (Fable audit MED): a genuine BackendExecutionError (e.g. a corrupt model directory)
+    """F4 : a genuine BackendExecutionError (e.g. a corrupt model directory)
     must exit cleanly with a `tg:` message and exit code 2, never a raw traceback."""
     monkeypatch.setattr("tensor_grep.core.retrieval_dense.dense_available", lambda: (True, None))
 
@@ -212,7 +212,7 @@ def test_search_semantic_corrupt_model_dir_exits_cleanly_text(tmp_path: Path, mo
 def test_search_semantic_corpus_chunk_cap_exceeded_degrades_to_bm25(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """F5 (Fable audit MED): retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per
+    """F5 : retrieval_chunker.MAX_CHUNKS bounds a single chunk_file() call (per
     FILE); a matched-file set with many small files can still blow past a sane CORPUS-wide total.
     `_apply_semantic_rerank`'s corpus-level cap must catch that and degrade to BM25-only with
     `rank_fallback_reason` set, instead of handing DenseIndex.__init__ an unbounded encode batch."""
@@ -308,7 +308,7 @@ def test_search_semantic_chunker_runtime_error_degrades_to_bm25(
 def test_search_semantic_builds_chunk_corpus_once_shared_by_both_legs(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """F3 (Fable audit MED): the dense leg's chunk corpus and the BM25 leg's chunk corpus must
+    """F3 : the dense leg's chunk corpus and the BM25 leg's chunk corpus must
     come from the SAME `chunk_file()` pass -- previously the dense leg built its own corpus in
     `_apply_semantic_rerank` while the BM25 leg rebuilt an independent one inside `rerank_hybrid`
     (a second full file-I/O pass, and a silent RRF-misalignment risk if the two passes'

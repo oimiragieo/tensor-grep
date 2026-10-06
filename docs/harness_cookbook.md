@@ -82,7 +82,7 @@ Recommended consumer behavior:
 Current coverage values describe the limits of this surface:
 
 - `"language_scope": "c-cpp-csharp-go-java-javascript-php-python-rust-typescript"` -- every language with a registered symbol-graph `LanguageSpec`, derived live from `lang_registry.LANGUAGE_REGISTRY` (10 languages as of this writing).
-- `"symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:"` -- honest about tiers: `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified for every registered language. The `foundational-defs-imports-only:` segment (languages with parser-backed defs/imports but refs/callers falling back to a regex-heuristic text match) is currently EMPTY -- C++ was the last language in that tier (Task 10E) -- but the segment is always emitted so the descriptor's shape never changes.
+- `"symbol_navigation": "parser-backed-refs-callers:c-cpp-csharp-go-java-javascript-php-python-rust-typescript+foundational-defs-imports-only:"` -- honest about tiers: `tg refs`/`tg callers`/`tg blast-radius` are AST/tree-sitter-verified for every registered language. The `foundational-defs-imports-only:` segment (languages with parser-backed defs/imports but refs/callers falling back to a regex-heuristic text match) is currently EMPTY -- C++ was the last language in that tier -- but the segment is always emitted so the descriptor's shape never changes.
 - `"test_matching": "filename+import+graph-heuristic"`
 
 ## Context Pack Flow
@@ -149,11 +149,10 @@ Find call sites plus likely impacted tests:
 tg callers . create_invoice --max-repo-files 512 --json
 ```
 
-`tg callers` is Python-first: it matches Python AST call nodes most reliably
-and can under-match, or take minutes, on large TypeScript/JS repos. Prefer
-`tg refs` for TS/JS symbol navigation; dogfooding found `tg refs` returning
-14 reference sites on a TS-heavy repo where `tg callers` returned 1 for the
-same symbol.
+Reference and caller resolution depends on language, scan scope, and provider.
+Inspect provenance and `resolution_gaps` before interpreting an empty result.
+For JavaScript and TypeScript, compare `tg refs` and `tg callers` when the task
+requires both reference and call information; they answer different questions.
 
 For `tg blast-radius ... --json`, `blast_radius_score` is a bounded `0.0` to
 `1.0` evidence-density score derived from ranked files, direct callers, and

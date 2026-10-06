@@ -84,7 +84,7 @@ _CENTRAL_SYMBOL_DENSITY_CAP = 25
 #           had "no imports crossing out", but the stem-only import graph
 #           (`_code_files_and_import_graph`) cannot resolve a `from skills.auth import Auth` symbol/
 #           subpackage edge, so a real `__init__.py` subpackage had empty resolved-imports and
-#           passed VACUOUSLY -- mislabeling a genuine product `skills/` package as a bundle (Opus-gate
+#           passed VACUOUSLY -- mislabeling a genuine product `skills/` package as a bundle (review
 #           FP). A folder-per-skill bundle always carries a manifest; a Python package never does.
 #       (b) NO `__init__.py` in the tree root OR any immediate child -- an unambiguous "this is a real
 #           Python (sub)package, not a folder-per-skill bundle" marker. Belt-and-suspenders with (a).
@@ -132,7 +132,7 @@ _STRONG0_VENDOR_DIR_NAMES = frozenset({
     "third_party",
     "_vendored",
 })
-# STRONG-3 skill-leaf manifest filenames (Opus-gate FIX -- now the SOLE positive leaf signal, see
+# STRONG-3 skill-leaf manifest filenames (review FIX -- now the SOLE positive leaf signal, see
 # `_child_has_skill_manifest`): a `skills`-named directory's immediate child counts toward the
 # leaf-fraction ONLY if it carries one of these manifest filenames (case-insensitive, checked
 # directly inside the child -- not recursively, mirroring STRONG-1's own manifest check). The
@@ -224,7 +224,7 @@ def _child_has_skill_manifest(child_abs_dir: Path) -> bool:
     (``SKILL.md``/``skill.md``, matched case-insensitively directly inside the child -- NOT
     recursively, mirroring how STRONG-1's own manifest check works)?
 
-    This is the SOLE positive leaf signal (Opus-gate FIX). An earlier draft ALSO counted a child
+    This is the SOLE positive leaf signal . An earlier draft ALSO counted a child
     with "no imports crossing out / no code files" as a leaf, but the stem-only import graph
     (``_code_files_and_import_graph``) cannot resolve a ``from skills.auth import Auth`` symbol/
     subpackage edge, so a real ``__init__.py`` subpackage had empty resolved-imports and satisfied
@@ -257,10 +257,10 @@ def _is_skill_leaf_tree(
           a strictly-safer EXTRA signal, but NOT relied on alone -- the stem-only import graph misses
           a ``from skills.<subpkg> import <Symbol>`` edge, which is why (a)+(b) below carry the load.
       (b) NO ``__init__.py`` in the tree root OR any immediate child -- a real Python (sub)package
-          marker a folder-per-skill bundle never has (Opus-gate FIX, belt-and-suspenders with (a)).
+          marker a folder-per-skill bundle never has (review FIX, belt-and-suspenders with (a)).
       (a) POSITIVE skill-manifest evidence: at least ``_SKILL_LEAF_FRACTION_THRESHOLD`` of the
           immediate child directories each carry their own ``SKILL.md``/``skill.md``
-          (``_child_has_skill_manifest``) -- the load-bearing guard (Opus-gate FIX).
+          (``_child_has_skill_manifest``) -- the load-bearing guard .
 
     A ``skills/`` directory with NO subdirectories at all (flat ``.py``/``.ts`` files directly
     inside -- the shape of a real Python/TS package, not a folder-per-skill bundle) has no children
@@ -430,7 +430,7 @@ def _detect_vendored_subtrees(
     if not (manifest_dirs or tool_config_dirs or strong0_vendor_dirs or skill_candidate_dirs):
         return {}
 
-    # #220 Opus-gate follow-up: the two most expensive REMAINING sections -- the reverse-import
+    # #220 review follow-up: the two most expensive REMAINING sections -- the reverse-import
     # graph re-derivation just below AND the STRONG-3 skill-leaf validation loop that consumes it
     # (`_is_skill_leaf_tree`, `iterdir()`-heavy per `skill_candidate_dirs` entry) -- ran
     # unconditionally even after the manifest-probe loop above already broke on a tripped deadline:
@@ -599,10 +599,10 @@ def _detect_workspace_root(
     *,
     deadline_monotonic: float | None = None,
 ) -> bool:
-    """CEO #2 auto-narrow (additive, advisory): cheap, single-level detection of whether the
+    """auto-narrow (additive, advisory): cheap, single-level detection of whether the
     scanned root itself looks like a MULTI-PROJECT workspace parent (e.g. a folder of several
     independently-cloned repos) rather than a single project -- the exact "root/mega-repo often
-    partial/null-symbol" tribal-knowledge gap the CEO flagged: an agent pointed at such a root
+    partial/null-symbol" tribal-knowledge gap the flagged: an agent pointed at such a root
     should be TOLD to narrow, never left to discover it the hard way.
 
     Deliberately reuses the SAME closed-vocabulary project-marker set and child-count thresholds
@@ -925,7 +925,7 @@ def build_orient_capsule(
     (which reuses an already-cached map) shares one code path with the cold path -- parity by
     construction rather than a second, driftable implementation.
 
-    ``deadline_seconds`` (CLI consistency fix, CEO v1.71.3 dogfood): `--deadline` used to be
+    ``deadline_seconds`` : `--deadline` used to be
     undefined on `tg orient` (Click "No such option" exit-2). Bounds the underlying
     ``build_repo_map`` walk/parse the same way the symbol commands do; `tg orient` has NO exit-2
     contract (docs/CONTRACTS.md), so a truncated scan still surfaces `partial`/`deadline_limit` as
@@ -973,7 +973,7 @@ def build_orient_capsule_from_map(
     auto_deweight: bool = True,
     deadline_monotonic: float | None = None,
 ) -> dict[str, Any]:
-    """Task #108 (Tier-2 daemon moat): the map-based core of ``build_orient_capsule``, taking an
+    """Task #108 (Tier-2 daemon capability): the map-based core of ``build_orient_capsule``, taking an
     already-built ``rm`` (e.g. the warm session daemon's cached ``repo_map``) instead of scanning
     the filesystem itself. ``build_orient_capsule`` is a thin wrapper around this function, so
     cold and warm output are identical by construction for the same map.
@@ -1012,7 +1012,7 @@ def build_orient_capsule_from_map(
     scan_possibly_truncated = bool(
         isinstance(scan_limit_info, dict) and scan_limit_info.get("possibly_truncated")
     )
-    # CEO #2 auto-narrow (advisory, additive): a genuine multi-project workspace root is told to
+    # auto-narrow (advisory, additive): a genuine multi-project workspace root is told to
     # narrow PROACTIVELY -- even on a scan that completed without truncating -- because the
     # "wrong root" problem is orthogonal to the scan-limit cap (a small mega-repo folder full of
     # tiny sibling repos can easily scan to completion while still being the wrong root to answer
@@ -1136,13 +1136,13 @@ def build_orient_capsule_from_map(
         "deweighted_trees": deweighted_trees_list,
         "auto_deweight": auto_deweight,
     }
-    # CEO #2 auto-narrow (advisory, additive): present only when the scanned root itself looks
+    # auto-narrow (advisory, additive): present only when the scanned root itself looks
     # like a multi-project workspace parent -- absent (never `False`) otherwise, so a non-
     # workspace repo's capsule stays byte-identical to before this field existed (mirrors
     # `suggested_ignore`'s/`outbound_dependencies`'s own additive-conditional convention).
     if workspace_root_detected:
         result["workspace_root_detected"] = True
-    # CLI consistency fix (CEO v1.71.3 dogfood): carry a --deadline truncation forward from `rm`
+    # CLI consistency fix : carry a --deadline truncation forward from `rm`
     # (mirrors repo_map._copy_partial_signal's shape) so a deadline-bounded scan is never silently
     # dropped. INFORMATIONAL only -- `tg orient` has NO exit-2 contract (docs/CONTRACTS.md:110), so
     # this does not change orient's documented always-exit-0 behavior; it only makes a truncated

@@ -159,7 +159,7 @@ fn execute_python_passthrough_command_inner(
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
 
-    // audit H5 (Opus gate must-fix): place the child in its own process group on Unix so
+    // audit H5 : place the child in its own process group on Unix so
     // terminate_passthrough_process's killpg(child.id(), SIGKILL) actually signals the whole
     // subtree on timeout. WITHOUT this, the child inherits tg's PGID, no process group with
     // id == child.id() exists, killpg returns ESRCH (swallowed, and the POSIX branch has no

@@ -1,0 +1,10 @@
+# Release history
+
+Published versions and their release pages are listed below.
+
+{% for version in context.history.released %}
+## {{ version.as_tag() }}
+
+[Release details](https://github.com/oimiragieo/tensor-grep/releases/tag/{{ version.as_tag() }})
+
+{% endfor %}

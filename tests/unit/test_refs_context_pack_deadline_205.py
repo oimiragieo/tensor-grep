@@ -5,7 +5,7 @@ The refs handler's DOMINANT reference-scan loop was already deadline-bounded, bu
 ``build_context_pack_from_map(repo_map, symbol)`` BARE -- leaving that stage's own in-memory
 symbol-scoring + pagerank loop unbounded on a very large session repo, unlike the sibling
 callers/impact handlers which thread the deadline (repo_map.py:16431 / 15011). Surfaced by the
-#203/#652 Opus gate as a pre-existing parity gap.
+#203/#652 review as a pre-existing parity gap.
 
 This spy test isolates the fix from refs' already-bounded scan loop: a value-level overrun test
 would pass vacuously (refs' dominant loop already trips ``partial`` on an expired deadline), so

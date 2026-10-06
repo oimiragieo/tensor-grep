@@ -299,7 +299,7 @@ def test_sql_write_to_imports_refused(tmp_path: Path) -> None:
 def test_sql_symbols_only_query_does_not_run_imports_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """CEO round 3 on #1175: a symbols-only query must not pay the imports-pass tax at all --
+    """round 3 on #1175: a symbols-only query must not pay the imports-pass tax at all --
     spy on the pass's OWN entry point (`sql_query._run_imports_pass`, defined in this module, not
     a `repo_map` symbol -- mind the bare-call ratchet) and assert it is never called."""
     import tensor_grep.cli.sql_query as sql_query_module

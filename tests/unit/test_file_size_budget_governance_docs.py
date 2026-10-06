@@ -1,7 +1,7 @@
-"""Report-only governance-doc size visibility (AGENTS.md / docs/BACKLOG.md / ...).
+"""Report-only governance-doc size visibility (AGENTS.md / CLAUDE.md / ...).
 
 `scripts/file_size_budget.py::governance_doc_census` exists because AGENTS.md and
-docs/BACKLOG.md need size visibility without prescribing a minimum document length. This suite proves the census is real (bidirectional
+CLAUDE.md need size visibility without prescribing a minimum document length. This suite proves the census is real (bidirectional
 control: a populated result differs observably from an empty one) rather than
 proving the docs are small, and that --docs-report never touches the exit code.
 """
@@ -23,12 +23,12 @@ sys.modules["file_size_budget_docs"] = budget
 _spec.loader.exec_module(budget)
 
 
-def test_census_finds_agents_and_backlog_with_plausible_counts() -> None:
+def test_census_finds_agents_and_claude_with_plausible_counts() -> None:
     rows = {path: (lines, size) for path, lines, size in budget.governance_doc_census()}
     assert "AGENTS.md" in rows, "AGENTS.md missing from governance doc census"
-    assert "docs/BACKLOG.md" in rows, "docs/BACKLOG.md missing from governance doc census"
+    assert "CLAUDE.md" in rows, "CLAUDE.md missing from governance doc census"
 
-    for relative in ("AGENTS.md", "docs/BACKLOG.md"):
+    for relative in ("AGENTS.md", "CLAUDE.md"):
         raw = (REPO_ROOT / relative).read_bytes()
         assert raw, f"{relative} is unexpectedly empty"
         assert rows[relative] == (len(raw.splitlines()), len(raw))

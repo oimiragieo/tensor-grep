@@ -28,7 +28,7 @@ _REVIEW_BUNDLE_COMPONENTS = (
     "scan_results",
     "checkpoint_metadata",
     "diff",
-    # CEO#8 enterprise close-the-loop: an OPTIONAL list of embedded EvidenceReceipt objects.
+    # enterprise close-the-loop: an OPTIONAL list of embedded EvidenceReceipt objects.
     # Deliberately NOT added to _REVIEW_BUNDLE_REQUIRED_COMPONENTS below -- every existing
     # receipt-less bundle (on disk from a prior tg version, or freshly created without --receipt)
     # must stay byte-valid and verify green. Because this tuple drives BOTH create_review_bundle's
@@ -488,7 +488,7 @@ def verify_review_bundle(
             errs = manifest_result.get("errors") or []
             manifest_signature_error = errs[0] if errs else "Embedded manifest signature invalid."
 
-    # CEO#8 enterprise close-the-loop (Change B): re-verify each embedded EvidenceReceipt's
+    # enterprise close-the-loop (Change B): re-verify each embedded EvidenceReceipt's
     # signature/trust via the SAME crypto `tg evidence verify` uses (never reimplemented here), and
     # -- only when `against` is supplied -- its freshness against a resolved git ref. An
     # unresolvable `--against` ref fails the WHOLE bundle closed regardless of whether any receipts
@@ -544,7 +544,7 @@ def verify_review_bundle(
     against_resolution_valid = against_check is None or bool(against_check["valid"])
     receipts_valid = all(bool(entry["valid"]) for entry in receipt_checks)
 
-    # NIT-1 (post-gate hardening, CEO#8): close the empty-bundle bypass. Without an opt-in
+    # NIT-1 : close the empty-bundle bypass. Without an opt-in
     # minimum, `evidence_receipts` null/absent/[] trivially passes (`all([]) == True`) and
     # `bundle_sha256` is cosmetic against an author who controls review-bundle.json -- they can
     # strip every receipt, recompute the KEYLESS checksums, and greenlight the gate with NO

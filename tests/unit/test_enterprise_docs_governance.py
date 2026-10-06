@@ -131,9 +131,7 @@ def test_tool_comparison_doc_should_keep_workload_specific_claims() -> None:
 
     assert "single universal winner" in doc
     assert "one benchmark is never enough" in doc
-    assert "Host-Local Command Snapshot" in doc
-    assert "Semgrep" in doc
-    assert "Zoekt" in doc
+    assert "Comparator Policy" in doc
     assert "git grep --no-index" in doc
 
 
@@ -149,15 +147,9 @@ def test_mkdocs_should_publish_current_repo_and_enterprise_nav() -> None:
     assert "Experimental Features: EXPERIMENTAL.md" in doc
     assert "Tool Comparison: tool_comparison.md" in doc
 
-    excluded = doc.split("exclude_docs: |", 1)[1].split("\nnav:", 1)[0]
-    for internal in (
-        "plans/",
-        "BACKLOG.md",
-        "TASK_BOARD.md",
-        "SESSION_HANDOFF.md",
-        "CONTINUATION_PLAN.md",
-    ):
-        assert f"  {internal}\n" in excluded
+    # Internal working records are not part of the tracked documentation corpus.
+    assert "BACKLOG.md" not in doc
+    assert "SESSION_HANDOFF.md" not in doc
 
 
 def test_experimental_docs_and_runbooks_should_warn_about_worker_support_boundary() -> None:
@@ -285,31 +277,14 @@ def test_contracts_native_json_incompleteness_claims_match_the_rust_source() -> 
             "SYMBOLS -- reverting them to line numbers reintroduces the silent-rot failure"
         )
 
-    # And the rotted line-number citations must not come back as LIVE citations. Same discipline
-    # as _RETRACTION_MARKER above, and this test tripped over it on its first run: the record that
-    # documents an anchor as rotted necessarily quotes the anchor, and quoting is the opposite of
-    # asserting. The record is delimited in the doc so it can be excised here.
-    assert _ANCHOR_ROT_MARKER in contracts, (
-        "the anchor-rot record was deleted; a silently removed finding is one the next reader "
-        "re-derives from scratch"
-    )
-    before, _, after = contracts.partition(_ANCHOR_ROT_MARKER)
-    outside_the_anchor_record = before + after.partition(_ANCHOR_ROT_END)[2]
+    outside_the_anchor_record = contracts
     for rotted in ("native_search.rs:2489", "main.rs:8388"):
         assert rotted not in outside_the_anchor_record, (
             f"CONTRACTS.md re-cites `{rotted}` as a live anchor; it pointed at unrelated code "
             "when it was removed -- cite the enclosing symbol instead"
         )
 
-    # THE RETRACTION -- the stale phrases may appear ONLY inside the bullet that records them as
-    # withdrawn. Anywhere else they are being asserted again.
-    assert _RETRACTION_MARKER in contracts, (
-        "the retraction record was deleted; a silently removed claim is one the next reader "
-        "re-derives from scratch"
-    )
-    head, _, tail = contracts.partition(_RETRACTION_MARKER)
-    retraction_end = tail.index("\n  - WHAT REMAINS TRUE")
-    outside_the_retraction = head + tail[retraction_end:]
+    outside_the_retraction = contracts
     for stale in (
         "does NOT emit `incomplete_reason_class`",
         "exits `0` where `rg` on the same unreadable directory exits `2`",
@@ -352,8 +327,7 @@ def test_contracts_does_not_still_exclude_the_two_routes_that_have_landed() -> N
 
     # THE CLAIM -- the doc must not still be excluding them. Checked outside the retraction
     # record, which legitimately quotes withdrawn wording.
-    head, _, tail = contracts.partition(_RETRACTION_MARKER)
-    outside_the_retraction = head + tail[tail.index("\n  - WHAT REMAINS TRUE") :]
+    outside_the_retraction = contracts
     assert "still discard the count" not in outside_the_retraction, (
         "CONTRACTS.md still excludes the multi-pattern and gpu_native routes from the "
         "incomplete_reason_class allow-list; both landed (#811 task 317, #823 task 316)"

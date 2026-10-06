@@ -1,4 +1,4 @@
-"""Closes 3 test-coverage gaps flagged by the adversarial Opus gate on PR #581 (the --deadline
+"""Closes 3 test-coverage gaps flagged by the adversarial review on PR #581 (the --deadline
 CLI-consistency fix that added --deadline/--no-deadline to agent/edit-plan/context/context-render/
 map/orient and --deadline to defs, docs/CONTRACTS.md:110). Test-only -- no production logic
 changes; see test_cli_deadline_flag.py for the flag-registration/threading regression suite this
@@ -125,7 +125,7 @@ def test_defs_daemon_probe_consulted_without_deadline(tmp_path: Path, monkeypatc
 # whether to try the daemon (`if effective_deadline is None: ...`). Putting the 60.0 default on
 # the typer.Option itself (codemap's own placement -- codemap has no daemon gate at all) would
 # make `effective_deadline` never None on a default call, silently skipping the daemon probe on
-# EVERY invocation and killing the #108 moat. The tests below prove both halves of that contract
+# EVERY invocation and killing the #108 capability. The tests below prove both halves of that contract
 # at once: the daemon gate is still consulted by default, AND the cold fallback (once the daemon
 # misses/is unavailable) gets exactly 60.0.
 # ==================================================================================================
@@ -142,7 +142,7 @@ def _agent_cold_spy(recorded: dict):
 def test_agent_default_still_reaches_daemon_gate_before_60s_cold_fallback(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """THE moat-preservation proof: a default `tg agent` call (no --deadline/--no-deadline) must
+    """THE capability-preservation proof: a default `tg agent` call (no --deadline/--no-deadline) must
     still ATTEMPT the warm-daemon path, proving the 60s cold-path default cannot have been
     applied before the gate's `effective_deadline is None` check."""
     (tmp_path / "m.py").write_text("def f():\n    return 1\n", encoding="utf-8")
@@ -230,7 +230,7 @@ _COLD_PATH_REAL_DEADLINE_CASES = {
     "agent": ["agent", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
     "edit-plan": ["edit-plan", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
     "defs": ["defs", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
-    # CEO v1.72.1 dogfood M1: source/blast-radius-plan both go through the same build_repo_map
+    # v1.72.1 dogfood M1: source/blast-radius-plan both go through the same build_repo_map
     # AST-parse loop as defs above (proven reliable at 0.1s against this ~80-file real tree), so
     # they reuse the identical real-deadline-truncation pattern.
     "source": ["source", str(_REAL_REPO_DIR), "q", "--deadline", "0.1", "--json"],
@@ -309,7 +309,7 @@ def test_agent_second_scan_deadline_clamps_to_floor(tmp_path: Path, monkeypatch)
     result = CliRunner().invoke(
         app, ["agent", str(tmp_path), "helper", "--deadline", "30", "--json"]
     )
-    # #639 Opus-gate nit 1 (dogfood #1 RESIDUAL): this scenario's shared deadline has ALREADY
+    # #639 review nit 1 (dogfood #1 RESIDUAL): this scenario's shared deadline has ALREADY
     # elapsed by the time the rescue scan even starts (injected post-render clock) -- pre-
     # fix that silently reported exit 0 (the rescue scan itself still succeeded inside its floored
     # 0.1s sub-budget, so nothing individually named in the old fold-in ever flagged it), which was
@@ -390,7 +390,7 @@ def test_agent_second_scan_skips_gracefully_on_full_deadline_exhaustion(
 
 
 # ==================================================================================================
-# Item 4 (dogfood #1 RESIDUAL, #639 Opus-gate nit 1): #639 (W1b) bounded the CHECKPOINTED post-map
+# Item 4 : #639 (W1b) bounded the CHECKPOINTED post-map
 # stages (build_context_pack_from_map's own pagerank/scoring loop, DAR's outbound-dependency
 # collection) and folded each one's own deadline-break flag into the capsule's `result["partial"]`.
 # But that fold-in only named the sibling stages it explicitly threaded a flag through -- the
@@ -498,7 +498,7 @@ def test_collect_capsule_call_site_evidence_propagates_inner_partial_signal(
 
 # ==================================================================================================
 # Item 5 (#642 gate nit-1 fast-follow): #642 added the SAME final wall-clock catch-all as Item 4
-# above, but ONLY to build_agent_capsule_from_map (agent_capsule.py) -- the #642 Opus gate flagged
+# above, but ONLY to build_agent_capsule_from_map (agent_capsule.py) -- the #642 review flagged
 # that `tg context-render` / `tg edit-plan` / `tg context` reach their own render/pack builders
 # (build_context_render_from_map, build_context_edit_plan_from_map, build_context_pack -- all
 # repo_map.py) WITHOUT ever routing through the agent capsule, so none of them ever saw a return-time

@@ -3,12 +3,7 @@
 The warm-session daemon is the only network-listening surface `tg` has. This page
 specifies its wire protocol and its authentication model.
 
-It exists because an audit (2026-08-19, §9) found that the protocol was documented
-**only in code comments** — `docs/architecture.md` said "authenticated with HMAC" and
-stopped there. A reader rebuilding this component from the docs would have had to
-reinvent the security model, and would probably have got it wrong in a way that looked
-fine. Every claim below cites `src/tensor_grep/cli/session_daemon.py` so it can be
-re-derived rather than trusted.
+Implementation symbols refer to `src/tensor_grep/cli/session_daemon.py`.
 
 > **Cite the symbol, not the line.** Constants are named here rather than pinned to line
 > numbers, which drift. Locate them with
@@ -56,8 +51,9 @@ Three properties matter, and all three are deliberate:
 - **Mode passed to `os.open`**, not applied afterwards with `chmod`. The kernel applies
   `0o600` *atomically at creation*, so there is no window in which the file exists and is
   world-readable. A write-then-chmod sequence has exactly that window.
-- **Windows ACL lockdown** is applied *before* the token bytes are written, so the
-  narrower permission is in force for the entire lifetime of the secret.
+- **Windows ACL restriction** is attempted before the token bytes are written.
+  This is best-effort protection; operators must still verify the metadata file
+  is accessible only to the intended local user.
 
 ### The authorization gate
 
@@ -73,9 +69,8 @@ if not isinstance(provided, str) or not provided:
 return hmac.compare_digest(provided, self.token)  # constant time
 ```
 
-`hmac.compare_digest` is required, not stylistic: a plain `==` short-circuits on the
-first differing byte and leaks the token one character at a time to a local attacker who
-can time responses.
+`hmac.compare_digest` is required to avoid data-dependent comparison timing.
+A plain equality check does not provide the same constant-time comparison contract.
 
 ### Fail-closed on a tokenless daemon
 

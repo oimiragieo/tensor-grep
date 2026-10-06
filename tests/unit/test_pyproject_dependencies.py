@@ -90,7 +90,7 @@ def test_ast_extra_pins_pygls_floor_matching_lsp_server_import() -> None:
     # that exists only in pygls 2.x (pygls 1.x has no `pygls.lsp.server` module at all -- its
     # LanguageServer lives at `pygls.server`). The `ast` extra's pygls floor must match what the
     # code actually requires, or `pip install "tensor-grep[ast]"` can resolve a pygls 1.x that
-    # ImportErrors the moment `tg lsp` runs (found by the #663 Opus gate).
+    # ImportErrors the moment `tg lsp` runs .
     deps = _optional_dependencies()["ast"]
 
     assert "pygls>=2.0" in deps

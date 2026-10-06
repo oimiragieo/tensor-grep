@@ -3,7 +3,7 @@
   "suite": "agent_loop",
   "generated_at_epoch_s": 1774918456.114201,
   "task_id": "invoice-payment-rewrite",
-  "root": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs_regen\\context_pack",
+  "root": "C:\\example\\project\\context_pack",
   "attempts": [
     {
       "attempt_id": "att-001",
@@ -14,7 +14,7 @@
       "retry_stage": "validation",
       "retry_reason": "post-apply validation failed; retry after repair or rollback",
       "checkpoint_id": "ckpt-1742491200-deadbeef",
-      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "audit_manifest_path": "C:\\example\\project\\rewrite\\rewrite-audit.json",
       "validation_success": false,
       "score_artifact": null,
       "inputs": [
@@ -34,7 +34,7 @@
       "retry_stage": "full_attempt",
       "retry_reason": "accepted fix after rerunning apply+verify with repaired validation commands",
       "checkpoint_id": "ckpt-1742491260-feedface",
-      "audit_manifest_path": "C:\\dev\\projects\\tensor-grep\\bench_data\\harness_api_doc_inputs\\rewrite\\rewrite-audit.json",
+      "audit_manifest_path": "C:\\example\\project\\rewrite\\rewrite-audit.json",
       "validation_success": true,
       "score_artifact": "docs/examples/patch_bakeoff.json",
       "inputs": [

@@ -315,7 +315,7 @@ def test_cli_broad_claude_ripgrep_backend_adds_guard_excludes(monkeypatch):
 
 
 def test_cli_rg_aggregate_json_timeout_emits_incomplete_envelope_exit2(monkeypatch):
-    """Fable review of #400, finding H2: when `tg search PATTERN --json` routes to the
+    """review review of #400, finding H2: when `tg search PATTERN --json` routes to the
     ripgrep AGGREGATE backend and the rg subprocess times out, the old code let
     ``subprocess.TimeoutExpired`` fall into RipgrepBackend.search()'s broad `except
     Exception`, wrap it as a RuntimeError, and re-raise -- main.py's search command had no
@@ -755,7 +755,7 @@ def test_python_search_treats_file_option_as_pattern_file_not_regex(monkeypatch,
     project = tmp_path / "project"
     project.mkdir()
     (project / "app.log").write_text("ERROR failed\n", encoding="utf-8")
-    windows_pattern_file = r"C:\Users\oimir\patterns.txt"
+    windows_pattern_file = r"C:\Users\example\patterns.txt"
     seen: dict[str, object] = {}
 
     def _fake_passthrough(self, paths, pattern, config=None):

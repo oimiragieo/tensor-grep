@@ -530,7 +530,7 @@ def _js_ts_import_update_target(
     except (OSError, UnicodeDecodeError):
         return None
 
-    # PERF increment 1 / read site 5 (Fable-designed, the "surprise 5th" site): this used to
+    # PERF increment 1 / read site 5 : this used to
     # re-read + re-parse the file on every (file, symbol, definition) pair -- edit-plan seeding
     # and _build_import_graph_consumers_from_map call it once per definition_file, profiled at
     # ~26% of edit_plan wall time. Share the parse product with every other JS/TS extractor via
@@ -717,7 +717,7 @@ def _js_ts_references_and_calls(
     except (OSError, UnicodeDecodeError):
         return [], []
 
-    # PERF increment 1 / Section B (Fable-designed): binding resolution only needs the source
+    # PERF increment 1 / Section B : binding resolution only needs the source
     # TEXT (not a parse tree), so it now runs BEFORE the parse -- letting a symbol-absent file
     # skip tree-sitter parsing entirely below (the refs loop that follows has no prefilter,
     # unlike the caller-scan literal check, so this is the biggest single payoff in this file).

@@ -926,7 +926,7 @@ def test_stale_changeset_bounds_the_added_file_probe_to_the_session_scan_limit(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """M3 (Fable completeness review): `_stale_changeset(detect_added_files=True)` used to
+    """M3 : `_stale_changeset(detect_added_files=True)` used to
     call `_iter_repo_files(root)` with no `max_files`, defaulting to a full unbounded
     recursive enumeration. Reachable from MCP via `refresh_session` / `_load_session_payload`
     on any `tg_session_*` call with `refresh_on_stale=True`. It must now bound the probe to

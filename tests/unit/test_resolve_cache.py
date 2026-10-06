@@ -197,7 +197,7 @@ def test_clear_all_source_caches_empties_resolved_path_str(tmp_path: Path) -> No
 
 
 def test_clear_all_source_caches_also_clears_repo_contexts():
-    # Fable final-review advisory B: the JS/TS + Rust per-repo contexts (tsconfig + re_export_cache)
+    # review final-review advisory B: the JS/TS + Rust per-repo contexts (tsconfig + re_export_cache)
     # must be swept on refresh too, else a warm daemon serves a stale re-export/alias resolution.
     import tensor_grep.cli.repo_map as repo_map
 

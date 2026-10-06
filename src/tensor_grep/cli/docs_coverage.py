@@ -181,7 +181,7 @@ def build_docs_coverage(
     Raises ``FileNotFoundError`` when ``path`` does not exist (fail closed -- a missing path must
     never read as a fully-covered empty repo).
 
-    CEO v1.72.1 dogfood M1: ``deadline_seconds`` is a thin additive thread-through into the walk
+    v1.72.1 dogfood M1: ``deadline_seconds`` is a thin additive thread-through into the walk
     (mirrors the #581 pattern -- ``build_repo_map`` already accepts ``deadline_monotonic``, and
     ``_iter_repo_files`` -- the SAME gitignore-aware walker ``map``/``orient``/``inventory`` trust --
     already knows how to bound itself by wall-clock time via ``deadline_monotonic``/``deadline_hit``,
@@ -319,7 +319,7 @@ def build_docs_coverage(
             "excluded": "tests, fixtures, tool-state (.claude/.git/.tensor-grep), vendor, build/cache",
         },
     }
-    # CEO v1.72.1 dogfood M1: mirrors build_repo_map's own partial/deadline_limit shape (repo_map.py
+    # v1.72.1 dogfood M1: mirrors build_repo_map's own partial/deadline_limit shape (repo_map.py
     # ~6569-6575) -- kept as a top-level `partial` flag (the one field an agent's parser checks) plus
     # a `deadline_limit` sibling, separate from scan_limit (the file-COUNT cap cause above).
     if walk_deadline_hit.hit:
@@ -469,7 +469,7 @@ def build_docs_stale_references(
     re-flagged, same contract the ``--check`` help text already promises for ``--stale``.
 
     ``deadline_seconds`` mirrors ``build_docs_coverage``'s additive --deadline thread-through
-    (CEO v1.72.1 dogfood M1): same walk, same partial/deadline_limit signal shape.
+    : same walk, same partial/deadline_limit signal shape.
     """
     root = Path(path)
     if not root.exists():

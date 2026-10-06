@@ -657,7 +657,7 @@ def _run_policy_command(name: str, command: str, cwd: Path, timeout: int) -> dic
         )
     resolved_path = Path(os.path.abspath(resolved_executable))
 
-    # #126 (Opus re-gate, 4th same-class edge -- UNC / network-share smuggling): a UNC spelling of
+    # #126 : a UNC spelling of
     # the executable -- \\host\share\..., the loopback admin-share \\127.0.0.1\C$\...\<repo>\evil.cmd
     # / \\localhost\C$\..., or the \\?\UNC\... extended form -- names the SAME on-disk in-repo shadow
     # through the network/admin-share namespace, which Path.resolve() does NOT map back to its C:\

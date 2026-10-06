@@ -166,7 +166,7 @@ Use this when a bad release escaped:
    - Homebrew: revert formula in tap to previous known-good version.
    - Winget: submit manifest update pointing to previous known-good installer.
 5. Incident close-out:
-   - Add root cause + mitigation to `CHANGELOG.md` and `docs/PAPER.md` (if architecture-impacting).
+   - Add root cause + mitigation to `CHANGELOG.md` and the relevant public technical guide (if architecture-impacting).
    - Add/adjust CI assertion so the specific failure cannot recur.
 
 ## 6. Operator verification commands

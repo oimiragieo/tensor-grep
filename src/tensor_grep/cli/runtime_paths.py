@@ -412,12 +412,12 @@ def native_binary_targets_windows(binary: Path | str) -> bool:
     filesystem carries it. A `/mnt/<drive>/` location is deliberately NOT treated as a Windows
     signal -- a Linux ELF built in-place on a Windows-drive checkout (the default resolver returns
     `/mnt/c/.../tg`, no `.exe`) lives there too and is same-domain, so flagging it would break a
-    working WSL config (Opus MF-1).
+    working WSL config .
     """
     return str(binary).lower().endswith(".exe")
 
 
-# GPU-P0-1 follow-up (2026-07-21 CEO WSL dogfood, gotcontext-saddle): `native_binary_targets_windows()`
+# GPU-P0-1 follow-up : `native_binary_targets_windows()`
 # is keyed on the `.exe` suffix of the resolved candidate ITSELF, which is correct for a raw
 # binary but blind to the bare-named (`tg`, no extension) POSIX shim that BOTH managed installers
 # generate for WSL/git-bash/MSYS shells: `scripts/install.sh`'s staged `bin/tg` heredoc (copied via
@@ -445,7 +445,7 @@ def native_binary_targets_windows(binary: Path | str) -> bool:
 #      alongside the bash shim, but does NOT copy `tg-native-metadata.json` there (only the
 #      original `.tensor-grep/bin/` gets it) -- so a shim resolved via `~/bin/tg` or
 #      `~/.local/bin/tg` (the common case; these, not `.tensor-grep/bin/`, are what installer
-#      wiring puts on `$PATH`) has signal 2 but NOT signal 1. Confirmed empirically: on the CEO's
+#      wiring puts on `$PATH`) has signal 2 but NOT signal 1. Confirmed empirically: on the 's
 #      WSL dogfood box, `resolve_native_tg_binary()` resolved exactly such a shimDir copy, and
 #      re-running the doctor probe logic against it post-fix (signal 2 present, signal 1 absent)
 #      correctly flips `is_cross_domain_native_binary()` to True and the translated path opens

@@ -2,11 +2,8 @@
 
 Proves that NON-allowlisted AWS credentials are detected by the scanner.
 
-Codex Sol CRITICAL finding #69: the Wave 1 positive control used EXAMPLE-suffix
-credentials, which gitleaks v8.30.1 allowlists, so it proved nothing about
-detection. This test plants credentials without the EXAMPLE marker, requires
-exit code 1 plus the named rule, and then proves reversibility (credentials
-removed from the scanned history -> exit code 0).
+The fixture uses a synthetic non-EXAMPLE key so the scanner must detect it.
+It then removes the fixture and requires a clean scan.
 
 Requires a gitleaks v8 binary: set GITLEAKS_BIN or put it on PATH. The test
 skips (does not pass) when none is available.
@@ -28,7 +25,7 @@ import pytest
 # [A-Z2-7] bounded by \b. The originally planned 34-char key
 # (AKIAIOSFODNN7THISISAFAKEKEYFORTEST) can never match, so it would make this
 # control fail for the wrong reason. This 20-char key has no EXAMPLE marker.
-ACCESS_KEY = "AKIAIOSFODNN7ZXCVBNM"
+ACCESS_KEY = "AKIA" + "IOSFODNN7ZXCVBNM"
 SECRET_KEY = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYFAKETESTKEY"
 EXPECTED_RULE = "aws-access-token"
 

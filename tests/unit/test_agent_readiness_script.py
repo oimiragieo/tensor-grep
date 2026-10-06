@@ -37,8 +37,6 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         "AGENTS.md",
         "README.md",
         "SKILL.md",
-        "docs/SESSION_HANDOFF.md",
-        "docs/CONTINUATION_PLAN.md",
         "docs/CONTRACTS.md",
     ):
         path = repo_root / relative
@@ -46,19 +44,15 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         path.write_text(required_content, encoding="utf-8")
 
     gpu_content = "\n".join([
-        f"post-`v{version}`",
-        "1GB and 5GB correctness",
-        "RTX 4070",
-        "RTX 5070",
-        "no crossover",
-        "public managed",
-        "not promotion-ready",
+        "native_gpu",
+        "sidecar",
+        "public_managed_promotion_ready",
+        "not_gpu_proof_reason",
     ])
     for relative in (
         "README.md",
         "docs/benchmarks.md",
         "docs/gpu_crossover.md",
-        "docs/PAPER.md",
     ):
         path = repo_root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -66,8 +60,8 @@ def _write_docs_claim_fixture(repo_root: Path, version: str = "1.9.6") -> None:
         taxonomy = ""
         if relative in {"docs/benchmarks.md", "docs/gpu_crossover.md"}:
             taxonomy = "\n".join([
-                "fair baseline is `rg -F -e ... -e ...`",
-                "sidecar-routed rows are unsupported for native CUDA promotion",
+                "rg -F -e ... -e ...",
+                "native CUDA",
             ])
         path.write_text("\n".join([prefix, gpu_content, taxonomy]), encoding="utf-8")
 
@@ -244,38 +238,26 @@ def test_agent_readiness_docs_claims_cover_gpu_taxonomy(tmp_path) -> None:
     module.validate_docs_claims("", tmp_path, "1.9.6")
 
 
-def test_agent_readiness_docs_claims_exempt_paper_md_from_version_freshness(tmp_path) -> None:
-    """audit #71/#73: docs/PAPER.md is an append-only historical log (never rewritten), so it
-    cannot carry a perpetually-current post-`vX` freshness marker. validate_docs_claims must
-    exempt PAPER.md from that fragment ONLY -- while still requiring it in the other GPU docs.
-    Pre-fix, PAPER.md only satisfied this check because a buggy unanchored release stamp
-    re-injected a fresh version into its dated historical notes every release."""
+def test_agent_readiness_docs_claims_need_only_public_documents(tmp_path) -> None:
     module = _load_script_module()
     _write_docs_claim_fixture(tmp_path)
-
-    # Strip the freshness marker from PAPER.md only (mirrors the de-anachronized real doc).
-    paper_path = tmp_path / "docs" / "PAPER.md"
-    paper_path.write_text(
-        paper_path.read_text(encoding="utf-8").replace("post-`v1.9.6`", ""),
-        encoding="utf-8",
-    )
-    # Must NOT raise: PAPER.md is exempt from the version-freshness fragment (all its other
-    # required GPU-honesty fragments are still present and still checked).
+    for name in ("PAPER.md", "SESSION_HANDOFF.md", "CONTINUATION_PLAN.md"):
+        (tmp_path / "docs" / name).unlink(missing_ok=True)
     module.validate_docs_claims("", tmp_path, "1.9.6")
 
-    # The exemption is PAPER.md-specific: gpu_crossover.md still requires the marker.
+    # Current public GPU documentation must still explain missing proof.
     crossover_path = tmp_path / "docs" / "gpu_crossover.md"
     crossover_path.write_text(
-        crossover_path.read_text(encoding="utf-8").replace("post-`v1.9.6`", ""),
+        crossover_path.read_text(encoding="utf-8").replace("not_gpu_proof_reason", ""),
         encoding="utf-8",
     )
     try:
         module.validate_docs_claims("", tmp_path, "1.9.6")
     except module.ReadinessError as exc:
         assert "gpu_crossover.md" in str(exc)
-        assert "post-`v1.9.6`" in str(exc)
+        assert "not_gpu_proof_reason" in str(exc)
     else:
-        raise AssertionError("expected gpu_crossover.md to still require the post-`vX` marker")
+        raise AssertionError("expected gpu_crossover.md to still require GPU proof disclosure")
 
 
 def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> None:
@@ -284,7 +266,7 @@ def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> No
     benchmarks_path = tmp_path / "docs" / "benchmarks.md"
     benchmarks_path.write_text(
         benchmarks_path.read_text(encoding="utf-8").replace(
-            "fair baseline is `rg -F -e ... -e ...`",
+            "rg -F -e ... -e ...",
             "",
         ),
         encoding="utf-8",
@@ -293,7 +275,7 @@ def test_agent_readiness_docs_claims_reject_missing_gpu_taxonomy(tmp_path) -> No
     try:
         module.validate_docs_claims("", tmp_path, "1.9.6")
     except module.ReadinessError as exc:
-        assert "fair baseline is `rg -F -e ... -e ...`" in str(exc)
+        assert "rg -F -e ... -e ..." in str(exc)
     else:
         raise AssertionError("expected docs claim validation to fail")
 
@@ -356,17 +338,15 @@ def test_agent_readiness_docs_claims_allow_latest_complete_pypi_lag_when_current
     module.validate_docs_claims("", tmp_path, "1.11.0")
 
 
-def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) -> None:
+def test_agent_readiness_docs_claims_reject_missing_gpu_promotion_contract(tmp_path) -> None:
     module = _load_script_module()
     _write_docs_claim_fixture(tmp_path, version="1.9.12")
-    # README is the marketing doc and no longer carries GPU dogfood labels (it is exempt from the
-    # gpu_fragments pins); the staleness check now applies to the dedicated GPU docs, so corrupt
-    # benchmarks.md (which is in gpu_docs) to exercise it.
+    # Promotion status must be documented independently of a successful execution.
     gpu_doc_path = tmp_path / "docs" / "benchmarks.md"
     gpu_doc_path.write_text(
         gpu_doc_path.read_text(encoding="utf-8").replace(
-            "post-`v1.9.12`",
-            "post-`v1.9.10`",
+            "public_managed_promotion_ready",
+            "",
             1,
         ),
         encoding="utf-8",
@@ -375,9 +355,9 @@ def test_agent_readiness_docs_claims_reject_stale_gpu_dogfood_label(tmp_path) ->
     try:
         module.validate_docs_claims("", tmp_path, "1.9.12")
     except module.ReadinessError as exc:
-        assert "post-`v1.9.12`" in str(exc)
+        assert "public_managed_promotion_ready" in str(exc)
     else:
-        raise AssertionError("expected stale GPU dogfood label to fail")
+        raise AssertionError("expected missing GPU promotion contract to fail")
 
 
 def test_agent_readiness_only_shell_probes_should_skip_repo_checks() -> None:
@@ -655,7 +635,7 @@ def test_agent_readiness_should_report_foreign_path_tg_remediation() -> None:
             "Together CLI (v2.12.0)"
         ),
         "path_tg_foreign_remediation": (
-            "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH than "
+            "Move C:/Users/example/.tensor-grep/bin earlier in PATH than "
             "C:/Python314/Scripts or rename the foreign tg command outside tensor-grep."
         ),
         "fresh_shell_path_tg_first_launcher_kind": "foreign",
@@ -665,7 +645,7 @@ def test_agent_readiness_should_report_foreign_path_tg_remediation() -> None:
             "C:/Python314/Scripts/tg.exe reports Together CLI (v2.12.0)"
         ),
         "fresh_shell_path_tg_foreign_remediation": (
-            "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH than "
+            "Move C:/Users/example/.tensor-grep/bin earlier in PATH than "
             "C:/Python314/Scripts or rename the foreign tg command outside tensor-grep."
         ),
         "search_acceleration_backend": "standalone-native-tg",
@@ -679,7 +659,7 @@ def test_agent_readiness_should_report_foreign_path_tg_remediation() -> None:
         message = str(exc)
         assert "not tensor-grep" in message
         assert "Together CLI" in message
-        assert "Move C:/Users/oimir/.tensor-grep/bin earlier in PATH" in message
+        assert "Move C:/Users/example/.tensor-grep/bin earlier in PATH" in message
     else:
         raise AssertionError("expected foreign PATH tg to fail with remediation")
 

@@ -558,7 +558,7 @@ impl CpuBackend {
         // The stat uses a trailing-separator-stripped path: on POSIX, lstat("<dirlink>/")
         // resolves THROUGH the final symlink, so a raw caller string with a trailing slash
         // would pass an is_symlink() check on the unstripped path and hand the link root to
-        // WalkDir (opus gate r4 F1, measured). components() normalization strips trailing
+        // WalkDir . components() normalization strips trailing
         // separators without resolving anything; an empty result falls back to the raw path.
         let guard_path = {
             let stripped: std::path::PathBuf = path_obj.components().collect();
@@ -1660,7 +1660,7 @@ mod tests {
 
     #[test]
     fn test_replace_in_place_on_a_missing_path_still_errors_with_the_path_named() {
-        // Contract-change pin, not a compatibility pin (opus gate r3 F1): a nonexistent path
+        // Contract-change pin, not a compatibility pin : a nonexistent path
         // was a SILENT Ok(()) no-op BEFORE the guard (the old pin test proved it) and is now
         // Err via the fail-closed symlink_metadata. The contract this PR deliberately changes
         // and must hold going forward is "Err, naming the path" -- not which producer made it.

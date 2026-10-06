@@ -1,4 +1,4 @@
-"""P0-2 (warm-LSP moat): readiness gate in ExternalLSPClient.
+"""P0-2 (warm-LSP capability): readiness gate in ExternalLSPClient.
 
 The 2-of-14 under-return happens because `textDocument/references` fires immediately after one
 didOpen while the server is still building its workspace index: `window/workDoneProgress/create`
