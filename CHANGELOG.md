@@ -1,6 +1,45 @@
 # CHANGELOG
 
 
+## v1.123.23 (2026-10-06)
+
+### Bug Fixes
+
+- Align context and edit targets with filename phrases
+  ([#1215](https://github.com/oimiragieo/tensor-grep/pull/1215),
+  [`4770055`](https://github.com/oimiragieo/tensor-grep/commit/47700556f404c631a58a1b9a272ea6fe37fc38dd))
+
+* fix: prefer complete filename phrases in shared context ranking
+
+* docs: bind ranking replay to merged diagnostic source
+
+- Preserve subprocess protocol and path decoding contracts
+  ([#1217](https://github.com/oimiragieo/tensor-grep/pull/1217),
+  [`c0e8449`](https://github.com/oimiragieo/tensor-grep/commit/c0e8449ebad3374d2f9168f691258b9ca899e235))
+
+* fix: preserve subprocess protocol and path decoding contracts
+
+* docs: bind subprocess rebase gates to merged diagnostics
+
+* test(subprocess): verify byte consumers with CI pytest entrypoint
+
+* docs: record subprocess CI entrypoint corrections
+
+* fix: make subprocess guard fingerprints stable across Python versions
+
+* docs: record cross-interpreter guard proof and exact pin migration
+
+* test(cli): align upgrade and info mocks with decoding policy
+
+* docs: record CLI subprocess mock CI correction
+
+* move pure subprocess decoders into core
+
+* test: pin decoder compatibility and retain import-layering ratchet
+
+* docs: record decoder-layering correction and verification
+
+
 ## v1.123.22 (2026-10-06)
 
 ### Bug Fixes
