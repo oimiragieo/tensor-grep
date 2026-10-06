@@ -221,6 +221,22 @@ The JSON schemas emitted by `tensor-grep search --json`, `tensor-grep search --n
   `checkpoint_not_found` still sees `ok: false` and a human-readable `detail`, and the new value
   appears exactly where the old one was wrong.
 
+- `tg checkpoint create [PATH] --label TEXT` accepts an optional trimmed label of 1-120 printable
+  Unicode characters. The label is carried in create/list JSON and human-readable list output,
+  and is persisted in both checkpoint metadata and `index.json`; omitted labels are `null` in new
+  records and absent or malformed stored labels load as `null` without hiding the checkpoint.
+  Labels may repeat and never select
+  restoration: the CLI retains its checkpoint-ID and `--last` forms, while MCP undo requires the
+  checkpoint ID. MCP `tg_checkpoint_create` and
+  `tg_checkpoint(action="create")` accept the same label; supplying it to meta-tool `list` or
+  `undo` returns `error.code = "invalid_input"`. Printable strings are preserved literally
+  over MCP, including `"null"`, numeric text, quoted text and JSON-shaped arrays or objects.
+  Non-text values passed directly to the Python handler return `invalid_input`; over MCP,
+  schema-invalid types are rejected by protocol argument validation (`isError`) before the
+  handler runs. Invalid text that reaches the handler returns structured `invalid_input`.
+  The storage version remains v1. Older clients that rewrite the index may discard labels they
+  do not understand.
+
 ## 5. Operational diagnostics (`tg doctor --json`)
 `tg doctor --json` is intended for operational automation and support workflows.
 - The doctor payload includes top-level `schema_version` and `doctor_schema_version`. Additive minor-version schema changes must bump these fields when consumer-visible shapes change.

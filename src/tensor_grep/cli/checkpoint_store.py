@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import tensor_grep.cli.checkpoint_labels as checkpoint_labels
 from tensor_grep.cli._index_lock import (
     atomic_write_bytes,
     atomic_write_json,
     index_lock,
-    record_from_entry,
 )
 
 # NOTE: only the two names this file actually calls are imported here.
@@ -228,6 +228,7 @@ class CheckpointRecord:
     root: str
     created_at: str
     file_count: int
+    label: str | None = None
 
 
 @dataclass
@@ -244,6 +245,7 @@ class CheckpointCreateResult:
     # field, default-empty, so every existing caller/serializer stays backward-compatible.
     skipped_nested_repos: list[str] = field(default_factory=list)
     scoped_paths: list[str] | None = None
+    label: str | None = None
 
 
 @dataclass
@@ -588,7 +590,7 @@ def _load_index(root: Path) -> list[CheckpointRecord]:
     if not index_path.exists():
         return []
     payload = json.loads(index_path.read_text(encoding="utf-8"))
-    return [record_from_entry(CheckpointRecord, entry) for entry in payload]
+    return checkpoint_labels.records_from_entries_with_labels(CheckpointRecord, payload)
 
 
 def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
@@ -615,6 +617,7 @@ def _rebuild_index_from_checkpoint_metadata(root: Path) -> Path | None:
                 root=str(Path(str(payload.get("root") or root)).expanduser().resolve()),
                 created_at=created_at,
                 file_count=int(payload.get("file_count") or 0),
+                label=checkpoint_labels.stored_checkpoint_label(payload.get("label")),
             )
         )
     records.sort(key=lambda record: record.created_at, reverse=True)
@@ -760,6 +763,7 @@ def _write_checkpoint_metadata(
         "original_path": str(original_path),
         "created_at": result.created_at,
         "file_count": result.file_count,
+        "label": result.label,
         "entries": entries,
         # audit #130d: disclose what create_checkpoint skipped (nested repos / submodules)
         # so `tg checkpoint create --json` and a later `load_checkpoint_metadata` never
@@ -773,7 +777,10 @@ def _write_checkpoint_metadata(
     _write_json_atomic(_metadata_path(root, result.checkpoint_id), payload)
 
 
-def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> CheckpointCreateResult:
+def create_checkpoint(
+    path: str = ".", paths: list[str] | None = None, *, label: str | None = None
+) -> CheckpointCreateResult:
+    normalized_label = checkpoint_labels.normalize_checkpoint_label(label)
     target = Path(path).expanduser().resolve()
     # A missing SUFFIXED path under an existing directory is deliberately file-scoped (undo of a
     # to-be-created file, see _detect_checkpoint_scope); anything else is a typo, not a scope.
@@ -860,6 +867,7 @@ def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> Checkp
             undo_command=_display_command(_undo_argv(scope, checkpoint_id)),
             skipped_nested_repos=skipped_nested_repos,
             scoped_paths=scoped_paths,
+            label=normalized_label,
         )
         _write_checkpoint_metadata(
             root,
@@ -892,6 +900,7 @@ def create_checkpoint(path: str = ".", paths: list[str] | None = None) -> Checkp
                     root=str(root),
                     created_at=created_at,
                     file_count=len(entries),
+                    label=normalized_label,
                 ),
             )
             records, dropped_dirs = _select_retained_checkpoints(root, records)
@@ -1197,7 +1206,7 @@ def load_checkpoint_metadata(checkpoint_id: str, path: str = ".") -> dict[str, A
     payload = json.loads(metadata_path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise ValueError("Checkpoint metadata must be a JSON object.")
-    return payload
+    return {**payload, "label": checkpoint_labels.stored_checkpoint_label(payload.get("label"))}
 
 
 def _paths_modified_since_checkpoint(

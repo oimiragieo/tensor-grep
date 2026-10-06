@@ -181,7 +181,10 @@ Three cooperating stores live under a project's `.tensor-grep/` directory:
   and supports undo (`checkpoint_store.py:20-21`); it raises `CheckpointCorruptError` when a
   snapshot blob is missing or unreadable rather than silently no-op'ing an undo
   (`checkpoint_store.py:54-60`). Retention is bounded by `TG_CHECKPOINT_MAX` (default 64,
-  `checkpoint_store.py:32-33`).
+  `checkpoint_store.py:32-33`). Optional labels are trimmed printable Unicode text (1-120
+  characters) persisted in checkpoint metadata and the index; labels are display annotations,
+  while undo continues to address a checkpoint by ID. Older clients that rewrite the index may
+  discard labels they do not understand.
 
 Both `tg session ...` and `tg checkpoint ...` are Python-only CLI verbs -- the Rust front door
 dispatches them straight to the Python passthrough (`Commands::Session`, `main.rs:3929`;
@@ -190,7 +193,7 @@ dispatches them straight to the Python passthrough (`Commands::Session`, `main.r
 ## MCP server
 
 `cli/mcp_server.py` runs a `FastMCP("tensor-grep")` server (`mcp_server.py:189`) at a pinned
-contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.11.0"`, `mcp_server.py:138`) exposing 58
+contract version (`_TG_MCP_SERVER_CONTRACT_VERSION = "1.12.0"`, `mcp_server.py:179`) exposing 58
 tools. Note the count is NOT the number of `@mcp.tool()` decorators (12) -- most tools register
 through `_register_legacy_tool`, which calls `mcp.tool()` only when legacy tools are enabled, so
 grepping the decorator undercounts by ~46. The authoritative number is

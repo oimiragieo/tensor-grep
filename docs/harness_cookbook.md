@@ -515,7 +515,7 @@ Use checkpoints when an agent needs an explicit rollback point before or after a
 Create a checkpoint:
 
 ```powershell
-tg checkpoint create . --json
+tg checkpoint create . --label "before module migration" --json
 ```
 
 List checkpoints:
@@ -535,6 +535,9 @@ Current behavior:
 - inside a Git repo, `mode` is `git-worktree-snapshot`
 - outside Git, `mode` is `filesystem-snapshot`
 - undo restores files captured at checkpoint creation and removes paths created afterward inside the checkpoint scope
+- labels are trimmed, printable Unicode text (1-120 characters) shown in create/list output; they
+  may repeat and do not select an undo target, which uses the checkpoint ID (or CLI `--last`)
+- older clients that rewrite `index.json` may discard labels they do not understand
 
 ## NDJSON Streaming Flow
 
@@ -594,7 +597,7 @@ Example flow:
 4. pass `gpu_device_ids=[...]` to `tg_agent_capsule` only for explicit native GPU evidence probes; sidecar-routed GPU evidence is returned as unsupported
 5. call `tg_rewrite_plan(...)`
 6. call `tg_rewrite_diff(...)` only when native `tg` is available
-7. call `tg_checkpoint_create(path=".")` if rollback is required
+7. call `tg_checkpoint_create(path=".", label="before rewrite")` if rollback is required
 8. call `tg_rewrite_apply(..., verify=True, checkpoint=True)` only when native `tg` is available; otherwise use simple embedded-safe apply without verify/checkpoint
 
 The MCP tool payloads mirror the CLI contract envelopes. Consumers should still inspect:
@@ -645,4 +648,3 @@ Use these rules:
    - use only when routing or explicit calibration says it wins
 
 For stable field semantics, see [Harness API](harness_api.md).
-

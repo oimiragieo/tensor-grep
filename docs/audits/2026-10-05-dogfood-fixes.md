@@ -6,9 +6,9 @@ are outside this change. Each row remains open until its own published-artifact 
 
 | ID | Owner | Disposition | Completion trigger |
 |---|---|---|---|
-| DOGFOOD-DIAGNOSTICS | CLI maintainer | MERGED, PR #1214 (`d0d9f7e`); publication/replay pending | Completed release and published installer/GPU proof replay |
-| DOGFOOD-DECODING | Runtime maintainer | IN_FLIGHT, PR #1217 | Classified production subprocess inventory, mutation-tested guard, release replay |
-| DOGFOOD-FILENAME | Ranking maintainer | IN_FLIGHT, PR #1215 | Pinned precedence/order, context/edit agreement, cached/session and release replay |
+| DOGFOOD-DIAGNOSTICS | CLI maintainer | SHIPPED v1.123.22, PR #1214 (`d0d9f7e`) | Release CI 44 jobs; eight published replay cases pass; [raw evidence](evidence/2026-10-05-dogfood/diagnostics-publication.json) |
+| DOGFOOD-DECODING | Runtime maintainer | MERGED, PR #1217 (`c0e8449`); publication/replay pending | Combined main CI `37437549841`, complete publication, published protocol/path replay |
+| DOGFOOD-FILENAME | Ranking maintainer | MERGED, PR #1215 (`47700556`); publication/replay pending | Combined main CI `37437549841`, complete publication, published context/edit and cached/session replay |
 | DOGFOOD-LABELS | Checkpoint maintainer | IN_FLIGHT, PR #1216 | CLI/MCP/store round trips, invalid-input no-write proof, recovery and release replay |
 
 ## Baseline and artifact identity
@@ -90,7 +90,13 @@ JSON failure guard in `f57bebc`. Sol and Opus cleared the resulting diagnostics 
 CI `37418321723` cleared that exact head with 38 terminal jobs and 49 clear PR checks.
 PR #1214 merged as `d0d9f7e960622f868a4a41c14c8d21a6e81ac1c8`; its complete tree matches
 `d96bb9e`. Seven merged-source replay rows and imported-bytecode/provenance checks pass.
-Main CI `37422114884` and publication remain pending; no published fix is claimed yet.
+Main CI `37422114884` completed successfully with 44 terminal jobs. Release commit
+`911b37c7d1a4c340352439e3b4499b9ba6eeba18` tags v1.123.22. All four expected PyPI artifacts
+are present and unyanked; downloaded Windows wheel/native hashes match publication metadata.
+Eight actual published diagnostics replay cases pass, with raw producer/consumer output and
+installed-source provenance in the [publication receipt](evidence/2026-10-05-dogfood/diagnostics-publication.json).
+The physical Windows CPU binary reports GPU unsupported; injected native-success/sidecar
+controls verify the proof contract without claiming native GPU hardware execution.
 
 Independent Sol review of `87cdbd9` found an unchanged missing-boolean proof gap. The reviewed
 amendment requires explicit JSON `sidecar_used=false` for native GPU success and preserves unknown
@@ -122,6 +128,23 @@ replayed onto that squash as `a347e47eeb60e5bdafc8dc4fe1a2aca832d9fba6`, with co
 tree equality to `06e7fd4` checked before commit. Canonical Windows re-verification passed
 94 guard, 102 consumer and 28 path tests (3 POSIX skips), full Ruff/preview/mypy, size/bare
 ratchets and 30 source replay rows. Final-head review and CI still apply after rebase.
+
+## Current integrated state (2026-10-06)
+
+Subprocess final head `733b116` passed CI `37432476137` (38 terminal jobs), independent Sol
+review and mandatory Opus review. Ranking final `0314714` passed CI `37426661907` (38 jobs)
+and independent Sol review. They merged in one open release window as `c0e8449` and `47700556`.
+The obsolete intermediate run was cancelled before any release job started; combined main
+CI `37437549841` now owns the publication hold. Thirty-two merged-source replay cases pass.
+Whole-tree three-way merge checks preserve both reviewed deltas and main's newer release stamp.
+
+Labels actual integration `e4e280a` has the exact full Git tree of reviewed `f20551a`:
+`48e63c9eb40279da8299b6128588197cf9a7610c`. Its four status/inventory conflicts were resolved
+from those exact reviewed bytes. Fresh status documentation is recorded separately. The new
+MCP label refusal correction has 103 passing sanitization/label/wire tests and 47 source replay
+cases on clean `58b7530`; those are local source results, not final CI or publication proof.
+The latest mandatory Opus invocation failed with HTTP 429 before review, resetting at
+2026-10-06 10:10 UTC. Retry on the final integrated artifact; no substitute clearance is claimed.
 
 ## Deferred diagnostic behavior
 

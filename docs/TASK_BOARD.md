@@ -1,13 +1,19 @@
 # tensor-grep — Task Board
 
-## Live reconciliation (2026-10-05)
+## Live reconciliation (2026-10-06)
 
 Intake: main `99c1ea1` / v1.123.21; prior main CI `37402418507` completed with
 44 terminal jobs and zero failures. Canonical venv metadata was 1.123.19 and the managed
 launcher 1.123.20, so neither is used as source-version evidence.
-[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS merged
-in PR #1214 (`d0d9f7e`), awaiting publication/replay; DOGFOOD-DECODING is IN_FLIGHT in #1217, DOGFOOD-FILENAME
-in PR #1215, and DOGFOOD-LABELS in PR #1216. Each retains its own review and release gate.
+[Bounded dogfood ledger](audits/2026-10-05-dogfood-fixes.md): DOGFOOD-DIAGNOSTICS is
+SHIPPED in v1.123.22 (PR #1214, `d0d9f7e`), with eight published replay cases passing.
+DOGFOOD-DECODING #1217 (`c0e8449`) and DOGFOOD-FILENAME #1215 (`47700556`) are MERGED;
+combined main CI `37437549841` and publication/replay remain pending.
+[DOGFOOD-LABELS](audits/dogfood-checkpoint-labels-receipt.md) is IN_FLIGHT in #1216
+(owner: checkpoint maintainer; PR history: #1216). Its actual dependency integration preserves
+the entire reviewed tree. Trigger: fresh exact-head CI, independent and Opus reviews, then
+published-artifact replay. The latest Opus seat failed on provider quota before review;
+retry after 2026-10-06 10:10 UTC. Prior review does not clear the new sanitization fix.
 These four scoped fixes do not close existing strategic rows. Open unrelated PR #1212 owns
 the earlier bug-hunt documentation closeout; Wave 3 remains outside this campaign.
 

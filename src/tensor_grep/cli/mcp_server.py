@@ -32,6 +32,7 @@ from tensor_grep.backends.cpu_backend import (
 )
 from tensor_grep.backends.ripgrep_backend import RipgrepBackend
 from tensor_grep.cli import mcp_arg_validation as _av
+from tensor_grep.cli import mcp_checkpoint_label_args as _checkpoint_label_args
 from tensor_grep.cli import mcp_search_bounds as _bounds
 from tensor_grep.cli.incompleteness import (
     incomplete_class_fragment as _incomplete_class_fragment,
@@ -175,8 +176,8 @@ def _mcp_server_version() -> str:
 # existing caller breaks; bumped so a version-pinning client can discover the field.
 # 1.8.0 -> 1.9.0 (bug-hunt E-04): additive `tg_search`/`tg_ast_search` fields -- `text_truncated`
 # + `text_chars` on a windowed row, `output_truncated` + `<field>_truncated` when a cap fires.
-# 1.10.0 (K2): invalid_input args; 1.11.0 (G1): coverage_gap fields on symbol tools (docs/CONTRACTS.md).
-_TG_MCP_SERVER_CONTRACT_VERSION = "1.11.0"  # 1.8.0 was P3: unified `incomplete` envelope
+# 1.10.0 invalid-input args; 1.11.0 symbol coverage; 1.12.0 checkpoint labels.
+_TG_MCP_SERVER_CONTRACT_VERSION = "1.12.0"  # 1.12.0: checkpoint labels
 
 
 def _apply_mcp_server_metadata(server: FastMCP) -> None:
@@ -210,13 +211,9 @@ def _register_legacy_tool(fn: Callable[..., str]) -> Callable[..., str]:
     """Decorator for the 46 legacy (pre-consolidation) MCP tool functions (#98).
 
     Registers `fn` as an MCP tool via `mcp.tool()` only when `_legacy_tools_enabled()` is
-    True at IMPORT time; otherwise returns `fn` completely unchanged (not wrapped), so it
-    stays directly importable/callable in-process -- the 10 meta-tools' dispatch bodies call
-    these functions directly no matter what the flag says, so a legacy name can be
-    de-advertised from `list_tools()` while its underlying logic keeps serving the meta-tool
-    that composes it. `mcp.tool()(fn)` itself returns `fn` unchanged (verified against the
-    installed FastMCP -- the decorator's only side effect is registering `fn` in the server's
-    internal tool table), so `fn` is safe to keep calling directly in either flag state.
+    True at IMPORT time. Both paths return `fn` unchanged: FastMCP's decorator only
+    registers the function, and the 10 meta-tools dispatch directly to these Python
+    callables even when their legacy names are de-advertised from `list_tools()`.
 
     Evaluated once per decoration (import time) so registration and `_MCP_TOOL_CAPABILITIES`
     share the SAME flag read. Each registered tool's description gains a covering-meta-tool
@@ -5368,24 +5365,24 @@ def tg_checkpoint(
     action: str,
     checkpoint_id: str | None = None,
     path: str = ".",
+    label: str | None = None,
 ) -> str:
-    """
-    Task-shaped meta-tool: edit checkpoint lifecycle. Composes 3 legacy tools:
+    """Checkpoint lifecycle; paths are confined to the MCP server root.
 
-    - action="create": create an edit checkpoint rooted at `path` (= tg_checkpoint_create)
-      [writes]
-    - action="list": list checkpoints rooted at `path` (= tg_checkpoint_list)
-    - action="undo": restore a checkpoint; also DELETES files created in scope since
-      (= tg_checkpoint_undo) [writes]
-
-    Args:
-        action: One of "create", "list", "undo".
-        checkpoint_id: Checkpoint ID to restore. Required for action="undo"; an opaque
-            identifier, not a path.
-        path: File or directory rooted at the checkpoint scope. Confined to the MCP server
-            root.
+    - action="create" creates a checkpoint (= tg_checkpoint_create); optional label is trimmed,
+      printable and 1-120 chars, and accepted only for create.
+    - action="list" lists checkpoints (= tg_checkpoint_list).
+    - action="undo" restores a checkpoint (= tg_checkpoint_undo); requires its opaque
+      checkpoint_id and deletes newer files within the stored scope.
     """
     try:
+        if label is not None and action in {"list", "undo"}:
+            payload = _meta_envelope(tool="tg_checkpoint", action=action)
+            payload["error"] = {
+                "code": "invalid_input",
+                "message": "label is only accepted when action='create'.",
+            }
+            return json.dumps(payload, indent=2)
         try:
             path = str(_confine_mcp_path(path, label="path"))
         except PathConfinementError as exc:
@@ -5393,7 +5390,7 @@ def tg_checkpoint(
 
         try:
             if action == "create":
-                return _self.tg_checkpoint_create(path=path)
+                return _self.tg_checkpoint_create(path=path, label=label)
             if action == "list":
                 return _self.tg_checkpoint_list(path=path)
             if action == "undo":
@@ -5408,6 +5405,9 @@ def tg_checkpoint(
     except Exception as exc:
         _log_tool_exception("tg_checkpoint", exc)
         return _sanitized_tool_error_text("tg_checkpoint", exc)
+
+
+_checkpoint_label_args.install_checkpoint_label_arguments(mcp)
 
 
 _TG_REWRITE_ACTIONS = ("plan", "apply", "diff")
