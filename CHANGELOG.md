@@ -1,6 +1,25 @@
 # CHANGELOG
 
 
+## v1.123.20 (2026-10-06)
+
+### Bug Fixes
+
+- **frontdoor**: Stop the native/Python front doors re-delegating search to each other forever
+  ([#1208](https://github.com/oimiragieo/tensor-grep/pull/1208),
+  [`d60aff0`](https://github.com/oimiragieo/tensor-grep/commit/d60aff0047893db26c1f0592a92ac3c5110dd132))
+
+P0: the native tg.exe and the Python front door re-delegated `search -s|-N --json` to each other
+  without bound (842 processes observed on a dev box). The full CLI now honours TG_REEXEC_GUARD
+  (search, --type-list, --pcre2-version); every door-to-door spawn on both sides carries
+  TG_FRONTDOOR_HOPS (one ASCII-digit grammar, per-child env copy, refused with exit 2 at >=4 or
+  malformed, ASCII messages); a failed bootstrap native spawn exits 2 (timeout still 124); tests no
+  longer reach the installed tg. AST spawn census enforces the stamp. Three Codex rounds; CI green
+  incl. test-rust-core on 4 lanes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+
 ## v1.123.19 (2026-10-05)
 
 ### Bug Fixes
