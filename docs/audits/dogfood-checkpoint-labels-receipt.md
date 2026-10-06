@@ -169,3 +169,29 @@ This supersedes the earlier three-PR burst proposal: merge green #1217 and #1215
 open release window, then integrate labels against their actual squash commits and obtain
 new exact-head reviews and CI. A rehearsal found four status/inventory conflicts; it is
 not evidence of an actual merge. Final Windows wheel/native replay remains required.
+
+## MCP label-error sanitization correction
+
+CI `37433094569` on `c82e9d9`, Linux Python 3.12 job `112169486515`, reached 6,697
+passing tests before SEC-007 rejected the new label `ValueError` arm's `str(exc)` output.
+The run was cancelled; it supplies no clearance. The same exact guard failure reproduces
+in the canonical Windows venv. The independently reviewed plan has raw-byte SHA-256
+`db806f226871471467f3fb4720d426c489f0d3407f2e006bbb33ef5d610b4e80`.
+
+Luna implementation `6232dac` was harvested into clean source
+`58b7530e10b7d33e810e204aa2bcdefdcb149881`. The label error arm now returns the fixed
+printable-label validation message without binding or formatting the exception. Meta create
+delegates to that legacy handler. Direct nontext calls retain `invalid_input` but now receive
+the same generic label message; schema-invalid wire input retains its protocol boundary.
+An injected private-path/sentinel error must produce the exact refused envelope, never reach
+storage, and preserve the full fixture's directories, names and file bytes in both tools.
+
+All nine bounded clean-source batches pass: 103 sanitization/label/wire tests, strict census,
+full Ruff/preview/mypy (177 files), size (1,124 files; zero regressions), bare-call checks,
+memoized actual handler assertions and 47 source replay rows. The 53 authorized exception
+formatting sites and all security ratchets are unchanged. Only one out-of-span advisory
+handler line was reanchored; the 340 identities and classifications are retained.
+
+New-source independent review, restored mandatory Opus review, integration against actual
+dependency squashes, exact-head CI and published replay remain required. The provider-limited
+Opus invocation returned HTTP 429 before work and is FAILED; it does not grant clearance.
