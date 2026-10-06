@@ -1,50 +1,35 @@
-# Support Matrix
+# Support matrix
 
-This document distinguishes CI-tested environments from best-effort compatibility and operator-managed deployments for `tensor-grep`.
+As of 2026-10-06, this page separates tested build environments from published install channels and best-effort use. CI coverage means a workflow exercises that platform; it does not mean the newest run is green or guarantee every machine configuration.
 
-## Platform Tiers
+## Platforms
 
-### Tier 1: CI-tested and release-validated
-- **Linux amd64:** `ubuntu-latest` CI, published CPU/NVIDIA release binaries, package-manager bundle validation.
-- **Windows amd64:** `windows-latest` CI, published CPU/NVIDIA release binaries, Winget manifest validation.
-- **macOS amd64:** `macos-15-intel` native-build-smoke and release-native asset CI, published CPU release binary (`tg-macos-amd64-cpu`), Homebrew formula validation.
-- **macOS arm64:** `macos-latest` native-build-smoke CI for Apple Silicon build coverage.
+| Platform | Evidence and practical limits |
+|---|---|
+| Linux x64 | Main CI tests Linux builds. A CPU native release asset is published. Other glibc-compatible distributions are best-effort and depend on compatibility with that asset and the Python dependencies. |
+| Windows x64 | Main CI tests Windows builds. A CPU native release asset is published. Windows Server variants are best-effort and are not separately exhaustive. |
+| macOS x64 | Native build and CPU release asset are covered by release workflows. |
+| macOS arm64 (Apple Silicon) | CI provides native build coverage, but there is no arm64 release asset in the current published CPU asset set. Use a supported Python install or build from source; the x64 asset under Rosetta is another operator-managed option. |
 
-### Best-effort / operator-validated
-- **Other glibc-compatible Linux distributions:** expected to work when they remain compatible with the published release binaries and Python dependency set.
-- **Windows Server variants:** expected to track the supported Windows runner base closely enough for standard CLI use, but not exhaustively CI-covered.
-- **Apple Silicon macOS:** use Rosetta with the published amd64 binary or build from source until a native arm64 release artifact is introduced.
+The default native asset profile is CPU. The CI workflow has a separate `native-frontdoor-gpu` profile that gates GPU asset build steps; that profile is not the default release profile. GPU support is experimental and depends on build options, compatible hardware, drivers, and the route actually selected. See [experimental features](EXPERIMENTAL.md) and the [GPU runbook](runbooks/gpu-troubleshooting.md).
 
-## Python Versions
-- **CI-tested:** Python 3.11 and 3.12.
-- **Source/package floor:** Python >= 3.11, matching `pyproject.toml`.
-- **Unsupported:** Python < 3.11.
+## Python and Rust versions
 
-## Rust Toolchain
-- **Maintainer baseline:** stable Rust 1.75+.
-- **Expectation:** use the stable toolchain from CI/release workflows when validating release builds or reproducing artifacts.
+- Python package floor: Python 3.11 or newer (`pyproject.toml` declares `>=3.11`).
+- Python versions exercised by the documented CI matrix: 3.11 and 3.12.
+- Python below 3.11 is unsupported.
+- Rust maintainers should use the stable toolchain specified by CI and release workflows. The source manifest's minimum toolchain is not a promise that every older stable compiler can reproduce current release builds.
 
-## Distribution Channels
-- **Official / release-validated:** GitHub Releases, PyPI, Homebrew formula, Winget manifest.
-- **Convenience channel:** `npx` wrapper for lightweight Node-based invocation.
-- **Operational guidance:** prefer PyPI or the install scripts when you need `tg update`; prefer GitHub Releases, Homebrew, or Winget for managed workstation/server rollout.
+## Published channels
 
-## Semantic Versioning & Deprecation
-`tensor-grep` follows Semantic Versioning (SemVer) 2.0.0.
-- **Major versions** may introduce breaking changes to CLI flags, `sgconfig.yml` schemas, or machine-readable outputs.
-- **Minor versions** add features in a backward-compatible manner.
-- **Deprecation Policy:** stable features, flags, or fields scheduled for removal are marked
-  `DEPRECATED` for at least **90 days AND 2 minor versions** -- whichever is longer.
+PyPI, GitHub Release CPU binaries, and their managed install scripts are the available user channels described by [installation](installation.md). npm/`npx`, Homebrew, and Winget manifests exist in the repository but are not published to their registries. Do not interpret CI validation of a manifest as registry availability.
 
-  The time floor is the load-bearing half. This project releases on merge via semantic-release,
-  and the measured cadence is **a median of 0 days between minor bumps** (v1.95, v1.96, v1.97 and
-  v1.98 all shipped on 2026-07-24). A version-only window is therefore not a window: read
-  literally, "2 minor versions" can elapse in an afternoon, while a reader reasonably infers
-  months. If you are pinning `tensor-grep` in a managed environment, 90 days is the number to
-  plan against.
-- **Supported versions / security patches:** the **latest released version only**. There are no
-  maintenance branches -- every fix ships forward from `main` -- so a security fix arrives as a new
-  release, never as a backport to an older line. Upgrade is the patch path. Air-gapped or
-  version-pinned deployments should budget for this explicitly rather than assume an LTS line
-  exists; there isn't one.
-- **Experimental Surface:** items documented in [docs/EXPERIMENTAL.md](EXPERIMENTAL.md) are outside the stable compatibility guarantees and may change in minor releases.
+## Compatibility and support policy
+
+`tensor-grep` follows Semantic Versioning. Minor releases add features compatibly; major releases may change CLI flags, configuration, or machine-readable outputs. The detailed compatibility rules live in [contracts](CONTRACTS.md).
+
+Stable features, flags, and fields scheduled for removal are marked `DEPRECATED` for at least **90 days and 2 minor versions**, whichever period is longer. The time floor matters because multiple minor releases can occur close together.
+
+Only the latest released version receives security fixes. There are no maintenance branches or older supported lines; upgrades carry fixes forward. Version-pinned or air-gapped deployments should account for that policy.
+
+Experimental features are outside stable compatibility guarantees and may change in a minor release. Their current setup and limits are listed in [Experimental features](EXPERIMENTAL.md).
